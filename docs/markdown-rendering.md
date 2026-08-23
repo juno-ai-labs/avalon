@@ -145,9 +145,11 @@ in its input and no `rehype-raw` is configured, so markup in the source is text.
 
 Markdown rendered anywhere other than the desktop renderer is a different
 problem with different constraints, and is deliberately not shared with this:
-the digest email has its own converter, for the reason
+Avalon's outbound email has one shared converter,
+`apps/api/src/services/email-markdown.ts`, for the reason
 [`digests.md`](digests.md) records — a general markdown library emits far more
-than an email client will honour.
+than an email client will honour. Every email surface renders through that one,
+rather than growing a second.
 
 The exported message card is the one place outside this stylesheet that styles
 this DOM, and it is not an exception to the invariant above — it is a different

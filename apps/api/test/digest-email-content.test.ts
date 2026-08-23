@@ -1,43 +1,28 @@
 import { describe, expect, it } from "vitest";
 
-import { digestEmailHtml, digestMarkdownToHtml } from "../src/services/digest-email-content";
+import { digestEmailHtml } from "../src/services/digest-email-content";
 import { occurrenceLabel } from "../src/services/digest-delivery-service";
 
-describe("digest markdown rendering", () => {
-  it("renders the structure a digest actually uses", () => {
-    const html = digestMarkdownToHtml([
-      "## Launch",
-      "",
-      "Two things moved today.",
-      "",
-      "- Shipped the **installer**",
-      "- Reviewed [the plan](https://example.com/plan)",
-    ].join("\n"));
+describe("digest email", () => {
+  it("renders the body's markdown rather than escaping it into the shell", () => {
+    const html = digestEmailHtml({
+      recipientName: "Ada",
+      workspaceName: "Avalon Studio",
+      occurrenceLabel: "Tuesday 11 August · 9:00 AM",
+      bodyMarkdown: "## Launch\n\n- One **thing** happened",
+      itemCount: 1,
+      highlightCount: 0,
+      appUrl: "https://with-avalon.com",
+      settingsUrl: "https://with-avalon.com/app/settings/digest",
+    });
 
-    // Two heading levels and no more: a third reads as noise in a mail client.
+    // The renderer moved out of this module. Swapping the call back for an
+    // escape would leave the whole digest suite green while handing readers the
+    // `##` and `**` this change exists to remove.
     expect(html).toContain("<h2");
-    expect(html).toContain("Launch");
     expect(html).toContain("<ul");
     expect(html).toContain("<strong");
-    expect(html).toContain('<a href="https://example.com/plan"');
-  });
-
-  it("never lets model output become markup", () => {
-    const html = digestMarkdownToHtml('<img src=x onerror="alert(1)"> and <script>alert(2)</script>');
-
-    expect(html).not.toContain("<img");
-    expect(html).not.toContain("<script");
-    expect(html).toContain("&lt;img");
-    expect(html).toContain("&lt;script");
-  });
-
-  it("refuses a link target that is not http", () => {
-    // The label survives as text; only the anchor is withheld, so nothing is
-    // silently swallowed and nothing dangerous is emitted.
-    const html = digestMarkdownToHtml("[click](javascript:alert(1))");
-
-    expect(html).not.toContain("<a href");
-    expect(html).toContain("click");
+    expect(html).not.toContain("## Launch");
   });
 
   it("keeps every style inline, because mail clients drop stylesheets", () => {

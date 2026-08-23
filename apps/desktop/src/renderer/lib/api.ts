@@ -983,8 +983,10 @@ export class AvalonApi {
   }
 
   async updateAutomation(id: string, input: {
-    instructions: string;
+    instructions?: string;
     activitySourcePluginIds?: Record<string, string>;
+    /** Absent leaves destinations alone; present replaces the whole set. */
+    deliveryTargets?: Array<{ type: 'email' } | { type: 'slack_agent_dm'; connectionId: string }>;
   }): Promise<AutomationDetail> {
     const updated = await this.request(`/automations/${encodeURIComponent(id)}`, {
       method: 'PATCH',
@@ -1844,7 +1846,13 @@ export class AvalonApi {
               scope: raw.suggestedScope === 'personal' ? 'you' : 'workspace',
               triggerSummary: raw.triggers.map(triggerSummary).join(' · '),
               capabilities: raw.requiredCapabilities,
-              requiresSlackDelivery: raw.expectedOutputs.some((output) => /\bslack\b/iu.test(output)),
+              // What the compiler understood the person to ask for, not what a
+              // regex could find in its prose. The prose version pre-ticked a
+              // destination for "a ranked list of your most important emails" —
+              // a briefing *about* email — and a destination frozen by mistake
+              // could not be changed afterwards.
+              requiresSlackDelivery: raw.requestedDelivery.includes("slack_agent_dm"),
+              requiresEmailDelivery: raw.requestedDelivery.includes("email"),
             },
           }
         : {}),

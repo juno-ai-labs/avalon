@@ -172,6 +172,41 @@ afterEach(() => {
 });
 
 describe('Avalon API wire adapter', () => {
+  it.each([
+    [['email'], true, false],
+    [['slack_agent_dm'], false, true],
+    [['email', 'slack_agent_dm'], true, true],
+    [[], false, false],
+  ])('carries the compiler\'s own %j through to the destination choices', async (requested, email, slack) => {
+    const draft = {
+      name: 'Morning briefing',
+      description: 'Summarizes the morning.',
+      overview: 'Runs every morning.',
+      instructions: 'Write the briefing.',
+      triggers: [{ type: 'interval' as const, intervalSeconds: 86_400, summary: 'Every 24 hours' }],
+      requiredCapabilities: [],
+      // Deliberately prose that a regex would read as a delivery request: the
+      // point of the structured field is that this no longer decides anything.
+      expectedOutputs: ['A ranked list of your five most important emails'],
+      requestedDelivery: requested,
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      suggestedScope: 'personal' as const,
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => sse([
+      { type: 'completed', draftId: '00000000-0000-7000-8000-000000000042', draft, assistantMessage: 'Ready.' },
+    ], 47)));
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    const result = await api.compileAutomation({ message: 'Brief me.' });
+
+    expect(result.summary?.requiresEmailDelivery).toBe(email);
+    expect(result.summary?.requiresSlackDelivery).toBe(slack);
+  });
+
   it('streams automation assistant tokens and returns the final typed draft', async () => {
     const draft = {
       name: 'Blog monitor',

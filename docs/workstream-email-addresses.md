@@ -20,6 +20,9 @@ reservation path, or what inbound mail is allowed to do when it arrives.
 | `apps/api/src/inbound-email-regional-bridge.ts` | The one verified Resend event handed to the owning region. |
 | `apps/api/src/routes/resend.ts` | The Global receiving webhook. |
 | `apps/api/src/services/automation-email-service.ts` | Outbound automation results by email. |
+| `apps/api/src/services/automation-email-content.ts` | The result email's shell, importable without the Worker's bindings. |
+| `apps/api/src/services/email-markdown.ts` | The Markdown renderer both Avalon emails share; owned by [`digests.md`](digests.md). |
+| `scripts/preview-automation-email.mjs` | Rendering the result email for somebody to look at. |
 | `apps/api/src/services/user-delivery.ts` | The connector-declared personal delivery surfaces beside it. |
 
 ## How it works
@@ -129,22 +132,42 @@ the row is the tombstone.
 ### Outbound automation results
 
 The addresses above are inbound. Separately, a personal automation may copy each
-run's result outward. Every run always lands in its own Avalon work stream — that
+run's result outward, and may change that afterwards from the automation itself:
+`PATCH /automations/:id` takes the whole destination set, and only the owner's own
+request is accepted. Every run always lands in its own Avalon work stream — that
 is the canonical record and is not a destination the creator can turn off. On top
 of it the creator may freeze email to their own account address and one
-connector-provided personal surface, chosen once on the create screen and stored in
-`automation_delivery_targets`. Which connectors offer such a surface is the
+connector-provided personal surface, chosen on the create screen, changed afterwards
+from the automation, and stored in `automation_delivery_targets`. Which connectors offer such a surface is the
 connector's own declaration rather than a list held by the create screen; see
 [connector architecture](connectors.md#delivering-automation-results-to-a-person).
 Slack's Agent DM is the one shipped today.
 
-Email delivery resolves the owner's account address when the automation is saved
+Email delivery resolves the owner's account address when the destination is added
 and stores that literal address, so a later account change cannot silently redirect
-results. Each result is sent through Resend from the notification sender, keyed for
-idempotency on the delivery target and the run's work stream, and the target records
-the work stream it last received so a workflow retry cannot mail the same result
-twice. Empty results and the "nothing qualified" phrasings suppressed for Slack are
-suppressed for email too.
+results. Editing the set does not re-resolve a destination that is already
+delivering; switching one off and on again does, because a retired row is not
+treated as current. Each result is sent through Resend from the notification sender —
+`RESEND_NOTIFICATION_FROM_EMAIL`, which is set in both Workers' vars; unset, it
+falls back to the transactional sender and a morning briefing arrives from the
+invitations address. Delivery is keyed for idempotency on the delivery target and
+the run's work stream, and the target records the work stream it last received so a
+workflow retry cannot mail the same result twice. Empty results and the "nothing
+qualified" phrasings suppressed for Slack are suppressed for email too.
+
+**The run itself is told where Avalon will send its result.** The active targets
+are loaded into the automation's prompt context as `resultDelivery`, and the
+platform policy forbids sending, drafting, or posting a copy of the result to any
+destination listed there. Without it a run whose instructions say "email me the
+briefing" reads that as a step, sends it through the mail connector, and Avalon
+then mails the same result to the frozen target — two copies from two senders. The
+compiler is the other half: it writes a destination into `expectedOutputs` rather
+than a provider send into `instructions`.
+
+**The body is the run's final message, which is Markdown**, rendered into email
+HTML by `apps/api/src/services/email-markdown.ts` — the same renderer the digest
+uses. A mail client renders no Markdown of its own, so text that is escaped and
+line-broken instead reaches the reader as `## Heading` and `**bold**`.
 
 `automation_delivery_targets`, its per-run last-delivery fence, and email
 receipts live in WorkspaceDO. The regional sender uses a stable provider
@@ -276,8 +299,44 @@ sunbird, terrapin, waxbill
 - **An inbound address is a routing identifier, never an authenticator.** The From
   match is defense in depth; the actual protection is that inbound-email runs get no
   external connector writes and no outbound web tools.
-- **The outbound email destination is the literal address frozen when the automation
-  was saved**, so a later account change cannot silently redirect results.
+- **A run never delivers a result Avalon is delivering.** The active destinations
+  travel in the automation prompt context as `resultDelivery`, and the platform
+  policy renders a `# Result delivery` section telling the run to drop every
+  recipient matching one before it sends anything. Removing either half puts the
+  duplicate back: the compiler no longer writes a provider send, so nothing else
+  stops a saved instruction that says "email me the briefing".
+- **`resultDelivery` mirrors each sender's own predicate, not a third one.** Email
+  delivers from `active` and only in production; Slack deliberately delivers from
+  `needs_input` too and skips a member who turned that notification off. A
+  convenient single predicate gets one of them wrong, and being wrong here is
+  either a duplicate delivery or a result delivered nowhere. The loader and the
+  two senders change together.
+- **Outside production, an automation's result is not emailed at all** —
+  `sendResendEmail` refuses to send transactional mail from a developer's machine
+  or a staging Worker. That is why `resultDelivery` names no email destination
+  there: a run told Avalon has the email covered suppresses its own send, and
+  since the compiler no longer writes a provider send either, a staging
+  automation that used to mail through the connector would otherwise go quiet
+  with nothing to explain it. If a staging automation stops emailing, this is the
+  reason and it is working as intended.
+- **A destination whose owner lost workspace membership is still listed.**
+  `deliverAutomationResultEmail` re-checks membership against regional D1 and
+  skips, so that result reaches nobody — the run stood down for a delivery that
+  did not happen. It is left this way deliberately: mirroring the check would put
+  a cross-region read on every automation run start for a case that is rare and
+  self-correcting once the membership row is repaired. A future change that makes
+  the destination set richer should reconsider it.
+- **Its order is fixed.** The rows are rendered into the system prefix, which is
+  re-rendered every turn and must be byte-identical across a retry; nothing
+  constrains the order two rows come back in.
+- **The result email carries a canonical HTTPS link, never `avalon://`.** Mail
+  clients do not linkify a custom scheme, and most readers of a briefing are on a
+  phone with no desktop app — see [`workstream-links.md`](workstream-links.md).
+- **The outbound email destination is the literal address frozen when the target
+  was created**, so a later account change cannot silently redirect results. The
+  *set* of destinations is not frozen — an owner may turn one on or off from the
+  automation — but a destination that survives an edit keeps its row, and with it
+  the per-run fence that stops a workflow retry mailing the same result twice.
 - **Every run lands in its own Avalon work stream**, and that destination cannot be
   turned off — the copies are additions to the canonical record, never replacements.
 
@@ -322,7 +381,12 @@ registry, and what happens to mail addressed to one. It does not own:
 | `apps/api/test/workstream-email-address.test.ts` | The format, the frozen vocabulary indexes, the distinct-adjective rule, collision advance, and the 64-byte bound. |
 | `apps/api/test/workstream-email-routing.test.ts` | Reservation, activation, disable/tombstone, and the regional fail-closed path. |
 | `apps/api/test/resend-inbound-email.test.ts` | Idempotency by Resend email ID, the lease, the sender check, the tool omissions, and the hourly budget. |
-| `apps/api/test/automation-result-email.test.ts` | The frozen destination, per-run idempotency, and the suppressed-empty rule. |
+| `apps/api/test/automation-result-email.test.ts` | The frozen destination, per-run idempotency, the suppressed-empty rule, and that the result's Markdown is rendered rather than mailed as markup. |
+| `apps/api/test/email-markdown.test.ts` | The shared renderer: the structure these emails use, escaping, refused link targets, and the plain-text preview line. |
+| `apps/api/test/automation-run-context.test.ts` | That a run is told its frozen destinations — email, Slack by id, a `needs_input` Slack target Avalon still delivers to — told nothing when a target cannot deliver, and told them in a fixed order. |
+| `apps/api/test/health-env-contract.test.ts` | That the probe says when notification mail is falling back to the transactional sender. |
+| `apps/api/test/automation-delivery-target-edit.test.ts` | Turning a destination off, keeping a surviving row's per-run fence, and leaving delivery alone when an edit does not mention it. |
+| `scripts/preview-automation-email.test.mjs` | The preview's flags, and that its sample still carries the constructs this email has rendered wrong. |
 
 Run one with
 `pnpm --filter @avalon/api exec vitest run test/workstream-email-address.test.ts`
@@ -350,6 +414,123 @@ Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
 
 ## Changelog
+
+### 2026-08-23 — A destination that is switched off is retired, not deleted
+
+**What changed:** `deliveryTargetStatements` no longer diffs against a set it
+read a moment earlier. It now states the end state: one upsert per requested
+destination keyed on `(automation_subscription_id, target_type)`, and one
+statement retiring every other type to `status = 'disabled'`. Switching a
+destination off keeps its row; switching it on again reuses that row. `PATCH`
+validates the destination set through the same schema `POST` does, and a
+destination already delivering is not re-resolved.
+
+**Why:** Every dedupe layer is keyed on the target row's *id* — the
+`last_delivered_workstream_id` fence, the Resend idempotency key, and the Slack
+`client_msg_id` are all derived from it. The previous shape preserved the row
+for a destination that survived an edit, which is what the entry below claims,
+and quietly failed to for one turned off and on again: that deleted the row and
+minted a new id with no fence and a fresh provider key, so a retry landing in
+that window sent the result a second time. A feature added to remove a duplicate
+had become a way to cause one.
+
+Two smaller failures had the same root. Inserts were queued ahead of the
+deletes, so replacing a Slack destination onto a reconnected connection tripped
+the unique index inside the batch and failed the whole edit with a 500 — an
+ordinary reconnect, not an edge case. And re-resolving destinations the edit was
+not touching meant one lapsed Slack link rejected *every* subsequent edit,
+leaving the dead destination impossible to remove.
+
+**Considered and rejected:** Reordering the statements so deletes run first,
+which fixes the 500 and neither of the others. Also rejected: deleting on
+"off" and accepting the fence gap as a narrow window — the window is exactly
+when somebody is most likely to be toggling, because a delivery that just
+failed is what makes them look.
+
+**Consequences:** A retired row still exists. Every sender names the statuses it
+will deliver to and `disabled` is in none of them, and the detail query does not
+return them, so it is off in every sense except forgetting — but a query written
+against this table must filter on status rather than assume presence means
+delivering. Re-choosing a retired destination re-resolves it, so a Slack
+connection that lapsed while switched off is rejected at that point rather than
+waking silently. Because each request states the whole set, two concurrent edits
+resolve last-writer-wins instead of one deleting a row the other just added.
+
+### 2026-08-23 — The destination is the compiler's answer, and it can be changed
+
+**What changed:** A draft carries `requestedDelivery` — the destinations the
+compiler understood the person to ask for — and the create screen pre-selects
+from that rather than from a regex over the draft's prose. Destinations are also
+no longer frozen for the life of the automation: `PATCH /automations/:id` accepts
+a whole set, and the automation's own screen shows them with a toggle each.
+
+**Why:** Two halves of the same mistake. The compiler already parsed the sentence,
+so inferring intent again from its output was guessing at something already
+known — and the guess pre-ticked a destination for "a ranked list of your most
+important emails", a briefing *about* email. And a wrong tick could not be undone:
+the only way to stop the mail was to delete the automation and build it again,
+which made the guess expensive in exactly the case it was most likely wrong.
+
+**Considered and rejected:** Keeping the prose heuristic and tightening the
+pattern, which is what the previous change did — it narrows the false positives
+without removing the class. Also rejected: replacing every target row on an edit,
+which is simpler than reconciling but clears `last_delivered_workstream_id`, so an
+edit between a run finishing and its delivery settling would re-send the result.
+Reconciling as shipped here still lost that fence when a destination was switched
+off and on again; the entry above records what it took to actually hold it.
+
+**Consequences:** `requestedDelivery` is a *request*, never authority: the
+destinations that actually deliver are the rows on the automation, and a draft
+that asks for a destination still delivers nowhere until somebody accepts it. The
+`update` path's owner check is defence behind the visibility fence rather than the
+thing doing the work — a personal automation is not visible to anybody else — and
+a change that widens automation visibility must keep it.
+
+### 2026-08-22 — One result, rendered, from the notification sender
+
+**What changed:** Three things that together decide what an automation's result
+looks like in an inbox. The run is now told its frozen destinations
+(`resultDelivery` in the automation prompt context) and forbidden by platform
+policy from sending a copy to one of them; the compiler is told that a request to
+be emailed or DMed names a destination rather than a step. The result email's body
+goes through the shared Markdown renderer instead of being escaped with `<br>`
+between lines, and `RESEND_NOTIFICATION_FROM_EMAIL` is now actually configured in
+both Workers.
+
+**Why:** A daily briefing automation delivered two emails — one the run sent
+through the owner's own Gmail because its instructions told it to, and one Avalon
+sent to the frozen target — and both were unreadable: the first was Markdown in a
+`text/plain` body, the second was Markdown escaped into HTML. The sender of the
+second read `invites@`, because the notification sender this document already
+claimed was used had never been set anywhere and silently fell back to the
+transactional one. Configuring it moves the From address on every notification
+sender — digests and mention emails as well as automation results.
+
+**Considered and rejected:** Detecting the duplicate at delivery time — comparing
+what the run sent through a connector against the frozen target — which needs a
+per-run record of every outbound provider write and still only suppresses the
+second copy after the first has left the mailbox. Telling the model is what stops
+the work happening at all. Also rejected: rendering the connector's outbound mail
+as HTML. `gmail.send` builds a `text/plain` body, that mail is sent as the person
+rather than as Avalon, and the tool guidance now says to write plain text; giving
+it a second MIME part is a separate change with its own reasons.
+
+**Consequences:** `resultDelivery` lists what each channel's sender will actually
+attempt, and the loader and the senders are now three readers of two predicates:
+a fourth reader, or a new delivery channel added to one and not the other, puts
+the duplicate back for exactly the targets it disagrees about. A destination that
+is not the owner's own address would also change what the policy is holding — it
+is a de-duplication rule today, bounded by the fact that a miss annoys the person
+who configured the automation, and it would become a confidentiality boundary.
+Two things this deliberately did **not** do, both named so the next change can
+take them up rather than rediscover them: the destination set is read at prompt
+render rather than frozen with the run scope, so a target disabled mid-run leaves
+the result delivered nowhere; and enforcement is the policy rather than a
+`beforeToolCall` predicate over that frozen set, which is the mechanism the
+harness already composes for read-only runs. `WORKSTREAM_PROMPT_VERSION` was
+deliberately not bumped: it is inside the canonical run-scope hash, so bumping it
+fails every in-flight run's resumed attempt across the deploy, and the policy
+change is additive.
 
 ### 2026-08-22 — The work-stream gate reads the object, not the anchor
 
