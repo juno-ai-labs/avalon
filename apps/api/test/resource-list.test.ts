@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { AuthContext } from "../src/env";
 import { ResourceService } from "../src/services/resource-service";
 import { createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { testSubstreamAgentsBinding } from "./helpers/durable-authority";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const userId = asUserId("00000000-0000-7000-8000-000000000002");
@@ -75,16 +76,18 @@ describe("resource listing", () => {
       "WHERE r.workspace_id = ? AND (c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)",
     );
     expect(firstResourceStatement?.sql).toContain("ORDER BY r.updated_at DESC, r.id DESC");
-    expect(firstResourceStatement?.values).toEqual([workspaceId, userId, userId, userId, userId, 3]);
+    // Two fewer `userId` bindings than before: the inbound-email visibility
+    // clause they belonged to was the closed-authority arm's, and inbound-email
+    // scoping is now a per-row authorization read against the work-stream
+    // object rather than a subquery in this statement.
+    expect(firstResourceStatement?.values).toEqual([workspaceId, userId, userId, 3]);
 
     await service.list({ query: "Release_100%", cursor: first.nextCursor!, limit: 2 });
     const second = statements.filter((statement) => statement.sql.includes("FROM resources r"))[1]!;
     expect(second.sql).toContain("LOWER(r.title) LIKE ?");
     expect(second.sql).toContain("r.updated_at < ? OR (r.updated_at = ? AND r.id < ?)");
-    expect(second.values.slice(0, 9)).toEqual([
+    expect(second.values.slice(0, 7)).toEqual([
       workspaceId,
-      userId,
-      userId,
       userId,
       userId,
       "%release\\_100\\%%",
@@ -132,7 +135,7 @@ describe("resource listing", () => {
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE TABLE automation_subscriptions (
-        id TEXT PRIMARY KEY, scope TEXT NOT NULL, owner_user_id TEXT
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL, owner_user_id TEXT
       );
       CREATE TABLE workstreams (
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, automation_subscription_id TEXT
@@ -143,6 +146,12 @@ describe("resource listing", () => {
       CREATE TABLE workstream_resources (
         workstream_id TEXT NOT NULL, resource_id TEXT NOT NULL, relationship_type TEXT NOT NULL
       );
+      -- The workspace object's own link table, which the listing statement
+      -- reads now that the closed-authority arm reading message_attachments
+      -- is gone.
+      CREATE TABLE workspace_workstream_resource_links (
+        workstream_id TEXT NOT NULL, resource_id TEXT NOT NULL
+      );
       CREATE TABLE resource_watches (
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, workstream_id TEXT NOT NULL,
         resource_id TEXT NOT NULL, enabled INTEGER NOT NULL
@@ -151,8 +160,8 @@ describe("resource listing", () => {
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL,
         scope TEXT NOT NULL, owner_user_id TEXT NOT NULL, archived_at TEXT
       );
-      INSERT INTO automation_subscriptions (id, scope, owner_user_id)
-        VALUES ('personal-subscription', 'personal', 'c0000000-0000-4000-8000-000000000c01');
+      INSERT INTO automation_subscriptions (id, workspace_id, scope, owner_user_id)
+        VALUES ('personal-subscription', '${workspaceId}', 'personal', 'c0000000-0000-4000-8000-000000000c01');
       INSERT INTO workstreams (id, workspace_id, automation_subscription_id)
         VALUES ('private-workstream', '${workspaceId}', 'personal-subscription');
       INSERT INTO workstream_participants (workstream_id, user_id, removed_at)
@@ -168,6 +177,14 @@ describe("resource listing", () => {
     const payloadReads: string[] = [];
     const environment = createTestEnv({
       DB: d1,
+      AVALON_REGION: "global",
+      // Inbound-email visibility used to be a subquery in the listing statement;
+      // it is a per-row `resourceAccess` call against the workspace object now.
+      // The stub answers that from the same fixture, so what this test is about
+      // — who may see a private email, and who may not — is unchanged.
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: { resourceAccess: resourceAccessFrom(database) },
+      }),
       PAYLOADS: {
         async get(key: string) {
           payloadReads.push(key);
@@ -203,6 +220,41 @@ describe("resource listing", () => {
     database.close();
   });
 });
+
+/**
+ * The workspace object's `resourceAccess`, answering from this fixture.
+ *
+ * Inbound-email visibility used to be a subquery inside the listing statement.
+ * That arm only ran with the authority closed; the live path asks the object
+ * per row. The stub reads the same seeded tables, so what this test is about —
+ * which member may see a private email — is unchanged.
+ */
+function resourceAccessFrom(database: DatabaseSync) {
+  return async (input: { resourceId: string; userId: string }) => ({
+    items: database.prepare(
+      `SELECT wr.workstream_id, w.automation_subscription_id,
+              EXISTS (
+                SELECT 1 FROM workstream_participants p
+                 WHERE p.workstream_id = wr.workstream_id AND p.user_id = ?
+                   AND p.removed_at IS NULL
+              ) AS is_participant
+         FROM workstream_resources wr
+         JOIN workstreams w ON w.id = wr.workstream_id
+        WHERE wr.resource_id = ?`,
+    ).all(input.userId, input.resourceId).map((row) => {
+      const item = row as Record<string, unknown>;
+      return {
+        workstreamId: String(item.workstream_id),
+        scope: "workspace" as const,
+        createdByUserId: null,
+        automationSubscriptionId: item.automation_subscription_id == null
+          ? null
+          : String(item.automation_subscription_id),
+        isParticipant: Number(item.is_participant) === 1,
+      };
+    }),
+  });
+}
 
 function authFor(authUserId: UserId): AuthContext {
   return { ...auth, userId: authUserId };
