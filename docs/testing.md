@@ -450,6 +450,35 @@ touch this area or a change worth making that has not been made.
   could run both regional Workers in-process and make the smoke check a gate
   rather than a manual step.
 
+## What the objects' RPC surface has, and has not
+
+Every public `async` method on `WorkspaceDO`, `SubstreamAgent`, `WorkstreamDO`
+and `BlockDashboardAgent` is an interface some Worker calls across a stub. As of
+2026-08-23, **60 of 79 are exercised somewhere in `test-workers/`**. The count is
+mechanical — grep each class's public async methods, then grep the suite for each
+name — so re-derive it rather than trusting this number after a change:
+
+```bash
+grep -c "^  \(override \)\?async " apps/api/src/durable-objects/workspace-do.ts
+```
+
+The nineteen with no workerd exercise, so nobody has to rediscover the list:
+
+| Object | Unexercised |
+| --- | --- |
+| `WorkspaceDO` | `activityEventSource`, `applyWorkstreamRegionalEffect`, `dueWorkstreamDirectory`, `existingOpportunities`, `getOpportunity`, `latestActivityEventCursor`, `notificationDirectoryState`, `opportunityWindow`, `resourceAccess`, `workstreamScheduleTargets` |
+| `SubstreamAgent` | `createRuntimeSuggestion`, `publishEvent`, `requestBlockDashboardRefresh` |
+| `WorkstreamDO` | `acknowledgeRegionalEffect`, `authorizeBlockDashboardBlockViewer`, `controlBlockDashboard`, `loadRegionalEffect` |
+| `BlockDashboardAgent` | `initializeBlock`, `revalidateViewerAccess` |
+
+**Uncovered here does not mean untested** — several have Node suites over their
+storage class, which is the right rung for what the SQL decides. It means
+nothing has driven them across the RPC boundary against real workerd, so a
+protocol change, an identity check or a transaction boundary would not be caught.
+Adding a method to one of these classes is the moment to add its workerd
+exercise, not later: the Worker-side caller's own suite will reach it through a
+double, and a double answers whatever it was told to.
+
 ## Recording what you covered
 
 Every module document carries a **Testing** section listing the suites that cover
