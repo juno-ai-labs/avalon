@@ -288,6 +288,33 @@ Status: fixed locally; application of migration 0093 to both Global and EU D1
 is pending. Fresh opt-in HyperSight and meeting-notes verification must find the
 D1 row and the exact R2 object referenced by its `object_key`.
 
+## Review-driven durable-authority hardening
+
+The final authority review also hardened cancellation recovery beyond the live
+reproduction. Checkpoint, successful-completion, failure, and root-stop batches
+carry their first live-lease admission through the immediately serialized
+receipt update rather than sampling wall-clock expiry twice. Root and child
+cleanup allocate after the greatest existing checkpoint index, healing a
+receipt stranded by an older partial settlement. Parent terminalization remains
+lease-fenced. Expired cancelled or orphaned inline children bulk-settle every
+pending or started descendant receipt before their child result becomes
+terminal. The Substream and BlockDashboard in-memory drains receive revocable
+identities; Substream rechecks identity after its pre-claim await, and every
+executor-owned dispatch release and transition to a durable terminal outcome is
+fenced by the exact row lease token. Substream product failure carries the same
+token; BlockDashboard delivery retries start only after its terminal outcome is
+durable. An abandoned continuation therefore cannot clear a successor lease,
+claim another row, or fail the successor's product run. Focused
+regressions cover checkpoint admission before and across a lease deadline, both
+terminal-settlement deadline crossings, inherited orphan checkpoints, read/write
+child receipts, renewed-child and obsolete-root cleanup races, sixty root receipts,
+stale Substream and BlockDashboard tokens, and replacement of a stranded drain.
+The final full gate also exposed that the workerd dispatch-reliability fixture
+created queue and run rows without the authoritative workstream root required by
+the product mutation it asserted. That path failed on the first
+isolated run. Seeding the production authority shape made the complete 12-test
+file pass in twenty consecutive workerd runs.
+
 ## Unresolved live acceptance blocker — Granola hosted MCP unavailable
 
 Granola's catalog entry and authorization record were visible, but activation
@@ -322,7 +349,7 @@ defects were coverage gaps rather than already-failing gates.
 | Desktop release invariants | 110 passed. |
 
 After the repairs, the focused harness suites pass 114 tests, the focused API
-durability, wake-up, attachment, and cancellation suites pass 127 tests, and the
+durability, dispatch, wake-up, attachment, and cancellation suites pass 179 tests, and the
 six-test attachment-receipt suite and the new database migration test pass. The
 new search, failure-classification,
 wake-up, attachment, cancellation, and migration regressions were each proven

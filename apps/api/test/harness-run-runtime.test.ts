@@ -152,7 +152,11 @@ interface RuntimeFixture {
   statementBatchSizes: number[];
 }
 
-function fixture(): RuntimeFixture {
+interface RuntimeFixtureOptions {
+  afterObjectStatement?: Parameters<typeof executeWorkstreamObjectSql>[2];
+}
+
+function fixture(options: RuntimeFixtureOptions = {}): RuntimeFixture {
   const database = legacyProductSqliteDatabase();
   database.exec(`
     INSERT INTO users
@@ -210,7 +214,11 @@ function fixture(): RuntimeFixture {
       "0",
       async (statements) => {
         statementBatchSizes.push(statements.length);
-        return executeWorkstreamObjectSql(objectDatabase, statements);
+        return executeWorkstreamObjectSql(
+          objectDatabase,
+          statements,
+          options.afterObjectStatement,
+        );
       },
     ),
     database,
@@ -2218,6 +2226,215 @@ describe("durable harness attempt runtime", () => {
     }
   });
 
+  it("does not advance a checkpoint when the lease expires before batch admission", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-checkpoint-pre-admission-expiry",
+      owner: "owner-checkpoint-pre-admission-expiry",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-checkpoint-pre-admission-expiry",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-checkpoint-pre-admission-expiry",
+      toolName: "linear_issue_get",
+      inputHash: "checkpoint-pre-admission-expiry-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    let intercepted = false;
+    const racingBinding = createTestD1Database({
+      prepare: sqlite.binding.prepare.bind(sqlite.binding),
+      batch: async (statements: D1PreparedStatement[]) => {
+        if (!intercepted) {
+          intercepted = true;
+          sqlite.object.prepare(
+            "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+          ).run(RUN_ONE);
+        }
+        return sqlite.binding.batch(statements);
+      },
+    });
+
+    await expect(checkpointToolInvocation(racingBinding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-checkpoint-pre-admission-expiry",
+      checkpointIndex: 1,
+      phase: "provider_started",
+    })).rejects.toMatchObject({ code: "run_ownership_lost" });
+    expect(intercepted).toBe(true);
+    expect(sqlite.object.prepare(
+      "SELECT status, checkpoint_index FROM tool_invocations WHERE id = ?",
+    ).get("invocation-checkpoint-pre-admission-expiry")).toEqual({
+      status: "started",
+      checkpoint_index: 0,
+    });
+    expect(sqlite.object.prepare(
+      "SELECT COUNT(*) AS count FROM tool_invocation_checkpoints WHERE tool_invocation_id = ?",
+    ).get("invocation-checkpoint-pre-admission-expiry")).toEqual({ count: 1 });
+  });
+
+  it("advances a checkpoint once its insert wins before lease expiry", async () => {
+    let crossOnCheckpoint = false;
+    let crossedLeaseBoundary = false;
+    const sqlite = fixture({
+      afterObjectStatement: (database, statement, index) => {
+        if (
+          !crossOnCheckpoint
+          || crossedLeaseBoundary
+          || index !== 0
+          || !statement.sql.includes("INSERT INTO tool_invocation_checkpoints")
+        ) return;
+        crossedLeaseBoundary = true;
+        database.prepare("UPDATE runs SET lease_expires_at = ? WHERE run_id = ?")
+          .run(Date.parse("2020-01-01T00:00:00.000Z"), RUN_ONE);
+      },
+    });
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-checkpoint-lease-boundary",
+      owner: "owner-checkpoint-lease-boundary",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-checkpoint-lease-boundary",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-checkpoint-lease-boundary",
+      toolName: "linear_issue_get",
+      inputHash: "checkpoint-lease-boundary-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+
+    crossOnCheckpoint = true;
+    await expect(checkpointToolInvocation(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-checkpoint-lease-boundary",
+      checkpointIndex: 1,
+      phase: "provider_started",
+    })).resolves.toBeUndefined();
+    expect(crossedLeaseBoundary).toBe(true);
+    expect(sqlite.object.prepare(
+      "SELECT status, checkpoint_index FROM tool_invocations WHERE id = ?",
+    ).get("invocation-checkpoint-lease-boundary")).toEqual({
+      status: "started",
+      checkpoint_index: 1,
+    });
+  });
+
+  it("completes a receipt once its result checkpoint wins before lease expiry", async () => {
+    let crossOnSettlement = false;
+    let crossedLeaseBoundary = false;
+    const sqlite = fixture({
+      afterObjectStatement: (database, statement, index) => {
+        if (
+          !crossOnSettlement
+          || crossedLeaseBoundary
+          || index !== 0
+          || !statement.sql.includes("INSERT INTO tool_invocation_checkpoints")
+        ) return;
+        crossedLeaseBoundary = true;
+        database.prepare("UPDATE runs SET lease_expires_at = ? WHERE run_id = ?")
+          .run(Date.parse("2020-01-01T00:00:00.000Z"), RUN_ONE);
+      },
+    });
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-completion-lease-boundary",
+      owner: "owner-completion-lease-boundary",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-completion-lease-boundary",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-completion-lease-boundary",
+      toolName: "linear_issue_get",
+      inputHash: "completion-lease-boundary-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+
+    crossOnSettlement = true;
+    await expect(completeToolInvocation(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-completion-lease-boundary",
+      checkpointIndex: 1,
+      outputRef: "payloads/runtime/completion-lease-boundary.json",
+      outputSummary: "Issue AVA-1",
+    })).resolves.toBe("persisted");
+    expect(crossedLeaseBoundary).toBe(true);
+    expect(sqlite.object.prepare(
+      "SELECT status, output_ref, checkpoint_index FROM tool_invocations WHERE id = ?",
+    ).get("invocation-completion-lease-boundary")).toEqual({
+      status: "completed",
+      output_ref: "payloads/runtime/completion-lease-boundary.json",
+      checkpoint_index: 1,
+    });
+  });
+
+  it("finalizes a failed receipt once its checkpoint wins before lease expiry", async () => {
+    let crossOnSettlement = false;
+    let crossedLeaseBoundary = false;
+    const sqlite = fixture({
+      afterObjectStatement: (database, statement, index) => {
+        if (
+          !crossOnSettlement
+          || crossedLeaseBoundary
+          || index !== 0
+          || !statement.sql.includes("INSERT INTO tool_invocation_checkpoints")
+        ) return;
+        crossedLeaseBoundary = true;
+        database.prepare("UPDATE runs SET lease_expires_at = ? WHERE run_id = ?")
+          .run(Date.parse("2020-01-01T00:00:00.000Z"), RUN_ONE);
+      },
+    });
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-failure-lease-boundary",
+      owner: "owner-failure-lease-boundary",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-failure-lease-boundary",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-failure-lease-boundary",
+      toolName: "linear_issue_get",
+      inputHash: "failure-lease-boundary-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+
+    crossOnSettlement = true;
+    await expect(finalizeToolInvocationFailure(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-failure-lease-boundary",
+      status: "failed",
+      phase: "execution_failed",
+      error: { code: "provider_failed", message: "Provider failed" },
+    })).resolves.toBe("persisted");
+    expect(crossedLeaseBoundary).toBe(true);
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json, checkpoint_index FROM tool_invocations WHERE id = ?",
+    ).get("invocation-failure-lease-boundary")).toEqual({
+      status: "failed",
+      error_json: '{"code":"provider_failed","message":"Provider failed"}',
+      checkpoint_index: 1,
+    });
+  });
+
   it("settles completed and failed tools before the owning attempt terminalizes as stopped", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
@@ -2377,6 +2594,20 @@ describe("durable harness attempt runtime", () => {
       owner: "owner-stop-successor",
     });
     if (successor.state !== "claimed") throw new Error("expected successor attempt");
+    // A pre-fix settlement could admit its next checkpoint and then miss the
+    // receipt update when the lease deadline crossed between batch statements.
+    // Stop must advance past that occupied index rather than conflict forever.
+    sqlite.object.prepare(
+      `INSERT INTO tool_invocation_checkpoints
+         (id, tool_invocation_id, harness_run_id, attempt_id, checkpoint_index,
+          phase, member_safe_payload_json, created_at)
+       VALUES (?, ?, ?, ?, 1, 'result_persisted', '{}', '2026-08-03T00:00:00.000Z')`,
+    ).run(
+      "checkpoint-orphan-before-stop",
+      "invocation-expired-attempt",
+      RUN_ONE,
+      successor.lease.attemptId,
+    );
     // The post-cutover compatibility view derives the displayed attempt from
     // the owning run, so the effect is rebound to the successor even though the
     // unsettled tool_effect row itself survived the claim.
@@ -2417,7 +2648,8 @@ describe("durable harness attempt runtime", () => {
     expect(sqlite.object.prepare(
       `SELECT tool_invocation_id, attempt_id, phase, member_safe_payload_json
          FROM tool_invocation_checkpoints
-        WHERE harness_run_id = ? AND checkpoint_index = 1
+        WHERE harness_run_id = ?
+          AND phase IN ('ambiguous_external_write', 'cancelled')
         ORDER BY tool_invocation_id`,
     ).all(RUN_ONE)).toEqual([
       {
@@ -2479,6 +2711,68 @@ describe("durable harness attempt runtime", () => {
     expect(sqlite.statementBatchSizes.at(-1)).toBe(6);
   });
 
+  it("finishes an admitted receipt settlement when the parent lease expires mid-batch", async () => {
+    let crossedLeaseBoundary = false;
+    const sqlite = fixture({
+      afterObjectStatement: (database, statement, index, statements) => {
+        if (
+          crossedLeaseBoundary
+          || index !== 0
+          || !statement.sql.includes("INSERT INTO tool_invocation_checkpoints")
+          || !statements.some((candidate) => candidate.sql.includes("UPDATE harness_runs"))
+        ) return;
+        crossedLeaseBoundary = true;
+        database.prepare(
+          "UPDATE runs SET lease_expires_at = ? WHERE run_id = ?",
+        ).run(Date.parse("2020-01-01T00:00:00.000Z"), RUN_ONE);
+      },
+    });
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-stop-lease-boundary",
+      owner: "owner-stop-lease-boundary",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-stop-lease-boundary",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stop-lease-boundary",
+      toolName: "terminal_run_command",
+      inputHash: "stop-lease-boundary-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
+
+    await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
+      status: "stopped",
+      error: { code: "run_cancelled", message: "The member stopped this run" },
+      memberSafePayload: { code: "run_cancelled" },
+    })).rejects.toThrow("durable attempt lease");
+    expect(crossedLeaseBoundary).toBe(true);
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json FROM tool_invocations WHERE id = ?",
+    ).get("invocation-stop-lease-boundary")).toEqual({
+      status: "ambiguous",
+      error_json: '{"code":"ambiguous_external_write","message":"The run stopped while an external write was unresolved"}',
+    });
+    expect(sqlite.object.prepare(
+      `SELECT phase FROM tool_invocation_checkpoints
+        WHERE tool_invocation_id = ? ORDER BY checkpoint_index DESC LIMIT 1`,
+    ).get("invocation-stop-lease-boundary")).toEqual({
+      phase: "ambiguous_external_write",
+    });
+    expect(sqlite.object.prepare(
+      "SELECT status, terminalized_at, lease_owner FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toEqual({
+      status: "running",
+      terminalized_at: null,
+      lease_owner: claim.lease.owner,
+    });
+  });
+
   it("fences every durable write from an executor after its lease ownership is replaced", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
@@ -2487,6 +2781,18 @@ describe("durable harness attempt runtime", () => {
       owner: "owner-obsolete",
     });
     if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      invocationId: "invocation-obsolete-stop",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-obsolete-stop",
+      toolName: "terminal_run_command",
+      inputHash: "obsolete-stop-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
 
     sqlite.object.prepare(
       `UPDATE harness_runs
@@ -2515,7 +2821,7 @@ describe("durable harness attempt runtime", () => {
       toolSurfaceHash: "surface-stale",
     })).rejects.toMatchObject({ code: "run_ownership_lost" });
     await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
-      status: "failed",
+      status: "stopped",
       error: { code: "obsolete", message: "An obsolete executor cannot terminalize" },
     })).rejects.toMatchObject({ code: "run_ownership_lost" });
 
@@ -2530,6 +2836,12 @@ describe("durable harness attempt runtime", () => {
     expect(sqlite.object.prepare(
       "SELECT COUNT(*) AS count FROM harness_run_lifecycle_events WHERE harness_run_id = ? AND event_key = 'terminal'",
     ).get(RUN_ONE)).toEqual({ count: 0 });
+    expect(sqlite.object.prepare(
+      "SELECT status, checkpoint_index FROM tool_invocations WHERE id = ?",
+    ).get("invocation-obsolete-stop")).toEqual({ status: "started", checkpoint_index: 0 });
+    expect(sqlite.object.prepare(
+      "SELECT COUNT(*) AS count FROM tool_invocation_checkpoints WHERE tool_invocation_id = ?",
+    ).get("invocation-obsolete-stop")).toEqual({ count: 1 });
   });
 
   it("does not reap a stale-row snapshot whose lease is renewed before the CAS batch", async () => {
@@ -3353,6 +3665,41 @@ describe("inline child-run durability", () => {
       owner: "owner-child-stale",
     });
     if (child.state !== "claimed") throw new Error("expected claimed child");
+    await persistToolExecutionPlan(sqlite.binding, child.lease, {
+      invocationId: "invocation-stale-child-write",
+      harnessRunId: child.childInput.harnessRunId,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-child-write",
+      toolName: "terminal_run_command",
+      inputHash: "stale-child-write-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
+    await persistToolExecutionPlan(sqlite.binding, child.lease, {
+      invocationId: "invocation-stale-child-read",
+      harnessRunId: child.childInput.harnessRunId,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-child-read",
+      toolName: "linear_issue_get",
+      inputHash: "stale-child-read-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    sqlite.object.prepare(
+      `INSERT INTO tool_invocation_checkpoints
+         (id, tool_invocation_id, harness_run_id, attempt_id, checkpoint_index,
+          phase, member_safe_payload_json, created_at)
+       VALUES (?, ?, ?, ?, 1, 'result_persisted', '{}', '2026-08-03T00:00:00.000Z')`,
+    ).run(
+      "checkpoint-orphan-before-child-reap",
+      "invocation-stale-child-write",
+      child.childInput.harnessRunId,
+      child.lease.attemptId,
+    );
     sqlite.object.prepare(
       "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
     ).run(child.childInput.harnessRunId);
@@ -3374,6 +3721,29 @@ describe("inline child-run durability", () => {
     expect(sqlite.database.prepare(
       "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = 'automation-run-child'",
     ).get()).toEqual({ status: "running", completed_at: null, result_summary: null });
+    expect(sqlite.object.prepare(
+      `SELECT id, status, error_json FROM tool_invocations
+        WHERE harness_run_id = ? ORDER BY id`,
+    ).all(child.childInput.harnessRunId)).toEqual([
+      {
+        id: "invocation-stale-child-read",
+        status: "failed",
+        error_json: '{"code":"parent_run_unavailable","message":"The parent run no longer owns a live attempt"}',
+      },
+      {
+        id: "invocation-stale-child-write",
+        status: "ambiguous",
+        error_json: '{"code":"ambiguous_external_write","message":"The child run ended while an external write was unresolved"}',
+      },
+    ]);
+    expect(sqlite.object.prepare(
+      `SELECT tool_invocation_id, phase FROM tool_invocation_checkpoints
+        WHERE harness_run_id = ? AND phase IN ('failed', 'ambiguous_external_write')
+        ORDER BY tool_invocation_id`,
+    ).all(child.childInput.harnessRunId)).toEqual([
+      { tool_invocation_id: "invocation-stale-child-read", phase: "failed" },
+      { tool_invocation_id: "invocation-stale-child-write", phase: "ambiguous_external_write" },
+    ]);
     expect(await loadInlineChildResult(sqlite.binding, RUN_ONE, "tool-stale-child"))
       .toEqual({
         state: "replay",
@@ -3455,6 +3825,18 @@ describe("inline child-run durability", () => {
       owner: "owner-child-reaper-race",
     });
     if (child.state !== "claimed") throw new Error("expected claimed child");
+    await persistToolExecutionPlan(sqlite.binding, child.lease, {
+      invocationId: "invocation-child-reaper-race",
+      harnessRunId: child.childInput.harnessRunId,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-child-reaper-race",
+      toolName: "terminal_run_command",
+      inputHash: "child-reaper-race-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
     sqlite.object.prepare(
       "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
     ).run(child.childInput.harnessRunId);
@@ -3492,6 +3874,12 @@ describe("inline child-run durability", () => {
       lease_expires_at: "2099-01-01T00:00:00.000Z",
       terminalized_at: null,
     });
+    expect(sqlite.object.prepare(
+      "SELECT status, checkpoint_index FROM tool_invocations WHERE id = ?",
+    ).get("invocation-child-reaper-race")).toEqual({ status: "started", checkpoint_index: 0 });
+    expect(sqlite.object.prepare(
+      "SELECT COUNT(*) AS count FROM tool_invocation_checkpoints WHERE tool_invocation_id = ?",
+    ).get("invocation-child-reaper-race")).toEqual({ count: 1 });
   });
 });
 

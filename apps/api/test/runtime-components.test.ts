@@ -2,6 +2,7 @@ import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerSocketEventSchema } from "@avalon/contracts";
 import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
 
 import { scheduledAlarmRetryDelay } from "../src/durable-objects/scheduled-alarms";
 import {
@@ -19,6 +20,7 @@ import {
 } from "../src/durable-objects/substream-agent";
 import { RunOwnershipLostError } from "../src/runtime/harness-run-runtime";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
+import { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import {
   assertDurableObjectJurisdiction,
   deriveWorkspacePlacementAffinity,
@@ -57,6 +59,93 @@ describe("runtime component invariants", () => {
     expect(agentRunExecutionFailureDisposition(new RunOwnershipLostError()))
       .toBe("defer_and_stop_drain");
     expect(agentRunExecutionFailureDisposition(new Error("provider failed"))).toBe("fail");
+  });
+
+  it("rechecks drain identity after the pre-claim regional-effects await", () => {
+    const source = readFileSync(
+      new URL("../src/durable-objects/substream-agent.ts", import.meta.url),
+      "utf8",
+    );
+    const barrier = source.indexOf("await this.flushDueRegionalEffects();");
+    const claim = source.indexOf("const claim = claimAgentRunDispatch(", barrier);
+    expect(barrier).toBeGreaterThan(-1);
+    expect(claim).toBeGreaterThan(barrier);
+    expect(source.slice(barrier, claim)).toContain("if (!ownsDrain()) return;");
+  });
+
+  it("fences product failure on the dispatch token owned by the caller", async () => {
+    const database = new DatabaseSync(":memory:");
+    const sql = createTestSqlStorage(database);
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
+      transactionSync: (callback: () => unknown) => callback(),
+      setAlarm: async () => undefined,
+      sql,
+    });
+    const store = new WorkstreamObjectStore(storage, "test", "global");
+    const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000000d1");
+    const workstreamId = asWorkstreamId("00000000-0000-4000-8000-0000000000d2");
+    const runId = "00000000-0000-7000-8000-0000000000d3";
+    store.ensureIdentity({ workspaceId, workstreamId }, "global");
+    sql.exec(
+      `UPDATE workstream
+          SET authority_mode = 'authoritative', authority_generation = 1,
+              exact_state = 'running', state_reason_code = 'workflow_started'
+        WHERE id = 1`,
+    );
+    const now = Date.now();
+    sql.exec(
+      `INSERT INTO runs (
+         run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
+         model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
+         active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+         tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+         created_at, updated_at
+       ) VALUES (?, '0', NULL, 'running', '{}', 0, 0, '', 0, 0, ?,
+                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ?, ?)`,
+      runId,
+      now,
+      now,
+      now,
+    );
+    sql.exec(
+      `INSERT INTO agent_run_dispatches
+         (run_id, input_json, state, attempt, available_at, started_at,
+          completed_at, last_error_code, lease_token, lease_expires_at,
+          created_at, updated_at)
+       VALUES (?, '{}', 'running', 2, ?, ?, NULL, NULL, 'successor-token', ?, ?, ?)`,
+      runId,
+      now,
+      now,
+      now + 60_000,
+      now,
+      now,
+    );
+    const product = new WorkstreamObjectProductService(storage, store, createTestEnv({}));
+
+    await expect(product.recordWorkflowFailed(
+      runId,
+      { code: "provider_failed", message: "Provider failed" },
+      "stale-token",
+    )).rejects.toThrow("workstream_run_failure_fenced");
+    expect(sql.exec<{ status: string }>(
+      `SELECT status FROM runs WHERE run_id = ?`, runId,
+    ).toArray()[0]).toEqual({ status: "running" });
+    expect(sql.exec<{ exact_state: string }>(
+      `SELECT exact_state FROM workstream WHERE id = 1`,
+    ).toArray()[0]).toEqual({ exact_state: "running" });
+
+    await expect(product.recordWorkflowFailed(
+      runId,
+      { code: "provider_failed", message: "Provider failed" },
+      "successor-token",
+    )).resolves.toBeUndefined();
+    expect(sql.exec<{ status: string }>(
+      `SELECT status FROM runs WHERE run_id = ?`, runId,
+    ).toArray()[0]).toEqual({ status: "failed" });
+    expect(sql.exec<{ exact_state: string }>(
+      `SELECT exact_state FROM workstream WHERE id = 1`,
+    ).toArray()[0]).toEqual({ exact_state: "failed" });
+    database.close();
   });
 
   it.each([
