@@ -48,6 +48,9 @@ const DISPATCHED_OPERATIONS = [
   "recordPluginActivation",
   "compactionCheckpoint",
   "persistCompactionCheckpoint",
+  "descriptionRefreshState",
+  "claimDescriptionEvaluation",
+  "recordDescriptionOutcome",
 ] as const satisfies readonly SchedulingOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */

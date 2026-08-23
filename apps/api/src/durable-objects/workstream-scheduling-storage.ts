@@ -40,6 +40,12 @@ export interface WakeupRow extends Record<string, SqlStorageValue> {
   created_at: number;
 }
 
+export interface DescriptionRefreshRow extends Record<string, SqlStorageValue> {
+  rest_until: number;
+  consecutive_keeps: number;
+  evaluated_through_sequence: number;
+}
+
 export interface CompactionCheckpointRow extends Record<string, SqlStorageValue> {
   run_id: string;
   compacted_through_sequence: number;
@@ -380,6 +386,138 @@ export class WorkstreamSchedulingStorage {
       );
       return "persisted";
     });
+  }
+
+  // ------------------------------------------------- description refresh
+
+  /**
+   * The refresh cadence's standing state, or nothing before the first one.
+   *
+   * Read as the cheapest of the gates that decide whether a terminal run pays
+   * for an evaluation at all: a work stream that has not rested is not looked
+   * at, whatever happened in it.
+   */
+  descriptionRefreshState(): DescriptionRefreshRow | undefined {
+    return first(this.sql.exec<DescriptionRefreshRow>(
+      `SELECT rest_until, consecutive_keeps, evaluated_through_sequence
+         FROM description_refresh_state WHERE id = 1`,
+    ));
+  }
+
+  /**
+   * Claim the right to evaluate this work stream's description.
+   *
+   * The floor that stops two runs terminalizing together from both spending an
+   * inference call, and the reason a failing model is not retried by every run
+   * behind it. Claiming writes the floor immediately; the outcome below
+   * replaces it with whatever the decision earned.
+   *
+   * The routed version was an upsert whose `WHERE rest_until <= ?3` decided
+   * whether the claim landed, read back through `meta.changes`, and then had to
+   * re-select the row to learn the version it had just written. One
+   * transaction answers both.
+   *
+   * `consecutive_keeps` is deliberately carried rather than reset. The routed
+   * statement achieved that by omitting the column so the trigger saw NULL and
+   * preserved the standing value — a contract that was lost once and restored
+   * by an object-schema migration. Here it is simply not written.
+   */
+  claimDescriptionEvaluation(input: {
+    evaluatedAt: number;
+    restUntil: number;
+    evaluatedThroughSequence: number;
+    windowMessageCount: number;
+  }): { version: number; consecutiveKeeps: number } | null {
+    return this.storage.transactionSync(() => {
+      const existing = first(this.sql.exec<{
+        rest_until: number; consecutive_keeps: number; version: number;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT rest_until, consecutive_keeps, version FROM description_refresh_state WHERE id = 1`,
+      ));
+      if (!existing) {
+        this.sql.exec(
+          `INSERT INTO description_refresh_state
+             (id, evaluated_at, rest_until, consecutive_keeps, evaluated_through_sequence,
+              window_message_count, decision, rejection_code, confidence, model,
+              previous_description, description, reasoning, version, created_at, updated_at)
+           VALUES (1, ?, ?, 0, ?, ?, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, 1, ?, ?)`,
+          input.evaluatedAt,
+          input.restUntil,
+          input.evaluatedThroughSequence,
+          input.windowMessageCount,
+          input.evaluatedAt,
+          input.evaluatedAt,
+        );
+        return { version: 1, consecutiveKeeps: 0 };
+      }
+      if (existing.rest_until > input.evaluatedAt) return null;
+      this.sql.exec(
+        `UPDATE description_refresh_state
+            SET evaluated_at = ?, rest_until = ?, evaluated_through_sequence = ?,
+                window_message_count = ?, decision = 'pending', rejection_code = NULL,
+                version = version + 1, updated_at = ?
+          WHERE id = 1`,
+        input.evaluatedAt,
+        input.restUntil,
+        input.evaluatedThroughSequence,
+        input.windowMessageCount,
+        input.evaluatedAt,
+      );
+      return { version: existing.version + 1, consecutiveKeeps: existing.consecutive_keeps };
+    });
+  }
+
+  /**
+   * Close a claim with what it decided, and the rest that decision earned.
+   *
+   * Guarded on the claim's own version, so a slow evaluation cannot overwrite
+   * the result — or the rest — of the one that superseded it. `false` means the
+   * row moved on, which the caller reports rather than retries: the decision is
+   * still worth knowing, and the write that replaced it owns the row.
+   */
+  recordDescriptionOutcome(input: {
+    expectedVersion: number;
+    decision: string;
+    rejectionCode: string | null;
+    confidence: number | null;
+    model: string;
+    previousDescription: string;
+    description: string | null;
+    reasoning: string;
+    windowMessageCount: number;
+    consecutiveKeeps: number;
+    restUntil: number;
+    now: number;
+  }): boolean {
+    return this.storage.transactionSync(() => {
+      this.sql.exec(
+        `UPDATE description_refresh_state
+            SET decision = ?, rejection_code = ?, confidence = ?, model = ?,
+                previous_description = ?, description = ?, reasoning = ?,
+                window_message_count = ?, consecutive_keeps = ?, rest_until = ?, updated_at = ?
+          WHERE id = 1 AND version = ?`,
+        input.decision,
+        input.rejectionCode,
+        input.confidence,
+        input.model,
+        input.previousDescription,
+        input.description,
+        input.reasoning,
+        input.windowMessageCount,
+        input.consecutiveKeeps,
+        input.restUntil,
+        input.now,
+        input.expectedVersion,
+      );
+      return this.#changed() > 0;
+    });
+  }
+
+  /** Rows written by the statement that just ran, in this transaction. */
+  #changed(): number {
+    return this.sql.exec<{ changes: number } & Record<string, SqlStorageValue>>(
+      `SELECT changes() AS changes`,
+    ).one().changes;
   }
 
   /** Whether this work stream has been archived, from its own identity row. */
