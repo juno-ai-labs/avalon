@@ -42,7 +42,7 @@ Every write is conditional on the status the pass started from, which is what ke
 
 ### Admission and immutable run scope
 
-The child dispatcher creates one replay-stable run identity; each execution attempt reaps expired attempts and claims a time-bounded object-local lease. At most one unexpired harness lease may run in a substream. The owner heartbeats while waiting on model output and tools; scope, activation, receipt-plan/completion, checkpoint, and terminal commits require the same attempt ID, lease owner, and expiry. An obsolete executor cannot publish a terminal result, and `completed` cannot commit until its final agent message is durable. Expired attempts are compare-and-swap reaped as failed.
+The child dispatcher creates one replay-stable run identity; each execution attempt reaps expired attempts and claims a time-bounded object-local lease. At most one unexpired harness lease may run in a substream. The owner heartbeats while waiting on model output and tools; scope, activation, receipt-plan/completion, checkpoint, and terminal commits require the same attempt ID, lease owner, and expiry. An obsolete executor cannot publish a terminal result, and `completed` cannot commit until its final agent message is durable. Expired attempts are compare-and-swap reaped as failed. Every in-memory drain also receives an identity predicate: abandoning a stranded promise revokes that predicate, so its late continuation exits before another dispatch even if the promise itself cannot be cancelled. The Substream loop rechecks that identity after its pre-claim regional-effects await, not only at the loop head. Substream and BlockDashboard dispatch settlement is separately fenced by the row's exact lease token; even the Substream product-failure transaction requires that token before changing the run or work-stream state.
 
 A launch is never split across the response that asked for it. The run row, work-stream state, and `agent_run_dispatches` admission commit before the child acknowledges launch. The dispatcher itself may continue through `waitUntil`, because the SQL dispatch row—not the in-memory promise—is the durable start signal and constructor/alarm activation resumes it. A start that fails before durable admission marks the run failed, publishes `harness_status_changed`, and answers `503`.
 
@@ -105,7 +105,7 @@ Every connector adapter supplies a static agent-plugin descriptor whose provider
 - Automation runs include explicitly bound connection/capability pairs and eligible connections attached through work-stream resources. Attached connections remain limited to the immutable grants frozen for the run.
 - Inbound-email runs remove external connector writes.
 
-Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `avalon_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Activation is durably recorded before the plugin's tools or trusted guidance become visible.
+Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `avalon_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. Activation is durably recorded before the plugin's tools or trusted guidance become visible.
 
 A hosted-MCP connection may supply `HarnessPlugin.loadTools` instead of a
 code-authored tool array. It still appears through the same static trusted
@@ -139,6 +139,13 @@ Revalidation also says why it is asking, because the two occasions need differen
 
 Revalidation answers with one of three verdicts, and the third one is the point of having them. `authorized` activates; `denied` is a decision about authority — a revoked credential, a withdrawn grant, an owner who no longer holds the connection — and reaches the model as `plugin_not_authorized`; `indeterminate` means the host could not reach a decision at all, because the provider timed out, the transport failed, or the health check answered something that says nothing about this run's authority. Both non-authorized verdicts leave the plugin inactive, so the distinction costs the run nothing, and it is what stops a provider hiccup from being reported as a permission problem: an `indeterminate` load returns `plugin_authorization_unavailable`, and the host logs `connector_plugin_reauthorization_failed` with the connection and the underlying cause rather than discarding it. An adapter distinguishes the two the same way, through `reconnectRequired` on its health result. A verdict must never be derived from a swallowed exception — a failure to verify is not a denial, and reporting it as one sends a run off to explain a permission problem that may not exist.
 
+All four non-success activation outcomes — unavailable, unauthorized,
+authorization indeterminate, and deferred tools unavailable — use typed thrown
+failures. Bind therefore emits `tool_failed`, the host stores a failed receipt,
+and the model sees `success: false` with a stable code and recovery action. A
+returned result containing an `error` field would instead be a completed tool by
+protocol and is forbidden for these cases.
+
 ### Skills
 
 A plugin gives the model a capability; a **skill** gives it a procedure. Skills are markdown instruction modules — how this workspace triages a queue, what a handover note must carry, the house voice — disclosed in the same three tiers the plugin catalog uses, because a workspace's accumulated know-how does not fit in a context window while a catalog line costs about fifty tokens.
@@ -158,6 +165,12 @@ All three are offered to every run the API starts — ad-hoc, automation, HyperS
 Bind's skill warnings — a name collision that lost a skill, a restored hint refused by a narrowed scope, a drifted pin — surface through `onSkillWarning`. Unwired, they are computed and discarded.
 
 The prompt sections are a pure render of run state. Bodies are rebuilt from the active set on every turn in Bind's total order (origin, then name) rather than spliced into the previous prompt, so a resumed attempt produces the same bytes as a fresh one and the provider's cached prefix survives. Loaded refs are durably recorded through `persistSkillActivation` and restored on the next attempt through `skillActivationHints` — a hint, like a plugin activation hint, so a ref the narrowed scope no longer resolves is dropped rather than restored.
+
+Skill scope misses, load-budget refusals, reads before activation, and missing
+bundled resources are also typed failures rather than successful `output.error`
+envelopes. Their messages carry the shortest next action; already-loaded skill
+refs remain in the active catalog rather than being mislabeled as `available`,
+and only bounded resource paths travel through the structured failure allowlist.
 
 ### Loop
 
@@ -195,6 +208,14 @@ When one throws a Zod error, the harness checks the normalized input against the
 same JSON Schema the model saw and any code-authored `validateInput` refinement:
 a mismatch becomes a bounded `kind: "validation"` result from the closest union
 branch, while valid input means the failure came from downstream data.
+Validation failures are labelled `phase: "validation"` on the lifecycle event.
+The attachment grounding guard discards such a call from its started-access
+bookkeeping because no executor content read occurred; only an execution-phase
+content failure can create an unresolved attachment claim. A validation event
+may arrive either before `tool_started` or after an executor rejects its parsed
+arguments. In the latter case the host settles the exact receipt identity it
+recorded for that start and never replans the call as an empty-input validation
+receipt; validation-only receipts exist only for failures that never started.
 
 Completed receipts replay without another provider call only while their owning
 subsystem's authorization and dependency checks still pass. Attachment list
@@ -251,6 +272,16 @@ parts cannot be recreated, it invalidates the safe-read receipt and executes the
 tool again rather than returning the JSON inclusion summary alone. No data URI
 enters D1, the replay object, or a persisted transcript row.
 
+Attachment dependencies are registered only after the invocation completion is
+accepted, and each insert plus mismatch cleanup requires that invocation to
+remain `completed` at the exact content-addressed `output_ref` returned by that
+settlement. A stale executor therefore cannot attach old resources to, or delete
+dependencies from, a successor replan of the stable invocation identity. The
+successor's replan compare-and-swap also repeats the absence of both attachment
+dependencies and coordinate-keyed child runs inside its atomic checkpoint and
+receipt writes. A dependency that appears after the preliminary read therefore
+leaves the completed receipt and its original output untouched.
+
 ### Model routing and inference ledger
 
 Each agent's default model and its fallback stages are one Cloudflare Flagship flag, resolved once per run and evaluated against the region, the environment, and the run's subject — the workspace, work stream, and user, each carrying the attributes a targeting rule matches on; the regional Worker variables remain the checked-in default that an absent flag, an unbound binding, and a failed evaluation all resolve to. [`feature-flags.md`](feature-flags.md) owns the flag keys, the value shape, and how a model change is rolled out.
@@ -266,7 +297,7 @@ audio admits only the `wav` and `mp3` formats the SDK contract supports. This
 keeps an SDK union or return-shape change visible to the compiler instead of
 letting it emerge later in a provider request.
 
-Every classified provider attempt appends an immutable inference-ledger row with its turn/route cursor, provider and model, routing decision, outcome, latency, available token/cache/cost counters, and hashed credential/workspace identities. Harness-run usage also stores turn/tool timings and counts. Provider error bodies and credentials are not retained in the ledger.
+Every classified provider attempt appends an immutable inference-ledger row with its turn/route cursor, provider and model, routing decision, outcome, latency, available token/cache/cost counters, and hashed credential/workspace identities. Harness-run usage also stores turn/tool timings and counts. Provider error bodies and credentials are not retained in the ledger. The opt-in payload index uses the same closed source vocabulary as the runtime: `workstream`, `automation_compiler`, `inline_child`, `block_dashboard`, and `meeting_notes`. Migration `0093_expand_agent_inference_log_sources.sql` admits the last two while preserving existing rows and rejecting unknown callers.
 
 ### Streaming stability
 
@@ -388,7 +419,9 @@ That split — a labelled trigger message for the model, a system row for the pe
 
 ### Cancellation and deferred systems
 
-Stopping a run persists `cancellation_requested_at`; it does not terminate an in-flight model request or tool call out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. The same leased child executor then commits one fenced `stopped` lifecycle event and returns the work stream to `idle`, preventing a stop/complete race.
+Stopping a run persists `cancellation_requested_at`; it does not terminate an in-flight model request or tool call out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. If that observation aborts a tool, the same live attempt may settle that exact in-flight receipt even though cancellation has been requested; the narrow settlement path still requires the current attempt id, lease owner, unexpired lease, `running` parent, and no prior terminalization. A `record_before_execute` write remains ambiguous, while a definitive read failure remains failed. In every checkpoint, successful-completion, failure, and stop-settlement batch, the live-lease fence admits the checkpoint insert; the immediately following receipt update is tied to that admitted checkpoint rather than re-reading wall-clock expiry. Crossing the lease deadline between serialized statements therefore cannot leave an immutable checkpoint beside a still-started receipt. Parent terminalization still requires the live lease. Any receipt already stranded behind such a checkpoint by an older deployment is healed by allocating stop cleanup after the greatest persisted checkpoint index and advancing the receipt to that exact new checkpoint. Any receipt still unfinished when the leased owner commits a requested `stopped` transition is closed in that same batch — unresolved writes become ambiguous and reads fail — whether it came from the current executor or survived an expired attempt. A definite completion or failure that wins before the batch remains terminal. Only after every receipt is durable does the child commit the fenced `stopped` lifecycle event and return the work stream to `idle`, preventing both a stop/complete race and a permanently `started` tool row. If an obsolete executor loses ownership, its local dispatch is deferred to adopt the successor's result; it cannot write an unfenced product failure.
+
+Cancellation-requested or orphaned inline children are reaped only after their own lease expires. The same attempt, owner, lease snapshot, expiry, and parent-liveness predicates first classify every pending or started child tool receipt in two bulk statements; unresolved writes become ambiguous and reads fail. The lifecycle and child-result commit then repeat the fences and require no unsettled receipt. Thus neither a stopped parent nor its eventual child reaper can leave a descendant tool card looking live.
 
 The work-stream transcript, attached resources, activation hints, run scope, inference ledger, tool receipts, inline child results, and scoped memory remain distinct durable records. Nested child delegation, personas, roles, autonomous heartbeats, and general child participants remain deferred product work.
 
@@ -422,6 +455,9 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   fails every pending or started tool invocation in the same fenced batch;
   member-requested stops render a distinct terminal stopped outcome in the
   desktop rather than disappearing into idle state.
+- **Terminal inline children leave no live-looking descendant receipt.** The
+  child reaper settles its pending and started receipts before its fenced child
+  result becomes replayable to the parent.
 - **A launch is never acknowledged before durable child admission.** The run,
   state transition, and `agent_run_dispatches` row exist before the request
   reports success, so constructor/alarm recovery has a durable start signal.
@@ -564,14 +600,17 @@ When an executor throws a Zod error and its normalized arguments also fail the
 provider-facing schema or its code-authored refinement, the model sees
 `kind: "validation"`, at most five actionable issues from the closest union
 branch, and no raw `invalid_union` tree. The message is capped at 1,200
-characters and never echoes submitted values. If those arguments pass both
-forms, the Zod failure is downstream. A read or provider-idempotent write remains
+characters and never echoes submitted values. That bounded schema message is
+the complete model recovery context for this branch; structured details from
+the executor's thrown error are not forwarded because they may describe
+downstream state rather than the rejected arguments. If those arguments pass
+both forms, the Zod failure is downstream. A read or provider-idempotent write remains
 `kind: "external"` and tells the model to retry once, then report invalid data.
 A `record_before_execute` write instead becomes `ambiguous_external_write` and
 terminates the run without retry guidance, because the provider may have applied
 the mutation before its response failed validation.
 
-The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`, `attachmentKind`, and `suggestedCall` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into the inference payload logs on every failed call. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
+The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `resourceId`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`, `attachmentKind`, and `suggestedCall` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into the inference payload logs on every failed call. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
 
 Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run. Reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
 
@@ -597,7 +636,9 @@ outputs, summaries, token content, and provider responses remain excluded.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, terminal commits, and durable structured failures. |
+| `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, terminal commits, durable structured failures, successful/failure/stop receipt settlement across a mid-batch lease deadline, healing an occupied checkpoint index, bulk residual-receipt settlement for stop/steering, descendant receipt settlement during child reaping, attachment dependency ordering, and dependency/replan interleavings. |
+| `apps/api/test/durable-agent-runtime.test.ts`, `agent-run-dispatch-queue.test.ts` | One drain per isolate, abandonment revoking the obsolete loop before another claim, durable wake derivation, reclaim ordering, and exact lease-token fences for Substream and BlockDashboard dispatch settlement. |
+| `apps/api/test-workers/agent-run-dispatch-reliability.test.ts`, `durable-object-runtime.test.ts` | Real workerd alarms, eviction/reclaim, abandoned-run recovery, queue progress against the same authoritative workstream root required by production product mutations, and the direct BlockDashboard terminal transition refusing an obsolete lease token without changing the successor's token, outcome, or stream checkpoint. |
 | `apps/api/test/harness-liveness-monitor-lifecycle.test.ts` | Heartbeats, expiry reaping, and the compare-and-swap that fails an abandoned attempt. |
 | `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
 | `apps/api/test/core-tool-idempotency.test.ts` | Receipt identity, plan hashes, and the `ambiguous_external_write` path. |
@@ -607,9 +648,12 @@ outputs, summaries, token content, and provider responses remain excluded.
 | `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, exact-ID conflict recovery, post-read revision races, invalidation races, and bounded insert contention. |
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
 | `apps/api/test/block-dashboard-submission.test.ts` | The single nudge, the `block_dashboard_block_not_submitted` failure, and the discarded trailing text. |
-| `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, the pending sidebar marker, and claim-before-launch. |
+| `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, and claim-before-launch. |
+| `apps/api/test/bind-host-durability.test.ts` | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction and post-start validation receipt reuse. |
+| `apps/api/test/attachment-tool-receipts.test.ts` | Exact derivative and completed-output-reference dependency fencing, replay reauthorization, all-or-nothing multi-image registration, and successor-safe mismatch cleanup. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The pending-wake-up clock appears only on marked work streams, with the next due time and bounded prompt in its tooltip. |
 | `apps/api/test/agent-inference-logging.test.ts` | That the diagnostic path is best-effort and cannot fail a run. |
+| `packages/db/test/agent-inference-source-migration.test.ts` | Preservation of all three prior payload-log sources, the complete runtime source vocabulary, closed unknown-source rejection, and foreign-key integrity through migration 0093. |
 | `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, `toolActivityName`, and the transport retry — that a fallback-less plan re-executes and re-sends **identical bytes**, that an exhausted budget and a refused endpoint each get their own provider code, that a 400 gets neither a retry nor the provider's name, and the backoff curve, `Retry-After` preference, and clamp as a pure function. |
 
 Run one with
@@ -635,6 +679,79 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-22 — Production refusals, cancelled receipts, and inference logs become honest
+
+**What changed:** Plugin activation, skill loading/resource access, and wake-up
+refusals now throw typed failures instead of returning successful results with
+an `error` field. Producer recovery values are bounded before the fail-closed
+sanitizer, already-loaded skills are not mislabeled as available, and plugin
+search is normalized, ranked keyword discovery capped at twenty results with a
+model-visible total match count. Bind labels rejected arguments as validation-phase failures,
+the attachment grounding guard excludes them from unresolved content, and the
+host settles a post-start rejection against its already-recorded real-input
+receipt rather than creating a conflicting empty-input plan. A
+lease-owning attempt may settle any terminal event already returned by Bind for
+the exact in-flight receipt after durable cancellation. Stopped terminalization
+atomically classifies any residual receipt from the current or an expired
+attempt before committing the parent and advances past any orphan checkpoint
+index from an older partially admitted settlement. Child reaping applies the same bulk
+classification before a stopped or orphaned descendant becomes terminal. An
+obsolete executor defers instead of failing its successor; abandoned drain
+identity is rechecked after the pre-claim await, and Substream and BlockDashboard
+executor-owned dispatch releases and terminal transitions require the exact
+lease token. Substream product failure requires that token too; post-terminal
+BlockDashboard delivery retries rely on the already-durable terminal outcome.
+Checkpoint, completion, and failure batches carry their first live-lease
+admission through the immediately serialized receipt write rather than sampling
+expiry twice; the receipt update must reference the exact checkpoint ID admitted
+by that first statement. Root-stop and child-reaper races retain started receipts
+unchanged when a successor takes ownership or an expired child lease is renewed.
+The real-worker dispatch fixture now seeds an authoritative product root; a
+scheduling-only fixture without that row masked recovery behind a guaranteed
+regional-effect authority refusal.
+An attachment replay
+dependency is registered only after the completion receipt passes that authority
+fence and only while its exact output reference remains current; a successor
+replan repeats both durable-dependency predicates inside its atomic write.
+Migration 0093 aligns the inference payload-log source check with all five
+runtime callers.
+
+**Why:** Signed-in production stress testing showed the same protocol lie on
+three surfaces: a missing plugin, unavailable skill, and nonexistent wake-up
+were green completed rows whose model payload said `success: true`. The same
+pass found a natural multi-capability plugin query returned no matches, an
+invalid attachment call created a false `Attachment content unverified`
+boundary, a stopped Terminal command left its card `started`, and HyperSight's
+visible success hid a D1 constraint failure on each opt-in inference payload log.
+In each case the durable protocol, not renderer wording, was the repair boundary.
+
+**Considered and rejected:** Renderer-side sniffing for `output.error`, a
+blanket conversion of every returned error-shaped object, AND-token discovery,
+and allowing parent cancellation to terminalize without closing its tool.
+Renderer inference would leave the model, receipt, and audit dishonest; blanket
+conversion could reinterpret legitimate domain result envelopes; AND search
+still misses queries spanning plugins; parent-only terminalization preserves a
+contradictory started child.
+
+**Consequences:** Expected refusals now produce `tool_failed`, failed durable
+receipts, and actionable structured model results. New deterministic refusal
+paths must throw a code-bearing error with allowlisted details. Search may return
+partial keyword matches but reports its full match count when the ranked list is
+bounded. The
+cancellation exception is not a general fence relaxation: attempt, owner, lease,
+running status, and terminalization checks still apply. Residual receipts are
+classified and closed in the atomic stopped commit, and every admitted receipt
+settlement finishes even if the lease deadline passes between its serialized
+checkpoint and receipt writes. Cleanup advances beyond an older orphan
+checkpoint rather than conflicting on it. Child reaping closes descendant receipts first. Stop
+therefore cannot degrade into a contradictory started row or a stale executor's
+later failed outcome, and an abandoned drain cannot continue beside its
+replacement. A
+stale executor cannot mutate attachment replay dependencies before its completion
+is accepted or race that dependency past a successor's preliminary replan check.
+New inference callers must add their source to the typed union and the D1 check
+in the same change.
 
 ### 2026-08-22 — Tools receive the receipt identity their effects are keyed to
 

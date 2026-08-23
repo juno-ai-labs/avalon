@@ -2925,8 +2925,9 @@ const FORWARDED_FAILURE_DETAIL_KEYS = [
 
 const MAXIMUM_FAILURE_DETAIL_BYTES = 8_000;
 const MAXIMUM_FAILURE_REASON_LENGTH = 1_000;
-const MAXIMUM_FAILURE_VALUE_LENGTH = 160;
-const MAXIMUM_FAILURE_AVAILABLE_VALUES = 20;
+/** Producer-side bounds for values sent through structured tool-failure recovery. */
+export const MAXIMUM_FAILURE_VALUE_LENGTH = 160;
+export const MAXIMUM_FAILURE_AVAILABLE_VALUES = 20;
 
 export interface StructuredFailureDetail {
   code: string;

@@ -161,6 +161,17 @@ instruction than "you must already know the column ids". Reserve it for shapes
 the model cannot otherwise see; a discovery tool that just re-lists what the
 catalog already says is spent context.
 
+`search_plugins` is ranked keyword discovery, not a literal phrase filter. It
+normalizes case, punctuation, and whitespace, then ranks exact field matches
+ahead of distinct-token overlap across the plugin id, display name, aliases,
+and description. Any meaningful token may make a plugin eligible, results are
+bounded to twenty, and `totalMatches` makes truncation visible so the model can
+narrow the query; ties are deterministic. That OR boundary is deliberate:
+a request such as `public web social timeline` spans the Web and X vocabularies
+and must discover both rather than require one catalog field to contain the
+entire sentence. A normalized-empty query returns no results, while a meaningful
+one-character name such as `X` remains searchable.
+
 ### 5. Errors are opaque only across a trust boundary, actionable everywhere else
 
 Two different jobs:
@@ -188,15 +199,20 @@ Two different jobs:
   and the shortest safe action in the failed result's `error` sentence.
 
   The shared typed-failure allowlist is `reason`, `field`, `expected`,
-  `available`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`,
+  `available`, `resourceId`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`,
   `attachmentKind`, and `suggestedCall`. Use only the subset the tool needs;
   `reason` is the general bounded next-step field, while the last three exist for
   attachment recovery. An adapter-only `hint`, path, or provider-detail field is
   silently stripped unless contracts, runtime, and tests add it to that shared
-  allowlist. The skill loader shows the same principle on successful envelopes:
-  `skill_limit_reached` returns its `reason` and already-loaded list in `output`,
-  while `skill_not_available` returns a bare code and keeps the fix in its
-  summary, which is the shape to avoid.
+  allowlist. The skill loader applies the same rule to
+  `skill_not_available`, `skill_limit_reached`, `skill_not_loaded`, and missing
+  bundled resources: each throws a typed failure whose message says what to
+  call next and whose allowlisted details contain bounded recovery values.
+  Returning `{output: {error: ...}}` from an executor is not an alternate
+  failure path. Bind correctly records any returned `HarnessToolResult` as
+  completed and projects it as `{success: true}`; using that shape for a refusal
+  creates a dishonest durable receipt, model result, audit event, and activity
+  row.
 
 Opacity is a deliberate, scoped cost. Pay it only where disclosure is the risk.
 
@@ -231,9 +247,10 @@ A limit that depends on *who* the agent is means identical calls succeed or fail
 with no signal the model can act on. Prefer a hard cap with a stable error and a
 stated remedy. The skill loader is the in-repo example: a count cap, a body-token
 budget, and a resource-read byte cap, all configurable by the host but never by
-the model, each returning `skill_limit_reached` with the reason and the list of
-what is already loaded. A limit the model can always predict and always recover
-from is better than a capability it can sometimes use and cannot reason about.
+the model, each returning `skill_limit_reached` with the reason. The active
+skill catalog already names what remains usable; refusal metadata never calls
+those loaded skills `available`. A limit the model can always predict and always
+recover from is better than a capability it can sometimes use and cannot reason about.
 
 Where truncation is kinder than refusal — a long reference read — truncate
 **with a visible marker** so the boundary is legible to the model instead of

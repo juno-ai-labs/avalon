@@ -55,7 +55,13 @@ export function runInput(runId: string, overrides: Record<string, unknown> = {})
 }
 
 /** Gives the object the identity and main substream a dispatch requires. */
-export function seedWorkstreamRoot(state: DurableObjectState, now = 1): void {
+export function seedWorkstreamRoot(
+  state: DurableObjectState,
+  now = 1,
+  identity: { workspaceId?: string; workstreamId?: string } = {},
+): void {
+  const workspaceId = identity.workspaceId ?? WORKSPACE_ID;
+  const workstreamId = identity.workstreamId ?? WORKSTREAM_ID;
   state.storage.sql.exec(
     `INSERT INTO workstream (
        id, workstream_key, parent_workspace_key, parent_do_id, parent_generation, region,
@@ -72,8 +78,8 @@ export function seedWorkstreamRoot(state: DurableObjectState, now = 1): void {
        0, 0, 0, 0,
        ?, ?, ?, ?
      ) ON CONFLICT(id) DO NOTHING`,
-    WORKSTREAM_ID,
-    WORKSPACE_ID,
+    workstreamId,
+    workspaceId,
     now,
     now,
     now,

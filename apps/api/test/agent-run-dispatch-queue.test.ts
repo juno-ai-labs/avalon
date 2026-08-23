@@ -339,6 +339,55 @@ describe("block dashboard dispatch scheduling", () => {
       leaseToken: "recovering",
     })?.id).toBe("block-run");
   });
+
+  it("fences a stale BlockDashboard executor from releasing a successor lease", () => {
+    const sql = blockQueue();
+    const stale = claimAgentRunDispatch(sql, BLOCK_DASHBOARD_RUN_DISPATCHES, {
+      now: NOW,
+      leaseToken: "stale-executor",
+    });
+    expect(stale?.id).toBe("block-run");
+    sql.exec(
+      `UPDATE agent_run_dispatches
+          SET lease_token = 'successor', lease_expires_at = ?, updated_at = ?
+        WHERE block_run_id = 'block-run'`,
+      NOW + AGENT_RUN_DISPATCH_LEASE_MS,
+      NOW,
+    );
+
+    expect(deferAgentRunDispatch(
+      sql,
+      BLOCK_DASHBOARD_RUN_DISPATCHES,
+      "block-run",
+      "stale-executor",
+      NOW + 5_000,
+      "stale_failure",
+      NOW,
+    )).toBe(false);
+    expect(settleAgentRunDispatch(
+      sql,
+      BLOCK_DASHBOARD_RUN_DISPATCHES,
+      "block-run",
+      "stale-executor",
+      "failed",
+      "stale_failure",
+      NOW,
+    )).toBe(false);
+    expect(sql.exec<{
+      state: string;
+      lease_token: string | null;
+      completed_at: number | null;
+      last_error_code: string | null;
+    }>(
+      `SELECT state, lease_token, completed_at, last_error_code
+         FROM agent_run_dispatches WHERE block_run_id = 'block-run'`,
+    ).toArray()[0]).toEqual({
+      state: "running",
+      lease_token: "successor",
+      completed_at: null,
+      last_error_code: null,
+    });
+  });
 });
 
 describe("compat trigger timestamp conversion", () => {
