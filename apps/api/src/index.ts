@@ -61,6 +61,7 @@ export { BlockDashboardAgent } from "./durable-objects/block-dashboard-agent";
 export { WorkstreamDO } from "./durable-objects/workstream-do";
 export { WorkspaceDO } from "./durable-objects/workspace-do";
 export { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
+export { SlackReactionTicker } from "./durable-objects/slack-reaction-ticker";
 export { ConnectorPollWorkflow } from "./workflows/connector-poll";
 export { ConnectorEventWorkflow } from "./workflows/connector-event";
 export { WorkOpportunityWorkflow } from "./workflows/work-opportunity";

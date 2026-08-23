@@ -720,7 +720,7 @@ perform the regional audit/control write explicitly through
 
 ### 2026-08-22 — Two object schemas admit a second notification kind, and the router refuses a cross-authority read
 
-**What changed:** WorkspaceDO schema version 8 rebuilds
+**What changed:** WorkspaceDO schema version 9 rebuilds
 `workstream_notification_intents` so `notification_kind` accepts
 `participant_added` beside `mention`, and WorkstreamDO version 3 rebuilds its
 `durable_outbox` so `effect_kind` accepts `participant_notification`. Both are
