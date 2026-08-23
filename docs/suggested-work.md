@@ -282,6 +282,7 @@ work-stream identity anchor with no product provenance.
 | `apps/api/test/suggested-work-opening-turn.test.ts` | That the opening message is the member's own turn carrying `suggested_work_expansion`. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Strict WorkspaceDO schema, atomic activity/provenance/resolution writes, dedupe, visibility, dismissal, serving, and every read-path request rule below. |
 | `apps/api/test-workers/opportunity-ranking.test.ts` | The ranking pipeline the object owns: who is a candidate, the cached state, the stored result, the recorded round, the lease settlement's `request_seq` guard, and the claim ledger's completion fence. |
+| `apps/api/test-workers/opportunity-batching-window.test.ts` | The aggregation window: the ten-minute debounce, the one-hour cap from the first event, one window per partition, and a replayed source counted once. |
 
 Run one with
 `pnpm --filter @avalon/api exec vitest run test/work-opportunity-batching.test.ts`
@@ -330,6 +331,22 @@ of how the last ranking ended — and `request_seq` against the scheduler's clai
 value.
 
 ## Changelog
+
+### 2026-08-23 — The batching window and the ranking pipeline get workerd suites
+
+**What changed:** `test-workers/opportunity-batching-window.test.ts` asserts the
+aggregation arithmetic — the ten-minute debounce, the one-hour cap measured from
+the first event, one window per partition, and a replayed source counted once.
+
+**Why:** the debounce and the cap are the product behaviour, and they had no
+test at all: the two that covered them ran the Worker-side D1 arm, which
+migration 0090 made unreachable, and went with it. `docs/potential-bugs.md`
+carried the gap until now.
+
+**What a future change has to respect:** elapsed time is simulated by ageing the
+window's `first_event_at`, not by passing a clock. `enqueueOpportunitySource`
+takes `now` as a default parameter and the RPC does not forward one, so a test
+that supplied a clock would be exercising a signature production never calls.
 
 ### 2026-08-23 — The ranking pipeline is asserted against the object that runs it
 

@@ -163,30 +163,6 @@ next slice, rather than per slice.
 
 ---
 
-## The opportunity batching window moved objects without moving its tests
-
-**Severity:** coverage-gap
-
-**Observed.** `work-opportunity-batching.ts`'s `enqueue` used to own the
-aggregation window in D1: a 10-minute debounce, a one-hour cap, and a retry that
-moved an event to a fresh window when its chosen one was claimed between the
-select and the insert. Two tests covered exactly that, and both ran the D1 arm,
-which only executes with the authority closed. WorkspaceDO owns the window now,
-with the same constants at `workspace-product-storage.ts:24-53`. The Worker-side
-implementation, its constants and its tests are deleted.
-
-**Why it is suspicious.** The arithmetic is the product behavior — how long
-Avalon waits before turning a burst of activity into one suggestion — and
-nothing now asserts it. `test-workers/durable-object-runtime.test.ts` exercises
-a window *lease*, so the table is not entirely unvisited, but the debounce, the
-cap and the claimed-window retry are not among what it checks.
-
-**What would settle it.** Extend that workerd suite: enqueue at T, assert
-`process_after` is T+10m; enqueue again at T+9m, assert it moves to T+19m and no
-second window appears; enqueue at T+55m, assert it clamps to first+1h.
-
----
-
 ## Who gets ranked, and the empty-ranking standoff, moved to the alarm untested
 
 **Severity:** coverage-gap
