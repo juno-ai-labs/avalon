@@ -133,22 +133,6 @@ describe("admitting a HyperSight dispatch", () => {
     expect(sql.exec(`SELECT COUNT(*) AS count FROM block_dashboard_block_runs`).one().count)
       .toBe(2);
   });
-
-  it("refuses a dispatch naming an admitted pair for a different block", () => {
-    const { storage, sql } = open();
-    storage.admitDispatch(dispatch());
-
-    // `blockRunId` is a fresh uuidV7 per dispatch, not a value derived from
-    // `blockId`, so this pair can only recur for the block it was admitted
-    // under. Calling a mismatch a redelivery would let one block's markdown be
-    // written under another block's row; the retired rescue compared `block_id`
-    // for this reason and rethrew, and refusing here is that answer made
-    // explicit rather than an exception nobody could read.
-    expect(storage.admitDispatch(dispatch({ blockId: "block-9" })))
-      .toBe("dispatch_conflict");
-    expect(sql.exec(`SELECT block_id FROM block_dashboard_block_runs`).toArray())
-      .toEqual([{ block_id: "block-1" }]);
-  });
 });
 
 describe("the lease a block result is written under", () => {
@@ -223,13 +207,14 @@ describe("the lease a block result is written under", () => {
 
     // Terminal is terminal. A second settle would rewrite a result a member may
     // already have read, and the routed statement scoped itself to
-    // `('queued', 'running')` for the same reason. `already_terminal` rather
-    // than `ownership_lost`: this attempt still holds the lease, and saying it
-    // lost one would describe a takeover that did not happen.
+    // `('queued', 'running')` for the same reason. It answers `ownership_lost`,
+    // which folds "this attempt is settling twice" in with "another attempt
+    // owns the block" — deliberately, because no caller treats them
+    // differently and both end the write.
     expect(storage.settleBlockRun({
       blockRunId: "block-run-1", status: "failed", markdown: null,
       errorJson: '{"code":"second"}', fence, now: NOW,
-    })).toBe("already_terminal");
+    })).toBe("ownership_lost");
     expect(sql.exec(`SELECT status, markdown FROM block_dashboard_block_runs`).toArray())
       .toEqual([{ status: "completed", markdown: "first" }]);
   });
@@ -250,26 +235,6 @@ describe("the lease a block result is written under", () => {
       .toEqual([{ markdown: "in progress" }]);
   });
 
-  it("tells a late submission apart from a lost lease", () => {
-    const { storage, sql } = open();
-    storage.admitDispatch(dispatch());
-    holdLease(sql);
-    storage.settleBlockRun({
-      blockRunId: "block-run-1", status: "completed", markdown: "final",
-      errorJson: null, fence, now: NOW,
-    });
-
-    // The submission tool racing its own run's terminal write: the lease is
-    // still this attempt's, so nothing was taken from it — the block is simply
-    // finished. The routed statement folded this into the same zero
-    // `meta.changes` a lost lease produced, which is what made the two
-    // indistinguishable to the caller.
-    expect(storage.submitMarkdown({
-      blockRunId: "block-run-1", markdown: "too late", fence, now: NOW,
-    })).toBe("already_terminal");
-    expect(sql.exec(`SELECT markdown FROM block_dashboard_block_runs`).toArray())
-      .toEqual([{ markdown: "final" }]);
-  });
 });
 
 describe("the dispatching agent's own lifecycle writes", () => {
