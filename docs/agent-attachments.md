@@ -454,6 +454,41 @@ cheap discovery and continuation paths.
 
 ## Changelog
 
+### 2026-08-22 — Tool receipts leave the compatibility layer
+
+**What changed:** Every read and write of a durable tool receipt now goes through
+`WorkstreamToolReceiptStorage` and its typed port, not D1-shaped SQL rewritten
+onto `_runtime_tool_invocations`. Object schema migration 17 drops that view,
+`_runtime_tool_checkpoints`, and their four triggers, and adopts two things the
+compatibility schema owned that were never compatibility objects: the
+`attachment_tool_receipts` table and the `tool_effects_run_call_uq` index.
+
+**Why:** the layer existed so one body of code could run against D1 and the
+object during the cutover, and every region past migration 0090 is permanently
+past that point. Concretely it cost three round trips per receipt operation —
+fence, batch, reconcile — with the run's lease restated in SQL each time because
+it could not be trusted in between. Each operation is now one `transactionSync`
+on the owning object.
+
+**Considered and rejected:** converting the two telemetry statements and the
+stale-run sweep into port operations as well. The telemetry statements are
+run-shaped rather than receipt-shaped and their primary table is `harness_runs`,
+so they are retargeted at `tool_effects` in place and the harness-runs slice
+converts them whole. The sweep did become an operation, but not a variant of an
+existing one: every other method is fenced on a live lease, and an expired lease
+is the sweep's entire premise.
+
+**Consequences:** the compat vocabulary does not disappear, it relocates.
+`ToolInvocationSchema` still publishes `pending`/`started` and ISO-8601, so
+`loadToolInvocation` translates at the wire boundary. Two behaviors that lived
+inside compatibility objects are now explicit: migration 14's projection of a
+settled receipt into its tool part, which is the only thing stopping a reaped
+run's card spinning forever, and the replay dedup the unique index carries. And
+a statement moved off a view reports `rowsWritten` rather than a trigger's
+counter, which counts index writes — an `=== 1` check that survives such a move
+will be wrong.
+
+
 ### 2026-08-20 — Attachment failures cannot become model-authored facts
 
 **What changed:** CSV/TSV extraction now reaches the UTF-8 converter under

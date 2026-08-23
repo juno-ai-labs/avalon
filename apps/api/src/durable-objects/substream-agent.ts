@@ -72,9 +72,11 @@ import {
 import {
   claimHarnessAttempt,
   reapStaleHarnessRuns,
+  RunOwnershipLostError,
   terminalizeHarnessAttempt,
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
+import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
 import { runWorkstreamHarness, type WorkstreamHarnessResult } from "../services/integrations";
 import { deliverAutomationResultEmail } from "../services/automation-email-service";
 import { settleDigestRun } from "../services/digest-run-settlement";
@@ -110,6 +112,11 @@ import {
   type PendingBlockDashboardRefresh,
 } from "./workstream-object-storage";
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
+import { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
+import {
+  ToolReceiptOperationRequestSchema,
+  type ToolReceiptOperationRequest,
+} from "./workstream-tool-receipt-protocol";
 import {
   TerminalOperationRequestSchema,
   terminalOperationAffectsDirectory,
@@ -305,6 +312,7 @@ const BLOCK_DASHBOARD_REFRESH_EVENT_TYPES = new Set([
 ]);
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
+
 export function isPersonalEventAudience(socketUserId: string, audienceUserId: string): boolean {
   return socketUserId === audienceUserId;
 }
@@ -499,6 +507,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private objectName: string | null = null;
   private product!: WorkstreamObjectProductService;
   private terminal!: WorkstreamTerminalStorage;
+  private toolReceipts!: WorkstreamToolReceiptStorage;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
@@ -552,6 +561,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       ));
       this.product = new WorkstreamObjectProductService(state.storage, this.objectStore, env);
       this.terminal = new WorkstreamTerminalStorage(state.storage);
+      this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
       await this.objectStore.waitUntilReady();
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
@@ -706,6 +716,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return this.acceptRuntimeSql(request);
     }
 
+    if (request.method === "POST" && url.pathname === "/internal/tool-receipt") {
+      return this.acceptToolReceiptOperation(request);
+    }
     if (request.method === "POST" && url.pathname === "/internal/terminal") {
       return this.acceptTerminalOperation(request);
     }
@@ -805,6 +818,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async attachRuntimeResource(input: SubstreamRuntimeResourceRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptRuntimeResource(this.rpcRequest(input)));
+  }
+
+  async executeToolReceiptOperation(
+    input: ToolReceiptOperationRequest,
+  ): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptToolReceiptOperation(this.rpcRequest(input)));
   }
 
   async executeTerminalOperation(input: TerminalOperationRequest): Promise<DurableObjectRpcResult> {
@@ -948,6 +968,36 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * sequence crossed the Worker boundary between its two statements, so the
    * lease it took could be decided on state that had already moved.
    */
+  /**
+   * Settle one durable tool receipt inside the event that owns this object.
+   *
+   * No `commitRuntimeMutation` wrapper, unlike the Terminal endpoint: receipts
+   * move no deadline `workspace_workstream_directory` projects, so there is no
+   * `directory_common` effect to enqueue. That is asserted rather than assumed,
+   * against this object's real outbox, in `test-workers/tool-receipt-authority.test.ts`
+   * — with a publishing Terminal operation beside it as the control, because
+   * inference is what let the Terminal port silently stop publishing once
+   * already.
+   */
+  private async acceptToolReceiptOperation(request: Request): Promise<Response> {
+    const parsed = ToolReceiptOperationRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return jsonResponse({ ok: false, error: "invalid_tool_receipt_operation" }, 400);
+    }
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== parsed.data.workspaceId
+      || identity.workstreamId !== parsed.data.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return jsonResponse({ ok: false, error: "workstream_tool_receipt_identity_mismatch" }, 409);
+    }
+    const method = this.toolReceipts[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const value = method.apply(this.toolReceipts, parsed.data.args);
+    return jsonResponse({ ok: true, value: value ?? null });
+  }
+
   private async acceptTerminalOperation(request: Request): Promise<Response> {
     const parsed = TerminalOperationRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) {
@@ -1502,7 +1552,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
     }
     await this.agentDrain.resume(
-      () => this.drainRunQueue()
+      (ownsDrain) => this.drainRunQueue(ownsDrain)
       .catch((error: unknown) => {
         logWarn(this.env, "substream_agent_drain_failed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
@@ -1516,14 +1566,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return "drained";
   }
 
-  private async drainRunQueue(): Promise<void> {
-    while (true) {
+  private async drainRunQueue(ownsDrain: () => boolean): Promise<void> {
+    while (ownsDrain()) {
       this.agentDrain.touch();
       // Only the alarm forwards regional effects, and this loop owns the alarm
       // until it returns. Flushing between runs keeps a queue of runs from
       // holding the parent's view of all of them; effects committed *during* a
       // single long run still wait for it to finish.
       await this.flushDueRegionalEffects();
+      // `abandonActive()` cannot cancel the promise that is inside the await.
+      // Recheck before the synchronous claim or that obsolete continuation can
+      // still lease a row beside the replacement drain.
+      if (!ownsDrain()) return;
       const now = Date.now();
       // The claim leases the row, so an invocation that dies mid-run leaves a
       // deadline behind rather than an indefinite "running" that only a live
@@ -1611,6 +1665,31 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           Date.now(),
         );
       } catch (error) {
+        if (error instanceof RunOwnershipLostError) {
+          logWarn(this.env, "agent_run_executor_lost_ownership", {
+            workspace_id: input.workspaceId,
+            workstream_id: input.workstreamId,
+            substream_id: input.substreamId ?? "0",
+            harness_run_id: claim.id,
+            attempt: claim.attempt,
+          });
+          // The successor owns the authoritative outcome. Retrying this local
+          // dispatch lets it adopt that terminal result; marking the product
+          // failed here would be an unfenced stale-executor write.
+          deferAgentRunDispatch(
+            this.state.storage.sql,
+            SUBSTREAM_AGENT_RUN_DISPATCHES,
+            claim.id,
+            claim.leaseToken,
+            Date.now() + 1_000,
+            "run_ownership_lost",
+            Date.now(),
+          );
+          // This drain may itself have been abandoned and replaced after its
+          // keep-alive stranded. It must not claim another row alongside the
+          // successor drain after losing the authority that fenced this one.
+          return;
+        }
         const safe = {
           code: error instanceof Error && "code" in error && typeof error.code === "string"
             ? error.code
@@ -1631,7 +1710,41 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           error_code: safe.code,
           reason: error instanceof Error ? error.message : "unknown",
         });
-        await this.product.recordWorkflowFailed(claim.id, safe).catch(() => undefined);
+        if (!ownsDrain()) {
+          logWarn(this.env, "agent_run_failure_abandoned_before_product_settlement", {
+            workspace_id: input.workspaceId,
+            workstream_id: input.workstreamId,
+            substream_id: input.substreamId ?? "0",
+            harness_run_id: claim.id,
+            attempt: claim.attempt,
+          });
+          return;
+        }
+        try {
+          // Product failure and work-stream status change are atomically
+          // conditional on this dispatch's exact token. The check above avoids
+          // a known-obsolete call; this fence closes the await/interleaving race.
+          await this.product.recordWorkflowFailed(claim.id, safe, claim.leaseToken);
+        } catch (settlementError) {
+          deferAgentRunDispatch(
+            this.state.storage.sql,
+            SUBSTREAM_AGENT_RUN_DISPATCHES,
+            claim.id,
+            claim.leaseToken,
+            Date.now() + 1_000,
+            "run_failure_settlement_deferred",
+            Date.now(),
+          );
+          logWarn(this.env, "agent_run_failure_settlement_deferred", {
+            workspace_id: input.workspaceId,
+            workstream_id: input.workstreamId,
+            substream_id: input.substreamId ?? "0",
+            harness_run_id: claim.id,
+            attempt: claim.attempt,
+            reason: settlementError instanceof Error ? settlementError.message : "unknown",
+          });
+          return;
+        }
         settleAgentRunDispatch(
           this.state.storage.sql,
           SUBSTREAM_AGENT_RUN_DISPATCHES,
@@ -1649,7 +1762,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         if (this.activeRunDispatch?.leaseToken === claim.leaseToken) {
           this.activeRunDispatch = null;
         }
-        this.agentDrain.touch();
+        if (ownsDrain()) this.agentDrain.touch();
       }
     }
   }
@@ -1729,10 +1842,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return this.settleAgentRunWithRetry(executionEnv, input, terminalOutcome);
     }
     await reapStaleHarnessRuns(executionEnv.DB, {
+      receipts: createToolReceiptPortFactory(executionEnv),
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
       limit: 25,
       automationDatabase: withWorkspaceRuntimeDatabase(this.env, input.workspaceId).DB,
+      onReceiptRepairFailure: (failure) => logWarn(this.env, "harness_residual_receipt_repair_failed", {
+        workspace_id: failure.workspaceId,
+        workstream_id: failure.workstreamId,
+        harness_run_id: failure.runId,
+        attempt_id: failure.attemptId,
+        repair_phase: failure.phase,
+        reason: failure.reason,
+      }),
     });
     const attemptId = uuidV7();
     const claim = await claimHarnessAttempt(executionEnv.DB, input, {
@@ -1856,7 +1978,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       ...(outcome.messageId ? { finalMessageId: outcome.messageId } : {}),
       ...(outcome.error ? { error: outcome.error } : {}),
       memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
-    });
+    }, createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId));
     if (outcome.messageId) {
       const messages = await this.product.messagesForRuntime(250);
       const message = messages.items.find((candidate) => candidate.id === outcome.messageId);

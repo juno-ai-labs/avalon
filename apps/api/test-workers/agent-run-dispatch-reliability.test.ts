@@ -30,7 +30,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { asBlockId, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 
 import { blockDashboardAgentName, substreamAgentName } from "../src/durable-objects/names";
-import { seedOpenWorkstreamAuthority } from "./helpers/substream-fixture";
+import { seedOpenWorkstreamAuthority, seedWorkstreamRoot } from "./helpers/substream-fixture";
 
 beforeAll(async () => {
   await seedOpenWorkstreamAuthority(env.DB);
@@ -85,6 +85,10 @@ function seedSubstreamDispatch(
     leaseExpiresAt?: number | null;
   } = {},
 ): void {
+  // Dispatch execution mutates the authoritative product row. Scheduling-only
+  // assertions used to pass without it, masking failures behind the exact
+  // production authority gate that this real-worker suite is meant to prove.
+  seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
   state.storage.sql.exec(
     `INSERT INTO substreams
        (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)

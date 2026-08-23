@@ -46,7 +46,6 @@ import {
 } from "../telemetry/product-usage";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
@@ -750,7 +749,6 @@ export class AutomationService {
 
   async get(id: string, options: { reconcileEmail?: boolean } = {}) {
     const row = await this.loadSubscription(id);
-    const authority = await readWorkstreamAuthorityControl(this.env);
     // Same as the list: a draft holds no address until it is promoted, so
     // reading one must not go and reserve it.
     const emailAddress = options.reconcileEmail === false || row.status === "draft"
@@ -760,23 +758,10 @@ export class AutomationService {
     const updateAvailable = Number(row.latest_version_number) > Number(row.version_number);
     const plannedWorkstream = row.next_run_at == null
       ? null
-      : authority.phase === "durable_object_open"
-        ? await new WorkstreamDirectoryService(this.env, this.auth).plannedForAutomation(
-            id,
-            String(row.next_run_at),
-          )
-        : await this.env.DB.prepare(
-            `SELECT w.*, t.name AS origin_label FROM workstreams w
-             JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
-             JOIN automation_templates t ON t.id = s.template_id
-             JOIN schedules sc ON sc.automation_subscription_id = s.id
-               AND sc.workspace_id = s.workspace_id AND sc.enabled = 1
-               AND sc.next_run_at = w.planned_for
-             WHERE w.workspace_id = ? AND w.automation_subscription_id = ?
-               AND w.harness_status = 'scheduled'
-             ORDER BY w.planned_for LIMIT 1`,
-          ).bind(this.auth.workspaceId, id).first<Record<string, unknown>>()
-          .then((planned) => planned ? toWorkstream(planned) : null);
+      : await new WorkstreamDirectoryService(this.env, this.auth).plannedForAutomation(
+          id,
+          String(row.next_run_at),
+        );
     const [runs, latestVersion, deliveryTargets] = await Promise.all([
       this.runs(id, 20),
       updateAvailable
@@ -1021,7 +1006,6 @@ export class AutomationService {
     const subscription = await this.loadSubscription(id);
     this.assertCanManageSubscription(subscription);
     const at = nowIso();
-    const authority = await readWorkstreamAuthorityControl(this.env);
     // A run opened ahead of its planned time is a queued trigger of its own:
     // the work stream and run already exist and only wait for the alarm.
     // Nothing would start them once the schedule is disabled, so they would sit
@@ -1032,16 +1016,11 @@ export class AutomationService {
     // the work stream stays harness_status = 'scheduled' until the harness
     // claims its attempt — so a work stream matched on that alone could belong
     // to a run that is already live.
-    const planned = await this.env.DB.prepare(authority.phase === "durable_object_open"
-      ? `SELECT workstream_id AS id FROM automation_runs
-          WHERE workspace_id = ? AND automation_subscription_id = ?
-            AND status = 'scheduled' AND started_at IS NULL`
-      : `SELECT w.id FROM workstreams w
-         JOIN automation_runs r ON r.workstream_id = w.id AND r.workspace_id = w.workspace_id
-         WHERE w.workspace_id = ? AND w.automation_subscription_id = ?
-           AND w.harness_status = 'scheduled' AND w.archived_at IS NULL
-           AND r.status = 'scheduled' AND r.started_at IS NULL`)
-      .bind(this.auth.workspaceId, id).all<{ id: string }>();
+    const planned = await this.env.DB.prepare(
+      `SELECT workstream_id AS id FROM automation_runs
+        WHERE workspace_id = ? AND automation_subscription_id = ?
+          AND status = 'scheduled' AND started_at IS NULL`,
+    ).bind(this.auth.workspaceId, id).all<{ id: string }>();
     const plannedWorkstreamIds = (planned.results ?? []).map((item) => String(item.id));
     const regionalStatements = [
       this.env.DB.prepare(
@@ -1058,38 +1037,19 @@ export class AutomationService {
            AND status = 'scheduled' AND started_at IS NULL`,
       ).bind(at, this.auth.workspaceId, id),
     ];
-    if (authority.phase === "durable_object_open") {
-      await Promise.all(plannedWorkstreamIds.map(async (workstreamId) => {
-        const executionEnv = await workstreamExecutionEnvironment(
-          this.env,
-          this.auth.workspaceId,
-          workstreamId,
-        );
-        await executionEnv.DB.prepare(
-          `UPDATE workstreams SET archived_at = ?, updated_at = ?
-            WHERE workspace_id = ? AND id = ? AND harness_status = 'scheduled'
-              AND archived_at IS NULL`,
-        ).bind(at, at, this.auth.workspaceId, workstreamId).run();
-      }));
-      await this.env.DB.batch(regionalStatements);
-    } else {
-      await this.env.DB.batch([
-        regionalStatements[0]!,
-        regionalStatements[1]!,
-        // Ordered before the run update so the EXISTS predicate still sees
-        // the scheduled state in the same D1 transaction.
-        this.env.DB.prepare(
+    await Promise.all(plannedWorkstreamIds.map(async (workstreamId) => {
+      const executionEnv = await workstreamExecutionEnvironment(
+        this.env,
+        this.auth.workspaceId,
+        workstreamId,
+      );
+      await executionEnv.DB.prepare(
         `UPDATE workstreams SET archived_at = ?, updated_at = ?
-         WHERE workspace_id = ? AND automation_subscription_id = ?
-           AND harness_status = 'scheduled' AND archived_at IS NULL
-           AND EXISTS (SELECT 1 FROM automation_runs r
-                        WHERE r.workstream_id = workstreams.id
-                          AND r.workspace_id = workstreams.workspace_id
-                          AND r.status = 'scheduled' AND r.started_at IS NULL)`,
-        ).bind(at, at, this.auth.workspaceId, id),
-        regionalStatements[2]!,
-      ]);
-    }
+          WHERE workspace_id = ? AND id = ? AND harness_status = 'scheduled'
+            AND archived_at IS NULL`,
+      ).bind(at, at, this.auth.workspaceId, workstreamId).run();
+    }));
+    await this.env.DB.batch(regionalStatements);
     // No route to close. The address stays claimed forever — that is the point
     // of the Global ledger — and mail to it is refused by the same checks that
     // always refused it: automation ingestion requires a visible, active
@@ -1125,18 +1085,8 @@ export class AutomationService {
     // omitted `automation` entirely, which nothing caught because the response
     // met no contract and the desktop client does not call this route.
     if (!schedule) return { scheduledFor: null, workstream: null, automation: String(subscription.name) };
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    const workstream = authority.phase === "durable_object_open"
-      ? await new WorkstreamDirectoryService(this.env, this.auth).plannedForAutomation(
-          id,
-          String(schedule.next_run_at),
-        )
-      : await this.env.DB.prepare(
-          `SELECT * FROM workstreams
-            WHERE workspace_id = ? AND automation_subscription_id = ? AND planned_for = ?`,
-        ).bind(this.auth.workspaceId, id, schedule.next_run_at)
-          .first<Record<string, unknown>>()
-          .then((item) => item ? toWorkstream(item) : null);
+    const workstream = await new WorkstreamDirectoryService(this.env, this.auth)
+      .plannedForAutomation(id, String(schedule.next_run_at));
     return { scheduledFor: String(schedule.next_run_at), workstream, automation: String(subscription.name) };
   }
 
@@ -1471,7 +1421,6 @@ export class AutomationService {
     const routeInput = routeInputFor(workstreamId);
     const emailRoute = await emailRouting.reserve(routeInput);
     const principal = parseJson<ExecutionPrincipal>(subscription.execution_principal_json, { type: "user", userId: this.auth.userId });
-    const authority = await readWorkstreamAuthorityControl(this.env);
     const executionEnv = await bootstrapWorkstreamRuntimeEnvironment(
       this.env,
       this.auth.workspaceId,
@@ -1499,14 +1448,10 @@ export class AutomationService {
           trigger_activity_id, planned_for, started_at, status, idempotency_key, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(runId, this.auth.workspaceId, subscription.id, workstreamId, triggerType, activityId, plannedFor, null, "scheduled", idempotencyKey, at);
-      if (authority.phase === "durable_object_open") {
-        // The regional row is a control-plane run record; the root, transcript,
-        // run and resource links below belong to the newly bootstrapped object.
-        const inserted = await runStatement.run();
-        controlRunInserted = (inserted.meta.changes ?? 0) > 0;
-      } else {
-        statements.push(runStatement);
-      }
+      // The regional row is a control-plane run record; the root, transcript,
+      // run and resource links below belong to the newly bootstrapped object.
+      const inserted = await runStatement.run();
+      controlRunInserted = (inserted.meta.changes ?? 0) > 0;
       if (openingInput && triggerMessageId) {
         statements.push(
           executionEnv.DB.prepare(
@@ -1515,29 +1460,7 @@ export class AutomationService {
               message_type, text_content, structured_content_json, sequence_number, created_at, edited_at)
              VALUES (?, ?, ?, ?, 'system', NULL, 'system', ?, ?, 1, ?, NULL)`,
           ).bind(triggerMessageId, openingInput.clientMessageId, this.auth.workspaceId, workstreamId, openingInput.textContent, JSON.stringify(openingInput.structuredContent), at),
-          ...(authority.phase === "durable_object_open" ? [] : [executionEnv.DB.prepare(
-            `INSERT INTO workstream_resources
-             (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
-             VALUES (?, ?, NULL, 0, 'inbound_email', ?)`,
-          ).bind(workstreamId, openingInput.resourceId, at)]),
         );
-      }
-      if (authority.phase !== "durable_object_open") {
-        statements.push(executionEnv.DB.prepare(
-          `INSERT OR IGNORE INTO workstream_resources
-           (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
-           SELECT ?, ar.resource_id, ar.attached_by_user_id, 0, ar.relationship_type, ?
-           FROM automation_resources ar
-           JOIN notes n ON n.resource_id = ar.resource_id AND n.workspace_id = ?
-           WHERE ar.automation_subscription_id = ? AND n.archived_at IS NULL
-             AND (n.scope = 'workspace' OR n.owner_user_id = ?)`,
-        ).bind(
-          workstreamId,
-          at,
-          this.auth.workspaceId,
-          subscription.id,
-          principal.type === "user" ? principal.userId : null,
-        ));
       }
       if (start) {
         // The work stream is created in this same batch, so its override cannot
@@ -1561,37 +1484,35 @@ export class AutomationService {
       // must not compensate the control row away from a real work stream.
       controlRunInserted = false;
       await this.recordRunCreationTelemetry(workstreamId, triggerType);
-      if (authority.phase === "durable_object_open") {
-        const resourceRows = await this.env.DB.prepare(
-          `SELECT ar.resource_id, ar.attached_by_user_id, ar.relationship_type
-             FROM automation_resources ar
-             JOIN notes n ON n.resource_id = ar.resource_id AND n.workspace_id = ?
-            WHERE ar.automation_subscription_id = ? AND n.archived_at IS NULL
-              AND (n.scope = 'workspace' OR n.owner_user_id = ?)`,
-        ).bind(
-          this.auth.workspaceId,
-          subscription.id,
-          principal.type === "user" ? principal.userId : null,
-        ).all<{ resource_id: string; attached_by_user_id: string | null; relationship_type: string }>();
-        const attachments = [
-          ...(resourceRows.results ?? []).map((resource) => ({
-            resourceId: resource.resource_id,
-            attachedByUserId: resource.attached_by_user_id,
-            relationshipType: resource.relationship_type,
-          })),
-          ...(openingInput ? [{
-            resourceId: openingInput.resourceId,
-            attachedByUserId: null,
-            relationshipType: "inbound_email",
-          }] : []),
-        ];
-        for (const attachment of attachments) {
-          await attachWorkstreamRuntimeResource(this.env, {
-            workspaceId: this.auth.workspaceId,
-            workstreamId,
-            ...attachment,
-          });
-        }
+      const resourceRows = await this.env.DB.prepare(
+        `SELECT ar.resource_id, ar.attached_by_user_id, ar.relationship_type
+           FROM automation_resources ar
+           JOIN notes n ON n.resource_id = ar.resource_id AND n.workspace_id = ?
+          WHERE ar.automation_subscription_id = ? AND n.archived_at IS NULL
+            AND (n.scope = 'workspace' OR n.owner_user_id = ?)`,
+      ).bind(
+        this.auth.workspaceId,
+        subscription.id,
+        principal.type === "user" ? principal.userId : null,
+      ).all<{ resource_id: string; attached_by_user_id: string | null; relationship_type: string }>();
+      const attachments = [
+        ...(resourceRows.results ?? []).map((resource) => ({
+          resourceId: resource.resource_id,
+          attachedByUserId: resource.attached_by_user_id,
+          relationshipType: resource.relationship_type,
+        })),
+        ...(openingInput ? [{
+          resourceId: openingInput.resourceId,
+          attachedByUserId: null,
+          relationshipType: "inbound_email",
+        }] : []),
+      ];
+      for (const attachment of attachments) {
+        await attachWorkstreamRuntimeResource(this.env, {
+          workspaceId: this.auth.workspaceId,
+          workstreamId,
+          ...attachment,
+        });
       }
     } catch (error) {
       if (controlRunInserted) {
@@ -1660,88 +1581,51 @@ export class AutomationService {
   }
 
   private async loadIdempotentRun(subscriptionId: string, idempotencyKey: string, openingClientMessageId: string | null = null): Promise<IdempotentAutomationRun | null> {
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    if (authority.phase === "durable_object_open") {
-      const run = await this.env.DB.prepare(
-        `SELECT id AS run_id, workstream_id, status AS run_status,
-                workflow_instance_id AS run_workflow_instance_id
-           FROM automation_runs
-          WHERE workspace_id = ? AND automation_subscription_id = ? AND idempotency_key = ?
-          LIMIT 1`,
-      ).bind(this.auth.workspaceId, subscriptionId, idempotencyKey).first<{
-        run_id: string;
-        workstream_id: string;
-        run_status: string;
-        run_workflow_instance_id: string | null;
-      }>();
-      if (!run) return null;
-      const executionEnv = await workstreamExecutionEnvironment(
-        this.env,
-        this.auth.workspaceId,
-        run.workstream_id,
-      );
-      const [harness, message] = await Promise.all([
-        executionEnv.DB.prepare(
-          `SELECT id, status, workflow_instance_id FROM harness_runs
-            WHERE workspace_id = ? AND workstream_id = ?
-              AND parent_tool_call_id IS NULL AND origin != 'block_dashboard_block'
-            ORDER BY created_at DESC LIMIT 1`,
-        ).bind(this.auth.workspaceId, run.workstream_id).first<{
-          id: string;
-          status: string;
-          workflow_instance_id: string | null;
-        }>(),
-        openingClientMessageId
-          ? executionEnv.DB.prepare(
-              `SELECT id FROM messages
-                WHERE workspace_id = ? AND workstream_id = ? AND client_message_id = ?`,
-            ).bind(this.auth.workspaceId, run.workstream_id, openingClientMessageId)
-              .first<{ id: string }>()
-          : Promise.resolve(null),
-      ]);
-      return {
-        runId: run.run_id,
-        workstreamId: asWorkstreamId(run.workstream_id),
-        harnessRunId: harness?.id ? asHarnessRunId(harness.id) : null,
-        workflowInstanceId: harness?.workflow_instance_id ?? run.run_workflow_instance_id,
-        runStatus: run.run_status,
-        harnessStatus: harness?.status ?? null,
-        triggerMessageId: message?.id ?? null,
-      };
-    }
-    const row = await this.env.DB.prepare(
-      `SELECT r.id AS run_id, r.workstream_id, r.status AS run_status,
-       r.workflow_instance_id AS run_workflow_instance_id,
-       h.id AS harness_run_id, h.status AS harness_status,
-       h.workflow_instance_id AS harness_workflow_instance_id,
-       m.id AS trigger_message_id
-       FROM automation_runs r
-       LEFT JOIN harness_runs h
-         ON h.workstream_id = r.workstream_id
-        AND h.parent_tool_call_id IS NULL
-        AND h.origin != 'block_dashboard_block'
-       LEFT JOIN messages m ON m.workstream_id = r.workstream_id AND m.client_message_id = ?4
-       WHERE r.workspace_id = ?1 AND r.automation_subscription_id = ?2 AND r.idempotency_key = ?3
-       ORDER BY h.created_at DESC LIMIT 1`,
-    ).bind(this.auth.workspaceId, subscriptionId, idempotencyKey, openingClientMessageId).first<{
+    const run = await this.env.DB.prepare(
+      `SELECT id AS run_id, workstream_id, status AS run_status,
+              workflow_instance_id AS run_workflow_instance_id
+         FROM automation_runs
+        WHERE workspace_id = ? AND automation_subscription_id = ? AND idempotency_key = ?
+        LIMIT 1`,
+    ).bind(this.auth.workspaceId, subscriptionId, idempotencyKey).first<{
       run_id: string;
       workstream_id: string;
       run_status: string;
       run_workflow_instance_id: string | null;
-      harness_run_id: string | null;
-      harness_status: string | null;
-      harness_workflow_instance_id: string | null;
-      trigger_message_id: string | null;
     }>();
-    if (!row) return null;
+    if (!run) return null;
+    const executionEnv = await workstreamExecutionEnvironment(
+      this.env,
+      this.auth.workspaceId,
+      run.workstream_id,
+    );
+    const [harness, message] = await Promise.all([
+      executionEnv.DB.prepare(
+        `SELECT id, status, workflow_instance_id FROM harness_runs
+          WHERE workspace_id = ? AND workstream_id = ?
+            AND parent_tool_call_id IS NULL AND origin != 'block_dashboard_block'
+          ORDER BY created_at DESC LIMIT 1`,
+      ).bind(this.auth.workspaceId, run.workstream_id).first<{
+        id: string;
+        status: string;
+        workflow_instance_id: string | null;
+      }>(),
+      openingClientMessageId
+        ? executionEnv.DB.prepare(
+            `SELECT id FROM messages
+              WHERE workspace_id = ? AND workstream_id = ? AND client_message_id = ?`,
+          ).bind(this.auth.workspaceId, run.workstream_id, openingClientMessageId)
+            .first<{ id: string }>()
+        : Promise.resolve(null),
+    ]);
     return {
-      runId: row.run_id,
-      workstreamId: asWorkstreamId(row.workstream_id),
-      harnessRunId: row.harness_run_id === null ? null : asHarnessRunId(row.harness_run_id),
-      workflowInstanceId: row.harness_workflow_instance_id ?? row.run_workflow_instance_id,
-      runStatus: row.run_status,
-      harnessStatus: row.harness_status,
-      triggerMessageId: row.trigger_message_id ?? null,
+      runId: run.run_id,
+      workstreamId: asWorkstreamId(run.workstream_id),
+      harnessRunId: harness?.id ? asHarnessRunId(harness.id) : null,
+      workflowInstanceId: harness?.workflow_instance_id ?? run.run_workflow_instance_id,
+      runStatus: run.run_status,
+      harnessStatus: harness?.status ?? null,
+      triggerMessageId: message?.id ?? null,
     };
   }
 
@@ -2251,17 +2135,4 @@ function isRecoverableEmailRouteTransition(error: unknown): boolean {
 }
 function toAutomationRun(row: Record<string, unknown>) {
   return { id: String(row.id), automationSubscriptionId: String(row.automation_subscription_id), workstreamId: String(row.workstream_id), triggerType: String(row.trigger_type), plannedFor: row.planned_for == null ? null : String(row.planned_for), startedAt: row.started_at == null ? null : String(row.started_at), completedAt: row.completed_at == null ? null : String(row.completed_at), status: String(row.status), resultSummary: row.result_summary == null ? null : String(row.result_summary), createdAt: String(row.created_at) };
-}
-function toWorkstream(row: Record<string, unknown>) {
-  const latestAttentionSequenceNumber = Number(row.latest_attention_sequence_number ?? 0);
-  return {
-    id: String(row.id), workspaceId: String(row.workspace_id), title: String(row.title), objective: String(row.objective ?? ""), emailAddress: row.email_address == null ? null : String(row.email_address), originType: String(row.origin_type), originLabel: row.origin_label == null ? null : String(row.origin_label), createdByUserId: row.created_by_user_id == null ? null : String(row.created_by_user_id), automationSubscriptionId: row.automation_subscription_id == null ? null : String(row.automation_subscription_id), automationRunId: row.automation_run_id == null ? null : String(row.automation_run_id), plannedFor: row.planned_for == null ? null : String(row.planned_for), harnessStatus: String(row.harness_status),
-    latestAttentionSequenceNumber,
-    readThroughSequenceNumber: latestAttentionSequenceNumber,
-    manualUnreadFromSequenceNumber: null,
-    manualUnreadGeneration: 0,
-    hasUnread: false,
-    firstUnreadSequenceNumber: null,
-    lastActivityAt: String(row.last_activity_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at), archivedAt: row.archived_at == null ? null : String(row.archived_at),
-  };
 }

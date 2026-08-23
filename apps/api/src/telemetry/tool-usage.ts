@@ -73,12 +73,12 @@ export async function emitAgentToolStartedTelemetry(
 
 interface ToolTerminalRow {
   id: string;
-  workspace_id: string;
-  workstream_id: string;
   harness_run_id: string;
+  /** The object's own spelling: `admitted`/`executing`, never `pending`/`started`. */
   status: string;
-  started_at: string | null;
-  completed_at: string | null;
+  /** Unix milliseconds, which is what the object stores; the view reformatted. */
+  started_at: number | null;
+  settled_at: number | null;
   error_json: string | null;
   execution_plan_json: string | null;
   origin: string;
@@ -135,22 +135,30 @@ export async function emitAgentToolTerminalTelemetry(
     replayed?: boolean;
   },
 ): Promise<void> {
+  // Pointed at the real `tool_effects` rather than the compatibility view, so
+  // this statement stops being a reason that view has to exist. It is not
+  // converted to the typed port: its primary table is `harness_runs` and its
+  // shape is run-and-workstream, not receipt — a `terminalTelemetryRow` on the
+  // receipt storage class would be the wrong owner. The harness-runs slice
+  // converts the whole statement; this only stops it blocking the receipt one.
+  //
+  // The workspace and workstream predicates are gone with the view that
+  // supplied those columns. They are not lost: every receipt in this object
+  // belongs to this work stream, and the routed statement reaches the object
+  // only after its identity has been checked.
   const row = await env.DB.prepare(
-    `SELECT ti.id, ti.workspace_id, ti.workstream_id, ti.harness_run_id,
-            ti.status, ti.started_at, ti.completed_at, ti.error_json,
+    `SELECT ti.effect_intent_id AS id, ti.run_id AS harness_run_id,
+            ti.status, ti.started_at, ti.settled_at, ti.error_json,
             ti.execution_plan_json, hr.origin, hr.parent_tool_call_id,
             hr.execution_principal_json,
             w.automation_run_id
-       FROM tool_invocations ti
-       JOIN harness_runs hr ON hr.id = ti.harness_run_id
+       FROM tool_effects ti
+       JOIN harness_runs hr ON hr.id = ti.run_id
        JOIN workstreams w
          ON w.id = hr.workstream_id AND w.workspace_id = hr.workspace_id
-      WHERE ti.id = ? AND ti.workspace_id = ? AND ti.workstream_id = ?
-        AND ti.harness_run_id = ?`,
+      WHERE ti.effect_intent_id = ? AND ti.run_id = ?`,
   ).bind(
     input.invocationId,
-    input.workspaceId,
-    input.workstreamId,
     input.harnessRunId,
   ).first<ToolTerminalRow>();
   if (!row || !['completed', 'failed', 'ambiguous'].includes(row.status)) return;
@@ -175,8 +183,9 @@ export async function emitAgentToolTerminalTelemetry(
   const userId = principal.type === 'user' && typeof principal.userId === 'string'
     ? asUserId(principal.userId)
     : undefined;
-  const started = row.started_at ? Date.parse(row.started_at) : Number.NaN;
-  const completed = row.completed_at ? Date.parse(row.completed_at) : Number.NaN;
+  // Already numbers. The view answered ISO-8601 and this re-parsed it.
+  const started = row.started_at ?? Number.NaN;
+  const completed = row.settled_at ?? Number.NaN;
   await emitProductUsageTelemetry(env, {
     workspaceId: input.workspaceId,
     ...(userId ? { userId } : {}),

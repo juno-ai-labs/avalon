@@ -7,6 +7,7 @@ import { encryptString, sha256 } from "../src/lib/crypto";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { SlackAgentService } from "../src/services/slack-agent-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import { testSubstreamAgentsBinding } from "./helpers/durable-authority";
 
 const credentialsKey = "slack-account-link-test-key";
 const workspaceId = "00000000-0000-7000-8000-000000000001";
@@ -279,7 +280,21 @@ describe("Slack account linking", () => {
     const database = await seededDatabase();
     await seedChallenge(database, "fresh-token", { expiresAt: "2099-01-01T00:00:00.000Z" });
     stubSlack();
-    const service = new SlackAgentService(environment(database));
+    // Linking republishes App Home, which resolves the installation through the
+    // Global route table and reads the member's task list from the workspace
+    // object. Neither is what this test is about, so the route is seeded and
+    // the object reports an empty list — but both have to be there, or the
+    // republish fails before the challenge is consumed.
+    database.prepare(
+      `INSERT INTO slack_installation_routes
+         (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
+       VALUES ('T123', 'global', ?, ?, 'active', '2026-01-01', '2026-01-01')`,
+    ).run(workspaceId, connectionId);
+    const service = new SlackAgentService(environment(database, {
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: { recentWorkstreamDirectory: async () => ({ items: [] }) },
+      }),
+    }));
 
     await expect(service.linkUser(auth(), "fresh-token")).resolves.toMatchObject({ linked: true, slackUserId: "U456" });
     await expect(service.linkUser(auth(), "fresh-token")).rejects.toMatchObject({ code: "slack_link_consumed" });
@@ -390,8 +405,12 @@ async function seededDatabase(): Promise<DatabaseSync> {
   return database;
 }
 
-function environment(database: DatabaseSync): Env {
+function environment(
+  database: DatabaseSync,
+  overrides: { WORKSPACE_DOS?: DurableObjectNamespace } = {},
+): Env {
   return createTestEnv({
+    ...overrides,
     DB: sqliteD1(database),
     ACTIVITY_QUEUE: { send: async () => {} },
     AVALON_REGION: "global",

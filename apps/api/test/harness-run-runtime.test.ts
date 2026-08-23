@@ -37,6 +37,7 @@ import {
   testWorkstreamObjectStore,
   workstreamObjectAll,
   workstreamObjectGet,
+  testToolReceiptPort,
   workstreamObjectRun,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
@@ -146,11 +147,18 @@ interface RuntimeFixture {
   database: DatabaseSync;
   /** Legacy-vocabulary access to the work stream's object database. */
   object: ObjectFacade;
+  receipts: ReturnType<typeof testToolReceiptPort>;
   /** The raw object database, for the rare normalized-table statement. */
   objectDatabase: DatabaseSync;
+  /** Statement counts sent through each object-local transaction. */
+  statementBatchSizes: number[];
 }
 
-function fixture(): RuntimeFixture {
+interface RuntimeFixtureOptions {
+  afterObjectStatement?: Parameters<typeof executeWorkstreamObjectSql>[2];
+}
+
+function fixture(options: RuntimeFixtureOptions = {}): RuntimeFixture {
   const database = legacyProductSqliteDatabase();
   database.exec(`
     INSERT INTO users
@@ -172,6 +180,7 @@ function fixture(): RuntimeFixture {
   openDatabases.push(objectDatabase);
   seedWorkstreamObjectRoot(objectDatabase, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
   const object = objectFacade(objectDatabase);
+  const statementBatchSizes: number[] = [];
   object.exec(`
     INSERT INTO workstreams
       (id, workspace_id, title, objective, origin_type, created_by_user_id,
@@ -205,11 +214,22 @@ function fixture(): RuntimeFixture {
       WORKSPACE_ID,
       WORKSTREAM_ID,
       "0",
-      async (statements) => executeWorkstreamObjectSql(objectDatabase, statements),
+      async (statements) => {
+        statementBatchSizes.push(statements.length);
+        return executeWorkstreamObjectSql(
+          objectDatabase,
+          statements,
+          options.afterObjectStatement,
+        );
+      },
     ),
     database,
     object,
     objectDatabase,
+    statementBatchSizes,
+    // The receipt operations no longer take a database handle: the lease fence
+    // moved inside the object, so they take the port instead.
+    receipts: testToolReceiptPort(objectDatabase),
   };
 }
 
@@ -246,6 +266,43 @@ async function claimScopedParent(sqlite: RuntimeFixture) {
   if (claim.state !== "claimed") throw new Error("expected claimed parent attempt");
   await persistImmutableRunScope(sqlite.binding, input(RUN_ONE), claim.lease, PARENT_SCOPE);
   return claim.lease;
+}
+
+function seedAutomationRun(sqlite: RuntimeFixture, suffix: string): string {
+  const templateId = `automation-template-${suffix}`;
+  const versionId = `automation-template-version-${suffix}`;
+  const subscriptionId = `automation-subscription-${suffix}`;
+  const runId = `automation-run-${suffix}`;
+  sqlite.database.prepare(
+    `INSERT INTO automation_templates
+      (id, workspace_id, owner_user_id, name, description, sharing_state,
+       latest_version_number, created_at, updated_at)
+     VALUES (?, ?, 'user-runtime', 'Stale run', 'Stale run', 'workspace', 1,
+             '2026-08-03', '2026-08-03')`,
+  ).run(templateId, WORKSPACE_ID);
+  sqlite.database.prepare(
+    `INSERT INTO automation_template_versions
+      (id, template_id, version_number, instructions, trigger_definitions_json,
+       required_capabilities_json, expected_outputs_json, default_behavior_json,
+       created_by_user_id, created_at)
+     VALUES (?, ?, 1, 'Run', '[]', '[]', '[]', '{}', 'user-runtime', '2026-08-03')`,
+  ).run(versionId, templateId);
+  sqlite.database.prepare(
+    `INSERT INTO automation_subscriptions
+      (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+       execution_principal_json, connector_bindings_json, overrides_json,
+       status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'workspace', NULL, '{"type":"workspace"}', '{}', '{}',
+             'active', '2026-08-03', '2026-08-03')`,
+  ).run(subscriptionId, WORKSPACE_ID, templateId, versionId);
+  sqlite.database.prepare(
+    `INSERT INTO automation_runs
+      (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
+       started_at, status, created_at)
+     VALUES (?, ?, ?, ?, 'scheduled', '2026-08-03T00:00:00.000Z', 'running',
+             '2026-08-03T00:00:00.000Z')`,
+  ).run(runId, WORKSPACE_ID, subscriptionId, WORKSTREAM_ID);
+  return runId;
 }
 
 function childScope(overrides: Partial<ImmutableRunScope> = {}): ImmutableRunScope {
@@ -308,11 +365,11 @@ describe("durable harness attempt runtime", () => {
     await heartbeatHarnessAttempt(sqlite.binding, RUN_ONE, first.lease);
     await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), first.lease, {
       status: "completed",
-    })).rejects.toThrow("final_message_required");
+    }, sqlite.receipts)).rejects.toThrow("final_message_required");
     await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), first.lease, {
       status: "completed",
       finalMessageId: "message-final",
-    })).rejects.toThrow("final_message_not_persisted");
+    }, sqlite.receipts)).rejects.toThrow("final_message_not_persisted");
     await persistHarnessFinalMessage(sqlite.binding, input(RUN_ONE), first.lease, {
       id: "message-final",
       sequenceNumber: 1,
@@ -330,11 +387,11 @@ describe("durable harness attempt runtime", () => {
     expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), first.lease, {
       status: "completed",
       finalMessageId: "message-final",
-    })).toBe("terminalized");
+    }, sqlite.receipts)).toBe("terminalized");
     expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), first.lease, {
       status: "completed",
       finalMessageId: "message-final",
-    })).toBe("already_terminal");
+    }, sqlite.receipts)).toBe("already_terminal");
     expect(sqlite.object.prepare(
       "SELECT COUNT(*) AS count FROM harness_run_lifecycle_events WHERE harness_run_id = ? AND event_key = 'terminal'",
     ).get(RUN_ONE)).toEqual({ count: 1 });
@@ -414,7 +471,7 @@ describe("durable harness attempt runtime", () => {
     `);
     expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), firstBlock.lease, {
       status: "completed",
-    })).toBe("terminalized");
+    }, sqlite.receipts)).toBe("terminalized");
     expect(sqlite.object.prepare(
       "SELECT harness_status FROM workstreams WHERE id = ?",
     ).get(WORKSTREAM_ID)).toEqual({ harness_status: "idle" });
@@ -462,6 +519,7 @@ describe("durable harness attempt runtime", () => {
       input(RUN_ONE),
       original.lease,
       { status: "stopped" },
+      sqlite.receipts,
     )).resolves.toBe("terminalized");
     expect(sqlite.object.prepare(
       "SELECT harness_status FROM workstreams WHERE id = ?",
@@ -518,6 +576,7 @@ describe("durable harness attempt runtime", () => {
       input(RUN_ONE),
       claim.lease,
       { status: "completed" },
+      sqlite.receipts,
     )).resolves.toBe("terminalized");
     expect(sqlite.object.prepare(
       "SELECT status, final_message_id FROM harness_runs WHERE id = ?",
@@ -588,7 +647,7 @@ describe("durable harness attempt runtime", () => {
     expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), recovery.lease, {
       status: "completed",
       finalMessageId: "message-recoverable",
-    })).toBe("terminalized");
+    }, sqlite.receipts)).toBe("terminalized");
   });
 
   it.each([
@@ -727,45 +786,13 @@ describe("durable harness attempt runtime", () => {
   it("CAS-reaps stale ownership and records append-only inference accounting", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
-    sqlite.database.exec(`
-      INSERT INTO automation_templates
-        (id, workspace_id, owner_user_id, name, description, sharing_state,
-         latest_version_number, created_at, updated_at)
-      VALUES ('automation-template-stale', '${WORKSPACE_ID}', 'user-runtime',
-              'Stale run', 'Stale run', 'workspace', 1, '2026-08-03', '2026-08-03');
-      INSERT INTO automation_template_versions
-        (id, template_id, version_number, instructions, trigger_definitions_json,
-         required_capabilities_json, expected_outputs_json, default_behavior_json,
-         created_by_user_id, created_at)
-      VALUES ('automation-template-version-stale', 'automation-template-stale', 1,
-              'Run', '[]', '[]', '[]', '{}', 'user-runtime', '2026-08-03');
-      INSERT INTO automation_subscriptions
-        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-         execution_principal_json, connector_bindings_json, overrides_json,
-         status, created_at, updated_at)
-      VALUES ('automation-subscription-stale', '${WORKSPACE_ID}', 'automation-template-stale',
-              'automation-template-version-stale', 'workspace', NULL,
-              '{"type":"workspace"}', '{}', '{}', 'active', '2026-08-03', '2026-08-03');
-    `);
-    sqlite.database.prepare(
-      `INSERT INTO automation_runs
-       (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
-        started_at, status, created_at)
-       VALUES (?, ?, ?, ?, 'scheduled', ?, 'running', ?)`,
-    ).run(
-      "automation-run-stale",
-      WORKSPACE_ID,
-      "automation-subscription-stale",
-      WORKSTREAM_ID,
-      "2026-08-03T00:00:00.000Z",
-      "2026-08-03T00:00:00.000Z",
-    );
+    const automationRunId = seedAutomationRun(sqlite, "stale");
     const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
       attemptId: "attempt-stale",
       owner: "owner-stale",
     });
     if (claim.state !== "claimed") throw new Error("expected claimed attempt");
-    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       invocationId: "invocation-stale-parent",
       harnessRunId: RUN_ONE,
       workspaceId: WORKSPACE_ID,
@@ -799,7 +826,7 @@ describe("durable harness attempt runtime", () => {
       RUN_ONE,
       "2026-08-03T00:00:00.000Z",
     );
-    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       invocationId: "invocation-stale-read",
       harnessRunId: RUN_ONE,
       workspaceId: WORKSPACE_ID,
@@ -811,7 +838,7 @@ describe("durable harness attempt runtime", () => {
       plan: { pluginId: "linear", canonicalToolName: "linear.issue.get", mode: "read" },
       mode: "read",
     });
-    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       invocationId: "invocation-stale-pending-write",
       harnessRunId: RUN_ONE,
       workspaceId: WORKSPACE_ID,
@@ -824,13 +851,13 @@ describe("durable harness attempt runtime", () => {
       mode: "write",
     });
     sqlite.object.prepare(
-      "UPDATE tool_invocations SET status = 'pending' WHERE id = ?",
+      "UPDATE tool_effects SET status = 'admitted' WHERE effect_intent_id = ?",
     ).run("invocation-stale-pending-write");
     expect(sqlite.object.prepare(
-      "SELECT status, completed_at, error_json FROM tool_invocations WHERE id = ?",
+      "SELECT status, settled_at, error_json FROM tool_effects WHERE effect_intent_id = ?",
     ).get("invocation-stale-parent")).toEqual({
-      status: "started",
-      completed_at: null,
+      status: "executing",
+      settled_at: null,
       error_json: null,
     });
     sqlite.object.prepare(
@@ -838,13 +865,14 @@ describe("durable harness attempt runtime", () => {
     ).run(RUN_ONE);
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => sqlite.receipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([RUN_ONE]);
     expect(sqlite.object.prepare("SELECT status, lease_owner FROM harness_runs WHERE id = ?").get(RUN_ONE))
       .toEqual({ status: "failed", lease_owner: null });
     expect(sqlite.object.prepare(
-      "SELECT status, completed_at, error_json FROM tool_invocations WHERE id = ?",
+      "SELECT status, settled_at, error_json FROM tool_effects WHERE effect_intent_id = ?",
     ).get("invocation-stale-parent")).toMatchObject({
       status: "ambiguous",
       error_json: JSON.stringify({
@@ -863,14 +891,14 @@ describe("durable harness attempt runtime", () => {
       visible_error_code: "ambiguous_external_write",
     });
     expect(sqlite.object.prepare(
-      "SELECT id, status FROM tool_invocations WHERE id IN (?, ?) ORDER BY id",
+      "SELECT effect_intent_id, status FROM tool_effects WHERE effect_intent_id IN (?, ?) ORDER BY effect_intent_id",
     ).all("invocation-stale-pending-write", "invocation-stale-read")).toEqual([
-      { id: "invocation-stale-pending-write", status: "failed" },
-      { id: "invocation-stale-read", status: "failed" },
+      { effect_intent_id: "invocation-stale-pending-write", status: "failed" },
+      { effect_intent_id: "invocation-stale-read", status: "failed" },
     ]);
     expect(sqlite.database.prepare(
-      "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = 'automation-run-stale'",
-    ).get()).toMatchObject({
+      "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = ?",
+    ).get(automationRunId)).toMatchObject({
       status: "failed",
       result_summary: "The harness executor lost its durable lease",
     });
@@ -925,6 +953,307 @@ describe("durable harness attempt runtime", () => {
     expect(() => sqlite.object.prepare(
       "UPDATE inference_attempts SET outcome = 'success' WHERE id = 'inference-1'",
     ).run()).toThrow(/cannot modify _runtime_inference_attempts/u);
+  });
+
+  it("repairs a terminal root whose first receipt-reaper call failed", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const automationRunId = seedAutomationRun(sqlite, "stale-receipt-retry");
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-stale-receipt-retry",
+      owner: "owner-stale-receipt-retry",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-stale-receipt-retry",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-receipt-retry",
+      toolName: "terminal_run_command",
+      inputHash: "stale-receipt-retry-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
+    sqlite.object.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_ONE);
+
+    let settlementCalls = 0;
+    const flakyReceipts = {
+      ...sqlite.receipts,
+      settleResidualReceipts: async (
+        repair: Parameters<typeof sqlite.receipts.settleResidualReceipts>[0],
+      ) => {
+        settlementCalls += 1;
+        if (settlementCalls === 1) throw new Error("transient_receipt_rpc_failure");
+        return sqlite.receipts.settleResidualReceipts(repair);
+      },
+    } satisfies typeof sqlite.receipts;
+    const repairFailures: unknown[] = [];
+
+    // BlockDashboard has receipt authority but deliberately no automation
+    // database. It must leave an ordinary automation root for Substream's
+    // fully-authorized sweep, both before and after terminalization.
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => flakyReceipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      automationDatabase: null,
+    })).toEqual([]);
+    expect(sqlite.object.prepare(
+      "SELECT status FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toEqual({ status: "running" });
+    expect(settlementCalls).toBe(0);
+
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => flakyReceipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      onReceiptRepairFailure: (failure) => repairFailures.push(failure),
+    })).toEqual([RUN_ONE]);
+    expect(repairFailures).toEqual([{
+      phase: "stale_root",
+      runId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      attemptId: claim.lease.attemptId,
+      reason: "transient_receipt_rpc_failure",
+    }]);
+    expect(sqlite.object.prepare(
+      "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toMatchObject({ status: "failed" });
+    expect(sqlite.object.prepare(
+      "SELECT status FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-stale-receipt-retry")).toEqual({ status: "executing" });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_ONE)).toEqual({ count: 0 });
+    expect(sqlite.database.prepare(
+      "SELECT status FROM automation_runs WHERE id = ?",
+    ).get(automationRunId)).toEqual({ status: "running" });
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => flakyReceipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      automationDatabase: null,
+    })).toEqual([]);
+    expect(settlementCalls).toBe(1);
+
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => flakyReceipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).toEqual([]);
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-stale-receipt-retry")).toEqual({
+      status: "ambiguous",
+      error_json: '{"code":"ambiguous_external_write","message":"The parent run lost its durable lease while an external write was in flight"}',
+    });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+    expect(sqlite.database.prepare(
+      "SELECT status, result_summary FROM automation_runs WHERE id = ?",
+    ).get(automationRunId)).toEqual({
+      status: "failed",
+      result_summary: "The harness executor lost its durable lease",
+    });
+    expect(settlementCalls).toBe(2);
+  });
+
+  it("lets a BlockDashboard-only sweep reap and reconcile a stale HyperSight root", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    sqlite.objectDatabase.prepare(
+      "UPDATE runs SET origin = 'block_dashboard_block' WHERE run_id = ?",
+    ).run(RUN_ONE);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-stale-hypersight",
+      owner: "owner-stale-hypersight",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed HyperSight attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-stale-hypersight",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-hypersight",
+      toolName: "terminal_run_command",
+      inputHash: "stale-hypersight-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
+    sqlite.object.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_ONE);
+
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => sqlite.receipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      automationDatabase: null,
+    })).toEqual([RUN_ONE]);
+    expect(sqlite.object.prepare(
+      "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toMatchObject({ status: "failed" });
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-stale-hypersight")).toEqual({
+      status: "ambiguous",
+      error_json: '{"code":"ambiguous_external_write","message":"The parent run lost its durable lease while an external write was in flight"}',
+    });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+  });
+
+  it("steps over an unsettleable terminal repair and still reaps stale work behind it", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const stopped = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-unsettleable-repair",
+      owner: "owner-unsettleable-repair",
+    });
+    if (stopped.state !== "claimed") throw new Error("expected claimed stopped attempt");
+    await persistToolExecutionPlan(sqlite.receipts, stopped.lease, {
+      invocationId: "invocation-unsettleable-repair",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-unsettleable-repair",
+      toolName: "linear_issue_get",
+      inputHash: "unsettleable-repair-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "linear.issue.get", mode: "read" },
+      mode: "read",
+    });
+    const failBeforeSettlement = {
+      ...sqlite.receipts,
+      settleResidualReceipts: async () => {
+        throw new Error("receipt_rpc_unavailable");
+      },
+    } satisfies typeof sqlite.receipts;
+    await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), stopped.lease, {
+      status: "stopped",
+    }, failBeforeSettlement)).rejects.toThrow("receipt_rpc_unavailable");
+
+    const stale = await claimHarnessAttempt(sqlite.binding, input(RUN_TWO), {
+      attemptId: "attempt-behind-unsettleable-repair",
+      owner: "owner-behind-unsettleable-repair",
+    });
+    if (stale.state !== "claimed") throw new Error("expected claimed stale attempt");
+    sqlite.object.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_TWO);
+
+    const repairFailures: unknown[] = [];
+    const refusingReceipts = {
+      ...sqlite.receipts,
+      settleResidualReceipts: async (
+        repair: Parameters<typeof sqlite.receipts.settleResidualReceipts>[0],
+      ) => repair.runId === RUN_ONE
+        ? { settled: 0, open: 1 }
+        : sqlite.receipts.settleResidualReceipts(repair),
+    } satisfies typeof sqlite.receipts;
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => refusingReceipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      limit: 1,
+      onReceiptRepairFailure: (failure) => repairFailures.push(failure),
+    })).toEqual([RUN_TWO]);
+    expect(repairFailures).toEqual([{
+      phase: "terminal_repair",
+      runId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      attemptId: stopped.lease.attemptId,
+      reason: "residual_receipts_not_settled",
+    }]);
+    expect(sqlite.object.prepare(
+      "SELECT status FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-unsettleable-repair")).toEqual({ status: "executing" });
+    expect(sqlite.object.prepare(
+      "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
+    ).get(RUN_TWO)).toMatchObject({ status: "failed" });
+    expect(sqlite.object.prepare(
+      `SELECT harness_run_id, event_key FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_TWO)).toEqual({
+      harness_run_id: RUN_TWO,
+      event_key: "residual_receipts_settled",
+    });
+  });
+
+  it("does not let historical receipt repair fail a later automation elicitation", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const automationRunId = seedAutomationRun(sqlite, "receipt-repair-needs-input");
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-repair-before-needs-input",
+      owner: "owner-repair-before-needs-input",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed stale attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-repair-before-needs-input",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-repair-before-needs-input",
+      toolName: "terminal_run_command",
+      inputHash: "repair-before-needs-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
+    sqlite.object.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_ONE);
+    let settlementCalls = 0;
+    const flakyReceipts = {
+      ...sqlite.receipts,
+      settleResidualReceipts: async (
+        repair: Parameters<typeof sqlite.receipts.settleResidualReceipts>[0],
+      ) => {
+        settlementCalls += 1;
+        if (settlementCalls === 1) throw new Error("transient_receipt_rpc_failure");
+        return sqlite.receipts.settleResidualReceipts(repair);
+      },
+    } satisfies typeof sqlite.receipts;
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => flakyReceipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).toEqual([RUN_ONE]);
+    sqlite.database.prepare(
+      `UPDATE automation_runs
+          SET status = 'needs_input', result_summary = 'Waiting for the member'
+        WHERE id = ?`,
+    ).run(automationRunId);
+
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => flakyReceipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).toEqual([]);
+    expect(sqlite.database.prepare(
+      "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = ?",
+    ).get(automationRunId)).toEqual({
+      status: "needs_input",
+      completed_at: null,
+      result_summary: "Waiting for the member",
+    });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_ONE)).toEqual({ count: 1 });
   });
 
   it("persists exactly one inference-ledger row for every Bind defect, retry, and fallback attempt", async () => {
@@ -1127,17 +1456,17 @@ describe("durable harness attempt runtime", () => {
       },
       mode: "read" as const,
     };
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, readPlan))
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, readPlan))
       .toMatchObject({ state: "created", invocationId: "invocation-read" });
-    await checkpointToolInvocation(sqlite.binding, claim.lease, {
+    await checkpointToolInvocation(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-read",
       checkpointIndex: 1,
       phase: "provider_request_started",
     });
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, readPlan))
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, readPlan))
       .toMatchObject({ state: "resume_read", invocationId: "invocation-read" });
-    expect(await completeToolInvocation(sqlite.binding, claim.lease, {
+    expect(await completeToolInvocation(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-read",
       checkpointIndex: 2,
@@ -1146,18 +1475,18 @@ describe("durable harness attempt runtime", () => {
     })).toBe("persisted");
     // A provider-facing alias may change between attempts. It is not part of
     // the immutable execution plan, so replay remains bound to canonical policy.
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...readPlan,
       toolName: "default_api.linear_issue_get",
     }))
       .toMatchObject({ state: "replay_completed", invocationId: "invocation-read" });
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...readPlan,
       toolName: "default_api.linear_issue_get",
       plan: { ...readPlan.plan, canonicalToolName: "linear.issue.update", mode: "write" },
     })).toMatchObject({ state: "ambiguous_external_write", invocationId: "invocation-read" });
 
-    const writePlan = await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    const writePlan = await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       invocationId: "invocation-write",
       harnessRunId: RUN_ONE,
       workspaceId: WORKSPACE_ID,
@@ -1171,15 +1500,15 @@ describe("durable harness attempt runtime", () => {
       mode: "write",
     });
     expect(writePlan.state).toBe("created");
-    expect(await markToolInvocationTimedOut(sqlite.binding, claim.lease, {
+    expect(await markToolInvocationTimedOut(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-write",
       mayHaveWritten: true,
     })).toBe("ambiguous");
     expect(sqlite.object.prepare(
-      "SELECT status, provider_idempotency_key FROM tool_invocations WHERE id = 'invocation-write'",
+      "SELECT status, provider_idempotency_key FROM tool_effects WHERE effect_intent_id = 'invocation-write'",
     ).get()).toEqual({ status: "ambiguous", provider_idempotency_key: "avalon:run:call-write" });
-    expect(await completeToolInvocation(sqlite.binding, claim.lease, {
+    expect(await completeToolInvocation(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-write",
       checkpointIndex: 2,
@@ -1188,10 +1517,10 @@ describe("durable harness attempt runtime", () => {
       allowAmbiguousReconciliation: true,
     })).toBe("persisted");
     expect(sqlite.object.prepare(
-      "SELECT status, output_ref FROM tool_invocations WHERE id = 'invocation-write'",
+      "SELECT status, output_ref FROM tool_effects WHERE effect_intent_id = 'invocation-write'",
     ).get()).toEqual({ status: "completed", output_ref: "payloads/runtime/reconciled-write.json" });
     expect(sqlite.object.prepare(
-      "SELECT phase FROM tool_invocation_checkpoints WHERE tool_invocation_id = 'invocation-read' ORDER BY checkpoint_index",
+      "SELECT phase FROM tool_effect_checkpoints WHERE effect_intent_id = 'invocation-read' ORDER BY checkpoint_index",
     ).all()).toEqual([
       { phase: "execution_planned" },
       { phase: "provider_request_started" },
@@ -1232,29 +1561,29 @@ describe("durable harness attempt runtime", () => {
       input: { query: "receipts" },
       mode: "read" as const,
     };
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...readCoordinates,
       invocationId: "invocation-compatible-read",
       plan: legacyReadPlan,
     })).toMatchObject({ state: "created" });
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...readCoordinates,
       plan: currentReadPlan,
       compatiblePriorPlans: [legacyReadPlan],
     })).toMatchObject({ state: "resume_read" });
-    expect(await completeToolInvocation(sqlite.binding, claim.lease, {
+    expect(await completeToolInvocation(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-compatible-read",
       checkpointIndex: 1,
       outputRef: "payloads/runtime/compatible-read.json",
       outputSummary: "Found issues",
     })).toBe("persisted");
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...readCoordinates,
       plan: currentReadPlan,
       compatiblePriorPlans: [legacyReadPlan],
     })).toMatchObject({ state: "replay_completed" });
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...readCoordinates,
       plan: currentReadPlan,
       compatiblePriorPlans: [{ ...legacyReadPlan, toolSurfaceHash: "wrong-legacy-surface" }],
@@ -1282,12 +1611,12 @@ describe("durable harness attempt runtime", () => {
       input: { issueId: "AVA-1", body: "Reviewed" },
       mode: "write" as const,
     };
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...writeCoordinates,
       invocationId: "invocation-compatible-write",
       plan: legacyWritePlan,
     })).toMatchObject({ state: "created" });
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...writeCoordinates,
       plan: currentWritePlan,
       compatiblePriorPlans: [legacyWritePlan],
@@ -1312,13 +1641,13 @@ describe("durable harness attempt runtime", () => {
       input: { id: "AVA-2" },
       mode: "read" as const,
     };
-    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...basePlan,
       invocationId: "invocation-plan-conflict",
       toolCallId: "call-plan-conflict",
       plan: { operation: "issue.get", version: 1 },
     });
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...basePlan,
       toolCallId: "call-plan-conflict",
       plan: { operation: "issue.get", version: 2 },
@@ -1334,23 +1663,23 @@ describe("durable harness attempt runtime", () => {
       plan: { operation: "issue.update" },
       mode: "write" as const,
     };
-    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...writePlan,
       invocationId: "invocation-write-retry",
       toolCallId: "call-write-retry",
     });
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...writePlan,
       toolCallId: "call-write-retry",
     })).toMatchObject({ state: "ambiguous_external_write" });
 
-    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...basePlan,
       invocationId: "invocation-definitive-failure",
       toolCallId: "call-definitive-failure",
       plan: { operation: "issue.get" },
     });
-    expect(await finalizeToolInvocationFailure(sqlite.binding, claim.lease, {
+    expect(await finalizeToolInvocationFailure(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-definitive-failure",
       status: "failed",
@@ -1365,21 +1694,21 @@ describe("durable harness attempt runtime", () => {
       },
     })).toBe("persisted");
 
-    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...basePlan,
       invocationId: "invocation-read-timeout",
       toolCallId: "call-read-timeout",
       plan: { operation: "issue.get" },
     });
-    expect(await markToolInvocationTimedOut(sqlite.binding, claim.lease, {
+    expect(await markToolInvocationTimedOut(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-read-timeout",
       mayHaveWritten: false,
     })).toBe("failed");
 
     const rows = sqlite.object.prepare(
-      `SELECT id, status, error_json FROM tool_invocations
-        WHERE id IN (?, ?, ?, ?) ORDER BY id`,
+      `SELECT effect_intent_id, status, error_json FROM tool_effects
+        WHERE effect_intent_id IN (?, ?, ?, ?) ORDER BY effect_intent_id`,
     ).all(
       "invocation-plan-conflict",
       "invocation-write-retry",
@@ -1388,41 +1717,41 @@ describe("durable harness attempt runtime", () => {
     );
     expect(rows).toEqual([
       {
-        id: "invocation-definitive-failure",
+        effect_intent_id: "invocation-definitive-failure",
         status: "failed",
         error_json: '{"code":"tool_failed","message":"The provider rejected the request","data":{"code":"revision_conflict","details":{"reason":"Read the item again by ID before retrying."}}}',
       },
       {
-        id: "invocation-plan-conflict",
+        effect_intent_id: "invocation-plan-conflict",
         status: "ambiguous",
         error_json: '{"code":"ambiguous_external_write","message":"A tool-call receipt was reused with a different immutable execution plan"}',
       },
       {
-        id: "invocation-read-timeout",
+        effect_intent_id: "invocation-read-timeout",
         status: "failed",
         error_json: '{"code":"tool_timeout","message":"The tool request timed out before producing a result"}',
       },
       {
-        id: "invocation-write-retry",
+        effect_intent_id: "invocation-write-retry",
         status: "ambiguous",
         error_json: '{"code":"ambiguous_external_write","message":"A prior write may have reached the provider"}',
       },
     ]);
     expect(sqlite.object.prepare(
-      `SELECT tool_invocation_id, phase FROM tool_invocation_checkpoints
-        WHERE tool_invocation_id IN (?, ?, ?, ?)
+      `SELECT effect_intent_id, phase FROM tool_effect_checkpoints
+        WHERE effect_intent_id IN (?, ?, ?, ?)
           AND checkpoint_index = 1
-        ORDER BY tool_invocation_id`,
+        ORDER BY effect_intent_id`,
     ).all(
       "invocation-plan-conflict",
       "invocation-write-retry",
       "invocation-definitive-failure",
       "invocation-read-timeout",
     )).toEqual([
-      { tool_invocation_id: "invocation-definitive-failure", phase: "execution_failed" },
-      { tool_invocation_id: "invocation-plan-conflict", phase: "ambiguous_external_write" },
-      { tool_invocation_id: "invocation-read-timeout", phase: "timed_out" },
-      { tool_invocation_id: "invocation-write-retry", phase: "ambiguous_external_write" },
+      { effect_intent_id: "invocation-definitive-failure", phase: "execution_failed" },
+      { effect_intent_id: "invocation-plan-conflict", phase: "ambiguous_external_write" },
+      { effect_intent_id: "invocation-read-timeout", phase: "timed_out" },
+      { effect_intent_id: "invocation-write-retry", phase: "ambiguous_external_write" },
     ]);
   });
 
@@ -1452,7 +1781,7 @@ describe("durable harness attempt runtime", () => {
       toolCallId: `${RUN_ONE}:turn:1:tool:0`,
       mode: "read" as const,
     };
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...coordinates,
       invocationId: "invocation-reused-coordinate",
       toolName: "load_plugin",
@@ -1460,7 +1789,7 @@ describe("durable harness attempt runtime", () => {
       input: { pluginId: "avalon_terminal" },
       plan: readPlan,
     })).toMatchObject({ state: "created" });
-    expect(await completeToolInvocation(sqlite.binding, claim.lease, {
+    expect(await completeToolInvocation(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-reused-coordinate",
       checkpointIndex: 1,
@@ -1470,7 +1799,7 @@ describe("durable harness attempt runtime", () => {
 
     // The identical call still replays. Rebinding may never cost a pass the
     // result it already paid for.
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...coordinates,
       toolName: "load_plugin",
       inputHash: "terminal-plugin",
@@ -1480,7 +1809,7 @@ describe("durable harness attempt runtime", () => {
 
     // A different read landing on the same coordinate executes instead of
     // halting the run: nothing external moved, so nothing is ambiguous.
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...coordinates,
       toolName: "search_code",
       inputHash: "github-search",
@@ -1502,13 +1831,13 @@ describe("durable harness attempt runtime", () => {
     // the original call's coordinates, and the next pass compared against the
     // wrong receipt.
     expect(sqlite.object.prepare(
-      `SELECT tool_name, status, input_hash, connection_id, output_ref, output_summary,
+      `SELECT tool_name, status, request_hash, connection_id, output_ref, output_summary,
               error_json, json_extract(execution_plan_json, '$.canonicalToolName') AS planned_tool
-         FROM tool_invocations WHERE id = 'invocation-reused-coordinate'`,
+         FROM tool_effects WHERE effect_intent_id = 'invocation-reused-coordinate'`,
     ).get()).toEqual({
       tool_name: "search_code",
-      status: "started",
-      input_hash: "github-search",
+      status: "executing",
+      request_hash: "github-search",
       // The rebinding call names no top-level connection (its connection
       // lives inside the plan); the rebind writes that null over the old
       // binding rather than leaving a stale one.
@@ -1519,8 +1848,8 @@ describe("durable harness attempt runtime", () => {
       planned_tool: "search_code",
     });
     expect(sqlite.object.prepare(
-      `SELECT phase FROM tool_invocation_checkpoints
-        WHERE tool_invocation_id = 'invocation-reused-coordinate' ORDER BY checkpoint_index`,
+      `SELECT phase FROM tool_effect_checkpoints
+        WHERE effect_intent_id = 'invocation-reused-coordinate' ORDER BY checkpoint_index`,
     ).all()).toEqual([
       { phase: "execution_planned" },
       { phase: "result_persisted" },
@@ -1530,7 +1859,7 @@ describe("durable harness attempt runtime", () => {
     // The rebound call completes through the same path production uses, which
     // passes a static `checkpointIndex: 1`. A replanned receipt is already past
     // that index, so the completion has to derive its own.
-    expect(await completeToolInvocation(sqlite.binding, claim.lease, {
+    expect(await completeToolInvocation(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-reused-coordinate",
       checkpointIndex: 1,
@@ -1538,16 +1867,16 @@ describe("durable harness attempt runtime", () => {
       outputSummary: "Found 3 matches",
     })).toBe("persisted");
     expect(sqlite.object.prepare(
-      `SELECT status, output_ref, checkpoint_index FROM tool_invocations
-        WHERE id = 'invocation-reused-coordinate'`,
+      `SELECT status, output_ref, checkpoint_index FROM tool_effects
+        WHERE effect_intent_id = 'invocation-reused-coordinate'`,
     ).get()).toEqual({
       status: "completed",
       output_ref: "payloads/runtime/searched-code.json",
       checkpoint_index: 3,
     });
     expect(sqlite.object.prepare(
-      `SELECT checkpoint_index, phase FROM tool_invocation_checkpoints
-        WHERE tool_invocation_id = 'invocation-reused-coordinate' ORDER BY checkpoint_index`,
+      `SELECT checkpoint_index, phase FROM tool_effect_checkpoints
+        WHERE effect_intent_id = 'invocation-reused-coordinate' ORDER BY checkpoint_index`,
     ).all()).toEqual([
       { checkpoint_index: 0, phase: "execution_planned" },
       { checkpoint_index: 1, phase: "result_persisted" },
@@ -1558,7 +1887,7 @@ describe("durable harness attempt runtime", () => {
     // A write landing on a settled read coordinate still fails closed, and a
     // read landing on a settled write coordinate reports the ambiguity rather
     // than raising a lease failure that never happened.
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...coordinates,
       mode: "write",
       toolName: "publish_branch_and_pr",
@@ -1568,7 +1897,7 @@ describe("durable harness attempt runtime", () => {
     })).toMatchObject({ state: "ambiguous_external_write" });
 
     const settledWrite = `${RUN_ONE}:turn:2:tool:0`;
-    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...coordinates,
       toolCallId: settledWrite,
       invocationId: "invocation-settled-write",
@@ -1578,14 +1907,14 @@ describe("durable harness attempt runtime", () => {
       input: { branch: "add-model" },
       plan: { ...readPlan, canonicalToolName: "publish_branch_and_pr", mode: "write" },
     });
-    await completeToolInvocation(sqlite.binding, claim.lease, {
+    await completeToolInvocation(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-settled-write",
       checkpointIndex: 1,
       outputRef: "payloads/runtime/published.json",
       outputSummary: "Opened pull request",
     });
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...coordinates,
       toolCallId: settledWrite,
       toolName: "load_plugin",
@@ -1594,7 +1923,7 @@ describe("durable harness attempt runtime", () => {
       plan: readPlan,
     })).toMatchObject({ state: "ambiguous_external_write", invocationId: "invocation-settled-write" });
     expect(sqlite.object.prepare(
-      "SELECT status FROM tool_invocations WHERE id = 'invocation-settled-write'",
+      "SELECT status FROM tool_effects WHERE effect_intent_id = 'invocation-settled-write'",
     ).get()).toEqual({ status: "completed" });
   });
 
@@ -1624,14 +1953,14 @@ describe("durable harness attempt runtime", () => {
       mode: "read" as const,
       plan: readPlan,
     };
-    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...delegation,
       invocationId: "invocation-delegation",
       toolName: "run_subagent",
       inputHash: "first-objective",
       input: { objective: "Find the model list" },
     });
-    await completeToolInvocation(sqlite.binding, claim.lease, {
+    await completeToolInvocation(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-delegation",
       checkpointIndex: 1,
@@ -1658,7 +1987,7 @@ describe("durable harness attempt runtime", () => {
       delegation.toolCallId,
       RUN_ONE,
     );
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...delegation,
       toolName: "run_subagent",
       inputHash: "second-objective",
@@ -1669,7 +1998,7 @@ describe("durable harness attempt runtime", () => {
     // invocation id, and a lifecycle trigger deletes the invocation when that
     // resource changes — which after a rebind would delete a different read.
     const attachmentPlan = { ...readPlan, canonicalToolName: "view_resource", capability: "workstream.resources.view" };
-    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
@@ -1681,7 +2010,7 @@ describe("durable harness attempt runtime", () => {
       plan: attachmentPlan,
       mode: "read",
     });
-    await completeToolInvocation(sqlite.binding, claim.lease, {
+    await completeToolInvocation(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-attachment",
       checkpointIndex: 1,
@@ -1700,7 +2029,7 @@ describe("durable harness attempt runtime", () => {
        (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
        VALUES (?, ?, ?, 'sha-one', ?)`,
     ).run(WORKSPACE_ID, "resource-one", "invocation-attachment", Date.now());
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
@@ -1715,7 +2044,7 @@ describe("durable harness attempt runtime", () => {
     // A `failed` receipt is still mutable for an ambiguous finalize, and still
     // flips: a write that failed may have reached the provider before it did,
     // and that is the row the member sees the "could not confirm" wording on.
-    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...delegation,
       toolCallId: `${RUN_ONE}:turn:1:tool:2`,
       invocationId: "invocation-failed-read",
@@ -1724,14 +2053,14 @@ describe("durable harness attempt runtime", () => {
       input: { query: "one" },
       plan: { ...readPlan, canonicalToolName: "search_code", capability: "code.read" },
     });
-    await finalizeToolInvocationFailure(sqlite.binding, claim.lease, {
+    await finalizeToolInvocationFailure(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-failed-read",
       status: "failed",
       phase: "execution_failed",
       error: { code: "tool_failed", message: "The provider rejected the request" },
     });
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    expect(await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       ...delegation,
       toolCallId: `${RUN_ONE}:turn:1:tool:2`,
       toolName: "search_code",
@@ -1740,7 +2069,7 @@ describe("durable harness attempt runtime", () => {
       plan: { ...readPlan, canonicalToolName: "search_code", capability: "code.read" },
     })).toMatchObject({ state: "ambiguous_external_write", invocationId: "invocation-failed-read" });
     expect(sqlite.object.prepare(
-      "SELECT status, error_json FROM tool_invocations WHERE id = 'invocation-failed-read'",
+      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = 'invocation-failed-read'",
     ).get()).toEqual({
       status: "ambiguous",
       error_json: '{"code":"ambiguous_external_write","message":"A tool-call receipt was reused with a different immutable execution plan"}',
@@ -1748,12 +2077,122 @@ describe("durable harness attempt runtime", () => {
 
     // Both refusals leave the settled receipts exactly as they were.
     expect(sqlite.object.prepare(
-      `SELECT id, status, input_hash FROM tool_invocations
-        WHERE id IN ('invocation-delegation', 'invocation-attachment') ORDER BY id`,
+      `SELECT effect_intent_id, status, request_hash FROM tool_effects
+        WHERE effect_intent_id IN ('invocation-delegation', 'invocation-attachment') ORDER BY effect_intent_id`,
     ).all()).toEqual([
-      { id: "invocation-attachment", status: "completed", input_hash: "first-resource" },
-      { id: "invocation-delegation", status: "completed", input_hash: "first-objective" },
+      { effect_intent_id: "invocation-attachment", status: "completed", request_hash: "first-resource" },
+      { effect_intent_id: "invocation-delegation", status: "completed", request_hash: "first-objective" },
     ]);
+  });
+
+  it("refuses a read rebind against dependent state that lands inside its own transaction", async () => {
+    for (const dependentKind of ["attachment", "child"] as const) {
+      const sqlite = fixture();
+      openDatabases.push(sqlite.database);
+      const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+        attemptId: `attempt-replan-${dependentKind}-race`,
+        owner: `owner-replan-${dependentKind}-race`,
+      });
+      if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+
+      const toolCallId = `${RUN_ONE}:turn:1:tool:0`;
+      const readPlan = {
+        pluginId: "avalon:workstream",
+        canonicalToolName: "view_resource",
+        capability: "workstream.resources.view",
+        connectionId: null,
+        mode: "read" as const,
+        idempotency: "safe",
+        toolSurfaceHash: "workstream-surface-v1",
+      };
+      await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+        invocationId: "invocation-replan-race",
+        harnessRunId: RUN_ONE,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        toolCallId,
+        toolName: "view_resource",
+        inputHash: "resource-before-race",
+        input: { resourceId: "resource-before-race" },
+        plan: readPlan,
+        mode: "read",
+      });
+      await completeToolInvocation(sqlite.receipts, claim.lease, {
+        harnessRunId: RUN_ONE,
+        invocationId: "invocation-replan-race",
+        checkpointIndex: 1,
+        outputRef: "payloads/runtime/resource-before-race.json",
+        outputSummary: "Viewed the original resource",
+      });
+
+      // The routed version read the dependents, then rebound in a second batch,
+      // so a dependency landing between the two would be missed and the CAS had
+      // to repeat the predicate. Here both happen in one `transactionSync`, and
+      // the latest a competing write can arrive is the instant the transaction
+      // opens — which is where this one is staged. What is being proved is that
+      // the decision is made against the rows as they are at write time, not
+      // against anything read before the call.
+      let staged = false;
+      const racedReceipts = testToolReceiptPort(sqlite.objectDatabase, () => {
+        if (staged) return;
+        staged = true;
+        if (dependentKind === "attachment") {
+          sqlite.object.prepare(
+            `INSERT INTO attachment_tool_receipts
+             (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
+             VALUES (?, ?, ?, ?, ?)`,
+          ).run(
+            WORKSPACE_ID,
+            "resource-raced",
+            "invocation-replan-race",
+            "sha-raced",
+            Date.now(),
+          );
+        } else {
+          sqlite.object.prepare(
+            `INSERT INTO harness_runs
+             (id, workspace_id, workstream_id, origin, execution_principal_json, status,
+              created_at, parent_harness_run_id, parent_tool_call_id,
+              chain_root_harness_run_id, chain_depth, delegated_task_hash)
+             VALUES (?, ?, ?, 'inline_child', ?, 'completed', ?, ?, ?, ?, 1, ?)`,
+          ).run(
+            "00000000-0000-4000-8000-0000000000c2",
+            WORKSPACE_ID,
+            WORKSTREAM_ID,
+            JSON.stringify({ type: "user", userId: "00000000-0000-4000-8000-000000000009" }),
+            new Date().toISOString(),
+            RUN_ONE,
+            toolCallId,
+            RUN_ONE,
+            "raced-objective",
+          );
+        }
+      });
+
+      expect(await persistToolExecutionPlan(racedReceipts, claim.lease, {
+        harnessRunId: RUN_ONE,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        toolCallId,
+        toolName: "view_resource",
+        inputHash: "resource-after-race",
+        input: { resourceId: "resource-after-race" },
+        plan: readPlan,
+        mode: "read",
+      })).toMatchObject({
+        state: "ambiguous_external_write",
+        invocationId: "invocation-replan-race",
+      });
+      expect(staged).toBe(true);
+      expect(sqlite.object.prepare(
+        `SELECT status, request_hash, output_ref FROM tool_effects
+          WHERE effect_intent_id = 'invocation-replan-race'`,
+      ).get()).toEqual({
+        status: "completed",
+        request_hash: "resource-before-race",
+        output_ref: "payloads/runtime/resource-before-race.json",
+      });
+    }
   });
 
   it("does not publish an R2 result reference when its lease is lost after upload", async () => {
@@ -1764,7 +2203,7 @@ describe("durable harness attempt runtime", () => {
       owner: "owner-upload-race",
     });
     if (claim.state !== "claimed") throw new Error("expected claimed attempt");
-    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
       invocationId: "invocation-upload-race",
       harnessRunId: RUN_ONE,
       workspaceId: WORKSPACE_ID,
@@ -1779,27 +2218,9 @@ describe("durable harness attempt runtime", () => {
 
     let uploaded = false;
     let uploadedKey = "";
-    let intercepted = false;
-    const racingBinding = createTestD1Database({
-      prepare: sqlite.binding.prepare.bind(sqlite.binding),
-      batch: async (statements: D1PreparedStatement[]) => {
-        if (!intercepted) {
-          intercepted = true;
-          expect(uploaded).toBe(true);
-          sqlite.object.prepare(
-            `UPDATE harness_runs
-                SET attempt_id = 'attempt-upload-successor',
-                    lease_owner = 'owner-upload-successor',
-                    lease_expires_at = '2099-01-01T00:00:00.000Z'
-              WHERE id = ?`,
-          ).run(RUN_ONE);
-        }
-        return sqlite.binding.batch(statements);
-      },
-    });
     const env = createTestEnv({
       AVALON_REGION: "global",
-      DB: racingBinding,
+      DB: sqlite.binding,
       PAYLOADS: createCloudflareTestBinding<R2Bucket>({
         put: async (key: string) => {
           uploaded = true;
@@ -1809,13 +2230,33 @@ describe("durable harness attempt runtime", () => {
       }),
     });
 
+    // Stolen through `ownershipGuard`, which runs on both sides of the upload,
+    // rather than by intercepting a D1 batch. The routed version uploaded and
+    // then settled in a separate round trip, so this case broke the lease
+    // *between* the two by mutating on the way into `batch`; settlement is now
+    // one transaction on the object and has no such window. The guard is the
+    // real seam for the same instant, and the claim is unchanged: the upload is
+    // allowed to have happened, and the receipt must not point at it.
+    let guardCalls = 0;
+    const stealLeaseAfterUpload = async () => {
+      guardCalls += 1;
+      if (guardCalls !== 2) return;
+      sqlite.object.prepare(
+        `UPDATE harness_runs
+            SET attempt_id = 'attempt-upload-successor',
+                lease_owner = 'owner-upload-successor',
+                lease_expires_at = '2099-01-01T00:00:00.000Z'
+          WHERE id = ?`,
+      ).run(RUN_ONE);
+    };
+
     await expect(__integrationTesting.persistSuccessfulToolResult(env, input(RUN_ONE), claim.lease, {
       invocationId: "invocation-upload-race",
       toolCallId: "call/upload race",
       output: { issue: { id: "AVA-3", title: "Immutable result" } },
       outputSummary: "Issue AVA-3",
-    })).rejects.toMatchObject({ code: "run_ownership_lost" });
-    expect(intercepted).toBe(true);
+    }, stealLeaseAfterUpload, sqlite.receipts)).rejects.toMatchObject({ code: "run_ownership_lost" });
+    expect(uploaded).toBe(true);
     expect(uploadedKey).toContain(
       `/tool-results/${claim.lease.attemptId}/call%2Fupload%20race/`,
     );
@@ -1829,15 +2270,15 @@ describe("durable harness attempt runtime", () => {
     )).not.toBe(uploadedKey);
     expect(sqlite.object.prepare(
       `SELECT status, output_ref, output_summary, checkpoint_index
-         FROM tool_invocations WHERE id = ?`,
+         FROM tool_effects WHERE effect_intent_id = ?`,
     ).get("invocation-upload-race")).toEqual({
-      status: "started",
+      status: "executing",
       output_ref: null,
       output_summary: null,
       checkpoint_index: 0,
     });
     expect(sqlite.object.prepare(
-      "SELECT COUNT(*) AS count FROM tool_invocation_checkpoints WHERE tool_invocation_id = ?",
+      "SELECT COUNT(*) AS count FROM tool_effect_checkpoints WHERE effect_intent_id = ?",
     ).get("invocation-upload-race")).toEqual({ count: 1 });
 
     uploaded = false;
@@ -1850,7 +2291,136 @@ describe("durable harness attempt runtime", () => {
     expect(uploaded).toBe(false);
   });
 
-  it("rechecks every failure and ambiguity fence at the atomic D1 mutation", async () => {
+  it("persists a returned tool result after a member stop while the attempt still owns settlement", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-completion-after-cancel",
+      owner: "owner-completion-after-cancel",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-completion-after-cancel",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-completion-after-cancel",
+      toolName: "linear_issue_get",
+      inputHash: "completion-after-cancel-input",
+      input: { issueId: "AVA-4" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    sqlite.object.prepare(
+      `UPDATE harness_runs
+          SET cancellation_requested_at = '2026-08-03T00:00:00.000Z',
+              cancellation_reason = 'member_stop'
+        WHERE id = ?`,
+    ).run(RUN_ONE);
+    let uploaded = false;
+    const env = createTestEnv({
+      AVALON_REGION: "global",
+      DB: sqlite.binding,
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({
+        put: async () => {
+          uploaded = true;
+          return {} as R2Object;
+        },
+      }),
+    });
+
+    await expect(__integrationTesting.settleRootHarnessToolCompletion(env, input(RUN_ONE), claim.lease, {
+      invocationId: "invocation-completion-after-cancel",
+      toolCallId: "call-completion-after-cancel",
+      canonicalToolName: "get_issue",
+      attachmentOutput: { issue: { id: "AVA-4" } },
+      durableOutput: { issue: { id: "AVA-4" } },
+      outputSummary: "Issue AVA-4",
+    }, sqlite.receipts)).resolves.toContain("/tool-results/");
+    expect(uploaded).toBe(true);
+    expect(sqlite.object.prepare(
+      "SELECT status, output_summary FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-completion-after-cancel")).toEqual({
+      status: "completed",
+      output_summary: "Issue AVA-4",
+    });
+  });
+
+  it("checks the root completion lease before registering an attachment dependency", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-stale-attachment",
+      owner: "owner-stale-attachment",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-stale-attachment",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-attachment",
+      toolName: "workstream_read_resource",
+      inputHash: "stale-attachment-input",
+      input: { resourceId: "00000000-0000-4000-8000-000000000099" },
+      plan: { operation: "resource.read", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    sqlite.object.prepare(
+      `UPDATE harness_runs
+          SET attempt_id = 'attempt-stale-attachment-successor',
+              lease_owner = 'owner-stale-attachment-successor',
+              lease_expires_at = '2099-01-01T00:00:00.000Z'
+        WHERE id = ?`,
+    ).run(RUN_ONE);
+    let uploaded = false;
+    const env = createTestEnv({
+      AVALON_REGION: "global",
+      DB: sqlite.binding,
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({
+        put: async () => {
+          uploaded = true;
+          return {} as R2Object;
+        },
+      }),
+    });
+    const attachmentOutput = {
+      resourceId: "00000000-0000-4000-8000-000000000099",
+      title: "Stale",
+      sourceMimeType: "text/plain",
+      modelMimeType: "text/plain",
+      version: { sha256: "a".repeat(64), extractorVersion: "attachment-text-v2" },
+      range: { start: 0, end: 5 },
+      totalCharacters: 5,
+      charactersBefore: 0,
+      charactersReturned: 5,
+      charactersAfter: 0,
+      text: "stale",
+      previousCursor: null,
+      nextCursor: null,
+    };
+
+    await expect(__integrationTesting.settleRootHarnessToolCompletion(
+      env,
+      input(RUN_ONE),
+      claim.lease,
+      {
+        invocationId: "invocation-stale-attachment",
+        toolCallId: "call-stale-attachment",
+        canonicalToolName: "read_resource",
+        attachmentOutput,
+        durableOutput: attachmentOutput,
+        outputSummary: "Read stale resource",
+      },
+      sqlite.receipts,
+    )).rejects.toMatchObject({ code: "run_ownership_lost" });
+    expect(uploaded).toBe(false);
+    expect(sqlite.object.prepare(
+      "SELECT COUNT(*) AS count FROM attachment_tool_receipts WHERE tool_invocation_id = ?",
+    ).get("invocation-stale-attachment")).toEqual({ count: 0 });
+  });
+
+  it("refuses every failure and ambiguity fence, leaving the receipt untouched", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
     const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
@@ -1908,7 +2478,7 @@ describe("durable harness attempt runtime", () => {
         ).run(claim.lease.attemptId, claim.lease.owner, RUN_ONE);
         const suffix = `${status}-${fence.name}`;
         const invocationId = `invocation-${suffix}`;
-        await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+        await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
           invocationId,
           harnessRunId: RUN_ONE,
           workspaceId: WORKSPACE_ID,
@@ -1921,18 +2491,14 @@ describe("durable harness attempt runtime", () => {
           mode: status === "ambiguous" ? "write" : "read",
         });
 
-        let intercepted = false;
-        const racingBinding = createTestD1Database({
-          prepare: sqlite.binding.prepare.bind(sqlite.binding),
-          batch: async (statements: D1PreparedStatement[]) => {
-            if (!intercepted) {
-              intercepted = true;
-              fence.mutate();
-            }
-            return sqlite.binding.batch(statements);
-          },
-        });
-        await expect(finalizeToolInvocationFailure(racingBinding, claim.lease, {
+        // Mutated before the call rather than intercepted inside it. The
+        // routed version fenced, then wrote in a separate round trip, so this
+        // case had to break the lease *between* the two to be meaningful —
+        // hence a D1 binding that mutated on the way into `batch`. The
+        // operation is now one transaction on the object, so no such window
+        // exists to aim at; the fence is read and acted on together.
+        fence.mutate();
+        await expect(finalizeToolInvocationFailure(sqlite.receipts, claim.lease, {
           harnessRunId: RUN_ONE,
           invocationId,
           status,
@@ -1942,22 +2508,231 @@ describe("durable harness attempt runtime", () => {
             message: `Fenced ${suffix}`,
           },
         })).rejects.toMatchObject({ code: fence.code });
-        expect(intercepted).toBe(true);
         expect(sqlite.object.prepare(
-          "SELECT status, error_json, checkpoint_index FROM tool_invocations WHERE id = ?",
+          "SELECT status, error_json, checkpoint_index FROM tool_effects WHERE effect_intent_id = ?",
         ).get(invocationId)).toEqual({
-          status: "started",
+          status: "executing",
           error_json: null,
           checkpoint_index: 0,
         });
         expect(sqlite.object.prepare(
-          "SELECT COUNT(*) AS count FROM tool_invocation_checkpoints WHERE tool_invocation_id = ?",
+          "SELECT COUNT(*) AS count FROM tool_effect_checkpoints WHERE effect_intent_id = ?",
         ).get(invocationId)).toEqual({ count: 1 });
       }
     }
   });
 
-  it("observes cancellation and still permits the owning attempt to terminalize as stopped", async () => {
+  it("does not advance a checkpoint when the lease expires before its transaction opens", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-checkpoint-pre-admission-expiry",
+      owner: "owner-checkpoint-pre-admission-expiry",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-checkpoint-pre-admission-expiry",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-checkpoint-pre-admission-expiry",
+      toolName: "linear_issue_get",
+      inputHash: "checkpoint-pre-admission-expiry-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    // The routed version staged this between the checkpoint insert and the
+    // receipt update, because those were two serialized statements and the
+    // lease could lapse between them. There is no such gap now, so the lease is
+    // expired at the last instant it can still be: as the transaction opens,
+    // before the fence is read.
+    let intercepted = false;
+    const racingReceipts = testToolReceiptPort(sqlite.objectDatabase, () => {
+      if (intercepted) return;
+      intercepted = true;
+      sqlite.object.prepare(
+        "UPDATE runs SET lease_expires_at = 0 WHERE run_id = ?",
+      ).run(RUN_ONE);
+    });
+
+    await expect(checkpointToolInvocation(racingReceipts, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-checkpoint-pre-admission-expiry",
+      checkpointIndex: 1,
+      phase: "provider_started",
+    })).rejects.toMatchObject({ code: "run_ownership_lost" });
+    expect(intercepted).toBe(true);
+    expect(sqlite.object.prepare(
+      "SELECT status, checkpoint_index FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-checkpoint-pre-admission-expiry")).toEqual({
+      status: "executing",
+      checkpoint_index: 0,
+    });
+    expect(sqlite.object.prepare(
+      "SELECT COUNT(*) AS count FROM tool_effect_checkpoints WHERE effect_intent_id = ?",
+    ).get("invocation-checkpoint-pre-admission-expiry")).toEqual({ count: 1 });
+  });
+
+  it("advances a checkpoint once its insert wins before lease expiry", async () => {
+    // The lease is expired the instant the operation's checkpoint has been
+    // admitted — after its fence was read, inside its own transaction. The
+    // routed version needed a second statement to survive this because it
+    // sampled expiry twice; here the fence is read once and everything after it
+    // is in the same transaction, so the settlement finishes by construction.
+    let crossOnCheckpoint = false;
+    let crossedLeaseBoundary = false;
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const receipts = testToolReceiptPort(sqlite.objectDatabase, undefined, (statement) => {
+      if (
+        !crossOnCheckpoint
+        || crossedLeaseBoundary
+        || !statement.includes("INSERT INTO tool_effect_checkpoints")
+      ) return;
+      crossedLeaseBoundary = true;
+      sqlite.objectDatabase.prepare("UPDATE runs SET lease_expires_at = ? WHERE run_id = ?")
+        .run(Date.parse("2020-01-01T00:00:00.000Z"), RUN_ONE);
+    });
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-checkpoint-lease-boundary",
+      owner: "owner-checkpoint-lease-boundary",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-checkpoint-lease-boundary",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-checkpoint-lease-boundary",
+      toolName: "linear_issue_get",
+      inputHash: "checkpoint-lease-boundary-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+
+    crossOnCheckpoint = true;
+    await expect(checkpointToolInvocation(receipts, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-checkpoint-lease-boundary",
+      checkpointIndex: 1,
+      phase: "provider_started",
+    })).resolves.toBeUndefined();
+    expect(crossedLeaseBoundary).toBe(true);
+    expect(sqlite.object.prepare(
+      "SELECT status, checkpoint_index FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-checkpoint-lease-boundary")).toEqual({
+      status: "executing",
+      checkpoint_index: 1,
+    });
+  });
+
+  it("completes a receipt once its result checkpoint wins before lease expiry", async () => {
+    // Same instrument, same reason, as the checkpoint case above.
+    let crossOnSettlement = false;
+    let crossedLeaseBoundary = false;
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const receipts = testToolReceiptPort(sqlite.objectDatabase, undefined, (statement) => {
+      if (
+        !crossOnSettlement
+        || crossedLeaseBoundary
+        || !statement.includes("INSERT INTO tool_effect_checkpoints")
+      ) return;
+      crossedLeaseBoundary = true;
+      sqlite.objectDatabase.prepare("UPDATE runs SET lease_expires_at = ? WHERE run_id = ?")
+        .run(Date.parse("2020-01-01T00:00:00.000Z"), RUN_ONE);
+    });
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-completion-lease-boundary",
+      owner: "owner-completion-lease-boundary",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-completion-lease-boundary",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-completion-lease-boundary",
+      toolName: "linear_issue_get",
+      inputHash: "completion-lease-boundary-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+
+    crossOnSettlement = true;
+    await expect(completeToolInvocation(receipts, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-completion-lease-boundary",
+      checkpointIndex: 1,
+      outputRef: "payloads/runtime/completion-lease-boundary.json",
+      outputSummary: "Issue AVA-1",
+    })).resolves.toBe("persisted");
+    expect(crossedLeaseBoundary).toBe(true);
+    expect(sqlite.object.prepare(
+      "SELECT status, output_ref, checkpoint_index FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-completion-lease-boundary")).toEqual({
+      status: "completed",
+      output_ref: "payloads/runtime/completion-lease-boundary.json",
+      checkpoint_index: 1,
+    });
+  });
+
+  it("finalizes a failed receipt once its checkpoint wins before lease expiry", async () => {
+    // Same instrument, same reason, as the checkpoint case above.
+    let crossOnSettlement = false;
+    let crossedLeaseBoundary = false;
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const receipts = testToolReceiptPort(sqlite.objectDatabase, undefined, (statement) => {
+      if (
+        !crossOnSettlement
+        || crossedLeaseBoundary
+        || !statement.includes("INSERT INTO tool_effect_checkpoints")
+      ) return;
+      crossedLeaseBoundary = true;
+      sqlite.objectDatabase.prepare("UPDATE runs SET lease_expires_at = ? WHERE run_id = ?")
+        .run(Date.parse("2020-01-01T00:00:00.000Z"), RUN_ONE);
+    });
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-failure-lease-boundary",
+      owner: "owner-failure-lease-boundary",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-failure-lease-boundary",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-failure-lease-boundary",
+      toolName: "linear_issue_get",
+      inputHash: "failure-lease-boundary-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+
+    crossOnSettlement = true;
+    await expect(finalizeToolInvocationFailure(receipts, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-failure-lease-boundary",
+      status: "failed",
+      phase: "execution_failed",
+      error: { code: "provider_failed", message: "Provider failed" },
+    })).resolves.toBe("persisted");
+    expect(crossedLeaseBoundary).toBe(true);
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json, checkpoint_index FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-failure-lease-boundary")).toEqual({
+      status: "failed",
+      error_json: '{"code":"provider_failed","message":"Provider failed"}',
+      checkpoint_index: 1,
+    });
+  });
+
+  it("settles completed and failed tools before the owning attempt terminalizes as stopped", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
     const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
@@ -1965,6 +2740,47 @@ describe("durable harness attempt runtime", () => {
       owner: "owner-cancelled",
     });
     if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-cancelled-write",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-cancelled-write",
+      toolName: "terminal_run_command",
+      inputHash: "cancelled-write-input",
+      input: { command: "sleep 60" },
+      plan: {
+        pluginId: "avalon:terminal",
+        canonicalToolName: "run_command",
+        capability: "terminal.command.run",
+        connectionId: null,
+        mode: "write",
+        idempotency: "record_before_execute",
+        toolSurfaceHash: "terminal-surface-v1",
+      },
+      mode: "write",
+    });
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-cancelled-read",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-cancelled-read",
+      toolName: "linear_issue_get",
+      inputHash: "cancelled-read-input",
+      input: { issueId: "AVA-1" },
+      plan: {
+        pluginId: "connection:linear",
+        canonicalToolName: "get_issue",
+        capability: "linear.issue.read",
+        connectionId: "linear",
+        mode: "read",
+        idempotency: "safe",
+        toolSurfaceHash: "linear-surface-v1",
+      },
+      mode: "read",
+    });
 
     sqlite.object.prepare(
       `UPDATE harness_runs
@@ -1975,11 +2791,30 @@ describe("durable harness attempt runtime", () => {
 
     await expect(heartbeatHarnessAttempt(sqlite.binding, RUN_ONE, claim.lease))
       .rejects.toMatchObject({ code: "run_cancelled" });
+    expect(await completeToolInvocation(sqlite.receipts, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-cancelled-read",
+      checkpointIndex: 1,
+      outputRef: "payloads/runtime/cancelled-read.json",
+      outputSummary: "Issue AVA-1",
+      allowCancellationRequested: true,
+    })).toBe("persisted");
+    expect(await __integrationTesting.settleRootHarnessToolFailure(sqlite.receipts, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-cancelled-write",
+      status: "ambiguous",
+      phase: "ambiguous_external_write",
+      error: {
+        code: "ambiguous_external_write",
+        message: "The stopped command may have reached the provider",
+      },
+      memberSafePayload: { code: "ambiguous_external_write" },
+    })).toBe("persisted");
     expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
       status: "stopped",
       error: { code: "run_cancelled", message: "The member stopped this run" },
       memberSafePayload: { code: "run_cancelled" },
-    })).toBe("terminalized");
+    }, sqlite.receipts)).toBe("terminalized");
 
     expect(sqlite.object.prepare(
       `SELECT status, cancellation_requested_at, terminalized_at, lease_owner
@@ -1993,6 +2828,22 @@ describe("durable harness attempt runtime", () => {
       "SELECT harness_status FROM workstreams WHERE id = ?",
     ).get(WORKSTREAM_ID)).toEqual({ harness_status: "idle" });
     expect(sqlite.object.prepare(
+      "SELECT effect_intent_id, status, output_ref, error_json FROM tool_effects WHERE run_id = ? ORDER BY effect_intent_id",
+    ).all(RUN_ONE)).toEqual([
+      {
+        effect_intent_id: "invocation-cancelled-read",
+        status: "completed",
+        output_ref: "payloads/runtime/cancelled-read.json",
+        error_json: null,
+      },
+      {
+        effect_intent_id: "invocation-cancelled-write",
+        status: "ambiguous",
+        output_ref: null,
+        error_json: '{"code":"ambiguous_external_write","message":"The stopped command may have reached the provider"}',
+      },
+    ]);
+    expect(sqlite.object.prepare(
       "SELECT status, member_safe_payload_json FROM harness_run_lifecycle_events WHERE harness_run_id = ? AND event_key = 'terminal'",
     ).get(RUN_ONE)).toEqual({
       status: "stopped",
@@ -2000,6 +2851,304 @@ describe("durable harness attempt runtime", () => {
     });
   });
 
+  it("settles inherited receipts before a successor stops an expired run", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const expired = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-stop-expired",
+      owner: "owner-stop-expired",
+    });
+    if (expired.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, expired.lease, {
+      invocationId: "invocation-expired-attempt",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-expired-attempt",
+      toolName: "terminal_run_command",
+      inputHash: "expired-attempt-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
+    await persistToolExecutionPlan(sqlite.receipts, expired.lease, {
+      invocationId: "invocation-expired-read",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-expired-read",
+      toolName: "linear_issue_get",
+      inputHash: "expired-read-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    sqlite.object.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_ONE);
+    const successor = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-stop-successor",
+      owner: "owner-stop-successor",
+    });
+    if (successor.state !== "claimed") throw new Error("expected successor attempt");
+    // A pre-fix settlement could admit its next checkpoint and then miss the
+    // receipt update when the lease deadline crossed between batch statements.
+    // Stop must advance past that occupied index rather than conflict forever.
+    sqlite.object.prepare(
+      `INSERT INTO tool_effect_checkpoints
+         (checkpoint_id, effect_intent_id, run_id, attempt_id, checkpoint_index,
+          phase, member_safe_payload_json, created_at)
+       VALUES (?, ?, ?, ?, 1, 'result_persisted', '{}', 1787000000000)`,
+    ).run(
+      "checkpoint-orphan-before-stop",
+      "invocation-expired-attempt",
+      RUN_ONE,
+      successor.lease.attemptId,
+    );
+    // The receipt itself survives the claim, unsettled. The attempt is no
+    // longer part of the assertion: it was the compatibility view deriving a
+    // displayed attempt from the owning run, and `tool_effects` has no such
+    // column — which is why the rebinding that comment described is gone too.
+    // `executing` is the object's spelling of what the view called `started`.
+    expect(sqlite.object.prepare(
+      "SELECT status FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-expired-attempt")).toEqual({ status: "executing" });
+    // Steering aborts the loop with a stopped outcome but intentionally does
+    // not persist cancellation_requested_at. Residual cleanup belongs to the
+    // stopped outcome, not only to member cancellation.
+    await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), successor.lease, {
+      status: "stopped",
+      error: { code: "run_cancelled", message: "The member stopped this run" },
+      memberSafePayload: { code: "run_cancelled" },
+    }, sqlite.receipts)).resolves.toBe("terminalized");
+    expect(sqlite.object.prepare(
+      "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toMatchObject({ status: "stopped" });
+    expect(sqlite.object.prepare(
+      "SELECT COUNT(*) AS count FROM harness_run_lifecycle_events WHERE harness_run_id = ? AND event_key = 'terminal'",
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+    expect(sqlite.object.prepare(
+      "SELECT effect_intent_id, status, error_json FROM tool_effects WHERE run_id = ? ORDER BY effect_intent_id",
+    ).all(RUN_ONE)).toEqual([
+      {
+        effect_intent_id: "invocation-expired-attempt",
+        status: "ambiguous",
+        error_json: '{"code":"ambiguous_external_write","message":"The run stopped while an external write was unresolved"}',
+      },
+      {
+        effect_intent_id: "invocation-expired-read",
+        status: "failed",
+        error_json: '{"code":"run_cancelled","message":"The run stopped before the tool produced a result"}',
+      },
+    ]);
+    expect(sqlite.object.prepare(
+      `SELECT effect_intent_id, attempt_id, phase, member_safe_payload_json
+         FROM tool_effect_checkpoints
+        WHERE run_id = ?
+          AND phase IN ('ambiguous_external_write', 'cancelled')
+        ORDER BY effect_intent_id`,
+    ).all(RUN_ONE)).toEqual([
+      {
+        effect_intent_id: "invocation-expired-attempt",
+        attempt_id: successor.lease.attemptId,
+        phase: "ambiguous_external_write",
+        member_safe_payload_json: '{"code":"ambiguous_external_write"}',
+      },
+      {
+        effect_intent_id: "invocation-expired-read",
+        attempt_id: successor.lease.attemptId,
+        phase: "cancelled",
+        member_safe_payload_json: '{"code":"run_cancelled"}',
+      },
+    ]);
+  });
+
+  it("retries stopped-run receipt settlement after its committed response is lost", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-stopped-receipt-retry",
+      owner: "owner-stopped-receipt-retry",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-stopped-receipt-retry",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stopped-receipt-retry",
+      toolName: "linear_issue_get",
+      inputHash: "stopped-receipt-retry-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "linear.issue.get", mode: "read" },
+      mode: "read",
+    });
+    const outcome = {
+      status: "stopped" as const,
+      error: { code: "run_cancelled", message: "The member stopped this run" },
+    };
+    let settlementCalls = 0;
+    const flakyReceipts = {
+      ...sqlite.receipts,
+      settleResidualReceipts: async (
+        repair: Parameters<typeof sqlite.receipts.settleResidualReceipts>[0],
+      ) => {
+        settlementCalls += 1;
+        const result = await sqlite.receipts.settleResidualReceipts(repair);
+        if (settlementCalls === 1) throw new Error("lost_receipt_rpc_response");
+        return result;
+      },
+    } satisfies typeof sqlite.receipts;
+
+    await expect(terminalizeHarnessAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      claim.lease,
+      outcome,
+      flakyReceipts,
+    )).rejects.toThrow("lost_receipt_rpc_response");
+    expect(sqlite.object.prepare(
+      "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toMatchObject({ status: "stopped" });
+    expect(sqlite.object.prepare(
+      "SELECT status FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-stopped-receipt-retry")).toEqual({ status: "failed" });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_ONE)).toEqual({ count: 0 });
+    const checkpointsAfterLostResponse = sqlite.object.prepare(
+      `SELECT checkpoint_index, phase, member_safe_payload_json FROM tool_effect_checkpoints
+        WHERE effect_intent_id = ? AND phase = 'cancelled' ORDER BY checkpoint_index`,
+    ).all("invocation-stopped-receipt-retry");
+    expect(checkpointsAfterLostResponse).toEqual([{
+      checkpoint_index: 1,
+      phase: "cancelled",
+      member_safe_payload_json: '{"code":"run_cancelled"}',
+    }]);
+
+    await expect(terminalizeHarnessAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      claim.lease,
+      outcome,
+      flakyReceipts,
+    )).resolves.toBe("already_terminal");
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-stopped-receipt-retry")).toEqual({
+      status: "failed",
+      error_json: '{"code":"run_cancelled","message":"The run stopped before the tool produced a result"}',
+    });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+    expect(sqlite.object.prepare(
+      `SELECT checkpoint_index, phase, member_safe_payload_json FROM tool_effect_checkpoints
+        WHERE effect_intent_id = ? AND phase = 'cancelled' ORDER BY checkpoint_index`,
+    ).all("invocation-stopped-receipt-retry")).toEqual(checkpointsAfterLostResponse);
+    expect(settlementCalls).toBe(2);
+  });
+
+  it("bulk-settles more residual receipts than one runtime transaction may contain", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-many-stopped-receipts",
+      owner: "owner-many-stopped-receipts",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+
+    for (let index = 0; index < 60; index += 1) {
+      const mode = index % 2 === 0 ? "write" : "read";
+      await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+        invocationId: `invocation-residual-${index}`,
+        harnessRunId: RUN_ONE,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        toolCallId: `call-residual-${index}`,
+        toolName: mode === "write" ? "terminal_run_command" : "linear_issue_get",
+        inputHash: `residual-input-${index}`,
+        input: { index },
+        plan: { operation: `residual.${index}`, mode, idempotency: "record_before_execute" },
+        mode,
+      });
+    }
+
+    await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
+      status: "stopped",
+      error: { code: "run_cancelled", message: "The run was steered" },
+      memberSafePayload: { code: "run_cancelled" },
+    }, sqlite.receipts)).resolves.toBe("terminalized");
+
+    expect(sqlite.object.prepare(
+      `SELECT status, COUNT(*) AS count FROM tool_effects
+        WHERE run_id = ? GROUP BY status ORDER BY status`,
+    ).all(RUN_ONE)).toEqual([
+      { status: "ambiguous", count: 30 },
+      { status: "failed", count: 30 },
+    ]);
+    // Terminalization is four statements regardless of receipt count. The
+    // object settles all receipts in one transaction of its own, then the
+    // single-statement lifecycle marker makes that acknowledgment retryable.
+    expect(sqlite.statementBatchSizes.slice(-2)).toEqual([4, 1]);
+  });
+
+  it("leaves a stopped run's receipts alone when its terminalization loses the lease", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-stop-lease-boundary",
+      owner: "owner-stop-lease-boundary",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-stop-lease-boundary",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stop-lease-boundary",
+      toolName: "terminal_run_command",
+      inputHash: "stop-lease-boundary-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
+    sqlite.object.prepare(
+      "UPDATE runs SET lease_expires_at = ? WHERE run_id = ?",
+    ).run(Date.parse("2020-01-01T00:00:00.000Z"), RUN_ONE);
+
+    // The routed version settled receipts and terminalized in one D1 batch,
+    // with the receipts first, so a lease lost between the two statements still
+    // left them settled. The two stores cannot share a transaction any more, so
+    // the settlement runs after the terminal write instead — and when that
+    // write loses the lease there is nothing to settle *for*: the run is still
+    // live, and its receipts belong to whoever holds it now. Closing them here
+    // is the failure this ordering exists to avoid.
+    await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
+      status: "stopped",
+      error: { code: "run_cancelled", message: "The member stopped this run" },
+      memberSafePayload: { code: "run_cancelled" },
+    }, sqlite.receipts)).rejects.toThrow("durable attempt lease");
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-stop-lease-boundary")).toEqual({
+      status: "executing",
+      error_json: null,
+    });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM tool_effect_checkpoints
+        WHERE effect_intent_id = ? AND phase = 'ambiguous_external_write'`,
+    ).get("invocation-stop-lease-boundary")).toEqual({ count: 0 });
+    expect(sqlite.object.prepare(
+      "SELECT status, terminalized_at, lease_owner FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toEqual({
+      status: "running",
+      terminalized_at: null,
+      lease_owner: claim.lease.owner,
+    });
+  });
   it("fences every durable write from an executor after its lease ownership is replaced", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
@@ -2008,6 +3157,18 @@ describe("durable harness attempt runtime", () => {
       owner: "owner-obsolete",
     });
     if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-obsolete-stop",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-obsolete-stop",
+      toolName: "terminal_run_command",
+      inputHash: "obsolete-stop-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
 
     sqlite.object.prepare(
       `UPDATE harness_runs
@@ -2036,9 +3197,9 @@ describe("durable harness attempt runtime", () => {
       toolSurfaceHash: "surface-stale",
     })).rejects.toMatchObject({ code: "run_ownership_lost" });
     await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
-      status: "failed",
+      status: "stopped",
       error: { code: "obsolete", message: "An obsolete executor cannot terminalize" },
-    })).rejects.toMatchObject({ code: "run_ownership_lost" });
+    }, sqlite.receipts)).rejects.toMatchObject({ code: "run_ownership_lost" });
 
     expect(sqlite.object.prepare(
       "SELECT status, attempt_id, lease_owner, terminalized_at FROM harness_runs WHERE id = ?",
@@ -2051,6 +3212,12 @@ describe("durable harness attempt runtime", () => {
     expect(sqlite.object.prepare(
       "SELECT COUNT(*) AS count FROM harness_run_lifecycle_events WHERE harness_run_id = ? AND event_key = 'terminal'",
     ).get(RUN_ONE)).toEqual({ count: 0 });
+    expect(sqlite.object.prepare(
+      "SELECT status, checkpoint_index FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-obsolete-stop")).toEqual({ status: "executing", checkpoint_index: 0 });
+    expect(sqlite.object.prepare(
+      "SELECT COUNT(*) AS count FROM tool_effect_checkpoints WHERE effect_intent_id = ?",
+    ).get("invocation-obsolete-stop")).toEqual({ count: 1 });
   });
 
   it("does not reap a stale-row snapshot whose lease is renewed before the CAS batch", async () => {
@@ -2080,6 +3247,7 @@ describe("durable harness attempt runtime", () => {
     });
 
     expect(await reapStaleHarnessRuns(racingBinding, {
+      receipts: () => sqlite.receipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([]);
@@ -2109,7 +3277,7 @@ describe("durable harness attempt runtime", () => {
 
     await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
       status: "completed",
-    })).rejects.toThrow("final_message_required");
+    }, sqlite.receipts)).rejects.toThrow("final_message_required");
     sqlite.object.prepare(
       `INSERT INTO messages
        (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
@@ -2119,7 +3287,7 @@ describe("durable harness attempt runtime", () => {
     await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
       status: "completed",
       finalMessageId: "human-final",
-    })).rejects.toThrow("final_message_not_persisted");
+    }, sqlite.receipts)).rejects.toThrow("final_message_not_persisted");
     expect(sqlite.object.prepare(
       "SELECT terminalized_at FROM harness_runs WHERE id = ?",
     ).get(RUN_ONE)).toEqual({ terminalized_at: null });
@@ -2166,7 +3334,7 @@ describe("durable harness attempt runtime", () => {
     await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
       status: "completed",
       finalMessageId: "message-realtime-outage",
-    })).resolves.toBe("terminalized");
+    }, sqlite.receipts)).resolves.toBe("terminalized");
 
     expect(sqlite.object.prepare(
       `SELECT text_content, harness_run_id, harness_attempt_id
@@ -2292,6 +3460,7 @@ describe("inline child-run durability", () => {
       input(continuationId),
       claim.lease,
       { status: "completed", finalMessageId: "message-continuation-final" },
+      sqlite.receipts,
     )).toBe("terminalized");
   });
 
@@ -2815,6 +3984,7 @@ describe("inline child-run durability", () => {
     ).run(child.childInput.harnessRunId);
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => sqlite.receipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([]);
@@ -2874,6 +4044,41 @@ describe("inline child-run durability", () => {
       owner: "owner-child-stale",
     });
     if (child.state !== "claimed") throw new Error("expected claimed child");
+    await persistToolExecutionPlan(sqlite.receipts, child.lease, {
+      invocationId: "invocation-stale-child-write",
+      harnessRunId: child.childInput.harnessRunId,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-child-write",
+      toolName: "terminal_run_command",
+      inputHash: "stale-child-write-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
+    await persistToolExecutionPlan(sqlite.receipts, child.lease, {
+      invocationId: "invocation-stale-child-read",
+      harnessRunId: child.childInput.harnessRunId,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-child-read",
+      toolName: "linear_issue_get",
+      inputHash: "stale-child-read-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    sqlite.object.prepare(
+      `INSERT INTO tool_effect_checkpoints
+         (checkpoint_id, effect_intent_id, run_id, attempt_id, checkpoint_index,
+          phase, member_safe_payload_json, created_at)
+       VALUES (?, ?, ?, ?, 1, 'result_persisted', '{}', 1787000000000)`,
+    ).run(
+      "checkpoint-orphan-before-child-reap",
+      "invocation-stale-child-write",
+      child.childInput.harnessRunId,
+      child.lease.attemptId,
+    );
     sqlite.object.prepare(
       "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
     ).run(child.childInput.harnessRunId);
@@ -2886,6 +4091,7 @@ describe("inline child-run durability", () => {
     ).run(RUN_ONE);
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => sqlite.receipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([child.childInput.harnessRunId]);
@@ -2895,6 +4101,29 @@ describe("inline child-run durability", () => {
     expect(sqlite.database.prepare(
       "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = 'automation-run-child'",
     ).get()).toEqual({ status: "running", completed_at: null, result_summary: null });
+    expect(sqlite.object.prepare(
+      `SELECT effect_intent_id, status, error_json FROM tool_effects
+        WHERE run_id = ? ORDER BY effect_intent_id`,
+    ).all(child.childInput.harnessRunId)).toEqual([
+      {
+        effect_intent_id: "invocation-stale-child-read",
+        status: "failed",
+        error_json: '{"code":"parent_run_unavailable","message":"The parent run no longer owns a live attempt"}',
+      },
+      {
+        effect_intent_id: "invocation-stale-child-write",
+        status: "ambiguous",
+        error_json: '{"code":"ambiguous_external_write","message":"The child run ended while an external write was unresolved"}',
+      },
+    ]);
+    expect(sqlite.object.prepare(
+      `SELECT effect_intent_id, phase FROM tool_effect_checkpoints
+        WHERE run_id = ? AND phase IN ('cancelled', 'failed', 'ambiguous_external_write')
+        ORDER BY effect_intent_id`,
+    ).all(child.childInput.harnessRunId)).toEqual([
+      { effect_intent_id: "invocation-stale-child-read", phase: "failed" },
+      { effect_intent_id: "invocation-stale-child-write", phase: "ambiguous_external_write" },
+    ]);
     expect(await loadInlineChildResult(sqlite.binding, RUN_ONE, "tool-stale-child"))
       .toEqual({
         state: "replay",
@@ -2928,6 +4157,97 @@ describe("inline child-run durability", () => {
       .rejects.toThrow("inline_child_result_hash_mismatch");
   });
 
+  it("repairs a terminal child whose first receipt settlement failed", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const parentLease = await claimScopedParent(sqlite);
+    const child = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      parentToolCallId: "tool-child-receipt-retry",
+      objective: "Retry receipt settlement after terminalization",
+      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000114"),
+      attemptId: "attempt-child-receipt-retry",
+      owner: "owner-child-receipt-retry",
+    });
+    if (child.state !== "claimed") throw new Error("expected claimed child");
+    await persistToolExecutionPlan(sqlite.receipts, child.lease, {
+      invocationId: "invocation-child-receipt-retry",
+      harnessRunId: child.childInput.harnessRunId,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-child-receipt-retry",
+      toolName: "terminal_run_command",
+      inputHash: "child-receipt-retry-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
+    sqlite.object.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(child.childInput.harnessRunId);
+    sqlite.object.prepare(
+      `UPDATE harness_runs
+          SET status = 'completed', completed_at = '2026-08-03T00:00:00.000Z',
+              terminalized_at = '2026-08-03T00:00:00.000Z',
+              lease_owner = NULL, lease_expires_at = NULL
+        WHERE id = ?`,
+    ).run(RUN_ONE);
+
+    let settlementCalls = 0;
+    const flakyReceipts = {
+      ...sqlite.receipts,
+      settleResidualReceipts: async (
+        repair: Parameters<typeof sqlite.receipts.settleResidualReceipts>[0],
+      ) => {
+        settlementCalls += 1;
+        if (settlementCalls === 1) throw new Error("transient_receipt_rpc_failure");
+        return sqlite.receipts.settleResidualReceipts(repair);
+      },
+    } satisfies typeof sqlite.receipts;
+    const repairFailures: unknown[] = [];
+
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => flakyReceipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      onReceiptRepairFailure: (failure) => repairFailures.push(failure),
+    })).toEqual([child.childInput.harnessRunId]);
+    expect(repairFailures).toEqual([{
+      phase: "stale_child",
+      runId: child.childInput.harnessRunId,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      attemptId: child.lease.attemptId,
+      reason: "transient_receipt_rpc_failure",
+    }]);
+    expect(sqlite.object.prepare(
+      "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
+    ).get(child.childInput.harnessRunId)).toMatchObject({ status: "failed" });
+    expect(sqlite.object.prepare(
+      "SELECT status FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-child-receipt-retry")).toEqual({ status: "executing" });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(child.childInput.harnessRunId)).toEqual({ count: 0 });
+
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => flakyReceipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).toEqual([]);
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-child-receipt-retry")).toEqual({
+      status: "ambiguous",
+      error_json: '{"code":"ambiguous_external_write","message":"The child run ended while an external write was unresolved"}',
+    });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(child.childInput.harnessRunId)).toEqual({ count: 1 });
+    expect(settlementCalls).toBe(2);
+  });
+
   it("cleans up an expired child after cancellation is requested", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
@@ -2947,6 +4267,7 @@ describe("inline child-run durability", () => {
     ).run(child.childInput.harnessRunId);
 
     expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => sqlite.receipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([child.childInput.harnessRunId]);
@@ -2976,6 +4297,18 @@ describe("inline child-run durability", () => {
       owner: "owner-child-reaper-race",
     });
     if (child.state !== "claimed") throw new Error("expected claimed child");
+    await persistToolExecutionPlan(sqlite.receipts, child.lease, {
+      invocationId: "invocation-child-reaper-race",
+      harnessRunId: child.childInput.harnessRunId,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-child-reaper-race",
+      toolName: "terminal_run_command",
+      inputHash: "child-reaper-race-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
     sqlite.object.prepare(
       "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
     ).run(child.childInput.harnessRunId);
@@ -3001,6 +4334,7 @@ describe("inline child-run durability", () => {
     });
 
     expect(await reapStaleHarnessRuns(racingBinding, {
+      receipts: () => sqlite.receipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([]);
@@ -3013,6 +4347,12 @@ describe("inline child-run durability", () => {
       lease_expires_at: "2099-01-01T00:00:00.000Z",
       terminalized_at: null,
     });
+    expect(sqlite.object.prepare(
+      "SELECT status, checkpoint_index FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-child-reaper-race")).toEqual({ status: "executing", checkpoint_index: 0 });
+    expect(sqlite.object.prepare(
+      "SELECT COUNT(*) AS count FROM tool_effect_checkpoints WHERE effect_intent_id = ?",
+    ).get("invocation-child-reaper-race")).toEqual({ count: 1 });
   });
 });
 

@@ -2378,6 +2378,7 @@ describe("agent harness", () => {
     expect(result.error).not.toContain("cursor");
     expect(events.find((event) => event.type === "tool_failed")).toMatchObject({
       error: expect.stringContaining("startCharacter: expected number, received string"),
+      phase: "validation",
       outcome: "definitive_failure",
     });
   });
@@ -3528,8 +3529,137 @@ describe("agent harness", () => {
           searchAliases: ["issue tracker", "project management"],
           description: "Authorized workspace connector.",
         }],
+        totalMatches: 1,
       },
     }));
+  });
+
+  it("ranks multi-keyword plugin discovery by overlap and rejects normalized-empty queries", async () => {
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-plugin-search-ranked",
+            "search_plugins",
+            JSON.stringify({ query: " PUBLIC-web, social timeline " }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-plugin-search-empty",
+            "search_plugins",
+            JSON.stringify({ query: " — " }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "searched" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const xPlugin = {
+      ...credentialPlugin("connection:x", "x", "Search public posts and timelines."),
+      modelId: "plugin_x",
+      displayName: "X",
+      searchAliases: ["social media", "timeline"],
+      description: "Read public social posts and timelines.",
+    };
+    const webPlugin = {
+      ...credentialPlugin("connection:web", "web", "Search and fetch the public web."),
+      modelId: "plugin_web",
+      displayName: "Web",
+      searchAliases: ["public web", "public-web"],
+    };
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      plugins: [webPlugin, xPlugin],
+      reauthorizePlugin: () => "authorized",
+    })).resolves.toMatchObject({ status: "completed", content: "searched" });
+
+    const ranked = JSON.parse(String(requestBodies[1]!.messages.find((message) =>
+      message.role === "tool")?.content)) as {
+        data: { plugins: Array<{ id: string }>; totalMatches: number };
+      };
+    expect(ranked.data.plugins.map((plugin) => plugin.id)).toEqual(["plugin_x", "plugin_web"]);
+    expect(ranked.data.totalMatches).toBe(2);
+    const empty = JSON.parse(String(requestBodies[2]!.messages.filter((message) =>
+      message.role === "tool").pop()?.content)) as {
+        data: { plugins: unknown[]; totalMatches: number };
+      };
+    expect(empty.data.plugins).toEqual([]);
+    expect(empty.data.totalMatches).toBe(0);
+  });
+
+  it("bounds broad plugin discovery and preserves a one-character display name", async () => {
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-plugin-search-broad",
+            "search_plugins",
+            JSON.stringify({ query: "connector" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-plugin-search-x",
+            "search_plugins",
+            JSON.stringify({ query: "X" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "searched" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const plugins = Array.from({ length: 25 }, (_, index) => {
+      const suffix = String(index).padStart(2, "0");
+      return credentialPlugin(`connection:p${suffix}`, `p${suffix}`, `Connector ${suffix}`);
+    });
+    plugins.push({
+      ...credentialPlugin("connection:x", "x", "X connector"),
+      displayName: "X",
+    });
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      plugins,
+      reauthorizePlugin: () => "authorized",
+    })).resolves.toMatchObject({ status: "completed", content: "searched" });
+
+    const broad = JSON.parse(String(requestBodies[1]!.messages.find((message) =>
+      message.role === "tool")?.content)) as {
+        data: { plugins: Array<{ id: string }>; totalMatches: number };
+      };
+    expect(broad.data.plugins).toHaveLength(20);
+    expect(broad.data.totalMatches).toBe(26);
+    expect(broad.data.plugins.map((plugin) => plugin.id)).toEqual(
+      Array.from({ length: 20 }, (_, index) => `plugin_p${String(index).padStart(2, "0")}`),
+    );
+    const exact = JSON.parse(String(requestBodies[2]!.messages.filter((message) =>
+      message.role === "tool").pop()?.content)) as {
+        data: { plugins: Array<{ id: string }>; totalMatches: number };
+      };
+    expect(exact.data.plugins.map((plugin) => plugin.id)).toEqual(["plugin_x"]);
+    expect(exact.data.totalMatches).toBe(1);
   });
 
   it("does not activate a preload candidate without a durable activation hint", async () => {
@@ -3589,6 +3719,7 @@ describe("agent harness", () => {
       return responses.shift()!;
     }) as typeof fetch;
     const persistActivation = vi.fn();
+    const events: HarnessEvent[] = [];
     const plugin = {
       ...credentialPlugin("connection:unverifiable", "unverifiable", "Unverifiable plugin policy"),
       modelId: "plugin_unverifiable",
@@ -3599,12 +3730,18 @@ describe("agent harness", () => {
       plugins: [plugin],
       reauthorizePlugin: () => verdict,
       persistActivation,
+      onEvent: (event) => { events.push(event); },
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "carried on" });
     expect(persistActivation).not.toHaveBeenCalled();
     const transcript = JSON.stringify(requestBodies[1]!.messages);
+    const toolMessage = requestBodies[1]!.messages.find((message) => message.role === "tool");
+    const toolResult = JSON.parse(String(toolMessage?.content)) as { success: boolean };
     expect(transcript).toContain(error);
+    expect(toolResult.success).toBe(false);
+    expect(events.filter((event) => event.type === "tool_failed")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "tool_completed")).toHaveLength(0);
     if (verdict === "indeterminate") expect(transcript).not.toContain("plugin_not_authorized");
   });
 
@@ -3634,17 +3771,26 @@ describe("agent harness", () => {
       return responses.shift()!;
     }) as typeof fetch;
     const persistActivation = vi.fn();
+    const events: HarnessEvent[] = [];
 
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [credentialPlugin("connection:eligible", "eligible", "Eligible plugin policy")],
       reauthorizePlugin: () => "authorized",
       persistActivation,
+      onEvent: (event) => { events.push(event); },
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "scope preserved" });
     expect(persistActivation).not.toHaveBeenCalled();
     expect(JSON.stringify(requestBodies[1]!.messages)).toContain("plugin_not_available");
+    const toolMessage = requestBodies[1]!.messages.find((message) => message.role === "tool");
+    const toolResult = JSON.parse(String(toolMessage?.content)) as { success: boolean };
+    expect(toolResult.success).toBe(false);
+    expect(events.find((event) => event.type === "tool_failed")).toMatchObject({
+      data: { code: "plugin_not_available" },
+    });
+    expect(events.some((event) => event.type === "tool_completed")).toBe(false);
     expect(requestBodies[1]!.tools?.map((tool) => tool.function.name)).not.toContain("eligible_search");
   });
 
