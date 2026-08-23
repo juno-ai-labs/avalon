@@ -74,7 +74,6 @@ function plan(overrides: Partial<Parameters<WorkstreamToolReceiptStorage["admit"
     executionPlanHash: "plan-hash",
     executionPlanJson: '{"mode":"read"}',
     compatiblePriorPlanHashes: [],
-    incomingIsRead: true,
     providerIdempotencyKey: null,
     fence,
     now: NOW,
@@ -186,6 +185,40 @@ describe("admitting a tool call's execution plan", () => {
     // cleared so nothing replays a payload the new call did not produce.
     expect(sql.exec(`SELECT status, output_ref, request_hash FROM tool_effects`).toArray())
       .toEqual([{ status: "executing", output_ref: null, request_hash: "other" }]);
+  });
+
+  it("refuses to rebind when either statement of the incoming mode is not a read", () => {
+    // Each half on its own, because the gate is a conjunction and a test that
+    // only ever disagreed with both at once would pass against either one being
+    // dropped. The two statements come from different places in the caller's
+    // plan and are checked here rather than trusted as a boolean, so the case
+    // where they disagree has to be reachable in a test even though no caller
+    // produces it today.
+    for (const incoming of [
+      { mode: "write" as const, executionPlanJson: '{"mode":"read"}' },
+      { mode: "read" as const, executionPlanJson: '{"mode":"write"}' },
+      { mode: "read" as const, executionPlanJson: "not json at all" },
+    ]) {
+      const { storage, sql } = open();
+      storage.admit(plan());
+      storage.complete({
+        effectIntentId: "effect-1", checkpointIndex: 1, outputRef: "ref",
+        outputSummary: "done", providerOperationId: null, payloadJson: "{}",
+        allowAmbiguousReconciliation: false, fence, now: NOW,
+      });
+
+      expect(storage.admit(plan({
+        ...incoming,
+        requestHash: "other",
+        executionPlanHash: "other",
+      }))).toEqual({ state: "ambiguous_external_write", effectIntentId: "effect-1" });
+      // And the settled read is untouched — still completed, still holding its
+      // own result and its own request. That is the point of failing closed: a
+      // rebind clears `output_ref` and takes the incoming call's hash, so the
+      // refusal has to leave both where they were.
+      expect(sql.exec(`SELECT status, output_ref, request_hash FROM tool_effects`).toArray())
+        .toEqual([{ status: "completed", output_ref: "ref", request_hash: "request-hash" }]);
+    }
   });
 
   it("refuses to rebind a settled read something else already built on", () => {
@@ -853,7 +886,6 @@ describe("abandoning the receipts of a reaped run", () => {
     const { storage, sql } = open();
     storage.admit(plan({
       mode: "write",
-      incomingIsRead: false,
       executionPlanJson: '{"mode":"write"}',
     }));
     reaped(sql);
