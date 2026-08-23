@@ -213,6 +213,7 @@ type TestableBlockDashboardAgent = {
   persistAndSettle(
     dispatch: BlockDashboardBlockDispatch,
     outcome: { run: BlockDashboardBlockRun },
+    leaseToken: string,
   ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }>;
 };
 
@@ -1585,9 +1586,38 @@ describe("Durable Objects in the Workers runtime", () => {
         markdown: checkpointText + continuedText,
         completedAt: "2026-08-17T20:00:03.000Z",
       };
-      await (instance as unknown as TestableBlockDashboardAgent).persistAndSettle(dispatch, {
+      state.storage.sql.exec(
+        `UPDATE agent_run_dispatches
+            SET state = 'running', lease_token = 'successor-terminal-owner',
+                lease_expires_at = ?
+          WHERE block_run_id = ?`,
+        Date.now() + 60_000,
+        queued.id,
+      );
+      const testable = instance as unknown as TestableBlockDashboardAgent;
+      await expect(testable.persistAndSettle(dispatch, {
         run: completed,
+      }, "obsolete-terminal-owner")).rejects.toMatchObject({
+        code: "block_dashboard_dispatch_ownership_lost",
       });
+      expect(state.storage.sql.exec<{
+        lease_token: string | null;
+        terminal_outcome_json: string | null;
+      }>(
+        `SELECT lease_token, terminal_outcome_json FROM agent_run_dispatches
+          WHERE block_run_id = ?`,
+        queued.id,
+      ).one()).toEqual({
+        lease_token: "successor-terminal-owner",
+        terminal_outcome_json: null,
+      });
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM agent_stream_checkpoint`,
+      ).one().count).toBe(1);
+
+      await testable.persistAndSettle(dispatch, {
+        run: completed,
+      }, "successor-terminal-owner");
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM agent_stream_checkpoint`,
       ).one().count).toBe(0);

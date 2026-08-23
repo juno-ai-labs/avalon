@@ -13,7 +13,14 @@
  * neither of those has to import the other through here.
  */
 import type { ExecutionPrincipal } from "@avalon/contracts";
-import { ExecutionPrincipalSchema, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import {
+  ExecutionPrincipalSchema,
+  MAXIMUM_FAILURE_AVAILABLE_VALUES,
+  MAXIMUM_FAILURE_VALUE_LENGTH,
+  asSubstreamId,
+  asWorkspaceId,
+  asWorkstreamId,
+} from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 
@@ -61,20 +68,29 @@ export interface PendingWakeup {
 /**
  * A deterministic rejection the model can act on.
  *
- * These never throw: the harness treats a throw as transient and may retry it,
- * and no retry fixes a bad instant or an exhausted cap. The caller renders
- * `code` and `hint` into the tool's `output`, which is the half the model
- * actually reads.
+ * These use the harness's classified tool-failure path. A stable code keeps a
+ * deterministic refusal definitive while `details.reason` carries the shortest
+ * safe correction into the model-visible failed result.
  */
 export class WakeupInputError extends Error {
   constructor(
     readonly code: string,
     message: string,
     readonly hint: string,
+    available?: string[],
   ) {
     super(message);
     this.name = "WakeupInputError";
+    const boundedAvailable = (available ?? [])
+      .filter((candidate) => candidate.length <= MAXIMUM_FAILURE_VALUE_LENGTH)
+      .slice(0, MAXIMUM_FAILURE_AVAILABLE_VALUES);
+    this.details = {
+      reason: hint,
+      ...(boundedAvailable.length ? { available: boundedAvailable } : {}),
+    };
   }
+
+  readonly details: { reason: string; available?: string[] };
 }
 
 /** Canonicalize an IANA zone, rejecting anything `Intl` will not accept. */

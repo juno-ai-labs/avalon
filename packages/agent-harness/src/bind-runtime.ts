@@ -202,6 +202,7 @@ type OpenRouterContextCatalog = {
 
 let openRouterContextCatalog: OpenRouterContextCatalog | null = null;
 let openRouterContextCatalogRequest: Promise<OpenRouterContextCatalog> | null = null;
+const PLUGIN_SEARCH_RESULT_LIMIT = 20;
 
 type RenderedSystemPrompt = {
   content: string;
@@ -212,6 +213,55 @@ class HarnessLimitError extends Error {
     super(message);
     this.name = "HarnessLimitError";
   }
+}
+
+function classifiedToolFailure(
+  code: string,
+  message: string,
+  details?: Record<string, unknown>,
+): Error & { code: string; details?: Record<string, unknown> } {
+  return Object.assign(new Error(message), { code, ...(details ? { details } : {}) });
+}
+
+function normalizedPluginSearchText(value: string): string {
+  return value.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "";
+}
+
+function searchAvailablePlugins(
+  plugins: ReturnType<typeof availablePluginCatalog>,
+  rawQuery: string,
+): {
+  plugins: ReturnType<typeof availablePluginCatalog>;
+  totalMatches: number;
+} {
+  const query = normalizedPluginSearchText(rawQuery);
+  if (!query) return { plugins: [], totalMatches: 0 };
+  const queryTokens = [...new Set(query.split(" "))];
+  const ranked = plugins
+    .map((plugin) => {
+      const fields = [
+        plugin.id,
+        plugin.displayName ?? "",
+        ...plugin.searchAliases,
+        plugin.description,
+      ].map(normalizedPluginSearchText).filter(Boolean);
+      const fieldTokens = new Set(fields.flatMap((field) => field.split(" ")));
+      const overlap = queryTokens.filter((token) => fieldTokens.has(token)).length;
+      const exactField = fields.some((field) => field === query);
+      const phrase = fields.some((field) => field.includes(query));
+      if (!exactField && !phrase && overlap === 0) return null;
+      return {
+        plugin,
+        score: (exactField ? 10_000 : phrase ? 5_000 : 0) + overlap * 100,
+      };
+    })
+    .filter((entry): entry is { plugin: ReturnType<typeof availablePluginCatalog>[number]; score: number } => entry !== null)
+    .sort((left, right) => right.score - left.score
+      || (left.plugin.id < right.plugin.id ? -1 : left.plugin.id > right.plugin.id ? 1 : 0));
+  return {
+    plugins: ranked.slice(0, PLUGIN_SEARCH_RESULT_LIMIT).map((entry) => entry.plugin),
+    totalMatches: ranked.length,
+  };
 }
 
 /**
@@ -1011,7 +1061,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             policy,
             error: message,
             ...(structured ? { data: structured } : {}),
-            phase: "execution",
+            phase: argumentValidationError ? "validation" : "execution",
             outcome: failureOutcome,
           });
           // A cancellation, timeout, or invalid response after a non-idempotent
@@ -1623,15 +1673,17 @@ async function createPluginRuntime(
         }
         if (definition.name === "search_plugins") {
           const query = typeof raw === "object" && raw !== null && "query" in raw
-            ? String(raw.query).trim().toLowerCase()
+            ? String(raw.query)
             : "";
-          const matches = availablePluginCatalog(activeRegistry).filter((plugin) =>
-            `${plugin.id} ${plugin.displayName ?? ""} ${plugin.searchAliases.join(" ")} ${plugin.description}`
-              .toLowerCase()
-              .includes(query));
+          const { plugins, totalMatches } = searchAvailablePlugins(
+            availablePluginCatalog(activeRegistry),
+            query,
+          );
           return {
-            output: { plugins: matches },
-            summary: `Found ${matches.length} available plugins`,
+            output: { plugins, totalMatches },
+            summary: plugins.length < totalMatches
+              ? `Found ${plugins.length} of ${totalMatches} available plugins; narrow the query to see the rest`
+              : `Found ${totalMatches} available plugins`,
           };
         }
         const modelId = typeof raw === "object" && raw !== null && "pluginId" in raw
@@ -1639,28 +1691,38 @@ async function createPluginRuntime(
           : "";
         const id = canonicalByModelId.get(modelId) ?? "";
         if (!eligibleIds.has(id) || activeRegistry.isCoreName(id)) {
-          return { output: { error: "plugin_not_available" }, summary: "Plugin is not available" };
+          throw classifiedToolFailure(
+            "plugin_not_available",
+            "That plugin is not available to this run. Call search_plugins or list_plugins and retry with an exact listed pluginId.",
+            { reason: "Use an exact pluginId from this run's plugin catalog." },
+          );
         }
         const authorization = await reauthorize(id, "activation");
         if (authorization === "denied") {
-          return { output: { error: "plugin_not_authorized" }, summary: "Plugin is no longer authorized" };
+          throw classifiedToolFailure(
+            "plugin_not_authorized",
+            "That plugin is no longer authorized. Do not use its tools unless a workspace owner restores the connection.",
+            { reason: "Ask a workspace owner to restore this plugin connection before retrying." },
+          );
         }
         if (authorization === "indeterminate") {
           // The host could not reach an authorization decision. Reporting that
           // as a revoked grant would send the run off to explain a permission
           // problem that may not exist, so the transient outcome says so.
-          return {
-            output: { error: "plugin_authorization_unavailable" },
-            summary: "Plugin authorization could not be verified",
-          };
+          throw classifiedToolFailure(
+            "plugin_authorization_unavailable",
+            "Plugin authorization could not be verified. Retry the activation later; do not describe the grant as revoked.",
+            { reason: "Retry after the authorization service is available." },
+          );
         }
         try {
           await ensurePluginTools(id);
         } catch {
-          return {
-            output: { error: "plugin_tools_unavailable" },
-            summary: "Plugin tools could not be loaded",
-          };
+          throw classifiedToolFailure(
+            "plugin_tools_unavailable",
+            "The plugin's tools could not be loaded. Retry once later; if it persists, report the plugin as temporarily unavailable.",
+            { reason: "Retry once after the plugin tool service recovers." },
+          );
         }
         await requiredPort("run_state_persistence_failed", "Plugin activation persistence failed", () => input.persistActivation?.(id));
         const plugin = activeRegistry.get(id)!;
