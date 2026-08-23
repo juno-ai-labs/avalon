@@ -286,13 +286,32 @@ describe("reading a page of transcript", () => {
     sql.exec(
       `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
        VALUES ('message-2', 'resource-1', 0, ?)`,
-      JSON.stringify({ fileName: "notes.md" }),
+      JSON.stringify({ attachedAt: new Date(NOW).toISOString() }),
+    );
+    // The descriptor the object froze when the resource was attached. The
+    // retired reader's `JSON resources` join read exactly this, through a view
+    // that `json_extract`ed it back out.
+    sql.exec(
+      `INSERT INTO workstream_resource_links
+         (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+          resource_json, attached_at, updated_at)
+       VALUES ('resource-1', NULL, 0, 'explicit', ?, ?, ?)`,
+      JSON.stringify({
+        id: "resource-1",
+        title: "notes.md",
+        mimeType: "text/markdown",
+        contentRef: "r2://notes",
+        metadata: { size: 4096 },
+      }),
+      NOW,
+      NOW,
     );
 
-    // One read per page rather than one per row, and the attachment's
-    // descriptor comes from the object's own frozen copy — the routed reader
-    // joined `resources` for it, which is what tied this read to a slice that
-    // has not landed.
+    // One read per page rather than one per row. The link is what the object
+    // owns; the resource behind it is still read from `resources` by the
+    // caller, because the object's own copy of the descriptor is frozen at
+    // attach time and swapping a live read for it is the resources slice's
+    // decision to make.
     expect(storage.mentionsFor({ messageIds: ["message-1", "message-2"] }))
       .toEqual([{
         part_id: "message-1",
@@ -307,7 +326,11 @@ describe("reading a page of transcript", () => {
         part_id: "message-2",
         resource_id: "resource-1",
         position: 0,
-        attachment_json: JSON.stringify({ fileName: "notes.md" }),
+        title: "notes.md",
+        mime_type: "text/markdown",
+        content_ref: "r2://notes",
+        metadata_json: JSON.stringify({ size: 4096 }),
+        attached_at: NOW,
       }]);
     // An empty page asks nothing, rather than building a query with no
     // placeholders in its `IN` list.
