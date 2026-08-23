@@ -1010,7 +1010,11 @@ export class WorkstreamTerminalStorage {
     return row ? toTask(row) : null;
   }
 
-  /** One unsettled task for lifecycle reconciliation, irrespective of owner. */
+  /**
+   * One unsettled task for lifecycle reconciliation, irrespective of owner.
+   * Submitting comes first because mixed residue must retire its generation
+   * before a running-task stop could make that same sandbox reusable.
+   */
   unsettledTask(generation: number): TerminalTaskRecord | null {
     const row = first<TaskRow>(this.sql.exec<TaskRow>(
       `SELECT task_id, run_id, effect_intent_id, sandbox_generation,
