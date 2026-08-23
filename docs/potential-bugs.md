@@ -211,8 +211,11 @@ anywhere:
    request without ranking, and the two do that to each other forever — a
    candidate load and a ranking slot per pass. The read-path half is asserted
    against a real WorkspaceDO in `test-workers/durable-object-runtime.test.ts`
-   ("treats an empty ranking with no candidates as a steady state"); the
-   scheduler half is the product alarm's now, and is the part still unasserted.
+   ("treats an empty ranking with no candidates as a steady state"), and the
+   settle half — that a request arriving mid-pass survives the pass that did not
+   answer it — in `test-workers/opportunity-ranking.test.ts`. What is still
+   unasserted is the alarm that puts the two together: which member it claims,
+   and in what order.
 
 **What would settle it.** A `test-workers/` suite over WorkspaceDO's product
 alarm: one active and one dormant member both due, assert only the active one's
