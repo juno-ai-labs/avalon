@@ -32,7 +32,6 @@ describe("the runtime compat views", () => {
   });
 });
 
-
 describe("the runtime messages insert trigger", () => {
   // SQLite drops an ON CONFLICT clause aimed at a view; the trigger must
   // absorb the replay itself. A retried harness attempt writes its final
