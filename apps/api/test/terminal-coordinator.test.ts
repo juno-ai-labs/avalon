@@ -295,7 +295,8 @@ describe("Terminal sandbox coordinator", () => {
     const contender = { ...context(), harnessRunId: otherRun, toolCallId: "batch-contender" };
 
     await expect(coordinator.acquire(contender)).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
-    expect(provider.cleanupCommand).toHaveBeenCalledTimes(21);
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
+    expect(provider.cleanupCommand).not.toHaveBeenCalled();
     expect(workstreamObjectGet(
       objectStore,
       "SELECT COUNT(*) AS count FROM terminal_tasks WHERE state = 'running'",
@@ -304,6 +305,93 @@ describe("Terminal sandbox coordinator", () => {
       objectStore,
       "SELECT operation_run_id FROM terminal_workspace WHERE id = 1",
     )).toEqual({ operation_run_id: otherRun });
+  });
+
+  it("retires a mixed generation before a later submitting task can overlap handoff", async () => {
+    const { objectStore, db, provider, clock } = fixture();
+    const linkedRun = "00000000-0000-4000-8000-000000000099";
+    const runningEffect = "mixed-running-effect";
+    const submittingEffect = "mixed-submitting-effect";
+    const terminal = testTerminalPortFactory(objectStore)(WORKSPACE_ID, WORKSTREAM_ID);
+    const coordinator = new TerminalSandboxCoordinator(
+      db,
+      testTerminalPortFactory(objectStore),
+      provider,
+      clock,
+    );
+    await coordinator.acquire(context());
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
+      linkedRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
+    );
+    for (const [effectId, callId, position] of [
+      [runningEffect, "mixed-running-call", 0],
+      [submittingEffect, "mixed-submitting-call", 1],
+    ] as const) {
+      seedToolReceipt(objectStore, {
+        id: effectId,
+        runId: RUN_ID,
+        toolCallId: callId,
+        toolName: "terminal_run_command",
+        position,
+      });
+    }
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_tasks
+        (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name,
+         state, command_sha256, command_deadline_at, stdout_head, stdout_tail,
+         stderr_head, stderr_tail, stdout_bytes, stderr_bytes, created_at, updated_at)
+       VALUES ('a-running-task', ?, ?, 1, 'mixed-running-provider', 'running',
+               'running-hash', ?, '', '', '', '', 0, 0, ?, ?),
+              ('z-submitting-task', ?, ?, 1, 'mixed-submitting-provider', 'submitting',
+               'submitting-hash', ?, '', '', '', '', 0, 0, ?, ?)`,
+      RUN_ID,
+      runningEffect,
+      clock.now().getTime() - 1,
+      clock.now().getTime() - 2,
+      clock.now().getTime() - 2,
+      RUN_ID,
+      submittingEffect,
+      clock.now().getTime() - 1,
+      clock.now().getTime() - 2,
+      clock.now().getTime() - 2,
+    );
+    workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'failed' WHERE id = ?", RUN_ID);
+    let finishDelete!: () => void;
+    vi.mocked(provider.deleteSandbox).mockImplementationOnce(async () => (
+      new Promise<void>((resolve) => { finishDelete = resolve; })
+    ));
+
+    const acquired = coordinator.acquire({
+      ...context(),
+      harnessRunId: linkedRun,
+      toolCallId: "mixed-linked-call",
+    });
+    await vi.waitFor(() => expect(provider.deleteSandbox).toHaveBeenCalledWith("sandbox-1"));
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    await expect(terminal.markTaskRunning({
+      effectIntentId: submittingEffect,
+      providerTaskId: "mixed-late-provider-command",
+      commandDeadlineAt: clock.now().getTime() + 60_000,
+      now: clock.now().getTime(),
+    })).resolves.toBe(true);
+
+    finishDelete();
+    await expect(acquired).resolves.toMatchObject({ providerSandboxId: "sandbox-2", generation: 2 });
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(
+      objectStore,
+      `SELECT COUNT(*) AS count FROM terminal_tasks
+        WHERE state IN ('planned', 'submitting', 'running')`,
+    )).toEqual({ count: 0 });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT generation, operation_run_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ generation: 2, operation_run_id: linkedRun });
   });
 
   it("releases a transient recovery claim without publishing a stale failure", async () => {
@@ -350,7 +438,6 @@ describe("Terminal sandbox coordinator", () => {
       linkedRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
     );
     workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'failed' WHERE id = ?", RUN_ID);
-    vi.mocked(provider.cleanupCommand!).mockRejectedValueOnce(new Error("cleanup unavailable"));
     vi.mocked(provider.stopSandbox).mockRejectedValueOnce(new Error("stop unavailable"));
     const linked = { ...context(), harnessRunId: linkedRun, toolCallId: "transient-recovery-linked" };
 
@@ -370,7 +457,7 @@ describe("Terminal sandbox coordinator", () => {
     });
   });
 
-  it("does not stop a successor after degraded cleanup loses its renewed token", async () => {
+  it("does not stop a successor after recovery renewal loses its exact token", async () => {
     const { objectStore, db, provider, clock, advance } = fixture();
     const linkedRun = "00000000-0000-4000-8000-000000000098";
     const successorRun = "00000000-0000-4000-8000-000000000099";
@@ -387,7 +474,7 @@ describe("Terminal sandbox coordinator", () => {
         ...port,
         renewLifecycleClaim: async (...args: Parameters<typeof port.renewLifecycleClaim>) => {
           renewCalls += 1;
-          if (renewCalls === 2) {
+          if (renewCalls === 1) {
             renewPaused();
             await renewRelease;
           }
@@ -433,21 +520,13 @@ describe("Terminal sandbox coordinator", () => {
     );
     workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'failed' WHERE id = ?", RUN_ID);
 
-    let rejectCleanup!: () => void;
-    vi.mocked(provider.cleanupCommand!).mockImplementationOnce(async () => (
-      new Promise<void>((_resolve, reject) => {
-        rejectCleanup = () => reject(new Error("cleanup degraded"));
-      })
-    ));
     const staleAcquire = coordinator.acquire({
       ...context(),
       harnessRunId: linkedRun,
       toolCallId: "renew-race-linked",
     });
-    await vi.waitFor(() => expect(provider.cleanupCommand).toHaveBeenCalledOnce());
-    advance(17);
-    rejectCleanup();
     await pausedRenew;
+    advance(17);
 
     const claimed = await terminal.sandbox();
     await expect(terminal.claimYieldedOperationRecovery({

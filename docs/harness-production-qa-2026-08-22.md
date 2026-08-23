@@ -38,7 +38,11 @@ PR #247 merged and deployed the first five repairs. Fresh Global Computer Use
 verified the reproduced failure-protocol, discovery, attachment-validation,
 stopped-receipt, and HyperSight paths; migration 0093 is applied to both
 regional D1 databases. The EU functional and meeting-notes payload paths remain
-open. The sixth defect's provider-quiesced lease repair is branch-local and
+open. PR #249 merged and deployed the sixth defect's lease-liveness repair.
+Fresh Global Computer Use proved linked runs no longer receive `sandbox_busy`,
+but the required post-deadline read exposed a seventh defect: Daytona named-
+session deletion removed observation without stopping the accepted shell, which
+wrote after handoff. The whole-sandbox quiescence repair is branch-local and
 mutation-proven, but not deployed or production-retested yet. Granola also failed a second fresh
 activation because its hosted MCP authorization could not be verified. The
 evidence still does not isolate Avalon code from provider/session/transport
@@ -49,7 +53,7 @@ confirmed code defect.
 
 - Date: 2026-08-22 PDT / 2026-08-23 UTC.
 - Desktop: production `/Applications/Avalon.app`; original pass 1.132.0,
-  post-deployment pass 1.133.0.
+  PR #247 post-deployment pass 1.133.0, and PR #249/HQA-07 pass 1.135.0.
 - Region: Global production API, application version 0.24.0 in the correlated
   Worker records.
 - Model observed in the correlated runs: `google/gemini-3.7-flash`.
@@ -60,6 +64,9 @@ confirmed code defect.
   Global `00b5ed2e-8abe-46a5-b648-c66f495de50a` and EU
   `0f665acb-cfbd-415c-b437-5d662e244d9f` from merge commit
   `22d2fc101934e45c6628fd97eb25074ccf22b9de` in workflow run `32614933942`.
+  PR #249 then deployed Global `2e590149-7543-4e48-a526-77a85b15210b`
+  and EU `53e47151-3a18-4553-b2b2-a074a83687cf` from merge commit
+  `973168279939212fde7eeac181431ee3ad8721bd` in workflow run `32624216543`.
 - Local checkout baseline before the repairs: `fbe7f512`. Production Worker
   logs exposed `build_sha: null`; the local commit is therefore a source-review
   baseline, not the identity of the deployed Worker revision above.
@@ -164,7 +171,7 @@ stays inside the harness loop, emits `tool_failed`, persists a failed receipt,
 and projects `{success: false}` with allowlisted recovery details. The current
 skill code is `skill_not_available`, not `skill_not_found`.
 
-### Branch-local repair and verification
+### Repair and post-deployment result
 
 - Plugin activation refusals now throw `plugin_not_available`,
   `plugin_not_authorized`, `plugin_authorization_unavailable`, or
@@ -232,9 +239,9 @@ removing the parent guard made the corresponding tests fail before the repair
 was restored.
 
 Status: the stopped parent and ambiguous receipt are production-verified after
-PR #247. The separate linked-run lease recovery is reopened as HQA-06; the
-earlier command remains ambiguous, and the no-late-marker check must be repeated
-after that repair deploys.
+PR #247. PR #249 production-verified linked-run lease liveness, while HQA-07
+reopened the provider-quiescence half after a post-deadline late marker. The
+earlier command remains ambiguous and is never replayed.
 
 ## Finding HQA-03 — P2: argument rejection creates a false attachment-content gap
 
@@ -370,18 +377,17 @@ session-replace, and command-submit mutation and renews the bounded submission
 window each time. Provider acceptance atomically changes the task to `running`
 and installs the requested command-plus-observation horizon instead of extending
 the pre-submit fence. When a linked run encounters a retained accepted command,
-Avalon deletes its exact named Daytona session (or confirms the whole sandbox
-stopped), then settles the exact durable task as cancelled and atomically hands
-the lease to the cleanup claimant. If a `submitting` task has no provider
-session, or Daytona reports the sandbox absent, Avalon instead confirms provider
-deletion, advances to a fresh sandbox generation, and only then admits the
-successor. An object-local cleanup token excludes competing tools and lifecycle
-work across those provider awaits. The exact token is renewed before every
-provider mutation and cannot be revived after expiry, so a degraded cleanup
+the follow-up repair now stops the whole Daytona sandbox before settling the
+exact durable task as cancelled and atomically handing the lease to the cleanup
+claimant. A `submitting` task instead retires the provider sandbox, advances to
+a fresh generation, and only then admits the successor. An object-local cleanup
+token excludes competing tools and lifecycle work across those provider awaits.
+The exact token is renewed before every provider mutation and cannot be revived
+after expiry, so a degraded cleanup
 cannot leave an obsolete stop/delete continuation behind after a successor
 takes over. The lifecycle sweep uses the same provider-cleanup-before-
 settlement order and token-fenced generation retirement for provider absence or
-a `submitting` task whose named session is missing before final expiry; when
+any `submitting` task before final expiry; when
 expiry is due, provider absence settles `expired` and preserves the final diff
 instead of creating a replacement generation. Scheduled cleanup does not
 depend on a later human-linked run. An aborted or late provider continuation stays unsettled
@@ -398,21 +404,20 @@ task blocks regardless of either deadline.
 
 The real-workerd regression proves both nominal deadlines can pass without
 admitting a contender, then proves exact task settlement permits takeover. A
-runtime integration forces `command_outcome_unknown` and asserts that the
-provider cleanup call precedes a distinct linked-run read while a concurrent
+runtime integration forces `command_outcome_unknown` and asserts that whole-
+sandbox stop and restart precede a distinct linked-run read while a concurrent
 contender remains fenced. Causal cases terminalize and hand off while the old
 runtime is paused both before durable task admission and after task admission
 but before provider confirmation. The latter resumes only after sandbox
 retirement and fails its durable pre-submit check before the modeled provider
 mutation; the Daytona-provider regression separately proves that check runs
 after session creation and immediately before `executeSessionCommand`. Neither
-stale continuation can submit or revive the retired command. Other cases keep the read fenced when neither session
-cleanup nor sandbox stop is confirmed, exercise the confirmed-stop/restart
-fallback, and prove a late command cannot clean up the successor. The provider
+stale continuation can submit or revive the retired command. Other cases keep the read fenced when whole-sandbox
+stop is not confirmed and prove a late command cannot clean up the successor. The provider
 unit suite pins exact named-session deletion, idempotent already-missing
 sessions, cancellation checks after in-flight session creation, and
 non-destructive ordinary cleanup failure. These tests prove
-Avalon orders admission after the provider cleanup contract; the required fresh
+Avalon orders admission after the provider lifecycle boundary; the required fresh
 production pass remains the evidence for a live Daytona process. The lifecycle
 regressions prove expired tasks are cleaned before sandbox stop and a contender
 cannot enter during a provider-await claim. Claim expiry does not turn
@@ -425,7 +430,7 @@ Cleanup has no agent-selected item cap: every successful iteration settles one
 of the finite durable tasks already present, and handoff waits for the set to be
 empty. Both linked-operation and scheduled-lifecycle 21-task regressions prove
 all residue is settled under the exact claim, including after a whole-sandbox
-fallback stop. Provider-404 cases prove linked recovery and pre-expiry scheduled
+stop. Provider-404 cases prove linked recovery and pre-expiry scheduled
 lifecycle cleanup cancel retained tasks under the cleanup token, retire the
 missing sandbox, and advance the generation before another operation can claim
 it; expiry instead commits `expired` without discarding its final-diff
@@ -434,9 +439,78 @@ status rule, retained-task or phase-specific submission fence, lifecycle-claim
 fence, late-publication guard, expiry settlement, transient-failure cleanup, or
 lifecycle status repair made the corresponding test fail before restoration.
 
-Status: fixed locally; deployment and fresh Computer Use recovery retest
-pending. The repair restores access only after provider cleanup is confirmed;
-it does not replay, reconcile, or declare the unknown command resolved.
+Status: PR #249 merged as `973168279939212fde7eeac181431ee3ad8721bd` and
+deployment run `32624216543` produced healthy Global Worker version
+`2e590149-7543-4e48-a526-77a85b15210b` and EU version
+`53e47151-3a18-4553-b2b2-a074a83687cf`, with both migration ledgers current.
+Fresh Global workstream `01a02d70-ffe2-71f2-85c9-e5606de0ec92` confirmed the
+lease-liveness half: every linked read acquired with zero `sandbox_busy`.
+Finding HQA-07 below records why provider quiescence still failed and requires a
+follow-up deploy. The ambiguous command remains unresolved and is never replayed.
+
+## Finding HQA-07 — P1: named-session deletion does not stop an accepted command
+
+### Reproduction and root cause
+
+Confidence: high; reproduced twice through signed-in Avalon 1.135.0 Computer
+Use, then isolated to the provider-lifecycle proof in foreground and scheduled
+recovery.
+
+In private Global workstream `01a02d70-ffe2-71f2-85c9-e5606de0ec92`, run
+`01a02d7d-2c06-7f3d-ba75-c40d8e570d50` submitted a warm command that wrote
+`strict-start.txt` at `2026-08-23T07:19:43Z`, slept for 120 seconds, and would
+then write `strict-late.txt`. Member stop converted invocation
+`01a02d7d-4e9c-7493-8c13-3b8032eb6450` to `command_outcome_unknown` after
+51,673 ms; the updated desktop rendered its receipt `ambiguous` and the parent
+`stopped`. Linked run `01a02d7e-aa4b-7e0b-9648-8c57fcafefb8` completed two
+read tools with zero `sandbox_busy`: the start marker was present and the late
+marker was initially absent. After the original 120-second deadline, traced run
+`01a02d86-2fa1-7f68-931a-b1d388581e9e` read exact content
+`PR249_STRICT_LATE_SHOULD_NOT_EXIST`, again with zero `sandbox_busy`.
+
+PR #249's recovery called Daytona `deleteSession` for a retained `running` task,
+then treated either deletion or a later 404 as process quiescence. The durable
+cleanup token and lease handoff were correct, but the provider evidence was not:
+production removed the named observation handle while the accepted shell kept
+running in the same sandbox. The linked run therefore overlapped the old process
+even though Avalon had safely cancelled the task and never replayed its command.
+The first shorter probe found its late marker too, but stop occurred too close to
+natural completion to isolate causality; the 120-second probe and post-deadline
+read are the acceptance evidence.
+
+### Branch-local repair and verification
+
+Accepted `running` tasks now require a token-renewed whole-sandbox stop before
+task cancellation or lease handoff. Acquisition restarts that same sandbox, so
+the filesystem remains available without the old process. A `submitting` task
+still deletes the provider sandbox and advances the generation, because a
+not-yet-returned submission could arrive after stop/restart. The same rule runs
+in scheduled lifecycle cleanup. Once a stop covers the generation, every
+residual running task is settled under that one claim instead of issuing a
+session deletion per task. `submitting` residue is selected first even when its
+task id sorts after a running row. A lost sandbox-delete response that is
+reconciled as provider absence stays inside the cleanup loop, which cancels all
+generation tasks before linked handoff or final expiry. Final expiry itself is
+also fenced on the absence of unsettled tasks, so a failed cancellation RPC
+cannot clear the sandbox authority and strand live residue.
+
+The focused runtime regression failed on the pre-fix path because no provider
+stop occurred, then passed with stop and restart ordered before the linked read
+while a second contender remained fenced. The scheduled-lifecycle regression
+likewise failed before the repair and now leaves the task `running` while stop is
+paused, then settles it only after stop completes. The four focused Terminal
+files pass 62/62 (21 runtime, 12 lifecycle, 10 coordinator, and 19 provider),
+and the real-workerd authority file passes 38/38. The redundant second
+stop/restart happy-path test was removed because the paused-stop case already
+proves ordering, contender exclusion, task cancellation, and handoff. In its
+place, the coordinator regression proves a `submitting` task is selected before
+an earlier-sorting `running` residue, remains retirement-bound even when its
+late provider callback changes it to `running`, and prevents stop/restart reuse
+of that generation.
+
+Status: fixed locally; deployment and a fresh signed-in post-deadline Computer
+Use retest are pending. The repair does not replay or declare the ambiguous
+command resolved.
 
 ## Review-driven durable-authority hardening
 
@@ -517,13 +591,19 @@ zero warnings, typecheck, the full root test command, all 357 repository script
 tests, all 110 desktop release-invariant tests, the root production build, the
 EU Wrangler dry-run build, `docs:check`, and `git diff --check`.
 
-The HQA-06 follow-up leaves the full Terminal authority file at 37/37 and the
-focused runtime, lifecycle, coordinator, and provider files at 61/61 (22
-runtime, 11 lifecycle, 9 coordinator, and 19 provider). The
+The HQA-06 follow-up initially left the full Terminal authority file at 37/37
+and the four focused files at 61/61 (22 runtime, 11 lifecycle, 9 coordinator,
+and 19 provider). HQA-07 reaches 38/38 and 62/62 after replacing the redundant
+runtime case with the mixed-residue coordinator regression and adding the
+expiry-settlement/cancellation-failure pair, giving the current 21/12/10/19
+split. The
 pre-fix status predicate, a deliberate retained-task-fence removal, and a
 deliberate lifecycle-status rollback each failed the named regression before
-the repair was restored. The complete branch gates are rerun after the final
-provider-cleanup repair and recorded before merge.
+the repair was restored. After the final provider-quiescence repair, root lint
+passed with zero warnings, typecheck and `docs:check` passed, the full root test
+command passed (including 1,740 API Node tests, 234 API real-workerd tests, and
+1,234 desktop tests), repository script tests passed 357/357, desktop release
+invariants passed 110/110, and both Global and EU Worker dry-run builds passed.
 
 The final full-test run also exposed a workerd fixture race in three dispatch
 lifecycle cases: each posted a dispatch and parked its one-millisecond alarm in
@@ -536,10 +616,10 @@ the complete root test command then passed, including all 233 workerd tests.
 
 ## Remaining acceptance work
 
-- Deploy the HQA-06 lease repair and rerun the exact stop, unknown-command,
-  linked-read, `START_PRESENT`, and `LATE_ABSENT` sequence in a
-  fresh signed-in production workstream. Green local tests do not satisfy that
-  UI gate.
+- Deploy the HQA-07 whole-sandbox quiescence repair and rerun the exact stop,
+  unknown-command, linked-read, `START_PRESENT`, immediate `LATE_ABSENT`, and
+  post-original-deadline `LATE_STILL_ABSENT` sequence in a fresh signed-in
+  production workstream. Green local tests do not satisfy that UI gate.
 - Granola has failed twice, including after PR #247. Continue with
   provider-aware diagnostics; do not report a revoked connection unless
   authorization actually returns denied.
@@ -556,7 +636,9 @@ the complete root test command then passed, including all 233 workerd tests.
 
 Do not describe the current production harness as fully accepted yet. PR #247's
 failure receipts, ranked discovery, attachment validation, stopped receipt, and
-Global HyperSight payload commit are production-verified. HQA-06 still requires
-deployment and a fresh stop/recovery retest, and Granola remains unavailable.
+Global HyperSight payload commit are production-verified. PR #249 production-
+verified that linked runs no longer wait behind the yielded lease, but HQA-07's
+whole-sandbox quiescence repair still requires deployment and a fresh strict
+stop/recovery retest. Granola remains unavailable.
 The prior EU Terminal, stale-attempt, injected-error, fresh EU payload, and
 meeting-notes payload gates remain explicit regional or targeted follow-up work.

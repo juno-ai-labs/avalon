@@ -343,9 +343,10 @@ export class TerminalSandboxCoordinator {
   /**
    * A yielded run never resumes its Terminal lease; `needs_input` specifically
    * admits a new linked run. If the old generation retained a named Daytona
-   * command after losing observation, the contender must first make that
-   * provider session quiescent and fence its durable task before it may take
-   * the workspace lease. The ambiguous command is cancelled, never replayed.
+   * command after losing observation, the contender must first stop that
+   * provider sandbox and fence its durable task before it may take the
+   * workspace lease. A submitting command instead retires the sandbox. The
+   * ambiguous command is cancelled, never replayed.
    */
   private async recoverYieldedOperation(
     context: HarnessToolContext,
@@ -409,60 +410,51 @@ export class TerminalSandboxCoordinator {
         const task = await terminal.unsettledTask(row.generation);
         if (!task) return finishRecovery();
 
-        if (!sandboxStopped && !sandboxRetired) {
+        if (!sandboxRetired && task.state === "submitting") {
+          // A provider session is an observation handle, not a process-liveness
+          // authority. A submission can outlive removal of that handle and
+          // arrive later, so only retirement of the provider sandbox excludes
+          // a stale mutation from the successor generation.
           try {
-            if (this.provider.cleanupCommand) {
-              await renewClaim();
-              const cleanup = await this.provider.cleanupCommand(
-                sandboxId,
-                task.providerTaskName,
-              );
-              if (cleanup === "missing" && task.state === "submitting") {
-                await renewClaim();
-                await this.provider.deleteSandbox(sandboxId);
-                sandboxRetired = true;
+            await renewClaim();
+            await this.provider.deleteSandbox(sandboxId);
+          } catch (error) {
+            if (!isTerminalProviderNotFound(error)) {
+              try {
+                await this.provider.getSandbox(sandboxId);
+              } catch (observationError) {
+                if (isTerminalProviderNotFound(observationError)) sandboxRetired = true;
+                else throw error;
               }
-            } else {
-              if (task.state === "submitting") {
-                await renewClaim();
-                await this.provider.deleteSandbox(sandboxId);
-                sandboxRetired = true;
-              } else {
-                await renewClaim();
-                await this.provider.stopSandbox(sandboxId);
-                sandboxStopped = true;
-              }
+              if (!sandboxRetired) throw error;
             }
+          }
+          sandboxRetired = true;
+          sandboxStopped = false;
+        } else if (!sandboxRetired && !sandboxStopped && task.state === "running") {
+          // Production proved that deleting Daytona's named session can remove
+          // observation while its accepted command keeps running. Stop the
+          // whole sandbox before cancelling the durable task or handing its
+          // lease to a linked run; start preserves the sandbox filesystem.
+          try {
+            await renewClaim();
+            await this.provider.stopSandbox(sandboxId);
+            sandboxStopped = true;
           } catch (error) {
             if (isTerminalProviderNotFound(error)) {
               sandboxRetired = true;
-            } else if (task.state === "submitting") {
-              try {
-                await renewClaim();
-                await this.provider.deleteSandbox(sandboxId);
-                sandboxRetired = true;
-              } catch (deleteError) {
-                if (!isTerminalProviderNotFound(deleteError)) throw error;
-                sandboxRetired = true;
-              }
             } else {
+              let observed: Awaited<ReturnType<TerminalSandboxProvider["getSandbox"]>> | null = null;
               try {
-                await renewClaim();
-                await this.provider.stopSandbox(sandboxId);
-                sandboxStopped = true;
-              } catch {
-                let observed: Awaited<ReturnType<TerminalSandboxProvider["getSandbox"]>> | null = null;
-                try {
-                  observed = await this.provider.getSandbox(sandboxId);
-                } catch (observationError) {
-                  if (isTerminalProviderNotFound(observationError)) sandboxRetired = true;
-                  else throw error;
-                }
-                if (!sandboxRetired && observed?.state !== "stopped" && observed?.state !== "archived") {
-                  throw error;
-                }
-                sandboxStopped = !sandboxRetired;
+                observed = await this.provider.getSandbox(sandboxId);
+              } catch (observationError) {
+                if (isTerminalProviderNotFound(observationError)) sandboxRetired = true;
+                else throw error;
               }
+              if (!sandboxRetired && observed?.state !== "stopped" && observed?.state !== "archived") {
+                throw error;
+              }
+              sandboxStopped = !sandboxRetired;
             }
           }
         }
