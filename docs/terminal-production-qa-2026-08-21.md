@@ -119,17 +119,24 @@ for the fixed sixteen-minute lease deadline. The branch-local repair treats the
 run as yielded while every foreign takeover remains fenced by any unsettled
 named Terminal task, regardless of either nominal deadline. Command admission
 is fenced on the exact live run, operation owner, generation, and provider
-sandbox; the durable task remains `submitting` through the combined command and
-provider-request window so a not-yet-visible submission cannot race cleanup.
+sandbox; the durable task remains `submitting` through the provider-request
+window so a not-yet-visible submission cannot race cleanup.
 Daytona revalidates that authority immediately before every mutating submission
-step. A linked run deletes an accepted command's exact Daytona session (or
+step. Provider acceptance atomically changes the task to `running` and installs
+the requested command-plus-observation horizon. A linked run deletes an
+accepted command's exact Daytona session (or
 confirms the whole sandbox stopped) before settlement. When a `submitting`
-command has no visible session, or the provider sandbox is 404, Avalon instead
-retires the old provider sandbox and advances to a fresh generation before
-handoff. An object-local cleanup token keeps competing tools and lifecycle work
+command has no visible session, or the provider sandbox is 404 before final
+expiry, Avalon instead retires the old provider sandbox and advances to a fresh
+generation before handoff. A due expiry settles `expired` and preserves its
+final-diff reference instead of creating a replacement generation. An
+object-local cleanup token keeps competing tools and lifecycle work
 excluded across each provider await. It is renewed before every provider
-mutation and cannot be revived after expiry, so a stale batch cannot touch a
-successor. Scheduled lifecycle cleanup cancels every retained task under that token before
+mutation and cannot be revived after expiry, so a stale cleanup continuation
+cannot touch a successor. Transient cleanup failure does not become a stale
+member-facing sandbox failure. A definitive late result is preserved only
+inside the obsolete runtime; the harness receipt fence discards it, and no
+command-log attachment or provider cleanup runs after recovery wins. Scheduled lifecycle cleanup cancels every retained task under that token before
 retiring a missing sandbox, including a `submitting` task with no visible named
 session and no later human-linked run. That provider boundary matters because
 `command_outcome_unknown` does not prove the command stopped. The earlier

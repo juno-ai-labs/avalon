@@ -3,7 +3,10 @@ import type { HarnessToolContext } from "@avalon/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalSandboxCoordinator } from "../src/services/terminal/coordinator";
-import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
+import {
+  DAYTONA_REQUEST_TIMEOUT_MS,
+  type TerminalSandboxProvider,
+} from "../src/services/terminal/daytona-provider";
 import { sha256Hex } from "../src/lib/crypto";
 import {
   createDaytonaTerminalRuntime,
@@ -38,7 +41,10 @@ const I = "00000000-0000-4000-8000-000000000015";
 const openDatabases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
 afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });
 
-function fixture(clock: { now(): Date } = { now: () => new Date("2026-08-13T12:00:00.000Z") }) {
+function fixture(
+  clock: { now(): Date } = { now: () => new Date("2026-08-13T12:00:00.000Z") },
+  acquisitionObserved?: ConstructorParameters<typeof TerminalSandboxCoordinator>[6],
+) {
   const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
   database.exec(`
@@ -127,7 +133,15 @@ function fixture(clock: { now(): Date } = { now: () => new Date("2026-08-13T12:0
     })),
   };
   const db = testWorkstreamRuntimeD1(sqliteD1(database), objectStore, { workspaceId: W, workstreamId: S });
-  const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), provider, clock);
+  const coordinator = new TerminalSandboxCoordinator(
+    db,
+    testTerminalPortFactory(objectStore),
+    provider,
+    clock,
+    undefined,
+    false,
+    acquisitionObserved,
+  );
   return { database, objectStore, files, provider, resources, publisher, runtime: createDaytonaTerminalRuntime(
     testTerminalPortFactory(objectStore), coordinator, provider, resources, publisher) };
 }
@@ -214,7 +228,12 @@ describe("Daytona Terminal runtime", () => {
 
   it("retires a sandbox before handoff when a submitting command has no provider session", async () => {
     let clockNow = Date.now();
-    const { objectStore, provider, runtime } = fixture({ now: () => new Date(clockNow) });
+    const admittedAt = clockNow;
+    const acquisitionObserved = vi.fn(async () => undefined);
+    const { objectStore, provider, runtime } = fixture(
+      { now: () => new Date(clockNow) },
+      acquisitionObserved,
+    );
     let finishSubmission!: () => void;
     let providerSubmissions = 0;
     vi.mocked(provider.createSandbox).mockImplementation(async (input) => ({
@@ -239,6 +258,13 @@ describe("Daytona Terminal runtime", () => {
         I,
       )).toEqual({ state: "submitting" });
     });
+    const submitting = workstreamObjectGet(
+      objectStore,
+      "SELECT command_deadline_at FROM terminal_tasks WHERE effect_intent_id = ?",
+      I,
+    ) as { command_deadline_at: number };
+    expect(submitting.command_deadline_at)
+      .toBeLessThan(admittedAt + DAYTONA_REQUEST_TIMEOUT_MS + 3_000);
     workstreamObjectRun(
       objectStore,
       `UPDATE runs SET status = 'needs_input', terminalized_at = ? WHERE run_id = ?`,
@@ -267,8 +293,9 @@ describe("Daytona Terminal runtime", () => {
     )).rejects.toMatchObject({ code: "sandbox_busy" });
     expect(provider.cleanupCommand).not.toHaveBeenCalled();
     expect(provider.stopSandbox).not.toHaveBeenCalled();
+    acquisitionObserved.mockClear();
 
-    clockNow += 10 * 60_000;
+    clockNow = submitting.command_deadline_at + 1;
     await expect(runtime.readFile(
       linkedContext,
       "src/file.txt",
@@ -277,6 +304,10 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.stopSandbox).not.toHaveBeenCalled();
     expect(provider.createSandbox).toHaveBeenCalledTimes(2);
     expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime-2", "/workspace/src/file.txt");
+    expect(acquisitionObserved).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ action: "start", localFilesRetained: false }),
+    );
     expect(workstreamObjectGet(
       objectStore,
       "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1",
@@ -362,6 +393,8 @@ describe("Daytona Terminal runtime", () => {
       cwd: "/workspace",
       timeoutMs: 3_000,
     }));
+    expect(provider.cleanupCommand).toHaveBeenCalledOnce();
+    expect(provider.cleanupCommand).toHaveBeenCalledWith("sandbox-runtime", `avalon-task-${I}`);
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state, exit_code, termination_reason FROM terminal_tasks WHERE effect_intent_id = ?",
@@ -371,24 +404,30 @@ describe("Daytona Terminal runtime", () => {
 
   it("keeps an unknown provider outcome recoverable and reattaches on the exact retry", async () => {
     const { objectStore, provider, runtime } = fixture();
+    const timeoutMs = 15 * 60_000;
+    const submittedAfter = Date.now();
     loseObservationAfterSubmission(provider);
     vi.mocked(provider.runCommand).mockImplementationOnce(async (_id, input) => {
       await input.onSubmitted?.("provider-command-unknown");
       return { exitCode: 0, stdout: "recovered\n", stderr: "" };
     });
 
-    await expect(runtime.runCommand(context, { command: "printf recovered", timeoutMs: 3_000 }))
+    await expect(runtime.runCommand(context, { command: "printf recovered", timeoutMs }))
       .rejects.toMatchObject({
         code: "command_outcome_unknown",
         details: { reason: "Resume this run so Avalon can reattach to the same durable command task." },
       });
-    expect(workstreamObjectGet(
+    const retained = workstreamObjectGet(
       objectStore,
-      "SELECT state, completed_at FROM terminal_tasks WHERE effect_intent_id = ?",
+      `SELECT state, completed_at, command_deadline_at
+         FROM terminal_tasks WHERE effect_intent_id = ?`,
       I,
-    )).toEqual({ state: "running", completed_at: null });
+    ) as { state: string; completed_at: number | null; command_deadline_at: number };
+    expect(retained).toMatchObject({ state: "running", completed_at: null });
+    expect(retained.command_deadline_at)
+      .toBeGreaterThanOrEqual(submittedAfter + timeoutMs + DAYTONA_REQUEST_TIMEOUT_MS);
 
-    await expect(runtime.runCommand(context, { command: "printf recovered", timeoutMs: 3_000 }))
+    await expect(runtime.runCommand(context, { command: "printf recovered", timeoutMs }))
       .resolves.toMatchObject({ state: "completed", stdout: "recovered\n" });
   });
 
@@ -667,8 +706,8 @@ describe("Daytona Terminal runtime", () => {
     )).toEqual({ state: "cancelled" });
   });
 
-  it("does not delete the successor session when a late command loses durable settlement", async () => {
-    const { objectStore, provider, runtime } = fixture();
+  it("keeps a late large result local after recovery wins without publishing or deleting", async () => {
+    const { objectStore, provider, resources, runtime } = fixture();
     let finishProvider!: (result: { exitCode: number; stdout: string; stderr: string }) => void;
     const providerPending = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
       (resolve) => { finishProvider = resolve; },
@@ -707,15 +746,56 @@ describe("Daytona Terminal runtime", () => {
       { ...context, harnessRunId: R2, toolCallId: "call-linked" },
       "src/file.txt",
     )).resolves.toEqual(new TextEncoder().encode("hello\n"));
-    finishProvider({ exitCode: 0, stdout: "late\n", stderr: "" });
-    await expect(late).rejects.toMatchObject({ code: "command_recovery_unavailable" });
+    finishProvider({ exitCode: 7, stdout: "x".repeat(150_000), stderr: "late-error\n" });
+    await expect(late).resolves.toMatchObject({
+      state: "failed",
+      exitCode: 7,
+      stdout: expect.stringContaining("provider output omitted"),
+      stderr: "late-error\n",
+    });
     expect(provider.cleanupCommand).toHaveBeenCalledTimes(1);
     expect(provider.stopSandbox).not.toHaveBeenCalled();
+    expect(resources.publishResource).not.toHaveBeenCalled();
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state, stdout_head FROM terminal_tasks WHERE effect_intent_id = ?",
       I,
     )).toEqual({ state: "cancelled", stdout_head: "" });
+  });
+
+  it("does not settle or publish a late result after its holder yields", async () => {
+    const { objectStore, provider, resources, runtime } = fixture();
+    let finishProvider!: (result: { exitCode: number; stdout: string; stderr: string }) => void;
+    vi.mocked(provider.runCommand).mockImplementationOnce(async (_id, input) => {
+      await input.onSubmitted?.("provider-command-yielded");
+      return new Promise((resolve) => { finishProvider = resolve; });
+    });
+
+    const late = runtime.runCommand(context, { command: "sleep 3", timeoutMs: 3_000 });
+    await vi.waitFor(() => expect(workstreamObjectGet(
+      objectStore,
+      "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?",
+      I,
+    )).toEqual({ state: "running" }));
+    workstreamObjectRun(
+      objectStore,
+      `UPDATE runs SET status = 'needs_input', terminalized_at = ? WHERE run_id = ?`,
+      Date.now(),
+      R,
+    );
+
+    finishProvider({ exitCode: 0, stdout: "x".repeat(150_000), stderr: "" });
+    await expect(late).resolves.toMatchObject({
+      state: "completed",
+      stdout: expect.stringContaining("provider output omitted"),
+    });
+    expect(resources.publishResource).not.toHaveBeenCalled();
+    expect(provider.cleanupCommand).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT state, stdout_head FROM terminal_tasks WHERE effect_intent_id = ?",
+      I,
+    )).toEqual({ state: "running", stdout_head: "" });
   });
 
   it("redacts provider secrets before command output reaches durable storage", async () => {
