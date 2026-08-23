@@ -123,3 +123,45 @@ describe("authentication session lifecycle", () => {
     })]);
   });
 });
+
+describe("what an access token can claim", () => {
+  it("drops a forged connector-principal claim on verification", async () => {
+    // The connector-principal design hangs on one property: the auth
+    // middleware builds its context exclusively from the claims
+    // `verifyAccessToken` returns, and that function constructs a fresh
+    // literal rather than spreading the JWT payload — so a token body that
+    // smuggles `principal: "connector"` cannot make a product request skip
+    // the `sessions` verification. This is the assertion behind that
+    // property.
+    const { SignJWT } = await import("jose");
+    const { verifyAccessToken } = await import("../src/services/auth-service");
+    const env = createTestEnv({
+      SESSION_SIGNING_KEY: "global-session-signing-key-with-enough-entropy",
+      AVALON_REGION: "global",
+    });
+    const now = Math.floor(Date.now() / 1_000);
+    const forged = await new SignJWT({
+      sid: "session-forged",
+      wid: "00000000-0000-7000-8000-000000000801",
+      region: "global",
+      principal: "connector",
+    })
+      .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+      .setSubject("00000000-0000-7000-8000-000000000802")
+      .setIssuer("avalon-api")
+      .setAudience("avalon-desktop")
+      .setIssuedAt(now)
+      .setExpirationTime(now + 60)
+      .sign(new TextEncoder().encode("global-session-signing-key-with-enough-entropy"));
+
+    const verified = await verifyAccessToken(env, forged);
+
+    // `toEqual`, so the *absence* of `principal` is what passes.
+    expect(verified).toEqual({
+      sessionId: "session-forged",
+      userId: "00000000-0000-7000-8000-000000000802",
+      workspaceId: "00000000-0000-7000-8000-000000000801",
+      region: "global",
+    });
+  });
+});

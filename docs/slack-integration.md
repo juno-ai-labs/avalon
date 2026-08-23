@@ -205,6 +205,14 @@ than a link authorizes a run — a `users.lookupByEmail`-grade match seats and c
 and cannot spend their credentials — so two replies in one thread can run under different
 principals, exactly as they do when two members type into the same work stream in Avalon.
 
+How "runs as themselves" reaches the work-stream object is the **connector principal**: the
+ingress verifies the active `slack_user_links` row and active membership on the very message
+being delivered (`linkedAccount`), then marks the auth `principal: "connector"` and carries a
+`slack:{team}:{user}` correlation id in place of a session id. The object re-checks current
+membership itself and refuses a stale principal as `connector_member_revoked`; it does not look
+the correlation id up in `sessions`, because a Slack message is not a login and no session row
+exists for it. A login session, by contrast, is always re-verified against its `sessions` row (outside local development's dev-auth bypass).
+
 The triggering Slack member travels with the workflow input through delivery. If a run needs
 input that requires a connected account, Avalon sends the connect prompt to that member rather
 than to whoever opened the work stream. Result controls are shared Slack content, so the feedback
@@ -465,6 +473,12 @@ At each run Avalon ranks actionable inbox items, sends up to three (fewer if few
   discardable.
 - **Attribution is not authorization.** An unlinked author's task still runs with
   the workspace principal, and the opening message keeps its external Slack actor.
+- **Only connector ingress sets `principal: "connector"`, and only after
+  verifying the link and membership on the message being delivered.** The
+  work-stream object re-checks membership alone, so the ingress's
+  `linkedAccount` check is the link's one gate; a path that hands out the
+  marker without it has nothing behind it. Sockets never carry a connector
+  principal — every ticket issuer refuses one at the mint.
 - **A thread belongs to its Slack conversation, not to one member.** Its work
   stream is public for a public channel and private for anything else, a private
   one's room is the conversation's members, and anybody in the conversation may
@@ -562,6 +576,18 @@ not own:
 - **Suspended members and revoked links cannot start or continue tasks.** A
   revoked link does not lock somebody out of a thread, though — it drops them to
   the workspace principal, the same as any unlinked member.
+- **`connector_member_revoked` on an ingress job is a race, not a state.** A
+  member already removed never presents a connector principal — `linkedAccount`
+  resolves them to no link and the message runs under the workspace principal —
+  so the object's refusal is reachable only when a membership or role change
+  lands between the ingress's read and the object's re-check. The job stays
+  retryable: the retry re-reads the link and either runs at the new role or
+  answers under the workspace principal. The code is deliberately not in
+  `SLACK_AUTHORIZATION_ERROR_CODES` (reauthorizing Slack does not restore
+  Avalon membership), and it does not mark the installation `needs_reconnect` —
+  one member's refusal says nothing about the workspace's grant. The same
+  retryable classification covers `invalid_product_request`, the one-deploy
+  window where a new Worker names a principal an old object script refuses.
 - **A private conversation's roster is read once and best effort.**
   `conversations.members` needs `groups:read`, which an installation that has not
   reconnected does not have, and it is bounded at 200 members. Known identities
@@ -610,7 +636,7 @@ not own:
 | `apps/api/test/slack-notification-service.test.ts` | The lookup-based DM path and its email fallback. |
 | `apps/api/test/slack-routing.test.ts` | The Global team route and the regional hand-off. |
 | `apps/api/test/slack-unfurl-refresh.test.ts` | The unfurl card and its refresh sweep — owned by [`workstream-links.md`](workstream-links.md). |
-| `apps/api/test/slack-workspace-assignment.test.ts` | The one-team-one-workspace invariant, the ingress re-drive, the link-challenge reap and the `slack_ingress` due time it clears, and the operator notice an exhausted job posts. |
+| `apps/api/test/slack-workspace-assignment.test.ts` | The one-team-one-workspace invariant, the ingress re-drive, the link-challenge reap and the `slack_ingress` due time it clears, the operator notice an exhausted job posts, and the connector principal: a linked member's create and reply present exactly the marked auth to the object, and the object's refusal stays retryable without flipping the installation. |
 
 Run one with
 `pnpm --filter @avalon/api exec vitest run test/slack-agent-ingress.test.ts` — the
@@ -706,6 +732,47 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 This document predates the [module document](module-documents.md) convention and
 had no changelog until the entries below; the reasoning behind everything above them
 was not recorded and is not reconstructed here.
+
+### 2026-08-23 — A linked member's message stopped impersonating a login
+
+**What changed:** The auth a linked member's ingress presents to the work-stream
+object now carries `principal: "connector"`. The object verifies that principal
+against current active membership in its region (`connectorPrincipalAuth`) and
+refuses a stale one as `connector_member_revoked`; the synthesized
+`slack:{team}:{user}` id stays on the context as a correlation label that
+nothing looks up. Session-principal requests are unchanged, byte for byte.
+Around the marker: `linkedAccount` now binds its link query to the routed
+connection rather than scanning by team, the object's refusal (and the
+one-deploy `invalid_product_request` skew) is classified retryable instead of
+terminal, a 401 from the object no longer flips the installation to
+`needs_reconnect`, and every socket-ticket issuer refuses a connector
+principal at the mint.
+
+**Why:** The Slack connector predates the object cutover of 2026-08-17. Before
+it, nothing verified the synthesized session id; after it, every product
+request was re-verified against `sessions`, where `slack:{team}:{user}` never
+existed — so from the cutover on, every linked member's `@Avalon` mention and
+thread reply died on its first attempt as `session_revoked` (the incident of
+2026-08-22; the unlinked path survived because the workspace principal writes
+through the runtime port, which never consulted `sessions`). The retry and
+reconnect reclassifications came out of review: the object's refusal is
+reachable only as a read-to-recheck race, so treating it as terminal dropped
+the one message that a retry would have delivered, and reading it as a grant
+failure paged an operator to reauthorize a healthy installation.
+
+**Considered and rejected:** Minting real `sessions` rows for Slack links — a
+link is not a login: it would have needed its own lifecycle (mint, renew,
+revoke with the link) to mirror facts the link row already owns, and an
+expiring mirror row would reintroduce this same failure intermittently.
+
+**Consequences:** The ingress's `linkedAccount` check *is* the link
+verification — the object deliberately re-checks only membership, so a path
+that hands out `principal: "connector"` without verifying the link first has
+no second gate behind it. And `connector_member_revoked` must stay out of
+`SLACK_AUTHORIZATION_ERROR_CODES`: reauthorizing Slack does not restore
+Avalon membership.
+
+Shipped in #256.
 
 ### 2026-08-22 — The reaction became a status, and agent output started rendering
 

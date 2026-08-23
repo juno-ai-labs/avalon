@@ -186,7 +186,12 @@ states and desktop tickets are expiring and atomically consumed. Refresh tokens
 are hashed for sessions or AES-GCM encrypted for providers.
 
 Every API resource query includes `workspace_id`. Mutations additionally resolve
-membership role. Every connector tool checks its execution principal, connection
+membership role. A connector ingress may assert a member's own authority by
+marking its auth `principal: "connector"` — set only after verifying the account
+link on the delivered message, re-checked against current membership by the
+work-stream object, and refused by every socket-ticket issuer (see
+[`workstream-durable-object.md`](workstream-durable-object.md#invariants)).
+Every connector tool checks its execution principal, connection
 scope, granted capability, and resource visibility. Workspace-scoped connector
 capabilities roll down to every work stream in that workspace and execute as the
 workspace principal; participants do not implicitly share their personal
