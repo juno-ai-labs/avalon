@@ -5,6 +5,7 @@ import {
 } from "@avalon/contracts";
 import {
   runHarness,
+  RESPONSE_FORMATTING_POLICY,
   type RunHarnessInput,
 } from "@avalon/agent-harness";
 import type { AuthContext, Env } from "../env";
@@ -44,6 +45,8 @@ WHAT TO KEEP, IN PRIORITY ORDER
 5. Only the earlier background needed to make the above make sense.
 
 Rewrite the whole briefing every time rather than appending to it. Drop answered questions, finished or abandoned work, stale background, and repetition. Move an item across states exactly as the transcript does: developing to committed, open to resolved, proposed to rejected, assigned to reassigned. A later, similar detail is a correction only when the transcript says it is.
+
+${RESPONSE_FORMATTING_POLICY}
 
 OUTPUT
 Markdown only, no preamble. Use these sections, omitting any that would be empty:
@@ -99,6 +102,8 @@ RECONCILIATION
 - Join fragments only when they clearly form one thought. Ignore filler, obvious recognition artifacts, and abandoned starts with no reliable meaning.
 - Never derive a commitment or decision from a truncated, unintelligible, or low-confidence fragment.
 - If recording or transcription is partial, summarize only supported content and add a Transcript caveat only when the limitation is material.
+
+${RESPONSE_FORMATTING_POLICY}
 
 OUTPUT
 Return Markdown only, with no preamble.

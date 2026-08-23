@@ -102,7 +102,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "8c65d13a515af943f34b7fc81aa6aa4c781fcbb30e6528cd3fb7a4d560e6fe3e",
+        hash: "fc136c9bc12ba4af42154ff39d650a1f5b420b3623594fa5675a1abd85c77b0b",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -110,7 +110,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "03f68f2a1227069c472134057567cbfd0a18ccfda427dd6ee08c8676510ffe08",
+        hash: "da75a3c0d58dc23e17a83a1e8a86ef431dc8ee2330226759bc8b6af5bbc7a209",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
