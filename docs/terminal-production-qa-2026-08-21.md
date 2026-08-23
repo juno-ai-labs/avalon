@@ -6,7 +6,7 @@ The 2026-08-21 production pass found that Terminal was not release-healthy for m
 
 The initial fault boundary was between the harness's durable tool receipt and Terminal's newly object-local authority, before (or while entering) the Terminal executor. It was not a Bash, Node, Python, SQLite, Git, or repository-permission failure: the failing attempts had no command output, completed in 454 ms–1 s, and occurred after successful operations against the same sandbox. PR #224 fixed the first reproduced heartbeat ordering and made the remaining failure diagnosable. Its production retest then proved the complete invariant: the resident main SubstreamAgent must not call its own Terminal-operation or generated-resource endpoints over RPC while its alarm owns the model/tool loop. PR #228 keeps both paths in the resident object event. The final signed-in Global production stress test passed every area in the acceptance matrix below across 28 Terminal tool calls, including two generated-resource publications and a publish/import round trip. A later signed-in Global pass cleared the concurrent cold-start, alarm-during-sleep, and timeout/recovery gates. It also exposed a separate fresh-workstream model-targeting authority violation and a documented inline-child limit that disagreed with the enforced contract. The owning Terminal module's separate EU functional gate remains open.
 
-The original QA changed no code or production configuration. The follow-up fixes merged through PRs #224 and #228. Every live test remained confined to private QA workstreams, scratch sandboxes, generated QA resources, and an authorized read-only checkout. The later stop-recovery passes proved PR #249's linked-run lease liveness but exposed a separate accepted-command quiescence failure, described below. PR #251 closed that strict Global no-late-write gate; the broader matrix remains open only for EU functional execution, stale-attempt recovery/UX, and injected durable-host error guidance.
+The original QA changed no code or production configuration. The follow-up fixes merged through PRs #224 and #228. Every live test remained confined to private QA workstreams, scratch sandboxes, generated QA resources, and an authorized read-only checkout. The later stop-recovery passes proved PR #249's linked-run lease liveness but exposed a separate accepted-command quiescence failure, described below. PR #251 closed that strict Global no-late-write gate; the broader matrix remains open for EU functional execution, stale-attempt recovery/UX, injected durable-host error guidance, and the exact HQA-08 residual-receipt RPC response-loss fault.
 
 ## 2026-08-22 post-deploy verification correction
 
@@ -410,7 +410,7 @@ Several error boundaries collapse distinct faults:
 - A failure in the harness's durable host callbacks is intentionally fatal but maps to `harness_execution_failed`.
 - The UI displays that generic member-safe code and offers Retry even when the write outcome is unknown or a durable receipt is missing.
 
-Implemented locally: the Terminal object port returns `terminal_operation_not_committed` with `outcome=not_committed` and `retryable=true` only when the transaction rolled back. A later alarm failure is logged but returns the committed result. The shared runtime receipt path applies the same boundary. Bind carries `tool_receipt_persistence_failed` and `run_state_persistence_failed`, while stale write receipts settle the card to `ambiguous` with conservative do-not-repeat guidance.
+Implemented and deployed: the Terminal object port returns `terminal_operation_not_committed` with `outcome=not_committed` and `retryable=true` only when the transaction rolled back. A later alarm failure is logged but returns the committed result. The shared runtime receipt path applies the same boundary. Bind carries `tool_receipt_persistence_failed` and `run_state_persistence_failed`, while stale write receipts settle the card to `ambiguous` with conservative do-not-repeat guidance.
 
 Production status: the Global pass produced no durable-host failure, so it
 proved the healthy path but did not exercise these participant-safe error
@@ -418,14 +418,21 @@ categories. Deterministic input-contract rejections were safe to correct, but
 they are not evidence for rollback, post-commit alarm, or stale-write guidance.
 The post-PR #251 audit also found that a transient receipt RPC after a stopped or
 reaped run had terminalized was never retried, leaving the run terminal while
-its tool card remained `admitted` or `executing`. The branch-local repair uses
+its tool card remained `admitted` or `executing`. The deployed repair uses
 an immutable settlement marker plus the existing bounded activation sweep. It
 also fails soft per warned repair row, preserves the receipt-scoped stopped
 payload, and cannot overwrite a later automation elicitation. Its stopped,
 stale-root, stale-child failure-first, positive BlockDashboard authority,
 unsettleable-row progress, and later-elicitation regressions pass 54/54 in the
-focused runtime file. Merge and deployment remain pending, and the durable
-error UX remains open for targeted production acceptance.
+focused runtime file. PR #253 merged as
+`e4311041bc45936137cd318871497c22392e0bff`; deployment run `32633487884`
+produced healthy Global Worker `c6eca610-7549-4658-9ce4-ca2b5fe370a1` and EU
+Worker `f3c83ce2-e854-49fc-9b05-5819dda1c984`, with no pending migration in
+either region. The exact residual-receipt RPC response-loss fault remains
+unexercised in production because it is not safely injectable through Computer
+Use; the deployed identity and health checks do not pretend to reproduce it. A
+fresh ordinary post-deployment Computer Use inspection was unavailable because
+the Mac relocked after deployment.
 
 ## Additional observations
 
