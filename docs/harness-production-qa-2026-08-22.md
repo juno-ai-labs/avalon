@@ -11,7 +11,7 @@ was blocked. Read-only Worker tailing correlated the visible results with
 durable runs. Local library, API, script, desktop-release, type, lint, and both
 regional build gates supplied the lower-level matrix.
 
-The pass found five Avalon defects:
+The original pass found five Avalon defects:
 
 1. deterministic plugin, skill, and wake-up refusals were returned as successful
    tool results, so the model, durable receipt, audit, activity icon, and prose
@@ -29,25 +29,37 @@ The pass found five Avalon defects:
    R2 object and discard the entire opt-in capture while leaving the visible
    inference successful.
 
-All five have narrow branch-local repairs with mutation-proven regression tests.
-They are not deployed and have not received a fresh production Computer Use
-retest at the time of this report. Granola also failed live activation because
-its hosted MCP request could not be completed. Logs classify that result as
-authorization indeterminate rather than revoked; the evidence does not isolate
-Avalon code from provider/session/transport state, so it remains an unresolved
-live acceptance blocker rather than a confirmed code defect.
+The post-deployment pass found a sixth Avalon defect: a
+`command_outcome_unknown` run terminalized as `needs_input` but retained
+Terminal's exclusive operation lease for sixteen minutes, blocking every linked
+recovery run.
+
+PR #247 merged and deployed the first five repairs. Fresh Global Computer Use
+verified the reproduced failure-protocol, discovery, attachment-validation,
+stopped-receipt, and HyperSight paths; migration 0093 is applied to both
+regional D1 databases. The EU functional and meeting-notes payload paths remain
+open. The sixth defect's provider-quiesced lease repair is branch-local and
+mutation-proven, but not deployed or production-retested yet. Granola also failed a second fresh
+activation because its hosted MCP authorization could not be verified. The
+evidence still does not isolate Avalon code from provider/session/transport
+state, so Granola remains an unresolved live acceptance blocker rather than a
+confirmed code defect.
 
 ## Environment and safety boundary
 
 - Date: 2026-08-22 PDT / 2026-08-23 UTC.
-- Desktop: production `/Applications/Avalon.app`, version 1.132.0.
+- Desktop: production `/Applications/Avalon.app`; original pass 1.132.0,
+  post-deployment pass 1.133.0.
 - Region: Global production API, application version 0.24.0 in the correlated
   Worker records.
 - Model observed in the correlated runs: `google/gemini-3.7-flash`.
 - UI driver: macOS Computer Use against the signed-in production application.
 - Correlation: read-only `wrangler tail` for `avalon-api-global`.
 - Exact correlated Worker script version:
-  `d1662f96-02b9-4367-97f3-00c6a98e962d`.
+  `d1662f96-02b9-4367-97f3-00c6a98e962d` before the repair. PR #247 deployed
+  Global `00b5ed2e-8abe-46a5-b648-c66f495de50a` and EU
+  `0f665acb-cfbd-415c-b437-5d662e244d9f` from merge commit
+  `22d2fc101934e45c6628fd97eb25074ccf22b9de` in workflow run `32614933942`.
 - Local checkout baseline before the repairs: `fbe7f512`. Production Worker
   logs exposed `build_sha: null`; the local commit is therefore a source-review
   baseline, not the identity of the deployed Worker revision above.
@@ -56,6 +68,26 @@ live acceptance blocker rather than a confirmed code defect.
   private QA workstreams and a scratch sandbox. Memory/table records and one
   attachment were QA-only. The automation remained an inactive draft and no
   delivery was created.
+
+## 2026-08-23 post-deployment Computer Use acceptance
+
+Both regional health endpoints were green after PR #247, and both regional
+migration listings reported no pending migrations after applying 0093. The
+signed-in Global desktop then exercised fresh workstreams against exact Worker
+version `00b5ed2e-8abe-46a5-b648-c66f495de50a`.
+
+| Surface | Result | Fresh evidence |
+| --- | --- | --- |
+| Failure protocol, discovery, and validation | PASS | Workstream `01a02ca6-5325-7345-b8f3-a434dd70e881`, run `01a02ca6-5aa0-7089-9e94-f7395676593e`. `public web social timeline` returned `plugin_x`, then `avalon_web`, with `totalMatches: 2`. Missing plugin, skill, and wake-up calls rendered failed rows with `success: false` and codes `plugin_not_available`, `skill_not_available`, and `wakeup_not_found`. Empty resource arguments rendered `kind: validation` with the exact missing-`resourceId` error and no false `Attachment content unverified` boundary. |
+| HyperSight payload logging | PASS in Global | HyperSight request `01a02ca7-fcf6-7029-8bbd-16f04de60826` rendered `HYPERSIGHT_PR247_POSTDEPLOY_OK`. D1 row `80f51d15-c8a4-4dd2-98dc-b9041c780e01` recorded source `block_dashboard` and object key `agent-inference/019fc068-22e8-739a-8394-a760fdc7c376/2026-08-23/80f51d15-c8a4-4dd2-98dc-b9041c780e01.json`; the exact 44,510-byte R2 object existed and carried the same request identity. No payload contents were exposed. |
+| Stop receipt | PASS; linked-run lease defect found | Workstream `01a02ca6-9b16-761b-b61f-08f8f612d9ae`, initial run `01a02ca6-a2fa-781c-8ae5-d6f33348eb12`. Stop moved the sleeping command card from `started` to `ambiguous` and visibly stopped the parent. A deliberately different follow-up command in run `01a02ca9-7aac-700c-9027-65bf6e9d5cfe` returned conservative `command_outcome_unknown`; three later runs produced five `sandbox_busy` read failures from 03:29:10Z through 03:33:38Z. This is HQA-06 below. |
+| Parallel children, alarm, and sleep | PASS | Workstream `01a02cab-74f9-7536-8b97-7623305b3c88`, root run `01a02cab-7c72-702f-9506-2aaeeea06001`. Three same-turn children completed independently in 4–5 seconds. A 40-second Terminal sleep completed in 42,813 ms while wake-up `01a02cab-abcc-7ae2-8e12-c9b5a7fbae37` became due; it fired once afterward in linked run `01a02cad-1c92-76d8-84bd-b328ad2a4ca7` and returned `PR247_ALARM_OK 2026-08-23T03:32:27.718Z`. |
+| Granola | UNRESOLVED LIVE BLOCKER | Fresh workstream `01a02cbd-3593-74ab-89c1-8241f4015b76`, run `01a02cbd-3b75-7c34-a5f2-49e2e33a3226`. `load_plugin` rendered a failed row in 897 ms with `success: false`, `kind: external`, code `plugin_authorization_unavailable`, and bounded retry guidance. No Granola content tool was exposed or called. |
+
+The Global HyperSight artifact proves both sides of the repaired D1/R2 commit.
+Migration and health are verified in EU, but no signed-in EU workspace was
+available for a fresh EU inference payload, so this report does not substitute
+Global functional evidence for that regional UI/artifact gate.
 
 ## Production catalog coverage
 
@@ -147,7 +179,8 @@ skill code is `skill_not_available`, not `skill_not_found`.
   pin the typed code and remediation. A deliberate return-to-success mutation
   made the new lifecycle assertion fail before the repair was restored.
 
-Status: fixed locally; deployment and fresh production UI/receipt retest pending.
+Status: production-verified after PR #247. All three refusals rendered failed
+rows and model-visible `success: false` with their stable codes.
 
 ## Finding HQA-02 — P1: member stop strands the in-flight Terminal receipt
 
@@ -198,7 +231,10 @@ its output-reference fence, removing the atomic dependent-state predicates, and
 removing the parent guard made the corresponding tests fail before the repair
 was restored.
 
-Status: fixed locally; deployment and a fresh stop/card/recovery UI retest pending.
+Status: the stopped parent and ambiguous receipt are production-verified after
+PR #247. The separate linked-run lease recovery is reopened as HQA-06; the
+earlier command remains ambiguous, and the no-late-marker check must be repeated
+after that repair deploys.
 
 ## Finding HQA-03 — P2: argument rejection creates a false attachment-content gap
 
@@ -228,7 +264,8 @@ validation-only empty-input receipt. Harness and host regressions assert all
 three boundaries. Each test failed for the expected reason when its
 corresponding repair was deliberately reverted.
 
-Status: fixed locally; deployment and fresh malformed-call UI retest pending.
+Status: production-verified after PR #247. The malformed call rendered as a
+validation failure and did not produce `Attachment content unverified`.
 
 ## Finding HQA-04 — P2: plugin discovery requires one literal full phrase
 
@@ -256,7 +293,9 @@ overlap to zero made the first test fail with an empty result, and replacing the
 full count with the slice count made the second report 20 instead of 26, before
 both implementations were restored.
 
-Status: fixed locally; deployment and production discovery retest pending.
+Status: production-verified after PR #247 for ranked discovery and the
+model-visible count: X preceded Web and `totalMatches` was 2. The broader
+26-match/20-return cap remains mutation-proven in the library regression.
 
 ## Finding HQA-05 — P2: HyperSight payload logs violate the D1 source vocabulary
 
@@ -284,9 +323,106 @@ three previously valid sources, admits both missing sources, rejects `unknown`,
 and verifies foreign keys. The test failed when either a prior or new source was
 deliberately removed from the migration before the repair was restored.
 
-Status: fixed locally; application of migration 0093 to both Global and EU D1
-is pending. Fresh opt-in HyperSight and meeting-notes verification must find the
-D1 row and the exact R2 object referenced by its `object_key`.
+Status: migration 0093 is applied to Global and EU. Fresh Global HyperSight
+verification found both the D1 row and its exact 44,510-byte R2 object. A fresh
+EU functional payload and meeting-notes payload remain unexercised.
+
+## Finding HQA-06 — P1: `needs_input` retains Terminal's operation lease
+
+### Reproduction and root cause
+
+Confidence: high; reproduced through signed-in Computer Use and traced through
+the object-local run, task, and lease authorities.
+
+After the stopped receipt was fixed, workstream
+`01a02ca6-9b16-761b-b61f-08f8f612d9ae` deliberately submitted a different
+command instead of replaying the prior ambiguous one. Run
+`01a02ca9-7aac-700c-9027-65bf6e9d5cfe` lost provider observation, returned
+`command_outcome_unknown`, and terminalized as `needs_input`. Runs
+`01a02caa-2a79-7bb5-8b69-13409aeb0a78`,
+`01a02caa-b399-76e8-a0fe-21d0292cfed1`, and
+`01a02cae-3566-7833-9d70-0c731f19735f` then produced five `sandbox_busy`
+reads between 03:29:10Z and 03:33:38Z.
+
+The harness considers `needs_input` terminal, writes `terminalized_at`, clears
+the attempt lease, and admits a new linked run when a person follows up. The
+Terminal lease query instead preserved the retired compatibility vocabulary in
+which `needs_input` counted as a live run. No release RPC exists, so the old run
+could not release `terminal_workspace.operation_run_id`; the five-second retry
+value was only polling guidance while the actual lease deadline was sixteen
+minutes. The lifecycle sweep used the same stale status list and logged a
+deferred transition every minute.
+
+### Branch-local repair and verification
+
+The operation lease now treats `needs_input` as yielded, while every takeover
+from another run remains fenced by any `planned`, `submitting`, or `running`
+Terminal task. Neither that task's nominal command deadline nor the broader
+sixteen-minute lease deadline is accepted as proof that Daytona stopped the
+process. Command admission is now one object-local transaction fenced by the
+exact sandbox generation, provider sandbox, live run, operation owner, and
+absence of a cleanup or lifecycle claim. The task remains `submitting` until
+Daytona returns the exact command ID; an unexpired command-plus-provider-request
+window excludes recovery, so cleanup cannot observe a not-yet-visible session
+and hand the sandbox away while submission can still arrive. Daytona rechecks
+that exact durable authority immediately before every session-create,
+session-replace, and command-submit mutation and renews the bounded submission
+window each time. When a linked run encounters a retained accepted command,
+Avalon deletes its exact named Daytona session (or confirms the whole sandbox
+stopped), then settles the exact durable task as cancelled and atomically hands
+the lease to the cleanup claimant. If a `submitting` task has no provider
+session, or Daytona reports the sandbox absent, Avalon instead confirms provider
+deletion, advances to a fresh sandbox generation, and only then admits the
+successor. An object-local cleanup token excludes competing tools and lifecycle
+work across those provider awaits. The exact token is renewed before every
+provider mutation and cannot be revived after expiry, so a degraded 20-task
+batch cannot leave an obsolete stop/delete continuation behind after a
+successor takes over. The lifecycle sweep uses the same provider-cleanup-before-
+settlement order and token-fenced generation retirement for provider absence or
+a `submitting` task whose named session is missing; scheduled cleanup does not
+depend on a later human-linked run. An aborted or late provider continuation stays unsettled
+until that cleanup wins and cannot delete the successor's session. `admitted`,
+`running`, `waiting`, and `steering`
+holders continue to block while their operation lease is valid; an unsettled
+task blocks regardless of either deadline.
+
+The real-workerd regression proves both nominal deadlines can pass without
+admitting a contender, then proves exact task settlement permits takeover. A
+runtime integration forces `command_outcome_unknown` and asserts that the
+provider cleanup call precedes a distinct linked-run read while a concurrent
+contender remains fenced. Causal cases terminalize and hand off while the old
+runtime is paused both before durable task admission and after task admission
+but before provider confirmation. The latter resumes only after sandbox
+retirement and fails its durable pre-submit check before the modeled provider
+mutation; the Daytona-provider regression separately proves that check runs
+after session creation and immediately before `executeSessionCommand`. Neither
+stale continuation can submit or revive the retired command. Other cases keep the read fenced when neither session
+cleanup nor sandbox stop is confirmed, exercise the confirmed-stop/restart
+fallback, and prove a late command cannot clean up the successor. The provider
+unit suite pins exact named-session deletion, idempotent already-missing
+sessions, cancellation checks after in-flight session creation, and
+non-destructive ordinary cleanup failure. These tests prove
+Avalon orders admission after the provider cleanup contract; the required fresh
+production pass remains the evidence for a live Daytona process. The lifecycle
+regressions prove expired tasks are cleaned before sandbox stop and a contender
+cannot enter during the provider await. A transitional lifecycle token cannot
+be converted into operation ownership merely because its deadline passed. The
+exact token is renewed before each provider mutation, while a renewal after
+expiry fails rather than reviving obsolete authority; the degraded-cleanup race
+proves the obsolete claimant cannot stop its successor.
+Cleanup is bounded to 20 tasks per claim; both linked-operation and scheduled-
+lifecycle 21-task regressions prove residue is safely continued on the next
+attempt, including after a whole-sandbox fallback stop. Provider-404 cases prove
+linked recovery and scheduled lifecycle cleanup cancel retained tasks under the
+cleanup token, retire the missing sandbox, and advance the generation before
+another operation can claim it. Removing the yielded-
+status rule, retained-task or submission fence, lifecycle-claim fence, late-
+settlement guard, or lifecycle status repair made the corresponding test fail
+before restoration.
+
+Status: fixed locally; deployment and fresh Computer Use recovery retest
+pending. The repair restores access only after provider cleanup is confirmed;
+it does not replay, reconcile, or declare the unknown command resolved.
 
 ## Review-driven durable-authority hardening
 
@@ -325,6 +461,14 @@ startup later logged `dynamic_connector_tools_unavailable` for the same
 connection. The harness correctly classified authority as indeterminate, not
 revoked. No secret, provider response body, or meeting content was logged.
 
+The post-PR #247 retry in fresh workstream
+`01a02cbd-3593-74ab-89c1-8241f4015b76`, run
+`01a02cbd-3b75-7c34-a5f2-49e2e33a3226`, failed the same way in 897 ms. The
+repaired protocol correctly rendered `success: false`, `kind: external`, code
+`plugin_authorization_unavailable`, and the bounded reason “Retry after the
+authorization service is available.” No Granola content tool was exposed or
+called.
+
 This evidence proves the live Granola acceptance gate failed. It does not prove
 whether the cause is provider availability, session/credential state, or
 Avalon's hosted-MCP transport. No code change follows without a provider-aware
@@ -349,7 +493,7 @@ defects were coverage gaps rather than already-failing gates.
 | Desktop release invariants | 110 passed. |
 
 After the repairs, the focused harness suites pass 114 tests, the focused API
-durability, dispatch, wake-up, attachment, and cancellation suites pass 179 tests, and the
+durability, dispatch, wake-up, attachment, and cancellation suites pass 178 tests, and the
 six-test attachment-receipt suite and the new database migration test pass. The
 new search, failure-classification,
 wake-up, attachment, cancellation, and migration regressions were each proven
@@ -359,12 +503,23 @@ zero warnings, typecheck, the full root test command, all 357 repository script
 tests, all 110 desktop release-invariant tests, the root production build, the
 EU Wrangler dry-run build, `docs:check`, and `git diff --check`.
 
+The HQA-06 follow-up leaves the full Terminal authority file at 36/36 and the
+focused runtime, lifecycle, coordinator, and provider files at 59/59 (21
+runtime, 11 lifecycle, 8 coordinator, and 19 provider). The
+pre-fix status predicate, a deliberate retained-task-fence removal, and a
+deliberate lifecycle-status rollback each failed the named regression before
+the repair was restored. The complete branch gates are rerun after the final
+provider-cleanup repair and recorded before merge.
+
 ## Remaining acceptance work
 
-- Deploy the branch-local repairs and rerun all five reproductions in a fresh
-  signed-in production workstream. Green local tests do not satisfy that UI gate.
-- Recheck Granola with provider-aware diagnostics; do not report a revoked
-  connection unless authorization actually returns denied.
+- Deploy the HQA-06 lease repair and rerun the exact stop, unknown-command,
+  linked-read, `START_PRESENT`, and `LATE_ABSENT` sequence in a
+  fresh signed-in production workstream. Green local tests do not satisfy that
+  UI gate.
+- Granola has failed twice, including after PR #247. Continue with
+  provider-aware diagnostics; do not report a revoked connection unless
+  authorization actually returns denied.
 - A production Notion connection was absent, so only adapter/library coverage is
   available for Notion in this pass.
 - External write happy/error paths were intentionally not stress-tested because
@@ -376,11 +531,9 @@ EU Wrangler dry-run build, `docs:check`, and `git diff --check`.
 
 ## Release recommendation
 
-Do not describe the current production harness as fully accepted yet. The broad
-happy-path matrix is strong, provider-owned negative paths were bounded, and the
-five confirmed Avalon defects have focused, mutation-proven local repairs.
-However, the exact failure receipts, ranked discovery results, attachment guard,
-stopped Terminal card, and inference-payload index must be observed after
-deployment before the fixes are called production-verified. Granola and the
-previously documented EU/injected recovery gates remain explicit unresolved or
-regional follow-up work.
+Do not describe the current production harness as fully accepted yet. PR #247's
+failure receipts, ranked discovery, attachment validation, stopped receipt, and
+Global HyperSight payload commit are production-verified. HQA-06 still requires
+deployment and a fresh stop/recovery retest, and Granola remains unavailable.
+The prior EU Terminal, stale-attempt, injected-error, fresh EU payload, and
+meeting-notes payload gates remain explicit regional or targeted follow-up work.

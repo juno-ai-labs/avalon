@@ -432,7 +432,7 @@ describe("Daytona Terminal provider", () => {
     expect(uploadFile).toHaveBeenCalledOnce();
   });
 
-  it("cancels a command by deleting its provider session and stops the sandbox if cleanup fails", async () => {
+  it("cancels a command without stopping the sandbox when session cleanup fails", async () => {
     const controller = new AbortController();
     const deleteSession = vi.fn(async () => { throw new Error("cleanup failed"); });
     const stop = vi.fn(async () => undefined);
@@ -459,7 +459,75 @@ describe("Daytona Terminal provider", () => {
     controller.abort();
     await expect(pending).rejects.toThrow(/cancelled/iu);
     expect(deleteSession).toHaveBeenCalledWith("cancelled-task");
-    expect(stop).toHaveBeenCalledOnce();
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it("does not submit after cancellation wins while session creation is in flight", async () => {
+    const controller = new AbortController();
+    let finishCreate!: () => void;
+    const createSession = vi.fn(async () => (
+      new Promise<void>((resolve) => { finishCreate = resolve; })
+    ));
+    const executeSessionCommand = vi.fn();
+    const sandbox = {
+      id: "sandbox-1", name: "sandbox", state: "started",
+      process: {
+        createSession,
+        getSession: vi.fn(async () => { throw new Error("not found"); }),
+        getSessionCommand: vi.fn(),
+        getSessionCommandLogs: vi.fn(),
+        executeSessionCommand,
+        deleteSession: vi.fn(async () => undefined),
+      },
+    };
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get: vi.fn(async () => sandbox) }));
+
+    const pending = provider.runCommand("sandbox-1", {
+      taskName: "pre-submit-cancel", command: "printf stale", cwd: "/workspace", timeoutMs: 120_000,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(createSession).toHaveBeenCalledOnce());
+    controller.abort();
+    finishCreate();
+    await expect(pending).rejects.toThrow(/cancelled/iu);
+    expect(executeSessionCommand).not.toHaveBeenCalled();
+  });
+
+  it("rechecks durable authority after session creation and before command submission", async () => {
+    const createSession = vi.fn(async () => undefined);
+    const executeSessionCommand = vi.fn();
+    const assertSubmissionAuthority = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("submission authority retired"));
+    const sandbox = {
+      id: "sandbox-1", name: "sandbox", state: "started",
+      process: {
+        createSession,
+        getSession: vi.fn(async () => { throw new Error("not found"); }),
+        getSessionCommand: vi.fn(),
+        getSessionCommandLogs: vi.fn(),
+        executeSessionCommand,
+        deleteSession: vi.fn(async () => undefined),
+      },
+    };
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get: vi.fn(async () => sandbox) }));
+
+    await expect(provider.runCommand("sandbox-1", {
+      taskName: "authority-fenced-task",
+      command: "printf stale",
+      cwd: "/workspace",
+      timeoutMs: 120_000,
+      assertSubmissionAuthority,
+    })).rejects.toThrow("submission authority retired");
+    expect(assertSubmissionAuthority).toHaveBeenCalledTimes(2);
+    expect(createSession).toHaveBeenCalledOnce();
+    expect(executeSessionCommand).not.toHaveBeenCalled();
   });
 
   it("reattaches to the one command in a stable provider session after a lost Worker response", async () => {
@@ -505,6 +573,48 @@ describe("Daytona Terminal provider", () => {
     expect(deleteSession).not.toHaveBeenCalled();
     await provider.cleanupCommand?.("sandbox-1", "avalon-task-1");
     expect(deleteSession).toHaveBeenCalledWith("avalon-task-1");
+  });
+
+  it("treats an already-deleted command session as quiescent", async () => {
+    const missing = Object.assign(new Error("session missing"), { status: 404 });
+    const stop = vi.fn(async () => undefined);
+    const sandbox = {
+      id: "sandbox-1", name: "sandbox", state: "started", stop,
+      process: {
+        createSession: vi.fn(async () => undefined),
+        executeSessionCommand: vi.fn(),
+        deleteSession: vi.fn(async () => { throw missing; }),
+      },
+    };
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get: vi.fn(async () => sandbox) }));
+
+    await expect(provider.cleanupCommand?.("sandbox-1", "already-gone"))
+      .resolves.toBe("missing");
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it("does not stop a healthy sandbox when ordinary session cleanup fails", async () => {
+    const failure = new Error("delete unavailable");
+    const stop = vi.fn(async () => undefined);
+    const sandbox = {
+      id: "sandbox-1", name: "sandbox", state: "started", stop,
+      process: {
+        createSession: vi.fn(async () => undefined),
+        executeSessionCommand: vi.fn(),
+        deleteSession: vi.fn(async () => { throw failure; }),
+      },
+    };
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get: vi.fn(async () => sandbox) }));
+
+    await expect(provider.cleanupCommand?.("sandbox-1", "cleanup-failed"))
+      .rejects.toThrow("delete unavailable");
+    expect(stop).not.toHaveBeenCalled();
   });
 
   it("replaces a stable provider session whose stored command differs", async () => {

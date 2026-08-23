@@ -10,6 +10,7 @@ import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-p
 import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-policy";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
+  seedToolReceipt,
   seedWorkstreamObjectRoot,
   testWorkstreamObjectStore,
   testWorkstreamRuntimeD1,
@@ -80,6 +81,7 @@ function fixture() {
     readFile: vi.fn(async () => new Uint8Array()),
     writeFile: vi.fn(async () => undefined),
     runCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
+    cleanupCommand: vi.fn(async () => undefined),
     publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),
   };
   return {
@@ -244,5 +246,190 @@ describe("Terminal sandbox coordinator", () => {
     workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'completed' WHERE id = ?", RUN_ID);
     await expect(coordinator.acquire({ ...context(), harnessRunId: otherRun, toolCallId: "other-call" }))
       .resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+  });
+
+  it("continues yielded-task cleanup in bounded batches", async () => {
+    const { objectStore, db, provider, clock } = fixture();
+    const otherRun = "00000000-0000-4000-8000-000000000099";
+    const coordinator = new TerminalSandboxCoordinator(
+      db,
+      testTerminalPortFactory(objectStore),
+      provider,
+      clock,
+    );
+    await coordinator.acquire(context());
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
+      otherRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
+    );
+    workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'failed' WHERE id = ?", RUN_ID);
+    for (let index = 0; index < 21; index += 1) {
+      const invocationId = `batch-invocation-${index}`;
+      seedToolReceipt(objectStore, {
+        id: invocationId,
+        runId: RUN_ID,
+        toolCallId: `batch-call-${index}`,
+        toolName: "terminal_run_command",
+        position: index,
+      });
+      workstreamObjectRun(
+        objectStore,
+        `INSERT INTO terminal_tasks
+          (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name,
+           state, command_sha256, command_deadline_at, stdout_head, stdout_tail,
+           stderr_head, stderr_tail, stdout_bytes, stderr_bytes, created_at, updated_at)
+         VALUES (?, ?, ?, 1, ?, 'running', 'hash', ?, '', '', '', '', 0, 0, ?, ?)`,
+        `batch-task-${index}`,
+        RUN_ID,
+        invocationId,
+        `batch-provider-task-${index}`,
+        Date.parse("2026-08-13T11:59:00.000Z"),
+        Date.parse("2026-08-13T11:58:00.000Z"),
+        Date.parse("2026-08-13T11:58:00.000Z"),
+      );
+    }
+    const contender = { ...context(), harnessRunId: otherRun, toolCallId: "batch-contender" };
+
+    await expect(coordinator.acquire(contender)).rejects.toMatchObject({ code: "sandbox_busy" });
+    expect(provider.cleanupCommand).toHaveBeenCalledTimes(20);
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT COUNT(*) AS count FROM terminal_tasks WHERE state = 'running'",
+    )).toEqual({ count: 1 });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT lifecycle_claim_id, operation_run_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ lifecycle_claim_id: null, operation_run_id: RUN_ID });
+
+    await expect(coordinator.acquire(contender)).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+    expect(provider.cleanupCommand).toHaveBeenCalledTimes(21);
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT COUNT(*) AS count FROM terminal_tasks WHERE state = 'running'",
+    )).toEqual({ count: 0 });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT operation_run_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ operation_run_id: otherRun });
+  });
+
+  it("does not stop a successor after a degraded cleanup batch loses its renewed token", async () => {
+    const { objectStore, db, provider, clock, advance } = fixture();
+    const linkedRun = "00000000-0000-4000-8000-000000000098";
+    const successorRun = "00000000-0000-4000-8000-000000000099";
+    const effectId = "renew-race-effect";
+    const baseFactory = testTerminalPortFactory(objectStore);
+    let renewCalls = 0;
+    let renewPaused!: () => void;
+    let releaseRenew!: () => void;
+    const pausedRenew = new Promise<void>((resolve) => { renewPaused = resolve; });
+    const renewRelease = new Promise<void>((resolve) => { releaseRenew = resolve; });
+    const interceptingFactory = ((workspaceId: string, workstreamId: string) => {
+      const port = baseFactory(workspaceId, workstreamId);
+      return {
+        ...port,
+        renewLifecycleClaim: async (...args: Parameters<typeof port.renewLifecycleClaim>) => {
+          renewCalls += 1;
+          if (renewCalls === 2) {
+            renewPaused();
+            await renewRelease;
+          }
+          return port.renewLifecycleClaim(...args);
+        },
+      };
+    }) satisfies typeof baseFactory;
+    const coordinator = new TerminalSandboxCoordinator(db, interceptingFactory, provider, clock);
+    await coordinator.acquire(context());
+    seedToolReceipt(objectStore, {
+      id: effectId,
+      runId: RUN_ID,
+      toolCallId: "renew-race-call",
+      toolName: "terminal_run_command",
+    });
+    const terminal = baseFactory(WORKSPACE_ID, WORKSTREAM_ID);
+    await expect(terminal.insertTask({
+      taskId: "renew-race-task",
+      runId: RUN_ID,
+      effectIntentId: effectId,
+      sandboxGeneration: 1,
+      sandboxId: "sandbox-1",
+      providerTaskName: "renew-race-provider-task",
+      commandSha256: "renew-race-hash",
+      commandDeadlineAt: clock.now().getTime() + 60_000,
+      startedAt: clock.now().getTime(),
+      now: clock.now().getTime(),
+    })).resolves.toBe(true);
+    await expect(terminal.markTaskRunning({
+      effectIntentId: effectId,
+      providerTaskId: "renew-race-command",
+      now: clock.now().getTime(),
+    })).resolves.toBe(true);
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13'),
+              (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
+      linkedRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
+      successorRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
+    );
+    workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'failed' WHERE id = ?", RUN_ID);
+
+    let rejectCleanup!: () => void;
+    vi.mocked(provider.cleanupCommand!).mockImplementationOnce(async () => (
+      new Promise<void>((_resolve, reject) => {
+        rejectCleanup = () => reject(new Error("cleanup degraded"));
+      })
+    ));
+    const staleAcquire = coordinator.acquire({
+      ...context(),
+      harnessRunId: linkedRun,
+      toolCallId: "renew-race-linked",
+    });
+    await vi.waitFor(() => expect(provider.cleanupCommand).toHaveBeenCalledOnce());
+    advance(4);
+    rejectCleanup();
+    await pausedRenew;
+
+    const claimed = await terminal.sandbox();
+    await expect(terminal.claimYieldedOperationRecovery({
+      runId: successorRun,
+      generation: 1,
+      sandboxId: "sandbox-1",
+      version: claimed!.version,
+      claimId: "successor-cleanup-claim",
+      claimExpiresAt: clock.now().getTime() + 3 * 60_000,
+      now: clock.now().getTime(),
+    })).resolves.toBe(true);
+    await expect(terminal.cancelTaskAfterProviderCleanup({
+      taskId: "renew-race-task",
+      runId: RUN_ID,
+      effectIntentId: effectId,
+      sandboxGeneration: 1,
+      providerTaskName: "renew-race-provider-task",
+      claimId: "successor-cleanup-claim",
+      now: clock.now().getTime(),
+    })).resolves.toBe(true);
+    await expect(terminal.settleYieldedOperationRecovery({
+      runId: successorRun,
+      generation: 1,
+      sandboxId: "sandbox-1",
+      claimId: "successor-cleanup-claim",
+      leaseExpiresAt: clock.now().getTime() + 16 * 60_000,
+      sandboxStopped: false,
+      now: clock.now().getTime(),
+    })).resolves.toMatchObject({ operationRunId: successorRun });
+
+    releaseRenew();
+    await expect(staleAcquire).rejects.toMatchObject({ code: "sandbox_busy" });
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    await expect(coordinator.acquire({
+      ...context(),
+      harnessRunId: successorRun,
+      toolCallId: "renew-race-successor",
+    })).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
   });
 });

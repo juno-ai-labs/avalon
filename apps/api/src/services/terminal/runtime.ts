@@ -23,6 +23,11 @@ const OUTPUT_ROOT = ".avalon-output";
 const MAX_PROVIDER_CAPTURE_BYTES = 128 * 1_024;
 const MAX_COMMAND_LOG_BYTES = 5_000_000;
 const OUTPUT_LIMIT_MARKER_RESERVE_BYTES = 256;
+// Daytona's client request timeout is two minutes. A task remains in
+// `submitting` through that window so recovery cannot delete a not-yet-visible
+// named session and hand the sandbox to another run while submission is still
+// capable of reaching the provider.
+const PROVIDER_SUBMISSION_RECOVERY_GRACE_MS = 2 * 60_000;
 
 type ImportInput = Parameters<TerminalRuntime["importResource"]>[1];
 type PublishInput = Parameters<TerminalRuntime["publishResource"]>[1];
@@ -376,18 +381,26 @@ export function createDaytonaTerminalRuntime(
       }
 
       const startedAt = existing?.startedAt ?? Date.now();
-      const deadlineAt = existing?.commandDeadlineAt ?? Date.now() + input.timeoutMs;
-      await terminal.insertTask({
+      const deadlineAt = existing?.commandDeadlineAt
+        ?? Date.now() + input.timeoutMs + PROVIDER_SUBMISSION_RECOVERY_GRACE_MS;
+      const taskAdmitted = await terminal.insertTask({
         taskId: newId(),
         runId: context.harnessRunId,
         effectIntentId,
         sandboxGeneration: sandbox.generation,
+        sandboxId: sandbox.providerSandboxId,
         providerTaskName: taskName,
         commandSha256: commandHash,
         commandDeadlineAt: deadlineAt,
         startedAt,
         now: startedAt,
       });
+      if (!taskAdmitted) {
+        throw new TerminalToolError(
+          "command_recovery_unavailable",
+          "This run no longer owns Terminal command submission. Stop and report the interrupted command; do not repeat it.",
+        );
+      }
 
       let result: { exitCode: number; stdout: string; stderr: string; timedOut?: boolean };
       let state: TerminalCommandOutput["state"];
@@ -400,20 +413,50 @@ export function createDaytonaTerminalRuntime(
           timeoutMs: input.timeoutMs,
           signal: context.signal,
           retainSessionForRecovery: true,
+          assertSubmissionAuthority: async () => {
+            const renewedAt = Date.now();
+            const authorized = await terminal.renewTaskSubmissionAuthority({
+              effectIntentId,
+              runId: context.harnessRunId,
+              sandboxGeneration: sandbox.generation,
+              sandboxId: sandbox.providerSandboxId,
+              commandDeadlineAt: renewedAt + input.timeoutMs + PROVIDER_SUBMISSION_RECOVERY_GRACE_MS,
+              now: renewedAt,
+            });
+            if (!authorized) {
+              throw new TerminalToolError(
+                "command_recovery_unavailable",
+                "This run lost durable Terminal submission authority before Daytona accepted the command. Stop and report the interrupted command; do not repeat it.",
+              );
+            }
+          },
+          onSubmitted: async (providerTaskId) => {
+            const recorded = await terminal.markTaskRunning({
+              effectIntentId,
+              providerTaskId,
+              now: Date.now(),
+            });
+            if (!recorded) {
+              throw new TerminalToolError(
+                "command_recovery_unavailable",
+                "The provider accepted the command after its durable authority was retired. Stop and report the ambiguity; do not repeat the command.",
+              );
+            }
+          },
         });
         state = result.timedOut ? "timed_out" : result.exitCode === 0 ? "completed" : "failed";
         terminationReason = result.timedOut ? "timed_out" : "exited";
-      } catch {
-        if (!context.signal.aborted) {
-          throw new TerminalToolError(
-            "command_outcome_unknown",
-            "Avalon lost provider observation before the command reached a final state. Retry this exact tool call so Avalon can reattach to its durable task; do not submit a different command.",
-            { reason: "Resume this run so Avalon can reattach to the same durable command task." },
-          );
-        }
-        result = { exitCode: 1, stdout: "", stderr: "Terminal command cancelled" };
-        state = "cancelled";
-        terminationReason = "cancelled";
+      } catch (error) {
+        if (error instanceof TerminalToolError) throw error;
+        throw new TerminalToolError(
+          "command_outcome_unknown",
+          context.signal.aborted
+            ? "Cancellation interrupted provider observation. Avalon retained the durable task so a linked run can prove the named command stopped; do not repeat the command."
+            : "Avalon lost provider observation before the command reached a final state. Retry this exact tool call so Avalon can reattach to its durable task; do not submit a different command.",
+          context.signal.aborted
+            ? { reason: "Continue in a linked run so Avalon can clean up the retained provider command before using Terminal again." }
+            : { reason: "Resume this run so Avalon can reattach to the same durable command task." },
+        );
       }
       const sanitizedStdout = sanitizeTerminalOutput(result.stdout);
       const sanitizedStderr = sanitizeTerminalOutput(result.stderr);
@@ -451,10 +494,10 @@ export function createDaytonaTerminalRuntime(
         terminationReason = "output_limit_exceeded";
       }
       const completedAt = Date.now();
-      await terminal.settleTask({
+      const taskSettled = await terminal.settleTask({
         effectIntentId,
         state,
-        exitCode: state === "timed_out" || state === "cancelled" || outputLimitExceeded
+        exitCode: state === "timed_out" || outputLimitExceeded
           ? null
           : result.exitCode,
         terminationReason,
@@ -468,11 +511,17 @@ export function createDaytonaTerminalRuntime(
         completedAt,
         now: completedAt,
       });
+      if (!taskSettled) {
+        throw new TerminalToolError(
+          "command_recovery_unavailable",
+          "Another recovery path already settled this durable command. Avalon will not touch its provider session again; inspect the later linked run and do not repeat the command.",
+        );
+      }
       await provider.cleanupCommand?.(sandbox.providerSandboxId, taskName).catch(() => undefined);
       return {
         state,
         terminationReason,
-        exitCode: state === "timed_out" || state === "cancelled" || outputLimitExceeded ? null : result.exitCode,
+        exitCode: state === "timed_out" || outputLimitExceeded ? null : result.exitCode,
         stdout: joinedCapture(stdout.head, stdout.tail),
         stderr: joinedCapture(stderr.head, stderr.tail),
         ...(outputResourceId ? { outputResourceId } : {}),
