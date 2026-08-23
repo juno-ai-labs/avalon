@@ -72,16 +72,6 @@ export function isToolReceiptOperation(value: string): value is ToolReceiptOpera
   return TOOL_RECEIPT_OPERATION_SET.has(value);
 }
 /**
- * The request envelope.
- *
- * Identity is validated strictly here and re-checked against the object's own
- * identity before anything executes, which is the check that matters: a
- * misrouted stub must fail rather than settle another work stream's receipts.
- * `args` is not re-validated field by field — the caller is this Worker holding
- * a stub for its own object, and the per-argument shapes are enforced at the
- * call site by `ToolReceiptObjectPort`, where a mismatch is a compile error.
- */
-/**
  * Positional arguments one receipt operation may carry over the wire.
  *
  * Bounds: elements in the `args` array of a `/internal/tool-receipt` request,
@@ -104,6 +94,16 @@ export function isToolReceiptOperation(value: string): value is ToolReceiptOpera
  */
 export const MAX_TOOL_RECEIPT_OPERATION_ARGS = 1;
 
+/**
+ * The request envelope.
+ *
+ * Identity is validated strictly here and re-checked against the object's own
+ * identity before anything executes, which is the check that matters: a
+ * misrouted stub must fail rather than settle another work stream's receipts.
+ * `args` is not re-validated field by field — the caller is this Worker holding
+ * a stub for its own object, and the per-argument shapes are enforced at the
+ * call site by `ToolReceiptObjectPort`, where a mismatch is a compile error.
+ */
 export const ToolReceiptOperationRequestSchema = z.object({
   workspaceId: z.string().uuid(),
   workstreamId: z.string().uuid(),
