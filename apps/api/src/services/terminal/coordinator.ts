@@ -534,7 +534,7 @@ export class TerminalSandboxCoordinator {
     // link check is its own statement against its own authority.
     const attached = await this.resourcePort(context.workspaceId, context.workstreamId)
       .attachedLinks({ resourceIds: links.map((candidate) => candidate.resourceId) });
-    if (new Set(attached.map((link: { resource_id: string }) => link.resource_id)).size !== links.length) {
+    if (new Set(attached.map((link) => link.resource_id)).size !== links.length) {
       return true;
     }
     const placeholders = links.map(() => "?").join(", ");

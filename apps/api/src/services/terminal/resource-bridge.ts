@@ -77,11 +77,12 @@ export function createTerminalResourceBridge(
         env.DB,
         createResourceObjectPort(env, context.workspaceId, context.workstreamId),
         {
-        workspaceId: context.workspaceId,
-        workstreamId: context.workstreamId,
-        principal: context.executionPrincipal,
-        resourceIds: [input.resourceId],
-      });
+          workspaceId: context.workspaceId,
+          workstreamId: context.workstreamId,
+          principal: context.executionPrincipal,
+          resourceIds: [input.resourceId],
+        },
+      );
       const row = rows[0];
       if (!row) {
         throw new TerminalToolError(

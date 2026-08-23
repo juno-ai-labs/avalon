@@ -1,7 +1,6 @@
 import { classifyAttachmentKind, type AttachmentKind, type ExecutionPrincipal } from "@avalon/contracts";
 import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
 import { BOUND_PARAMETER_ID_CHUNK } from "../durable-objects/bound-parameters";
-import { sha256 } from "../lib/crypto";
 
 export interface VisibleWorkstreamResourceRow extends Record<string, unknown> {
   id: string;
@@ -183,30 +182,6 @@ export async function loadWorkstreamResourceInventoryFingerprint(
   // same case, and the join it replaces existed only because a routed reader
   // had to reach the row through the work stream it belongs to.
   return `inventory:${await attachments.inventoryRevision()}`;
-}
-
-/** Sidebar compatibility path. Model tools and compaction use bounded queries below. */
-export async function loadVisibleWorkstreamResources(
-  database: D1Database,
-  attachments: ResourceObjectPort,
-  input: {
-    workspaceId: string;
-    workstreamId: string;
-    principal: ExecutionPrincipal;
-    order?: "ascending" | "descending";
-  },
-): Promise<VisibleWorkstreamResourceSet> {
-  const rows = await loadVisibleRows(database, attachments, input);
-  if (input.order === "ascending") rows.reverse();
-  const fingerprint = await sha256(JSON.stringify(rows.map((row) => [
-    row.id,
-    row.attached_at,
-    row.updated_at,
-    row.visibility_version,
-    row.relationship_type,
-    row.message_attachment,
-  ])));
-  return { rows, fingerprint };
 }
 
 export async function loadVisibleWorkstreamResourcesByIds(
