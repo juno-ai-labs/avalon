@@ -121,3 +121,37 @@ cap and the claimed-window retry are not among what it checks.
 **What would settle it.** Extend that workerd suite: enqueue at T, assert
 `process_after` is T+10m; enqueue again at T+9m, assert it moves to T+19m and no
 second window appears; enqueue at T+55m, assert it clamps to first+1h.
+
+---
+
+## Who gets ranked, and the empty-ranking standoff, moved to the alarm untested
+
+**Severity:** coverage-gap
+
+**Observed.** `processDueSuggestedWork` was a cron pass that claimed due
+suggested-work sets, preferred recently-seen members, treated a long-waiting
+request as urgent so the less-active tier could not starve, and settled each
+member's ranking. It returned immediately once the authority was open, so it did
+nothing in any supported deployment. WorkspaceDO's product alarm does this now
+(`workspace-do.ts:1420-1441`) with the same dormant cutoff, active cutoff and
+starvation preference. The cron pass, its constants and its tests are deleted.
+
+**Why it is suspicious.** Two things the deleted suite proved are now unasserted
+anywhere:
+
+1. **Who gets ranked.** A member seen minutes ago is ranked; a member last seen
+   weeks ago keeps their request but is skipped until they return. The object
+   reimplements that ordering, and nothing checks it.
+2. **The empty-ranking standoff.** A set stored empty against a *real* candidate
+   fingerprint is a trap with no exit: the read path calls it unranked and asks
+   for a ranking, the scheduler cache-hits on the fingerprint and clears the
+   request without ranking, and the two do that to each other forever — a
+   candidate load and a ranking slot per pass. The read-path half is still
+   asserted in `suggested-work-scheduling.test.ts`; the scheduler half is the
+   alarm's now.
+
+**What would settle it.** A `test-workers/` suite over WorkspaceDO's product
+alarm: one active and one dormant member both due, assert only the active one's
+ranking workflow is launched and the dormant one's `due_at` survives; a member
+whose `due_at` is older than the starvation window is treated as urgent; and a
+set stored empty against a live fingerprint does not clear its own request.
