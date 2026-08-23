@@ -1,3 +1,4 @@
+import { RESPONSE_FORMATTING_POLICY } from "@avalon/agent-harness";
 import { ExecutionPrincipalSchema, asWorkspaceId, asWorkstreamId, type WorkstreamId } from "@avalon/contracts";
 import { createDatabase, newId, nowIso } from "@avalon/db";
 
@@ -489,6 +490,10 @@ export function renderDigestBrief(
     "- Write this digest from the source material below and nothing else. This work stream holds this occurrence alone — there is no earlier digest above it, and nothing else to draw on.",
     "- If an item below is only a fragment and the detail matters, use your tools to read the full context before summarizing it.",
     "- No sign-off, no restating these instructions, no commentary about being an assistant.",
+    "",
+    // The email's renderer covers Markdown and nothing else, and the reader has
+    // no way to tell a stray `$\\rightarrow$` from something Avalon meant.
+    RESPONSE_FORMATTING_POLICY,
     "",
     `## Source material (${events.length} item${events.length === 1 ? "" : "s"})`,
     ...sections,
