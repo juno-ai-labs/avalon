@@ -26,6 +26,15 @@ describe("work-stream runtime database routing", () => {
     )).toBe(true);
   });
 
+  it("routes a bare tool_effects write to the owning object, where the table lives", () => {
+    // The dev seed writes the object's receipt table without naming any other
+    // table. Classified regional, the statement reaches D1, which dropped its
+    // product tables at migration 0090 — `no such table: tool_effects`.
+    expect(__workstreamRuntimeDatabaseTesting.localStatement(
+      "INSERT INTO tool_effects (effect_intent_id, run_id) VALUES (?, ?)",
+    )).toBe(true);
+  });
+
   it("leaves workspace-owned resource and identity reads for the underlying workspace router", () => {
     expect(__workstreamRuntimeDatabaseTesting.localStatement(
       "SELECT title FROM resources WHERE workspace_id = ?",
