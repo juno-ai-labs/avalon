@@ -1056,6 +1056,42 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-22 — Every closed-authority arm is gone, and the routing is unconditional
+
+**What changed:** The 83 `authority.phase === "durable_object_open"` gates
+outside `workstream-authority.ts` are down to six. `workstreamExecutionEnvironment`
+routes at the object without reading the control row;
+`bootstrapWorkstreamRuntimeEnvironment` still reads it, for the generation it
+fences the bootstrap with, but no longer branches on the phase. The six that
+remain are the maintenance fence itself and are not dual implementations: the
+alarm deferral and both socket/message refusals in `workspace-do.ts`, the create
+service's recheck, `substream-agent.ts`'s bootstrap fence, and `routes/dev.ts`
+refusing a seed against a closed authority.
+
+**Why:** Migration 0090 closed the phase permanently, so every non-open arm has
+been unreachable since. Keeping them cost a D1 read on hot paths — the flag
+targeting attributes read one per work-stream subject — and, worse, kept the
+reading burden the 2026-08-19 removal above set out to end: a reader still had
+to establish which half was live.
+
+**Consequences, and the part worth reading before the next one:** removing the
+gate in `workstreamExecutionEnvironment` is a no-op in production and was not a
+no-op in the test tree. A dozen focused unit environments bound no object and
+were, without saying so, exercising the un-routed arm — so their fixtures were
+regional rows the routed read cannot see. Each was moved to a work-stream object
+store (`test/helpers/durable-authority.ts`'s `testWorkstreamObjectStore` and
+`objectStores`), or given a stub that runs the routed statements back through
+the same double, so the assertions stayed and only the wiring moved. Two ids had
+to become real UUIDs, because routing parses them and a label does not parse.
+
+**Rejected:** Keying the helper on `!env.SUBSTREAM_AGENTS` instead, the way
+`refreshWorkspaceSchedule` keys on `!env.WORKSPACE_DOS`. It would have kept every
+fixture working and cost nothing to write — and it would have replaced a dead
+branch with a live one that silently returns the wrong database whenever a
+binding is missing. `refreshWorkspaceSchedule` can afford that because skipping
+an alarm refresh is recoverable; reading a work stream's product state from the
+wrong authority is not.
+
 ### 2026-08-22 — Object schema 17: the tool-receipt views retire
 
 **What changed:** Migration 17 drops `_runtime_tool_invocations` with its
@@ -2024,9 +2060,9 @@ there is nothing left to drain.
 
 **Deliberate leftovers:** `packages/db` query helpers remain as the SQL dialect
 served by WorkstreamDO compatibility views; they are not regional D1 callers.
-`bootstrapWorkstreamRuntimeEnvironment` and
-`workstreamExecutionEnvironment` keep their non-open fallbacks for the DO-
-internal legacy-open read paths this change deliberately did not touch.
+`bootstrapWorkstreamRuntimeEnvironment` and `workstreamExecutionEnvironment`
+kept their non-open fallbacks at the time; both are gone as of the 2026-08-22
+entry below.
 
 **Consequences:** Unit tests that exercised the legacy arms were retargeted to
 the object boundary (see `test/helpers/durable-authority.ts`, which walks the

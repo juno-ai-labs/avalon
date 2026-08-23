@@ -47,6 +47,37 @@ everything above it that can return.
 
 ---
 
+## A work stream's targeting facts can be cached from before it was written
+
+**Severity:** wrong-answer
+
+**Observed.** `flag-targeting-attributes.ts:272-300` reads a work stream's
+origin, scope, creator and system flag through `workstreamExecutionEnvironment`,
+and `cached(...)` stores whatever that read *resolves* for a TTL. Post-cutover
+the read resolves the moment the object exists: `bootstrapWorkstreamRuntimeEnvironment`
+writes the identity root, and the compatibility view derives a `workstreams` row
+from that root alone — `origin_type` `'ad_hoc'`, `scope` `'workspace'`, no
+creator — before any product row lands.
+
+**Why it is suspicious.** The automation paths resolve a model for a work stream
+id one statement before they write its row. Before the cutover that read missed,
+and a miss is deliberately not remembered — `test/flag-targeting-attributes.test.ts`
+asserted exactly that, and the assertion is deleted with the window it covered.
+Now the same read *succeeds*, with the root's defaults, and the cache keeps them.
+An automation's work stream could evaluate every targeting rule as an ad-hoc one
+created by nobody for as long as the entry holds.
+
+**What would settle it.** Two things, in order. First, whether the derived row
+really is visible between `bootstrapRuntime` and the product insert — a
+`test-workers/` case that bootstraps an object and selects from `workstreams`
+before writing one answers it. If it is, whether any resolver actually reads in
+that window: `scheduledWorkstreamModel` is called inside
+`AutomationService.createRun`'s batch construction, which is the suspect. If both
+hold, the fix is to not cache a row whose object has no product state, rather
+than to widen the window.
+
+---
+
 ## WorkspaceDO's activity read filter, target marking and dedupe are untested
 
 **Severity:** coverage-gap
