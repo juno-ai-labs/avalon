@@ -79,7 +79,10 @@ they do not.
   renderer isolation, connector credential scope, session and ticket handling,
   webhook signature verification, untrusted model or provider payloads, secrets
   placement. **Required in spirit** whenever the change touches any of those;
-  [Security model](security.md) defines the boundaries.
+  [Security model](security.md) defines the boundaries. A change that adds a
+  defensive limit lists every one it leaves open here, and again under **Reviewer
+  notes** as deferred work, per
+  [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md).
 - **Provider configuration** — Any change requiring a Slack, GitHub, Linear,
   Notion, Google, Resend, or Cloudflare setting to be updated outside the repo,
   and in which region. A reviewer must be able to see what will break if the
