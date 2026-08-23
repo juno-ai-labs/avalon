@@ -30,6 +30,8 @@ interface RecordedStatement {
 class WatchDatabase {
   readonly statements: RecordedStatement[] = [];
   batches = 0;
+  /** Make the regional half of the two-authority write fail, and only that half. */
+  failRegionalWatchWrite = false;
 
   constructor(private readonly connectorType: string) {}
 
@@ -77,7 +79,12 @@ class WatchDatabase {
           }
           throw new Error(`Unexpected first query: ${recorded.sql}`);
         },
-        run: async () => ({ success: true, meta: { changes: 1 }, results: [] }),
+        run: async () => {
+          if (this.failRegionalWatchWrite && recorded.sql.startsWith("INSERT INTO resource_watches")) {
+            throw new Error("resource_watch_row_unavailable");
+          }
+          return { success: true, meta: { changes: 1 }, results: [] };
+        },
       };
       return createTestD1PreparedStatement(statement);
     },
@@ -172,12 +179,37 @@ describe("resource watch scheduling modes", () => {
       "2026-08-01T12:00:00.000Z",
     ]);
     // The attachment and the watch row sit in different authorities, so there
-    // is no batch to count: the attachment is written first, through the work
-    // stream's object, and the regional watch row follows.
+    // is no batch that spans them: the attachment is written first, through the
+    // work stream's object, and the regional watch row follows.
     expect(database.batches).toBe(0);
-    expect(database.statements.map((statement) => statement.sql.split(" ").slice(0, 3).join(" ")))
-      .toContain("UPDATE workstream_resources SET");
     expect(refreshWorkspaceSchedule).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * The compensation the two-authority write exists for.
+   *
+   * While both statements went into one `DB.batch`, a failed watch row took the
+   * attachment with it and there was nothing to compensate. They cannot share a
+   * transaction any more, so the attachment is written first and rolled back by
+   * hand — and an attachment left claiming a watch that no sweep will ever poll
+   * is a work stream quietly waiting on a resource nobody is reading.
+   */
+  it("rolls the attachment back when the regional watch row cannot be written", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-01T12:00:00.000Z"));
+    const database = new WatchDatabase("github");
+    database.failRegionalWatchWrite = true;
+
+    await expect(new ResourceService(environment(database), auth).watch(resourceId, workstreamId))
+      .rejects.toThrow("resource_watch_row_unavailable");
+
+    const attachmentWrites = database.statements
+      .filter((statement) => statement.sql.startsWith("UPDATE workstream_resources SET watch_enabled"));
+    // Two: the optimistic enable, then the restore of the value it replaced.
+    expect(attachmentWrites).toHaveLength(2);
+    expect(attachmentWrites.at(-1)?.values[0]).toBe(0);
+    // Nothing is due, so nothing asks the scheduler to look.
+    expect(refreshWorkspaceSchedule).not.toHaveBeenCalled();
   });
 
   it("preserves an immediate poll deadline for polling connectors", async () => {

@@ -47,6 +47,38 @@ everything above it that can return.
 
 ---
 
+## Three ordinary-run readers lost their only assertion when it stopped being one
+
+**Severity:** coverage-gap
+
+**Observed.** `test/ordinary-harness-run-selection.test.ts` asserted the SQL
+*text* of four queries that exclude inline children and HyperSight runs. It is
+deleted; the rule is now asserted behaviourally, against a real object, in
+`test-workers/ordinary-harness-run-selection.test.ts` — but only for the reader
+that suite can reach, which is the work stream's own detail projection.
+
+**Why it is suspicious.** The other three readers issue the same predicate and
+have no assertion at all now: `automation-service.ts`'s idempotency reader,
+`activity-consumer.ts`'s automation recovery, and
+`workspace-schedule-execution.ts`'s run reuse. The text assertions were not
+coverage — a passing string proves only that a string is present, and when the
+query moved into the object the assertion was retargeted at its new spelling
+without anyone re-checking the rule — but deleting them still leaves three
+call sites where dropping `parent_tool_call_id IS NULL` goes unnoticed. The
+scheduler one is the worst of the three: reusing an inline child as an
+automation's run attaches a scheduled automation to a tool's private run.
+
+**What would settle it.** One Node spec per reader, over a work-stream object
+store seeded with all three run shapes and the ordinary one *oldest*:
+`AutomationService.runNow` twice under one idempotency key returns the ordinary
+run's harness id; `runAutomationSchedule` against a work stream whose only live
+row is an inline child creates a new run rather than reusing it; and the
+activity consumer's recovery resolves the ordinary run. The fixtures are the
+expensive part — `automation-lifecycle.test.ts` already has most of what the
+first two need.
+
+---
+
 ## A work stream's targeting facts can be cached from before it was written
 
 **Severity:** wrong-answer

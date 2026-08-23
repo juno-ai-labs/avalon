@@ -165,6 +165,15 @@ beforeEach(async () => {
   `abortAllDurableObjects()` is the one that keeps persisted data, but it aborts
   instances rather than retiring them: a test *about* eviction still wants
   `evictDurableObject`, which drains in flight work and hibernates sockets.
+- **`reset()` is not confined to the file that calls it.** Storage is isolated
+  per file, but the reset itself takes every object's input gate, so a file that
+  never calls one can still be made to wait for a sibling's. That surfaces as a
+  `beforeAll`/`beforeEach` timing out on its *first* test and passing when the
+  file is run alone — which reads as flakiness and is not. Two things fix it,
+  and `workspace-directory-reads.test.ts` does both: set up in `beforeEach`
+  rather than `beforeAll`, so a wipe that lands mid-file is repaired rather than
+  inherited; and give that hook an explicit timeout well above the work it does,
+  with a comment saying the budget is for the interleave and not for the query.
 - **Bindings come from `apps/api/wrangler.test.jsonc`**, not from the production
   configs. A new Durable Object class needs both a binding and its name in the
   `new_sqlite_classes` migration tag, or the object has no SQLite storage.
@@ -268,6 +277,14 @@ is usually one of these:
   on either end passes for any self-consistent format, including a broken one.
 - **A snapshot of a stub**, which pins the fixture and re-baselines the moment it
   is wrong.
+- **The source text.** `expect(source(file)).toContain("SELECT … WHERE …")` reads
+  a module off disk and asserts a string is in it. It cannot fail for the reason
+  it is named after — only for the string having moved — and the repair, every
+  time, is to paste the new spelling in. `ordinary-harness-run-selection.test.ts`
+  did exactly that through a rewrite that moved its four queries into a Durable
+  Object: the assertions were retargeted and stayed green while nobody re-checked
+  the rule. It is now a workerd suite that seeds the three run shapes and reads.
+  If a rule is worth pinning, something has to *run* it.
 
 What to assert instead: the observable output of the real thing — the status and
 body a route returned, rows read back through the same API production reads them
