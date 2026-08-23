@@ -72,8 +72,8 @@ command hash and sandbox generation, and reattaches to the sole command in that
 session. A linked run cannot use an interrupted accepted command's sandbox until
 Avalon has stopped the whole sandbox and restarted it; deleting or failing to
 find the named session is not process-quiescence evidence. A pre-acceptance
-`submitting` task instead retires the provider sandbox and advances the
-generation. All other incomplete writes keep the harness's fail-closed ambiguity
+`planned` or `submitting` task instead retires the provider sandbox and advances
+the generation. All other incomplete writes keep the harness's fail-closed ambiguity
 behavior. The model receives one final result; provider observation is never a
 tool. The SubstreamAgent stores the task, command hash,
 deadline, exit, termination reason, output byte counts, and bounded head/tail.
@@ -457,10 +457,11 @@ absence of a Daytona named session as proof that an accepted `running` command
 stopped. Under the existing exact cleanup token, they stop the whole provider
 sandbox before cancelling the durable task or handing the operation lease to a
 linked run; acquisition then restarts the same sandbox and retains its files. A
-`submitting` task still retires the provider sandbox and advances the generation,
-because an in-flight submission could otherwise arrive after stop/restart.
+`planned` or `submitting` task still retires the provider sandbox and advances
+the generation, because an in-flight submission could otherwise arrive after
+stop/restart.
 Multiple residual running tasks share the one provider stop and are then settled
-under the same token. Submitting residue is selected before running residue; a
+under the same token. Pre-acceptance residue is selected before running residue; a
 lost delete response followed by provider absence is reconciled inside that
 token-held loop, so every task is cancelled before handoff or final expiry.
 Normal completed-command session cleanup remains
@@ -487,7 +488,14 @@ cycle before a linked tool can run. That cost occurs only on an already-abnormal
 path and buys a provider-authoritative non-overlap boundary. Runtime and
 lifecycle regressions pause the stop, keep contenders fenced and the task
 unsettled, then prove stop and restart precede the linked read. Removing either
-call-site stop made its named regression fail before restoration. Fresh
+call-site stop made its named regression fail before restoration. Pre-expiry
+scheduled cleanup of pre-acceptance residue is intentionally destructive: it
+deletes the sandbox, advances the generation, and clears any prior final-diff
+reference. Final expiry preserves the existing generation and final-diff
+reference, but skips a new preservation capture on that path because a possibly
+in-flight submission could make the snapshot torn; no new diff is safer than a
+falsely authoritative one. A future optimization must preserve provider-proven
+quiescence before reusing that sandbox or publishing a final diff. Fresh
 production verification remains required after this change deploys; the
 ambiguous command is never replayed or declared resolved.
 
@@ -508,8 +516,8 @@ accepts the command, the same atomic update changes the task to `running` and
 moves its deadline to the requested command-plus-observation horizon. The
 initial repair treated deletion of the exact retained Daytona session as
 quiescence; the 2026-08-23 entry records why production disproved that assumption
-and replaced it with mandatory whole-sandbox stop. A `submitting` task is
-different: Avalon deletes the old
+and replaced it with mandatory whole-sandbox stop. A pre-acceptance `planned` or
+`submitting` task is different: Avalon deletes the old
 sandbox and advances to a fresh generation so a late request targets only the
 retired provider id. Before final expiry, provider-level 404 follows the same
 token-fenced task cancellation and generation-retirement path; once expiry is
@@ -521,7 +529,7 @@ after expiry, so a stale cleanup continuation cannot stop or delete a
 successor's sandbox. Foreground and scheduled recovery reuse Terminal's
 established sixteen-minute operation-authority window rather than introducing
 another defensive timeout. Each claim is renewed before another provider
-mutation. Scheduled lifecycle cleanup retires every `submitting` task's provider
+mutation. Scheduled lifecycle cleanup retires every pre-acceptance task's provider
 sandbox without waiting for a later human-linked run;
 ordinary successful-command cleanup never stops the whole sandbox on a session
 deletion error. Aborted commands remain unsettled until recovery confirms

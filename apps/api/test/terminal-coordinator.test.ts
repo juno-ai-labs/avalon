@@ -307,6 +307,67 @@ describe("Terminal sandbox coordinator", () => {
     )).toEqual({ operation_run_id: otherRun });
   });
 
+  it("retires a planned task before linked handoff", async () => {
+    const { objectStore, db, provider, clock } = fixture();
+    const linkedRun = "00000000-0000-4000-8000-000000000099";
+    const effectId = "planned-recovery-effect";
+    const coordinator = new TerminalSandboxCoordinator(
+      db,
+      testTerminalPortFactory(objectStore),
+      provider,
+      clock,
+    );
+    await coordinator.acquire(context());
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
+      linkedRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
+    );
+    seedToolReceipt(objectStore, {
+      id: effectId,
+      runId: RUN_ID,
+      toolCallId: "planned-recovery-call",
+      toolName: "terminal_run_command",
+    });
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_tasks
+        (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name,
+         state, command_sha256, command_deadline_at, stdout_head, stdout_tail,
+         stderr_head, stderr_tail, stdout_bytes, stderr_bytes, created_at, updated_at)
+       VALUES ('planned-recovery-task', ?, ?, 1, 'planned-recovery-provider', 'planned',
+               'planned-hash', ?, '', '', '', '', 0, 0, ?, ?)`,
+      RUN_ID,
+      effectId,
+      clock.now().getTime() - 1,
+      clock.now().getTime() - 2,
+      clock.now().getTime() - 2,
+    );
+    workstreamObjectRun(
+      objectStore,
+      "UPDATE terminal_workspace SET final_diff_resource_id = 'planned-old-final-diff' WHERE id = 1",
+    );
+    workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'failed' WHERE id = ?", RUN_ID);
+
+    await expect(coordinator.acquire({
+      ...context(),
+      harnessRunId: linkedRun,
+      toolCallId: "planned-recovery-linked",
+    })).resolves.toMatchObject({ providerSandboxId: "sandbox-2", generation: 2 });
+    expect(provider.deleteSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT state FROM terminal_tasks WHERE task_id = 'planned-recovery-task'",
+    )).toEqual({ state: "cancelled" });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT generation, final_diff_resource_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ generation: 2, final_diff_resource_id: null });
+  });
+
   it("retires a mixed generation before a later submitting task can overlap handoff", async () => {
     const { objectStore, db, provider, clock } = fixture();
     const linkedRun = "00000000-0000-4000-8000-000000000099";
