@@ -207,4 +207,4 @@ changes ship together and must stay together. Anything that reads a streaming
 message's `text` from the cache is reading the revealed prefix, not everything
 received — code that needs the whole stream reads the cursor.
 
-Shipped in the same change as `markdown-rendering.md`'s streaming mode.
+Shipped in #258.
