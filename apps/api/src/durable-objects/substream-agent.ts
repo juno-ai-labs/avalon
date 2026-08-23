@@ -1847,6 +1847,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       workstreamId: input.workstreamId,
       limit: 25,
       automationDatabase: withWorkspaceRuntimeDatabase(this.env, input.workspaceId).DB,
+      onReceiptRepairFailure: (failure) => logWarn(this.env, "harness_residual_receipt_repair_failed", {
+        workspace_id: failure.workspaceId,
+        workstream_id: failure.workstreamId,
+        harness_run_id: failure.runId,
+        attempt_id: failure.attemptId,
+        repair_phase: failure.phase,
+        reason: failure.reason,
+      }),
     });
     const attemptId = uuidV7();
     const claim = await claimHarnessAttempt(executionEnv.DB, input, {

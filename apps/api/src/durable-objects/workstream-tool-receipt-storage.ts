@@ -214,9 +214,9 @@ export class WorkstreamToolReceiptStorage {
     /**
      * Settle a receipt the run already started even though a member stop is
      * durable. Cancellation blocks *new* work; it must not strand a receipt
-     * this same attempt has to settle before its parent can terminalize —
-     * `terminalizeHarnessAttempt` refuses while any receipt is still admitted
-     * or executing, so refusing here would deadlock the stop it is honouring.
+     * this same attempt can still settle definitively before its parent
+     * terminalizes. Refusing here would demote a known returned result to the
+     * residual stop fallback, including ambiguity for a write.
      * Every other condition still holds: this exact attempt, this exact lease
      * owner, still running, not terminalized, not expired.
      */
@@ -778,11 +778,11 @@ export class WorkstreamToolReceiptStorage {
   /**
    * Close every receipt a run still has open, because the run is ending now.
    *
-   * The stop and the reap both reach this. A run may not terminalize while any
-   * receipt of its is still admitted or executing — a member who stopped a run
-   * and is left looking at a tool card that never resolves has been told the
-   * work ended when its record says it did not — so the classification has to
-   * happen before the terminal event, and has to be atomic with nothing.
+   * The stop and the reap both reach this after committing the terminal run.
+   * That terminal-first ordering is required to avoid settling a receipt whose
+   * run is still live or has been taken over. A later immutable lifecycle
+   * marker acknowledges this object-local transaction; the bounded sweep
+   * retries terminal rows that are missing it.
    *
    * A receipt that was *executing* a write is `ambiguous`, not `failed`: the
    * provider may already have performed it, and the run ending is not evidence
@@ -807,19 +807,20 @@ export class WorkstreamToolReceiptStorage {
      * receipts are in the same object, but the caller reaches them through two
      * different paths and cannot hold one transaction across both. Of the two
      * orderings only this one fails safe — a settle that never runs leaves a
-     * terminal run with open receipts, which the next sweep's
-     * `abandonRunReceipts` closes, whereas settling first and then failing to
-     * terminalize would close the receipts of a run that is still live and may
-     * have just been taken over.
+     * terminal run with open receipts. The caller records an immutable
+     * acknowledgment only after this transaction succeeds; the next bounded
+     * sweep retries any terminal row missing that marker. Settling first and
+     * then failing to terminalize would instead close the receipts of a run
+     * that is still live and may have just been taken over.
      */
     lease: { kind: "terminalized"; at: number };
     now: number;
   }): { settled: number; open: number } {
     return this.storage.transactionSync(() => {
-      // The terminal stamp alone, as `abandonRunReceipts` does: the write that
-      // set it also cleared `lease_owner` and `lease_expires_at`, so there is
-      // no lease left to name. Matching the exact instant is what ties this
-      // call to that write rather than to some earlier terminalization.
+      // The terminal stamp is the only remaining fence: the write that set it
+      // also cleared `lease_owner` and `lease_expires_at`, so there is no live
+      // lease left to name. Matching the exact instant ties this call to that
+      // write rather than to some earlier terminalization.
       const owned = first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
         `SELECT 1 AS ok FROM runs WHERE run_id = ? AND terminalized_at = ?`,
         input.runId,
@@ -904,68 +905,6 @@ export class WorkstreamToolReceiptStorage {
         WHERE effect_intent_id = ?`,
       effectIntentId,
     ))?.index ?? 0;
-  }
-
-  abandonRunReceipts(input: { runId: string; terminalizedAt: number }): number {
-    return this.storage.transactionSync(() => {
-      // The guard, once, as its own question. The routed statement restated it
-      // as an `EXISTS` inside the UPDATE because it had no transaction to hold
-      // it in; here the answer cannot change between reading it and acting.
-      //
-      // Matching the stamp rather than merely `terminalized_at IS NOT NULL` is
-      // the same fence `settleResidualReceipts` takes, and for the reason set
-      // out there: it ties this call to one particular terminal write, so a
-      // sweep holding a stale instant cannot settle receipts a later
-      // terminalization owns.
-      const terminalized = first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
-        `SELECT 1 AS ok FROM runs WHERE run_id = ? AND terminalized_at = ?`,
-        input.runId,
-        input.terminalizedAt,
-      ));
-      if (!terminalized) return 0;
-
-      const abandoned = this.sql.exec<{
-        effect_intent_id: string; ambiguous: number;
-      } & Record<string, SqlStorageValue>>(
-        `SELECT effect_intent_id,
-                CASE WHEN status = 'executing'
-                       AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
-                     THEN 1 ELSE 0 END AS ambiguous
-           FROM tool_effects
-          WHERE run_id = ? AND status IN ('admitted', 'executing')`,
-        input.runId,
-      ).toArray();
-      if (abandoned.length === 0) return 0;
-
-      for (const receipt of abandoned) {
-        const status = receipt.ambiguous === 1 ? "ambiguous" as const : "failed" as const;
-        const errorJson = JSON.stringify(receipt.ambiguous === 1
-          ? {
-            code: "ambiguous_external_write",
-            message: "The parent run lost its durable lease while an external write was in flight",
-          }
-          : {
-            code: "parent_run_terminated",
-            message: "The parent run lost its durable lease",
-          });
-        this.sql.exec(
-          `UPDATE tool_effects
-              SET status = ?, settled_at = ?, error_json = ?
-            WHERE effect_intent_id = ?`,
-          status,
-          input.terminalizedAt,
-          errorJson,
-          receipt.effect_intent_id,
-        );
-        this.#projectSettledPart(
-          receipt.effect_intent_id,
-          status,
-          errorJson,
-          input.terminalizedAt,
-        );
-      }
-      return abandoned.length;
-    });
   }
 
   /**
