@@ -1,6 +1,7 @@
 import { asHarnessRunId, asWorkspaceId, asWorkstreamId, type HarnessRunId, type StructuredFailureDetail, type WorkstreamWorkflowInput } from "@avalon/contracts";
 
 import { uuidV7 } from "../lib/uuid-v7";
+import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import type {
   BlockDashboardObjectPort,
@@ -250,146 +251,67 @@ async function parseVerifiedInlineChildResult(
   return parseInlineChildResult(value);
 }
 
+/**
+ * The published spelling of a stored run status.
+ *
+ * `_runtime_harness_runs` did this remap in SQL — `admitted` as `scheduled`,
+ * `cancelled` as `stopped`, `waiting` and `steering` both as `running`. The
+ * object has never stored the published spellings, so the translation does not
+ * disappear with the view; it moves here, to the one boundary that serves
+ * callers written against the published enum.
+ */
+function publishedRunStatus(stored: string): string {
+  switch (stored) {
+    case "admitted": return "scheduled";
+    case "cancelled": return "stopped";
+    case "waiting": case "steering": return "running";
+    default: return stored;
+  }
+}
+
 export async function claimHarnessAttempt(
-  db: D1Database,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  runs: HarnessRunObjectPort,
+  input: Pick<WorkstreamWorkflowInput, "harnessRunId">,
   options: AttemptIdentity & { leaseSeconds?: number },
 ): Promise<AttemptClaim> {
   const leaseSeconds = Math.max(10, Math.min(300, Math.trunc(options.leaseSeconds ?? 60)));
-  const lifecycleId = uuidV7();
-  const results = await db.batch([
-    db.prepare(
-      `UPDATE harness_runs
-          SET status = 'running',
-              started_at = COALESCE(started_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-              attempt_number = CASE WHEN attempt_id = ?4 THEN attempt_number ELSE attempt_number + 1 END,
-              attempt_id = ?4,
-              lease_owner = ?5,
-              heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-              lease_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', printf('+%d seconds', ?6))
-        WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
-          AND parent_tool_call_id IS NULL
-          AND status IN ('scheduled', 'running')
-          AND terminalized_at IS NULL
-          AND cancellation_requested_at IS NULL
-          AND (
-            attempt_id IS NULL
-            OR (attempt_id = ?4 AND lease_owner = ?5)
-            OR lease_expires_at IS NULL
-            OR lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-          )
-          AND (
-            harness_runs.origin = 'block_dashboard_block'
-            OR NOT EXISTS (
-              SELECT 1
-                FROM harness_runs active
-               WHERE active.workspace_id = ?2
-                 AND active.workstream_id = ?3
-                 AND active.id != ?1
-                 AND active.origin != 'block_dashboard_block'
-                 AND active.parent_tool_call_id IS NULL
-                 AND active.status = 'running'
-                 AND active.terminalized_at IS NULL
-                 AND active.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            )
-          )`,
-    ).bind(
-      input.harnessRunId,
-      input.workspaceId,
-      input.workstreamId,
-      options.attemptId,
-      options.owner,
-      leaseSeconds,
-    ),
-    db.prepare(
-      `INSERT INTO harness_run_lifecycle_events
-       (id, harness_run_id, workspace_id, workstream_id, attempt_id, event_key,
-        event_type, status, member_safe_payload_json, created_at)
-       SELECT ?6, id, workspace_id, workstream_id, ?4, ?7, 'claimed', 'running', '{}',
-              strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-         FROM harness_runs
-        WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
-          AND parent_tool_call_id IS NULL
-          AND attempt_id = ?4 AND lease_owner = ?5 AND terminalized_at IS NULL
-       ON CONFLICT(harness_run_id, event_key) DO NOTHING`,
-    ).bind(
-      input.harnessRunId,
-      input.workspaceId,
-      input.workstreamId,
-      options.attemptId,
-      options.owner,
-      lifecycleId,
-      `attempt:${options.attemptId}:claimed`,
-    ),
-    db.prepare(
-      `UPDATE workstreams
-          SET harness_status = 'running',
-              last_activity_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        WHERE id = ?1 AND workspace_id = ?2
-          AND EXISTS (
-            SELECT 1 FROM harness_runs
-             WHERE id = ?3 AND workspace_id = ?2 AND workstream_id = ?1
-               AND origin != 'block_dashboard_block'
-               AND parent_tool_call_id IS NULL
-               AND attempt_id = ?4 AND lease_owner = ?5
-               AND status = 'running' AND terminalized_at IS NULL
-               AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-          )`,
-    ).bind(
-      input.workstreamId,
-      input.workspaceId,
-      input.harnessRunId,
-      options.attemptId,
-      options.owner,
-    ),
-  ]);
-
-  if (d1Changes(results[0]) > 0) {
-    const row = await db.prepare(
-      `SELECT attempt_number, lease_expires_at
-         FROM harness_runs
-        WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
-          AND attempt_id = ?4 AND lease_owner = ?5`,
-    ).bind(
-      input.harnessRunId,
-      input.workspaceId,
-      input.workstreamId,
-      options.attemptId,
-      options.owner,
-    ).first<{ attempt_number: number; lease_expires_at: string }>();
-    if (!row) throw new RunOwnershipLostError();
-    return {
-      state: "claimed",
-      lease: {
-        attemptId: options.attemptId,
-        owner: options.owner,
-        attemptNumber: Number(row.attempt_number),
-        leaseExpiresAt: row.lease_expires_at,
-      },
-    };
+  // One call where the routed version was a three-statement batch followed by
+  // one of two diagnostic reads. The claim, its lifecycle event, and the answer
+  // to "why not" all come from the same transaction, so the diagnosis cannot
+  // describe a row that has moved since the refusal.
+  const claim = await runs.claimAttempt({
+    runId: input.harnessRunId,
+    attemptId: options.attemptId,
+    owner: options.owner,
+    now: Date.now(),
+    leaseSeconds,
+    lifecycleEventId: uuidV7(),
+  });
+  switch (claim.outcome) {
+    case "claimed":
+      return {
+        state: "claimed",
+        lease: {
+          attemptId: options.attemptId,
+          owner: options.owner,
+          attemptNumber: claim.attemptEpoch,
+          leaseExpiresAt: new Date(claim.leaseExpiresAt).toISOString(),
+        },
+      };
+    case "terminal":
+      return { state: "terminal", status: publishedRunStatus(claim.status) as HarnessTerminalStatus };
+    case "cancelled":
+      return { state: "cancelled" };
+    case "busy":
+      return {
+        state: "busy",
+        leaseExpiresAt: claim.activeLeaseExpiresAt === null
+          ? null
+          : new Date(claim.activeLeaseExpiresAt).toISOString(),
+      };
+    default:
+      throw new Error("harness_run_not_found");
   }
-
-  const row = await db.prepare(
-    `SELECT status, cancellation_requested_at,
-            (SELECT MAX(active.lease_expires_at)
-               FROM harness_runs active
-              WHERE active.workspace_id = ?2 AND active.workstream_id = ?3
-                AND (harness_runs.origin = 'block_dashboard_block' OR active.origin != 'block_dashboard_block')
-                AND active.parent_tool_call_id IS NULL
-                AND active.status = 'running' AND active.terminalized_at IS NULL)
-              AS active_lease_expires_at
-      FROM harness_runs
-      WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
-        AND parent_tool_call_id IS NULL`,
-  ).bind(input.harnessRunId, input.workspaceId, input.workstreamId)
-    .first<{ status: string; cancellation_requested_at: string | null; active_lease_expires_at: string | null }>();
-  if (!row) throw new Error("harness_run_not_found");
-  if (TERMINAL_STATUSES.has(row.status)) {
-    return { state: "terminal", status: row.status as HarnessTerminalStatus };
-  }
-  if (row.cancellation_requested_at) return { state: "cancelled" };
-  return { state: "busy", leaseExpiresAt: row.active_lease_expires_at };
 }
 
 /**
@@ -402,6 +324,7 @@ export async function claimHarnessAttempt(
  */
 export async function admitInlineChildAttempt(
   db: D1Database,
+  runs: HarnessRunObjectPort,
   parentInput: HarnessRunCoordinates,
   parentLease: AttemptLease,
   options: AdmitInlineChildOptions,
@@ -425,7 +348,7 @@ export async function admitInlineChildAttempt(
   // This early assertion gives callers a precise cancellation/ownership error.
   // The INSERT repeats the complete fence, so losing ownership between the
   // assertion and the write cannot admit a child.
-  await assertHarnessAttemptOwned(db, parentInput.harnessRunId, parentLease);
+  await assertHarnessAttemptOwned(runs, parentInput.harnessRunId, parentLease);
   const results = await db.batch([
     db.prepare(
       `INSERT INTO harness_runs
@@ -647,7 +570,7 @@ export async function admitInlineChildAttempt(
         reused: true,
       };
     }
-    await assertHarnessAttemptOwned(db, parentInput.harnessRunId, parentLease);
+    await assertHarnessAttemptOwned(runs, parentInput.harnessRunId, parentLease);
     const fresh = await db.prepare(
       `SELECT child.status, child.terminalized_at, child.cancellation_requested_at,
               child.lease_expires_at, child.child_result_json, child.child_result_hash,
@@ -699,7 +622,7 @@ export async function admitInlineChildAttempt(
     throw new Error("inline_child_admission_conflict");
   }
 
-  await assertHarnessAttemptOwned(db, parentInput.harnessRunId, parentLease);
+  await assertHarnessAttemptOwned(runs, parentInput.harnessRunId, parentLease);
   const capacity = await db.prepare(
     `SELECT parent.chain_depth,
             EXISTS (
@@ -882,12 +805,12 @@ export async function terminalizeQueuedHarnessRun(
 }
 
 export async function persistImmutableRunScope(
-  db: D1Database,
+  runs: HarnessRunObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
   lease: AttemptLease,
   scope: ImmutableRunScope,
 ): Promise<{ scopeHash: string; reused: boolean }> {
-  await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
+  await assertHarnessAttemptOwned(runs, input.harnessRunId, lease);
   const canonicalScope = {
     executionPrincipal: scope.executionPrincipal,
     eligibleConnectionIds: [...new Set(scope.eligibleConnectionIds)].sort(),
@@ -908,61 +831,39 @@ export async function persistImmutableRunScope(
     limits: scope.limits,
   };
   const scopeHash = await sha256Hex(stableJson(canonicalScope));
-  const now = new Date().toISOString();
-  const result = await db.prepare(
-    `INSERT INTO harness_run_scopes
-     (harness_run_id, workspace_id, workstream_id, attempt_id, execution_principal_json,
-      eligible_connection_ids_json, eligible_capabilities_json, eligible_connection_capabilities_json,
-      trigger_policy_json, routing_policy_version, prompt_version, tool_surface_hash,
-      memory_context_hash, limits_json, scope_hash, created_at)
-     SELECT ?1, ?2, ?3, ?4, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
-       FROM harness_runs
-      WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
-        AND attempt_id = ?4 AND lease_owner = ?5 AND status = 'running'
-        AND terminalized_at IS NULL
-        AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-     ON CONFLICT(harness_run_id) DO NOTHING`,
-  ).bind(
-    input.harnessRunId,
-    input.workspaceId,
-    input.workstreamId,
-    lease.attemptId,
-    lease.owner,
-    stableJson(canonicalScope.executionPrincipal),
-    stableJson(canonicalScope.eligibleConnectionIds),
-    stableJson(canonicalScope.eligibleCapabilities),
-    stableJson(canonicalScope.eligibleConnectionCapabilities),
-    stableJson(canonicalScope.triggerPolicy),
-    canonicalScope.routingPolicyVersion,
-    canonicalScope.promptVersion,
-    canonicalScope.toolSurfaceHash,
-    canonicalScope.memoryContextHash,
-    stableJson(canonicalScope.limits),
+  const persisted = await runs.persistScope({
+    runId: input.harnessRunId,
+    attemptId: lease.attemptId,
+    owner: lease.owner,
+    now: Date.now(),
     scopeHash,
-    now,
-  ).run();
-  if (d1Changes(result) > 0) return { scopeHash, reused: false };
-
-  const existing = await db.prepare(
-    "SELECT attempt_id, scope_hash FROM harness_run_scopes WHERE harness_run_id = ?",
-  ).bind(input.harnessRunId).first<{ attempt_id: string; scope_hash: string }>();
-  if (!existing) throw new RunOwnershipLostError();
-  if (existing.attempt_id !== lease.attemptId || existing.scope_hash !== scopeHash) {
-    throw new Error("immutable_run_scope_mismatch");
-  }
-  return { scopeHash, reused: true };
+    executionPrincipalJson: stableJson(canonicalScope.executionPrincipal),
+    eligibleConnectionIdsJson: stableJson(canonicalScope.eligibleConnectionIds),
+    eligibleCapabilitiesJson: stableJson(canonicalScope.eligibleCapabilities),
+    eligibleConnectionCapabilitiesJson: stableJson(canonicalScope.eligibleConnectionCapabilities),
+    triggerPolicyJson: stableJson(canonicalScope.triggerPolicy),
+    routingPolicyVersion: canonicalScope.routingPolicyVersion,
+    promptVersion: canonicalScope.promptVersion,
+    toolSurfaceHash: canonicalScope.toolSurfaceHash,
+    memoryContextHash: canonicalScope.memoryContextHash,
+    limitsJson: stableJson(canonicalScope.limits),
+  });
+  if (persisted.outcome === "ownership_lost") throw new RunOwnershipLostError();
+  if (persisted.outcome === "mismatch") throw new Error("immutable_run_scope_mismatch");
+  return { scopeHash, reused: persisted.outcome === "reused" };
 }
 
 /** Persist a child scope only when it is a read-only narrowing of its parent. */
 export async function persistInlineChildScope(
   db: D1Database,
+  runs: HarnessRunObjectPort,
   parentInput: HarnessRunCoordinates,
   parentLease: AttemptLease,
   childInput: HarnessRunCoordinates,
   childLease: AttemptLease,
   scope: ImmutableRunScope,
 ): Promise<{ scopeHash: string; reused: boolean }> {
-  await assertHarnessAttemptOwned(db, parentInput.harnessRunId, parentLease);
+  await assertHarnessAttemptOwned(runs, parentInput.harnessRunId, parentLease);
   await assertInlineChildAttemptOwned(
     db,
     parentInput,
@@ -1015,7 +916,7 @@ export async function persistInlineChildScope(
     }
   }
 
-  const persisted = await persistImmutableRunScope(db, childInput, childLease, scope);
+  const persisted = await persistImmutableRunScope(runs, childInput, childLease, scope);
   // A scope persisted after the parent lost ownership is never exposed to the
   // child model: this final fence turns the call into an authoritative abort.
   await assertInlineChildAttemptOwned(
@@ -1029,73 +930,43 @@ export async function persistInlineChildScope(
 }
 
 export async function persistRunPluginActivation(
-  db: D1Database,
+  runs: HarnessRunObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
   lease: AttemptLease,
   plugin: { pluginId: string; toolSurfaceHash: string },
 ): Promise<void> {
-  await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
-  const now = new Date().toISOString();
-  const result = await db.prepare(
-    `INSERT INTO harness_run_plugin_activations
-     (harness_run_id, attempt_id, plugin_id, tool_surface_hash, authorized_at, activated_at)
-     SELECT ?1, ?4, ?6, ?7, ?8, ?8
-       FROM harness_runs
-      WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
-        AND attempt_id = ?4 AND lease_owner = ?5 AND status = 'running'
-        AND terminalized_at IS NULL
-        AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-     ON CONFLICT(harness_run_id, plugin_id) DO NOTHING`,
-  ).bind(
-    input.harnessRunId,
-    input.workspaceId,
-    input.workstreamId,
-    lease.attemptId,
-    lease.owner,
-    plugin.pluginId,
-    plugin.toolSurfaceHash,
-    now,
-  ).run();
-  if (d1Changes(result) > 0) return;
-  const existing = await db.prepare(
-    `SELECT attempt_id, tool_surface_hash FROM harness_run_plugin_activations
-      WHERE harness_run_id = ? AND plugin_id = ?`,
-  ).bind(input.harnessRunId, plugin.pluginId)
-    .first<{ attempt_id: string; tool_surface_hash: string }>();
-  if (!existing) throw new RunOwnershipLostError();
-  if (existing.attempt_id !== lease.attemptId || existing.tool_surface_hash !== plugin.toolSurfaceHash) {
-    throw new Error("plugin_activation_mismatch");
-  }
+  const persisted = await runs.persistPluginActivation({
+    runId: input.harnessRunId,
+    attemptId: lease.attemptId,
+    owner: lease.owner,
+    now: Date.now(),
+    pluginId: plugin.pluginId,
+    toolSurfaceHash: plugin.toolSurfaceHash,
+  });
+  if (persisted.outcome === "ownership_lost") throw new RunOwnershipLostError();
+  if (persisted.outcome === "mismatch") throw new Error("plugin_activation_mismatch");
 }
 
 export async function heartbeatHarnessAttempt(
-  db: D1Database,
+  runs: HarnessRunObjectPort,
   runId: string,
   lease: AttemptLease,
   leaseSeconds = 60,
 ): Promise<AttemptLease> {
   const boundedSeconds = Math.max(10, Math.min(300, Math.trunc(leaseSeconds)));
-  const result = await db.prepare(
-    `UPDATE harness_runs
-        SET heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-            lease_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', printf('+%d seconds', ?4))
-      WHERE id = ?1 AND attempt_id = ?2 AND lease_owner = ?3
-        AND status = 'running' AND terminalized_at IS NULL
-        AND cancellation_requested_at IS NULL
-        AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
-  ).bind(runId, lease.attemptId, lease.owner, boundedSeconds).run();
-  if (d1Changes(result) === 0) {
-    const state = await db.prepare(
-      "SELECT status, cancellation_requested_at FROM harness_runs WHERE id = ?",
-    ).bind(runId).first<{ status: string; cancellation_requested_at: string | null }>();
-    if (state?.status === "stopped" || state?.cancellation_requested_at) throw new RunCancelledError();
-    throw new RunOwnershipLostError();
-  }
-  const row = await db.prepare(
-    "SELECT lease_expires_at FROM harness_runs WHERE id = ? AND attempt_id = ? AND lease_owner = ?",
-  ).bind(runId, lease.attemptId, lease.owner).first<{ lease_expires_at: string }>();
-  if (!row) throw new RunOwnershipLostError();
-  return { ...lease, leaseExpiresAt: row.lease_expires_at };
+  // One round trip where there were three: the update, a re-read to tell a
+  // cancelled run from a lost lease when nothing changed, and a third read for
+  // the deadline this call had itself just written.
+  const beat = await runs.heartbeatAttempt({
+    runId,
+    attemptId: lease.attemptId,
+    owner: lease.owner,
+    now: Date.now(),
+    leaseSeconds: boundedSeconds,
+  });
+  if (beat.outcome === "cancelled") throw new RunCancelledError();
+  if (beat.outcome === "ownership_lost") throw new RunOwnershipLostError();
+  return { ...lease, leaseExpiresAt: new Date(beat.leaseExpiresAt).toISOString() };
 }
 
 export async function heartbeatInlineChildAttempt(
@@ -1174,41 +1045,39 @@ export async function heartbeatInlineChildAttempt(
 }
 
 export async function assertHarnessAttemptOwned(
-  db: D1Database,
+  runs: HarnessRunObjectPort,
   runId: string,
   lease: AttemptLease,
 ): Promise<void> {
-  const row = await db.prepare(
-    `SELECT status, cancellation_requested_at
-       FROM harness_runs
-      WHERE id = ?1 AND attempt_id = ?2 AND lease_owner = ?3
-        AND terminalized_at IS NULL
-        AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
-  ).bind(runId, lease.attemptId, lease.owner)
-    .first<{ status: string; cancellation_requested_at: string | null }>();
-  if (!row) throw new RunOwnershipLostError();
-  if (row.status === "stopped" || row.cancellation_requested_at) throw new RunCancelledError();
-  if (row.status !== "running") throw new RunOwnershipLostError();
+  const owned = await runs.attemptOwnership({
+    runId,
+    attemptId: lease.attemptId,
+    owner: lease.owner,
+    now: Date.now(),
+  });
+  if (owned.outcome === "cancelled") throw new RunCancelledError();
+  if (owned.outcome === "ownership_lost") throw new RunOwnershipLostError();
 }
 
 /**
  * A live lease owner may close an already-started tool after cancellation was
- * requested. This predicate deliberately omits the ordinary cancellation-null
- * fence: cancellation blocks new work, but it cannot strand the child receipt
- * that the same attempt must settle before terminalizing its parent.
+ * requested. This deliberately omits the ordinary cancellation fence:
+ * cancellation blocks new work, but it cannot strand the child receipt that the
+ * same attempt must settle before terminalizing its parent.
  */
 export async function assertHarnessToolSettlementOwned(
-  db: D1Database,
+  runs: HarnessRunObjectPort,
   runId: string,
   lease: AttemptLease,
 ): Promise<void> {
-  const row = await db.prepare(
-    `SELECT status FROM harness_runs
-      WHERE id = ?1 AND attempt_id = ?2 AND lease_owner = ?3
-        AND terminalized_at IS NULL
-        AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
-  ).bind(runId, lease.attemptId, lease.owner).first<{ status: string }>();
-  if (row?.status !== "running") throw new RunOwnershipLostError();
+  const owned = await runs.attemptOwnership({
+    runId,
+    attemptId: lease.attemptId,
+    owner: lease.owner,
+    now: Date.now(),
+    allowCancellationRequested: true,
+  });
+  if (owned.outcome !== "owned") throw new RunOwnershipLostError();
 }
 
 export async function assertInlineChildAttemptOwned(
@@ -1263,6 +1132,7 @@ export async function assertInlineChildAttemptOwned(
 
 export async function persistHarnessFinalMessage(
   db: D1Database,
+  runs: HarnessRunObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
   lease: AttemptLease,
   message: { id: string; sequenceNumber: number; text: string; createdAt: string },
@@ -1278,7 +1148,7 @@ export async function persistHarnessFinalMessage(
     ).bind(input.harnessRunId, lease.attemptId, lease.owner).first<{ owned: number }>();
     if (!owned) throw new RunOwnershipLostError();
   } else {
-    await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
+    await assertHarnessAttemptOwned(runs, input.harnessRunId, lease);
   }
   const lifecycleId = uuidV7();
   const eventPayload = stableJson({
@@ -1637,7 +1507,7 @@ export class CoalescedRunLiveness {
   private currentLease: AttemptLease;
 
   constructor(
-    private readonly db: D1Database,
+    private readonly runs: HarnessRunObjectPort,
     private readonly runId: string,
     lease: AttemptLease,
     private readonly options: { leaseSeconds?: number; minimumIntervalMs?: number } = {},
@@ -1660,7 +1530,7 @@ export class CoalescedRunLiveness {
       this.inFlight = (async () => {
         try {
           this.currentLease = await heartbeatHarnessAttempt(
-            this.db,
+            this.runs,
             this.runId,
             this.currentLease,
             this.options.leaseSeconds ?? 60,
@@ -1792,6 +1662,7 @@ export class InlineChildRunLiveness {
 
 export async function terminalizeInlineChildAttempt(
   db: D1Database,
+  runs: HarnessRunObjectPort,
   parentInput: HarnessRunCoordinates,
   parentLease: AttemptLease,
   childInput: HarnessRunCoordinates,

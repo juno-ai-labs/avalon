@@ -77,6 +77,7 @@ import {
   type BlockDashboardBlockDispatch,
   type BlockDashboardSocketRetractionRequest,
 } from "./block-dashboard-protocol";
+import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { blockDashboardAgentName, workstreamDOName } from "./names";
 import {
@@ -1206,11 +1207,15 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
     });
     const attemptId = uuidV7();
     const owner = `block-dashboard-agent:${dispatch.blockId}:${dispatch.blockRunId}:${attemptId}`;
-    const claim = await claimHarnessAttempt(executionEnv.DB, input, {
-      attemptId,
-      owner,
-      leaseSeconds: 300,
-    });
+    const claim = await claimHarnessAttempt(
+      createHarnessRunObjectPort(executionEnv, dispatch.workspaceId, dispatch.workstreamId),
+      input,
+      {
+        attemptId,
+        owner,
+        leaseSeconds: 300,
+      },
+    );
     if (claim.state === "busy") {
       const leaseAt = claim.leaseExpiresAt ? Date.parse(claim.leaseExpiresAt) : Number.NaN;
       return {
