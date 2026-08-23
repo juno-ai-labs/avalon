@@ -21,6 +21,11 @@ on how a decision is made, not as something to engineer around:
   works this through in full.
 - **Prefer the failure you will notice** over the one that needs tooling we do
   not have in order to find.
+- **A defensive limit is a decision, not a detail.** Adding a cap, a ceiling, a
+  timeout, or a cooldown needs a justification, and its *number* is the team's to
+  set rather than yours to guess — write the guard open and hand the number back.
+  [`docs/adding-security-defensive-and-other-limits.md`](docs/adding-security-defensive-and-other-limits.md)
+  is the rule, and it applies to any limit you are about to type.
 
 **None of this is licence to skip the rules below.** Speed at this size comes
 from not paying for the same thing twice: the quality gates take minutes, a flaky
