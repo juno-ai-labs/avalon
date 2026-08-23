@@ -1518,11 +1518,11 @@ describe("Terminal authority on real workerd", () => {
         now: 2_000,
       });
 
-      await terminal(stub, "settleLifecycleTransition", {
+      expect(await terminal(stub, "settleLifecycleTransition", {
         lifecycleState: "expired",
         claimId: "claim-expire",
         now: 3_000,
-      });
+      })).toMatchObject({ value: true });
 
       // Past expiry there is nothing left to stop, archive, or reattach to, so
       // every deadline and the provider id go together.

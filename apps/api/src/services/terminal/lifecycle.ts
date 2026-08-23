@@ -188,7 +188,11 @@ export async function reconcileDueTerminalSandbox(
         claimId,
         now: now.getTime(),
       });
-      if (!settled) throw new Error("terminal_lifecycle_expiry_tasks_unsettled");
+      if (!settled) {
+        throw new Error(
+          `terminal_lifecycle_expiry_tasks_unsettled: generation=${row.generation} claim=${claimId}`,
+        );
+      }
       return { transition: "expired" };
     }
     const retired = await terminal.retireMissingSandboxAfterLifecycleClaim({
