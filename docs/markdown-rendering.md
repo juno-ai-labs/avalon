@@ -77,15 +77,29 @@ model's text cannot impersonate one.
 ### Streaming
 
 A message that is still growing renders through `MarkdownBody`'s `streaming`
-mode: `splitStreamingMarkdown` cuts the source into settled segments — at
-blank-line boundaries, outside code fences, never before a line that could
-continue the previous block — plus an open tail, and each settled segment
-renders through a memoised component keyed on its source string. A commit that
-only appended to the tail re-parses the tail alone; the settled body's
-elements are reused untouched. The commit that ends the stream renders the
-source whole again, which also heals the seams segmentation cannot preserve —
-a reference link or a GFM footnote whose definition arrives in a later
-segment renders literally until then.
+mode: `splitStreamingMarkdown` cuts the source into settled segments plus an
+open tail, and each settled segment renders through a memoised component keyed
+on its source string. A commit that only appended to the tail re-parses the
+tail alone; the settled body's elements are reused untouched. Cuts are decided
+only at complete lines — the still-arriving final line decides nothing,
+because its classification can change as it grows (a bare `1` is a paragraph
+until the `.` makes it a list item), and that deferral is what makes the
+settled prefix unconditionally stable — and land, outside code fences, in two
+places: at a non-blank line after a blank line that does not continue the
+previous block (a blockquote line or an indented continuation still does),
+and at a top-level list item that follows an item of the same marker, blank
+line between or not. The list cut exists because a list-dominant reply — a
+very ordinary "here is the plan" — otherwise has *no* safe blank-line
+boundaries at all, settles nothing, and re-parses whole on every commit at
+the paced reveal's rate.
+
+Streaming rendering is therefore an approximation the settled re-render
+heals: each settled list item renders as its own single-item list while the
+message streams (ordered numbering survives via the `start` attribute; a
+loose item renders tight — without its paragraph wrapper — until the turn
+completes), and a reference link or a GFM footnote whose definition arrives
+in a later segment renders literally until then. The commit that ends the
+stream renders the source whole again.
 
 This exists because the paced reveal
 ([`streaming-reveal.md`](streaming-reveal.md)) commits up to once per painted
@@ -93,10 +107,11 @@ frame, and re-parsing and re-highlighting a whole reply per commit grows with
 its length: measured before the change, a 20,000-character streaming reply
 held the main thread for ~27 of every 30 seconds and dropped the transcript to
 17 frames per second. With segmentation the per-commit cost is flat in reply
-length — frame-duration p95 stays at 16.8ms from 500 through 20,000
-characters. The cost is guarded by
-`workstream-blocks-streaming-cost.test.tsx`, which asserts that ten tail
-appends together cost less than one initial parse.
+length — ~57fps with zero long tasks from 500 through 20,000 characters,
+measured for a heading/paragraph/fence body and for a list-dominant one (the
+harness's two corpora). The cost is guarded by
+`workstream-blocks-streaming-cost.test.tsx`, which asserts, for both of those
+shapes, that ten tail appends together cost less than one initial parse.
 
 The memoisation is only as good as its inputs' identity, and the trap that
 has already bitten — twice, in the same change that introduced this — is a
@@ -255,12 +270,16 @@ The traps, both of which have bitten:
 ### 2026-08-23 — A streaming body re-parses its tail, not its length
 
 **What changed:** `MarkdownBody` gained a `streaming` mode: the source is
-split at settled-block boundaries (`splitStreamingMarkdown`) and every settled
+split at settled-block boundaries (`splitStreamingMarkdown`) — blank-line
+boundaries plus, after review caught list-dominant replies settling nothing
+at all, per-item cuts inside top-level same-marker lists — and every settled
 segment renders through a memoised component, so a commit that appends
-streamed text re-parses only the open tail. A settled body's rendered element
-is also memoised on its source, so commits elsewhere on the screen skip
-finished messages entirely. Both `mentions` parameter defaults were hoisted to
-one `NO_MENTIONS` constant.
+streamed text re-parses only the open tail. Cuts are decided only at complete
+lines, which is what makes the settled prefix unconditionally stable as text
+arrives character by character. A settled body's rendered element is also
+memoised on its source, so commits elsewhere on the screen skip finished
+messages entirely. Both `mentions` parameter defaults were hoisted to one
+`NO_MENTIONS` constant.
 
 **Why:** The paced reveal ([`streaming-reveal.md`](streaming-reveal.md))
 commits up to once per painted frame, and the whole-body re-parse made that
@@ -279,14 +298,18 @@ streaming path was never on the table; the mode lives inside `MarkdownBody`
 and the single-renderer guard still passes.
 
 **Consequences:** While a message streams, its rendering is an approximation
-healed at completion: a loose list can momentarily render as two lists at a
-segment boundary, and reference-link or footnote definitions later in the
-stream do not reach earlier segments until the settled re-render. The memo
-chain is identity-fragile by nature — the `NO_MENTIONS` hoist exists because a
-`= []` default two components up silently restored the whole-body re-parse,
+healed at completion: a settled list item renders as its own single-item list
+(numbering preserved via `start`; a loose item renders tight until the turn
+settles), and reference-link or footnote definitions later in the stream do
+not reach earlier segments until the settled re-render. The memo chain is
+identity-fragile by nature — the `NO_MENTIONS` hoist exists because a `= []`
+default two components up silently restored the whole-body re-parse,
 observable only as client-side jank — and
-`workstream-blocks-streaming-cost.test.tsx` pins the cost ratio so the next
-such regression fails a test instead of a reader.
+`workstream-blocks-streaming-cost.test.tsx` pins the cost ratio for a
+heading/paragraph/fence body *and* a list-dominant one, because the second
+shape is exactly the one the first version of the splitter silently missed:
+its every candidate blank-line cut point is a list line, so it settled zero
+segments and kept the whole-body re-parse at the paced commit rate.
 
 Shipped in #258.
 

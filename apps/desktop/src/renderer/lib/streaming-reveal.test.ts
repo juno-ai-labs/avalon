@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   advanceStreamReveal,
+  alignRevealBoundary,
   applyRevealedText,
   flushStreamReveal,
   revealBudget,
@@ -88,6 +89,35 @@ describe('advanceStreamReveal', () => {
     expect(advanceStreamReveal(cursors, 1_000)).toEqual({ changed: false, backlogRemains: false });
     expect(done.revealed).toBe(0);
     expect(drained.lastRevealAt).toBeNull();
+  });
+});
+
+describe('alignRevealBoundary', () => {
+  it('steps past a split surrogate pair and leaves whole characters alone', () => {
+    const text = 'A😀B';
+    // Index 2 lands between the emoji's high and low surrogates.
+    expect(alignRevealBoundary(text, 2)).toBe(3);
+    expect(alignRevealBoundary(text, 1)).toBe(1);
+    expect(alignRevealBoundary(text, 3)).toBe(3);
+    expect(alignRevealBoundary(text, 0)).toBe(0);
+    expect(alignRevealBoundary(text, text.length)).toBe(text.length);
+  });
+
+  it('never exposes an unpaired surrogate through repeated one-unit ticks', () => {
+    const cursors = new Map([['message-one', cursor({ receivedText: 'A😀B😀C' })]]);
+    const seen: string[] = [];
+    // Elapsed time near zero pins the budget to its one-unit floor, the case
+    // that would otherwise slice an emoji in half for a frame.
+    for (let tick = 0; tick < 12; tick += 1) {
+      advanceStreamReveal(cursors, 1_000);
+      const current = cursors.get('message-one')!;
+      seen.push(current.receivedText.slice(0, current.revealed));
+    }
+    for (const prefix of seen) {
+      const last = prefix.charCodeAt(prefix.length - 1);
+      expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+    }
+    expect(seen.at(-1)).toBe('A😀B😀C');
   });
 });
 

@@ -1410,8 +1410,13 @@ export function useWorkstreamSocket(
     void connect();
     // The cursors survive this effect — they live in the resume state — so a
     // remount can inherit a reveal already in progress. Without this the held
-    // prefix would sit until the next wire frame arrived to restart the loop.
-    if ([...streamCursors.values()].some(
+    // prefix would sit until the next wire frame arrived to restart the loop —
+    // and a mount in an already-hidden window cannot wait on an animation
+    // frame at all, because none will fire until the window is shown; hidden
+    // means nobody is watching, so the inherited backlog shows at once.
+    if (document.visibilityState === 'hidden') {
+      handleVisibilityChange();
+    } else if ([...streamCursors.values()].some(
       (cursor) => !cursor.completed && cursor.revealed < cursor.receivedText.length,
     )) scheduleReveal();
     return () => {

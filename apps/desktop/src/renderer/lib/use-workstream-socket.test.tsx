@@ -1345,6 +1345,75 @@ describe('useWorkstreamSocket', () => {
     }
   });
 
+  it('flushes an inherited reveal backlog when it mounts in a hidden window', async () => {
+    // A remount can inherit cursors holding unrevealed text through the resume
+    // registry — and a hidden window gets no animation frames, so an armed
+    // loop would never fire. Hidden means nobody is watching: show it at once.
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    stubAnimationFrames(); // queued but never flushed: no frame ever fires
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000731';
+    const messageId = '00000000-0000-7000-8000-000000000732';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    function Socket(): null {
+      useWorkstreamSocket(api, workstreamId, true);
+      return null;
+    }
+    function Tree({ mounted }: { mounted: boolean }): React.JSX.Element {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <WorkstreamSocketResumeProvider scope="user-one:workspace-one">
+            {mounted ? <Socket /> : null}
+          </WorkstreamSocketResumeProvider>
+        </QueryClientProvider>
+      );
+    }
+    const rendered = render(<Tree mounted />);
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'stream_started',
+      sequence: 1,
+      occurredAt: '2026-08-23T12:00:00.000Z',
+      messageId,
+      harnessRunId: '00000000-0000-7000-8000-000000000733',
+      turnId: 'turn-inherited',
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }));
+    act(() => socket.message({
+      type: 'stream_delta',
+      sequence: 2,
+      occurredAt: '2026-08-23T12:00:00.100Z',
+      messageId,
+      turnId: 'turn-inherited',
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'Held back across the remount.',
+    }));
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0]?.text).toBe('');
+
+    rendered.rerender(<Tree mounted={false} />);
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    try {
+      rendered.rerender(<Tree mounted />);
+      await flushPromises();
+      expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0]?.text)
+        .toBe('Held back across the remount.');
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
   it('drops text a retry retracted from the reveal instead of animating it away', () => {
     const workstreamId = '00000000-0000-7000-8000-000000000721';
     const messageId = '00000000-0000-7000-8000-000000000722';
