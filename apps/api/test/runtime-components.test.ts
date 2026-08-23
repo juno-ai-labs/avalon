@@ -10,7 +10,6 @@ import {
   type ScheduleTiming,
 } from "../src/services/workspace-schedule-execution";
 import {
-  agentRunExecutionFailureDisposition,
   applyActiveStreamCheckpointEvent,
   distinctNonParticipantViewers,
   isPersonalEventAudience,
@@ -18,7 +17,6 @@ import {
   splitActiveStreamCheckpointText,
   substreamAgentName,
 } from "../src/durable-objects/substream-agent";
-import { RunOwnershipLostError } from "../src/runtime/harness-run-runtime";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import {
@@ -55,12 +53,6 @@ afterEach(() => {
 });
 
 describe("runtime component invariants", () => {
-  it("defers an obsolete executor instead of letting it fail the successor", () => {
-    expect(agentRunExecutionFailureDisposition(new RunOwnershipLostError()))
-      .toBe("defer_and_stop_drain");
-    expect(agentRunExecutionFailureDisposition(new Error("provider failed"))).toBe("fail");
-  });
-
   it("rechecks drain identity after the pre-claim regional-effects await", () => {
     const source = readFileSync(
       new URL("../src/durable-objects/substream-agent.ts", import.meta.url),

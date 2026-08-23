@@ -6,7 +6,7 @@ The 2026-08-21 production pass found that Terminal was not release-healthy for m
 
 The initial fault boundary was between the harness's durable tool receipt and Terminal's newly object-local authority, before (or while entering) the Terminal executor. It was not a Bash, Node, Python, SQLite, Git, or repository-permission failure: the failing attempts had no command output, completed in 454 ms–1 s, and occurred after successful operations against the same sandbox. PR #224 fixed the first reproduced heartbeat ordering and made the remaining failure diagnosable. Its production retest then proved the complete invariant: the resident main SubstreamAgent must not call its own Terminal-operation or generated-resource endpoints over RPC while its alarm owns the model/tool loop. PR #228 keeps both paths in the resident object event. The final signed-in Global production stress test passed every area in the acceptance matrix below across 28 Terminal tool calls, including two generated-resource publications and a publish/import round trip. A later signed-in Global pass cleared the concurrent cold-start, alarm-during-sleep, and timeout/recovery gates. It also exposed a separate fresh-workstream model-targeting authority violation and a documented inline-child limit that disagreed with the enforced contract. The owning Terminal module's separate EU functional gate remains open.
 
-The original QA changed no code or production configuration. The follow-up fixes merged through PRs #224 and #228. Every live test remained confined to private QA workstreams, scratch sandboxes, generated QA resources, and an authorized read-only checkout.
+The original QA changed no code or production configuration. The follow-up fixes merged through PRs #224 and #228. Every live test remained confined to private QA workstreams, scratch sandboxes, generated QA resources, and an authorized read-only checkout. The later stop-recovery pass reopened one Global linked-run gate, described below; the Global matrix is therefore not wholly accepted despite the earlier sequential, concurrency, alarm, and timeout passes.
 
 ## 2026-08-22 post-deploy verification correction
 
@@ -97,6 +97,45 @@ merely finishing near each other.
 | Scheduled wake-up due during active sleep | PASS | Wake-up `01a02b97-e88b-7ba5-ae73-60fcc0975e99` was due at 22:30:30.891Z while the 75-second command was active. It did not interrupt or duplicate the live run, appeared once after that run completed, and produced the requested scheduled-test response without tools. |
 | Timeout and process termination | PASS | Workstream `01a02b9a-d74e-7717-85f8-3f2522a2fd2a`, run `01a02b9a-dcf7-7308-9fb0-1e4ad8ca28a9`, returned `state=timed_out`, `terminationReason=timed_out`, and `exitCode=null` for a 3-second deadline. The immediate command returned `QA_TIMEOUT_RECOVERY_OK` and `LATE_ABSENT`; a second check 22 seconds later still returned `LATE_ABSENT`, proving GNU `timeout` terminated the original process rather than only abandoning observation. |
 | Visible desktop state | PASS | Computer Use inspected the completed tool cards, exact timing fields, scheduled wake-up transcript, sidebar terminal states, and timeout report in the production window. No card remained `started`, no run needed intervention, and no duplicate wake-up appeared. |
+
+### 2026-08-23 stop-recovery follow-up reopens the Global lease gate
+
+PR #247 fixed the stopped receipt itself: in fresh Global workstream
+`01a02ca6-9b16-761b-b61f-08f8f612d9ae`, run
+`01a02ca6-a2fa-781c-8ae5-d6f33348eb12` changed its sleeping command card from
+`started` to `ambiguous` and the parent visibly stopped. The separate recovery
+sequence then found a lease-liveness defect. Run
+`01a02ca9-7aac-700c-9027-65bf6e9d5cfe` submitted a deliberately different
+command, received conservative `command_outcome_unknown`, and yielded as
+`needs_input`. Three later linked runs (`01a02caa-2a79-7bb5-8b69-13409aeb0a78`,
+`01a02caa-b399-76e8-a0fe-21d0292cfed1`, and
+`01a02cae-3566-7833-9d70-0c731f19735f`) produced five failed read rows with
+`sandbox_busy` from 03:29:10Z through 03:33:38Z.
+
+The status-only holder was terminalized and could never execute again; a reply
+always admits a new linked run. The object-local lease nevertheless preserved
+the retired compatibility rule that counted `needs_input` as live, so it waited
+for the fixed sixteen-minute lease deadline. The branch-local repair treats the
+run as yielded while every foreign takeover remains fenced by any unsettled
+named Terminal task, regardless of either nominal deadline. Command admission
+is fenced on the exact live run, operation owner, generation, and provider
+sandbox; the durable task remains `submitting` through the combined command and
+provider-request window so a not-yet-visible submission cannot race cleanup.
+Daytona revalidates that authority immediately before every mutating submission
+step. A linked run deletes an accepted command's exact Daytona session (or
+confirms the whole sandbox stopped) before settlement. When a `submitting`
+command has no visible session, or the provider sandbox is 404, Avalon instead
+retires the old provider sandbox and advances to a fresh generation before
+handoff. An object-local cleanup token keeps competing tools and lifecycle work
+excluded across each provider await. It is renewed before every provider
+mutation and cannot be revived after expiry, so a stale batch cannot touch a
+successor. Scheduled lifecycle cleanup cancels every retained task under that token before
+retiring a missing sandbox, including a `submitting` task with no visible named
+session and no later human-linked run. That provider boundary matters because
+`command_outcome_unknown` does not prove the command stopped. The earlier
+command remains ambiguous and must not be replayed or called resolved. This
+Global stop/recovery gate is open again until the linked-run takeover and
+`START_PRESENT`/`LATE_ABSENT` checks pass against the deployed repair.
 
 Every fresh work stream also emitted an otherwise hidden error before its
 creation request completed:
@@ -356,9 +395,11 @@ production passes remain the evidence for package installation, output
 overflow/sanitization, and authorized read-only checkout; those were not
 repeated in this acceptance run. The later production pass proves two-way cold
 Terminal startup, overlapping sleeps, keep-alive heartbeats, a scheduled wake-up
-due during an active tool, timeout termination, and post-timeout recovery.
-EU Terminal execution, stale-attempt recovery/UX, and injected durable-host
-error guidance remain open, so the owning module's broader production
-acceptance gate remains open; EU health alone is not functional Terminal
-evidence. A future change to resident tool authority must retain the rule that
-the main child uses object-local ports while external callers use RPC.
+due during an active tool, timeout termination, and post-timeout recovery. The
+2026-08-23 follow-up above reopened the separate stop/unknown-command
+lease-recovery gate. EU Terminal execution, stale-attempt recovery/UX, injected
+durable-host error guidance, and that Global linked-run recovery remain open,
+so the owning module's broader production acceptance gate remains open; EU
+health alone is not functional Terminal evidence. A future change to resident
+tool authority must retain the rule that the main child uses object-local ports
+while external callers use RPC.
