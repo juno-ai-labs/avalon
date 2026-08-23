@@ -48,9 +48,6 @@ class SqliteStatement {
       results: this.statement.all(...this.values as SQLInputValue[]) as T[],
     });
   }
-  async first<T>(): Promise<T | null> {
-    return (this.statement.get(...this.values as SQLInputValue[]) as T | undefined) ?? null;
-  }
 }
 
 function sqliteD1(database: DatabaseSync): D1Database {
@@ -224,6 +221,7 @@ describe("attachment tool receipts", () => {
     // another object, so the row is simply absent and the register fails closed.
     await expect(registerAttachmentToolReceipt(createTestEnv({ DB: d1 }), target({
       invocationId: "00000000-0000-4000-8000-0000000000ff",
+      expectedOutputRef: OUTPUT_REF,
       canonicalToolName: "read_resource",
       output: readOutput(),
     }), receipts)).rejects.toThrow("attachment_receipt_version_changed");
@@ -338,34 +336,42 @@ describe("attachment tool receipts", () => {
   });
 
   it("does not attach or delete dependencies after a successor replaces the output reference", async () => {
-    for (const register of [
-      (d1: D1Database, input: Parameters<typeof registerAttachmentToolReceipt>[1]) =>
-        registerAttachmentToolReceipt(d1, input),
-      (d1: D1Database, input: Parameters<typeof registerAttachmentToolReceipt>[1]) =>
-        __attachmentToolReceiptTesting.registerObjectAttachmentToolReceipt({ DB: d1 } as never, input),
-    ]) {
-      const { database, d1 } = fixture();
-      database.prepare(
-        "UPDATE tool_invocations SET output_ref = 'receipts/successor.json' WHERE id = ?",
-      ).run(INVOCATION_ID);
-      database.prepare(
-        `INSERT INTO attachment_tool_receipts
-         (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      ).run(WORKSPACE_ID, SECOND_RESOURCE_ID, INVOCATION_ID, HASH, new Date().toISOString());
+    const { database, d1 } = fixture();
+    const { receipts, sql } = receiptAuthority();
+    // The receipt was replanned onto another call and completed again between
+    // this caller's completion and its registration. Its dependency belongs to
+    // the successor's result, so the loser must neither add to it nor take it
+    // away — and the digest is moved too, so the loser reaches its own
+    // compensating rollback rather than stopping at the record.
+    sql.exec(
+      `UPDATE tool_effects SET output_ref = 'receipts/successor.json' WHERE effect_intent_id = ?`,
+      INVOCATION_ID,
+    );
+    sql.exec(
+      `INSERT INTO attachment_tool_receipts
+       (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      WORKSPACE_ID,
+      SECOND_RESOURCE_ID,
+      INVOCATION_ID,
+      HASH,
+      1,
+    );
+    database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?")
+      .run("b".repeat(64), RESOURCE_ID);
 
-      await expect(register(d1, {
-        workspaceId: WORKSPACE_ID,
-        invocationId: INVOCATION_ID,
-        expectedOutputRef: OUTPUT_REF,
-        canonicalToolName: "read_resource",
-        output: readOutput(),
-      })).rejects.toThrow("attachment_receipt_version_changed");
-      expect(database.prepare(
-        `SELECT resource_id, derivative_sha256
-           FROM attachment_tool_receipts WHERE tool_invocation_id = ?`,
-      ).all(INVOCATION_ID)).toEqual([{ resource_id: SECOND_RESOURCE_ID, derivative_sha256: HASH }]);
-    }
+    await expect(registerAttachmentToolReceipt(createTestEnv({ DB: d1 }), target({
+      invocationId: INVOCATION_ID,
+      expectedOutputRef: OUTPUT_REF,
+      canonicalToolName: "read_resource",
+      output: readOutput(),
+    }), receipts)).rejects.toThrow("attachment_receipt_version_changed");
+
+    expect(sql.exec(
+      `SELECT resource_id, derivative_sha256 FROM attachment_tool_receipts
+        WHERE tool_invocation_id = ?`,
+      INVOCATION_ID,
+    ).toArray()).toEqual([{ resource_id: SECOND_RESOURCE_ID, derivative_sha256: HASH }]);
   });
 
   it("does not make a mixed image/metadata view result replayable", () => {

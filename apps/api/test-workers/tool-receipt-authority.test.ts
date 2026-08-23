@@ -230,6 +230,69 @@ describe("tool-receipt authority on real workerd", () => {
    * *finds* the method, so a rejection on the argument's own terms passes; an
    * unknown-operation refusal, or a crash on `undefined`, does not.
    */
+  it("closes a stopped run's open receipts, and only against its own terminal stamp", async () => {
+    const stub = agent();
+    await boot(stub);
+    const terminalizedAt = Date.now();
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      seedLiveRun(state);
+    });
+    // A read that never started and a write that did. The classification turns
+    // on exactly that difference, so a fixture with only one of them would pass
+    // against a settlement that ignored the plan's mode entirely.
+    await receipt(stub, "admit", admission("effect-read", "call-read"));
+    await receipt(stub, "admit", {
+      ...admission("effect-write", "call-write"),
+      mode: "write",
+      executionPlanJson: '{"mode":"write"}',
+      requestHash: "write-hash",
+    });
+
+    // Terminalizing is the caller's own write, in the regional database. This
+    // stands in for it: the settlement is fenced on the stamp it left, and
+    // nothing else about the run.
+    const settleWith = (at: number) => receipt(stub, "settleResidualReceipts", {
+      runId: RUN,
+      attemptId: ATTEMPT,
+      lease: { kind: "terminalized", at },
+      phase: "cancelled",
+      errorJson: '{"code":"run_cancelled"}',
+      payloadJson: '{"code":"run_cancelled"}',
+      ambiguousMessage: "The run stopped while an external write was unresolved",
+      now: terminalizedAt,
+    });
+
+    // Before the run is terminal there is nothing to settle for, and a stale
+    // executor naming an instant the run never carried must change nothing.
+    expect((await settleWith(terminalizedAt)).value).toEqual({ settled: 0, open: 2 });
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE runs SET status = 'cancelled', terminalized_at = ? WHERE run_id = ?`,
+        terminalizedAt,
+        RUN,
+      );
+    });
+    expect((await settleWith(terminalizedAt - 1)).value).toEqual({ settled: 0, open: 2 });
+
+    expect((await settleWith(terminalizedAt)).value).toEqual({ settled: 2, open: 0 });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT effect_intent_id, status FROM tool_effects ORDER BY effect_intent_id`,
+      ).toArray()).toEqual([
+        // The write may already have reached the provider; stopping is not
+        // evidence either way, and calling it failed would be a claim.
+        { effect_intent_id: "effect-write", status: "ambiguous" },
+        { effect_intent_id: "effect-read", status: "failed" },
+      ].sort((a, b) => a.effect_intent_id.localeCompare(b.effect_intent_id)));
+      expect(state.storage.sql.exec<{ phase: string }>(
+        `SELECT phase FROM tool_effect_checkpoints
+          WHERE phase IN ('cancelled', 'ambiguous_external_write')
+          ORDER BY phase`,
+      ).toArray()).toEqual([{ phase: "ambiguous_external_write" }, { phase: "cancelled" }]);
+    });
+  });
+
   it("dispatches every method the storage class exposes", async () => {
     const methods = Object.getOwnPropertyNames(WorkstreamToolReceiptStorage.prototype)
       .filter((name) => name !== "constructor")
@@ -282,6 +345,18 @@ describe("tool-receipt authority on real workerd", () => {
       status: "failed" as const,
       allowAmbiguousReconciliation: false,
       phase: "probe",
+      attemptId: ATTEMPT,
+      // `settleResidualReceipts` dereferences this to read its terminal stamp,
+      // and an operation that throws inside the object breaks its input gate
+      // for every later probe — which is why this argument carries every field
+      // rather than only the plausible ones. The stamp deliberately matches no
+      // run, so the fence declines and the probe still learns what it came for:
+      // that dispatch found the method.
+      lease: { kind: "terminalized" as const, at: 1 },
+      ambiguousMessage: "probe",
+      // Read by the attachment-dependency operations, which refuse a receipt
+      // whose settled ref is not this one.
+      expectedOutputRef: "probe-ref",
       fence: { runId: RUN, attemptId: ATTEMPT, owner: OWNER },
       now: Date.now(),
     };

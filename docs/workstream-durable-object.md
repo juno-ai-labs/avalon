@@ -1056,6 +1056,35 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-23 — Residual receipt settlement becomes an object operation
+
+**What changed:** `WorkstreamToolReceiptStorage` gained `settleResidualReceipts`,
+which classifies and closes every receipt a run still has open. Both callers that
+end a run reach it: `terminalizeHarnessAttempt` for a stopped parent and
+`reapStaleHarnessRuns` for an expired inline child. Its fence is the run's exact
+`terminalized_at`, and it is called *after* the terminal write rather than before.
+`complete` and `fail` also gained `allowCancellationRequested`, and the
+attachment-dependency operations gained an `expectedOutputRef` fence.
+
+**Why:** all three arrived on `main` while this branch was open, written as D1
+statements against `tool_invocations` — a compatibility view object schema
+migration 17 drops. Rebasing could not keep them and could not drop them, so they
+moved into the object, and one of them could not move unchanged. The residual
+settlement and the terminal lifecycle row were a single D1 batch fenced on each
+other; they are now in different stores with no transaction between them, so the
+ordering became a real choice. Terminalize-then-settle is the one whose failure is
+recoverable: a settle that does not run leaves a terminal run with open receipts,
+which `abandonRunReceipts` closes on the next sweep, whereas settle-then-fail
+closes the receipts of a run that is still live and may already have a successor.
+
+**What a future change has to respect:** do not move the settlement back ahead of
+the terminal write in the name of atomicity — the atomicity is not available, and
+that order corrupts live runs rather than delaying dead ones.
+`allowCancellationRequested` relaxes exactly one condition of `#fence` and must
+keep the rest: a run may not admit new work after a member stop, but the receipt
+Bind already returned has to be settleable or `terminalizeHarnessAttempt`
+deadlocks against its own open-receipt fence.
+
 ### 2026-08-22 — Every closed-authority arm is gone, and the routing is unconditional
 
 **What changed:** The 83 `authority.phase === "durable_object_open"` gates
