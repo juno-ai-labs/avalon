@@ -42,18 +42,21 @@ open. PR #249 merged and deployed the sixth defect's lease-liveness repair.
 Fresh Global Computer Use proved linked runs no longer receive `sandbox_busy`,
 but the required post-deadline read exposed a seventh defect: Daytona named-
 session deletion removed observation without stopping the accepted shell, which
-wrote after handoff. The whole-sandbox quiescence repair is branch-local and
-mutation-proven, but not deployed or production-retested yet. Granola also failed a second fresh
-activation because its hosted MCP authorization could not be verified. The
-evidence still does not isolate Avalon code from provider/session/transport
-state, so Granola remains an unresolved live acceptance blocker rather than a
-confirmed code defect.
+wrote after handoff. PR #251 merged and deployed the whole-sandbox quiescence
+repair. A fresh strict Global Computer Use sequence stopped an accepted
+120-second command, completed immediate linked reads without `sandbox_busy`,
+and still found the late marker absent after the original deadline. Granola also
+failed a second fresh activation because its hosted MCP authorization could not
+be verified. The evidence still does not isolate Avalon code from
+provider/session/transport state, so Granola remains an unresolved live
+acceptance blocker rather than a confirmed code defect.
 
 ## Environment and safety boundary
 
-- Date: 2026-08-22 PDT / 2026-08-23 UTC.
+- Date: 2026-08-22–23 PDT / 2026-08-23 UTC.
 - Desktop: production `/Applications/Avalon.app`; original pass 1.132.0,
-  PR #247 post-deployment pass 1.133.0, and PR #249/HQA-07 pass 1.135.0.
+  PR #247 post-deployment pass 1.133.0, and PR #249 reproduction plus PR #251
+  HQA-07 acceptance pass 1.135.0.
 - Region: Global production API, application version 0.24.0 in the correlated
   Worker records.
 - Model observed in the correlated runs: `google/gemini-3.7-flash`.
@@ -67,6 +70,9 @@ confirmed code defect.
   PR #249 then deployed Global `2e590149-7543-4e48-a526-77a85b15210b`
   and EU `53e47151-3a18-4553-b2b2-a074a83687cf` from merge commit
   `973168279939212fde7eeac181431ee3ad8721bd` in workflow run `32624216543`.
+  PR #251 deployed Global `7fbfa5ff-d4ec-4b55-89cf-d9763ce4a609` and EU
+  `bba16c1f-a471-4397-89bc-7e988eecdde6` from merge commit
+  `9c09e4d1683edf268706e4cb5ca5ce7885ee6fa5` in workflow run `32629139604`.
 - Local checkout baseline before the repairs: `fbe7f512`. Production Worker
   logs exposed `build_sha: null`; the local commit is therefore a source-review
   baseline, not the identity of the deployed Worker revision above.
@@ -80,14 +86,16 @@ confirmed code defect.
 
 Both regional health endpoints were green after PR #247, and both regional
 migration listings reported no pending migrations after applying 0093. The
-signed-in Global desktop then exercised fresh workstreams against exact Worker
-version `00b5ed2e-8abe-46a5-b648-c66f495de50a`.
+signed-in Global desktop exercised the initial fresh workstreams against exact
+Worker version `00b5ed2e-8abe-46a5-b648-c66f495de50a`; the later HQA-07
+acceptance row ran against `7fbfa5ff-d4ec-4b55-89cf-d9763ce4a609`.
 
 | Surface | Result | Fresh evidence |
 | --- | --- | --- |
 | Failure protocol, discovery, and validation | PASS | Workstream `01a02ca6-5325-7345-b8f3-a434dd70e881`, run `01a02ca6-5aa0-7089-9e94-f7395676593e`. `public web social timeline` returned `plugin_x`, then `avalon_web`, with `totalMatches: 2`. Missing plugin, skill, and wake-up calls rendered failed rows with `success: false` and codes `plugin_not_available`, `skill_not_available`, and `wakeup_not_found`. Empty resource arguments rendered `kind: validation` with the exact missing-`resourceId` error and no false `Attachment content unverified` boundary. |
 | HyperSight payload logging | PASS in Global | HyperSight request `01a02ca7-fcf6-7029-8bbd-16f04de60826` rendered `HYPERSIGHT_PR247_POSTDEPLOY_OK`. D1 row `80f51d15-c8a4-4dd2-98dc-b9041c780e01` recorded source `block_dashboard` and object key `agent-inference/019fc068-22e8-739a-8394-a760fdc7c376/2026-08-23/80f51d15-c8a4-4dd2-98dc-b9041c780e01.json`; the exact 44,510-byte R2 object existed and carried the same request identity. No payload contents were exposed. |
 | Stop receipt | PASS; linked-run lease defect found | Workstream `01a02ca6-9b16-761b-b61f-08f8f612d9ae`, initial run `01a02ca6-a2fa-781c-8ae5-d6f33348eb12`. Stop moved the sleeping command card from `started` to `ambiguous` and visibly stopped the parent. A deliberately different follow-up command in run `01a02ca9-7aac-700c-9027-65bf6e9d5cfe` returned conservative `command_outcome_unknown`; three later runs produced five `sandbox_busy` read failures from 03:29:10Z through 03:33:38Z. This is HQA-06 below. |
+| Accepted-command quiescence | PASS in Global after PR #251 | Private workstream `01a02dd3-7328-7a2e-b9d9-31b1a4b902bc`. Strict run `01a02dd4-6d36-7257-b21b-b78bcc9f0bb5` wrote its start marker at 08:54:57Z, entered a 120-second sleep, and invocation `01a02dd4-7feb-7ab7-ba87-84696df880c0` became `ambiguous` after member stop. Linked run `01a02dd5-4b96-7d63-8246-91564414489f` immediately read the start marker and received `not_found` for the late marker with zero `sandbox_busy`. Post-deadline run `01a02dd7-1395-7588-b14d-645b74db5a1a`, invocation `01a02dd7-2319-71a5-94a0-36a3a9c45997`, again received `not_found`; the command was never replayed. Trace-only run `01a02dda-092e-7c50-b45f-e1a326e0bae9` reconfirmed the missing marker against exact Worker version `7fbfa5ff-d4ec-4b55-89cf-d9763ce4a609`. |
 | Parallel children, alarm, and sleep | PASS | Workstream `01a02cab-74f9-7536-8b97-7623305b3c88`, root run `01a02cab-7c72-702f-9506-2aaeeea06001`. Three same-turn children completed independently in 4–5 seconds. A 40-second Terminal sleep completed in 42,813 ms while wake-up `01a02cab-abcc-7ae2-8e12-c9b5a7fbae37` became due; it fired once afterward in linked run `01a02cad-1c92-76d8-84bd-b328ad2a4ca7` and returned `PR247_ALARM_OK 2026-08-23T03:32:27.718Z`. |
 | Granola | UNRESOLVED LIVE BLOCKER | Fresh workstream `01a02cbd-3593-74ab-89c1-8241f4015b76`, run `01a02cbd-3b75-7c34-a5f2-49e2e33a3226`. `load_plugin` rendered a failed row in 897 ms with `success: false`, `kind: external`, code `plugin_authorization_unavailable`, and bounded retry guidance. No Granola content tool was exposed or called. |
 
@@ -208,7 +216,7 @@ this reproduction; it does not make automatic command replay safe. The durable
 receipt correctly remains conservative because a record-before-execute command
 can be unknown in other interruption timings.
 
-### Branch-local repair and verification
+### Repair and verification
 
 Every terminal tool event already returned by Bind may settle after a durable
 cancellation request while the attempt still owns its exact live lease. The
@@ -217,10 +225,11 @@ lease owner, running status, unexpired lease, and no prior terminalization; only
 the cancellation-null check is relaxed. This covers a cancellation failure and
 a tool that completes or fails naturally inside the stop poll window. Any
 receipt still `pending` or `started` when the leased owner commits `stopped` is
-classified and closed in that same batch, whether it came from the current
-executor or survived an expired attempt: an unresolved write becomes ambiguous
-and a read fails. A definite completion or failure that wins first remains
-terminal. An obsolete executor defers its local dispatch to adopt the
+then classified under the exact terminal stamp, whether it came from the
+current executor or survived an expired attempt: an unresolved write becomes
+ambiguous and a read fails. The immutable settlement marker makes a lost
+second-call response retryable. A definite completion or failure that wins first
+remains terminal. An obsolete executor defers its local dispatch to adopt the
 successor's result instead of writing an unfenced product failure.
 
 Runtime regressions drive the production root completion and failure helpers:
@@ -240,8 +249,9 @@ was restored.
 
 Status: the stopped parent and ambiguous receipt are production-verified after
 PR #247. PR #249 production-verified linked-run lease liveness, while HQA-07
-reopened the provider-quiescence half after a post-deadline late marker. The
-earlier command remains ambiguous and is never replayed.
+reopened the provider-quiescence half after a post-deadline late marker. PR #251
+then closed that half with the strict no-late-write acceptance recorded below.
+The earlier command remains ambiguous and is never replayed.
 
 ## Finding HQA-03 — P2: argument rejection creates a false attachment-content gap
 
@@ -260,7 +270,7 @@ The fail-closed boundary itself is correct for the separate nonexistent-resource
 call: content genuinely could not be verified, so the agent must retry with a
 valid resource or report the boundary without inventing file contents.
 
-### Branch-local repair and verification
+### Repair and production verification
 
 Bind now emits `phase: validation` for declared argument errors. The grounding
 guard always removes and ignores validation-phase access, even when a started
@@ -446,8 +456,9 @@ deployment run `32624216543` produced healthy Global Worker version
 `53e47151-3a18-4553-b2b2-a074a83687cf`, with both migration ledgers current.
 Fresh Global workstream `01a02d70-ffe2-71f2-85c9-e5606de0ec92` confirmed the
 lease-liveness half: every linked read acquired with zero `sandbox_busy`.
-Finding HQA-07 below records why provider quiescence still failed and requires a
-follow-up deploy. The ambiguous command remains unresolved and is never replayed.
+Finding HQA-07 below records why provider quiescence failed under PR #249 and
+how PR #251 closed the fresh strict production gate. The ambiguous command
+remains unresolved and is never replayed.
 
 ## Finding HQA-07 — P1: named-session deletion does not stop an accepted command
 
@@ -509,9 +520,66 @@ an earlier-sorting `running` residue, remains retirement-bound even when its
 late provider callback changes it to `running`, and prevents stop/restart reuse
 of that generation.
 
-Status: fixed locally; deployment and a fresh signed-in post-deadline Computer
-Use retest are pending. The repair does not replay or declare the ambiguous
-command resolved.
+Status: PR #251 merged as `9c09e4d1683edf268706e4cb5ca5ce7885ee6fa5`.
+Deployment run `32629139604` produced healthy Global Worker version
+`7fbfa5ff-d4ec-4b55-89cf-d9763ce4a609` and EU version
+`bba16c1f-a471-4397-89bc-7e988eecdde6`, with no pending migration in either
+region. The fresh Global sequence above passed the exact post-deadline Computer
+Use gate. The repair does not replay or declare the ambiguous command resolved.
+
+## Finding HQA-08 — P2: a transient receipt RPC can outlive terminalization
+
+The post-merge audit of PR #247 found a second failure window in the stopped and
+stale-run cleanup path. Root terminalization, root reaping, and child reaping
+commit the authoritative terminal run before asking the work-stream object to
+settle residual receipts. That order is required: settling first could close a
+receipt belonging to a still-live run or a successor. But if the second object
+call failed transiently, every later path skipped recovery. A repeated stopped
+terminalization returned `already_terminal`, and the stale-run sweep selected
+only nonterminal `running` rows. The run could never execute again while its
+receipt remained `admitted` or `executing`, leaving a tool card spinning
+forever.
+
+The local repair writes an immutable `residual_receipts_settled` lifecycle event
+only after the object acknowledges idempotent settlement. The direct stopped
+retry checks that marker, and the existing bounded activation sweep repairs
+already-terminal stopped, stale-root, and stale-child rows missing it before
+claiming new expired work. A BlockDashboard-only sweep excludes ordinary roots
+because it intentionally lacks automation authority; the Substream sweep keeps
+receipt, eligible `scheduled`/`running` automation-row, and marker settlement
+together without overwriting a later `needs_input` continuation. A repair that
+cannot satisfy its exact object fence emits a warning and is skipped for that
+activation, so it remains retryable without blocking stale work behind it or a
+new run claim. The older root-only
+`abandonRunReceipts` operation was removed in favor of the one residual
+settlement path. This reuses the current ledger, receipt operation, and sweep
+limit; it adds no schema, queue, alarm, timer, or recovery owner.
+
+Three regressions inject the receipt-port failure after the terminal write and
+prove a later retry or sweep closes the exact receipt and records the marker;
+the stopped case loses the response after settlement commits and proves retry
+does not add another checkpoint. A fourth regression proves the
+BlockDashboard-only sweep positively reaps and reconciles a stale HyperSight
+root while its ordinary-automation negative case remains fenced. Two more
+causal cases prove an unsettleable oldest repair does not block the stale root
+behind it and an earlier root cannot fail a later automation elicitation. The
+payload-less stopped case also pins the existing receipt-scoped
+`{"code":"run_cancelled"}` checkpoint. The focused harness runtime file passes
+54/54, and it passes 115/115 together with the
+receipt-storage unit suite. Mutations disabling the direct
+retry or terminal-row scan made the named regressions fail with the receipt
+still `executing`; replacing the block-origin allowance made the positive
+BlockDashboard regression fail. Mutations restoring the empty stopped payload,
+allowing `needs_input` automation settlement, or rethrowing a per-row repair
+failure made their causal regressions fail. Historical marker backfill is
+synchronous on run admission and may attempt up to 25 rows per activation; it
+drains as markers accumulate, while a warned failed attempt does not consume the
+ordinary stale-reaping budget. The follow-up full root run passed 1,748 API Node tests, 234
+API real-workerd tests, and 1,234 desktop tests. Root lint, typecheck,
+`docs:check`, all 357 script tests, all 110 desktop release invariants, both
+regional dry-run builds, and `git diff --check` also passed. Status: fixed and
+validated locally; merge, deployment, and the broader production
+injected-durable-host-error acceptance gate remain pending.
 
 ## Review-driven durable-authority hardening
 
@@ -607,21 +675,19 @@ command passed (including 1,742 API Node tests, 234 API real-workerd tests, and
 1,234 desktop tests), repository script tests passed 357/357, desktop release
 invariants passed 110/110, and both Global and EU Worker dry-run builds passed.
 
-The final full-test run also exposed a workerd fixture race in three dispatch
+An earlier full-test run also exposed a workerd fixture race in three dispatch
 lifecycle cases: each posted a dispatch and parked its one-millisecond alarm in
 separate object invocations, allowing the automatic alarm to start between the
 two setup calls. The pre-fix full suite observed one terminal run whose test
 assertion raced its still-held dispatch token, while the isolated shuffled file
 passed 20/20. Reusing the file's existing atomic `dispatchWithoutDraining`
 helper removes that input-gate gap; the repaired shuffled file passed 20/20 and
-the complete root test command then passed, including all 233 workerd tests.
+the complete root test command then passed, including all 233 workerd tests at
+that point; the later final run above includes 234 after the added authority
+regression.
 
 ## Remaining acceptance work
 
-- Deploy the HQA-07 whole-sandbox quiescence repair and rerun the exact stop,
-  unknown-command, linked-read, `START_PRESENT`, immediate `LATE_ABSENT`, and
-  post-original-deadline `LATE_STILL_ABSENT` sequence in a fresh signed-in
-  production workstream. Green local tests do not satisfy that UI gate.
 - Granola has failed twice, including after PR #247. Continue with
   provider-aware diagnostics; do not report a revoked connection unless
   authorization actually returns denied.
@@ -639,8 +705,8 @@ the complete root test command then passed, including all 233 workerd tests.
 Do not describe the current production harness as fully accepted yet. PR #247's
 failure receipts, ranked discovery, attachment validation, stopped receipt, and
 Global HyperSight payload commit are production-verified. PR #249 production-
-verified that linked runs no longer wait behind the yielded lease, but HQA-07's
-whole-sandbox quiescence repair still requires deployment and a fresh strict
-stop/recovery retest. Granola remains unavailable.
+verified that linked runs no longer wait behind the yielded lease. PR #251
+production-verified the strict whole-sandbox stop, linked-read, and
+post-original-deadline no-late-write sequence. Granola remains unavailable.
 The prior EU Terminal, stale-attempt, injected-error, fresh EU payload, and
 meeting-notes payload gates remain explicit regional or targeted follow-up work.
