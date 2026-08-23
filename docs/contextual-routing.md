@@ -241,14 +241,30 @@ policies that will drift.
 ## Testing
 
 `apps/api/test/activity-contextual-routing.test.ts` keeps the dormant prior,
-feedback reads, corroboration rule, and candidate exclusions covered against a
-migrated in-memory SQLite database. Its queue-level regression also proves the
-pause skips inference while preserving Suggested work batching. Work-opportunity,
+the feedback reads and the corroboration rule covered against a migrated
+in-memory SQLite database. Its queue-level regression also proves the pause
+skips inference while preserving Suggested work batching. Work-opportunity,
 work-stream REST and room-snapshot, and desktop transcript/socket tests
 separately assert that the pause creates and shows no cards.
 
+`test-workers/workspace-directory-reads.test.ts` covers `suggestionFeedback`,
+which is where both bar reads get their evidence: that a resolution is scoped to
+the producer that wrote it, that one older than the window is forgotten, and
+that a run reads oldest-first. The Node file reads it through a stub, so those
+three are only asserted there.
+
+**The candidate exclusions are not in that file, and must not be put back.**
+The dismissal run, its producer scoping, its window and the already-routed set
+are subqueries inside WorkspaceDO's `routingCandidates`, so a Node test can only
+reach them through a stub that reproduces them — which is what the deleted suite
+was doing against an unreachable D1 query. They are asserted against a real
+object in `test-workers/durable-object-runtime.test.ts`. The stub in the Node
+file answers eligibility and ordering only, deliberately.
+
 ```bash
 pnpm --filter @avalon/api exec vitest run test/activity-contextual-routing.test.ts
+pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts \
+  test-workers/durable-object-runtime.test.ts
 ```
 
 `apps/desktop/src/renderer/lib/api.test.ts` covers canonical feed reconstruction
@@ -342,6 +358,34 @@ suppressed type. The prior is `connector-digestibility.md` plus whether that
 connector declares any digestible type at all.
 
 ## Changelog
+
+### 2026-08-22 — The candidate query's filters move to the suite that runs them
+
+**What changed:** `activity-consumer.ts` no longer branches on
+`authority.phase`. The legacy ID-only activity-queue message is acked without
+being processed, and `routeDirectWatches`, `runMatchingAutomations`,
+`isWorkstreamVisibleToUser` and the candidate query each keep only their object
+arm. The five candidate-exclusion tests move from the Node suite to
+`test-workers/durable-object-runtime.test.ts`, and the Node suite's workspace
+stub answers `routingCandidates` with eligibility and ordering only.
+
+**Why:** Migration 0090 closed the phase permanently, so every non-open arm has
+been unreachable since — including the D1 candidate query those five tests were
+written against. Every producer of the legacy queue message returns before
+sending it once `WORKSPACE_DOS` is bound, so acking one is the whole live
+behaviour: admitting it would build a second connector-event authority out of a
+D1 row nothing has written since the cutover, and leaving it unacked would
+redeliver it forever.
+
+**Rejected:** Teaching the Node stub the dismissal run and the exclusion. It
+would have kept those five tests green while they asserted nothing but the stub
+— the same failure the deleted D1 arm had already produced once here.
+
+**What a future change has to respect:** the invariant above — candidate
+exclusion belongs inside the candidate query — now lives in WorkspaceDO. A new
+exclusion goes in `routingCandidates` and is proved on workerd; adding one to
+the Worker after the call would reintroduce exactly the shrinking-list bug that
+invariant exists to prevent.
 
 ### 2026-08-18 — Routing feedback and candidates use WorkspaceDO indexes
 

@@ -10,6 +10,7 @@ import {
   workstreamObjectGet,
   workstreamObjectRun,
   testTerminalPortFactory,
+  seedToolReceipt,
 } from "./helpers/durable-authority";
 
 const W = "40000000-0000-4000-8000-000000000001";
@@ -111,13 +112,10 @@ describe("Terminal scheduled lifecycle", () => {
       VALUES ('run-lifecycle', ?, ?, 'test', ?, 'running', '2026-08-13')`,
       W, S, JSON.stringify({ type: "user", userId: U }),
     );
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO tool_invocations
-        (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, status)
-      VALUES ('invocation-lifecycle', ?, ?, 'run-lifecycle', 'call', 'terminal_run_command', 'hash', '{}', 'started')`,
-      W, S,
-    );
+    seedToolReceipt(objectStore, {
+      id: 'invocation-lifecycle', runId: 'run-lifecycle', toolCallId: 'call',
+      toolName: 'terminal_run_command',
+    });
     workstreamObjectRun(
       objectStore,
       `INSERT INTO terminal_tasks

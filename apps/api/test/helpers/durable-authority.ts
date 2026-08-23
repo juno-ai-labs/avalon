@@ -2,6 +2,11 @@ import { DatabaseSync } from "node:sqlite";
 import { vi } from "vitest";
 
 import { applyWorkstreamObjectSchema } from "../../src/durable-objects/workstream-object-schema";
+import {
+  TOOL_RECEIPT_OPERATIONS,
+  type ToolReceiptObjectPort,
+} from "../../src/durable-objects/workstream-tool-receipt-protocol";
+import { WorkstreamToolReceiptStorage } from "../../src/durable-objects/workstream-tool-receipt-storage";
 import { WorkstreamTerminalStorage } from "../../src/durable-objects/workstream-terminal-storage";
 import {
   createTerminalPortFactory,
@@ -139,6 +144,63 @@ export function seedWorkstreamObjectRoot(
     `INSERT INTO substream_agent_identity (id, external_substream_id, created_at, updated_at)
      VALUES (1, '0', ?, ?) ON CONFLICT(id) DO NOTHING`,
   ).run(now, now);
+}
+
+/**
+ * Seed one tool receipt in the object's own vocabulary.
+ *
+ * Fixtures used to write `tool_invocations` and let the compatibility trigger
+ * translate — and invent the five `NOT NULL` columns the old vocabulary never
+ * carried. With the view retired there is nothing to translate, so the
+ * invention happens here, once, where it can be read. Note `status`: the view
+ * spelled the first two `pending` and `started`; the object has only ever
+ * stored `admitted` and `executing`.
+ */
+export function seedToolReceipt(
+  database: DatabaseSync,
+  receipt: {
+    id: string;
+    runId: string;
+    toolCallId: string;
+    toolName: string;
+    status?: "admitted" | "executing" | "completed" | "failed" | "ambiguous";
+    mode?: "read" | "write";
+    position?: number;
+    requestHash?: string;
+    inputJson?: string;
+    outputRef?: string | null;
+    outputSummary?: string | null;
+    executionPlanJson?: string | null;
+    startedAt?: number | null;
+    settledAt?: number | null;
+    checkpointIndex?: number;
+  },
+): void {
+  database.prepare(
+    `INSERT INTO tool_effects
+       (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name,
+        mode, request_hash, authority_revision, status, tool_call_id, input_json,
+        output_ref, output_summary, execution_plan_json, started_at, settled_at,
+        checkpoint_index)
+     VALUES (?, ?, 0, ?, ?, ?, ?, ?, 'runtime', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    receipt.id,
+    receipt.runId,
+    receipt.position ?? 0,
+    `runtime:${receipt.id}`,
+    receipt.toolName,
+    receipt.mode ?? "read",
+    receipt.requestHash ?? "hash",
+    receipt.status ?? "executing",
+    receipt.toolCallId,
+    receipt.inputJson ?? "{}",
+    receipt.outputRef ?? null,
+    receipt.outputSummary ?? null,
+    receipt.executionPlanJson ?? null,
+    receipt.startedAt ?? null,
+    receipt.settledAt ?? null,
+    receipt.checkpointIndex ?? 0,
+  );
 }
 
 export interface RuntimeStatement {
@@ -419,6 +481,43 @@ export function testSubstreamAgentsBinding(
         };
       }
     }),
+    /**
+     * The tool-receipt port's counterpart, on the same object database.
+     *
+     * Same shape and same reasoning as `executeTerminalOperation` above: real
+     * storage, real schema, real constraints, with only the transport standing
+     * in. A lost lease comes back as a 200 carrying `ownership_lost`, because
+     * that is an ordinary end to a run rather than a fault — a stub that threw
+     * for it would let a test pass against error handling production never
+     * reaches.
+     */
+    executeToolReceiptOperation: vi.fn((input: {
+      workspaceId: string;
+      workstreamId: string;
+      operation: string;
+      args: unknown[];
+    }) => {
+      const store = storeFor(input.workstreamId, input.workspaceId);
+      const storage = new WorkstreamToolReceiptStorage(
+        createCloudflareTestBinding<DurableObjectStorage>({
+          getAlarm: async () => null,
+          setAlarm: async () => undefined,
+          transactionSync: (body: () => unknown) => body(),
+          sql: objectSqlStorage(store),
+        }),
+      ) as unknown as Record<string, (...args: unknown[]) => unknown>;
+      try {
+        const value = storage[input.operation]!.apply(storage, input.args);
+        return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
+      } catch (error) {
+        return {
+          status: 409,
+          bodyJson: JSON.stringify({
+            error: error instanceof Error ? error.message : "tool_receipt_operation_failed",
+          }),
+        };
+      }
+    }),
     executeRuntimeSql: vi.fn((input: {
       workspaceId: string;
       workstreamId?: string;
@@ -520,4 +619,65 @@ export function testSubstreamAgentsBinding(
     jurisdiction: vi.fn((): DurableObjectNamespace => binding),
   });
   return binding;
+}
+
+/**
+ * A tool-receipt port backed by the same in-memory object database.
+ *
+ * The Node suite's stand-in for the `/internal/tool-receipt` round trip: the
+ * real storage class over the real object schema, so every statement and every
+ * fence is exercised. What the *runtime* decides — that the operation is atomic
+ * against a concurrent caller — is proved in `test-workers/` instead.
+ */
+export function testToolReceiptPort(
+  database: DatabaseSync,
+  /**
+   * Run inside `transactionSync`, immediately before the operation's body.
+   *
+   * The only way for a test to land competing state at the last instant an
+   * operation could still observe it. Every receipt operation reads its fences
+   * and writes its rows in one transaction, so this is where a race that used
+   * to fit between two D1 batches now has to be staged from.
+   */
+  beforeTransaction?: () => void,
+  /**
+   * Run after each statement an operation executes, with that statement's SQL.
+   *
+   * The counterpart to `beforeTransaction` for the other half of an operation:
+   * competing state that lands *after* a decision has been read, to prove the
+   * decision is not re-derived from a source that has since moved.
+   */
+  afterStatement?: (sql: string) => void,
+): ToolReceiptObjectPort {
+  const objectSql = objectSqlStorage(database);
+  const sql = afterStatement
+    ? new Proxy(objectSql, {
+      get(target, property, receiver) {
+        if (property !== "exec") return Reflect.get(target, property, receiver) as unknown;
+        return (statement: string, ...values: unknown[]) => {
+          const result = (target.exec as (...rest: unknown[]) => unknown)(statement, ...values);
+          afterStatement(statement);
+          return result;
+        };
+      },
+    })
+    : objectSql;
+  const storage = new WorkstreamToolReceiptStorage(
+    createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null,
+      setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => {
+        beforeTransaction?.();
+        return body();
+      },
+      sql,
+    }),
+  );
+  return Object.fromEntries(
+    TOOL_RECEIPT_OPERATIONS.map((operation) => [
+      operation,
+      async (...args: unknown[]) =>
+        (storage[operation] as (...rest: unknown[]) => unknown).apply(storage, args),
+    ]),
+  ) as ToolReceiptObjectPort;
 }

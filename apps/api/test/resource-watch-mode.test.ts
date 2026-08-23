@@ -14,7 +14,7 @@ vi.mock("../src/services/workstream-wakeup-service", async (importOriginal) => (
 
 import { refreshWorkspaceSchedule } from "../src/services/workstream-wakeup-service";
 import { ResourceService } from "../src/services/resource-service";
-import { createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestDurableObjectId, createTestDurableObjectInstance, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const userId = asUserId("00000000-0000-7000-8000-000000000002");
@@ -30,6 +30,8 @@ interface RecordedStatement {
 class WatchDatabase {
   readonly statements: RecordedStatement[] = [];
   batches = 0;
+  /** Make the regional half of the two-authority write fail, and only that half. */
+  failRegionalWatchWrite = false;
 
   constructor(private readonly connectorType: string) {}
 
@@ -70,7 +72,18 @@ class WatchDatabase {
           if (recorded.sql.startsWith("SELECT watch_enabled FROM workstream_resources")) {
             return { watch_enabled: 0 } as T;
           }
+          if (recorded.sql.startsWith("SELECT placement_affinity FROM workspaces")) {
+            // Routing a statement at the work stream's object resolves where
+            // this workspace is placed first. One region here, one answer.
+            return { placement_affinity: "wnam" } as T;
+          }
           throw new Error(`Unexpected first query: ${recorded.sql}`);
+        },
+        run: async () => {
+          if (this.failRegionalWatchWrite && recorded.sql.startsWith("INSERT INTO resource_watches")) {
+            throw new Error("resource_watch_row_unavailable");
+          }
+          return { success: true, meta: { changes: 1 }, results: [] };
         },
       };
       return createTestD1PreparedStatement(statement);
@@ -82,6 +95,42 @@ class WatchDatabase {
         { success: true, meta: { changes: 1 }, results: [] },
       ];
     },
+  });
+
+  /**
+   * The work stream's own object, over the same recorder.
+   *
+   * Watch writes are the work stream's, so they reach `executeRuntimeSql`
+   * rather than `env.DB` directly. Replaying each statement through `prepare`
+   * keeps this file's assertions on the SQL the service issued, which is the
+   * whole subject of these tests.
+   */
+  readonly agents = createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
+    idFromName: () => createTestDurableObjectId("substream"),
+    get: () => createTestDurableObjectInstance({
+      executeRuntimeSql: async (input: {
+        statements: Array<{ sql: string; params: unknown[] }>;
+      }) => {
+        return {
+        status: 200,
+        bodyJson: JSON.stringify({
+          results: await Promise.all(input.statements.map(async ({ sql, params }) => {
+            const statement = this.binding.prepare(sql).bind(...params);
+            if (/^\s*SELECT/iu.test(sql) || /\bRETURNING\b/iu.test(sql)) {
+              const row = await statement.first<Record<string, string | number | null>>();
+              return {
+                columns: row ? Object.keys(row) : [],
+                rows: row ? [row] : [],
+                changes: row ? 1 : 0,
+              };
+            }
+            return { columns: [], rows: [], changes: 1 };
+          })),
+        }),
+        };
+      },
+    }),
+    jurisdiction() { return this as Env["SUBSTREAM_AGENTS"]; },
   });
 }
 
@@ -96,6 +145,7 @@ const auth: AuthContext = {
 function environment(database: WatchDatabase): Env {
   return createTestEnv({
     DB: database.binding,
+    SUBSTREAM_AGENTS: database.agents,
     APP_ENV: "test",
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
@@ -128,8 +178,38 @@ describe("resource watch scheduling modes", () => {
       "2026-08-01T12:00:00.000Z",
       "2026-08-01T12:00:00.000Z",
     ]);
-    expect(database.batches).toBe(1);
+    // The attachment and the watch row sit in different authorities, so there
+    // is no batch that spans them: the attachment is written first, through the
+    // work stream's object, and the regional watch row follows.
+    expect(database.batches).toBe(0);
     expect(refreshWorkspaceSchedule).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * The compensation the two-authority write exists for.
+   *
+   * While both statements went into one `DB.batch`, a failed watch row took the
+   * attachment with it and there was nothing to compensate. They cannot share a
+   * transaction any more, so the attachment is written first and rolled back by
+   * hand — and an attachment left claiming a watch that no sweep will ever poll
+   * is a work stream quietly waiting on a resource nobody is reading.
+   */
+  it("rolls the attachment back when the regional watch row cannot be written", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-01T12:00:00.000Z"));
+    const database = new WatchDatabase("github");
+    database.failRegionalWatchWrite = true;
+
+    await expect(new ResourceService(environment(database), auth).watch(resourceId, workstreamId))
+      .rejects.toThrow("resource_watch_row_unavailable");
+
+    const attachmentWrites = database.statements
+      .filter((statement) => statement.sql.startsWith("UPDATE workstream_resources SET watch_enabled"));
+    // Two: the optimistic enable, then the restore of the value it replaced.
+    expect(attachmentWrites).toHaveLength(2);
+    expect(attachmentWrites.at(-1)?.values[0]).toBe(0);
+    // Nothing is due, so nothing asks the scheduler to look.
+    expect(refreshWorkspaceSchedule).not.toHaveBeenCalled();
   });
 
   it("preserves an immediate poll deadline for polling connectors", async () => {

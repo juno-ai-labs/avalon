@@ -63,15 +63,6 @@ export function slackUnfurlErrorReason(error: unknown): string {
   return slackErrorReason(error);
 }
 
-/** Columns every summary query must project, so both callers stay in step. */
-export const WORKSTREAM_UNFURL_COLUMNS =
-  `w.title, w.harness_status, w.last_activity_at, w.origin_type, t.name AS automation_name`;
-
-/** The joins `WORKSTREAM_UNFURL_COLUMNS` depends on. */
-export const WORKSTREAM_UNFURL_JOINS =
-  `LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
-   LEFT JOIN automation_templates t ON t.id = s.template_id`;
-
 export function workstreamUnfurlSummary(row: Record<string, unknown>): WorkstreamUnfurlSummary {
   return {
     title: typeof row.title === "string" ? row.title : "",

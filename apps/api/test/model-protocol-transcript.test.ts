@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import type { DatabaseSync } from "node:sqlite";
+import { seedWorkstreamObjectRoot, testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
@@ -26,28 +28,55 @@ type ToolRow = {
   execution_plan_json?: string | null;
 };
 
-class ProjectionStatement {
-  private values: unknown[] = [];
-
-  constructor(
-    private readonly sql: string,
-    private readonly rows: ToolRow[],
-  ) {}
-
-  bind(...values: unknown[]): ProjectionStatement {
-    this.values = values;
-    return this;
+/**
+ * Seed the fixtures as real receipts in a real object store.
+ *
+ * The projection used to read `messages JOIN tool_invocations` through a
+ * compatibility view, so a mocked `prepare` could hand it rows. It now asks the
+ * work-stream object for receipts by id — the join was `ti.id = m.id` on ids the
+ * caller already held — so the fixtures have to become rows the object actually
+ * holds. Statuses are written in the object's own vocabulary, which is the
+ * substance of the change: `pending`/`started` were the view's spellings.
+ */
+function seedReceipts(objectStore: DatabaseSync, rows: ToolRow[]): void {
+  seedWorkstreamObjectRoot(objectStore, {
+    workspaceId: WORKSPACE_ID,
+    workstreamId: WORKSTREAM_ID,
+  });
+  for (const runId of new Set(rows.map((row) => row.harness_run_id))) {
+    objectStore.prepare(
+      `INSERT INTO runs (run_id, substream_id, status, budget, attempt_epoch,
+         model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
+         active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+         tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+         created_at, updated_at, legacy_attempt_id)
+       VALUES (?,'0','running','{}',0,0,'',0,0,1,0,0,0,0,0,0,0,0,0,0,1,1,'attempt-1')
+       ON CONFLICT(run_id) DO NOTHING`,
+    ).run(runId);
   }
-
-  async all<T>(): Promise<D1Result<T>> {
-    expect(this.sql).toContain("JOIN tool_invocations ti ON ti.id = m.id");
-    expect(this.values.slice(0, 2)).toEqual([WORKSPACE_ID, WORKSTREAM_ID]);
-    const requested = new Set(this.values.slice(2).map(String));
-    return createTestD1Result<T>({
-      success: true,
-      results: this.rows.filter((row) => requested.has(row.message_id)) as T[],
-    });
-  }
+  rows.forEach((row, position) => {
+    objectStore.prepare(
+      `INSERT INTO tool_effects
+         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name,
+          mode, request_hash, authority_revision, status, tool_call_id, input_json,
+          output_ref, output_summary, error_json, execution_plan_json)
+       VALUES (?,?,0,?,?,?,?,'request-hash','runtime',?,?,?,?,?,?,?)`,
+    ).run(
+      row.invocation_id ?? row.message_id,
+      row.harness_run_id,
+      position,
+      `runtime:${row.invocation_id ?? row.message_id}`,
+      row.tool_name,
+      "read",
+      row.status === "pending" ? "admitted" : row.status === "started" ? "executing" : row.status,
+      row.tool_call_id,
+      row.input_json,
+      row.output_ref,
+      row.output_summary,
+      row.error_json,
+      row.execution_plan_json ?? null,
+    );
+  });
 }
 
 function projectionEnv(
@@ -55,10 +84,18 @@ function projectionEnv(
   outputs: Record<string, unknown>,
   stalledReplayStage?: "get" | "body",
 ): Env {
+  const objectStore = testWorkstreamObjectStore();
+  seedReceipts(objectStore, rows);
   return createTestEnv({
     DB: createTestD1Database({
-      prepare: (sql: string) => createTestD1PreparedStatement(new ProjectionStatement(sql, rows)),
+      prepare: () => createTestD1PreparedStatement({
+        bind() { return this; },
+        async all<T>() { return createTestD1Result<T>({ success: true, results: [] }); },
+        async run() { return createTestD1Result({ success: true }); },
+      }),
     }),
+    AVALON_REGION: "global",
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({
       get: vi.fn(async (key: string) => {
         if (stalledReplayStage === "get") return new Promise<R2ObjectBody | null>(() => {});
@@ -293,52 +330,40 @@ describe("durable UI-to-model transcript projection", () => {
         return JSON.stringify({ replayVersion: 1, output: { text: "private note contents" } });
       },
     } as R2ObjectBody));
-    const prepare = vi.fn((sql: string) => {
-      let values: unknown[] = [];
-      return createTestD1PreparedStatement({
-        bind(...bound: unknown[]) {
-          values = bound;
-          return this;
-        },
-        async all<T>() {
-          if (sql.includes("JOIN tool_invocations ti")) {
-            return createTestD1Result<T>({
-              success: true,
-              results: [{
-                invocation_id: invocationId,
-                message_id: invocationId,
-                harness_run_id: PRIOR_RUN_ID,
-                tool_call_id: call,
-                tool_name: "workstream_read_resource",
-                input_json: JSON.stringify({ resourceId: "00000000-0000-4000-8000-000000000046" }),
-                output_ref: "results/private-note.json",
-                output_summary: "Read private note",
-                status: "completed",
-                error_json: null,
-                execution_plan_json: JSON.stringify({
-                  canonicalToolName: "read_resource",
-                  capability: "workstream.resources.read",
-                }),
-              }] as T[],
-            });
-          }
-          expect(values).toBeDefined();
-          return createTestD1Result<T>({ success: true, results: [] });
-        },
-        async run() {
-          return createTestD1Result({ success: true, meta: { changes: 1 } });
-        },
-      });
-    });
-    const database = createTestD1Database({
-      prepare,
-      async batch(statements: D1PreparedStatement[]) {
-        return Promise.all(statements.map((statement) => statement.run()));
-      },
-    });
+    // A completed attachment receipt the object really holds, with no recorded
+    // dependency — which is what "cannot prove current visibility" is. The
+    // dependency rows and the receipt now live in the same object, so this is
+    // one store rather than a mocked query and a mocked default.
+    const objectStore = testWorkstreamObjectStore();
+    seedReceipts(objectStore, [{
+      message_id: invocationId,
+      harness_run_id: PRIOR_RUN_ID,
+      tool_call_id: call,
+      tool_name: "workstream_read_resource",
+      input_json: JSON.stringify({ resourceId: "00000000-0000-4000-8000-000000000046" }),
+      output_ref: "results/private-note.json",
+      output_summary: "Read private note",
+      status: "completed",
+      error_json: null,
+      execution_plan_json: JSON.stringify({
+        canonicalToolName: "read_resource",
+        capability: "workstream.resources.read",
+      }),
+    }]);
     const env = createTestEnv({
-      DB: database,
+      DB: createTestD1Database({
+        prepare: () => createTestD1PreparedStatement({
+          bind() { return this; },
+          async all<T>() { return createTestD1Result<T>({ success: true, results: [] }); },
+          async run() { return createTestD1Result({ success: true, meta: { changes: 1 } }); },
+        }),
+        async batch(statements: D1PreparedStatement[]) {
+          return Promise.all(statements.map((statement) => statement.run()));
+        },
+      }),
       PAYLOADS: createCloudflareTestBinding<R2Bucket>({ get }),
+      AVALON_REGION: "global",
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
     });
 
     const projection = await __integrationTesting.projectModelProtocolTranscript(env, {

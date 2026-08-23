@@ -1056,6 +1056,248 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-23 — The receipt RPC waits on initialization like its five siblings
+
+**What changed:** `executeToolReceiptOperation` now awaits `this.initialized`
+before dispatching, which every other RPC entry point on `SubstreamAgent`
+already did.
+
+**Why:** two independent reviews flagged it as the one bare method. The stronger
+argument is that the class already documents the invariant it broke — the
+comment on `objectStore`, `terminal` and `toolReceipts` says every handler
+"waits on `initialized` first" as the reason those fields can be `!`-asserted.
+One method not doing so made that sentence false, and the fields it reads are
+assigned inside the `blockConcurrencyWhile` callback.
+
+In practice workerd queues external requests behind that callback, so this is
+unlikely to have been reachable — but an in-isolate self-call reaches the method
+through a stub returned by `durableObjectSelf`, and that path does not
+necessarily queue the same way. No test asserts the difference, because an
+honest one would need `blockConcurrencyWhile` not to queue; the value here is
+the restored invariant, not an observable change.
+
+**What a future change has to respect:** nothing inside the boot callback may
+reach a receipt operation, or this await deadlocks. It does not today — the
+callback constructs stores, waits for readiness, settles identity and releases
+dispatch leases, and touches no receipts.
+
+### 2026-08-23 — The receipt wire's argument cap becomes a named bound
+
+**What changed:** `args: z.array(z.unknown()).max(4)` on
+`ToolReceiptOperationRequestSchema` is now
+`MAX_TOOL_RECEIPT_OPERATION_ARGS = 1`, exported, and carrying the fields
+[`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)
+requires. A workerd spec drives the refusal through the real endpoint.
+
+**Why:** review flagged the 4 as an arbitrary wire limit that would reject a
+future method while TypeScript still compiled. The number was worse than
+arbitrary — every method on `WorkstreamToolReceiptStorage` takes exactly one
+options object, so 4 was slack around a protocol that is 1, and it was a bare
+literal where this repository requires a named constant with a stated `Without
+it:` and `Trips:`. Tightening it to the real arity makes the array's shape a
+fact rather than caller input.
+
+**What a future change has to respect:** an operation that genuinely needs a
+second positional argument changes this constant in the same commit rather than
+working around it. The reviewer's underlying point stands — the schema can
+reject what the mapped type accepts — and the `Exhaustive` guard plus the
+dispatch probe are what make that divergence visible rather than silent.
+
+### 2026-08-23 — The rebind gate stops trusting the caller's summary of the mode
+
+**What changed:** `admit` no longer takes `incomingIsRead`. `#mayRebind` derives
+both statements of the incoming call's mode itself, from the `mode` column and
+the plan blob the object is already handed, through a shared `planMode` helper
+that returns undefined for anything unparseable so every reader fails closed.
+
+**Why:** a review of the split gate pointed out that one of its five conditions
+arrived as a boolean the caller computed. The caller derived it from a single
+policy and could not have disagreed with itself, so this fixed no live defect —
+but it was trust the gate did not need, and the object receives both statements
+regardless. A widened rebind is the one failure here that is silent: it clears a
+settled read's `output_ref` and re-points the receipt at another call, and
+nothing downstream can tell that happened.
+
+**What a future change has to respect:** the check is a conjunction of the two
+statements, and the spec covering it drives each half separately — asserting only
+the both-disagree case would pass against either half being dropped. Keep the
+`planMode` failure mode too: an unreadable plan is not a read.
+
+### 2026-08-23 — Residual receipt settlement becomes an object operation
+
+**What changed:** `WorkstreamToolReceiptStorage` gained `settleResidualReceipts`,
+which classifies and closes every receipt a run still has open. Both callers that
+end a run reach it: `terminalizeHarnessAttempt` for a stopped parent and
+`reapStaleHarnessRuns` for an expired inline child. Its fence is the run's exact
+`terminalized_at`, and it is called *after* the terminal write rather than before.
+`complete` and `fail` also gained `allowCancellationRequested`, and the
+attachment-dependency operations gained an `expectedOutputRef` fence.
+
+**Why:** all three arrived on `main` while this branch was open, written as D1
+statements against `tool_invocations` — a compatibility view object schema
+migration 17 drops. Rebasing could not keep them and could not drop them, so they
+moved into the object, and one of them could not move unchanged. The residual
+settlement and the terminal lifecycle row were a single D1 batch fenced on each
+other; they are now in different stores with no transaction between them, so the
+ordering became a real choice. Terminalize-then-settle is the one whose failure is
+recoverable: a settle that does not run leaves a terminal run with open receipts,
+which `abandonRunReceipts` closes on the next sweep, whereas settle-then-fail
+closes the receipts of a run that is still live and may already have a successor.
+
+**What a future change has to respect:** do not move the settlement back ahead of
+the terminal write in the name of atomicity — the atomicity is not available, and
+that order corrupts live runs rather than delaying dead ones.
+`allowCancellationRequested` relaxes exactly one condition of `#fence` and must
+keep the rest: a run may not admit new work after a member stop, but the receipt
+Bind already returned has to be settleable or `terminalizeHarnessAttempt`
+deadlocks against its own open-receipt fence.
+
+### 2026-08-22 — Every closed-authority arm is gone, and the routing is unconditional
+
+**What changed:** The 83 `authority.phase === "durable_object_open"` gates
+outside `workstream-authority.ts` are down to six. `workstreamExecutionEnvironment`
+routes at the object without reading the control row;
+`bootstrapWorkstreamRuntimeEnvironment` still reads it, for the generation it
+fences the bootstrap with, but no longer branches on the phase. The six that
+remain are the maintenance fence itself and are not dual implementations: the
+alarm deferral and both socket/message refusals in `workspace-do.ts`, the create
+service's recheck, `substream-agent.ts`'s bootstrap fence, and `routes/dev.ts`
+refusing a seed against a closed authority.
+
+**Why:** Migration 0090 closed the phase permanently, so every non-open arm has
+been unreachable since. Keeping them cost a D1 read on hot paths — the flag
+targeting attributes read one per work-stream subject — and, worse, kept the
+reading burden the 2026-08-19 removal above set out to end: a reader still had
+to establish which half was live.
+
+**Consequences, and the part worth reading before the next one:** removing the
+gate in `workstreamExecutionEnvironment` is a no-op in production and was not a
+no-op in the test tree. A dozen focused unit environments bound no object and
+were, without saying so, exercising the un-routed arm — so their fixtures were
+regional rows the routed read cannot see. Each was moved to a work-stream object
+store (`test/helpers/durable-authority.ts`'s `testWorkstreamObjectStore` and
+`objectStores`), or given a stub that runs the routed statements back through
+the same double, so the assertions stayed and only the wiring moved. Two ids had
+to become real UUIDs, because routing parses them and a label does not parse.
+
+**Rejected:** Keying the helper on `!env.SUBSTREAM_AGENTS` instead, the way
+`refreshWorkspaceSchedule` keys on `!env.WORKSPACE_DOS`. It would have kept every
+fixture working and cost nothing to write — and it would have replaced a dead
+branch with a live one that silently returns the wrong database whenever a
+binding is missing. `refreshWorkspaceSchedule` can afford that because skipping
+an alarm refresh is recoverable; reading a work stream's product state from the
+wrong authority is not.
+
+### 2026-08-22 — Object schema 17: the tool-receipt views retire
+
+**What changed:** Migration 17 drops `_runtime_tool_invocations` with its
+insert, update and delete triggers and `_runtime_tool_checkpoints` with its
+insert trigger, and first adopts `attachment_tool_receipts` (with its index) and
+`tool_effects_run_call_uq` into this object's own schema.
+`WORKSTREAM_OBJECT_SCHEMA_VERSION` → 17. `LOCAL_TABLES` and `TABLE_REWRITES`
+lose the three table names and two rewrites, so the routers no longer recognize
+`tool_invocations` at all.
+
+**Why:** the five receipt writers and every reader now speak to
+`WorkstreamToolReceiptStorage` through a typed port, so nothing named the views.
+The adoption is the part that is not bookkeeping: both objects live in
+`workstream-runtime-compat-schema.ts` and neither is a compatibility object —
+one is a real table of live product data, the other the constraint that dedups a
+replayed tool call. A migration that derived its drop set from the file would
+have taken both.
+
+**Considered and rejected:** dropping the views without moving migration 14's
+transcript settlement out of the update trigger first. That trigger projects a
+settled receipt into its same-id tool part, and the stale-run sweep depends on
+it because it has no event publisher and never rewrites the transcript row. The
+projection moved into `abandonRunReceipts` in the preceding change and has its
+own spec; dropping the trigger before that would have left reaped runs showing a
+spinning tool card with nothing failing.
+
+**Consequences:** migration 16's trigger repair is now historical — it still has
+to exist for objects that applied it before 17 arrived, but the allocation it
+fixed lives in the typed `admit`. A routed statement against a normalized table
+reports workerd's `rowsWritten` rather than a trigger's counter, and
+`rowsWritten` counts index writes: the workerd suite pins that at 2 for a
+one-row update of an indexed column, because a caller moving a statement off a
+view and keeping an `=== 1` check would be wrong in exactly that way.
+
+
+### 2026-08-22 — What the compat schema holds that is not compat
+
+**What changed:** Documentation only. `workstream-runtime-compat-schema.ts` is
+now recorded as holding two objects that must outlive the layer it is named for:
+`attachment_tool_receipts`, a real `STRICT` table carrying live product data,
+and `tool_effects_run_call_uq`, the unique index that dedups a replayed tool
+call. Neither appears in `workstream-object-schema.ts` today; retiring the compat
+views has to move both there first.
+
+**Why:** the file's header comment says its statements "deliberately create no
+compatibility data tables", three lines above a `CREATE TABLE`. That sentence is
+how someone decides what a drop migration should drop, and following it deletes
+live attachment-dependency rows. The index has the same shape of problem one
+severity lower: dropping it changes nothing observable at the time and silently
+permits two receipts for one `(run_id, tool_call_id)`. The general rule, worth
+more than either instance: **derive a drop set from what each object is, never
+from the file it lives in.** `_runtime_statement_changes` lives in the same array
+and genuinely is compat machinery that goes.
+
+**Considered and rejected:** editing the header comment alone. It is accurate
+about most of the array and the failure it invites is not a misreading of the
+sentence — it is trusting a file's name to classify its contents. The check has
+to live where the drop set is chosen, so the claim is recorded in the retirement
+PRD's slice-1 inventory as an explicit *keep* and guarded by two specs in
+`workstream-tool-receipt-storage.test.ts`.
+
+**Consequences:** the compat schema is no longer a set that can be dropped
+wholesale. Any future migration that retires part of it must enumerate what it
+drops and justify each object, rather than deriving the list from the array.
+
+### 2026-08-22 — `tool_position` is a high-water mark, not a row count
+
+**What changed:** Object schema migration 16 rebuilds
+`_runtime_tool_invocations_insert` so `tool_effects.tool_position` is allocated
+as `COALESCE(MAX(tool_position) + 1, 0)` over the run instead of
+`COUNT(*)`.
+
+**Why:** The table's uniqueness is `UNIQUE (run_id, attempt_epoch,
+tool_position)`, and a count allocates injectively only while nothing is ever
+removed. `attachment-tool-receipts.ts` deletes receipts from two paths, and the
+compat delete trigger turns each into a `DELETE FROM tool_effects`. One hole in
+a run's positions and the next admission computed a number another row already
+held; `INSERT OR IGNORE` dropped it, and `persistToolExecutionPlan` — reading
+zero changes as "someone else already wrote my receipt" — looked up
+`(harness_run_id, tool_call_id)`, found nothing because its row was never
+written, and threw `RunOwnershipLostError`. The run ended on a lease failure
+that never happened.
+
+That call key *is* a real constraint: the compat schema creates
+`tool_effects_run_call_uq ON tool_effects(run_id, tool_call_id)`, which is what
+makes the routed `ON CONFLICT(harness_run_id, tool_call_id) DO NOTHING` mean
+what it says once the SQL router strips the clause. It is simply not the
+constraint a position collision fires — that admission carries a *new*
+`tool_call_id` — so the caller's fallback lookup queries for a row the ignored
+insert never created. An earlier draft of this entry said the constraint did not
+exist; it does, it is load-bearing for replay dedup, and
+[the compat-layer retirement](PRDs/2026-08-22_retiring-the-runtime-compat-layer/prd.md)
+has to carry it into the object's own schema rather than drop it with the views.
+
+**Considered and rejected:** Waiting for the tool-receipt slice of
+[the compat-layer retirement](PRDs/2026-08-22_retiring-the-runtime-compat-layer/prd.md),
+which deletes this trigger outright and allocates the position in a typed
+operation. That slice is several changes away and the defect is live, so the
+allocation is repaired in place first and the typed operation inherits it. Also
+rejected: scoping the high-water mark to `(run_id, attempt_epoch)`. It would
+restart numbering at a new attempt, which is defensible on its own but is a
+behavior change this repair has no reason to make.
+
+**Consequences:** Migration 14's precedent — rebuilding a compat trigger in a
+later migration rather than editing the frozen v1 source — now has a second
+user, and the helper reapplies migration 3's epoch rounding because it derives
+its text from v1 and would otherwise reinstate the truncation that fixed.
+Positions are no longer dense: a run that has had a receipt deleted has a gap,
+which nothing reads and the constraint does not mind.
+
 ### 2026-08-22 — Every object in the hierarchy shares one migration base
 
 **What changed:** `MigratableDurableObject` is a new base that
@@ -1914,9 +2156,9 @@ there is nothing left to drain.
 
 **Deliberate leftovers:** `packages/db` query helpers remain as the SQL dialect
 served by WorkstreamDO compatibility views; they are not regional D1 callers.
-`bootstrapWorkstreamRuntimeEnvironment` and
-`workstreamExecutionEnvironment` keep their non-open fallbacks for the DO-
-internal legacy-open read paths this change deliberately did not touch.
+`bootstrapWorkstreamRuntimeEnvironment` and `workstreamExecutionEnvironment`
+kept their non-open fallbacks at the time; both are gone as of the 2026-08-22
+entry below.
 
 **Consequences:** Unit tests that exercised the legacy arms were retargeted to
 the object boundary (see `test/helpers/durable-authority.ts`, which walks the
