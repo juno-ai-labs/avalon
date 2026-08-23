@@ -1056,6 +1056,26 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-23 — The rebind gate stops trusting the caller's summary of the mode
+
+**What changed:** `admit` no longer takes `incomingIsRead`. `#mayRebind` derives
+both statements of the incoming call's mode itself, from the `mode` column and
+the plan blob the object is already handed, through a shared `planMode` helper
+that returns undefined for anything unparseable so every reader fails closed.
+
+**Why:** a review of the split gate pointed out that one of its five conditions
+arrived as a boolean the caller computed. The caller derived it from a single
+policy and could not have disagreed with itself, so this fixed no live defect —
+but it was trust the gate did not need, and the object receives both statements
+regardless. A widened rebind is the one failure here that is silent: it clears a
+settled read's `output_ref` and re-points the receipt at another call, and
+nothing downstream can tell that happened.
+
+**What a future change has to respect:** the check is a conjunction of the two
+statements, and the spec covering it drives each half separately — asserting only
+the both-disagree case would pass against either half being dropped. Keep the
+`planMode` failure mode too: an unreadable plan is not a read.
+
 ### 2026-08-23 — Residual receipt settlement becomes an object operation
 
 **What changed:** `WorkstreamToolReceiptStorage` gained `settleResidualReceipts`,

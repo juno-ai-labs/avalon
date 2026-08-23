@@ -1517,11 +1517,6 @@ export async function persistToolExecutionPlan(
     executionPlanHash,
     executionPlanJson,
     compatiblePriorPlanHashes,
-    // Both statements of the mode, exactly as the routed gate demanded: every
-    // caller derives them from one policy today, so they cannot disagree, and
-    // the pair is checked so a caller that ever sets them separately cannot
-    // widen the rebind by disagreeing with itself.
-    incomingIsRead: plan.mode === "read" && plan.plan.mode === "read",
     providerIdempotencyKey: plan.providerIdempotencyKey ?? null,
     fence: { runId: plan.harnessRunId, attemptId: lease.attemptId, owner: lease.owner },
     now: Date.now(),

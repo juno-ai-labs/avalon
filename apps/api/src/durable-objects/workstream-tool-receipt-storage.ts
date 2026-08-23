@@ -27,6 +27,20 @@
 
 import { uuidV7 } from "../lib/uuid-v7";
 
+/**
+ * A plan blob's declared mode, or undefined for anything that will not parse.
+ *
+ * Undefined rather than a throw because every caller is a gate that must fail
+ * closed: an unreadable plan is not a read.
+ */
+function planMode(executionPlanJson: string | null): unknown {
+  try {
+    return (JSON.parse(executionPlanJson ?? "null") as { mode?: unknown } | null)?.mode;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The real statuses, and the compatibility spellings they replaced. */
 export type ToolReceiptStatus =
   | "admitted" | "executing" | "completed" | "failed" | "ambiguous";
@@ -302,15 +316,6 @@ export class WorkstreamToolReceiptStorage {
     executionPlanHash: string;
     executionPlanJson: string;
     compatiblePriorPlanHashes: readonly string[];
-    /**
-     * Both statements of the incoming call's mode agree that it is a read.
-     *
-     * Decided by the caller because only it holds the plan object. It is half
-     * of the rebind gate; the other half — that the *stored* receipt was also a
-     * read, and that this is a demonstrably different call — is decided here,
-     * against rows the caller cannot see.
-     */
-    incomingIsRead: boolean;
     providerIdempotencyKey: string | null;
     fence: ToolReceiptFence;
     now: number;
@@ -479,17 +484,23 @@ export class WorkstreamToolReceiptStorage {
    */
   #mayRebind(
     existing: EffectRow,
-    input: { incomingIsRead: boolean; requestHash: string; toolCallId: string; fence: ToolReceiptFence },
+    input: {
+      mode: "read" | "write";
+      executionPlanJson: string;
+      requestHash: string;
+      toolCallId: string;
+      fence: ToolReceiptFence;
+    },
   ): boolean {
-    if (existing.status !== "completed" || !input.incomingIsRead) return false;
+    if (existing.status !== "completed") return false;
+    // Both statements of the *incoming* call's mode, derived here rather than
+    // taken as a boolean from the caller. The caller computed the same
+    // conjunction and could not have disagreed with itself, but it was trust
+    // this gate did not need: the object is handed both statements anyway, and
+    // a widened rebind is the one failure here that is silent.
+    if (input.mode !== "read" || planMode(input.executionPlanJson) !== "read") return false;
     if (existing.request_hash === input.requestHash) return false;
-    let recordedMode: unknown;
-    try {
-      recordedMode = (JSON.parse(existing.execution_plan_json ?? "null") as { mode?: unknown } | null)?.mode;
-    } catch {
-      return false;
-    }
-    if (recordedMode !== "read") return false;
+    if (planMode(existing.execution_plan_json) !== "read") return false;
     return !this.#hasDependents(existing.effect_intent_id, input.fence.runId, input.toolCallId);
   }
 
@@ -890,6 +901,12 @@ export class WorkstreamToolReceiptStorage {
       // The guard, once, as its own question. The routed statement restated it
       // as an `EXISTS` inside the UPDATE because it had no transaction to hold
       // it in; here the answer cannot change between reading it and acting.
+      //
+      // Matching the stamp rather than merely `terminalized_at IS NOT NULL` is
+      // the same fence `settleResidualReceipts` takes, and for the reason set
+      // out there: it ties this call to one particular terminal write, so a
+      // sweep holding a stale instant cannot settle receipts a later
+      // terminalization owns.
       const terminalized = first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
         `SELECT 1 AS ok FROM runs WHERE run_id = ? AND terminalized_at = ?`,
         input.runId,
