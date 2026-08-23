@@ -2041,19 +2041,50 @@ async function settleAndRecordResidualReceipts(
   await recordResidualReceiptsSettled(db, row);
 }
 
-/** Close the HyperSight block a reaped run was refreshing. */
-async function abandonStaleBlockRun(
-  blocks: BlockDashboardPortFactory,
-  row: TerminalizedReceiptRepair,
-): Promise<void> {
-  await blocks(row.workspaceId, row.workstreamId).abandonBlockRun({
-    harnessRunId: row.runId,
-    terminalizedAt: Date.parse(row.terminalizedAt),
-    errorJson: JSON.stringify({
-      code: "stale_run_reaped",
-      message: "The HyperSight refresh lost its durable lease",
-    }),
-  });
+/**
+ * Everything a terminalized run left open outside its own receipts, settled
+ * before the marker that says its reconciliation finished.
+ *
+ * Two authorities, and both are reached the same way and for the same reason:
+ * neither can be another statement in the batch that terminalized the run — the
+ * block lives in its own object and the automation run in another database —
+ * and each re-reads the run's `terminalized_at` inside its own transaction, so
+ * a run since taken over is not closed by the sweep that lost it. Running them
+ * here rather than beside the batch is what makes a transient failure retried:
+ * `settleAndRecordResidualReceipts` records nothing when this throws, and the
+ * bounded sweep comes back for every terminal run missing that marker.
+ *
+ * `abandonBlockRun` is called for every run, not only a HyperSight one, and not
+ * because this run has a block — it may well not. The operation also repairs
+ * blocks whose runs are already terminal but which never settled, the state a
+ * failed settlement RPC leaves behind and which no selector here can find
+ * again. Gating it on the run's own origin would mean a work stream whose later
+ * stale runs happen to be ordinary ones never clears its orphan. The cost is
+ * one round trip per run on a sweep that already makes one for receipts.
+ */
+function settleOtherAuthorities(
+  options: { blocks: BlockDashboardPortFactory },
+  automationDatabase: D1Database | null,
+  origin: string,
+  repair: TerminalizedReceiptRepair,
+): () => Promise<void> {
+  return async () => {
+    await options.blocks(repair.workspaceId, repair.workstreamId).abandonBlockRun({
+      harnessRunId: repair.runId,
+      terminalizedAt: Date.parse(repair.terminalizedAt),
+      errorJson: JSON.stringify({
+        code: "stale_run_reaped",
+        message: "The HyperSight refresh lost its durable lease",
+      }),
+    });
+    if (
+      repair.status === "failed"
+      && repair.parentToolCallId === null
+      && origin !== "block_dashboard_block"
+    ) {
+      await settleStaleAutomationRun(automationDatabase, repair);
+    }
+  };
 }
 
 async function settleStaleAutomationRun(
@@ -2432,12 +2463,12 @@ export async function reapStaleHarnessRuns(
         db,
         options.receipts(row.workspace_id, row.workstream_id),
         repair,
-        row.status === "failed" && row.parent_tool_call_id === null && row.origin !== "block_dashboard_block"
-          ? () => settleStaleAutomationRun(
-            options.automationDatabase === undefined ? db : options.automationDatabase,
-            repair,
-          )
-          : undefined,
+        settleOtherAuthorities(
+          options,
+          options.automationDatabase === undefined ? db : options.automationDatabase,
+          row.origin,
+          repair,
+        ),
       );
       processed += 1;
     } catch (error) {
@@ -2572,18 +2603,7 @@ export async function reapStaleHarnessRuns(
           db,
           options.receipts(row.workspace_id, row.workstream_id),
           repair,
-          // The one other authority this run left work in, settled before the
-          // marker that says the reap finished. A HyperSight run left its block
-          // `running`; anything else left an automation run scheduled. Neither
-          // can be a seventh statement in the batch above — the block lives in
-          // its own object — and both are guarded on the run's `terminalized_at`
-          // re-read inside their own transaction, so a run since taken over is
-          // not closed by the sweep that lost it.
-          row.origin === "block_dashboard_block"
-            ? () => abandonStaleBlockRun(options.blocks, repair)
-            : automationDatabase
-              ? () => settleStaleAutomationRun(automationDatabase, repair)
-              : undefined,
+          settleOtherAuthorities(options, automationDatabase, row.origin, repair),
         );
       } catch (error) {
         options.onReceiptRepairFailure?.({

@@ -4298,6 +4298,58 @@ describe("inline child-run durability", () => {
     ).get(WORKSTREAM_ID)).toEqual({ harness_status: "running" });
   });
 
+  it("repairs a HyperSight orphan while reaping a run that has no block of its own", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    // RUN_TWO's block was stranded: its run is terminal in the object, but the
+    // settlement that would have closed the block never landed. Nothing finds
+    // it again — the reaper selects `status = 'running' AND terminalized_at IS
+    // NULL`, which a terminalized run no longer matches.
+    sqlite.objectDatabase.exec(`
+      INSERT INTO block_dashboard_configuration_versions
+        (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)
+      VALUES ('orphan-version', 1, '[{"id":"orphan","prompt":"Summarize"}]',
+              'user-runtime', 1787000000000);
+      INSERT INTO block_dashboard_block_runs
+        (block_run_id, configuration_version_id, block_id, prompt,
+         trigger_sequence, run_id, status, created_at)
+      VALUES ('orphan-block-run', 'orphan-version', 'orphan', 'Summarize', 1,
+              '${RUN_TWO}', 'running', 1787000000000);
+      UPDATE runs SET origin = 'block_dashboard_block', status = 'failed',
+                      terminalized_at = 1787000000000
+       WHERE run_id = '${RUN_TWO}'
+    `);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-orphan-repair",
+      owner: "owner-orphan-repair",
+    });
+    expect(claim.state).toBe("claimed");
+    sqlite.object.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_ONE);
+
+    // RUN_ONE is an ordinary run with no block at all. The sweep still reaches
+    // the block authority, because the repair is what needs reaching, not this
+    // run's own block — a work stream whose later stale runs happen to be
+    // ordinary ones would otherwise keep its orphan forever.
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => sqlite.receipts,
+      blocks: () => sqlite.blocks,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).toEqual([RUN_ONE]);
+    expect(sqlite.objectDatabase.prepare(
+      `SELECT status, completed_at, json_extract(error_json, '$.code') AS code
+         FROM block_dashboard_block_runs WHERE block_run_id = 'orphan-block-run'`,
+    ).get()).toEqual({
+      status: "failed",
+      // Its own run's terminal instant, and the repair's own reason: nobody
+      // established that *this* block's run lost a lease.
+      completed_at: 1787000000000,
+      code: "block_run_orphaned",
+    });
+  });
+
   it("does not clean up a child snapshot whose lease is renewed before the CAS batch", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);

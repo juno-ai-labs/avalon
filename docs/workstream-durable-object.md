@@ -1127,6 +1127,26 @@ nothing. The PRD anticipates this — it lists `block-dashboard + harness-runs` 
 a cross-slice pair, and says such statements "decide method ownership rather than
 order".
 
+**The repair rides on traffic, not on a schedule.** `#closeOrphanedBlockRuns`
+runs from both write paths that can see an orphan: every reap of the work
+stream — whatever the reaped run's origin — and every dispatch admitted to it.
+Neither alone is enough, which review established after the first version gated
+the reap arm on the reaped run's own origin: a work stream whose later stale
+runs happen to be ordinary ones would have kept its orphan forever, and a quiet
+one may never have another stale run at all. The dispatch arm answers the quiet
+case in the way a member experiences it — a dashboard that is refreshing is a
+dashboard that dispatches, so their own next refresh clears the block the last
+one stranded. The rejected alternative was a durable retry: an outbox row or a
+reconciliation alarm, either of which is real machinery to carry an
+inconsistency that slice 6 deletes outright by folding the sweep into the
+object.
+
+The reason a repaired block records is the repair's own
+(`block_run_orphaned`), not the reaping caller's `stale_run_reaped`. An
+orphan's run may have ended any way at all, and stamping it with the cause of
+whatever run happened to be reaped alongside it would put a story in front of a
+member that nobody established.
+
 **What a future change has to respect:** `recordBlockRunProgress` is
 deliberately unfenced and `settleBlockRun` is deliberately fenced. They are two
 authorities, not an inconsistency — `BlockDashboardAgent` owns the dispatch and
