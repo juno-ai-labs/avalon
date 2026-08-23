@@ -291,7 +291,7 @@ export class WorkstreamBlockDashboardStorage {
         );
       }
       const closed = terminal ? this.#changed() : 0;
-      return closed + this.#closeOrphanedBlockRuns(input.errorJson);
+      return closed + this.#closeOrphanedBlockRuns();
     });
   }
 
@@ -312,23 +312,40 @@ export class WorkstreamBlockDashboardStorage {
    * later `abandonBlockRun` on this work stream sweeps it, so the failure heals
    * on the next reap rather than persisting.
    *
+   * Reached from both write paths that can see an orphan: every reap of this
+   * work stream, whatever the reaped run's origin, and every dispatch admitted
+   * to it. Neither alone is enough. Restricting the reap arm to HyperSight runs
+   * would leave a work stream whose only later stale runs are ordinary ones
+   * with the block still spinning, and a quiet work stream may never have
+   * another stale run at all — but a dashboard that is refreshing is a
+   * dashboard that dispatches, so the member's own next refresh clears it.
+   * Neither path is a scheduled reconciliation, and this is not one: it is a
+   * repair that rides on traffic the work stream was already generating, which
+   * is what makes it worth having before slice 6 folds the sweep into the
+   * object and closes the window itself.
+   *
+   * The reason recorded is this repair's own, not the reaping caller's. An
+   * orphan's run may have ended any way at all — a lost lease, a stop, an
+   * ordinary completion whose block write failed — and stamping it
+   * `stale_run_reaped` because a reaper happened to be the one who noticed
+   * would put a cause in front of a member that nobody established.
+   *
    * `completed_at` comes from the run's own `terminalized_at` rather than from
    * the repairing caller's clock, so a block closed late still reports when its
    * run actually ended.
    */
-  #closeOrphanedBlockRuns(errorJson: string): number {
+  #closeOrphanedBlockRuns(): number {
     this.sql.exec(
       `UPDATE block_dashboard_block_runs
           SET status = 'failed',
               completed_at = (SELECT terminalized_at FROM runs WHERE runs.run_id = block_dashboard_block_runs.run_id),
-              error_json = ?
+              error_json = '{"code":"block_run_orphaned","message":"The refresh ended without settling this block"}'
         WHERE status IN ('queued', 'running')
           AND EXISTS (
             SELECT 1 FROM runs
              WHERE runs.run_id = block_dashboard_block_runs.run_id
                AND runs.terminalized_at IS NOT NULL
           )`,
-      errorJson,
     );
     return this.#changed();
   }
@@ -429,6 +446,10 @@ export class WorkstreamBlockDashboardStorage {
         input.harnessRunId,
         input.createdAt,
       );
+      // Every admitted dispatch also sweeps the work stream's orphans, so a
+      // block stranded by a failed settlement is cleared by the next refresh
+      // rather than waiting for a stale run that may never come.
+      this.#closeOrphanedBlockRuns();
       return "admitted";
     });
   }

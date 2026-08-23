@@ -385,13 +385,90 @@ describe("closing a block whose run was reaped", () => {
     })).toBe(2);
 
     // Both closed: the one being reaped, and the orphan. The orphan reports the
-    // instant its own run ended, not the instant the repair happened.
+    // instant its own run ended, not the instant the repair happened, and it
+    // reports the repair's own reason rather than the reaper's — nobody
+    // established that *its* run lost a lease.
+    expect(sql.exec(
+      `SELECT block_run_id, status, completed_at, json_extract(error_json, '$.code') AS code
+         FROM block_dashboard_block_runs ORDER BY block_run_id`,
+    ).toArray()).toEqual([
+      {
+        block_run_id: "block-run-1", status: "failed",
+        completed_at: NOW - 60_000, code: "block_run_orphaned",
+      },
+      {
+        block_run_id: "block-run-2", status: "failed",
+        completed_at: NOW, code: "stale_run_reaped",
+      },
+    ]);
+  });
+
+  it("repairs an orphan when the reaped run is an ordinary one with no block", () => {
+    const { storage, sql } = open();
+    storage.admitDispatch(dispatch());
+    sql.exec(
+      `INSERT INTO runs
+         (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+          next_action_cursor, input_fence_seq, revision, started_at,
+          active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+          tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+          origin, execution_principal_json, chain_depth, model, created_at, updated_at)
+       VALUES (?, '0', 'failed', '{}', 0, 0, '', 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+               'member_message', '{}', 0, 'a-model', ?, ?)`,
+      "00000000-0000-7000-8000-0000000000c1",
+      NOW,
+      NOW,
+      NOW,
+    );
+    sql.exec(
+      `UPDATE runs SET terminalized_at = ? WHERE run_id = ?`,
+      NOW,
+      "00000000-0000-7000-8000-0000000000c1",
+    );
+    sql.exec(
+      `UPDATE runs SET status = 'failed', terminalized_at = ? WHERE run_id = ?`,
+      NOW - 60_000,
+      RUN,
+    );
+
+    // The reaper calls this for every run it reaps, not only HyperSight ones.
+    // A work stream whose later stale runs are all ordinary would otherwise
+    // keep its orphan forever, which is the case the origin gate missed.
+    expect(storage.abandonBlockRun({
+      harnessRunId: "00000000-0000-7000-8000-0000000000c1",
+      terminalizedAt: NOW,
+      errorJson: '{"code":"stale_run_reaped"}',
+    })).toBe(1);
+    expect(sql.exec(`SELECT status, completed_at FROM block_dashboard_block_runs`).toArray())
+      .toEqual([{ status: "failed", completed_at: NOW - 60_000 }]);
+  });
+
+  it("repairs an orphan on the next dispatch, without waiting for a stale run", () => {
+    const { storage, sql } = open();
+    storage.admitDispatch(dispatch());
+    sql.exec(
+      `UPDATE runs SET status = 'failed', terminalized_at = ? WHERE run_id = ?`,
+      NOW - 60_000,
+      RUN,
+    );
+
+    // The arm that covers a quiet work stream. A dashboard that is refreshing
+    // is a dashboard that dispatches, so the member's own next refresh clears
+    // the block their last one stranded — no stale run, and no scheduled
+    // reconciliation, required.
+    storage.admitDispatch(dispatch({
+      configurationVersionId: "configuration-2",
+      versionNumber: 2,
+      blockRunId: "block-run-2",
+      harnessRunId: "00000000-0000-7000-8000-0000000000b2",
+    }));
+
     expect(sql.exec(
       `SELECT block_run_id, status, completed_at FROM block_dashboard_block_runs
         ORDER BY block_run_id`,
     ).toArray()).toEqual([
       { block_run_id: "block-run-1", status: "failed", completed_at: NOW - 60_000 },
-      { block_run_id: "block-run-2", status: "failed", completed_at: NOW },
+      { block_run_id: "block-run-2", status: "queued", completed_at: null },
     ]);
   });
 

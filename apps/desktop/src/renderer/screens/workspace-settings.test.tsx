@@ -662,6 +662,12 @@ describe('Workspace settings', () => {
     expect(notionCard).not.toBeNull();
     expect(screen.getByText(/workspace automations use only the connections explicitly bound to them/iu)).toBeVisible();
     const personalButton = within(notionCard!).getByRole('button', { name: 'Connect for me' });
+    // Enabled before clicked, as the workspace button below already is. The
+    // card renders as soon as the provider name does, while this button stays
+    // disabled until the connector catalog resolves — and a click on a disabled
+    // button is a silent no-op, so without this the test fails under load with
+    // "Number of calls: 0" rather than with anything about Notion.
+    await waitFor(() => expect(personalButton).toBeEnabled());
     fireEvent.click(personalButton);
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'notion',
