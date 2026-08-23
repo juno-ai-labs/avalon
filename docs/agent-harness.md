@@ -89,6 +89,8 @@ Interactive multi-round work starts with a short plan and reports meaningful pha
 
 An automation run's final message is what Avalon delivers, so the run is told which destinations Avalon will send it to and told to drop every recipient matching one before it sends anything of its own. Without that, an automation asked to email its owner does the sending as well as Avalon and the owner receives it twice. The destinations travel in the automation context as `resultDelivery`, filtered by the predicate each channel's own sender uses, and the rule is a `# Result delivery` section rendered only when that list is non-empty — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) owns the delivery itself.
 
+Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — the character itself is typed instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). The rule exists because no Avalon surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
+
 ### Automation compilation
 
 Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. A destination Avalon delivers to is described rather than instructed: the compiler never writes a provider send for one, because Avalon sends the result there itself. Which destinations the owner asked for is a required field of the submit-draft schema, `requestedDelivery`, closed to the two Avalon offers — the create screen selects from it rather than re-reading the draft's prose. It records what was asked and never what was inferred: a briefing *about* somebody's inbox is not a request to be emailed, a send aimed at a third party is not a request for the owner, and a request to be "sent the result" that names no channel resolves to nothing rather than to a guess.
@@ -681,6 +683,35 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-23 — The work-stream prompt states what a written answer is made of
+
+**What changed:** `RESPONSE_FORMATTING_POLICY`
+(`prompts/response-formatting.ts`) joined the work-stream system prompt, which
+every ordinary run — digests included — carries. It states that written
+answers are GitHub-flavoured Markdown while an elicitation question is a
+plain-text label, that TeX and math delimiters are never written, that a
+literal backslash belongs only in code formatting, and that a dollar sign in
+prose is plain text.
+
+**Why:** models routed through OpenRouter emit TeX for symbols, and no Avalon
+surface renders it. The display-side normalizer
+([`model-text-normalization.md`](model-text-normalization.md)) repairs what
+arrives anyway; the prompt half is the only half that also fixes the copy that
+is *stored* — exported, quoted into a later run, read back by the next model —
+so both halves exist. The dollar-sign clause is deliberately scoped: an early
+draft said a dollar sign belongs in backticks, which instructs a model to
+code-format every price — the exact output the normalizer's money rule was
+built to protect as prose. A future edit that widens the clause re-fights that
+decision.
+
+**Consequences:** the policy is a static module constant in the cached prefix,
+~800 bytes against the 8,000-byte ceiling; the digest brief deliberately does
+not restate it (a second copy at the user-message layer competed with the
+brief's own output shape), and `digest-run.test.ts` pins the absence while
+`prompts.test.ts` pins the TeX line's presence.
+
+Shipped in #257.
 
 ### 2026-08-23 — The compiler reports the destinations it was asked for, and its ceiling stays at 10,000
 
