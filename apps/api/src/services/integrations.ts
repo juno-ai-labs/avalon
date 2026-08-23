@@ -75,7 +75,7 @@ import {
   type WorkstreamCompactionFence,
   type WorkstreamWorkflowInput,
 } from "@avalon/contracts";
-import { createDatabase, newId, nowIso } from "@avalon/db";
+import { newId, nowIso } from "@avalon/db";
 import {
   connectorCapabilitySupportsScope,
   ConnectorError,
@@ -185,6 +185,8 @@ import type { ToolReceiptRecord } from "../durable-objects/workstream-tool-recei
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { createBlockDashboardObjectPort } from "../runtime/block-dashboard-port";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
+import { createMessageObjectPort } from "../runtime/message-port";
+import { transcriptLister } from "../runtime/message-projection";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import {
@@ -1979,7 +1981,6 @@ export async function runWorkstreamHarness(
   // actual authority without copying connector/resource state into the agent.
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const runStartedAtMs = Date.now();
-  const database = createDatabase(env.DB);
   const workstream = await env.DB.prepare(
     `SELECT title, objective FROM workstreams WHERE id = ? AND workspace_id = ? AND archived_at IS NULL`,
   ).bind(input.workstreamId, input.workspaceId).first<{ title: string; objective: string }>();
@@ -2032,7 +2033,14 @@ export async function runWorkstreamHarness(
   const storedMessages = await loadTriggerFencedTranscriptMessages(
     env,
     input,
-    database.workstreams.listMessages,
+    // The transcript comes from the object rather than from a routed reader
+    // whose four-table join was rewritten onto three compatibility views. The
+    // paging contract is unchanged, which is what lets this stay an injected
+    // lister: the loader's fence walk is the same walk.
+    transcriptLister(
+      createMessageObjectPort(env, input.workspaceId, input.workstreamId),
+      { workspaceId: input.workspaceId, workstreamId: input.workstreamId },
+    ),
     priorCompaction?.compactedThroughSequence ?? -1,
   );
   const transcriptProjection = await projectModelProtocolTranscript(env, input, storedMessages);

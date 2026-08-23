@@ -187,3 +187,33 @@ function parseJson<T>(value: string | null, fallback: T): T {
     return fallback;
   }
 }
+
+/**
+ * A page-at-a-time transcript reader, in the shape the loaders already take.
+ *
+ * The harness's fence walk pages backward from an immutable boundary until it
+ * reaches the prior compaction, and it takes its reader as an argument so the
+ * walk itself can be tested without a database. That argument used to be the
+ * repository's `listMessages`, whose SQL joined four tables and aggregated two
+ * of them into JSON. It is this now, and the walk is untouched.
+ */
+export function transcriptLister(
+  messages: MessageObjectPort,
+  identity: { workspaceId: string; workstreamId: string },
+): (
+  workspaceId: string,
+  workstreamId: string,
+  limit: number,
+  beforeSequence?: number,
+) => Promise<Message[]> {
+  return async (_workspaceId, _workstreamId, limit, beforeSequence) => {
+    const rows = await messages.messagesBefore({
+      // The repository's cursor was exclusive and defaulted to "everything", and
+      // its `LIMIT` was capped at 250. Both are the contract its callers walk
+      // against, so both come with it.
+      beforeSequence: beforeSequence ?? Number.MAX_SAFE_INTEGER,
+      limit: Math.min(limit, 250),
+    });
+    return readMessagePage(messages, identity, rows);
+  };
+}
