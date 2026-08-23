@@ -1,5 +1,4 @@
 import {
-  acknowledgeConnectorAgentActivation,
   ConnectorError,
   joinAllSlackPublicChannels,
   type SlackPublicChannelSyncResult,
@@ -7,9 +6,20 @@ import {
   normalizeSlackActivity,
   parseSlackAgentInvocation,
   parseSlackEventEnvelope,
+  resolveSlackReactions,
   slackApi,
   slackActivityEventType,
+  slackAgentActivationAcknowledgement,
+  slackAgentReactionSource,
+  slackDefaultReactionFor,
+  slackMarkdownMessages,
+  slackWorkingReaction,
+  splitSlackMarkdown,
+  SLACK_DEFAULT_REACTIONS,
   type ConnectorConnectionContext,
+  type SlackAgentReactionCommand,
+  type SlackAgentReactionResult,
+  type SlackReactionOutcome,
   type SlackAgentInvocation,
   type SlackAgentSessionOrigin,
   type SlackIngressEnvelope,
@@ -87,6 +97,8 @@ interface SlackConnectionRow extends Record<string, unknown> {
   credential_iv: string;
   credential_key_version?: number;
   granted_scopes_json: string;
+  /** Free-form connector configuration; carries the reaction override. */
+  config_json?: string;
   status: string;
 }
 
@@ -126,6 +138,12 @@ interface SlackSessionRow {
   invocation_kind: SlackPromptSource["kind"];
   channel_type: SlackPromptSource["channelType"];
   assigned_user_id: string | null;
+  /** The triggering message Avalon's status reaction sits on, not the root. */
+  reaction_channel_id: string | null;
+  reaction_message_ts: string | null;
+  /** Only what Avalon placed itself, so a transition never takes a member's. */
+  reaction_current: string | null;
+  reaction_cursor: number;
 }
 
 type SlackPromptSource = {
@@ -477,7 +495,7 @@ export class SlackAgentService {
     while (true) {
       const page = await this.env.DB.prepare(
         `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
-                granted_scopes_json, status
+                granted_scopes_json, config_json, status
          FROM connector_connections
          WHERE connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled' AND id > ?
          ORDER BY id ASC LIMIT 100`,
@@ -1021,7 +1039,7 @@ export class SlackAgentService {
     this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     const rawConnections = await this.env.DB.prepare(
       `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
-              granted_scopes_json, status
+              granted_scopes_json, config_json, status
        FROM connector_connections
        WHERE workspace_id = ? AND connector_type = 'slack' AND scope = 'workspace'
          AND status <> 'disabled' ORDER BY id`,
@@ -1203,7 +1221,9 @@ export class SlackAgentService {
            ORDER BY created_at ASC LIMIT 1`,
         ).bind(workspaceId, workstreamId).first<{ prompt: string; target_user_id: string | null }>()
       : null;
-    const responseText = openElicitation?.prompt || text || "Avalon completed the task without a text response.";
+    // Trimmed rather than merely non-empty: whitespace-only text splits into no
+    // chunks at all, which would close the stream having appended nothing.
+    const responseText = openElicitation?.prompt.trim() || text.trim() || SLACK_EMPTY_RESULT_TEXT;
     // The session row names the person who opened the thread. Runs no longer
     // belong to that one person, so delivery follows the member whose message
     // triggered this run. Old workflow payloads lack the field and safely fall
@@ -1220,7 +1240,7 @@ export class SlackAgentService {
     let deliveryError: unknown;
     try {
       if (session.slack_stream_ts) {
-        for (const chunk of splitSlackText(responseText, 12_000)) {
+        for (const chunk of splitSlackMarkdown(responseText)) {
           await slackApi(token, "chat.appendStream", { channel: session.slack_channel_id, ts: session.slack_stream_ts, markdown_text: chunk }, AbortSignal.timeout(10_000));
         }
         streamContentComplete = true;
@@ -1309,6 +1329,13 @@ export class SlackAgentService {
       } catch (error) {
         logWarn(this.env, "slack_thread_status_cleanup_failed", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
       }
+      // Stopped before the swap, so a tick in flight cannot land a working
+      // reaction on top of the outcome and leave the message reading as busy.
+      await this.signalReactionTicker(session, "stop");
+      // Delivery is the authority on the outcome reaction, not the rotation:
+      // this runs on every terminal status, so the message ends up correct even
+      // when the ticker never started or was lost mid-run.
+      await this.applyOutcomeReaction(session, connection, token, outcomeStatus);
       await this.env.DB.prepare(
         "UPDATE slack_agent_sessions SET slack_stream_ts = NULL, updated_at = ? WHERE id = ?",
       ).bind(nowIso(), session.id).run();
@@ -1359,7 +1386,9 @@ export class SlackAgentService {
       const channelId = opened.channel.id;
       const title = input.outcomeStatus === "needs_input" ? `Action needed · ${input.title}` : input.title;
       const deliveryKey = `${target.id}:${input.workstreamId}`;
-      const threadTs = await postSlackTextChunks(token, channelId, `${title}\n${input.text}`, undefined, `${deliveryKey}:result`);
+      // The title is a `header` block rather than a line of body text above the
+      // content, which is what it was when the body was posted as raw mrkdwn.
+      const threadTs = await postSlackTextChunks(token, channelId, input.text, undefined, `${deliveryKey}:result`, title);
       await slackApi(token, "chat.postMessage", {
         channel: channelId,
         thread_ts: threadTs,
@@ -1428,9 +1457,10 @@ export class SlackAgentService {
     await postSlackTextChunks(
       token,
       opened.channel.id,
-      `*${input.title}*\n${input.markdown}`,
+      input.markdown,
       undefined,
       `digest:${input.targetId}:${input.deliveryId}`,
+      input.title,
     );
   }
 
@@ -1696,24 +1726,26 @@ export class SlackAgentService {
       matchedWorkspaceUserId = externalIdentity.matchedWorkspaceUserId;
       matchedVerification = externalIdentity.matchedVerification;
     }
-    if (activationInvocation) {
-      const adapter = connectorRegistryForEnv(this.env).get("slack").messagingAgent;
-      if (!adapter) throw new ApiError(500, "slack_agent_adapter_missing", "Slack Agent is not configured");
-      const activationConnection: ConnectorConnectionContext = {
-        id: connection.id,
-        workspaceId: connection.workspace_id,
-        scope: "workspace",
-        ownerUserId: null,
-        grantedScopes: parseGrantedScopes(connection.granted_scopes_json),
-        credentials: { botAccessToken: token },
-        cursor: {},
-        config: {},
-      };
+    const reactionSource = activationInvocation ? slackAgentReactionSource(activationInvocation) : null;
+    let placedReaction: string | null = null;
+    // The acknowledgement command is built and executed as two explicit steps
+    // rather than through `acknowledgeConnectorAgentActivation`, because the
+    // shared hook takes only the invocation and cannot see the workspace's
+    // configured reaction set. Both steps are the adapter's own, so this is the
+    // same control plane the shared helper would have gone through.
+    const acknowledgementCommand = activationInvocation
+      ? slackAgentActivationAcknowledgement(
+          activationInvocation,
+          resolveSlackReactions(slackConnectionReactionOverride(connection)),
+        )
+      : null;
+    if (acknowledgementCommand) {
       try {
-        await acknowledgeConnectorAgentActivation(adapter, activationInvocation, {
-          connection: activationConnection,
-          signal: AbortSignal.timeout(5_000),
-        });
+        const acknowledgement = await this.executeSlackReaction(connection, token, acknowledgementCommand);
+        // Remembered so the terminal transition can take *this* emoji off again.
+        // The session does not exist yet, so it is carried down to the write
+        // that creates or resumes it rather than persisted here.
+        placedReaction = acknowledgement.reaction;
       } catch (error) {
         // The host contract and capability checks remain fail-closed. Once the
         // provider call begins, however, a supplemental reaction must not drop
@@ -1728,7 +1760,7 @@ export class SlackAgentService {
         logWarn(this.env, "slack_activation_ack_failed", {
           connection_id: connection.id,
           team_id: teamId,
-          event_id: activationInvocation.kind === "event" ? activationInvocation.eventId : null,
+          event_id: activationInvocation?.kind === "event" ? activationInvocation.eventId : null,
           reason: slackErrorReason(error),
         });
       }
@@ -1798,6 +1830,23 @@ export class SlackAgentService {
     }
     if (session) {
       await this.clearPendingPrompt(connection.id, channel, thread, slackUserId);
+      // Each prompt in a thread moves the status onto the message that made it.
+      // The rotation restarts with it, so a continuation does not resume the
+      // previous run's position and appear to have skipped a step.
+      if (reactionSource) {
+        await this.env.DB.prepare(
+          `UPDATE slack_agent_sessions
+             SET reaction_channel_id = ?, reaction_message_ts = ?, reaction_current = ?,
+                 reaction_cursor = 0, updated_at = ?
+           WHERE id = ?`,
+        ).bind(reactionSource.channelId, reactionSource.timestamp, placedReaction, nowIso(), session.id).run();
+        session = { ...session, reaction_channel_id: reactionSource.channelId, reaction_message_ts: reactionSource.timestamp, reaction_current: placedReaction, reaction_cursor: 0 };
+        await this.signalReactionTicker(
+          session,
+          "start",
+          resolveSlackReactions(slackConnectionReactionOverride(connection)).workingIntervalMs,
+        );
+      }
     }
     if (session && session.workstream_id) {
       const justCreated = session.opening_client_message_id === openingClientMessageId;
@@ -3040,6 +3089,199 @@ export class SlackAgentService {
     return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: asUserId(String(row.user_id)), workspaceId: asWorkspaceId(String(row.workspace_id)), region: this.env.AVALON_REGION, role: membership.role }, connection, slackUserId, teamId };
   }
 
+  /**
+   * Swaps the reaction on a run's source message for the one naming its outcome.
+   *
+   * Never throws. A reaction is decoration on a run that has already happened,
+   * and the persisted Avalon run stays canonical whatever Slack answers here —
+   * so a failure leaves whatever is on the message and says so in the log.
+   */
+  private async applyOutcomeReaction(
+    session: SlackSessionRow,
+    connection: SlackConnectionRow,
+    token: string,
+    outcome: SlackReactionOutcome,
+  ): Promise<void> {
+    if (!session.reaction_channel_id || !session.reaction_message_ts) return;
+    try {
+      // Re-read rather than trusting the snapshot `deliverWorkstreamOutcome`
+      // took at the top. Between that read and this call the stream appends,
+      // `chat.stopStream`, a possible full fallback post, the needs-input DMs,
+      // and the status clear have all run on 5-10s timeouts, and the ticker has
+      // been rewriting `reaction_current` every six seconds throughout. Removing
+      // the stale emoji answers `no_reaction`, which is swallowed as success —
+      // leaving the working reaction *and* the outcome on the message, which is
+      // the one invariant this feature has.
+      const current = await this.env.DB.prepare(
+        "SELECT reaction_current FROM slack_agent_sessions WHERE id = ?",
+      ).bind(session.id).first<{ reaction_current: string | null }>();
+      const placed = current?.reaction_current ?? null;
+      const reactions = resolveSlackReactions(slackConnectionReactionOverride(connection));
+      const result = await this.executeSlackReaction(connection, token, {
+        kind: "reaction",
+        channelId: session.reaction_channel_id,
+        timestamp: session.reaction_message_ts,
+        add: reactions.outcomes[outcome],
+        remove: placed,
+        fallback: slackDefaultReactionFor(outcome),
+      });
+      // Conditional on the value this transition actually removed, so a tick
+      // that slipped in behind the read is detected rather than overwritten.
+      // `IS` rather than `=` because the column is nullable and NULL is a real
+      // state here: it means Avalon has placed nothing.
+      const written = await this.env.DB.prepare(
+        "UPDATE slack_agent_sessions SET reaction_current = ?, updated_at = ? WHERE id = ? AND reaction_current IS ?",
+      ).bind(result?.reaction ?? null, nowIso(), session.id, placed).run();
+      if (!Number(written.meta.changes ?? 0)) {
+        logWarn(this.env, "slack_outcome_reaction_raced", {
+          session_id: session.id,
+          outcome,
+          expected: placed,
+        });
+      }
+    } catch (error) {
+      if (slackReconnectRequired(error)) {
+        await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
+      }
+      logWarn(this.env, "slack_outcome_reaction_failed", {
+        session_id: session.id,
+        connection_id: connection.id,
+        outcome,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  }
+
+  /**
+   * Advances the rotating working reaction one step.
+   *
+   * Returns whether the run is still live and worth another tick. It does not
+   * throw: the caller is an alarm, and a thrown alarm is retried by the runtime,
+   * which would spend Slack's rate limit redrawing an emoji. A Slack refusal —
+   * a rate limit above all — keeps the rotation alive and simply leaves the
+   * current reaction in place until the next tick.
+   */
+  async advanceSessionReaction(input: {
+    workspaceId: string;
+    sessionId: string;
+    deliveryKey: string;
+  }): Promise<boolean> {
+    try {
+      // `slack_agent_sessions` is WorkspaceDO's, so the alarm's bare env has to
+      // be scoped before it can read a session at all.
+      this.env = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
+      const session = await this.env.DB.prepare(
+        "SELECT * FROM slack_agent_sessions WHERE id = ? AND workspace_id = ?",
+      ).bind(input.sessionId, input.workspaceId).first<SlackSessionRow>();
+      if (!session?.reaction_channel_id || !session.reaction_message_ts) return false;
+      // Liveness comes from the run, not the ticker's own bookkeeping: delivery
+      // stamps a new key, so a key that has moved means this run is over even if
+      // the explicit stop never arrived. Comparing against the baseline rather
+      // than against "has ever delivered" is what keeps a follow-up prompt in an
+      // existing thread rotating — it inherits the previous run's key.
+      if ((session.last_delivery_key ?? "") !== input.deliveryKey) return false;
+      const connection = await this.connectionById(session.connection_id);
+      const reactions = resolveSlackReactions(slackConnectionReactionOverride(connection));
+      // The cursor names the reaction this tick places, and the *next* position
+      // is what gets persisted. Pre-incrementing skipped the first emoji
+      // entirely: admission resets the cursor to 0, so the first tick showed
+      // `working[1]` and the documented order never started where it says it
+      // does — most runs finished before it wrapped around to the first.
+      const cursor = session.reaction_cursor;
+      try {
+        const result = await this.executeSlackReaction(connection, await this.botToken(connection), {
+          kind: "reaction",
+          channelId: session.reaction_channel_id,
+          timestamp: session.reaction_message_ts,
+          add: slackWorkingReaction(reactions, cursor),
+          remove: session.reaction_current,
+          fallback: slackDefaultReactionFor("working", cursor),
+        });
+        // Conditional on the emoji this tick removed, so a terminal transition
+        // that landed in between is not overwritten by a working reaction.
+        await this.env.DB.prepare(
+          `UPDATE slack_agent_sessions SET reaction_current = ?, reaction_cursor = ?, updated_at = ?
+            WHERE id = ? AND reaction_current IS ?`,
+        ).bind(result.reaction, cursor + 1, nowIso(), session.id, session.reaction_current).run();
+      } catch (error) {
+        // A rate limit above all: keep the rotation alive and leave the current
+        // reaction until the next tick rather than ending it on one refusal.
+        logWarn(this.env, "slack_working_reaction_failed", {
+          session_id: session.id,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
+      return true;
+    } catch (error) {
+      logWarn(this.env, "slack_reaction_tick_abandoned", {
+        session_id: input.sessionId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+      return false;
+    }
+  }
+
+  /** Starts or stops the rotation for a session, never failing the run for it. */
+  private async signalReactionTicker(
+    session: SlackSessionRow,
+    action: "start" | "stop",
+    intervalMs = SLACK_DEFAULT_REACTIONS.workingIntervalMs,
+  ): Promise<void> {
+    try {
+      // Workspace-scoped rather than a regional singleton: the ticker belongs to
+      // one Slack session inside one workspace, so it takes that workspace's
+      // placement affinity like every other product object.
+      const ticker = await durableObjectStubForWorkspace(
+        this.env,
+        this.env.SLACK_REACTION_TICKERS,
+        session.workspace_id,
+        `${this.env.AVALON_REGION}:slack-reaction:${session.id}`,
+      );
+      await ticker.fetch(`https://slack-reaction-ticker.internal/${action}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(action === "start"
+          ? {
+              workspaceId: session.workspace_id,
+              sessionId: session.id,
+              deliveryKey: session.last_delivery_key ?? "",
+              intervalMs,
+            }
+          : {}),
+      });
+    } catch (error) {
+      logWarn(this.env, "slack_reaction_ticker_signal_failed", {
+        session_id: session.id,
+        action,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  }
+
+  /** Runs one reaction transition through the connector's agent control plane. */
+  private async executeSlackReaction(
+    connection: SlackConnectionRow,
+    token: string,
+    command: SlackAgentReactionCommand,
+  ): Promise<SlackAgentReactionResult> {
+    const adapter = connectorRegistryForEnv(this.env).get("slack").messagingAgent;
+    if (!adapter) throw new ApiError(500, "slack_agent_adapter_missing", "Slack Agent is not configured");
+    const context: ConnectorConnectionContext = {
+      id: connection.id,
+      workspaceId: connection.workspace_id,
+      scope: "workspace",
+      ownerUserId: null,
+      grantedScopes: parseGrantedScopes(connection.granted_scopes_json),
+      credentials: { botAccessToken: token },
+      cursor: {},
+      config: {},
+    };
+    return await adapter.execute(command, {
+      connection: context,
+      signal: AbortSignal.timeout(5_000),
+    }) as SlackAgentReactionResult;
+  }
+
   private async connectionForTeam(teamId: string): Promise<SlackConnectionRow> {
     const route = await workspaceRegionalDatabase(this.env).prepare(
       `SELECT workspace_id, connection_id FROM slack_installation_routes
@@ -3059,7 +3301,7 @@ export class SlackAgentService {
     this.env = withWorkspaceRuntimeDatabase(this.env, route.workspace_id);
     const row = await this.env.DB.prepare(
       `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
-              granted_scopes_json, status
+              granted_scopes_json, config_json, status
        FROM connector_connections
        WHERE id = ? AND workspace_id = ? AND connector_type = 'slack'
          AND scope = 'workspace' AND provider_account_id = ? AND status <> 'disabled'`,
@@ -3086,7 +3328,7 @@ export class SlackAgentService {
     this.env = withWorkspaceRuntimeDatabase(this.env, route.workspace_id);
     const row = await this.env.DB.prepare(
       `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
-              granted_scopes_json, status
+              granted_scopes_json, config_json, status
        FROM connector_connections WHERE id = ? AND workspace_id = ?
          AND connector_type = 'slack' AND scope = 'workspace'`,
     ).bind(id, route.workspace_id).first<SlackConnectionRow>();
@@ -3304,16 +3546,33 @@ async function postSlackResponse(responseUrl: string, message: z.input<typeof Sl
   if (!response.ok) throw new ApiError(502, "slack_response_failed", `Slack response URL returned HTTP ${response.status}`);
 }
 
-async function postSlackTextChunks(token: string, channel: string, text: string, threadTs?: string, clientMessageKey?: string): Promise<string> {
-  const chunks = splitSlackText(text || "Avalon completed the task without a text response.", 40_000);
+/**
+ * Posts agent markdown into Slack as rendered blocks.
+ *
+ * The `text` field carries only the notification fallback. It is parsed as
+ * mrkdwn, a dialect with no headings and no tables, and sending agent output
+ * through it was what put literal `###` characters in front of members while the
+ * streaming path — which has always used `markdown_text` — rendered the same
+ * output correctly. Both paths now render through the same `markdown` block.
+ */
+async function postSlackTextChunks(
+  token: string,
+  channel: string,
+  text: string,
+  threadTs?: string,
+  clientMessageKey?: string,
+  header?: string,
+): Promise<string> {
+  const messages = slackMarkdownMessages(text, { ...(header ? { header } : {}), fallback: SLACK_EMPTY_RESULT_TEXT });
   let rootTs = threadTs;
   let firstMessageTs: string | null = null;
-  for (const [index, chunk] of chunks.entries()) {
+  for (const [index, message] of messages.entries()) {
     const result = await slackApi(token, "chat.postMessage", {
       channel,
       ...(rootTs ? { thread_ts: rootTs } : {}),
       ...(clientMessageKey ? { client_msg_id: await stableUuid(`${clientMessageKey}:${index}`) } : {}),
-      text: chunk,
+      text: message.text,
+      blocks: message.blocks,
     }, AbortSignal.timeout(10_000));
     firstMessageTs ??= result.ts;
     rootTs ??= result.ts;
@@ -3330,18 +3589,25 @@ async function stableUuid(value: string): Promise<string> {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
-function splitSlackText(value: string, maximum: number): string[] {
-  const chunks: string[] = [];
-  let chunk = "";
-  for (const character of value) {
-    if (chunk.length + character.length > maximum) {
-      chunks.push(chunk);
-      chunk = "";
-    }
-    chunk += character;
+/** What a run with no text response says, rather than posting nothing at all. */
+const SLACK_EMPTY_RESULT_TEXT = "Avalon completed the task without a text response.";
+
+/**
+ * The reaction vocabulary a workspace installation has configured, if any.
+ *
+ * Unparseable configuration reads as none rather than throwing: `resolveSlackReactions`
+ * already falls back to the defaults, and a member's run must not fail over a
+ * malformed emoji list an administrator saved months ago.
+ */
+function slackConnectionReactionOverride(connection: SlackConnectionRow): unknown {
+  try {
+    const config: unknown = JSON.parse(connection.config_json || "{}");
+    return config && typeof config === "object" && !Array.isArray(config)
+      ? (config as Record<string, unknown>).reactions
+      : null;
+  } catch {
+    return null;
   }
-  if (chunk) chunks.push(chunk);
-  return chunks.length ? chunks : ["Avalon completed the task without a text response."];
 }
 
 function slackChannelType(value: unknown): SlackPromptSource["channelType"] {

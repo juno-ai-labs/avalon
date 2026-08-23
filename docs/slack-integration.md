@@ -16,6 +16,9 @@ listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 | Path | Responsibility |
 | --- | --- |
 | `packages/connectors/src/slack.ts` | The adapter: capabilities, scope health, tools, activity types. |
+| `packages/connectors/src/slack-reactions.ts` | The reaction vocabulary and how an override resolves against it. |
+| `packages/connectors/src/slack-markdown.ts` | Agent markdown rendered as Slack blocks, and split at Slack's limit. |
+| `apps/api/src/durable-objects/slack-reaction-ticker.ts` | The alarm behind the rotating working reaction. |
 | `packages/contracts/src/index.ts` | The shared contracts both ends parse. |
 | `packages/db/migrations/0039_slack_connector.sql` | The regional schema. |
 | `apps/api/src/services/connection-service.ts` | OAuth and connection lifecycle. |
@@ -108,7 +111,9 @@ Ingress verifies `v0:{timestamp}:{exact raw body}` using HMAC-SHA256, requires a
 
 Queue workers atomically lease jobs, retry failed or abandoned work, and clear the stored ingress payload after successful processing. A job that failed on authorization is classified non-retryable and pinned at the attempt ceiling, which is right while a grant is dead and wrong the moment it is not: `redriveReauthorizedIngress` re-queues such a job once its connection has been written again, which a reauthorization always does. It is self-limiting, because a re-driven job that fails again stamps itself newer than the connection. Without it, events that arrived during an outage stayed failed forever with their payload still on the row — and a `link_shared` Slack reports exactly once is never redelivered, so the message keeps its bare URL permanently. Retries with the same `event_id` and body are acknowledged once. Reuse of an event ID with different content is a conflict. Provider payloads are not written to Global object storage during routing. Ordinary channel messages that do not match an existing or retryable Avalon thread are acknowledged without creating a regional ingress job.
 
-After a queued DM or mention passes connection, policy, and actor checks, the worker uses the shared connector activation flow to add the `eyes` reaction to the exact triggering message before it gathers context, creates/resumes a workstream, or starts model/tool processing. Slack's `already_reacted` response is a successful idempotent retry. A Slack-side reaction failure is logged and, when appropriate, marks the installation for reconnect, but does not discard the already-admitted user request. Commands and modal submissions have no unambiguous source message and retain their existing ephemeral/modal acknowledgement instead.
+After a queued DM or mention passes connection, policy, and actor checks, the worker adds the acknowledgement reaction to the exact triggering message before it gathers context, creates/resumes a workstream, or starts model/tool processing. Slack's `already_reacted` response is a successful idempotent retry. A Slack-side reaction failure is logged and, when appropriate, marks the installation for reconnect, but does not discard the already-admitted user request. Commands and modal submissions have no unambiguous source message and retain their existing ephemeral/modal acknowledgement instead.
+
+The acknowledgement command is built and executed as two explicit adapter steps rather than through `acknowledgeConnectorAgentActivation`. The shared hook takes only the invocation, so it cannot see the workspace's configured reaction set; both steps are still the adapter's own, so the acknowledgement goes through the same control plane the shared helper would have used.
 
 ### Identity linking
 
@@ -235,16 +240,75 @@ The workstream also carries the thread it was summoned from as an attached `slac
 
 On a prompt Avalon:
 
-1. adds an `eyes` reaction when the invocation has a source message;
+1. adds the acknowledgement reaction when the invocation has a source message;
 2. sets the Slack Agent thread status;
 3. creates or resumes the durable workstream;
-4. starts a `chat.startStream` reply when the surface supports it;
-5. executes the ordinary authorized Avalon harness;
-6. appends the complete persisted final message in Slack's required 12,000-character chunks and stops the stream;
-7. falls back to complete 40,000-character Slack message chunks if streaming is unavailable;
-8. links to the canonical Avalon workstream and offers feedback.
+4. starts the reaction rotation for that session;
+5. starts a `chat.startStream` reply when the surface supports it;
+6. executes the ordinary authorized Avalon harness;
+7. appends the complete persisted final message in Slack's required 12,000-character chunks and stops the stream;
+8. falls back to complete Slack message chunks if streaming is unavailable;
+9. stops the rotation and swaps the reaction for the one naming the outcome;
+10. links to the canonical Avalon workstream and offers feedback.
 
 The persisted Avalon run is canonical. A Slack delivery failure never rewrites a completed run as failed.
+
+#### The status reaction
+
+A reaction on the triggering message is the only status a member sees without
+opening the thread, so it tracks the run rather than merely receipting it. **At
+most one Avalon reaction sits on a message at a time**, and each transition
+removes the previous one:
+
+| State | Default | When |
+| --- | --- | --- |
+| Acknowledged | `eyes` | The prompt is admitted and authorized, before context gathering. |
+| Working | `brain` → `mag` → `writing_hand` → `gear` | Rotating while the run is live. |
+| Outcome | `white_check_mark`, `question`, `warning`, `octagonal_sign` | The run reaches `completed`, `needs_input`, `failed`, or `stopped`. |
+
+A transition removes only the emoji Avalon itself last placed, recorded in
+`slack_agent_sessions.reaction_current`, so a member's own reaction on the same
+message survives. Both transitions re-read that column immediately before acting
+and write it back conditionally, because delivery and a rotation tick can be in
+flight at once: removing a stale emoji answers `no_reaction`, which is a
+successful retry, and would otherwise leave the working reaction beside the
+outcome — the one thing the single-slot rule exists to prevent. The reaction sits on the *triggering* message rather than the
+thread root, and each new prompt in a thread moves it and restarts the rotation.
+
+The rotation is a Durable Object alarm keyed by session, holding its cursor in
+its own SQLite database and stopping when the session's delivery key moves —
+which is delivery's own stamp that the run is over. A tick re-reads its own row
+before re-arming, so a stop that arrived while the tick was awaiting Slack
+cancels the rotation rather than being undone by it. **The outcome reaction never
+depends on it**: delivery applies that transition, and delivery runs on
+every terminal status whether or not a ticker ever started. That is what lets the
+rotation be treated as decoration — an alarm that is lost costs a cycling emoji,
+not a member's ability to tell that their task finished.
+
+The six-second default cadence is Slack's constraint rather than a preference.
+`reactions.add` and `reactions.remove` are Tier 3 methods — roughly 50 calls a
+minute, counted per method per workspace per app — and one rotation step spends
+one call in each bucket, so a single run uses ten of its fifty per minute and a
+workspace has room for about five concurrent runs. Faster cycling stalls in a
+busy workspace, where Slack's refusals land on whichever run ticks last.
+
+Reaction sets resolve most-specific-wins: the built-in defaults, then a workspace
+override on the installation's `config_json`, then a per-run override. An
+override may name any subset and inherits the rest. Slack exposes no way to check
+that an emoji name exists before using it, so a name it rejects with
+`invalid_name` falls back to Avalon's own default for that state, once.
+
+#### Rendering agent output
+
+Slack has two text dialects. The `text` field of `chat.postMessage` is **mrkdwn**
+— `*bold*`, `_italic_`, no headings, no tables — while the `markdown` block and
+the streaming `markdown_text` field take ordinary markdown, which is what the
+agent emits. Every delivery path therefore renders through the `markdown` block
+and carries `text` only as the notification and screen-reader fallback. An
+automation result's title is a `header` block above it rather than a line of body
+text. Long output splits at Slack's 12,000-character limit, preferring a
+paragraph seam, then a line, and closing and reopening a fenced code block rather
+than severing one.
 
 An automation's Agent-DM destination is one of the frozen delivery targets described in
 [work-stream and automation email addresses](workstream-email-addresses.md#outbound-automation-results);
@@ -389,9 +453,16 @@ At each run Avalon ranks actionable inbox items, sends up to three (fewer if few
   `needs_reconnect` still reaches Slack and fails on Slack's answer; only a
   *disabled* installation is refused, because disabling clears the credentials and
   drops the row from `connectionForTeam`.
-- **The `eyes` reaction is added by the host control plane after admission and
-  authorization but before context gathering**, and `already_reacted` is a
-  successful retry.
+- **The acknowledgement reaction is added by the host control plane after
+  admission and authorization but before context gathering**, and
+  `already_reacted` is a successful retry.
+- **At most one Avalon reaction sits on a source message**, and a transition
+  removes only the emoji Avalon itself last placed — never whatever it finds
+  there, which would take a member's reaction with it.
+- **The outcome reaction is applied by the delivery path, not by the rotation.**
+  Delivery runs on every terminal status, so the message ends correct even when
+  the ticker never started or was lost; that is what makes the rotation
+  discardable.
 - **Attribution is not authorization.** An unlinked author's task still runs with
   the workspace principal, and the opening message keeps its external Slack actor.
 - **A thread belongs to its Slack conversation, not to one member.** Its work
@@ -502,8 +573,16 @@ not own:
   before health checks and tool calls succeed. Until the identity scopes arrive,
   lookup-based mentions fall back to email.
 - **Streaming degrades rather than fails**: replies stream in Slack's required
-  12,000-character chunks, falling back to complete 40,000-character message chunks
-  when streaming is unavailable.
+  12,000-character chunks, falling back to complete message chunks when streaming
+  is unavailable. Both paths render through the `markdown` block, so the same
+  output looks the same whichever carried it.
+- **A reaction failure never touches the run.** A missing `reactions:write`
+  discovered mid-run leaves whatever is on the message; a rate-limited rotation
+  step keeps the current emoji and tries again on the next tick; a configured
+  emoji Slack rejects falls back to Avalon's default for that state.
+- **The rotation parks after 50 steps.** A backstop for a ticker whose run
+  vanished without reaching delivery, not a policy — the liveness check ends the
+  rotation as soon as the run does.
 - **Message-context reads are bounded** — up to eight nearby messages on a prompt,
   and the per-tool bounds in [`slack-permissions.md`](slack-permissions.md).
 - **SSE responses on Slack's Streamable HTTP MCP endpoint are parsed**, but
@@ -522,6 +601,8 @@ not own:
 | Suite | Covers |
 | --- | --- |
 | `apps/api/test/slack-agent-ingress.test.ts` | Signature verification, the replay window, dedupe, the ingress job written before acknowledgement, and the manifest read from `config/provider-apps/slack.json`. |
+| `packages/connectors/src/slack-reactions.test.ts` | Override resolution, partial inheritance, the malformed-override fallback, and the rotation's wrap. |
+| `packages/connectors/src/slack-markdown.test.ts` | Block rendering, the notification fallback, and every split rule including the reopened fence. |
 | `apps/api/test/slack-account-link.test.ts` | Both routes to a link, mint-on-click, retirement ordering and its mint-time bound, and each refusal reason. |
 | `apps/api/test/slack-workstream-creator-attribution.test.ts` | Creator resolution and the one case where an existing creator is rewritten. |
 | `apps/api/test/slack-thread-audience.test.ts` | The conversation's visibility and room, bounded roster enrichment, participant events, per-message delivery routing, shared feedback controls, a second linked member continuing a thread, and an unmapped Slack member's reply. |
@@ -625,6 +706,63 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 This document predates the [module document](module-documents.md) convention and
 had no changelog until the entries below; the reasoning behind everything above them
 was not recorded and is not reconstructed here.
+
+### 2026-08-22 — The reaction became a status, and agent output started rendering
+
+**What changed:** The `eyes` reaction gained a lifecycle. It is still added on
+admission, but a Durable Object alarm now rotates a working reaction while the
+run is live, and delivery swaps in one naming the outcome — `white_check_mark`,
+`question`, `warning`, or `octagonal_sign`. At most one Avalon reaction sits on a
+message at a time, and a transition removes only what Avalon placed. The sets are
+configurable per installation. Separately, every delivery path now renders agent
+output through Slack's `markdown` block instead of posting it as `text`, and
+`slack_agent_sessions` — WorkspaceDO's, since the object cutover — gained four
+columns recording where the reaction sits and which one it is.
+
+**Why:** Two defects in the same surface, both visible to everyone in a channel
+rather than only to the member who asked. The reaction was added once and removed
+by nothing, so a run that died on a provider error and a run that completed
+successfully were indistinguishable at the message that started them — the Agent
+thread status *was* cleared, but that is only visible inside the thread pane. And
+`postSlackTextChunks` passed the model's markdown into `chat.postMessage`'s
+`text`, which Slack parses as mrkdwn: a dialect with no headings and no tables, so
+`### Outcome` reached the channel as three literal hashes. The streaming path had
+always used `markdown_text` and rendered correctly, which meant the same output
+looked different depending only on which path carried it.
+
+**Considered and rejected:** A delayed queue message for the rotation, reusing the
+`schedulePublicChannelSync` pattern, which needs no new infrastructure. Every tick
+would write a `slack_ingress_jobs` row — dozens per run for a decorative effect —
+and a queued message cannot be cancelled, so a run that finished in ten seconds
+would keep waking only to discover it was over. Also rejected: translating
+markdown to mrkdwn so the `text` field could stay. `###` has no correct
+translation into a dialect without headings, only a lossy one, and it would have
+made the two delivery paths differ in a new way rather than the old one. Also
+rejected: stacking each state as its own reaction. It ends with three pills and
+makes the current state something the reader has to work out from a set.
+
+**Consequences:** The outcome transition is applied by **delivery**, not by the
+ticker, and that split is load-bearing: delivery runs on every terminal status, so
+a ticker that never started or was lost costs a cycling emoji rather than a
+member's ability to tell that their task finished. Anything that moves the outcome
+reaction onto the ticker reintroduces the original defect in a subtler form.
+
+The six-second cadence is Slack's arithmetic, not taste. `reactions.add` and
+`reactions.remove` are Tier 3 — about 50 calls a minute per method per workspace
+per app — and a rotation step spends one in each bucket, leaving room for roughly
+five concurrent runs in a workspace. A future change tempted to speed it up should
+know that the refusals land on whichever run happens to tick last, which is the
+worst possible distribution of the failure.
+
+The acknowledgement no longer goes through `acknowledgeConnectorAgentActivation`.
+That helper takes only the invocation and cannot see a workspace's configured
+reaction set, so the command is built and executed as two explicit adapter steps —
+the same control plane, one less indirection that could not carry the argument.
+
+`reaction_current` is deliberately nullable rather than defaulted: "Avalon has
+placed nothing" and "the reaction is `eyes`" are different states, and a default
+would make every row written before this migration claim the second and then try
+to remove an emoji that was never there.
 
 ### 2026-08-22 — A spent link challenge is kept a day, and an exhausted job is reported once
 

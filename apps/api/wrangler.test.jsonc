@@ -29,13 +29,20 @@
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
       { "name": "BLOCK_DASHBOARD_AGENTS", "class_name": "BlockDashboardAgent" },
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
-      { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" }
+      { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
+      { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" }
     ]
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["SubstreamAgent", "BlockDashboardAgent", "WorkstreamDO", "WorkspaceDO"]
+      "new_sqlite_classes": [
+        "SubstreamAgent",
+        "BlockDashboardAgent",
+        "WorkstreamDO",
+        "WorkspaceDO",
+        "SlackReactionTicker"
+      ]
     }
   ],
   "queues": {
