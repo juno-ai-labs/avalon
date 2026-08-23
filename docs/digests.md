@@ -611,6 +611,36 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
+### 2026-08-22 — The email renders the Markdown the digest prompt actually asks for
+
+**What changed:** The small Markdown renderer in `digest-email-content.ts` gained
+ordered lists, tables, fenced code blocks, nested lists, task-list marks,
+single-asterisk emphasis, strikethrough, bare-URL links, and character-reference
+decoding. Code spans are lifted out before the emphasis passes and put back
+afterwards. Mention links render as their label. Everything goes through
+`normalizeModelMarkdown` first.
+
+**Why:** An audit of what each surface does with the same Markdown found this one
+losing most of it. A numbered list arrived as bullets, so a sequence of migration
+steps read as an unordered set. A table arrived as one run-on paragraph of pipes.
+A fenced block arrived as its own backticks with the newlines collapsed. `&amp;`
+was escaped a second time and shown as its own source. A person mention was
+printed as `[@Ada](person:0199-…)`. And emphasis inside a code span was applied
+to the code, turning a command into one nobody could copy.
+
+None of this was a wrong decision earlier — the renderer covered the subset a
+digest used when it was written, and the prompt has since been asking for tables
+and numbered steps. The gap is what the audit was for.
+
+**Consequences:** The renderer stays hand-rolled for the reasons stated above it:
+mail clients honour little of what a general library emits, and no model output
+ever becomes markup — every path still escapes before a tag is added. Character
+references are decoded *before* escaping, which is the order that makes
+`&lt;script&gt;` read as text rather than open a tag, and there is a test that
+fails if the two are swapped. A nested list takes its own marker rather than its
+parent's; inheriting it renumbered a bulleted aside under step 2 as steps of its
+own, which is what the rendered email showed before this shipped.
+
 ### 2026-08-20 — The email preview stops querying retired D1 product tables
 
 **What changed:** The preview still uses D1 to enumerate real active members,

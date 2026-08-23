@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { digestEmailHtml, digestMarkdownToHtml } from "../src/services/digest-email-content";
+import { digestEmailHtml, digestMarkdownToHtml, digestMarkdownToText } from "../src/services/digest-email-content";
 import { occurrenceLabel } from "../src/services/digest-delivery-service";
 
 describe("digest markdown rendering", () => {
@@ -20,6 +20,109 @@ describe("digest markdown rendering", () => {
     expect(html).toContain("<ul");
     expect(html).toContain("<strong");
     expect(html).toContain('<a href="https://example.com/plan"');
+  });
+
+  it("numbers an ordered list instead of bulleting it", () => {
+    const html = digestMarkdownToHtml("1. First\n2. Second\n3. Third");
+
+    expect(html).toContain("<ol");
+    expect(html).toContain("list-style:decimal");
+    expect(html).not.toContain("<ul");
+  });
+
+  it("keeps a bulleted sublist bulleted under a numbered step", () => {
+    // The parent's marker is not the child's: inheriting it renumbered a list
+    // of notes under step 2 as steps of its own.
+    const html = digestMarkdownToHtml("1. Freeze writes\n2. Backfill\n   - one pass\n   - then verify\n3. Cut over");
+
+    expect(html).toMatch(/<ul[^>]*list-style:circle/u);
+    expect(html).toContain("one pass");
+    expect((html.match(/<ol/gu) ?? []).length).toBe(1);
+  });
+
+  it("nests a sublist inside the item it belongs to", () => {
+    const html = digestMarkdownToHtml("- Parent\n  - Child\n- Sibling");
+
+    expect(html).toMatch(/<li[^>]*>Parent<ul[^>]*><li[^>]*>Child<\/li><\/ul><\/li>/u);
+    expect(html).toContain("Sibling");
+  });
+
+  it("renders a table as a table rather than as a row of pipes", () => {
+    const html = digestMarkdownToHtml("| Name | Count |\n| --- | --- |\n| Alpha | 3 |");
+
+    expect(html).toContain("<table");
+    expect(html).toContain("<th");
+    expect(html).toMatch(/<td[^>]*>Alpha<\/td>/u);
+    expect(html).not.toContain("| Alpha |");
+  });
+
+  it("keeps a fenced block intact, newlines and markup characters included", () => {
+    const html = digestMarkdownToHtml("```ts\nconst a = 1;\nif (a && b) return;\n```");
+
+    expect(html).toContain("<pre");
+    expect(html).toContain("const a = 1;\nif (a &amp;&amp; b) return;");
+    // The fence itself is syntax, not content, and never reaches the reader.
+    expect(html).not.toContain("```");
+  });
+
+  it("does not style the inside of a code span", () => {
+    // A command with asterisks in it is a command; bolding part of it makes it
+    // one nobody can copy.
+    const html = digestMarkdownToHtml("Run `npm run **build**` now");
+
+    expect(html).toContain("npm run **build**");
+    expect(html).not.toContain("<strong");
+  });
+
+  it("shows a mention as its label, having nowhere outside Avalon to link it", () => {
+    const source = "Assigned to [@Ada Lovelace](person:0199-abc) in [#launch](connector:slack:launch).";
+
+    expect(digestMarkdownToHtml(source)).toContain("Assigned to @Ada Lovelace in #launch.");
+    expect(digestMarkdownToHtml(source)).not.toContain("person:");
+    expect(digestMarkdownToText(source)).toBe("Assigned to @Ada Lovelace in #launch.");
+  });
+
+  it("decodes a character reference instead of showing its source", () => {
+    const html = digestMarkdownToHtml("A &amp; B, &rarr; C, &#8212; D");
+
+    expect(html).toContain("A &amp; B, → C, — D");
+    expect(html).not.toContain("&amp;amp;");
+  });
+
+  it("escapes a decoded reference rather than letting it become markup", () => {
+    // Decoding runs before escaping precisely so this cannot open a tag.
+    const html = digestMarkdownToHtml("&lt;script&gt;alert(1)&lt;/script&gt;");
+
+    expect(html).not.toContain("<script");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("marks a task list with a character no client can break", () => {
+    const html = digestMarkdownToHtml("- [x] Done\n- [ ] Pending");
+
+    expect(html).toContain("☑ Done");
+    expect(html).toContain("☐ Pending");
+    expect(html).not.toContain("[x]");
+  });
+
+  it("renders single-asterisk emphasis and strikethrough", () => {
+    expect(digestMarkdownToHtml("This is *urgent* work")).toContain("<em");
+    expect(digestMarkdownToHtml("~~dropped~~ and kept")).toContain("<del");
+  });
+
+  it("links a bare URL without linking an underscore into emphasis", () => {
+    const html = digestMarkdownToHtml("See https://example.com/a_b_c/page for more");
+
+    expect(html).toContain('<a href="https://example.com/a_b_c/page"');
+    expect(html).not.toContain("<em");
+  });
+
+  it("shows the character a model meant instead of the TeX it wrote", () => {
+    expect(digestMarkdownToHtml("Backlog $\\rightarrow$ Done")).toContain("Backlog → Done");
+    expect(digestMarkdownToText("Backlog $\\rightarrow$ Done")).toBe("Backlog → Done");
+    // And leaves a price alone, which is the reason that rule is written the
+    // way it is.
+    expect(digestMarkdownToHtml("Seats cost $50 and $70")).toContain("Seats cost $50 and $70");
   });
 
   it("never lets model output become markup", () => {

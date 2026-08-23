@@ -1,3 +1,4 @@
+import { normalizeModelMarkdown } from "@avalon/contracts/model-markdown";
 import { escapeHtml } from "./resend";
 
 /**
@@ -39,48 +40,133 @@ const PARAGRAPH_STYLE = `margin:0 0 13px;font-size:15px;line-height:1.65;color:$
 const LIST_STYLE = `margin:0 0 16px;padding-left:18px;font-size:15px;line-height:1.6;color:${COLOR.inkSoft}`;
 const LIST_ITEM_STYLE = "margin:0 0 9px;padding-left:3px";
 const QUOTE_STYLE = `margin:0 0 16px;padding:12px 16px;background:${COLOR.surfaceRaised};border-left:3px solid ${COLOR.mutedDeep};border-radius:0 8px 8px 0;font-size:14px;line-height:1.6;color:${COLOR.muted}`;
+const LINK_STYLE = `color:${COLOR.brand};text-decoration:none;border-bottom:1px solid rgba(206,220,0,.35)`;
 const RULE_STYLE = `border:0;border-top:1px solid ${COLOR.lineSoft};margin:26px 0`;
 
-interface Block {
-  kind: "heading" | "paragraph" | "list" | "quote" | "rule";
-  level?: number;
+const CODE_BLOCK_STYLE = `margin:0 0 16px;padding:12px 14px;background:${COLOR.canvas};border:1px solid ${COLOR.line};border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.55;color:${COLOR.inkSoft};white-space:pre-wrap;word-break:break-word`;
+const TABLE_STYLE = `margin:0 0 16px;border-collapse:separate;border-spacing:2px;width:100%;font-size:13.5px;line-height:1.5`;
+const TABLE_CELL_STYLE = `padding:7px 9px;border-radius:5px;background:${COLOR.surfaceRaised};color:${COLOR.inkSoft};text-align:left;vertical-align:top`;
+const TABLE_HEADER_STYLE = `padding:7px 9px;border-radius:5px;background:${COLOR.line};color:${COLOR.ink};font-weight:650;text-align:left;vertical-align:top`;
+const CODE_STYLE = `padding:2px 6px;border-radius:5px;background:${COLOR.surfaceRaised};border:1px solid ${COLOR.line};font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:${COLOR.inkSoft}`;
+/**
+ * Marks where a code span was lifted out of a line so the emphasis passes
+ * cannot reach inside it. U+0000 is the one character guaranteed absent: the
+ * text is split on it before anything else runs.
+ */
+const CODE_SEPARATOR = "\u0000";
+
+/** A checked and an unchecked box, drawn as characters no client can break. */
+const TASK_MARK = { done: "☑", pending: "☐" } as const;
+
+interface ListItem {
+  /** Nesting depth, counted from the leading whitespace of the source line. */
+  depth: number;
+  /** Each item carries its own marker: a bulleted sublist can sit under a
+   * numbered step, and inheriting the parent's would renumber it. */
+  ordered: boolean;
   lines: string[];
+  task?: "done" | "pending";
 }
+
+type Block =
+  | { kind: "heading"; level: number; lines: string[] }
+  | { kind: "paragraph"; lines: string[] }
+  | { kind: "quote"; lines: string[] }
+  | { kind: "rule" }
+  | { kind: "code"; lines: string[] }
+  | { kind: "table"; header: string[]; rows: string[][] }
+  | { kind: "list"; ordered: boolean; items: ListItem[] };
 
 export function digestMarkdownToHtml(markdown: string): string {
-  return blocksFromMarkdown(markdown).map(renderBlock).join("\n");
+  return blocksFromMarkdown(normalizeModelMarkdown(markdown)).map(renderBlock).join("\n");
 }
 
-/** The plain-text alternative, which is what a text-only client receives. */
+/**
+ * The plain-text alternative, which is what a text-only client receives.
+ *
+ * Markdown is close enough to read as text, so this leaves the structure alone
+ * and only removes what would read as debris in a client that renders none of
+ * it: the mention links, whose target is an internal identifier that means
+ * nothing outside Avalon, and the TeX the HTML part no longer shows either.
+ */
 export function digestMarkdownToText(markdown: string): string {
-  return markdown.replace(/\r\n/gu, "\n").replace(/\n{3,}/gu, "\n\n").trim();
+  return normalizeModelMarkdown(markdown)
+    .replace(/\r\n/gu, "\n")
+    .replace(MENTION_LINK, (_match, label: string) => label)
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+}
+
+/** `[label](person:…)` and `[label](connector:…)`, whose targets are internal. */
+const MENTION_LINK = /\[([^\]]+)\]\((?:person|connector):[^)\s]*\)/gu;
+
+const FENCE = /^\s{0,3}(?:`{3,}|~{3,})/u;
+const TABLE_DIVIDER = /^\s{0,3}\|?(?:\s*:?-{1,}:?\s*\|)+\s*:?-{1,}:?\s*\|?\s*$/u;
+const TABLE_ROW = /^\s{0,3}\|.*\|\s*$/u;
+const BULLET = /^(\s*)(?:[-*+]|(\d{1,3})[.)])\s+(.*)$/u;
+
+/** A table row's cells, with the optional leading and trailing pipes removed. */
+function tableCells(line: string): string[] {
+  return line.trim().replace(/^\|/u, "").replace(/\|$/u, "").split("|").map((cell) => cell.trim());
 }
 
 function blocksFromMarkdown(markdown: string): Block[] {
   const blocks: Block[] = [];
-  let current: Block | null = null;
+  const lines = markdown.replace(/\r\n/gu, "\n").split("\n");
+  let current: Extract<Block, { kind: "paragraph" | "quote" | "list" }> | null = null;
   const flush = (): void => {
     if (current) blocks.push(current);
     current = null;
   };
 
-  for (const raw of markdown.replace(/\r\n/gu, "\n").split("\n")) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index]!;
     const line = raw.trimEnd();
+
+    // A fence takes every line up to its closer verbatim, which is the whole
+    // point of one: nothing inside is markup, so nothing inside is parsed.
+    if (FENCE.test(line)) {
+      flush();
+      const body: string[] = [];
+      index += 1;
+      for (; index < lines.length && !FENCE.test(lines[index]!.trimEnd()); index += 1) body.push(lines[index]!);
+      blocks.push({ kind: "code", lines: body });
+      continue;
+    }
+
     if (line.trim().length === 0) {
       flush();
       continue;
     }
+
     if (/^\s{0,3}(?:[-*_]\s*){3,}$/u.test(line)) {
       flush();
-      blocks.push({ kind: "rule", lines: [] });
+      blocks.push({ kind: "rule" });
       continue;
     }
+
     const heading = /^(#{1,6})\s+(.*)$/u.exec(line);
     if (heading) {
       flush();
       blocks.push({ kind: "heading", level: heading[1]!.length, lines: [heading[2]!] });
       continue;
     }
+
+    // A table is recognised from its divider, so the header line is already
+    // behind us — which is why this reads ahead rather than accumulating.
+    if (TABLE_ROW.test(line) && index + 1 < lines.length && TABLE_DIVIDER.test(lines[index + 1]!.trimEnd())) {
+      flush();
+      const header = tableCells(line);
+      const rows: string[][] = [];
+      index += 2;
+      for (; index < lines.length && TABLE_ROW.test(lines[index]!.trimEnd()); index += 1) {
+        rows.push(tableCells(lines[index]!.trimEnd()));
+      }
+      index -= 1;
+      blocks.push({ kind: "table", header, rows });
+      continue;
+    }
+
     const quote = /^\s{0,3}>\s?(.*)$/u.exec(line);
     if (quote) {
       if (current?.kind !== "quote") {
@@ -90,19 +176,32 @@ function blocksFromMarkdown(markdown: string): Block[] {
       current.lines.push(quote[1]!);
       continue;
     }
-    const bullet = /^\s{0,3}(?:[-*+]|\d{1,3}[.)])\s+(.*)$/u.exec(line);
+
+    const bullet = BULLET.exec(line);
     if (bullet) {
+      const ordered = bullet[2] !== undefined;
       if (current?.kind !== "list") {
         flush();
-        current = { kind: "list", lines: [] };
+        current = { kind: "list", ordered, items: [] };
       }
-      current.lines.push(bullet[1]!);
+      const content = bullet[3]!;
+      const task = /^\[[xX]\]\s/u.test(content) ? "done" as const
+        : /^\[\s?\]\s/u.test(content) ? "pending" as const
+        : undefined;
+      current.items.push({
+        depth: Math.min(Math.floor(bullet[1]!.replace(/\t/gu, "  ").length / 2), 3),
+        ordered,
+        lines: [task ? content.replace(/^\[[xX\s]?\]\s+/u, "") : content],
+        ...(task ? { task } : {}),
+      });
       continue;
     }
+
     // A wrapped bullet continues the bullet above it rather than starting a
     // paragraph, which is what keeps a long item from splitting mid-sentence.
     if (current?.kind === "list" && /^\s{2,}/u.test(raw)) {
-      current.lines[current.lines.length - 1] += ` ${line.trim()}`;
+      const last = current.items[current.items.length - 1];
+      if (last) last.lines.push(line.trim());
       continue;
     }
     if (current?.kind === "paragraph") {
@@ -116,46 +215,147 @@ function blocksFromMarkdown(markdown: string): Block[] {
   return blocks;
 }
 
+/**
+ * A list rendered at one nesting depth, recursing into the items below it.
+ *
+ * Mail clients disagree about nested-list indentation and several drop the
+ * marker of an inner list entirely, so each level is its own element with its
+ * own padding rather than a client's default.
+ */
+function renderList(items: ListItem[], ordered: boolean, depth: number): string {
+  const tag = ordered ? "ol" : "ul";
+  const marker = depth === 0 ? "disc" : depth === 1 ? "circle" : "square";
+  const style = `${LIST_STYLE};list-style:${ordered ? "decimal" : marker}`;
+  let html = "";
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]!;
+    if (item.depth > depth) continue;
+    const children: ListItem[] = [];
+    while (index + 1 < items.length && items[index + 1]!.depth > depth) {
+      children.push(items[index + 1]!);
+      index += 1;
+    }
+    const mark = item.task ? `${TASK_MARK[item.task]} ` : "";
+    const nested = children.length > 0
+      ? renderList(children, children[0]!.ordered, depth + 1)
+      : "";
+    // A task list carries its state in the mark, so it drops the bullet that
+    // would otherwise sit beside it.
+    const itemStyle = item.task ? `${LIST_ITEM_STYLE};list-style:none` : LIST_ITEM_STYLE;
+    html += `<li style="${itemStyle}">${mark}${renderInline(item.lines.join(" "))}${nested}</li>`;
+  }
+  return `<${tag} style="${style}">${html}</${tag}>`;
+}
+
 function renderBlock(block: Block): string {
   if (block.kind === "rule") return `<hr style="${RULE_STYLE}">`;
   if (block.kind === "heading") {
     // Two levels of heading and no more. A digest is a page someone skims in a
     // mail client, and a third level reads as noise rather than structure.
-    const style = (block.level ?? 1) <= 2 ? SECTION_STYLE : SUBSECTION_STYLE;
-    const tag = (block.level ?? 1) <= 2 ? "h2" : "h3";
+    const style = block.level <= 2 ? SECTION_STYLE : SUBSECTION_STYLE;
+    const tag = block.level <= 2 ? "h2" : "h3";
     return `<${tag} style="${style}">${renderInline(block.lines[0] ?? "")}</${tag}>`;
+  }
+  if (block.kind === "code") return `<pre style="${CODE_BLOCK_STYLE}">${escapeHtml(block.lines.join("\n"))}</pre>`;
+  if (block.kind === "table") {
+    const width = Math.max(block.header.length, ...block.rows.map((row) => row.length));
+    const cells = (row: string[], style: string, tag: string): string => Array.from({ length: width }, (_unused, index) => (
+      `<${tag} style="${style}">${renderInline(row[index] ?? "")}</${tag}>`
+    )).join("");
+    const head = `<tr>${cells(block.header, TABLE_HEADER_STYLE, "th")}</tr>`;
+    const body = block.rows.map((row) => `<tr>${cells(row, TABLE_CELL_STYLE, "td")}</tr>`).join("");
+    return `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="${TABLE_STYLE}">${head}${body}</table>`;
   }
   if (block.kind === "quote") {
     return `<blockquote style="${QUOTE_STYLE}">${renderInline(block.lines.join(" "))}</blockquote>`;
   }
-  if (block.kind === "list") {
-    const items = block.lines
-      .map((line) => `<li style="${LIST_ITEM_STYLE}">${renderInline(line)}</li>`)
-      .join("");
-    return `<ul style="${LIST_STYLE}">${items}</ul>`;
-  }
+  if (block.kind === "list") return renderList(block.items, block.ordered, 0);
   return `<p style="${PARAGRAPH_STYLE}">${renderInline(block.lines.join(" "))}</p>`;
 }
 
 /**
- * Inline emphasis, code and links. The text is escaped first, so a link target
- * is matched against already-escaped text and can only ever produce an `href`
- * this function built — never markup the model wrote.
+ * The character references a model writes when it is quoting markup, decoded
+ * before anything is escaped so `A &amp; B` reads as `A & B` rather than as its
+ * own source. Decoding first and escaping second is what keeps that safe: every
+ * character this produces goes straight back through `escapeHtml`.
+ *
+ * The named set is the one CommonMark's own test suite leans on. A name outside
+ * it stays literal, which is the same thing the desktop renderer does with one
+ * it cannot resolve.
+ */
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0", hellip: "…",
+  mdash: "—", ndash: "–", lsquo: "\u2018", rsquo: "\u2019", ldquo: "\u201c", rdquo: "\u201d",
+  times: "×", divide: "÷", plusmn: "±", deg: "°", rarr: "→", larr: "←", harr: "↔",
+  copy: "©", reg: "®", trade: "™", middot: "·", bull: "•", euro: "€", pound: "£", yen: "¥",
+};
+
+function decodeEntities(value: string): string {
+  return value.replace(/&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31});/gu, (match, body: string) => {
+    if (body.startsWith("#")) {
+      const code = body[1] === "x" || body[1] === "X"
+        ? Number.parseInt(body.slice(2), 16)
+        : Number.parseInt(body.slice(1), 10);
+      // Surrogates and out-of-range values have no character to become, and
+      // `String.fromCodePoint` throws on them rather than returning anything.
+      if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return match;
+      return String.fromCodePoint(code);
+    }
+    return NAMED_ENTITIES[body] ?? match;
+  });
+}
+
+/**
+ * Inline emphasis, code and links.
+ *
+ * Code spans are lifted out before anything else runs and put back at the end,
+ * so the emphasis passes never reach inside one: `` `npm run **build**` `` is a
+ * command with asterisks in it, and bolding part of it makes it a command
+ * nobody can copy.
+ *
+ * The text is escaped before a single tag is added, so a link target is matched
+ * against already-escaped text and can only ever produce an `href` this
+ * function built — never markup the model wrote.
  */
 function renderInline(value: string): string {
-  let html = escapeHtml(value);
-  html = html.replace(/`([^`]+)`/gu, (_match, code: string) =>
-    `<code style="padding:2px 6px;border-radius:5px;background:${COLOR.surfaceRaised};border:1px solid ${COLOR.line};font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:${COLOR.inkSoft}">${code}</code>`);
+  const codes: string[] = [];
+  // The separator is stripped from the input first, so a placeholder built from
+  // it provably cannot collide with anything the model wrote.
+  let html = escapeHtml(decodeEntities(value.split(CODE_SEPARATOR).join(""))).replace(/(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/gu, (_match, _fence, code: string) => {
+    codes.push(`<code style="${CODE_STYLE}">${code.replace(/^ (.*) $/u, "$1")}</code>`);
+    return `${CODE_SEPARATOR}${codes.length - 1}${CODE_SEPARATOR}`;
+  });
+
+  // A mention's target is an Avalon identifier, so it becomes its own label:
+  // there is nothing outside the app for it to link to.
+  html = html.replace(MENTION_LINK, (_match, label: string) => label);
   html = html.replace(
-    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gu,
-    (_match, label: string, href: string) =>
-      `<a href="${href}" style="color:${COLOR.brand};text-decoration:none;border-bottom:1px solid rgba(206,220,0,.35)">${label}</a>`,
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/gu,
+    (_match, label: string, href: string) => `<a href="${href}" style="${LINK_STYLE}">${label}</a>`,
   );
-  html = html.replace(/\*\*([^*]+)\*\*/gu, (_match, bold: string) =>
-    `<strong style="color:${COLOR.ink};font-weight:650">${bold}</strong>`);
-  html = html.replace(/(^|[\s(])_([^_]+)_(?=[\s.,;:)!?]|$)/gu, (_match, prefix: string, italic: string) =>
-    `${prefix}<em style="color:${COLOR.inkSoft}">${italic}</em>`);
-  return html;
+  // A bare URL, which a mail client would otherwise leave as text or linkify
+  // with a target of its own choosing. Anchored so the one inside the `href`
+  // just written is not matched a second time.
+  html = html.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/gu, (_match, prefix: string, href: string) => (
+    `${prefix}<a href="${href}" style="${LINK_STYLE}">${href}</a>`
+  ));
+  html = html.replace(/\*\*([^*]+)\*\*|__([^_]+)__/gu, (_match, stars?: string, unders?: string) =>
+    `<strong style="color:${COLOR.ink};font-weight:650">${stars ?? unders}</strong>`);
+  html = html.replace(/~~([^~]+)~~/gu, (_match, struck: string) =>
+    `<del style="color:${COLOR.mutedDeep}">${struck}</del>`);
+  html = html.replace(/(^|[\s(])([*_])([^\s*_](?:[^*_]*[^\s*_])?)\2(?=[\s.,;:)!?]|$)/gu, (
+    _match,
+    prefix: string,
+    _marker: string,
+    italic: string,
+  ) => `${prefix}<em style="color:${COLOR.inkSoft}">${italic}</em>`);
+
+  // Split rather than matched: the separator is a control character, and a
+  // regular expression containing one is both unreadable and lint-flagged.
+  // Odd positions are the indices this function put there.
+  return html.split(CODE_SEPARATOR)
+    .map((part, index) => (index % 2 === 1 ? codes[Number(part)] ?? "" : part))
+    .join("");
 }
 
 export interface DigestEmailContent {
