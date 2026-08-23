@@ -554,10 +554,14 @@ limit; it adds no schema, queue, alarm, timer, or recovery owner.
 Three regressions inject the receipt-port failure after the terminal write and
 prove a later retry or sweep closes the exact receipt and records the marker;
 the stopped case loses the response after settlement commits and proves retry
-does not add another checkpoint. The focused harness runtime file passes 51/51,
-and it passes 112/112 together with the receipt-storage unit suite. Mutations disabling the direct
+does not add another checkpoint. A fourth regression proves the
+BlockDashboard-only sweep positively reaps and reconciles a stale HyperSight
+root while its ordinary-automation negative case remains fenced. The focused
+harness runtime file passes 52/52, and it passes 113/113 together with the
+receipt-storage unit suite. Mutations disabling the direct
 retry or terminal-row scan made the named regressions fail with the receipt
-still `executing`. The follow-up full root run passed 1,745 API Node tests, 234
+still `executing`; replacing the block-origin allowance made the positive
+BlockDashboard regression fail. The follow-up full root run passed 1,746 API Node tests, 234
 API real-workerd tests, and 1,234 desktop tests. Root lint, typecheck,
 `docs:check`, all 357 script tests, all 110 desktop release invariants, both
 regional dry-run builds, and `git diff --check` also passed. Status: fixed and
