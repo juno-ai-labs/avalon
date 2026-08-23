@@ -193,6 +193,10 @@ export class WorkstreamObjectClient {
           workspaceId: this.auth.workspaceId,
           region: this.auth.region,
           role: this.auth.role,
+          // Spread conditionally rather than sent as `undefined`: the room's
+          // auth schema is strict, and a session-principal payload should be
+          // byte-identical to what it was before connector principals existed.
+          ...(this.auth.principal === "connector" ? { principal: "connector" as const } : {}),
         },
       } as SubstreamProductRequest,
       this.traced,

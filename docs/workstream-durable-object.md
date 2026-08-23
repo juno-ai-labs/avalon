@@ -717,6 +717,7 @@ misrouted product statement now fails because the table or column is absent.
 - **Nothing may `await` between a sync waterline's allocation and its send.** The waterline is a monotonic counter and the desktop discards anything at or below the last one it applied, so a publication that allocated first has to send first. `publishSync` allocates in `transactionSync` and sends in the same synchronous run, which is what makes that true; an `await` between the two opens the input gate and lets a later publication overtake, and the desktop then silently drops the parked payload along with every topic it named. This is not hypothetical — it is the bug the revalidation sweep shipped, recorded in the changelog.
 - **No publish path asks D1 anything.** Losing workspace access is carried by the queue in [`access-revocation.md`](access-revocation.md) and by nothing else — no object polls, revalidates on a timer, or re-reads `workspace_members` before sending. Putting a D1 query back on a publish path is where the waterline ordering bug came from, and the transcript feed would pay it per token frame. An object enforcing its *own* SQL — `canRead`, `product.canRead` — is not that: it is synchronous, local, and answers a question no queue message carries.
 - **D1 workspace membership is rechecked for every workspace subscribe/command and every WorkstreamDO/SubstreamAgent/BlockDashboardAgent admission.** Admission is where authorization is decided, and it is decided fresh every time; no long-lived ticket or attachment is continuing authority for a new write. What an admitted socket then holds is ended by the revocation queue, not by re-asking.
+- **A product request names its principal, and each principal is verified against the fact that owns it.** A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. Sockets never carry a connector principal; tickets are issued to login sessions only.
 - **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
 
 ## Boundary
@@ -1055,6 +1056,33 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-23 — The product API learned who a connector principal is
+
+**What changed:** `ProductAuthSchema` accepts an optional
+`principal: "connector"`, and `runProductRequest` verifies that principal with
+`connectorPrincipalAuth` — the session query minus the `sessions` join: current
+active membership in this workspace and region, role and region equality with
+the asserted auth — refusing staleness as `connector_member_revoked`. Session
+principals still go through `socketAuth` unchanged, and a session payload on
+the wire is byte-identical to before. `WorkstreamObjectClient` forwards the
+marker only when the auth carries it.
+
+**Why:** The object cutover made `socketAuth` the product gate, which silently
+broke the one caller whose auth never named a `sessions` row: Slack ingress for
+linked members, which synthesizes `slack:{team}:{user}` as a correlation id.
+Every linked member's mention died as `session_revoked` from 2026-08-17 until
+this change (found 2026-08-22). The alternatives rejected: minting real session
+rows for connector links (a link is not a login, and the mirror row would need
+its own lifecycle to stay honest), and having the object verify the link itself
+(`slack_user_links` is WorkspaceDO state — the auth path would gain a
+DO-to-DO dependency for a fact the Worker already verified milliseconds
+earlier, on the very message being delivered). What a future change has to
+respect: only connector ingress may set `principal: "connector"`, always after
+verifying the link on the message being delivered — the object's re-check
+covers membership only, by design; and the auth middleware must keep building
+its context exclusively from verified token claims, so the marker can never
+arrive from outside.
 
 ### 2026-08-23 — The receipt RPC waits on initialization like its five siblings
 

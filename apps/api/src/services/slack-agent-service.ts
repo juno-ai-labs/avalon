@@ -3086,7 +3086,14 @@ export class SlackAgentService {
       granted_scopes_json: String(row.granted_scopes_json),
       status: String(row.status),
     };
-    return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: asUserId(String(row.user_id)), workspaceId: asWorkspaceId(String(row.workspace_id)), region: this.env.AVALON_REGION, role: membership.role }, connection, slackUserId, teamId };
+    // `principal: "connector"` is what makes this authority honest: the
+    // sessionId below is a correlation label, not a `sessions` row, and without
+    // the marker the product objects look it up there and refuse every linked
+    // member's message as `session_revoked` — which is exactly what happened to
+    // every `@Avalon` mention after the object cutover (2026-08-22). The link
+    // row and active membership verified just above are the authority; the
+    // objects re-check the membership half themselves on every request.
+    return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: asUserId(String(row.user_id)), workspaceId: asWorkspaceId(String(row.workspace_id)), region: this.env.AVALON_REGION, role: membership.role, principal: "connector" }, connection, slackUserId, teamId };
   }
 
   /**
