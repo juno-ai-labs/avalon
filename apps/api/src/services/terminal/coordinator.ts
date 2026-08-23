@@ -212,22 +212,22 @@ export class TerminalSandboxCoordinator {
     }));
     const domains = policy.mode === "trusted_only" ? parseEffectiveDomains(policy) : [];
     let row = await this.terminal(context).sandbox();
-    let telemetryAction: TerminalAcquisitionObservation["action"] | null = !row
-      ? "start"
-      : row.lifecycleState === "stopped" || row.lifecycleState === "archived"
-        ? "restore"
-        : row.lifecycleState === "running" && row.sandboxId
-          ? null
-          : "start";
-    const localFilesRetained = Boolean(row?.sandboxId);
     if (!row) {
       row = await this.reserveFirstGeneration(context, authorityFingerprint, policy.revision, now);
     }
     row = await this.claimOperation(context, row, now);
+    let telemetryAction: TerminalAcquisitionObservation["action"] | null =
+      row.lifecycleState === "stopped" || row.lifecycleState === "archived"
+        ? "restore"
+        : row.lifecycleState === "running" && row.sandboxId
+          ? null
+          : "start";
+    let localFilesRetained = Boolean(row.sandboxId);
 
     const importedResourceRevoked = await this.hasRevokedImportedResource(context, row);
     if (row.authorityFingerprint !== authorityFingerprint || importedResourceRevoked) {
       telemetryAction = "repository_replace";
+      localFilesRetained = false;
       row = await this.replaceForAuthority(context, row, authorityFingerprint, policy.revision, now);
     }
 
@@ -327,7 +327,6 @@ export class TerminalSandboxCoordinator {
       claimed = await this.recoverYieldedOperation(
         context,
         row,
-        leaseExpiresAt,
         now,
       );
     }
@@ -351,7 +350,6 @@ export class TerminalSandboxCoordinator {
   private async recoverYieldedOperation(
     context: HarnessToolContext,
     row: TerminalSandboxRecord,
-    leaseExpiresAt: number,
     now: number,
   ): Promise<TerminalSandboxRecord | null> {
     const sandboxId = row.sandboxId;
@@ -383,33 +381,27 @@ export class TerminalSandboxCoordinator {
     let sandboxStopped = false;
     let sandboxRetired = false;
     const finishRecovery = async (): Promise<TerminalSandboxRecord | null> => {
+      const handoffNow = this.clock.now().getTime();
+      const handoffLeaseExpiresAt = handoffNow + TERMINAL_OPERATION_LEASE_MS;
       const recovered = sandboxRetired
         ? await terminal.retireYieldedOperationRecovery({
             runId: context.harnessRunId,
             generation: row.generation,
             sandboxId,
             claimId,
-            leaseExpiresAt,
-            ...deadlines(this.clock.now()),
-            now,
+            leaseExpiresAt: handoffLeaseExpiresAt,
+            ...deadlines(new Date(handoffNow)),
+            now: handoffNow,
           })
         : await terminal.settleYieldedOperationRecovery({
             runId: context.harnessRunId,
             generation: row.generation,
             sandboxId,
             claimId,
-            leaseExpiresAt,
+            leaseExpiresAt: handoffLeaseExpiresAt,
             sandboxStopped,
-            now,
+            now: handoffNow,
           });
-      if (!recovered) {
-        await terminal.failLifecycleClaim({
-          lifecycleState: sandboxRetired ? "failed" : sandboxStopped ? "stopped" : row.lifecycleState,
-          failureCode: "operation_recovery_handoff_lost",
-          claimId,
-          now,
-        });
-      }
       return recovered;
     };
     try {
@@ -482,7 +474,7 @@ export class TerminalSandboxCoordinator {
           sandboxGeneration: task.sandboxGeneration,
           providerTaskName: task.providerTaskName,
           claimId,
-          now,
+          now: this.clock.now().getTime(),
         });
         if (!settled && await terminal.unsettledTask(row.generation)) {
           throw new Error("terminal_task_cleanup_fence_lost");
@@ -498,9 +490,9 @@ export class TerminalSandboxCoordinator {
       sandboxStopped ||= observed?.state === "stopped" || observed?.state === "archived";
       await terminal.failLifecycleClaim({
         lifecycleState: sandboxRetired ? "failed" : sandboxStopped ? "stopped" : row.lifecycleState,
-        failureCode: "operation_recovery_provider_failed",
+        failureCode: null,
         claimId,
-        now,
+        now: this.clock.now().getTime(),
       });
       return null;
     }

@@ -83,6 +83,38 @@ describe("Terminal scheduled lifecycle", () => {
       .toEqual({ lifecycle_state: "stopped", idle_expires_at: null });
   });
 
+  it("reconciles an active holder after its operation lease expires", async () => {
+    const { objectStore, db, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z",
+      archive: "2026-08-13T13:00:00.000Z",
+      expire: "2026-09-12T12:00:00.000Z",
+    });
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES ('run-expired-active', ?, ?, 'test', ?, 'running', '2026-08-13')`,
+      W, S, JSON.stringify({ type: "user", userId: U }),
+    );
+    workstreamObjectRun(
+      objectStore,
+      `UPDATE terminal_workspace
+          SET operation_run_id = 'run-expired-active', operation_lease_expires_at = ?
+        WHERE id = 1`,
+      NOW.getTime() - 1,
+    );
+
+    await expect(reconcileDueTerminalSandbox(
+      db,
+      testTerminalPortFactory(objectStore),
+      provider,
+      W,
+      S,
+      NOW,
+    )).resolves.toEqual({ transition: "stopped" });
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
+  });
+
   it("does not let an expired lifecycle continuation stop after a replacement scheduler settles", async () => {
     const { objectStore, db, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
@@ -290,7 +322,7 @@ describe("Terminal scheduled lifecycle", () => {
     expect(provider.deleteSandbox).toHaveBeenCalledOnce();
   });
 
-  it("cancels retained tasks and advances generation when Daytona reports the sandbox absent", async () => {
+  it("expires after cancelling retained tasks when Daytona reports the sandbox absent", async () => {
     const { objectStore, db, provider } = fixture("archived", {
       warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
     });
@@ -306,7 +338,8 @@ describe("Terminal scheduled lifecycle", () => {
     workstreamObjectRun(
       objectStore,
       `UPDATE terminal_workspace
-          SET operation_run_id = 'run-missing-sandbox', operation_lease_expires_at = ?
+          SET operation_run_id = 'run-missing-sandbox', operation_lease_expires_at = ?,
+              final_diff_resource_id = 'final-diff'
         WHERE id = 1`,
       Date.parse("2026-08-13T12:16:00.000Z"),
     );
@@ -339,22 +372,21 @@ describe("Terminal scheduled lifecycle", () => {
       W,
       S,
       NOW,
-    )).resolves.toEqual({ transition: "deferred" });
+    )).resolves.toEqual({ transition: "expired" });
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state FROM terminal_tasks WHERE task_id = 'task-missing-sandbox'",
     )).toEqual({ state: "cancelled" });
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT generation, sandbox_id, lifecycle_state FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ generation: 2, sandbox_id: null, lifecycle_state: "starting" });
-    const terminal = testTerminalPortFactory(objectStore)(W, S);
-    await expect(terminal.claimOperation({
-      runId: "run-after-missing-sandbox",
-      generation: 2,
-      leaseExpiresAt: Date.parse("2026-08-13T12:20:00.000Z"),
-      now: NOW.getTime() + 1,
-    })).resolves.toMatchObject({ operationRunId: "run-after-missing-sandbox" });
+      `SELECT generation, sandbox_id, lifecycle_state, final_diff_resource_id
+         FROM terminal_workspace WHERE id = 1`,
+    )).toEqual({
+      generation: 1,
+      sandbox_id: null,
+      lifecycle_state: "expired",
+      final_diff_resource_id: "final-diff",
+    });
   });
 
   it("keeps operation claims fenced while lifecycle cleanup owns the provider", async () => {
@@ -429,67 +461,6 @@ describe("Terminal scheduled lifecycle", () => {
       leaseExpiresAt: Date.parse("2026-08-13T12:20:00.000Z"),
       now: NOW.getTime() + 1,
     })).resolves.toMatchObject({ operationRunId: "run-linked-race" });
-  });
-
-  it("does not hand an expired lifecycle transition to a linked operation", async () => {
-    const { objectStore, db, provider } = fixture("running", {
-      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
-    });
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-      VALUES ('run-expired-lifecycle', ?, ?, 'test', ?, 'needs_input', '2026-08-13'),
-             ('run-expired-linked', ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      W, S, JSON.stringify({ type: "user", userId: U }),
-      W, S, JSON.stringify({ type: "user", userId: U }),
-    );
-    workstreamObjectRun(
-      objectStore,
-      `UPDATE terminal_workspace
-          SET operation_run_id = 'run-expired-lifecycle', operation_lease_expires_at = ?
-        WHERE id = 1`,
-      Date.parse("2026-08-13T12:16:00.000Z"),
-    );
-    let finishStop!: () => void;
-    vi.mocked(provider.stopSandbox).mockImplementationOnce(async () => (
-      new Promise<void>((resolve) => { finishStop = resolve; })
-    ));
-    const lifecycle = reconcileDueTerminalSandbox(
-      db,
-      testTerminalPortFactory(objectStore),
-      provider,
-      W,
-      S,
-      NOW,
-    );
-    await vi.waitFor(() => expect(provider.stopSandbox).toHaveBeenCalledOnce());
-    const terminal = testTerminalPortFactory(objectStore)(W, S);
-    const transitional = await terminal.sandbox();
-    await expect(terminal.claimYieldedOperationRecovery({
-      runId: "run-expired-linked",
-      generation: 1,
-      sandboxId: "provider-1",
-      version: transitional!.version,
-      claimId: "linked-recovery-after-expiry",
-      claimExpiresAt: Date.parse("2026-08-13T13:00:00.000Z"),
-      now: transitional!.lifecycleClaimExpiresAt! + 1,
-    })).resolves.toBe(false);
-    await expect(terminal.claimOperation({
-      runId: "run-expired-linked",
-      generation: 1,
-      leaseExpiresAt: Date.parse("2026-08-13T13:00:00.000Z"),
-      now: transitional!.lifecycleClaimExpiresAt! + 1,
-    })).resolves.toBeNull();
-
-    finishStop();
-    await expect(lifecycle).resolves.toEqual({ transition: "stopped" });
-    await expect(terminal.claimOperation({
-      runId: "run-expired-linked",
-      generation: 1,
-      leaseExpiresAt: Date.parse("2026-08-13T13:00:00.000Z"),
-      now: transitional!.lifecycleClaimExpiresAt! + 2,
-    })).resolves.toMatchObject({ operationRunId: "run-expired-linked" });
   });
 
   it("settles every retained task after a fallback stop before lifecycle transition", async () => {
@@ -570,18 +541,29 @@ describe("Terminal scheduled lifecycle", () => {
     expect(provider.stopSandbox).toHaveBeenCalledTimes(2);
   });
 
-  it("retires the generation when an expiry retry observes Daytona already deleted the sandbox", async () => {
+  it("settles expiry when its retry observes Daytona already deleted the sandbox", async () => {
     const { objectStore, db, provider } = fixture("archived", {
       warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
     });
     const notFound = Object.assign(new Error("sandbox not found"), { response: { status: 404 } });
+    workstreamObjectRun(
+      objectStore,
+      "UPDATE terminal_workspace SET final_diff_resource_id = 'final-diff' WHERE id = 1",
+    );
     vi.mocked(provider.deleteSandbox).mockRejectedValueOnce(new Error("delete response lost"));
     vi.mocked(provider.getSandbox).mockRejectedValueOnce(notFound);
 
-    await expect(reconcileDueTerminalSandbox(db, testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "deferred" });
+    await expect(reconcileDueTerminalSandbox(db, testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "expired" });
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT generation, lifecycle_state, sandbox_id, expire_due_at FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ generation: 2, lifecycle_state: "starting", sandbox_id: null, expire_due_at: null });
+      `SELECT generation, lifecycle_state, sandbox_id, expire_due_at, final_diff_resource_id
+         FROM terminal_workspace WHERE id = 1`,
+    )).toEqual({
+      generation: 1,
+      lifecycle_state: "expired",
+      sandbox_id: null,
+      expire_due_at: null,
+      final_diff_resource_id: "final-diff",
+    });
   });
 });

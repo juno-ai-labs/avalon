@@ -775,6 +775,9 @@ describe("Terminal authority on real workerd", () => {
       // A late provider continuation cannot rewrite the task after cleanup.
       await terminal(stub, "settleTask", {
         effectIntentId: EFFECT_A,
+        runId: RUN_A,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-retained",
         state: "completed",
         exitCode: 0,
         terminationReason: "exited",
@@ -784,15 +787,24 @@ describe("Terminal authority on real workerd", () => {
         stderrTail: "",
         stdoutBytes: 4,
         stderrBytes: 0,
-        outputResourceId: null,
         completedAt: 6_003,
         now: 6_003,
       });
+      expect(await terminal(stub, "attachTaskOutputResource", {
+        effectIntentId: EFFECT_A,
+        runId: RUN_A,
+        sandboxGeneration: 1,
+        state: "completed",
+        completedAt: 6_003,
+        outputResourceId: "late-log",
+        now: 6_004,
+      })).toMatchObject({ value: false });
       const task = await terminal(stub, "taskByEffect", EFFECT_A);
       expect(task.value).toMatchObject({ state: "cancelled", stdoutHead: "" });
       const lateSubmission = await terminal(stub, "markTaskRunning", {
         effectIntentId: EFFECT_A,
         providerTaskId: "late-provider-command",
+        commandDeadlineAt: 9_000,
         now: 6_003,
       });
       expect(lateSubmission.value).toBe(false);
@@ -1209,6 +1221,12 @@ describe("Terminal authority on real workerd", () => {
         now: 2_000,
       });
       expect(recovery.value).toBe(false);
+      expect(await terminal(stub, "claimOperation", {
+        runId: RUN_B,
+        generation: 1,
+        leaseExpiresAt: 9_000_000,
+        now: 2_001,
+      })).toMatchObject({ value: null });
       expect((await terminal(stub, "sandbox")).value).toMatchObject({
         lifecycleState: "stopping",
         lifecycleClaimId: "expired-lifecycle-claim",
@@ -1737,6 +1755,68 @@ describe("Terminal authority on real workerd", () => {
       // though the row is still `running`; that is what stops a lost command
       // from pinning the workspace.
       expect((await terminal(stub, "hasLiveTask", 1, 9_000_001)).value).toBe(false);
+    });
+
+    it("does not settle a command while lifecycle owns provider authority", async () => {
+      const stub = agent();
+      const effect = "00000000-0000-7000-8000-0000000000f5";
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+        seedEffect(state, effect, RUN_A);
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-lifecycle-result",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
+      await terminal(stub, "insertTask", {
+        taskId: "00000000-0000-7000-8000-0000000000a5",
+        runId: RUN_A,
+        effectIntentId: effect,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-lifecycle-result",
+        providerTaskName: "avalon-task-lifecycle-result",
+        commandSha256: "c".repeat(64),
+        commandDeadlineAt: 2_000,
+        startedAt: 1_500,
+        now: 1_500,
+      });
+      const beforeClaim = await terminal(stub, "sandbox");
+      await terminal(stub, "claimLifecycleTransition", {
+        lifecycleState: "stopping",
+        claimId: "lifecycle-result-claim",
+        claimExpiresAt: 9_000_000,
+        generation: 1,
+        version: (beforeClaim.value as { version: number }).version,
+        now: 3_000,
+      });
+
+      expect(await terminal(stub, "settleTask", {
+        effectIntentId: effect,
+        runId: RUN_A,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-lifecycle-result",
+        state: "completed",
+        exitCode: 0,
+        terminationReason: "exited",
+        stdoutHead: "late",
+        stdoutTail: "",
+        stderrHead: "",
+        stderrTail: "",
+        stdoutBytes: 4,
+        stderrBytes: 0,
+        completedAt: 3_001,
+        now: 3_001,
+      })).toMatchObject({ value: false });
+      expect((await terminal(stub, "taskByEffect", effect)).value)
+        .toMatchObject({ state: "submitting", stdoutHead: "" });
     });
   });
 
