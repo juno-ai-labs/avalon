@@ -935,7 +935,7 @@ describe("durable harness attempt runtime", () => {
       result_summary: "The harness executor lost its durable lease",
     });
 
-    await recordInferenceAttempt(sqlite.binding, {
+    await recordInferenceAttempt(sqlite.runs, {
       id: "inference-1",
       harnessRunId: RUN_ONE,
       workspaceId: WORKSPACE_ID,
@@ -1383,7 +1383,7 @@ describe("durable harness attempt runtime", () => {
       onInferenceAttempt: async (attempt) => {
         callbackIndex += 1;
         const completedAtMs = Date.now();
-        await recordInferenceAttempt(sqlite.binding, {
+        await recordInferenceAttempt(sqlite.runs, {
           id: `bind-callback-${String(callbackIndex).padStart(2, "0")}`,
           harnessRunId: RUN_ONE,
           workspaceId: WORKSPACE_ID,
@@ -4067,14 +4067,14 @@ describe("inline child-run durability", () => {
       },
     });
     await expect(assertInlineChildAttemptOwned(
-      sqlite.binding,
+      sqlite.runs,
       input(RUN_ONE),
       parentLease,
       original.childInput,
       original.lease,
     )).rejects.toThrow("durable attempt lease");
     await expect(assertInlineChildAttemptOwned(
-      sqlite.binding,
+      sqlite.runs,
       input(RUN_ONE),
       parentLease,
       takeover.childInput,
@@ -4273,7 +4273,7 @@ describe("inline child-run durability", () => {
     expect(await cancelDescendantHarnessRuns(sqlite.binding, RUN_ONE, "parent_cancelled"))
       .toBe(1);
     await expect(assertInlineChildAttemptOwned(
-      sqlite.binding,
+      sqlite.runs,
       input(RUN_ONE),
       parentLease,
       child.childInput,
