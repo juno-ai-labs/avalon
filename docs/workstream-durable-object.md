@@ -1305,6 +1305,59 @@ which no caller acts on: both throw, and the two error codes it added were
 caught nowhere. The distinction is real and the object can make it; it is worth
 making when something needs it.
 
+### 2026-08-23 — The transcript's remaining readers, and the boundary the self-registration had not actually removed
+
+**What changed:** seven more transcript callers left `_runtime_messages` —
+naming, the description refresh, Terminal's admission check, creation
+telemetry, the HyperSight context fence, the automation opening-message
+lookup, and the connected-activity writer. `WorkstreamMessageStorage` gains the
+operations they need: `saidMessages`/`saidMessageCount` behind a
+`MessageTypeFilter`, `saidWindow`, `messageAtSequence`,
+`messageFromParticipant` and `openingAttachmentCount`. `/internal/messages`
+answers its RPC entry point without building a `Request` or reading a
+`Response`.
+
+**Why:** the slice claimed every reader and writer that is not the product
+service, and it had converted six services. The rest were not among the
+cross-slice batches it named as deliberately untouched — they were simply not
+done, and both the changelog and the PRD were handing slice 5's author a map
+that said otherwise.
+
+**`MessageTypeFilter` exists because the two window readers disagree.** Naming
+wanted `message_type = 'text'`; the description refresh wanted
+`message_type <> 'tool'`. Those are different questions, and `parts.message_type`
+carries no CHECK constraint, so they cannot be reconciled into one list: an
+`include` list silently drops a type nobody has added yet and an `exclude` list
+silently admits one. Each caller states which it means.
+
+**The finding: a port call from inside the object was paying for a boundary the
+self-registration exists to remove.** Converting the description window
+regressed `message-to-output-pipeline.test.ts` — deterministically, 5 runs in
+5 — because the drain runs that refresh at the end of every harness run and the
+port made it slower. `durable-object-self.ts` hands an object a stand-in stub so
+a call to itself never leaves the isolate; the RPC entry point then serialized
+its already-parsed input into a `Request`, read that body back as a stream, and
+read a `Response` body back out, which is six serializations to move a value
+nowhere. `messageOperationOutcome` is the endpoint's decision without either
+wrapper, and both entry points share it.
+
+That was not the whole regression, and chasing it is what found the rest.
+
+**What a future change has to respect.** The remaining `_runtime_messages`
+callers are *all* cross-slice, and there are more of them than the three this
+slice first named: every `harness-run-runtime.ts` reader joins `messages` to
+`harness_runs` or `harness_run_lifecycle_events` inside one statement; Slack's
+elicitation answer guards its counter update on `EXISTS (SELECT 1 FROM
+messages)`; and inbound email's sequence claim is fenced on
+`workstreams.email_address`, which makes it identity's as much as messages'.
+`workstream-resource-visibility.ts` names `messages` beside
+`workstream_resources` and belongs to the resources slice. None of them is a
+plain reader left behind.
+
+The three new window operations take a `limit` and mean it. `saidWindow` asks
+for one past the ceiling on purpose: `requested > limit` is how the description
+reports that it capped, and a count clamped *at* the ceiling can never say so.
+
 ### 2026-08-23 — The transcript gets a typed authority, and the compat layer's ordering turns out to be wrong
 
 **What changed:** `WorkstreamMessageStorage` owns `parts`, `part_mentions` and

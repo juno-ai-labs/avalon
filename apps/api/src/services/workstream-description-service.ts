@@ -36,6 +36,7 @@ import {
 import { z } from "zod";
 
 import type { Env } from "../env";
+import { createMessageObjectPort } from "../runtime/message-port";
 import { logStructuredEvent } from "../observability/logger";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
@@ -61,6 +62,17 @@ export const DESCRIPTION_WINDOW_MINIMUM_MESSAGES = 200;
  * work stream that only ever discussed today.
  */
 export const MAXIMUM_DESCRIPTION_WINDOW_MESSAGES = 600;
+/**
+ * What counts as a turn this window is judged on.
+ *
+ * Everything but a tool card, which is how the work was done rather than what
+ * the work stream is for. Stated as an exclusion rather than a list, because
+ * that is what the retired predicate said: a host notice counts, and so would a
+ * message type added after this was written. Naming's window asks the opposite
+ * question about the same column, which is why neither caller shares a
+ * predicate with the other.
+ */
+const DESCRIPTION_WINDOW_MESSAGE_TYPES = { exclude: ["tool"] } as const;
 /**
  * The same ceiling expressed in characters, and the one that actually binds the
  * request size.
@@ -282,15 +294,6 @@ interface WorkstreamDescriptionRow {
   description_source: string;
   origin_type: string;
   archived_at: string | null;
-}
-
-interface WindowMessageRow {
-  sequence_number: number;
-  author_type: string;
-  author_name: string | null;
-  external_actor_json: string | null;
-  text_content: string;
-  created_at: string;
 }
 
 interface ClaimRow {
@@ -606,28 +609,27 @@ async function loadWindow(
   workstreamId: string,
   now: Date,
 ): Promise<DescriptionWindow> {
-  const cutoff = new Date(now.getTime() - DESCRIPTION_WINDOW_HOURS * 60 * 60 * 1_000).toISOString();
-  const recent = await env.DB.prepare(
-    `SELECT COUNT(*) AS message_count
-       FROM messages
-      WHERE workspace_id = ? AND workstream_id = ?
-        AND message_type <> 'tool' AND trim(text_content) <> ''
-        AND created_at >= ?`,
-  ).bind(workspaceId, workstreamId, cutoff).first<{ message_count: number }>();
-
-  const requested = Math.max(DESCRIPTION_WINDOW_MINIMUM_MESSAGES, Number(recent?.message_count ?? 0));
+  const cutoff = now.getTime() - DESCRIPTION_WINDOW_HOURS * 60 * 60 * 1_000;
+  // One call, not three. The count only exists to size the page and the authors
+  // are read from the page, so asking them separately would be three round
+  // trips describing one transcript — on a path that runs at the end of every
+  // harness run. The retired version got the first two in one statement each
+  // and the third from a `LEFT JOIN users`.
+  const window = await createMessageObjectPort(env, workspaceId, workstreamId).saidWindow({
+    messageTypes: DESCRIPTION_WINDOW_MESSAGE_TYPES,
+    since: cutoff,
+    minimum: DESCRIPTION_WINDOW_MINIMUM_MESSAGES,
+    maximum: MAXIMUM_DESCRIPTION_WINDOW_MESSAGES,
+  });
+  const ordered = window.rows;
+  const requested = window.requested;
   const limit = Math.min(requested, MAXIMUM_DESCRIPTION_WINDOW_MESSAGES);
-  const rows = await env.DB.prepare(
-    `SELECT m.sequence_number, m.author_type, m.external_actor_json, m.text_content, m.created_at,
-            u.name AS author_name
-       FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
-      WHERE m.workspace_id = ? AND m.workstream_id = ?
-        AND m.message_type <> 'tool' AND trim(m.text_content) <> ''
-      ORDER BY m.sequence_number DESC
-      LIMIT ?`,
-  ).bind(workspaceId, workstreamId, limit).all<WindowMessageRow>();
-
-  const ordered = (rows.results ?? []).slice().reverse();
+  // The author's name, which the retired `LEFT JOIN users` took from a view
+  // that answered with the member's own id. It still does — this prompt has
+  // been reading UUIDs where it means names since the cutover — but the
+  // fabrication is now in one place rather than inside a join, and the identity
+  // slice is where every reader of it starts seeing the real profile at once.
+  const authors = new Map(window.authors.map((author) => [author.user_id, author.user_id]));
   const messages = ordered.map((row) => {
     // A message from a connected surface is stored as `system` carrying an
     // external actor, because it has no Avalon account behind it. Reading the
@@ -642,8 +644,9 @@ async function loadWindow(
     return {
       sequenceNumber: Number(row.sequence_number),
       authorType,
-      authorName: external?.displayName ?? (row.author_name == null ? null : String(row.author_name)),
-      occurredAt: String(row.created_at),
+      authorName: external?.displayName
+        ?? (row.author_user_id == null ? null : authors.get(row.author_user_id) ?? null),
+      occurredAt: new Date(row.created_at).toISOString(),
       text: String(row.text_content),
     } satisfies WindowMessage;
   });

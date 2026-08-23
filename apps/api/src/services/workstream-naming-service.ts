@@ -9,6 +9,7 @@ import { nowIso } from "@avalon/db";
 import type { Env } from "../env";
 import { truncateUtf16Safe } from "../lib/text";
 import { logStructuredEvent } from "../observability/logger";
+import { createMessageObjectPort } from "../runtime/message-port";
 import { publishWorkstreamEvent } from "./integrations";
 import { runStructuredInference } from "./structured-inference";
 
@@ -162,30 +163,32 @@ export async function refreshWorkstreamName(env: Env, input: {
     // never finished — the isolate went away mid-call — leaves the row in it.
     // This pass is the one thing that comes along afterwards, so it repairs the
     // row rather than stepping over it.
-    // The count is over exactly the rows the naming context reads. `messages`
-    // also holds a row per tool call and per elicitation — and a run
-    // ends where those accumulate, which is one of the two places this is
-    // called from. Counting them would trip the threshold on a work stream that
-    // has said two things, and name it from what the first pass already saw.
     const row = await env.DB.prepare(
-      `SELECT w.title, w.title_status, w.objective,
-         (SELECT COUNT(*) FROM (
-            SELECT 1 FROM messages m
-             WHERE m.workspace_id = w.workspace_id AND m.workstream_id = w.id
-               AND m.message_type = 'text'
-               AND m.text_content IS NOT NULL AND m.text_content != ''
-             LIMIT ?
-          )) AS message_count
+      `SELECT w.title, w.title_status, w.objective
        FROM workstreams w
       WHERE w.id = ? AND w.workspace_id = ?
         AND w.title_status IN ('naming', 'automatic')`,
-    ).bind(RENAME_AFTER_MESSAGE_COUNT, input.workstreamId, input.workspaceId).first<{
+    ).bind(input.workstreamId, input.workspaceId).first<{
       title: string;
       title_status: "naming" | "automatic";
       objective: string;
-      message_count: number;
     }>();
-    if (!row || Number(row.message_count) < RENAME_AFTER_MESSAGE_COUNT) return;
+    if (!row) return;
+    // The count is over exactly the rows the naming context reads, which is why
+    // it is `saidMessages`' own counterpart rather than a predicate written out
+    // again here. The transcript also holds a row per tool call and per
+    // elicitation — and a run *ends* where those accumulate, which is one of
+    // the two places this is called from. Counting them would trip the
+    // threshold on a work stream that has said two things, and name it from
+    // what the first pass already saw.
+    //
+    // It costs a second round trip, to the same object the row above came
+    // from. The retired version got both from one statement because the router
+    // rewrote `workstreams` and `messages` onto views side by side; the title
+    // half belongs to the identity slice and cannot come through this port yet.
+    const saidCount = await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
+      .saidMessageCount({ messageTypes: { include: ["text"] }, limit: RENAME_AFTER_MESSAGE_COUNT });
+    if (saidCount < RENAME_AFTER_MESSAGE_COUNT) return;
 
     const title = await generateName(env, {
       workspaceId: input.workspaceId,
@@ -226,15 +229,13 @@ async function loadNamingContext(
   workspaceId: string,
   workstreamId: string,
 ): Promise<WorkstreamNameContextMessage[]> {
-  const result = await env.DB.prepare(
-    `SELECT author_type, text_content FROM messages
-      WHERE workspace_id = ? AND workstream_id = ? AND message_type = 'text'
-        AND text_content IS NOT NULL AND text_content != ''
-      ORDER BY sequence_number
-      LIMIT ?`,
-  ).bind(workspaceId, workstreamId, RENAME_CONTEXT_MESSAGE_LIMIT)
-    .all<{ author_type: string; text_content: string }>();
-  return (result.results ?? []).map((message) => ({
+  const rows = await createMessageObjectPort(env, workspaceId, workstreamId)
+    .saidMessages({
+      messageTypes: { include: ["text"] },
+      order: "oldest",
+      limit: RENAME_CONTEXT_MESSAGE_LIMIT,
+    });
+  return rows.map((message) => ({
     author: message.author_type === "agent" ? "avalon" as const : "person" as const,
     text: truncateUtf16Safe(message.text_content, RENAME_CONTEXT_MESSAGE_CHARACTERS),
   }));

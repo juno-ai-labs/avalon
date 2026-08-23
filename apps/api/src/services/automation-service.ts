@@ -45,6 +45,7 @@ import {
   telemetryJourneyDuration,
 } from "../telemetry/product-usage";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
+import { createMessageObjectPort } from "../runtime/message-port";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 import {
@@ -1754,12 +1755,9 @@ export class AutomationService {
         workflow_instance_id: string | null;
       }>(),
       openingClientMessageId
-        ? executionEnv.DB.prepare(
-            `SELECT id FROM messages
-              WHERE workspace_id = ? AND workstream_id = ? AND client_message_id = ?`,
-          ).bind(this.auth.workspaceId, run.workstream_id, openingClientMessageId)
-            .first<{ id: string }>()
-        : Promise.resolve(null),
+        ? createMessageObjectPort(this.env, this.auth.workspaceId, run.workstream_id)
+          .messageByClientId({ clientMessageId: openingClientMessageId })
+        : Promise.resolve(undefined),
     ]);
     return {
       runId: run.run_id,
