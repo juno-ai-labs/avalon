@@ -11,6 +11,8 @@ import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare
 import {
   executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
+  testSchedulingPort,
+  testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
@@ -105,6 +107,10 @@ function fixture(): { database: DatabaseSync; objectStore: DatabaseSync; baseEnv
     PAYLOADS: createCloudflareTestBinding<R2Bucket>(new MemoryBucket()),
     AVALON_REGION: "global",
     APP_ENV: "test",
+    // The elicitation tool's replay check reaches the object through the
+    // scheduling port rather than the runtime router, so the fixture needs the
+    // binding that port dispatches through — over this same object store.
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
   });
   return {
     database,
@@ -293,22 +299,34 @@ describe("Avalon core write-tool idempotency", () => {
 
   it("converges elicitation retries on one durable question", async () => {
     const { objectStore, baseEnv } = fixture();
-    // The existence check travels the runtime SQL port since the cutover, so
-    // the stale read is injected there: the port answers the check with no
-    // rows both times while every other statement reaches the object.
+    // The existence check travels the scheduling port now, so the stale read is
+    // injected there: the operation answers "no such question" both times while
+    // every other statement, and every other scheduling operation, reaches the
+    // object. What is under test is that the durable insert converges anyway —
+    // the check is an optimization, and the `ON CONFLICT` is the guarantee.
     let staleExistenceChecks = 0;
+    const scheduling = testSchedulingPort(objectStore) as unknown as
+      Record<string, (...args: unknown[]) => Promise<unknown>>;
     const staleExistenceEnv = withWorkstreamRuntimeDatabase(
-      baseEnv,
+      createTestEnv({
+        ...baseEnv,
+        SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
+          extra: {
+            executeSchedulingOperation: async (input: { operation: string; args: unknown[] }) => {
+              if (input.operation === "elicitationExistsForRun") {
+                staleExistenceChecks += 1;
+                return { status: 200, bodyJson: JSON.stringify({ ok: true, value: false }) };
+              }
+              const value = await scheduling[input.operation]!(...input.args);
+              return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
+            },
+          },
+        }),
+      }),
       WORKSPACE_ID,
       WORKSTREAM_ID,
       "0",
-      async (statements) => {
-        if (statements.length === 1 && statements[0]!.sql.includes("SELECT id FROM elicitations")) {
-          staleExistenceChecks += 1;
-          return [{ columns: [], rows: [], changes: 0 }];
-        }
-        return executeWorkstreamObjectSql(objectStore, statements);
-      },
+      async (statements) => executeWorkstreamObjectSql(objectStore, statements),
     );
     const tool = __integrationTesting.createAvalonTools(staleExistenceEnv, workflowInput())
       .find((candidate) => candidate.definition.name === "request_elicitation");

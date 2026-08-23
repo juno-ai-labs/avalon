@@ -6741,10 +6741,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           context.providerIdempotencyKey,
         );
         const id = await coreWriteEntityId("elicitation", input, providerIdempotencyKey);
-        const existing = await env.DB.prepare(
-          `SELECT id FROM elicitations
-           WHERE id = ? AND workspace_id = ? AND workstream_id = ? AND harness_run_id = ?`,
-        ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId).first<{ id: string }>();
+        const existing = await createSchedulingObjectPort(env, input.workspaceId, input.workstreamId)
+          .elicitationExistsForRun({ elicitationId: id, runId: input.harnessRunId });
         if (existing) {
           return {
             output: { elicitationId: id },

@@ -18,6 +18,7 @@ import { publishWorkstreamEvent } from "./integrations";
 import { launchWorkstreamHarness } from "./workstream-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
+import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import {
   attachWorkstreamOriginResource,
   type OriginResourceDescriptor,
@@ -220,15 +221,23 @@ export class SlackWorkspaceWorkstreamService {
       clientMessageId,
     );
     if (existing) return { elicitation: null, harnessRunId: null };
-    const raw = await executionEnv.DB.prepare(
-      `SELECT id, harness_run_id, prompt, response_type, options_json,
-              minimum_selections, maximum_selections, created_at
-       FROM elicitations
-       WHERE workspace_id = ? AND workstream_id = ? AND status = 'open'
-       ORDER BY created_at ASC LIMIT 1`,
-    ).bind(this.workspaceId, workstreamId).first<Record<string, unknown>>();
+    const scheduling = createSchedulingObjectPort(this.env, this.workspaceId, workstreamId);
+    const raw = await scheduling.oldestOpenElicitation();
     if (!raw) return null;
-    const elicitation = OpenElicitationRowSchema.parse(raw);
+    // The object's columns, named as this path already names them. The view
+    // renamed `elicitation_id` and `run_id` and rendered the instant as
+    // ISO-8601; the last of those is a boundary format here, because the
+    // rendered elicitation goes into a transcript payload a client reads.
+    const elicitation = OpenElicitationRowSchema.parse({
+      id: raw.elicitation_id,
+      harness_run_id: raw.run_id,
+      prompt: raw.prompt,
+      response_type: raw.response_type,
+      options_json: raw.options_json,
+      minimum_selections: raw.minimum_selections,
+      maximum_selections: raw.maximum_selections,
+      created_at: new Date(raw.created_at).toISOString(),
+    });
     const actor = ExternalActorSchema.parse(input.actor);
     const answer = slackElicitationAnswer(elicitation, input.text);
     const at = nowIso();
@@ -306,10 +315,8 @@ export class SlackWorkspaceWorkstreamService {
     if (Number(results[1]?.meta.changes ?? 0) !== 1) {
       throw new ApiError(500, "elicitation_response_write_failed", "The response could not be stored");
     }
-    const remaining = await executionEnv.DB.prepare(
-      "SELECT COUNT(*) AS count FROM elicitations WHERE workstream_id = ? AND status = 'open'",
-    ).bind(workstreamId).first<{ count: number }>();
-    const harnessRunId = Number(remaining?.count ?? 0) === 0
+    const remaining = await scheduling.openElicitationCount();
+    const harnessRunId = remaining === 0
       ? await launchWorkstreamHarness(this.env, {
           workspaceId: this.workspaceId,
           workstreamId: asWorkstreamId(workstreamId),

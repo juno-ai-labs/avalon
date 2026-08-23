@@ -196,6 +196,86 @@ describe("scheduling a wake-up", () => {
   });
 });
 
+describe("open elicitations", () => {
+  const ask = (elicitationId: string, createdAt: number, overrides: Record<string, unknown> = {}) => ({
+    elicitation_id: elicitationId,
+    run_id: RUN,
+    prompt: `Question ${elicitationId}`,
+    response_type: "text",
+    options_json: "[]",
+    minimum_selections: 0,
+    maximum_selections: null,
+    target_user_id: null,
+    status: "pending",
+    created_at: createdAt,
+    ...overrides,
+  });
+
+  function seed(
+    sql: ReturnType<typeof createTestSqlStorage>,
+    row: ReturnType<typeof ask>,
+  ): void {
+    sql.exec(
+      `INSERT INTO elicitation_requests
+         (elicitation_id, run_id, prompt, response_type, options_json, minimum_selections,
+          maximum_selections, target_user_id, status, answer_json, answered_by_user_id,
+          external_actor_json, created_at, answered_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL)`,
+      row.elicitation_id,
+      row.run_id,
+      row.prompt,
+      row.response_type,
+      row.options_json,
+      row.minimum_selections,
+      row.maximum_selections,
+      row.target_user_id,
+      row.status,
+      row.created_at,
+    );
+  }
+
+  it("answers with the question waiting longest, and ignores answered ones", () => {
+    const { storage, sql } = open();
+    seed(sql, ask("answered-first", NOW - 120_000, { status: "answered" }));
+    seed(sql, ask("waiting-longest", NOW - 60_000));
+    seed(sql, ask("newer", NOW));
+
+    // Slack delivers one question at a time, so "the open one" has to be the
+    // oldest rather than any open one — otherwise a person answering in a
+    // thread answers a different question than the one they were shown.
+    expect(storage.oldestOpenElicitation()?.elicitation_id).toBe("waiting-longest");
+    expect(storage.openElicitationCount()).toBe(2);
+  });
+
+  it("says nothing is waiting once every question is answered", () => {
+    const { storage, sql } = open();
+    seed(sql, ask("only", NOW, { status: "answered" }));
+
+    // The count is what decides whether answering resumes the run: a work
+    // stream with a question still open must not start one, or the harness
+    // wakes up to a question it is still blocked on.
+    expect(storage.oldestOpenElicitation()).toBeUndefined();
+    expect(storage.openElicitationCount()).toBe(0);
+  });
+
+  it("finds a replayed question only under the run that asked it", () => {
+    const { storage, sql } = open();
+    seed(sql, ask("asked", NOW));
+
+    expect(storage.elicitationExistsForRun({ elicitationId: "asked", runId: RUN }))
+      .toBe(true);
+    // The id is derived from a provider idempotency key, which is scoped to a
+    // run. Answering yes for another run's id would let one run's replay check
+    // be satisfied by a question it never asked.
+    expect(storage.elicitationExistsForRun({
+      elicitationId: "asked",
+      runId: "00000000-0000-7000-8000-0000000000ff",
+    })).toBe(false);
+    expect(storage.elicitationExistsForRun({ elicitationId: "never-asked", runId: RUN }))
+      .toBe(false);
+  });
+});
+
 describe("the description-refresh cadence", () => {
   const claim = (evaluatedAt: number, restUntil: number) => ({
     evaluatedAt,

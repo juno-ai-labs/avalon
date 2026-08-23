@@ -51,11 +51,37 @@ const DISPATCHED_OPERATIONS = [
   "descriptionRefreshState",
   "claimDescriptionEvaluation",
   "recordDescriptionOutcome",
+  "oldestOpenElicitation",
+  "openElicitationCount",
+  "elicitationExistsForRun",
 ] as const satisfies readonly SchedulingOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */
 export const SCHEDULING_OPERATIONS: Exhaustive<typeof DISPATCHED_OPERATIONS> =
   DISPATCHED_OPERATIONS;
+
+/**
+ * The operations that can change which wake-ups are pending.
+ *
+ * The object keeps an alarm entry per pending wake-up, and something has to
+ * make that index match the table. It used to be a regex over routed statement
+ * text — the only signal available when the writers reached the table through a
+ * view — which meant every writer had to keep arriving through that one port for
+ * the index to stay true. Naming the operations instead makes the object
+ * maintain its own index off its own writes, and an operation added here
+ * without a place in this set is the kind of omission a reviewer can see.
+ */
+const WAKEUP_MUTATIONS = new Set<SchedulingOperation>([
+  "scheduleWakeup",
+  "claimDueWakeup",
+  "releaseClaimedWakeup",
+  "cancelWakeup",
+  "deleteUnarmedWakeup",
+]);
+
+export function mutatesWakeups(operation: SchedulingOperation): boolean {
+  return WAKEUP_MUTATIONS.has(operation);
+}
 
 const SCHEDULING_OPERATION_SET = new Set<string>(SCHEDULING_OPERATIONS);
 
