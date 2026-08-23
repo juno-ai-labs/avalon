@@ -2,7 +2,8 @@ import { asWorkspaceId } from "@avalon/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import { SubstreamAgent, type SubstreamProductRequest } from "../src/durable-objects/substream-agent";
+import { rpcResultBody } from "../src/durable-objects/rpc-result";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
@@ -11,6 +12,7 @@ import {
   seedWorkstreamObjectRoot,
   testWorkstreamObjectStore,
 } from "./helpers/durable-authority";
+import { createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
 
 const WORKSPACE = "00000000-0000-7000-8000-0000000000c0";
 const PARTICIPANT = "00000000-0000-7000-8000-0000000000c1";
@@ -69,6 +71,9 @@ function seededDatabase(options: { openAuthority?: boolean } = {}): DatabaseSync
       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
     VALUES ('${WORKSTREAM}', '${PARTICIPANT}', '${PARTICIPANT}', 'creator', '${at}');
   `);
+  // The product `get` the connector-principal tests drive reads the viewer's
+  // pin through the workspace database; the object ledger is its shape.
+  createWorkspaceObjectTable(database, "workspace_workstream_pins");
   if (options.openAuthority !== false) openWorkstreamAuthorityForTest(database, at);
   return database;
 }
@@ -457,5 +462,70 @@ describe("who the work-stream room disconnects", () => {
     // the transcript feed is the highest-frequency socket in the product.
     expect(asked.filter((sql) => sql.includes("workspace_members"))).toEqual([]);
     expect(reader.closes).toEqual([]);
+  });
+});
+
+describe("what authority the product API accepts", () => {
+  // The incident these pin down (2026-08-22): connector ingress presented a
+  // synthesized `slack:{team}:{user}` session id, the room looked it up in
+  // `sessions` — where it never existed — and every linked member's Slack
+  // message died as `session_revoked`. A connector principal now says what it
+  // is, and the room verifies the D1 fact that is its to verify: current
+  // active membership in this workspace and region. The link itself is the
+  // Worker's per-message check, where the link rows live.
+  function productAuth(overrides: Partial<{
+    sessionId: string;
+    userId: string;
+    role: "owner" | "admin" | "member";
+    principal: "connector";
+  }> = {}) {
+    return {
+      sessionId: "slack:T123:U456",
+      userId: PARTICIPANT,
+      workspaceId: asWorkspaceId(WORKSPACE),
+      region: "global",
+      role: "owner",
+      ...overrides,
+    } as SubstreamProductRequest["auth"];
+  }
+
+  it("still refuses a synthesized session id that claims no principal", async () => {
+    const result = await roomFor(seededDatabase())
+      .handleProductRequest({ operation: "get", auth: productAuth() });
+
+    expect(result.status).toBe(401);
+    expect(rpcResultBody(result)).toEqual({ error: "session_revoked" });
+  });
+
+  it("runs a connector-principal request as the member the ingress verified", async () => {
+    const result = await roomFor(seededDatabase())
+      .handleProductRequest({ operation: "get", auth: productAuth({ principal: "connector" }) });
+
+    expect(result.status).toBe(200);
+    expect(rpcResultBody(result)).toMatchObject({ id: WORKSTREAM });
+  });
+
+  it("refuses a connector principal for somebody who is not an active member", async () => {
+    const database = seededDatabase();
+    database.exec(
+      `UPDATE workspace_members SET status = 'suspended'
+        WHERE workspace_id = '${WORKSPACE}' AND user_id = '${PARTICIPANT}'`,
+    );
+
+    const result = await roomFor(database)
+      .handleProductRequest({ operation: "get", auth: productAuth({ principal: "connector" }) });
+
+    expect(result.status).toBe(401);
+    expect(rpcResultBody(result)).toEqual({ error: "connector_member_revoked" });
+  });
+
+  it("refuses a connector principal whose asserted role has gone stale", async () => {
+    const result = await roomFor(seededDatabase()).handleProductRequest({
+      operation: "get",
+      auth: productAuth({ principal: "connector", role: "member" }),
+    });
+
+    expect(result.status).toBe(401);
+    expect(rpcResultBody(result)).toEqual({ error: "connector_member_revoked" });
   });
 });
