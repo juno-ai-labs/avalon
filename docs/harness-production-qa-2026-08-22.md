@@ -51,6 +51,14 @@ be verified. The evidence still does not isolate Avalon code from
 provider/session/transport state, so Granola remains an unresolved live
 acceptance blocker rather than a confirmed code defect.
 
+The audit of the previously merged PR #247 receipt path then found an eighth
+defect: a transient residual-receipt RPC after terminalization had no retry
+owner. PR #253 merged and deployed the marker-backed activation repair to both
+regions. The exact residual-receipt RPC response-loss fault is not safely
+injectable in production; deterministic fail-before-commit and
+commit-but-response-lost regressions prove the recovery path, while deployment
+identity, migrations, and regional health prove the repaired code is live.
+
 ## Environment and safety boundary
 
 - Date: 2026-08-22–23 PDT / 2026-08-23 UTC.
@@ -73,6 +81,9 @@ acceptance blocker rather than a confirmed code defect.
   PR #251 deployed Global `7fbfa5ff-d4ec-4b55-89cf-d9763ce4a609` and EU
   `bba16c1f-a471-4397-89bc-7e988eecdde6` from merge commit
   `9c09e4d1683edf268706e4cb5ca5ce7885ee6fa5` in workflow run `32629139604`.
+  PR #253 deployed Global `c6eca610-7549-4658-9ce4-ca2b5fe370a1` and EU
+  `f3c83ce2-e854-49fc-9b05-5819dda1c984` from merge commit
+  `e4311041bc45936137cd318871497c22392e0bff` in workflow run `32633487884`.
 - Local checkout baseline before the repairs: `fbe7f512`. Production Worker
   logs exposed `build_sha: null`; the local commit is therefore a source-review
   baseline, not the identity of the deployed Worker revision above.
@@ -577,9 +588,17 @@ drains as markers accumulate, while a warned failed attempt does not consume the
 ordinary stale-reaping budget. The follow-up full root run passed 1,748 API Node tests, 234
 API real-workerd tests, and 1,234 desktop tests. Root lint, typecheck,
 `docs:check`, all 357 script tests, all 110 desktop release invariants, both
-regional dry-run builds, and `git diff --check` also passed. Status: fixed and
-validated locally; merge, deployment, and the broader production
-injected-durable-host-error acceptance gate remain pending.
+regional dry-run builds, and `git diff --check` also passed. Status: PR #253
+merged as `e4311041bc45936137cd318871497c22392e0bff`. Deployment run
+`32633487884` produced healthy Global Worker version
+`c6eca610-7549-4658-9ce4-ca2b5fe370a1` and EU version
+`f3c83ce2-e854-49fc-9b05-5819dda1c984`; both migration listings reported no
+pending migration, and both EU and Global health endpoints passed. The exact
+residual-receipt RPC response-loss fault remains unexercised in production
+because it is not safely injectable through Computer Use; no UI-only claim
+substitutes for that fault. A fresh ordinary post-deployment Computer Use
+inspection was also unavailable because the Mac relocked after deployment, so
+regional health is not presented as UI evidence.
 
 ## Review-driven durable-authority hardening
 
@@ -699,6 +718,10 @@ regression.
 - The prior Terminal acceptance still owns EU functional execution,
   stale-attempt recovery, and injected durable-host-error guidance; health checks
   alone do not close those gates.
+- The exact HQA-08 residual-receipt RPC response-loss fault remains unexercised
+  in production because it is not safely injectable through Computer Use. Run
+  a fresh ordinary post-PR #253 UI inspection when the Mac is unlocked; neither
+  that inspection nor regional health substitutes for the fault-injection gate.
 
 ## Release recommendation
 
@@ -707,6 +730,9 @@ failure receipts, ranked discovery, attachment validation, stopped receipt, and
 Global HyperSight payload commit are production-verified. PR #249 production-
 verified that linked runs no longer wait behind the yielded lease. PR #251
 production-verified the strict whole-sandbox stop, linked-read, and
-post-original-deadline no-late-write sequence. Granola remains unavailable.
-The prior EU Terminal, stale-attempt, injected-error, fresh EU payload, and
-meeting-notes payload gates remain explicit regional or targeted follow-up work.
+post-original-deadline no-late-write sequence. PR #253 is deployed and healthy
+in both regions; deterministic tests verify its transient receipt-reconciliation
+repair, while the exact residual-receipt RPC response-loss fault remains
+unexercised in production. Granola remains unavailable. The prior EU Terminal,
+stale-attempt, injected-error, fresh EU payload, and meeting-notes payload gates
+remain explicit regional or targeted follow-up work.
