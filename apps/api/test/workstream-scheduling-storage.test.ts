@@ -1,0 +1,227 @@
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-object-schema";
+import { WorkstreamSchedulingStorage } from "../src/durable-objects/workstream-scheduling-storage";
+import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
+import { createTestSqlStorage } from "./helpers/sql-storage";
+
+const RUN = "00000000-0000-7000-8000-0000000000d1";
+const NOW = 1_787_000_000_000;
+
+const databases: DatabaseSync[] = [];
+
+afterEach(() => {
+  for (const database of databases.splice(0)) database.close();
+});
+
+/**
+ * A work stream's own object, with one run to hang scheduling rows from.
+ *
+ * The object's tables rather than the compatibility views: these operations are
+ * what replaces those views, so a fixture written in their vocabulary would be
+ * seeding the thing this slice deletes.
+ */
+function open(): {
+  storage: WorkstreamSchedulingStorage;
+  sql: ReturnType<typeof createTestSqlStorage>;
+} {
+  const database = new DatabaseSync(":memory:");
+  databases.push(database);
+  const sql = createTestSqlStorage(database);
+  const binding = createCloudflareTestBinding<DurableObjectStorage>({
+    getAlarm: async () => null,
+    setAlarm: async () => undefined,
+    transactionSync: (body: () => unknown) => body(),
+    sql,
+  });
+  applyWorkstreamObjectSchema(binding, "v", 1);
+  sql.exec(`INSERT INTO workstream (
+      id, workstream_key, parent_workspace_key, parent_do_id, parent_generation, region,
+      authority_mode, authority_generation, title, description, preview, scope,
+      exact_state, state_reason_code, next_sequence_number, next_attention_ordinal,
+      unread_tracking_start_ordinal, authority_epoch, scope_epoch,
+      source_authorization_floor, listing_epoch, deletion_epoch, run_revision,
+      created_at, last_people_activity_at, state_changed_at, updated_at
+    ) VALUES (1,'S','W',NULL,0,'global','authoritative',1,'T','','','workspace',
+              'idle','s',1,1,0,0,0,0,0,0,0,1,1,1,1)`);
+  sql.exec(`INSERT INTO substreams (id,kind,inherit_mode,depth,return_mode,audience,tool_policy,status,created_at)
+    VALUES ('0','main','none',0,'none','workspace','full','open',1)`);
+  sql.exec(
+    `INSERT INTO runs
+       (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+        next_action_cursor, input_fence_seq, revision, started_at,
+        active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+        tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+        origin, execution_principal_json, chain_depth, model, created_at, updated_at)
+     VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+             'member_message', '{}', 0, 'a-model', ?, ?)`,
+    RUN,
+    NOW,
+    NOW,
+    NOW,
+  );
+  return { storage: new WorkstreamSchedulingStorage(binding), sql };
+}
+
+/** The wake-up every test starts from. */
+function wakeup(overrides: Record<string, unknown> = {}) {
+  return {
+    wakeupId: "wakeup-1",
+    createdByRunId: RUN,
+    executionPrincipalJson: JSON.stringify({ type: "workspace", workspaceId: "W" }),
+    prompt: "Check the deploy",
+    dueAt: NOW + 3_600_000,
+    idempotencyKey: "receipt-1",
+    now: NOW,
+    ...overrides,
+  };
+}
+
+describe("scheduling a wake-up", () => {
+  it("tells a replay apart from a first scheduling and from an archived work stream", () => {
+    const { storage, sql } = open();
+
+    expect(storage.scheduleWakeup(wakeup())).toEqual({
+      outcome: "scheduled",
+      wakeupId: "wakeup-1",
+    });
+    // The same receipt, retried. The routed statement expressed this as
+    // `ON CONFLICT … DO NOTHING` plus a re-read, so a replay and a refusal both
+    // arrived as zero rows written; the operation names which happened, and
+    // answers with the wake-up the first attempt created rather than the id
+    // this caller proposed.
+    expect(storage.scheduleWakeup(wakeup({ wakeupId: "wakeup-2" }))).toEqual({
+      outcome: "replayed",
+      wakeupId: "wakeup-1",
+    });
+    expect(sql.exec(`SELECT COUNT(*) AS n FROM workstream_wakeups`).one().n).toBe(1);
+
+    sql.exec(`UPDATE workstream SET archived_at = ? WHERE id = 1`, NOW);
+    // The third case, which the routed statement could only express as a
+    // `SELECT … FROM workstreams WHERE archived_at IS NULL` that inserted
+    // nothing — indistinguishable from the replay above.
+    expect(storage.scheduleWakeup(wakeup({
+      wakeupId: "wakeup-3",
+      idempotencyKey: "receipt-2",
+    }))).toEqual({ outcome: "workstream_archived", wakeupId: "wakeup-3" });
+    expect(sql.exec(`SELECT COUNT(*) AS n FROM workstream_wakeups`).one().n).toBe(1);
+  });
+
+  it("claims a wake-up once, and refuses a claim made on a stale version", () => {
+    const { storage, sql } = open();
+    storage.scheduleWakeup(wakeup());
+
+    expect(storage.claimDueWakeup({ wakeupId: "wakeup-1", expectedVersion: 1, now: NOW }))
+      .toBe(true);
+    // The compare-and-swap the routed `WHERE status = 'pending' AND version = ?`
+    // spelled out. A second alarm holding the same version it read before the
+    // first one won loses, which is what makes a wake-up at-most-once.
+    expect(storage.claimDueWakeup({ wakeupId: "wakeup-1", expectedVersion: 1, now: NOW }))
+      .toBe(false);
+    expect(sql.exec(`SELECT status, version FROM workstream_wakeups`).toArray())
+      .toEqual([{ status: "fired", version: 2 }]);
+
+    // And the version is doing work the status cannot. Released, the row is
+    // pending again — so a claim is refused here only because the version the
+    // caller read is no longer the version the row is on. This is the case the
+    // argument exists for: a caller that read the row, did something slow, and
+    // came back to claim on a stale understanding.
+    storage.releaseClaimedWakeup({ wakeupId: "wakeup-1", now: NOW });
+    expect(storage.claimDueWakeup({ wakeupId: "wakeup-1", expectedVersion: 1, now: NOW }))
+      .toBe(false);
+    expect(storage.claimDueWakeup({ wakeupId: "wakeup-1", expectedVersion: 3, now: NOW }))
+      .toBe(true);
+  });
+
+  it("releases a claim whose run never started, so the next alarm retries it", () => {
+    const { storage, sql } = open();
+    storage.scheduleWakeup(wakeup());
+    storage.claimDueWakeup({ wakeupId: "wakeup-1", expectedVersion: 1, now: NOW });
+
+    expect(storage.releaseClaimedWakeup({ wakeupId: "wakeup-1", now: NOW })).toBe(true);
+    expect(sql.exec(`SELECT status, fired_at FROM workstream_wakeups`).toArray())
+      .toEqual([{ status: "pending", fired_at: null }]);
+    // Only a claim can be released. A pending row is not a claim this caller
+    // holds, and releasing one would resurrect a wake-up somebody cancelled.
+    expect(storage.releaseClaimedWakeup({ wakeupId: "wakeup-1", now: NOW })).toBe(false);
+  });
+
+  it("separates a wake-up that is already settled from one that is not there", () => {
+    const { storage } = open();
+    storage.scheduleWakeup(wakeup());
+
+    expect(storage.cancelWakeup({ wakeupId: "wakeup-1", now: NOW })).toBe("cancelled");
+    expect(storage.cancelWakeup({ wakeupId: "wakeup-1", now: NOW })).toBe("not_pending");
+    expect(storage.cancelWakeup({ wakeupId: "absent", now: NOW })).toBe("not_found");
+  });
+
+  it("deletes an unarmed wake-up, and only while it is still pending", () => {
+    const { storage, sql } = open();
+    storage.scheduleWakeup(wakeup());
+    storage.claimDueWakeup({ wakeupId: "wakeup-1", expectedVersion: 1, now: NOW });
+
+    // A fired wake-up has already run; deleting it here would erase the record
+    // of work that happened. Only the arming failure this exists for — a row
+    // written moments ago and still pending — is removable.
+    expect(storage.deleteUnarmedWakeup({ wakeupId: "wakeup-1" })).toBe(false);
+    storage.releaseClaimedWakeup({ wakeupId: "wakeup-1", now: NOW });
+    expect(storage.deleteUnarmedWakeup({ wakeupId: "wakeup-1" })).toBe(true);
+    expect(sql.exec(`SELECT COUNT(*) AS n FROM workstream_wakeups`).one().n).toBe(0);
+  });
+
+  it("lists pending wake-ups soonest first, and counts only those", () => {
+    const { storage } = open();
+    storage.scheduleWakeup(wakeup({ dueAt: NOW + 7_200_000 }));
+    storage.scheduleWakeup(wakeup({
+      wakeupId: "wakeup-2",
+      idempotencyKey: "receipt-2",
+      prompt: "Sooner",
+      dueAt: NOW + 3_600_000,
+    }));
+    storage.scheduleWakeup(wakeup({
+      wakeupId: "wakeup-3",
+      idempotencyKey: "receipt-3",
+      prompt: "Cancelled",
+      dueAt: NOW + 60_000,
+    }));
+    storage.cancelWakeup({ wakeupId: "wakeup-3", now: NOW });
+
+    // The sidebar marker and the tool's own listing both read this, so the
+    // order is the product's: the next thing that will happen, first. The
+    // cancelled row is soonest by due time and must not lead it.
+    expect(storage.pendingWakeups({ limit: 20 }).map((row) => row.prompt))
+      .toEqual(["Sooner", "Check the deploy"]);
+    expect(storage.pendingWakeupCount()).toBe(2);
+  });
+});
+
+describe("plugin activation hints", () => {
+  it("keeps the first activation instant and moves only the last authorization", () => {
+    const { storage, sql } = open();
+
+    storage.recordPluginActivation({ pluginId: "linear", now: NOW });
+    storage.recordPluginActivation({ pluginId: "linear", now: NOW + 60_000 });
+
+    // `activated_at` is when this work stream first reached for the plugin, and
+    // a later authorization must not rewrite that history; `last_authorized_at`
+    // is the one that moves. The retired trigger wrote exactly this, and the
+    // caller's own `ON CONFLICT(workstream_id, plugin_id)` clause never ran —
+    // the view had no unique index for it to name.
+    expect(sql.exec(`SELECT plugin_id, activated_at, last_authorized_at
+                       FROM plugin_activation_hints`).toArray()).toEqual([
+      { plugin_id: "linear", activated_at: NOW, last_authorized_at: NOW + 60_000 },
+    ]);
+  });
+
+  it("answers every hint it holds, leaving eligibility to the caller", () => {
+    const { storage } = open();
+    storage.recordPluginActivation({ pluginId: "slack", now: NOW });
+    storage.recordPluginActivation({ pluginId: "linear", now: NOW });
+
+    // A hint is not an authorization. This returns both, and the run's own
+    // eligible set is what discards one — a plugin the run may not load is
+    // refused where the run scope is known, not here.
+    expect(storage.activationHints()).toEqual(["linear", "slack"]);
+  });
+});
