@@ -163,6 +163,120 @@ describe("appending to the transcript", () => {
   });
 });
 
+describe("the windows a reader asks for", () => {
+  /** A transcript with one of each type the two readers disagree about. */
+  function mixed(storage: WorkstreamMessageStorage): void {
+    storage.appendMessage(message({ messageId: "m1", clientMessageId: "c1", messageType: "text", text: "First" }));
+    storage.appendMessage(message({ messageId: "m2", clientMessageId: "c2", messageType: "system", text: "Host notice", now: NOW + 1_000 }));
+    storage.upsertToolMessage({
+      messageId: "m3",
+      clientMessageId: "c3",
+      structuredContentJson: JSON.stringify({ invocation: { toolName: "t", status: "completed" } }),
+      createdAt: NOW + 2_000,
+      editedAt: null,
+    });
+    storage.appendMessage(message({ messageId: "m4", clientMessageId: "c4", messageType: "text", text: "  ", now: NOW + 3_000 }));
+    storage.appendMessage(message({ messageId: "m5", clientMessageId: "c5", messageType: "text", text: "Last", now: NOW + 4_000 }));
+  }
+
+  it("answers naming's question and the description's differently, from the same rows", () => {
+    const { storage } = open();
+    mixed(storage);
+
+    // Naming names an `include`: only what someone typed. The host notice and
+    // the tool card are both excluded, and so is the whitespace-only message —
+    // an empty turn is not something said.
+    expect(storage.saidMessages({ messageTypes: { include: ["text"] }, order: "oldest", limit: 10 })
+      .map((row) => row.id)).toEqual(["m1", "m5"]);
+    // The description names an `exclude`: everything but a tool card. The host
+    // notice counts, because it is part of where the work stream has got to.
+    // The two are different questions about a column with no CHECK constraint,
+    // which is why one list could not serve both.
+    expect(storage.saidMessages({ messageTypes: { exclude: ["tool"] }, order: "oldest", limit: 10 })
+      .map((row) => row.id)).toEqual(["m1", "m2", "m5"]);
+  });
+
+  it("reads the newest end in reading order, and bounds what it counts", () => {
+    const { storage } = open();
+    mixed(storage);
+
+    // The description takes the most recent messages and renders them oldest
+    // first. Selecting `DESC` and reversing is the only way to do both.
+    expect(storage.saidMessages({ messageTypes: { exclude: ["tool"] }, order: "newest", limit: 2 })
+      .map((row) => row.id)).toEqual(["m2", "m5"]);
+    expect(storage.saidMessageCount({ messageTypes: { exclude: ["tool"] }, limit: 10 })).toBe(3);
+    // The ceiling is the caller's, and it binds: neither reader wants the count
+    // of a work stream that has been talking for a year.
+    expect(storage.saidMessageCount({ messageTypes: { exclude: ["tool"] }, limit: 2 })).toBe(2);
+    // And the window, which is what makes the description's count about the
+    // last 72 hours rather than about everything.
+    expect(storage.saidMessageCount({
+      messageTypes: { exclude: ["tool"] },
+      limit: 10,
+      since: NOW + 2_000,
+    })).toBe(1);
+  });
+
+  it("finds a message at a transcript position", () => {
+    const { storage } = open();
+    mixed(storage);
+
+    // The HyperSight context fence names a sequence number and needs the row
+    // that holds it, to prove the frozen boundary it was dispatched with still
+    // exists.
+    expect(storage.messageAtSequence({ sequenceNumber: 2 })?.id).toBe("m2");
+    expect(storage.messageAtSequence({ sequenceNumber: 99 })).toBeUndefined();
+  });
+
+  it("answers Terminal's admission check only for a participant's own message", () => {
+    const { storage, sql } = open();
+    storage.appendMessage(message({ messageId: "m1", clientMessageId: "c1", authorUserId: "user-1" }));
+    sql.exec(
+      `INSERT INTO participants
+         (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+          added_at, removed_at, updated_at)
+       VALUES ('user-1', 'message', 'user-1', 'active', 0, ?, NULL, ?)`,
+      NOW,
+      NOW,
+    );
+
+    expect(storage.messageFromParticipant({ messageId: "m1", authorUserId: "user-1" }))
+      .toEqual({ text_content: "What changed?" });
+    // A repository command runs with the sender's authorization, so a message
+    // whose author is not this caller must not admit one.
+    expect(storage.messageFromParticipant({ messageId: "m1", authorUserId: "user-2" }))
+      .toBeUndefined();
+    // And a member who has left cannot keep authorizing commands through a
+    // message they sent before leaving.
+    sql.exec(
+      `UPDATE participants SET status = 'removed', removed_at = ? WHERE user_id = 'user-1'`,
+      NOW,
+    );
+    expect(storage.messageFromParticipant({ messageId: "m1", authorUserId: "user-1" }))
+      .toBeUndefined();
+  });
+
+  it("counts the attachments on the opening message only", () => {
+    const { storage, sql } = open();
+    storage.appendMessage(message({ messageId: "m1", clientMessageId: "c1" }));
+    storage.appendMessage(message({ messageId: "m2", clientMessageId: "c2", now: NOW + 1_000 }));
+    for (const [part, resource, position] of [["m1", "r1", 0], ["m1", "r2", 1], ["m2", "r3", 0]] as const) {
+      sql.exec(
+        `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+         VALUES (?, ?, ?, '{}')`,
+        part,
+        resource,
+        position,
+      );
+    }
+
+    // Creation telemetry asks what a member started the work stream *with*, so
+    // it is sequence 1 and nothing else — an attachment added later is not part
+    // of how the work stream was created.
+    expect(storage.openingAttachmentCount()).toBe(2);
+  });
+});
+
 describe("a tool card in the transcript", () => {
   const card = (status: string) => JSON.stringify({
     invocation: { toolName: "linear.issue.get", status },
