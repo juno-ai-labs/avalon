@@ -32,6 +32,8 @@ const DISPATCHED_OPERATIONS = [
   "persistPluginActivation",
   "recordInferenceAttempt",
   "inlineChildOwnership",
+  "admitInlineChild",
+  "heartbeatInlineChild",
 ] as const satisfies readonly HarnessRunOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */

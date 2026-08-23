@@ -3531,7 +3531,6 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
       };
 
       let admission = await admitInlineChildAttempt(
-        options.env.DB,
         runs,
         parentInput,
         options.parentLease(),
@@ -3547,7 +3546,6 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         );
         if (replay) return inlineChildOutcomeAsToolResult(admission.childInput.harnessRunId, replay);
         admission = await admitInlineChildAttempt(
-          options.env.DB,
           runs,
           parentInput,
           options.parentLease(),
@@ -3576,7 +3574,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         reason: "sub_agent",
       };
       const childLiveness = new InlineChildRunLiveness(
-        options.env.DB,
+        runs,
         parentInput,
         options.parentLease(),
         admission.childInput,
