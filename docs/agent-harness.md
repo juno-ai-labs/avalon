@@ -688,7 +688,12 @@ after object-local residual receipt settlement succeeds. A repeated stopped
 terminalization retries when its exact terminal row lacks the marker. The
 existing bounded stale-run sweep repairs missing markers before claiming new
 expired rows, including already-terminal roots and children, and then records
-the acknowledgment so the scan makes forward progress.
+the acknowledgment so the scan makes forward progress. A rejected repair is
+reported and skipped for that activation rather than aborting run admission;
+the absent marker keeps it eligible for a later retry. Stopped-root receipt
+checkpoints retain the receipt-scoped `run_cancelled` payload, and stale
+automation repair can fail only `scheduled` or `running` rows, never a later
+member-owned `needs_input` continuation.
 
 **Why:** A run's terminal state and its receipt settlement are necessarily two
 object calls. The safer terminal-first ordering was already established, but a
@@ -703,7 +708,9 @@ reintroduce the takeover corruption this ordering was designed to prevent.
 Adding a queue, alarm, schema column, or separate reaper would duplicate the
 activation sweep and create another recovery owner. The immutable lifecycle
 ledger already provides the one durable acknowledgment needed, and the sweep's
-existing limit bounds historical catch-up.
+existing limit bounds historical catch-up. Letting one rejected historical row
+throw out of the sweep was also rejected: the visible warning plus absent marker
+preserves diagnosis and retry without preventing unrelated work from starting.
 
 **Consequences:** The first failed settlement remains fail-safe: the terminal
 run cannot execute again and its receipt stays visibly open until recovery.
@@ -712,7 +719,13 @@ marks it complete. Three regressions inject the failure after stopped, root,
 and child terminalization, while a fourth proves the BlockDashboard-only sweep
 can repair its own stale root without gaining automation authority. Removing
 either retry path or the block-origin allowance makes the corresponding
-regression fail.
+regression fail. Additional causal cases prove a payload-less member stop keeps
+`run_cancelled`, an old repair cannot overwrite a later automation elicitation,
+and an unsettleable first repair cannot prevent a stale run behind it from being
+reaped. Historical repair is synchronous on the run-start path: an activation
+may attempt up to 25 old rows before ordinary stale-run reaping. The cost is
+finite as markers accumulate; failed attempts are warned and do not consume the
+new-work reaping budget, though they remain eligible for a later activation.
 
 ### 2026-08-22 — Tool receipts leave the compatibility layer
 
