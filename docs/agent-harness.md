@@ -42,7 +42,7 @@ Every write is conditional on the status the pass started from, which is what ke
 
 ### Admission and immutable run scope
 
-The child dispatcher creates one replay-stable run identity; each execution attempt reaps expired attempts and claims a time-bounded object-local lease. At most one unexpired harness lease may run in a substream. The owner heartbeats while waiting on model output and tools; scope, activation, receipt-plan/completion, checkpoint, and terminal commits require the same attempt ID, lease owner, and expiry. An obsolete executor cannot publish a terminal result, and `completed` cannot commit until its final agent message is durable. Expired attempts are compare-and-swap reaped as failed.
+The child dispatcher creates one replay-stable run identity; each execution attempt reaps expired attempts and claims a time-bounded object-local lease. At most one unexpired harness lease may run in a substream. The owner heartbeats while waiting on model output and tools; scope, activation, receipt-plan/completion, checkpoint, and terminal commits require the same attempt ID, lease owner, and expiry. An obsolete executor cannot publish a terminal result, and `completed` cannot commit until its final agent message is durable. Expired attempts are compare-and-swap reaped as failed. Every in-memory drain also receives an identity predicate: abandoning a stranded promise revokes that predicate, so its late continuation exits before another dispatch even if the promise itself cannot be cancelled. The Substream loop rechecks that identity after its pre-claim regional-effects await, not only at the loop head. Substream and BlockDashboard dispatch settlement is separately fenced by the row's exact lease token; even the Substream product-failure transaction requires that token before changing the run or work-stream state.
 
 A launch is never split across the response that asked for it. The run row, work-stream state, and `agent_run_dispatches` admission commit before the child acknowledges launch. The dispatcher itself may continue through `waitUntil`, because the SQL dispatch row—not the in-memory promise—is the durable start signal and constructor/alarm activation resumes it. A start that fails before durable admission marks the run failed, publishes `harness_status_changed`, and answers `503`.
 
@@ -419,7 +419,9 @@ That split — a labelled trigger message for the model, a system row for the pe
 
 ### Cancellation and deferred systems
 
-Stopping a run persists `cancellation_requested_at`; it does not terminate an in-flight model request or tool call out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. If that observation aborts a tool, the same live attempt may settle that exact in-flight receipt even though cancellation has been requested; the narrow settlement path still requires the current attempt id, lease owner, unexpired lease, `running` parent, and no prior terminalization. A `record_before_execute` write remains ambiguous, while a definitive read failure remains failed. Any receipt still unfinished when the leased owner commits a requested `stopped` transition is closed in that same batch — unresolved writes become ambiguous and reads fail — whether it came from the current executor or survived an expired attempt. A definite completion or failure that wins before the batch remains terminal. Only after every receipt is durable does the child commit the fenced `stopped` lifecycle event and return the work stream to `idle`, preventing both a stop/complete race and a permanently `started` tool row. If an obsolete executor loses ownership, its local dispatch is deferred to adopt the successor's result; it cannot write an unfenced product failure.
+Stopping a run persists `cancellation_requested_at`; it does not terminate an in-flight model request or tool call out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. If that observation aborts a tool, the same live attempt may settle that exact in-flight receipt even though cancellation has been requested; the narrow settlement path still requires the current attempt id, lease owner, unexpired lease, `running` parent, and no prior terminalization. A `record_before_execute` write remains ambiguous, while a definitive read failure remains failed. In every checkpoint, successful-completion, failure, and stop-settlement batch, the live-lease fence admits the checkpoint insert; the immediately following receipt update is tied to that admitted checkpoint rather than re-reading wall-clock expiry. Crossing the lease deadline between serialized statements therefore cannot leave an immutable checkpoint beside a still-started receipt. Parent terminalization still requires the live lease. Any receipt already stranded behind such a checkpoint by an older deployment is healed by allocating stop cleanup after the greatest persisted checkpoint index and advancing the receipt to that exact new checkpoint. Any receipt still unfinished when the leased owner commits a requested `stopped` transition is closed in that same batch — unresolved writes become ambiguous and reads fail — whether it came from the current executor or survived an expired attempt. A definite completion or failure that wins before the batch remains terminal. Only after every receipt is durable does the child commit the fenced `stopped` lifecycle event and return the work stream to `idle`, preventing both a stop/complete race and a permanently `started` tool row. If an obsolete executor loses ownership, its local dispatch is deferred to adopt the successor's result; it cannot write an unfenced product failure.
+
+Cancellation-requested or orphaned inline children are reaped only after their own lease expires. The same attempt, owner, lease snapshot, expiry, and parent-liveness predicates first classify every pending or started child tool receipt in two bulk statements; unresolved writes become ambiguous and reads fail. The lifecycle and child-result commit then repeat the fences and require no unsettled receipt. Thus neither a stopped parent nor its eventual child reaper can leave a descendant tool card looking live.
 
 The work-stream transcript, attached resources, activation hints, run scope, inference ledger, tool receipts, inline child results, and scoped memory remain distinct durable records. Nested child delegation, personas, roles, autonomous heartbeats, and general child participants remain deferred product work.
 
@@ -453,6 +455,9 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   fails every pending or started tool invocation in the same fenced batch;
   member-requested stops render a distinct terminal stopped outcome in the
   desktop rather than disappearing into idle state.
+- **Terminal inline children leave no live-looking descendant receipt.** The
+  child reaper settles its pending and started receipts before its fenced child
+  result becomes replayable to the parent.
 - **A launch is never acknowledged before durable child admission.** The run,
   state transition, and `agent_run_dispatches` row exist before the request
   reports success, so constructor/alarm recovery has a durable start signal.
@@ -631,7 +636,9 @@ outputs, summaries, token content, and provider responses remain excluded.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, terminal commits, durable structured failures, production root completion/failure settlement after cancellation, bulk residual-receipt settlement for stop/steering, attachment dependency ordering, and dependency/replan interleavings. |
+| `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, terminal commits, durable structured failures, successful/failure/stop receipt settlement across a mid-batch lease deadline, healing an occupied checkpoint index, bulk residual-receipt settlement for stop/steering, descendant receipt settlement during child reaping, attachment dependency ordering, and dependency/replan interleavings. |
+| `apps/api/test/durable-agent-runtime.test.ts`, `agent-run-dispatch-queue.test.ts` | One drain per isolate, abandonment revoking the obsolete loop before another claim, durable wake derivation, reclaim ordering, and exact lease-token fences for Substream and BlockDashboard dispatch settlement. |
+| `apps/api/test-workers/agent-run-dispatch-reliability.test.ts`, `durable-object-runtime.test.ts` | Real workerd alarms, eviction/reclaim, abandoned-run recovery, queue progress against the same authoritative workstream root required by production product mutations, and the direct BlockDashboard terminal transition refusing an obsolete lease token without changing the successor's token, outcome, or stream checkpoint. |
 | `apps/api/test/harness-liveness-monitor-lifecycle.test.ts` | Heartbeats, expiry reaping, and the compare-and-swap that fails an abandoned attempt. |
 | `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
 | `apps/api/test/core-tool-idempotency.test.ts` | Receipt identity, plan hashes, and the `ambiguous_external_write` path. |
@@ -687,8 +694,23 @@ receipt rather than creating a conflicting empty-input plan. A
 lease-owning attempt may settle any terminal event already returned by Bind for
 the exact in-flight receipt after durable cancellation. Stopped terminalization
 atomically classifies any residual receipt from the current or an expired
-attempt before committing the parent, and an obsolete executor defers instead
-of failing its successor. An attachment replay
+attempt before committing the parent and advances past any orphan checkpoint
+index from an older partially admitted settlement. Child reaping applies the same bulk
+classification before a stopped or orphaned descendant becomes terminal. An
+obsolete executor defers instead of failing its successor; abandoned drain
+identity is rechecked after the pre-claim await, and Substream and BlockDashboard
+executor-owned dispatch releases and terminal transitions require the exact
+lease token. Substream product failure requires that token too; post-terminal
+BlockDashboard delivery retries rely on the already-durable terminal outcome.
+Checkpoint, completion, and failure batches carry their first live-lease
+admission through the immediately serialized receipt write rather than sampling
+expiry twice; the receipt update must reference the exact checkpoint ID admitted
+by that first statement. Root-stop and child-reaper races retain started receipts
+unchanged when a successor takes ownership or an expired child lease is renewed.
+The real-worker dispatch fixture now seeds an authoritative product root; a
+scheduling-only fixture without that row masked recovery behind a guaranteed
+regional-effect authority refusal.
+An attachment replay
 dependency is registered only after the completion receipt passes that authority
 fence and only while its exact output reference remains current; a successor
 replan repeats both durable-dependency predicates inside its atomic write.
@@ -719,8 +741,13 @@ partial keyword matches but reports its full match count when the ranked list is
 bounded. The
 cancellation exception is not a general fence relaxation: attempt, owner, lease,
 running status, and terminalization checks still apply. Residual receipts are
-classified and closed in the atomic stopped commit, so Stop cannot degrade into
-a contradictory started row or a stale executor's later failed outcome. A
+classified and closed in the atomic stopped commit, and every admitted receipt
+settlement finishes even if the lease deadline passes between its serialized
+checkpoint and receipt writes. Cleanup advances beyond an older orphan
+checkpoint rather than conflicting on it. Child reaping closes descendant receipts first. Stop
+therefore cannot degrade into a contradictory started row or a stale executor's
+later failed outcome, and an abandoned drain cannot continue beside its
+replacement. A
 stale executor cannot mutate attachment replay dependencies before its completion
 is accepted or race that dependency past a successor's preliminary replan check.
 New inference callers must add their source to the typed union and the D1 check

@@ -158,12 +158,18 @@ export interface RuntimeStatement {
 export function executeWorkstreamObjectSql(
   database: DatabaseSync,
   statements: RuntimeStatement[],
+  afterStatement?: (
+    database: DatabaseSync,
+    statement: RuntimeStatement,
+    index: number,
+    statements: RuntimeStatement[],
+  ) => void,
 ): WorkstreamRuntimeSqlResult[] {
   const sql = objectSqlStorage(database);
   const results: WorkstreamRuntimeSqlResult[] = [];
   database.exec("BEGIN");
   try {
-    for (const statement of statements) {
+    for (const [index, statement] of statements.entries()) {
       sql.exec(`UPDATE _runtime_statement_changes SET changes = 0 WHERE id = 1`);
       let cursor: SqlStorageCursor<Record<string, SqlStorageValue>>;
       try {
@@ -192,6 +198,7 @@ export function executeWorkstreamObjectSql(
         rows,
         changes: Math.max(cursor.rowsWritten, counted),
       });
+      afterStatement?.(database, statement, index, statements);
     }
     database.exec("COMMIT");
   } catch (error) {

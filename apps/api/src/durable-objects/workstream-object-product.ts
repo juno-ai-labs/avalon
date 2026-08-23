@@ -2668,16 +2668,26 @@ export class WorkstreamObjectProductService {
     );
   }
 
-  async recordWorkflowFailed(runId: string, error: { code: string; message: string }): Promise<void> {
+  async recordWorkflowFailed(
+    runId: string,
+    error: { code: string; message: string },
+    dispatchLeaseToken: string,
+  ): Promise<void> {
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
         const now = Date.now();
-        sql.exec(
+        const changed = sql.exec<{ run_id: string }>(
           `UPDATE runs SET status = 'failed', terminal_reason = 'failed', error_json = ?,
                   completed_at = ?, terminalized_at = ?, updated_at = ?
-            WHERE run_id = ? AND status IN ('admitted', 'running')`,
-          JSON.stringify(error), now, now, now, runId,
+            WHERE run_id = ? AND status IN ('admitted', 'running')
+              AND EXISTS (
+                SELECT 1 FROM agent_run_dispatches dispatch
+                 WHERE dispatch.run_id = ? AND dispatch.lease_token = ?
+              )
+            RETURNING run_id`,
+          JSON.stringify(error), now, now, now, runId, runId, dispatchLeaseToken,
         );
+        if (changed.toArray().length === 0) throw new Error("workstream_run_failure_fenced");
         sql.exec(
           `UPDATE workstream SET exact_state = 'failed', state_reason_code = ?,
                   state_changed_at = ?, updated_at = ? WHERE id = 1`,
