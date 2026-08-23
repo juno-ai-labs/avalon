@@ -428,11 +428,11 @@ focused runtime file. PR #253 merged as
 `e4311041bc45936137cd318871497c22392e0bff`; deployment run `32633487884`
 produced healthy Global Worker `c6eca610-7549-4658-9ce4-ca2b5fe370a1` and EU
 Worker `f3c83ce2-e854-49fc-9b05-5819dda1c984`, with no pending migration in
-either region. Deliberate durable-host response loss remains open for targeted
-production acceptance; the deployed identity and health checks do not pretend
-to reproduce that destructive fault through the UI. A fresh ordinary
-post-deployment Computer Use inspection was unavailable because the Mac
-relocked after deployment.
+either region. The exact residual-receipt RPC response-loss fault remains
+unexercised in production because it is not safely injectable through Computer
+Use; the deployed identity and health checks do not pretend to reproduce it. A
+fresh ordinary post-deployment Computer Use inspection was unavailable because
+the Mac relocked after deployment.
 
 ## Additional observations
 

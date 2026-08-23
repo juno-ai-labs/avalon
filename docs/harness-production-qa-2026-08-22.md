@@ -593,9 +593,9 @@ merged as `e4311041bc45936137cd318871497c22392e0bff`. Deployment run
 `32633487884` produced healthy Global Worker version
 `c6eca610-7549-4658-9ce4-ca2b5fe370a1` and EU version
 `f3c83ce2-e854-49fc-9b05-5819dda1c984`; both migration listings reported no
-pending migration. The exact durable-host response-loss injection remains an
-open production acceptance gate because forcing it would deliberately corrupt
-a member-visible receipt path; no UI-only claim substitutes for that fault. A
+pending migration. The exact residual-receipt RPC response-loss fault remains
+unexercised in production because it is not safely injectable through Computer
+Use; no UI-only claim substitutes for that fault. A
 fresh ordinary post-deployment Computer Use inspection was also unavailable
 because the Mac relocked after deployment, so regional health is not presented
 as UI evidence.
