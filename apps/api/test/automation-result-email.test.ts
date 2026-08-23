@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import {
@@ -91,6 +91,18 @@ function successfulResend() {
 }
 
 describe("automation result email", () => {
+  // The subject carries the run's date, so the clock is pinned: asserting on
+  // today's date passes on the day it is written and fails the next morning.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // Late enough in the UTC day that a reader east of it is already on the
+    // next date, which is what the timezone case below turns on.
+    vi.setSystemTime(new Date("2026-08-22T21:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("sends an escaped result to the frozen address and records the delivery", async () => {
     const { env, calls } = environment();
     const resend = successfulResend();
@@ -155,6 +167,20 @@ describe("automation result email", () => {
     const calls = resend.mock.calls as unknown as Array<[string, RequestInit]>;
     const body = JSON.parse(String(calls[0]?.[1].body)) as Record<string, unknown>;
     expect(body.subject).toBe("Action needed · Daily <Azure> tracker Injected · 22 Aug 2026");
+  });
+
+  it("dates the subject in the reader's own timezone", async () => {
+    const { env } = environment({}, target, { timezone: "Pacific/Auckland" });
+    const resend = successfulResend();
+
+    await deliverAutomationResultEmail(env, input, resend);
+
+    const [, init] = resend.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(init.body)) as { subject: string };
+    // 21:00 UTC on 22 August is 09:00 on the 23rd in Auckland. A briefing dated
+    // by the Worker's clock rather than the reader's is dated wrong for
+    // everybody far enough east of it.
+    expect(body.subject).toContain("23 Aug 2026");
   });
 
   it("says in the subject and the body when a run produced no result", async () => {

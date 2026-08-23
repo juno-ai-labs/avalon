@@ -507,7 +507,7 @@ function DraftSummary({
       />
       <section className="automation-plugin-defaults automation-delivery-target" aria-label="Deliver results">
         <header>
-          <div><strong>Deliver results</strong><small>{deliveryNudge(summary)}Every destination is frozen when this automation is saved.</small></div>
+          <div><strong>Deliver results</strong><small>{deliveryNudge(summary)}You can change these later from the automation.</small></div>
         </header>
         <ul>
           <DeliveryChoice

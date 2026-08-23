@@ -829,9 +829,23 @@ export class AutomationService {
     defaultPluginIds?: string[] | undefined;
     activitySourcePluginIds?: Record<string, string> | undefined;
     overrides?: Record<string, unknown> | undefined;
+    deliveryTargets?: CreateAutomationInput["deliveryTargets"] | undefined;
   }) {
     const row = await this.loadSubscription(id);
     this.assertCanManageSubscription(row);
+    // A delivery target is one person's: the row carries their user id and the
+    // address is their own. Somebody else administering the automation may
+    // change what it does, never where it reaches this person.
+    //
+    // Defence behind a fence that already holds: only a personal automation can
+    // carry a destination, and `loadSubscription` does not return one to
+    // anybody but its owner, so this cannot fire today. It is here so that a
+    // change making automations visible more widely — a shared workspace
+    // automation with per-member delivery, say — fails closed rather than
+    // silently letting an administrator redirect somebody else's mail.
+    if (input.deliveryTargets !== undefined && row.owner_user_id !== this.auth.userId) {
+      throw new ApiError(403, "delivery_owner_required", "Only the automation's owner can change where its results are delivered");
+    }
     if ((input.name != null || input.description != null) && row.template_owner_user_id !== this.auth.userId) {
       throw new ApiError(403, "template_owner_required", "Only the template owner can change its name or description");
     }
@@ -900,10 +914,85 @@ export class AutomationService {
         ).bind(versionId, at, id, this.auth.workspaceId),
       );
     }
+    if (input.deliveryTargets !== undefined) {
+      statements.push(...await this.deliveryTargetStatements(id, String(row.scope) as Scope, input.deliveryTargets, at));
+    }
     await this.env.DB.batch(statements);
     const detail = await this.get(id);
     await this.recordAutomationAction(row, 'edit', String(detail.status) as 'draft' | 'active' | 'paused' | 'error');
     return detail;
+  }
+
+  /**
+   * The statements that make an automation's destinations match what was asked
+   * for, leaving the ones that are already right alone.
+   *
+   * A target that survives keeps its row, and with it
+   * `last_delivered_workstream_id` — the fence that stops a workflow retry
+   * mailing the same result twice. Deleting and reinserting every target on
+   * every edit would clear that fence, so an edit between a run finishing and
+   * its delivery settling could send the result again.
+   *
+   * An address is still resolved when the target is created rather than per
+   * run, so this re-resolves only for a destination that was not there before.
+   */
+  private async deliveryTargetStatements(
+    subscriptionId: string,
+    scope: Scope,
+    requested: CreateAutomationInput["deliveryTargets"],
+    at: string,
+  ): Promise<D1PreparedStatement[]> {
+    const resolved = await this.resolveDeliveryTargets(scope, requested);
+    const existing = await this.env.DB.prepare(
+      `SELECT id, target_type, connection_id FROM automation_delivery_targets
+        WHERE workspace_id = ? AND automation_subscription_id = ?`,
+    ).bind(this.auth.workspaceId, subscriptionId).all<{
+      id: string;
+      target_type: string;
+      connection_id: string | null;
+    }>();
+    const keep = new Set<string>();
+    const statements: D1PreparedStatement[] = [];
+    for (const target of resolved) {
+      const match = (existing.results ?? []).find((candidate) =>
+        candidate.target_type === target.type
+        && (target.type === "email" || candidate.connection_id === target.connectionId));
+      if (match) {
+        keep.add(match.id);
+        // A target the owner has just chosen again is one they want delivering,
+        // whatever a past failure left on it.
+        statements.push(this.env.DB.prepare(
+          `UPDATE automation_delivery_targets SET status = 'active', last_error_json = NULL, updated_at = ?
+            WHERE id = ? AND workspace_id = ?`,
+        ).bind(at, match.id, this.auth.workspaceId));
+        continue;
+      }
+      statements.push(this.env.DB.prepare(
+        `INSERT INTO automation_delivery_targets
+          (id, workspace_id, automation_subscription_id, target_type, connection_id,
+           user_id, slack_team_id, slack_user_id, email_address, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+      ).bind(
+        newId(),
+        this.auth.workspaceId,
+        subscriptionId,
+        target.type,
+        target.type === "email" ? null : target.connectionId,
+        this.auth.userId,
+        target.type === "email" ? null : target.providerTenantId,
+        target.type === "email" ? null : target.providerUserId,
+        target.type === "email" ? target.emailAddress : null,
+        at,
+        at,
+      ));
+    }
+    for (const candidate of existing.results ?? []) {
+      if (keep.has(candidate.id)) continue;
+      statements.push(this.env.DB.prepare(
+        "DELETE FROM automation_delivery_targets WHERE id = ? AND workspace_id = ?",
+      ).bind(candidate.id, this.auth.workspaceId));
+    }
+    return statements;
   }
 
   async runNow(id: string, idempotencyKey: string) {
@@ -1232,6 +1321,10 @@ export class AutomationService {
       overview: String(template.overview ?? ""),
       triggers: parseJson(template.trigger_definitions_json, []), requiredCapabilities: parseJson(template.required_capabilities_json, []),
       expectedOutputs: parseJson(template.expected_outputs_json, []), defaultBehavior: parseJson(template.default_behavior_json, {}),
+      // A shared template carries no delivery request: the person adopting it
+      // picks their own destinations, and inheriting somebody else's would be
+      // a decision made for them.
+      requestedDelivery: [],
       recommendedPlugins: parseJson(template.recommended_plugins_json, []),
       memoryTables: parseJson(template.memory_tables_json, []),
       suggestedScope: "personal", followUpQuestion: null, elicitation: null, ready: true,

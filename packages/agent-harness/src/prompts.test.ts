@@ -33,6 +33,7 @@ const currentDraft: AutomationDraft = {
   recommendedPlugins: [],
   memoryTables: [],
   expectedOutputs: ["Engineering brief"],
+  requestedDelivery: [],
   defaultBehavior: { noChanges: "Record a concise no-change result" },
   suggestedScope: "workspace",
   followUpQuestion: null,
@@ -83,7 +84,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "057749eb1e20721c7153ab9c02a5df2e77bbe6ffab01e351f3b4b7d158d2aa61",
+        hash: "80e6d54b0ac346ec3cb6b2a68f3231aeac6a31cce9d3b89d5563898388d038c0",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -94,7 +95,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "454024ba860693fa42a27d79e7cc1022f105383eca9093050009c2ca21dd74ee",
+        hash: "6b6d47b4b5cf0265e9c851943ab374c9ce1d6292b1b6077148aad4386273556b",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -570,13 +571,21 @@ describe("prompt renderers", () => {
     const compilerPrompt = renderAutomationCompilerMessages({ messages: [] })[0]!.content;
 
     expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_000);
-    // The compiler's ceiling is 1 KB above the work stream's because it gained
-    // a permanent `# Narration` section that the 8 KB figure predates. The
-    // bound is here to catch prose creeping in unnoticed, not to force the
+    // The compiler's ceiling is 2.5 KB above the work stream's: it gained a
+    // permanent `# Narration` section that the 8 KB figure predates, and then
+    // the delivery rules — a destination is not a step, and the result's output
+    // shape — which are what stop an automation delivering its result twice.
+    // The bound is here to catch prose creeping in unnoticed, not to force the
     // next author to delete a rule to fit a new one: raising it deliberately,
     // with the reason in the agent-harness.md changelog, is a valid move and
     // usually the better one. See that entry before cutting policy to fit.
-    expect(Buffer.byteLength(compilerPrompt, "utf8")).toBeLessThan(10_000);
+    //
+    // Raised from 10,000 with that entry rather than compressed a third time.
+    // What should move out before this is raised again is named there too: the
+    // stack-ranked-briefing sentence is one workflow's output shape sitting in
+    // standing policy, and `docs/writing-prompts.md` says that belongs in a
+    // skill.
+    expect(Buffer.byteLength(compilerPrompt, "utf8")).toBeLessThan(10_500);
   });
 
   it("requires both agents to hydrate referenced attachments and respect exact partial coverage", () => {

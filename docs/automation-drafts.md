@@ -149,6 +149,12 @@ may not write through to, inserts a new automation exactly as it always did.
   the result; a model asked for an email-shaped artifact produces one nested
   inside another, and asked for a table produces the one structure the renderer
   keeps verbatim rather than laying out.
+- **The destination is declared, not inferred.** A draft carries
+  `requestedDelivery`, the destinations the compiler understood the person to ask
+  for, and the create screen pre-selects from that. Reading it back out of the
+  draft's prose is guessing at something the compiler already knew, and the guess
+  ticks a destination for a briefing that merely *mentions* email. It stays a
+  request: what delivers is the set of rows on the created automation.
 - **A destination is not a step.** Avalon sends each run's final message to the
   destinations frozen on the automation, so the compiler writes "email me the
   briefing" into `expectedOutputs` and never into `instructions` as a
@@ -237,7 +243,7 @@ from the API, not a second renderer completion.
 | `apps/api/test/automation-draft-persistence.test.ts` | The lifecycle end to end against a migrated SQLite database: a draft appearing in the list, later turns updating it in place, the conversation coming back, promotion keeping the id, and a draft id the caller may not write through to. |
 | `apps/api/test/automation-lifecycle.test.ts` | Archival, and the refusal to archive an automation that runs. |
 | `apps/api/test/automation-compile-source-validation.test.ts` | An unbindable activity source still saving as a draft. |
-| `apps/desktop/src/renderer/screens/new-automation.test.tsx` | Resuming `?draft=`, the screen naming the draft it wrote, and the delivery choice a draft's own outputs pre-tick. |
+| `apps/desktop/src/renderer/screens/new-automation.test.tsx` | Resuming `?draft=`, the screen naming the draft it wrote, and the delivery choice a draft's `requestedDelivery` pre-selects. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | Draft ordering, the row's link, and the archive menu item. |
 
 Run them with `pnpm --filter @avalon/api exec vitest run test/automation-draft-persistence.test.ts`
@@ -280,6 +286,28 @@ conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
 ## Changelog
+
+### 2026-08-23 — The compiler names the destination it was asked for
+
+**What changed:** `AutomationDraftSchema` gained `requestedDelivery`, the
+submit-draft tool schema requires it, and the compiler policy says to record what
+was asked for and nothing else — never a destination inferred from the subject
+matter. The create screen reads that field instead of matching phrases in
+`expectedOutputs`.
+
+**Why:** The screen was inferring intent from prose the compiler had already
+parsed, and getting it wrong in the direction that costs most: the compiler's own
+worked example is a briefing *about* somebody's inbox, whose expected output says
+"emails", which pre-ticked a destination nobody asked for.
+
+**Considered and rejected:** Having the API derive the field server-side from the
+same prose. It moves the guess rather than removing it, and leaves two readings of
+one sentence — the model's and the regex's — free to disagree.
+
+**Consequences:** The field is defaulted, so drafts saved before it existed still
+parse and simply pre-select nothing. A new destination kind has to be added to the
+enum in contracts *and* to the tool schema the model answers against, or the
+compiler cannot name it.
 
 ### 2026-08-22 — The compiler stops writing the delivery it is given
 
