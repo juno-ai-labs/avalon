@@ -309,10 +309,23 @@ block a place to put the language, which nothing had shown before.
 `markdownLanguageAliases`: a display name a reader recognises ("TypeScript",
 "HTML") rather than the fence's own shorthand or Prism's internal name. A
 language neither table knows is title-cased from the fence word, the same
-fallback `markdownLanguageAliases` already uses for highlighting, so a label
-is never blank. The `data-language` attribute on `.markdown-code-block` is
-unchanged — it stays the fence's raw lowercased word — so nothing reading that
-attribute needed to change.
+fallback `markdownLanguageAliases` already uses for highlighting. The
+`data-language` attribute on `.markdown-code-block` is unchanged — it stays the
+fence's raw lowercased word — so nothing reading that attribute needed to
+change.
+
+A fence that names no language gets no header label at all, rather than the
+"Plain text" every one of `data-language`'s internal defaults would otherwise
+surface — review caught that an unlabelled fence, the most common kind in a
+transcript, was rendering a caption ("PLAIN TEXT", uppercased by the header's
+own styling) nobody wrote and nothing asked for. `MarkdownCodeBlock` now reads
+whether a language was actually named off the raw prop, before it is defaulted
+to `'plain'` for highlighting and for `data-language` — those two stay
+unaffected, since the default is applied after the label decision rather than
+instead of it. The exported card's `.markdown-code-language` rule also picked
+up `display: block`: it is a `<span>`, and the `margin-bottom` the rule already
+declared is a no-op on an inline box, so the label sat flush against the code
+with none of the gap the layout was written to have.
 
 ### 2026-08-23 — The renderer repairs a model's TeX, and stops emitting a dead mention link
 

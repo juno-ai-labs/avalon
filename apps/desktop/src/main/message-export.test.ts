@@ -203,6 +203,15 @@ describe('the exported document', () => {
     expect(html).toContain('.markdown-code-block-header button { display: none; }');
   });
 
+  // The label is a <span>, and a vertical margin on an inline box is a no-op —
+  // without `display: block` the label sits flush against the code with no gap,
+  // which nothing here renders to catch.
+  it('blockifies the code language label so its margin actually opens a gap', () => {
+    const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
+
+    expect(html).toMatch(/\.markdown-code-language\s*\{[^}]*\bdisplay:\s*block;/u);
+  });
+
   it('splashes two different messages differently and the same message the same way', () => {
     const splash = (contentHtml: string): string =>
       messageExportDocument({ format: 'image', contentHtml, logoDataUrl: LOGO })
