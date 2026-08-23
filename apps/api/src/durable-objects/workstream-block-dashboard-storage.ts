@@ -264,8 +264,8 @@ export class WorkstreamBlockDashboardStorage {
    * Deliberately unfenced on a live lease — an expired one is the sweep's whole
    * premise — and instead tied to the exact `terminalized_at` the reaper
    * stamped, so a run that has since been taken over is not settled by the
-   * sweep that lost it. The same shape, and the same reason, as
-   * `abandonRunReceipts`.
+   * sweep that lost it. The same shape, and the same reason, as the receipt
+   * authority's own `settleResidualReceipts`, which the reaper calls first.
    */
   abandonBlockRun(input: { harnessRunId: string; terminalizedAt: number; errorJson: string }): number {
     return this.storage.transactionSync(() => {
