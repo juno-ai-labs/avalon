@@ -1,4 +1,10 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import {
+  asHarnessRunId,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+  readStructuredFailure,
+} from "@avalon/contracts";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -323,15 +329,15 @@ describe("wake-up delay grammar", () => {
     expect(() => parseWakeupDelay(text)).toThrow(expect.objectContaining({ code }));
   });
 
-  it("names every accepted unit in the hint on every delay rejection", () => {
+  it("names every accepted unit in the model-visible reason on every delay rejection", () => {
     for (const text of ["5", "1.5h", "5 fortnights", "5m 10m"]) {
       try {
         parseWakeupDelay(text);
         expect.unreachable(`expected ${text} to be rejected`);
       } catch (error) {
-        const hint = (error as WakeupInputError).hint;
+        const reason = (error as WakeupInputError).details.reason;
         for (const unit of ["seconds", "minutes", "hours", "days", "weeks", "ISO-8601"]) {
-          expect(hint).toContain(unit);
+          expect(reason).toContain(unit);
         }
       }
     }
@@ -462,15 +468,15 @@ describe("wake-up instant resolution", () => {
         resolveWakeupInstant(request);
         expect.unreachable(`expected ${code}`);
       } catch (error) {
-        const { hint } = error as WakeupInputError;
+        const reason = (error as WakeupInputError).details.reason;
         expect((error as WakeupInputError).code).toBe(code);
         // A caller who passed `at` gets the timestamp grammar, not duration units.
         if (form === "delay") {
-          expect(hint).toContain("Accepted units are seconds");
-          expect(hint).not.toContain("ISO-8601 date and time");
+          expect(reason).toContain("Accepted units are seconds");
+          expect(reason).not.toContain("ISO-8601 date and time");
         } else {
-          expect(hint).toContain("ISO-8601 date and time");
-          expect(hint).not.toContain("Accepted units are seconds");
+          expect(reason).toContain("ISO-8601 date and time");
+          expect(reason).not.toContain("Accepted units are seconds");
         }
       }
     }
@@ -489,13 +495,13 @@ describe("wake-up instant resolution", () => {
     })).toThrow(expect.objectContaining({ code: "wakeup_too_distant" }));
   });
 
-  it("carries a remediation hint on every rejection", () => {
+  it("carries a model-visible remediation reason on every rejection", () => {
     try {
       resolveWakeupInstant({ defaultTimezone: "UTC", now });
       expect.unreachable("expected a rejection");
     } catch (error) {
       expect(error).toBeInstanceOf(WakeupInputError);
-      expect((error as WakeupInputError).hint.length).toBeGreaterThan(0);
+      expect((error as WakeupInputError).details.reason.length).toBeGreaterThan(0);
     }
   });
 });
@@ -637,16 +643,15 @@ describe("wake-up tools", () => {
     expect(count.n).toBe(1);
   });
 
-  it("returns a recoverable error with the hint in output, never a throw", async () => {
+  it("throws a classified recoverable error with model-visible guidance", async () => {
     const { env } = fixture();
     const { schedule } = wakeupTools(env);
 
-    const result = await schedule.execute({ prompt: "Too soon", delay: "5s" }, context());
-
-    expect(result.output).toMatchObject({
-      error: "wakeup_too_soon",
-      hint: expect.stringContaining("seconds from now"),
-    });
+    await expect(schedule.execute({ prompt: "Too soon", delay: "5s" }, context()))
+      .rejects.toMatchObject({
+        code: "wakeup_too_soon",
+        details: { reason: expect.stringContaining("seconds from now") },
+      });
   });
 
   it("refuses an undeclared parameter rather than dropping it", async () => {
@@ -669,14 +674,37 @@ describe("wake-up tools", () => {
       );
     }
 
-    const result = await schedule.execute(
+    await expect(schedule.execute(
       { prompt: "One too many", delay: "150 minutes" },
       context("receipt-overflow"),
+    )).rejects.toMatchObject({
+      code: "wakeup_limit_reached",
+      details: {
+        reason: expect.stringContaining("cancel one pending wake-up"),
+        available: expect.arrayContaining([expect.any(String)]),
+      },
+    });
+  });
+
+  it("bounds wake-up recovery IDs before structured-failure sanitization", () => {
+    const valid = Array.from(
+      { length: MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM + 5 },
+      (_, index) => `wakeup-${String(index).padStart(2, "0")}`,
+    );
+    const failure = new WakeupInputError(
+      "wakeup_limit_reached",
+      "Too many wake-ups",
+      "Cancel one pending wake-up before retrying.",
+      [`wakeup-${"x".repeat(170)}`, ...valid],
     );
 
-    const output = result.output as { error: string; pending: unknown[] };
-    expect(output.error).toBe("wakeup_limit_reached");
-    expect(output.pending).toHaveLength(MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM);
+    expect(readStructuredFailure(failure)).toEqual({
+      code: "wakeup_limit_reached",
+      details: {
+        reason: "Cancel one pending wake-up before retrying.",
+        available: valid.slice(0, MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM),
+      },
+    });
   });
 
   it("lists and cancels a pending wake-up, then refuses to cancel it twice", async () => {
@@ -694,8 +722,9 @@ describe("wake-up tools", () => {
     await expect(cancel.execute({ wakeupId }, context())).resolves.toMatchObject({
       output: { status: "cancelled" },
     });
-    await expect(cancel.execute({ wakeupId }, context())).resolves.toMatchObject({
-      output: { error: "wakeup_not_pending" },
+    await expect(cancel.execute({ wakeupId }, context())).rejects.toMatchObject({
+      code: "wakeup_not_pending",
+      details: { reason: expect.stringContaining("still pending") },
     });
     expect((await list.execute({}, context())).output).toMatchObject({ wakeups: [] });
   });
@@ -733,7 +762,10 @@ describe("wake-up tools", () => {
     await expect(cancel.execute(
       { wakeupId: "00000000-0000-4000-8000-00000000000a" },
       context(),
-    )).resolves.toMatchObject({ output: { error: "wakeup_not_found" } });
+    )).rejects.toMatchObject({
+      code: "wakeup_not_found",
+      message: expect.not.stringContaining("another work stream"),
+    });
   });
 });
 

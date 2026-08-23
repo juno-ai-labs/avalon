@@ -165,6 +165,32 @@ beforeEach(async () => {
   `abortAllDurableObjects()` is the one that keeps persisted data, but it aborts
   instances rather than retiring them: a test *about* eviction still wants
   `evictDurableObject`, which drains in flight work and hibernates sockets.
+- **A native RPC method that throws can leave an unhandled rejection, and that
+  fails the run while every test in it passes.** Calling one on a *stub*
+  (`stub.someMethod(…)`, not `exports.default.fetch` or a `worker.queue` call)
+  can leave two rejected promises — the one the caller awaits and one the RPC
+  layer holds for the remote call — and `await expect(…).rejects` handles only
+  the first. Vitest reports the other as `Unhandled Rejection` and exits
+  non-zero under a summary reading `222 passed`. The tell is the serialized
+  error: `{ durableObjectId: …, remote: true }`. Assert the throwing path inside
+  `runInDurableObject` instead, where it stays in one isolate, and cover the RPC
+  hop with a call that resolves. Not every `.rejects` on a stub does this —
+  `forced-migration.test.ts` and `queue-dispatch.test.ts` have several that do
+  not — so treat the unhandled-rejection report as the signal rather than
+  rewriting assertions pre-emptively.
+- **Read the exit code, not the summary.** The line above is the reason: `Tests
+  222 passed (222)` is printed by a run that exited 1. `grep`ping a vitest run
+  for `Tests ` proves the specs passed and nothing else — capture `$?`, or run
+  `pnpm --filter @avalon/api test` and let its failure surface.
+- **`reset()` is not confined to the file that calls it.** Storage is isolated
+  per file, but the reset itself takes every object's input gate, so a file that
+  never calls one can still be made to wait for a sibling's. That surfaces as a
+  `beforeAll`/`beforeEach` timing out on its *first* test and passing when the
+  file is run alone — which reads as flakiness and is not. Two things fix it,
+  and `workspace-directory-reads.test.ts` does both: set up in `beforeEach`
+  rather than `beforeAll`, so a wipe that lands mid-file is repaired rather than
+  inherited; and give that hook an explicit timeout well above the work it does,
+  with a comment saying the budget is for the interleave and not for the query.
 - **Bindings come from `apps/api/wrangler.test.jsonc`**, not from the production
   configs. A new Durable Object class needs both a binding and its name in the
   `new_sqlite_classes` migration tag, or the object has no SQLite storage.
@@ -268,6 +294,14 @@ is usually one of these:
   on either end passes for any self-consistent format, including a broken one.
 - **A snapshot of a stub**, which pins the fixture and re-baselines the moment it
   is wrong.
+- **The source text.** `expect(source(file)).toContain("SELECT … WHERE …")` reads
+  a module off disk and asserts a string is in it. It cannot fail for the reason
+  it is named after — only for the string having moved — and the repair, every
+  time, is to paste the new spelling in. `ordinary-harness-run-selection.test.ts`
+  did exactly that through a rewrite that moved its four queries into a Durable
+  Object: the assertions were retargeted and stayed green while nobody re-checked
+  the rule. It is now a workerd suite that seeds the three run shapes and reads.
+  If a rule is worth pinning, something has to *run* it.
 
 What to assert instead: the observable output of the real thing — the status and
 body a route returned, rows read back through the same API production reads them
@@ -432,6 +466,66 @@ touch this area or a change worth making that has not been made.
   started `pnpm dev:api:local` first, which is why it is not in CI; a harness
   could run both regional Workers in-process and make the smoke check a gate
   rather than a manual step.
+
+## Staging a race against an object operation
+
+A receipt or terminal operation used to be a D1 batch, and a test staged a race
+by intercepting `batch` and writing between its statements. Those operations are
+now one `transactionSync` inside the object, so there is no gap to write into and
+that instrument silently never fires — the test still passes, asserting nothing.
+Two hooks on `testToolReceiptPort` replace it:
+
+- `beforeTransaction` runs as the transaction opens, before any fence is read.
+  The latest a competing write can still be *seen* by the operation.
+- `afterStatement` runs after each statement, with its SQL. The earliest a
+  competing write lands *behind* a decision the operation has already made.
+
+Between them they cover what the two-batch interception used to: "does the
+decision repeat against current rows" and "does an admitted operation finish".
+Assert the hook fired — an interception that never runs is the failure mode this
+whole section exists for.
+
+**When the property itself is gone, say so rather than simulating it.** Some of
+these tests asserted a compensation for a hazard the single transaction removed
+— a settlement surviving a lease that lapsed between two statements, a CAS
+repeating a predicate a stale read had already answered. Rewriting them to
+re-create the old two-step shape would be testing a structure the code no longer
+has. Assert the property that replaced it, and put the reason in the test.
+
+## What the objects' RPC surface has, and has not
+
+Every public `async` method on `WorkspaceDO`, `SubstreamAgent`, `WorkstreamDO`
+and `BlockDashboardAgent` is an interface some Worker calls across a stub. As of
+2026-08-23, **60 of 79 are exercised somewhere in `test-workers/`**. The count is
+mechanical — grep each class's public async methods, then grep the suite for each
+name — so re-derive it rather than trusting this number after a change:
+
+```bash
+grep -c "^  \(override \)\?async " apps/api/src/durable-objects/workspace-do.ts
+```
+
+The nineteen with no workerd exercise, so nobody has to rediscover the list:
+
+| Object | Unexercised |
+| --- | --- |
+| `WorkspaceDO` | `activityEventSource`, `applyWorkstreamRegionalEffect`, `dueWorkstreamDirectory`, `existingOpportunities`, `getOpportunity`, `latestActivityEventCursor`, `notificationDirectoryState`, `opportunityWindow`, `resourceAccess`, `workstreamScheduleTargets` |
+| `SubstreamAgent` | `createRuntimeSuggestion`, `publishEvent`, `requestBlockDashboardRefresh` |
+| `WorkstreamDO` | `acknowledgeRegionalEffect`, `authorizeBlockDashboardBlockViewer`, `controlBlockDashboard`, `loadRegionalEffect` |
+| `BlockDashboardAgent` | `initializeBlock`, `revalidateViewerAccess` |
+
+The receipt storage class is covered differently, and better: `tool-receipt-authority.test.ts`
+reflects over `WorkstreamToolReceiptStorage`'s own methods and drives each one
+through the real endpoint, so a method added without a dispatch entry fails there
+without anyone remembering to add a case. That is worth copying for the next
+typed port rather than maintaining another hand-written list.
+
+**Uncovered here does not mean untested** — several have Node suites over their
+storage class, which is the right rung for what the SQL decides. It means
+nothing has driven them across the RPC boundary against real workerd, so a
+protocol change, an identity check or a transaction boundary would not be caught.
+Adding a method to one of these classes is the moment to add its workerd
+exercise, not later: the Worker-side caller's own suite will reach it through a
+double, and a double answers whatever it was told to.
 
 ## Recording what you covered
 

@@ -16,9 +16,10 @@ import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare
 import {
   executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  workstreamObjectGet,
   workstreamObjectRun,
+  seedToolReceipt,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -91,14 +92,19 @@ function fixture(options: { images?: ImagesBinding; ai?: Ai } = {}) {
     ...(options.images ? { IMAGES: options.images } : {}),
     ...(options.ai ? { AI: options.ai } : {}),
     SESSION_SIGNING_KEY: "attachment-test-session-signing-key", AVALON_REGION: "global", APP_ENV: "test",
+    // Receipts reach their object through the typed port now, not through the
+    // routed D1 handle, so the binding has to be here for the port to resolve.
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
   });
   return {
     database,
     objectStore,
     bucket,
-    // Wrapped the way the harness wraps its execution environment, so
-    // `regionalDatabase(env)` sees through to the regional half and the
-    // receipt services take their per-authority paths.
+    // Wrapped the way the harness wraps its execution environment. This used to
+    // matter to the receipt services as well, because they branched on
+    // `regionalDatabase(env) !== env.DB`; that branch is gone and they reach
+    // their object through the typed port. It still matters to everything else
+    // routed through this env.
     env: withWorkstreamRuntimeDatabase(
       baseEnv,
       WORKSPACE_ID,
@@ -566,23 +572,19 @@ describe("work-stream attachment tools", () => {
     const output = result.output as { items: Array<{ version: { sha256: string } | null }> };
     const invocationId = "70000000-0000-4000-8000-000000000001";
     const outputRef = "receipts/view.json";
-    // The invocation and its receipt live in the work-stream object; the
-    // compat insert satisfies the object's own foreign keys (the effect row
-    // the receipt references is created by the same trigger), so no
-    // enforcement has to be switched off the way the dropped D1 copies needed.
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO tool_invocations
-        (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
-         input_hash, input_json, output_ref, output_summary, status)
-      VALUES (?, ?, ?, ?, 'view-call', 'workstream_view_resource', 'hash', ?, ?, 'Viewed image', 'completed')`,
-      invocationId,
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
-      HARNESS_RUN_ID,
-      JSON.stringify({ resourceIds: [imageId], maxDimension: 2_048 }),
+    // The receipt and its dependency rows both live in the work-stream object,
+    // so the object's own foreign keys are satisfied without switching any
+    // enforcement off the way the dropped D1 copies needed.
+    seedToolReceipt(objectStore, {
+      id: invocationId,
+      runId: HARNESS_RUN_ID,
+      toolCallId: "view-call",
+      toolName: "workstream_view_resource",
+      status: "completed",
+      inputJson: JSON.stringify({ resourceIds: [imageId], maxDimension: 2_048 }),
       outputRef,
-    );
+      outputSummary: "Viewed image",
+    });
     objectStore.prepare(
       `INSERT INTO attachment_tool_receipts
         (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
@@ -614,7 +616,7 @@ describe("work-stream attachment tools", () => {
       rawInput: { resourceIds: [imageId], maxDimension: 2_048 },
       outputRef,
     })).resolves.toBeNull();
-    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM tool_invocations WHERE id = ?", invocationId))
+    expect(objectStore.prepare("SELECT COUNT(*) AS count FROM tool_effects WHERE effect_intent_id = ?").get(invocationId))
       .toEqual({ count: 0 });
     expect(database.prepare(
       "SELECT object_ref, object_kind FROM resource_object_deletion_outbox WHERE object_ref = ?",

@@ -1,13 +1,15 @@
 import type { HarnessToolContext } from "@avalon/agent-harness";
+import { newId } from "@avalon/db";
 
 import { sha256 } from "../../lib/crypto";
 import {
   executionPrincipalKey,
 } from "../workstream-resource-visibility";
-import type {
-  TerminalSandboxProvider,
-  TerminalSandboxSnapshot,
-  TerminalSandboxState,
+import {
+  isTerminalProviderNotFound,
+  type TerminalSandboxProvider,
+  type TerminalSandboxSnapshot,
+  type TerminalSandboxState,
 } from "./daytona-provider";
 import {
   compileTerminalNetworkPolicy,
@@ -15,12 +17,13 @@ import {
   type TerminalNetworkMode,
 } from "./network-policy";
 import type { TerminalPortFactory } from "./object-port";
+import {
+  TERMINAL_OPERATION_LEASE_MS,
+  type TerminalSandboxRecord,
+} from "../../durable-objects/workstream-terminal-storage";
 import type {
   TerminalObjectPort,
 } from "../../durable-objects/workstream-terminal-protocol";
-import type {
-  TerminalSandboxRecord,
-} from "../../durable-objects/workstream-terminal-storage";
 import { TerminalToolError } from "./tools";
 
 const WARM_STOP_MINUTES = 5;
@@ -209,22 +212,22 @@ export class TerminalSandboxCoordinator {
     }));
     const domains = policy.mode === "trusted_only" ? parseEffectiveDomains(policy) : [];
     let row = await this.terminal(context).sandbox();
-    let telemetryAction: TerminalAcquisitionObservation["action"] | null = !row
-      ? "start"
-      : row.lifecycleState === "stopped" || row.lifecycleState === "archived"
-        ? "restore"
-        : row.lifecycleState === "running" && row.sandboxId
-          ? null
-          : "start";
-    const localFilesRetained = Boolean(row?.sandboxId);
     if (!row) {
       row = await this.reserveFirstGeneration(context, authorityFingerprint, policy.revision, now);
     }
     row = await this.claimOperation(context, row, now);
+    let telemetryAction: TerminalAcquisitionObservation["action"] | null =
+      row.lifecycleState === "stopped" || row.lifecycleState === "archived"
+        ? "restore"
+        : row.lifecycleState === "running" && row.sandboxId
+          ? null
+          : "start";
+    let localFilesRetained = Boolean(row.sandboxId);
 
     const importedResourceRevoked = await this.hasRevokedImportedResource(context, row);
     if (row.authorityFingerprint !== authorityFingerprint || importedResourceRevoked) {
       telemetryAction = "repository_replace";
+      localFilesRetained = false;
       row = await this.replaceForAuthority(context, row, authorityFingerprint, policy.revision, now);
     }
 
@@ -312,12 +315,21 @@ export class TerminalSandboxCoordinator {
     row: TerminalSandboxRecord,
     now: number,
   ): Promise<TerminalSandboxRecord> {
-    const claimed = await this.terminal(context).claimOperation({
+    const terminal = this.terminal(context);
+    const leaseExpiresAt = this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS;
+    let claimed = await terminal.claimOperation({
       runId: context.harnessRunId,
       generation: row.generation,
-      leaseExpiresAt: plusMinutes(this.clock.now(), 16),
+      leaseExpiresAt,
       now,
     });
+    if (!claimed) {
+      claimed = await this.recoverYieldedOperation(
+        context,
+        row,
+        now,
+      );
+    }
     if (!claimed) {
       throw new TerminalToolError(
         "sandbox_busy",
@@ -326,6 +338,157 @@ export class TerminalSandboxCoordinator {
       );
     }
     return claimed;
+  }
+
+  /**
+   * A yielded run never resumes its Terminal lease; `needs_input` specifically
+   * admits a new linked run. If the old generation retained a named Daytona
+   * command after losing observation, the contender must first stop that
+   * provider sandbox and fence its durable task before it may take the
+   * workspace lease. A submitting command instead retires the sandbox. The
+   * ambiguous command is cancelled, never replayed.
+   */
+  private async recoverYieldedOperation(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    now: number,
+  ): Promise<TerminalSandboxRecord | null> {
+    const sandboxId = row.sandboxId;
+    if (!sandboxId) return null;
+    const terminal = this.terminal(context);
+    const claimId = newId(now);
+    const renewClaim = async (): Promise<void> => {
+      const renewedAt = this.clock.now().getTime();
+      const renewed = await terminal.renewLifecycleClaim({
+        generation: row.generation,
+        sandboxId,
+        claimId,
+        claimExpiresAt: renewedAt + TERMINAL_OPERATION_LEASE_MS,
+        now: renewedAt,
+      });
+      if (!renewed) throw new Error("terminal_operation_recovery_claim_lost");
+    };
+    const recoveryClaimed = await terminal.claimYieldedOperationRecovery({
+      runId: context.harnessRunId,
+      generation: row.generation,
+      sandboxId,
+      version: row.version,
+      claimId,
+      claimExpiresAt: now + TERMINAL_OPERATION_LEASE_MS,
+      now,
+    });
+    if (!recoveryClaimed) return null;
+
+    let sandboxStopped = false;
+    let sandboxRetired = false;
+    const finishRecovery = async (): Promise<TerminalSandboxRecord | null> => {
+      const handoffNow = this.clock.now().getTime();
+      const handoffLeaseExpiresAt = handoffNow + TERMINAL_OPERATION_LEASE_MS;
+      const recovered = sandboxRetired
+        ? await terminal.retireYieldedOperationRecovery({
+            runId: context.harnessRunId,
+            generation: row.generation,
+            sandboxId,
+            claimId,
+            leaseExpiresAt: handoffLeaseExpiresAt,
+            ...deadlines(new Date(handoffNow)),
+            now: handoffNow,
+          })
+        : await terminal.settleYieldedOperationRecovery({
+            runId: context.harnessRunId,
+            generation: row.generation,
+            sandboxId,
+            claimId,
+            leaseExpiresAt: handoffLeaseExpiresAt,
+            sandboxStopped,
+            now: handoffNow,
+          });
+      return recovered;
+    };
+    try {
+      while (true) {
+        const task = await terminal.unsettledTask(row.generation);
+        if (!task) return finishRecovery();
+
+        if (!sandboxRetired && task.state !== "running") {
+          // Pre-acceptance work can outlive removal of an observation handle
+          // and arrive later, so only retirement of the provider sandbox
+          // excludes a stale mutation from the successor generation. This also
+          // keeps the schema-admitted `planned` state fail-safe if task
+          // admission ever moves before provider submission.
+          try {
+            await renewClaim();
+            await this.provider.deleteSandbox(sandboxId);
+          } catch (error) {
+            if (!isTerminalProviderNotFound(error)) {
+              try {
+                await this.provider.getSandbox(sandboxId);
+              } catch (observationError) {
+                if (isTerminalProviderNotFound(observationError)) sandboxRetired = true;
+                else throw error;
+              }
+              if (!sandboxRetired) throw error;
+            }
+          }
+          sandboxRetired = true;
+          sandboxStopped = false;
+        } else if (!sandboxRetired && !sandboxStopped && task.state === "running") {
+          // Production proved that deleting Daytona's named session can remove
+          // observation while its accepted command keeps running. Stop the
+          // whole sandbox before cancelling the durable task or handing its
+          // lease to a linked run; start preserves the sandbox filesystem.
+          try {
+            await renewClaim();
+            await this.provider.stopSandbox(sandboxId);
+            sandboxStopped = true;
+          } catch (error) {
+            if (isTerminalProviderNotFound(error)) {
+              sandboxRetired = true;
+            } else {
+              let observed: Awaited<ReturnType<TerminalSandboxProvider["getSandbox"]>> | null = null;
+              try {
+                observed = await this.provider.getSandbox(sandboxId);
+              } catch (observationError) {
+                if (isTerminalProviderNotFound(observationError)) sandboxRetired = true;
+                else throw error;
+              }
+              if (!sandboxRetired && observed?.state !== "stopped" && observed?.state !== "archived") {
+                throw error;
+              }
+              sandboxStopped = !sandboxRetired;
+            }
+          }
+        }
+
+        const settled = await terminal.cancelTaskAfterProviderCleanup({
+          taskId: task.taskId,
+          runId: task.runId,
+          effectIntentId: task.effectIntentId,
+          sandboxGeneration: task.sandboxGeneration,
+          providerTaskName: task.providerTaskName,
+          claimId,
+          now: this.clock.now().getTime(),
+        });
+        if (!settled && await terminal.unsettledTask(row.generation)) {
+          throw new Error("terminal_task_cleanup_fence_lost");
+        }
+      }
+    } catch {
+      let observed: Awaited<ReturnType<TerminalSandboxProvider["getSandbox"]>> | null = null;
+      try {
+        observed = await this.provider.getSandbox(sandboxId);
+      } catch (observationError) {
+        sandboxRetired ||= isTerminalProviderNotFound(observationError);
+      }
+      sandboxStopped ||= observed?.state === "stopped" || observed?.state === "archived";
+      await terminal.failLifecycleClaim({
+        lifecycleState: sandboxRetired ? "failed" : sandboxStopped ? "stopped" : row.lifecycleState,
+        failureCode: null,
+        claimId,
+        now: this.clock.now().getTime(),
+      });
+      return null;
+    }
   }
 
   /**
@@ -407,7 +570,7 @@ export class TerminalSandboxCoordinator {
       authorityFingerprint,
       networkRevision,
       runId: context.harnessRunId,
-      operationLeaseExpiresAt: plusMinutes(this.clock.now(), 16),
+      operationLeaseExpiresAt: this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS,
       ...deadlines(this.clock.now()),
       now,
     });
@@ -511,7 +674,7 @@ export class TerminalSandboxCoordinator {
       authorityFingerprint,
       networkRevision,
       runId: context.harnessRunId,
-      operationLeaseExpiresAt: plusMinutes(this.clock.now(), 16),
+      operationLeaseExpiresAt: this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS,
       ...deadlines(this.clock.now()),
       now,
     });

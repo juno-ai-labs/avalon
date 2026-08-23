@@ -308,6 +308,24 @@ copied into this table; they come from `WorkspaceDO.workspace_workstream_directo
 
 ## Changelog
 
+### 2026-08-22 — The unfurl sweep and App Home read only the object
+
+**What changed:** `slack-unfurl-refresh.ts`'s stale-card selection,
+`slack-agent-service.ts`'s App Home task list and its unfurl summary lookup no
+longer branch on `authority.phase`; each keeps only its WorkspaceDO arm. The
+`WORKSTREAM_UNFURL_COLUMNS` / `WORKSTREAM_UNFURL_JOINS` fragments existed so the
+two D1 summary queries stayed in step, and go with them.
+
+**Why:** Migration 0090 closed the phase permanently, so the D1 arms had been
+unreachable since. The two fragments were the coupling between them; keeping
+them would have invited a third caller back onto the regional tables.
+
+**What a future change has to respect:** an unfurl summary comes from
+`lookupWorkstreamDirectory`, and the archived filter is applied to its result
+rather than in SQL. A work stream missing from that lookup falls through to the
+anonymous card, which is the same failure mode the D1 query's
+`archived_at IS NULL` produced.
+
 ### 2026-08-22 — A skipped link still advances
 
 **What changed:** The Durable-Object-mode sweep advances `refreshed_at` for a

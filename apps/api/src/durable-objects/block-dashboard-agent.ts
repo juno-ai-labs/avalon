@@ -41,6 +41,7 @@ import {
   terminalizeHarnessAttempt,
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
+import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
 import { resolveAgentModelRouting } from "../services/agent-model-flags";
 import { runWorkstreamHarness, type WorkstreamHarnessResult } from "../services/integrations";
 import {
@@ -53,7 +54,9 @@ import {
   AGENT_RUN_DISPATCH_LEASE_MS,
   BLOCK_DASHBOARD_RUN_DISPATCHES,
   applyAgentRunDispatchSweepFloor,
+  deferAgentRunDispatch,
   releaseAgentRunDispatchLeases,
+  settleAgentRunDispatch,
 } from "./agent-run-dispatch-queue";
 import {
   DurableAgentDrain,
@@ -1020,7 +1023,7 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       }
     }
     await this.agentDrain.resume(
-      () => this.drainRunQueue().catch((error: unknown) => {
+      (ownsDrain) => this.drainRunQueue(ownsDrain).catch((error: unknown) => {
         logWarn(this.env, "block_dashboard_block_agent_drain_failed", {
           reason: error instanceof Error ? error.message : "unknown",
         });
@@ -1030,8 +1033,8 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
     return "drained";
   }
 
-  private async drainRunQueue(): Promise<void> {
-    while (true) {
+  private async drainRunQueue(ownsDrain: () => boolean): Promise<void> {
+    while (ownsDrain()) {
       this.agentDrain.touch();
       const row = this.state.storage.sql.exec<DispatchRow>(
         `SELECT block_run_id, dispatch_json, state, attempt, terminal_outcome_json, settled_at
@@ -1082,20 +1085,20 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
           this.queueBroadcast(() => this.broadcastLatestRun(row.block_run_id), "running");
           let result: { failed: boolean; errorCode: string | null; retryAt: number | null };
           try {
-            result = await this.keepAliveLease.while(() => this.execute(dispatch, row));
+            result = await this.keepAliveLease.while(() => this.execute(dispatch, row, leaseToken));
           } catch (error) {
             const code = error instanceof Error && "code" in error && typeof error.code === "string"
               ? error.code
               : "block_dashboard_block_execution_failed";
-            this.state.storage.sql.exec(
-              `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
-                 last_error_code = ?, updated_at = ?, lease_token = NULL,
-                 lease_expires_at = NULL WHERE block_run_id = ?
-                 AND terminal_outcome_json IS NULL`,
-              Date.now() + durableAgentRetryDelay(row.attempt + 1),
-              code,
-              Date.now(),
+            const deferredAt = Date.now();
+            deferAgentRunDispatch(
+              this.state.storage.sql,
+              BLOCK_DASHBOARD_RUN_DISPATCHES,
               row.block_run_id,
+              leaseToken,
+              deferredAt + durableAgentRetryDelay(row.attempt + 1),
+              code,
+              deferredAt,
             );
             logWarn(this.env, "block_dashboard_block_agent_run_deferred", {
               workspace_id: dispatch.workspaceId,
@@ -1112,35 +1115,32 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
           ).toArray()[0]?.terminal_outcome_json ?? null;
           if (terminalized) continue;
           if (result.retryAt !== null) {
-            this.state.storage.sql.exec(
-              `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
-                 last_error_code = ?, updated_at = ?, lease_token = NULL,
-                 lease_expires_at = NULL WHERE block_run_id = ?
-                 AND terminal_outcome_json IS NULL`,
+            deferAgentRunDispatch(
+              this.state.storage.sql,
+              BLOCK_DASHBOARD_RUN_DISPATCHES,
+              row.block_run_id,
+              leaseToken,
               result.retryAt,
               result.errorCode,
               Date.now(),
-              row.block_run_id,
             );
             return;
           }
-          this.state.storage.sql.exec(
-            `UPDATE agent_run_dispatches SET state = ?, completed_at = ?,
-               last_error_code = ?, updated_at = ?, lease_token = NULL,
-               lease_expires_at = NULL WHERE block_run_id = ?
-               AND terminal_outcome_json IS NULL`,
+          settleAgentRunDispatch(
+            this.state.storage.sql,
+            BLOCK_DASHBOARD_RUN_DISPATCHES,
+            row.block_run_id,
+            leaseToken,
             result.failed ? "failed" : "completed",
-            Date.now(),
             result.errorCode,
             Date.now(),
-            row.block_run_id,
           );
           continue;
         } finally {
           if (this.activeRunDispatch?.leaseToken === leaseToken) {
             this.activeRunDispatch = null;
           }
-          this.agentDrain.touch();
+          if (ownsDrain()) this.agentDrain.touch();
         }
       }
 
@@ -1170,6 +1170,7 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
   private async execute(
     dispatch: BlockDashboardBlockDispatch,
     row: DispatchRow,
+    leaseToken: string,
   ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }> {
     if (row.terminal_outcome_json) {
       return this.settleWithRetry(dispatch, TerminalOutcomeSchema.parse(JSON.parse(row.terminal_outcome_json)));
@@ -1185,10 +1186,19 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
     );
     const input = await this.initializeRuntimeRun(executionEnv, dispatch);
     await reapStaleHarnessRuns(executionEnv.DB, {
+      receipts: createToolReceiptPortFactory(executionEnv),
       workspaceId: dispatch.workspaceId,
       workstreamId: dispatch.workstreamId,
       limit: 25,
       automationDatabase: null,
+      onReceiptRepairFailure: (failure) => logWarn(this.env, "harness_residual_receipt_repair_failed", {
+        workspace_id: failure.workspaceId,
+        workstream_id: failure.workstreamId,
+        harness_run_id: failure.runId,
+        attempt_id: failure.attemptId,
+        repair_phase: failure.phase,
+        reason: failure.reason,
+      }),
     });
     const attemptId = uuidV7();
     const owner = `block-dashboard-agent:${dispatch.blockId}:${dispatch.blockRunId}:${attemptId}`;
@@ -1207,7 +1217,7 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
     }
     if (claim.state === "terminal") {
       const terminal = await this.readRuntimeBlockRun(executionEnv, dispatch);
-      return this.persistAndSettle(dispatch, { run: terminal });
+      return this.persistAndSettle(dispatch, { run: terminal }, leaseToken);
     }
     if (claim.state === "cancelled") {
       await terminalizeQueuedHarnessRun(
@@ -1221,7 +1231,7 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
         code: "run_cancelled",
         message: "The HyperSight block was stopped before it started",
       });
-      return this.persistAndSettle(dispatch, { run: stopped });
+      return this.persistAndSettle(dispatch, { run: stopped }, leaseToken);
     }
 
     const running = await this.updateRuntimeBlockRun(executionEnv, dispatch, "running");
@@ -1256,9 +1266,9 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       status,
       ...(error ? { error } : {}),
       memberSafePayload: error ? { code: error.code } : {},
-    });
+    }, createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId));
     const terminal = await this.updateRuntimeBlockRun(executionEnv, dispatch, status, error);
-    return this.persistAndSettle(dispatch, { run: terminal });
+    return this.persistAndSettle(dispatch, { run: terminal }, leaseToken);
   }
 
   private async initializeRuntimeRun(env: Env, dispatch: BlockDashboardBlockDispatch): Promise<WorkstreamWorkflowInput> {
@@ -1401,23 +1411,33 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
   private async persistAndSettle(
     dispatch: BlockDashboardBlockDispatch,
     outcome: TerminalOutcome,
+    leaseToken: string,
   ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }> {
     const parsed = TerminalOutcomeSchema.parse(outcome);
     const state = terminalDispatchState(parsed.run);
     const now = Date.now();
     this.state.storage.transactionSync(() => {
-      this.state.storage.sql.exec(
+      const transitioned = this.state.storage.sql.exec<{ block_run_id: string }>(
         `UPDATE agent_run_dispatches SET state = ?, terminal_outcome_json = ?,
            available_at = ?, completed_at = COALESCE(completed_at, ?), settled_at = NULL,
            last_settlement_error_code = NULL, updated_at = ?,
-           lease_token = NULL, lease_expires_at = NULL WHERE block_run_id = ?`,
+           lease_token = NULL, lease_expires_at = NULL
+         WHERE block_run_id = ? AND lease_token = ?
+           AND terminal_outcome_json IS NULL
+         RETURNING block_run_id`,
         state,
         JSON.stringify(parsed),
         now,
         now,
         now,
         dispatch.blockRunId,
+        leaseToken,
       );
+      if (transitioned.toArray().length === 0) {
+        throw Object.assign(new Error("The BlockDashboard dispatch lease was replaced"), {
+          code: "block_dashboard_dispatch_ownership_lost",
+        });
+      }
       this.state.storage.sql.exec(
         `DELETE FROM agent_stream_checkpoint WHERE id = 1 AND block_run_id = ?`,
         dispatch.blockRunId,

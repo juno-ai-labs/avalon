@@ -16,7 +16,6 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   workstreamExecutionEnvironment,
 } from "./workstream-runtime-database";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
@@ -216,25 +215,20 @@ export async function fireDigestSchedule(
       // Legacy D1 rows cascade. The DO path leaves a durable, unlistable
       // tombstone because its object identity cannot join this transaction.
       if (workstreamId) {
-        const authority = await readWorkstreamAuthorityControl(env);
-        if (authority.phase === "durable_object_open") {
-          const executionEnv = await workstreamExecutionEnvironment(
-            env,
-            schedule.workspace_id,
-            workstreamId,
-          );
-          await executionEnv.DB.prepare(
-            `UPDATE workstreams SET archived_at = ?, updated_at = ?
-              WHERE id = ? AND system_kind = 'digest'`,
-          ).bind(nowIso(), nowIso(), workstreamId).run().catch(() => undefined);
-          // A Durable Object identity cannot be deleted transactionally with
-          // its parent delivery claim. This authoritative tombstone keeps the
-          // never-started system stream unlistable and is safer than a
-          // cross-object purge that could race a late Workflow creation.
-        } else {
-          await env.DB.prepare("DELETE FROM workstreams WHERE id = ? AND system_kind = 'digest'")
-            .bind(workstreamId).run().catch(() => undefined);
-        }
+        const executionEnv = await workstreamExecutionEnvironment(
+          env,
+          schedule.workspace_id,
+          workstreamId,
+        );
+        await executionEnv.DB.prepare(
+          `UPDATE workstreams SET archived_at = ?, updated_at = ?
+            WHERE id = ? AND system_kind = 'digest'`,
+        ).bind(nowIso(), nowIso(), workstreamId).run().catch(() => undefined);
+        // A Durable Object identity cannot be deleted transactionally with
+        // its parent delivery claim. This authoritative tombstone keeps the
+        // never-started system stream unlistable and is safer than a
+        // cross-object purge that could race a late Workflow creation.
+      
       }
     }
     throw error;

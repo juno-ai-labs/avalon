@@ -13,7 +13,6 @@ import {
   WorkstreamWorkflowInputSchema,
   asWorkspaceId,
   asWorkstreamId,
-  type ActivityQueueMessage,
   type Message as AvalonMessage,
   type WorkspaceId,
   type WorkstreamWorkflowInput
@@ -24,7 +23,6 @@ import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/w
 import { workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceConnectorEventQueueMessageSchema,
-  WorkspaceConnectorEventSchema,
   type WorkspaceConnectorEvent,
 } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
@@ -43,7 +41,6 @@ import {
   publishSubstreamAgentEvent,
 } from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
-import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   workstreamExecutionEnvironment,
@@ -63,8 +60,6 @@ import { logDebug, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
-import { emitProductUsageTelemetry, telemetryCountBucket } from "../telemetry/product-usage";
-import { newId } from "@avalon/db";
 import {
   acknowledgeWorkstreamOutboxEffect,
   applyQueuedWorkspaceDirectoryEffect,
@@ -74,7 +69,6 @@ import {
   processWorkstreamNotificationIntent,
 } from "../services/workstream-regional-effect-service";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import { workspaceConnectorEventPayloadHash } from "../services/workspace-connector-event-ingress";
 
 interface ActivityRow {
   id: string;
@@ -120,13 +114,6 @@ interface SubscriptionRow {
   template_description: string;
 }
 
-interface WorkstreamCandidate {
-  id: string;
-  title: string;
-  objective: string;
-  last_activity_at: string;
-}
-
 type TriggerDefinition = z.infer<typeof TriggerDefinitionSchema>;
 
 const SemanticTriggerResultSchema = z.object({ matches: z.boolean(), confidence: z.number().min(0).max(1) });
@@ -167,57 +154,6 @@ function parseStrings(value: string): string[] {
   } catch {
     return [];
   }
-}
-
-function connectorEventMetadata(value: string): Record<string, unknown> {
-  const metadata = parseRecord(value);
-  delete metadata._processing_claim_id;
-  delete metadata._processing_claimed_at;
-  delete metadata._processing_error;
-  delete metadata._workspace_do_event_id;
-  delete metadata._connector_event_workflow_id;
-  delete metadata._connector_event_attempt;
-  return metadata;
-}
-
-function workspaceConnectorEvent(activity: ActivityRow): WorkspaceConnectorEvent {
-  return WorkspaceConnectorEventSchema.parse({
-    connectorType: activity.connector_type,
-    activity: {
-      id: activity.id,
-      workspaceId: activity.workspace_id,
-      region: activity.workspace_region,
-      connectionId: activity.connection_id,
-      connectionScope: activity.connection_scope,
-      connectionOwnerUserId: activity.connection_owner_user_id,
-      provider: activity.provider,
-      providerEventId: activity.provider_event_id,
-      eventType: activity.event_type,
-      resourceType: activity.resource_type,
-      providerResourceId: activity.provider_resource_id,
-      actor: parseRecord(activity.actor_json),
-      subject: parseRecord(activity.subject_json),
-      occurredAt: activity.occurred_at,
-      receivedAt: activity.received_at,
-      title: activity.title,
-      summary: activity.summary,
-      textSnippet: activity.text_snippet,
-      payloadRef: activity.payload_ref,
-      visibility: parseRecord(activity.visibility_json),
-      targetUserIds: parseStrings(activity.target_user_ids_json),
-      entityKeys: parseStrings(activity.entity_keys_json),
-      dedupeKey: activity.dedupe_key,
-      rawContentHash: activity.raw_content_hash,
-      metadata: connectorEventMetadata(activity.metadata_json),
-      externalPeople: (() => {
-        try {
-          return JSON.parse(activity.external_people_json) as unknown;
-        } catch {
-          return [];
-        }
-      })(),
-    },
-  });
 }
 
 function deepEqual(left: unknown, right: unknown): boolean {
@@ -383,94 +319,12 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     return;
   }
 
-  const parsed = ActivityQueueMessageSchema.safeParse(message.body);
-  if (!parsed.success) {
-    message.ack();
-    return;
-  }
-
-  const input = parsed.data;
-  if (input.region !== env.AVALON_REGION) {
-    message.ack();
-    return;
-  }
-
-  // A maintenance cutover drains this legacy ID-only handoff before opening
-  // WorkspaceDO authority. Once open, the canonical event and its retry state
-  // already live in WorkspaceDO; consulting the frozen D1 source row would
-  // reintroduce a second connector-event authority.
-  const authority = await readWorkstreamAuthorityControl(env);
-  if (authority.phase === "durable_object_open") {
-    message.ack();
-    return;
-  }
-
-  try {
-    const activity = await loadActivity(env, input);
-    if (!activity) {
-      message.ack();
-      return;
-    }
-    const event = workspaceConnectorEvent(activity);
-    const admission = await admitConnectorEvent(env, {
-      workspaceId: input.workspaceId,
-      ingressEventId: activity.id,
-      payloadHash: await workspaceConnectorEventPayloadHash(event),
-      event,
-    }, input.attempt);
-    await env.DB.prepare(
-      `UPDATE activities
-          SET processing_status = ?1,
-              metadata_json = json_set(
-                json_remove(
-                  json_remove(COALESCE(metadata_json, '{}'), '$._processing_claim_id'),
-                  '$._processing_claimed_at'
-                ),
-                '$._workspace_do_event_id', ?2,
-                '$._connector_event_workflow_id', ?3,
-                '$._connector_event_attempt', ?4
-              )
-        WHERE id = ?5 AND workspace_id = ?6`
-    )
-      .bind(
-        admission.accepted.processingStatus === "processed"
-          ? "processed"
-          : admission.workflowAttempt <= 5 ? "processing" : "failed",
-        admission.accepted.eventId,
-        admission.workflowInstanceId,
-        admission.recordedAttempt,
-        activity.id,
-        activity.workspace_id,
-      )
-      .run();
-    const connector = ["generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x"]
-      .includes(activity.connector_type)
-      ? activity.connector_type as "generic_webhook" | "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x"
-      : null;
-    if (connector) {
-      await emitProductUsageTelemetry(env, {
-        workspaceId: asWorkspaceId(activity.workspace_id),
-        name: "connector_activity_ingested",
-        properties: {
-          connector,
-          activityType: activity.event_type.slice(0, 80).replace(/[^a-z0-9_.:-]+/giu, "_").toLowerCase(),
-          result: "accepted",
-          itemCount: telemetryCountBucket(1),
-        },
-        operationId: activity.id,
-        eventId: newId(),
-      }).catch(() => undefined);
-    }
-    message.ack();
-  } catch (error) {
-    logWarn(env, "connector_event_queue_admission_failed", {
-      workspace_id: input.workspaceId,
-      ingress_event_id: input.activityId,
-      reason: error instanceof Error ? error.message : "unknown",
-    });
-    const attempts = Math.max(1, message.attempts);
-    message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
-  }
+  // The legacy ID-only handoff. A maintenance cutover drained it before opening
+  // WorkspaceDO authority, and nothing has enqueued one since — but a message
+  // that was already in flight then can still arrive, and it is acked rather
+  // than left to redeliver forever. Reading the frozen D1 source row behind it
+  // would reintroduce a second connector-event authority.
+  message.ack();
 }
 
 async function admitConnectorEvent(
@@ -682,71 +536,34 @@ function connectorActorLabel(activity: ActivityRow): string {
   return activity.provider;
 }
 
-async function loadActivity(env: Env, input: ActivityQueueMessage): Promise<ActivityRow | null> {
-  return env.DB.prepare(
-    `SELECT a.*, w.region AS workspace_region, route.connector_type
-       FROM activities a
-       JOIN workspaces w ON w.id = a.workspace_id
-       JOIN connector_ingress_routes route ON route.connection_id = a.connection_id
-      WHERE a.id = ?1 AND a.workspace_id = ?2 AND w.region = ?3
-      LIMIT 1`
-  )
-    .bind(input.activityId, input.workspaceId, input.region)
-    .first<ActivityRow>();
-}
-
 async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<string>> {
   const entityKeys = parseStrings(activity.entity_keys_json);
   if (!activity.provider_resource_id && entityKeys.length === 0) return new Set();
 
-  const authority = await readWorkstreamAuthorityControl(env);
-  let directWorkstreamIds: string[];
-  if (authority.phase === "durable_object_open") {
-    const resources = await env.DB.prepare(
-      `SELECT id FROM resources
-        WHERE workspace_id = ?1 AND connection_id = ?2 AND provider = ?3
-          AND (provider_resource_id = ?4 OR EXISTS (
-            SELECT 1 FROM json_each(?5) WHERE json_each.value = provider_resource_id
-          ))`,
-    ).bind(
-      activity.workspace_id,
-      activity.connection_id,
-      activity.provider,
-      activity.provider_resource_id,
-      JSON.stringify(entityKeys),
-    ).all<{ id: string }>();
-    const workspace = await workspaceDirectory(env, asWorkspaceId(activity.workspace_id));
-    const resolvedWorkstreamIds = new Set<string>();
-    for (const resource of resources.results ?? []) {
-      const resolved = await workspace.workstreamsForResource({
-        workspaceId: activity.workspace_id,
-        resourceId: resource.id,
-        watchedOnly: true,
-      });
-      for (const workstreamId of resolved.workstreamIds) resolvedWorkstreamIds.add(workstreamId);
-    }
-    directWorkstreamIds = [...resolvedWorkstreamIds];
-  } else {
-    const direct = await env.DB.prepare(`SELECT DISTINCT wr.workstream_id
-       FROM resources r
-       JOIN workstream_resources wr ON wr.resource_id = r.id
-       JOIN workstreams w ON w.id = wr.workstream_id
-      WHERE r.workspace_id = ?1
-        AND r.connection_id = ?2
-        AND r.provider = ?3
-        AND (
-          r.provider_resource_id = ?4
-          OR EXISTS (
-            SELECT 1 FROM json_each(?5)
-            WHERE json_each.value = r.provider_resource_id
-          )
-        )
-        AND wr.watch_enabled = 1
-        AND w.archived_at IS NULL`)
-    .bind(activity.workspace_id, activity.connection_id, activity.provider, activity.provider_resource_id, JSON.stringify(entityKeys))
-    .all<{ workstream_id: string }>();
-    directWorkstreamIds = direct.results.map((row) => row.workstream_id);
+  const resources = await env.DB.prepare(
+    `SELECT id FROM resources
+      WHERE workspace_id = ?1 AND connection_id = ?2 AND provider = ?3
+        AND (provider_resource_id = ?4 OR EXISTS (
+          SELECT 1 FROM json_each(?5) WHERE json_each.value = provider_resource_id
+        ))`,
+  ).bind(
+    activity.workspace_id,
+    activity.connection_id,
+    activity.provider,
+    activity.provider_resource_id,
+    JSON.stringify(entityKeys),
+  ).all<{ id: string }>();
+  const workspace = await workspaceDirectory(env, asWorkspaceId(activity.workspace_id));
+  const resolvedWorkstreamIds = new Set<string>();
+  for (const resource of resources.results ?? []) {
+    const resolved = await workspace.workstreamsForResource({
+      workspaceId: activity.workspace_id,
+      resourceId: resource.id,
+      watchedOnly: true,
+    });
+    for (const workstreamId of resolved.workstreamIds) resolvedWorkstreamIds.add(workstreamId);
   }
+  const directWorkstreamIds = [...resolvedWorkstreamIds];
 
   const routed = new Set<string>();
   const restrictedUserIds = restrictedActivityUserIds(activity);
@@ -1010,7 +827,6 @@ async function startActivityAutomation(
   let harnessRunId: string;
   const now = new Date().toISOString();
   const principal = ExecutionPrincipalSchema.parse(JSON.parse(subscription.execution_principal_json));
-  const authority = await readWorkstreamAuthorityControl(env);
 
   if (!run) {
     const workstreamId = uuidV7();
@@ -1044,11 +860,10 @@ async function startActivityAutomation(
          result_summary, workflow_instance_id, created_at
        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, NULL, 'running', NULL, NULL, ?7)`,
     ).bind(runId, activity.workspace_id, subscription.id, workstreamId, activity.event_type, activity.id, now);
-    let controlRunInserted = false;
-    if (authority.phase === "durable_object_open") {
-      const inserted = await runStatement.run();
-      controlRunInserted = (inserted.meta.changes ?? 0) > 0;
-    }
+    // The regional row is a control-plane run record; the work stream and
+    // harness run below belong to the newly bootstrapped object.
+    const inserted = await runStatement.run();
+    const controlRunInserted = (inserted.meta.changes ?? 0) > 0;
     try {
       await executionEnv.DB.batch([
       executionEnv.DB.prepare(
@@ -1071,7 +886,6 @@ async function startActivityAutomation(
         now,
         modelOverride
       ),
-      ...(authority.phase === "durable_object_open" ? [] : [runStatement]),
       executionEnv.DB.prepare(
         `INSERT INTO harness_runs (
            id, workspace_id, workstream_id, origin, execution_principal_json,
@@ -1284,10 +1098,11 @@ async function routeContextually(
     return false;
   }
   const restrictedUserIds = restrictedActivityUserIds(activity);
-  const restrictedUserIdsJson = restrictedUserIds == null ? null : JSON.stringify(restrictedUserIds);
-  const authority = await readWorkstreamAuthorityControl(env);
-  const candidates = authority.phase === "durable_object_open"
-    ? await (await workspaceDirectory(env, asWorkspaceId(activity.workspace_id))).routingCandidates({
+  // The dismissal run and the already-routed exclusion the D1 arm expressed as
+  // subqueries are the object's now; the shape it returns is mapped to the
+  // candidate rows the prompt renderer takes.
+  const candidates = await (await workspaceDirectory(env, asWorkspaceId(activity.workspace_id)))
+    .routingCandidates({
       workspaceId: activity.workspace_id,
       restrictedUserIds,
       excludedWorkstreamIds: [...excludedWorkstreamIds],
@@ -1299,65 +1114,7 @@ async function routeContextually(
       title: item.title,
       objective: item.description,
       last_activity_at: item.lastActivityAt,
-    })) }))
-    : await env.DB.prepare(`SELECT w.id, w.title, w.objective, w.last_activity_at
-       FROM workstreams w
-      WHERE w.workspace_id = ?1
-        AND w.archived_at IS NULL
-        AND w.harness_status IN ('idle', 'running', 'needs_input', 'scheduled')
-        AND (?2 IS NULL OR EXISTS (
-          SELECT 1 FROM json_each(?2) visible_user
-           WHERE w.created_by_user_id = visible_user.value OR EXISTS (
-             SELECT 1 FROM workstream_participants wp
-              WHERE wp.workstream_id = w.id
-                AND wp.user_id = visible_user.value
-                AND wp.removed_at IS NULL
-           )
-        ))
-        -- A work stream whose last few suggestions were all dismissed stops
-        -- being offered one. Counted here rather than after the LIMIT so a
-        -- suppressed work stream is replaced by the next eligible one instead
-        -- of costing the model a candidate; counted only since the most recent
-        -- acceptance so a single acceptance clears the run, and only within the
-        -- window so a work stream that never gets another suggestion is not
-        -- excluded forever by dismissals nobody remembers.
-        -- Both halves are scoped to this module's own cards: the suggested-work
-        -- path writes the same table, and a work stream must not lose its place
-        -- in contextual routing's candidate pool over dismissals of a different
-        -- agent's suggestions.
-        AND (
-          SELECT COUNT(*)
-            FROM activity_suggestions dismissed
-           WHERE dismissed.workstream_id = w.id
-             AND dismissed.source = 'contextual_routing'
-             AND dismissed.status = 'dismissed'
-             AND dismissed.resolved_at >= ?3
-             AND dismissed.resolved_at > COALESCE((
-               SELECT MAX(accepted.resolved_at)
-                 FROM activity_suggestions accepted
-                WHERE accepted.workstream_id = w.id
-                  AND accepted.source = 'contextual_routing'
-                  AND accepted.status = 'accepted'
-             ), '')
-        ) < ?4
-        -- Anything a watch or an automation already routed. Excluded here for
-        -- the same reason the dismissal run is: filtering after the LIMIT let a
-        -- work stream that is already receiving this activity consume one of
-        -- the twelve slots, so a directly-routed activity handed the model
-        -- eleven candidates and silently cost the twelfth its chance.
-        AND NOT EXISTS (
-          SELECT 1 FROM json_each(?5) routed WHERE routed.value = w.id
-        )
-      ORDER BY w.last_activity_at DESC
-      LIMIT 12`)
-    .bind(
-      activity.workspace_id,
-      restrictedUserIdsJson,
-      dismissalRunCutoff(),
-      DISMISSAL_RUN_LIMIT,
-      JSON.stringify([...excludedWorkstreamIds]),
-    )
-    .all<WorkstreamCandidate>();
+    })) }));
   const eligible = candidates.results;
   if (eligible.length === 0) return false;
 
@@ -1412,25 +1169,11 @@ async function isWorkstreamVisibleToUser(
   workstreamId: string,
   userId: string
 ): Promise<boolean> {
-  const authority = await readWorkstreamAuthorityControl(env);
-  if (authority.phase === "durable_object_open") {
-    return (await workspaceDirectory(env, workspaceId)).canReadWorkstream({
-      workspaceId,
-      workstreamId,
-      userId,
-    });
-  }
-  const visible = await env.DB.prepare(`SELECT 1
-       FROM workstreams w
-      WHERE w.id = ?1
-        AND (w.created_by_user_id = ?2 OR EXISTS (
-          SELECT 1 FROM workstream_participants wp
-           WHERE wp.workstream_id = w.id AND wp.user_id = ?2 AND wp.removed_at IS NULL
-        ))
-      LIMIT 1`)
-    .bind(workstreamId, userId)
-    .first();
-  return Boolean(visible);
+  return (await workspaceDirectory(env, workspaceId)).canReadWorkstream({
+    workspaceId,
+    workstreamId,
+    userId,
+  });
 }
 
 function workspaceDirectory(env: Env, workspaceId: WorkspaceId) {
