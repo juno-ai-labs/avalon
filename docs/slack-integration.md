@@ -318,7 +318,7 @@ text. Long output splits at Slack's 12,000-character limit, preferring a
 paragraph seam, then a line, and closing and reopening a fenced code block rather
 than severing one.
 
-An automation's Agent-DM destination is one of the frozen delivery targets described in
+An automation's Agent-DM destination is one of the delivery targets described in
 [work-stream and automation email addresses](workstream-email-addresses.md#outbound-automation-results);
 Slack and email are delivered independently, so a failure in one is retried without holding back the other.
 

@@ -35,6 +35,7 @@ const workerKeys = [
   "TERMINAL_EMERGENCY_DISABLED",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
+  "RESEND_NOTIFICATION_FROM_EMAIL",
   "RESEND_RECEIVING_API_KEY",
   "RESEND_WEBHOOK_SIGNING_SECRET",
   // Legacy deployment compatibility. New environments use the explicit name above.
@@ -103,6 +104,7 @@ const regionalizableKeys = [
   "TERMINAL_EMERGENCY_DISABLED",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
+  "RESEND_NOTIFICATION_FROM_EMAIL",
   "RESEND_RECEIVING_API_KEY",
   "GOOGLE_OAUTH_CLIENT_ID",
   "GOOGLE_OAUTH_CLIENT_SECRET",
@@ -154,6 +156,7 @@ const safeDefaults = {
   OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
   OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
   RESEND_FROM_EMAIL: "Avalon <invites@with-avalon.com>",
+  RESEND_NOTIFICATION_FROM_EMAIL: "Avalon <notifications@with-avalon.com>",
   WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
   LINEAR_NATIVE_AGENT_ENABLED: "false",
   CONNECTOR_CREDENTIALS_KEY_VERSION: "1",

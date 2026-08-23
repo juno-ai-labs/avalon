@@ -163,6 +163,17 @@ healthRoutes.get("/", async (c) => {
     : c.env.OPS_SLACK_BOT_TOKEN?.trim() || c.env.OPS_SLACK_CHANNEL_ID?.trim()
       ? { ok: false, message: "half configured: set both OPS_SLACK_BOT_TOKEN and OPS_SLACK_CHANNEL_ID, or neither" }
       : { ok: false, message: "not configured" };
+  // Reported separately, because the fallback that covers it is silent. An
+  // unset notification sender sends every digest and automation result from the
+  // invitations address and returns "sent" — which is how it went unnoticed for
+  // the life of the feature. Not part of the required environment contract: an
+  // unset sender must not 503 a region, it must be visible.
+  checks.resendNotificationSender = {
+    ok: Boolean(c.env.RESEND_NOTIFICATION_FROM_EMAIL?.trim()),
+    message: c.env.RESEND_NOTIFICATION_FROM_EMAIL?.trim()
+      ? "configured"
+      : "unset; digests and automation results send from the transactional sender",
+  };
   const linearValues = [
     c.env.LINEAR_OAUTH_CLIENT_ID?.trim(),
     c.env.LINEAR_OAUTH_CLIENT_SECRET?.trim(),

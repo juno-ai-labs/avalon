@@ -647,6 +647,33 @@ export const AutomationDeliveryTargetInputSchema = z.discriminatedUnion("type", 
   z.object({ type: z.literal("email") }).strict(),
 ]);
 
+/**
+ * The whole destination set an automation delivers its result to, as a client
+ * states it.
+ *
+ * One schema rather than a bound repeated per route, because the rule it
+ * carries is the table's: `automation_delivery_targets` is unique on
+ * `(automation_subscription_id, target_type)`, so a set naming a type twice has
+ * no valid persisted form. Stated as a `.max()` alone it reads as "at most two
+ * of anything", which admits two of the same kind and leaves the unique index
+ * as the only thing refusing them — reached after validation has passed, so the
+ * caller gets a 500 where they should have got a 422. `create` carried the
+ * refinement and `PATCH` re-declared the array without it; sharing the schema is
+ * what stops that happening a third time.
+ */
+export const AutomationDeliveryTargetSetSchema = z.array(AutomationDeliveryTargetInputSchema)
+  .max(2)
+  .superRefine((targets, context) => {
+    const types = new Set<string>();
+    for (const target of targets) {
+      if (types.has(target.type)) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Each delivery destination can be chosen once" });
+        return;
+      }
+      types.add(target.type);
+    }
+  });
+
 export const MemoryTableColumnTypeSchema = z.enum([
   "string",
   "url",
@@ -943,6 +970,16 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
   })
 ]);
 
+/**
+ * Where the person asked for the result to go, as the compiler understood it.
+ *
+ * A *request*, not a destination: the destinations are chosen on the create
+ * screen and changed afterwards from the automation. This exists so that choice
+ * starts from what was actually asked for rather than from a regex over the
+ * draft's prose — the compiler is the one thing in the system that already
+ * parsed the sentence.
+ */
+export const AutomationRequestedDeliverySchema = z.enum(["email", "slack_agent_dm"]);
 export const AutomationDraftSchema = z.object({
   name: z.string().min(1).max(140),
   description: z.string().min(1).max(1200),
@@ -951,6 +988,8 @@ export const AutomationDraftSchema = z.object({
   triggers: z.array(TriggerDefinitionSchema).min(1),
   requiredCapabilities: z.array(z.string()).default([]),
   expectedOutputs: z.array(z.string()).default([]),
+  /** Defaulted, so a draft saved before this field existed still parses. */
+  requestedDelivery: z.array(AutomationRequestedDeliverySchema).max(2).default([]),
   defaultBehavior: z.record(z.string(), z.unknown()).default({}),
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),
@@ -1407,7 +1446,7 @@ export const CreateAutomationRequestSchema = z.object({
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
   activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}),
   resourceIds: z.array(IdSchema).max(20).default([]),
-  deliveryTargets: z.array(AutomationDeliveryTargetInputSchema).max(2).default([]),
+  deliveryTargets: AutomationDeliveryTargetSetSchema.default([]),
   /**
    * Pins the work stream each run of this automation creates to one OpenRouter
    * model. Same developer-mode selector as a new work stream, held on the
@@ -1417,14 +1456,6 @@ export const CreateAutomationRequestSchema = z.object({
 }).superRefine((input, context) => {
   if (input.deliveryTargets.length > 0 && input.scope !== "personal") {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["deliveryTargets"], message: "Result delivery outside Avalon requires a personal automation" });
-  }
-  const types = new Set<string>();
-  for (const target of input.deliveryTargets) {
-    if (types.has(target.type)) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["deliveryTargets"], message: "Each delivery destination can be chosen once" });
-      break;
-    }
-    types.add(target.type);
   }
 });
 export const CompileAutomationRequestSchema = z.object({
