@@ -115,9 +115,71 @@ describe("claiming a run's attempt", () => {
       ...fence, runId: OTHER, leaseSeconds: 60, lifecycleEventId: "event-other",
     });
 
+    // The refusal says *why*, and when to look again — the routed version
+    // needed a second statement with a correlated subquery for that.
     expect(storage.claimAttempt({
       ...fence, runId: RUN, attemptId: "attempt-2", leaseSeconds: 60, lifecycleEventId: "event-1",
-    })).toEqual({ outcome: "not_claimable" });
+    })).toEqual({ outcome: "busy", activeLeaseExpiresAt: NOW + 60_000 });
+  });
+
+  it("marks the work stream running, and stamps when that changed", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN);
+
+    storage.claimAttempt({ ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-1" });
+
+    // The claim batch's third statement. It is the sidebar's whole answer to
+    // "is this work stream busy", and the routed version wrote it guarded on
+    // the first statement having landed.
+    expect(sql.exec(
+      `SELECT exact_state, state_reason_code, state_changed_at, last_people_activity_at
+         FROM workstream WHERE id = 1`,
+    ).one()).toMatchObject({
+      exact_state: "running",
+      state_reason_code: "runtime_running",
+      state_changed_at: NOW,
+      last_people_activity_at: NOW,
+    });
+  });
+
+  it("does not demote a work stream that is already busy in a more exact way", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN);
+    sql.exec(
+      `UPDATE workstream SET exact_state = 'interrupting', state_reason_code = 'member_stop',
+              state_changed_at = ? WHERE id = 1`,
+      NOW - 5_000,
+    );
+
+    storage.claimAttempt({ ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-1" });
+
+    // `interrupting`, `preparing_context` and `waiting_capacity` all published
+    // as `running` through the retired view, so its trigger compared the
+    // *projection* on both sides and left the exact state alone. Writing plain
+    // `running` here would lose the reason a member is being shown.
+    expect(sql.exec(
+      `SELECT exact_state, state_reason_code, state_changed_at, last_people_activity_at
+         FROM workstream WHERE id = 1`,
+    ).one()).toMatchObject({
+      exact_state: "interrupting",
+      state_reason_code: "member_stop",
+      state_changed_at: NOW - 5_000,
+      // Activity is not a state change: the claim happened, whatever it left
+      // the state as.
+      last_people_activity_at: NOW,
+    });
+  });
+
+  it("leaves the work stream alone when a HyperSight block claims", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN, { origin: "block_dashboard_block" });
+
+    storage.claimAttempt({ ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-1" });
+
+    // A block run is beside the conversation rather than holding it, so the
+    // sidebar must not report the work stream busy on its account.
+    expect(sql.exec(`SELECT exact_state FROM workstream WHERE id = 1`).one())
+      .toMatchObject({ exact_state: "idle" });
   });
 
   it("lets a HyperSight block claim beside a live interactive run", () => {
@@ -142,7 +204,27 @@ describe("claiming a run's attempt", () => {
 
     expect(storage.claimAttempt({
       ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-1",
-    })).toEqual({ outcome: "not_claimable" });
+    })).toEqual({ outcome: "cancelled" });
+  });
+
+  it("reports a finished run as terminal rather than busy", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN, { status: "completed" });
+
+    // The caller reports the outcome instead of retrying, so telling this apart
+    // from a contended work stream is the difference between answering the
+    // member and spinning.
+    expect(storage.claimAttempt({
+      ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-1",
+    })).toEqual({ outcome: "terminal", status: "completed" });
+  });
+
+  it("says so when the run is not there at all", () => {
+    const { storage } = open();
+
+    expect(storage.claimAttempt({
+      ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-1",
+    })).toEqual({ outcome: "not_found" });
   });
 });
 
@@ -224,5 +306,144 @@ describe("lifecycle events", () => {
       .toEqual({ outcome: "replayed" });
     expect(storage.lifecycleEvent({ runId: RUN, eventKey: event.eventKey }))
       .toMatchObject({ event_id: "event-1", status: "failed" });
+  });
+});
+
+describe("freezing a run's scope", () => {
+  const scope = {
+    scopeHash: "scope-hash-1",
+    executionPrincipalJson: '{"type":"user","userId":"u1"}',
+    eligibleConnectionIdsJson: '["connection-read"]',
+    eligibleCapabilitiesJson: '["documents.read"]',
+    eligibleConnectionCapabilitiesJson: '{"connection-read":["documents.read"]}',
+    triggerPolicyJson: '{"kind":"interactive"}',
+    routingPolicyVersion: "routing-v1",
+    promptVersion: "prompt-v1",
+    toolSurfaceHash: "tools-v1",
+    memoryContextHash: null,
+    limitsJson: '{"maxIterations":8}',
+  };
+
+  function claimed() {
+    const opened = open();
+    seedRun(opened.sql, RUN);
+    opened.storage.claimAttempt({
+      ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-claim",
+    });
+    return opened;
+  }
+
+  it("freezes the scope for the attempt that holds the run", () => {
+    const { storage } = claimed();
+
+    expect(storage.persistScope({ ...fence, runId: RUN, ...scope }))
+      .toEqual({ outcome: "persisted" });
+    expect(storage.scope({ runId: RUN }))
+      .toMatchObject({ attempt_id: "attempt-1", scope_hash: "scope-hash-1", created_at: NOW });
+  });
+
+  it("reports the same attempt's identical scope as a reuse, not a write", () => {
+    const { storage } = claimed();
+    storage.persistScope({ ...fence, runId: RUN, ...scope });
+
+    // A retrying executor re-freezing what it already froze is a replay. The
+    // routed version could not tell this from a lost run without a second
+    // statement, because both came back as zero changes.
+    expect(storage.persistScope({ ...fence, runId: RUN, ...scope }))
+      .toEqual({ outcome: "reused" });
+  });
+
+  it("refuses a second, different scope on the same run", () => {
+    const { storage } = claimed();
+    storage.persistScope({ ...fence, runId: RUN, ...scope });
+
+    // The scope is immutable for the life of the run: what the model was
+    // allowed to reach cannot be renegotiated after it started reaching. This
+    // is a caller defect rather than a race, which is why it is its own answer.
+    expect(storage.persistScope({ ...fence, runId: RUN, ...scope, scopeHash: "scope-hash-2" }))
+      .toEqual({ outcome: "mismatch" });
+    expect(storage.scope({ runId: RUN })).toMatchObject({ scope_hash: "scope-hash-1" });
+  });
+
+  it("refuses an attempt that no longer holds the run", () => {
+    const { storage } = claimed();
+
+    expect(storage.persistScope({ ...fence, runId: RUN, attemptId: "attempt-2", ...scope }))
+      .toEqual({ outcome: "ownership_lost" });
+    expect(storage.scope({ runId: RUN })).toBeUndefined();
+  });
+
+  it("refuses once the lease has lapsed", () => {
+    const { storage } = claimed();
+
+    // The `SELECT … FROM harness_runs WHERE lease_expires_at > now` that used
+    // to be the INSERT's own source. Nothing is written for an attempt whose
+    // lease has run out, because another executor may already have taken over.
+    expect(storage.persistScope({ ...fence, runId: RUN, now: NOW + 61_000, ...scope }))
+      .toEqual({ outcome: "ownership_lost" });
+    expect(storage.scope({ runId: RUN })).toBeUndefined();
+  });
+});
+
+describe("recording a plugin activation", () => {
+  function claimed() {
+    const opened = open();
+    seedRun(opened.sql, RUN);
+    opened.storage.claimAttempt({
+      ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-claim",
+    });
+    return opened;
+  }
+
+  const activation = { pluginId: "linear", toolSurfaceHash: "surface-v1" };
+
+  it("records the activation for the attempt that holds the run", () => {
+    const { storage, sql } = claimed();
+
+    expect(storage.persistPluginActivation({ ...fence, runId: RUN, ...activation }))
+      .toEqual({ outcome: "persisted" });
+    expect(sql.exec(
+      `SELECT attempt_id, tool_surface_hash, authorized_at, activated_at
+         FROM run_plugin_activations WHERE run_id = ? AND plugin_id = ?`,
+      RUN,
+      "linear",
+    ).one()).toMatchObject({
+      attempt_id: "attempt-1",
+      tool_surface_hash: "surface-v1",
+      authorized_at: NOW,
+      activated_at: NOW,
+    });
+  });
+
+  it("reports the same attempt's identical activation as a reuse", () => {
+    const { storage } = claimed();
+    storage.persistPluginActivation({ ...fence, runId: RUN, ...activation });
+
+    expect(storage.persistPluginActivation({ ...fence, runId: RUN, ...activation }))
+      .toEqual({ outcome: "reused" });
+  });
+
+  it("refuses an activation whose tool surface has changed", () => {
+    const { storage } = claimed();
+    storage.persistPluginActivation({ ...fence, runId: RUN, ...activation });
+
+    // The surface hash is part of the frozen scope. A second activation naming
+    // a different one means the tools moved under a run that was promised they
+    // would not, so it is refused rather than recorded over.
+    expect(storage.persistPluginActivation({
+      ...fence, runId: RUN, ...activation, toolSurfaceHash: "surface-v2",
+    })).toEqual({ outcome: "mismatch" });
+  });
+
+  it("refuses an attempt that no longer holds the run", () => {
+    const { storage, sql } = claimed();
+
+    expect(storage.persistPluginActivation({
+      ...fence, runId: RUN, attemptId: "attempt-2", ...activation,
+    })).toEqual({ outcome: "ownership_lost" });
+    expect(sql.exec(
+      `SELECT COUNT(*) AS count FROM run_plugin_activations WHERE run_id = ?`,
+      RUN,
+    ).one()).toMatchObject({ count: 0 });
   });
 });

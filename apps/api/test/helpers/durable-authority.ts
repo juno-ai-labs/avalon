@@ -18,6 +18,11 @@ import {
   MESSAGE_OPERATIONS,
   type MessageObjectPort,
 } from "../../src/durable-objects/workstream-message-protocol";
+import { WorkstreamHarnessRunStorage } from "../../src/durable-objects/workstream-harness-run-storage";
+import {
+  HARNESS_RUN_OPERATIONS,
+  type HarnessRunObjectPort,
+} from "../../src/durable-objects/workstream-harness-run-protocol";
 import { WorkstreamResourceStorage } from "../../src/durable-objects/workstream-resource-storage";
 import {
   RESOURCE_OPERATIONS,
@@ -906,6 +911,25 @@ export function testResourcePort(database: DatabaseSync): ResourceObjectPort {
     new WorkstreamResourceStorage(plainBinding(database)),
     RESOURCE_OPERATIONS,
   );
+}
+
+/** A harness-run port over a real storage instance in this isolate. */
+export function testHarnessRunPort(database: DatabaseSync): HarnessRunObjectPort {
+  const storage = new WorkstreamHarnessRunStorage(
+    createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null,
+      setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => body(),
+      sql: objectSqlStorage(database),
+    }),
+  );
+  return Object.fromEntries(
+    HARNESS_RUN_OPERATIONS.map((operation) => [
+      operation,
+      async (...args: unknown[]) =>
+        (storage[operation] as (...rest: unknown[]) => unknown).apply(storage, args),
+    ]),
+  ) as HarnessRunObjectPort;
 }
 
 /** The same port as a factory, for a caller that takes one. */

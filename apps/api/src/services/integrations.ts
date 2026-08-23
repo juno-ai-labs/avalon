@@ -185,6 +185,8 @@ import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { createBlockDashboardObjectPort } from "../runtime/block-dashboard-port";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
+import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
+import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createResourceObjectPort } from "../runtime/resource-port";
 import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { transcriptLister } from "../runtime/message-projection";
@@ -2014,7 +2016,8 @@ export async function runWorkstreamHarness(
     code: "run_ownership_lost",
   });
   const attemptLease = runtime.lease;
-  const liveness = new CoalescedRunLiveness(env.DB, input.harnessRunId, attemptLease, {
+  const runs = createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId);
+  const liveness = new CoalescedRunLiveness(runs, input.harnessRunId, attemptLease, {
     leaseSeconds: 300,
     minimumIntervalMs: 5_000,
   });
@@ -2128,7 +2131,7 @@ export async function runWorkstreamHarness(
     ...runLimits,
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
   };
-  await persistImmutableRunScope(env.DB, input, liveness.lease, {
+  await persistImmutableRunScope(runs, input, liveness.lease, {
     executionPrincipal: input.executionPrincipal,
     eligibleConnectionIds: [...harnessTools.frozenConnections.values()].map((plugin) => plugin.connectionId),
     eligibleCapabilities: [
@@ -3106,7 +3109,7 @@ export async function runWorkstreamHarness(
     }).catch(() => undefined);
   } else if (streamedText) {
     const at = nowIso();
-    await persistHarnessFinalMessage(env.DB, input, liveness.lease, {
+    await persistHarnessFinalMessage(env.DB, runs, input, liveness.lease, {
       id: messageId,
       sequenceNumber: await ensureSequence(),
       text: streamedText,
@@ -3253,7 +3256,11 @@ async function waitForInlineChildResult(
   signal: AbortSignal,
 ): Promise<InlineChildResult | null> {
   while (!signal.aborted) {
-    await assertHarnessAttemptOwned(env.DB, parentInput.harnessRunId, parentLease);
+    await assertHarnessAttemptOwned(
+      createHarnessRunObjectPort(env, parentInput.workspaceId, parentInput.workstreamId),
+      parentInput.harnessRunId,
+      parentLease,
+    );
     const lookup = await loadInlineChildResult(
       env.DB,
       parentInput.harnessRunId,
@@ -3483,6 +3490,11 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         workstreamId: options.input.workstreamId,
         harnessRunId: options.input.harnessRunId,
       };
+      const runs = createHarnessRunObjectPort(
+        options.env,
+        parentInput.workspaceId,
+        parentInput.workstreamId,
+      );
       const canonicalByModelId = new Map(
         options.harnessTools.plugins.map((plugin) => [plugin.modelId, plugin.canonicalId]),
       );
@@ -3520,6 +3532,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
 
       let admission = await admitInlineChildAttempt(
         options.env.DB,
+        runs,
         parentInput,
         options.parentLease(),
         admissionOptions,
@@ -3535,6 +3548,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         if (replay) return inlineChildOutcomeAsToolResult(admission.childInput.harnessRunId, replay);
         admission = await admitInlineChildAttempt(
           options.env.DB,
+          runs,
           parentInput,
           options.parentLease(),
           admissionOptions,
@@ -3608,6 +3622,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
       try {
         await persistInlineChildScope(
           options.env.DB,
+          runs,
           parentInput,
           options.parentLease(),
           admission.childInput,
@@ -3660,7 +3675,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           },
           async (pluginId) => {
             await assertChildOwned();
-            await persistRunPluginActivation(options.env.DB, admission.childInput, childLiveness.lease, {
+            await persistRunPluginActivation(runs, admission.childInput, childLiveness.lease, {
               pluginId,
               toolSurfaceHash: childPluginSurfaceHashes.get(pluginId)!,
             });
@@ -3735,7 +3750,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             await assertChildOwned();
             const surfaceHash = childPluginSurfaceHashes.get(pluginId);
             if (!surfaceHash) throw new ConnectorError("unauthorized", "Plugin is outside the child scope");
-            await persistRunPluginActivation(options.env.DB, admission.childInput, childLiveness.lease, {
+            await persistRunPluginActivation(runs, admission.childInput, childLiveness.lease, {
               pluginId,
               toolSurfaceHash: surfaceHash,
             });
@@ -4127,6 +4142,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
 
       await terminalizeInlineChildAttempt(
         options.env.DB,
+        runs,
         parentInput,
         options.parentLease(),
         admission.childInput,
@@ -4597,6 +4613,9 @@ async function persistSuccessfulToolResult(
    */
   receipts: ToolReceiptObjectPort
     = createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+  /** The harness-run authority, injectable through the same seam and for the same reason. */
+  runs: HarnessRunObjectPort
+    = createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
 ): Promise<string> {
   const replayPayload = serializeToolReplayOutput(result.output);
   const contentHash = await sha256(replayPayload);
@@ -4624,9 +4643,9 @@ async function persistSuccessfulToolResult(
   await ownershipGuard?.();
   const assertSettlementOwned = async (): Promise<void> => {
     if (result.allowCancellationRequested) {
-      await assertHarnessToolSettlementOwned(env.DB, input.harnessRunId, lease);
+      await assertHarnessToolSettlementOwned(runs, input.harnessRunId, lease);
     } else {
-      await assertHarnessAttemptOwned(env.DB, input.harnessRunId, lease);
+      await assertHarnessAttemptOwned(runs, input.harnessRunId, lease);
     }
   };
   await assertSettlementOwned();
@@ -4672,6 +4691,8 @@ async function settleRootHarnessToolCompletion(
   /** Injectable for the same reason `persistSuccessfulToolResult`'s is. */
   receipts: ToolReceiptObjectPort
     = createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+  runs: HarnessRunObjectPort
+    = createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
 ): Promise<string> {
   const outputRef = await persistSuccessfulToolResult(env, input, lease, {
     invocationId: result.invocationId,
@@ -4688,7 +4709,7 @@ async function settleRootHarnessToolCompletion(
     // requires this exact live attempt and rejects parent terminalization while
     // any receipt from any attempt remains pending or started.
     allowCancellationRequested: true,
-  }, undefined, receipts);
+  }, undefined, receipts, runs);
   // The invocation completion is the authority for this dependency. If the
   // Worker disappears between these writes, replay finds no dependency,
   // invalidates the receipt, and executes again instead of trusting the JSON.
@@ -5819,10 +5840,12 @@ async function persistWorkstreamPluginActivation(
   ) {
     throw new ConnectorError("unauthorized", "Plugin is outside this immutable run scope");
   }
-  await persistRunPluginActivation(env.DB, input, lease, {
-    pluginId,
-    toolSurfaceHash: surfaceHash,
-  });
+  await persistRunPluginActivation(
+    createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
+    input,
+    lease,
+    { pluginId, toolSurfaceHash: surfaceHash },
+  );
   await createSchedulingObjectPort(env, input.workspaceId, input.workstreamId)
     .recordPluginActivation({ pluginId, now: Date.now() });
 }

@@ -27,6 +27,9 @@ const DISPATCHED_OPERATIONS = [
   "attemptOwnership",
   "recordLifecycleEvent",
   "lifecycleEvent",
+  "persistScope",
+  "scope",
+  "persistPluginActivation",
 ] as const satisfies readonly HarnessRunOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */
