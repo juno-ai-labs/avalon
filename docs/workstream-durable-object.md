@@ -1305,6 +1305,66 @@ which no caller acts on: both throw, and the two error codes it added were
 caught nowhere. The distinction is real and the object can make it; it is worth
 making when something needs it.
 
+### 2026-08-23 — Resources leave the compatibility layer, and turn out to have been mostly somebody else's
+
+**What changed:** `WorkstreamResourceStorage` owns `workstream_resource_links`
+and `resource_inventory_revision`, reached through `/internal/resources` and a
+typed port. Object schema migration 20 drops
+`_runtime_workstream_resources`, `_runtime_resources` and
+`_runtime_resource_revisions` with the first one's two triggers, and both
+routing tables lose all three entries. This is slice 5 of
+[the compat-layer retirement](PRDs/2026-08-22_retiring-the-runtime-compat-layer/prd.md).
+
+**Why this slice is a tenth of the size its statement count predicted.** The
+PRD counts 73 statements across 22 files for `resources`,
+`workstream_resources` and `workstream_resource_inventory_revisions`. Almost
+all of them name `resources` *alone*, which routes to WorkspaceDO and belongs
+to the notes-and-resources slice. What reached this object was the **link** —
+which resources a work stream has attached, why, and whether it is watching
+them — and a handful of statements that joined the two.
+
+`_runtime_resources` is what made those joins possible, and it was never a view
+over a table this object owns. It projected
+`workstream_resource_links.resource_json` — the *frozen copy* the object keeps
+of a workspace resource — as though it were the workspace's live `resources`
+row. Every caller now asks the authority that owns the half it needs, which is
+two reads where there was one join, and which is also the only arrangement that
+is true: the frozen copy and the live row have been able to disagree since a
+resource could be renamed after being attached.
+
+**The watch toggle is the conversion worth reading.** Turning a watch on
+crosses two authorities — the link is this object's, the `resource_watches` row
+is regional — so no transaction spans them. The routed version read
+`watch_enabled`, wrote the new one, ran the regional write, and on failure wrote
+back the value it had read three round trips earlier. `setWatchEnabled` answers
+with the value it replaced, so the compensation restores *that*, and the read
+and the write are one operation rather than two with a window between them.
+
+**One behaviour deliberately not reproduced.** The retired update trigger
+advanced `resource_inventory_revision` on every column it could write,
+including `watch_enabled`. That revision is a compaction checkpoint's
+visibility fence — `inventory:<revision>` — which exists to invalidate a
+checkpoint when what a run is *authorized to see* changes. A watch flag changes
+nothing about that, so the endpoint does not bump it, and a checkpoint survives
+a toggle that never affected it. The paths that do change the authorized set are
+the product service's, and they still bump it. There is a `test-workers/` spec
+for exactly this.
+
+**What a future change has to respect.** Two `INSERT INTO workstream_resources`
+literals and an inbound-email visibility predicate went with this slice, all
+three already dead: the inserts sat behind `if (regional === env.DB)`, which
+requires an environment with no workspace runtime database — and production
+requires one before request dispatch — while the visibility predicate had been
+replaced by a per-row `resourceAccess` call against the workspace object in
+`6ff47e62`. That last one is worth knowing about before someone reads the
+deletion as a lost rule: **it is enforced, just not in SQL any more**, and
+`canReadInboundEmailResource` is where it lives.
+
+`_runtime_workstream_resources` never had an *insert* trigger. Attaching has
+gone through the product service since before this slice, which is the clearest
+evidence that the link table was already the object's in everything but its
+reads.
+
 ### 2026-08-23 — The transcript's remaining readers, and the boundary the self-registration had not actually removed
 
 **What changed:** seven more transcript callers left `_runtime_messages` —

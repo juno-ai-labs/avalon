@@ -3,6 +3,12 @@ import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlit
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+} from "./helpers/durable-authority";
+
+import {
   __attachmentToolReceiptTesting,
   invalidateAttachmentToolReplay,
   registerAttachmentToolReceipt,
@@ -69,7 +75,11 @@ function sqliteD1(database: DatabaseSync): D1Database {
 }
 
 const databases: DatabaseSync[] = [];
-afterEach(() => { for (const database of databases.splice(0)) database.close(); });
+const objectStores: DatabaseSync[] = [];
+afterEach(() => {
+  for (const database of databases.splice(0)) database.close();
+  for (const store of objectStores.splice(0)) store.close();
+});
 
 function fixture() {
   const database = new DatabaseSync(":memory:");
@@ -78,14 +88,7 @@ function fixture() {
     PRAGMA foreign_keys = ON;
     CREATE TABLE resources (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'avalon_upload', model_content_sha256 TEXT, updated_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00.000Z');
     CREATE TABLE workstreams (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL);
-    CREATE TABLE workstream_resources (workstream_id TEXT NOT NULL, resource_id TEXT NOT NULL, relationship_type TEXT NOT NULL DEFAULT 'attached', attached_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00.000Z', watch_enabled INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workstream_id, resource_id));
     CREATE TABLE notes (resource_id TEXT NOT NULL, workspace_id TEXT NOT NULL, archived_at TEXT, scope TEXT, owner_user_id TEXT, updated_at TEXT);
-    -- Reached by loadVisibleWorkstreamResourcesByIds, which the deleted D1 arm
-    -- never called: it answered visibility with one hand-written join instead.
-    -- Converting to the live path brought the real visibility loader into this
-    -- test's reach, which is more coverage than the file had before.
-    CREATE TABLE messages (id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL);
-    CREATE TABLE message_attachments (message_id TEXT NOT NULL, resource_id TEXT NOT NULL);
     CREATE TABLE resource_object_deletion_outbox (
       object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
       attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
@@ -95,10 +98,32 @@ function fixture() {
       ('${RESOURCE_ID}', '${WORKSPACE_ID}', '${HASH}'),
       ('${SECOND_RESOURCE_ID}', '${WORKSPACE_ID}', '${HASH}');
     INSERT INTO workstreams (id, workspace_id) VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}');
-    INSERT INTO workstream_resources (workstream_id, resource_id) VALUES
-      ('${WORKSTREAM_ID}', '${RESOURCE_ID}'), ('${WORKSTREAM_ID}', '${SECOND_RESOURCE_ID}');
   `);
-  return { database, d1: sqliteD1(database) };
+  // The attachment half is the object's, so it is a real object database with
+  // the real schema. What remains in the fake D1 above is the workspace's half:
+  // the resource row and its note authorization, which is the split this slice
+  // makes visible.
+  const objectStore = testWorkstreamObjectStore();
+  objectStores.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+  for (const resourceId of [RESOURCE_ID, SECOND_RESOURCE_ID]) attachResource(objectStore, resourceId);
+  return {
+    database,
+    objectStore,
+    d1: sqliteD1(database),
+    agents: testSubstreamAgentsBinding(objectStore),
+  };
+}
+
+/** Attach one resource to the work stream's object. */
+function attachResource(store: DatabaseSync, resourceId: string): void {
+  store.prepare(
+    `INSERT INTO workstream_resource_links
+       (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+        resource_json, attached_at, updated_at)
+     VALUES (?, NULL, 0, 'attached', '{}', 1, 1)
+     ON CONFLICT(resource_id) DO NOTHING`,
+  ).run(resourceId);
 }
 
 function readOutput(sha256 = HASH) {
@@ -187,9 +212,9 @@ function target<T extends Record<string, unknown>>(overrides: T): T & {
 
 describe("attachment tool receipts", () => {
   it("registers a dependency only while the exact derivative is still current", async () => {
-    const { database, d1 } = fixture();
+    const { database, d1, agents } = fixture();
     const { receipts, sql } = receiptAuthority();
-    const env = createTestEnv({ DB: d1 });
+    const env = createTestEnv({ DB: d1, SUBSTREAM_AGENTS: agents, AVALON_REGION: "global" });
 
     await registerAttachmentToolReceipt(env, target({
       invocationId: INVOCATION_ID,
@@ -213,13 +238,13 @@ describe("attachment tool receipts", () => {
   });
 
   it("refuses to register against a receipt this work stream does not hold", async () => {
-    const { d1 } = fixture();
+    const { d1, agents } = fixture();
     const { receipts } = receiptAuthority();
 
     // Cross-work-stream protection used to be a `WHERE workstream_id = ?` on a
     // shared table. It is now structural: another work stream's receipts are in
     // another object, so the row is simply absent and the register fails closed.
-    await expect(registerAttachmentToolReceipt(createTestEnv({ DB: d1 }), target({
+    await expect(registerAttachmentToolReceipt(createTestEnv({ DB: d1, SUBSTREAM_AGENTS: agents, AVALON_REGION: "global" }), target({
       invocationId: "00000000-0000-4000-8000-0000000000ff",
       expectedOutputRef: OUTPUT_REF,
       canonicalToolName: "read_resource",
@@ -228,9 +253,9 @@ describe("attachment tool receipts", () => {
   });
 
   it("requires current authorization and derivative identity on every attachment replay", async () => {
-    const { database, d1 } = fixture();
+    const { database, objectStore, d1, agents } = fixture();
     const { receipts, sql } = receiptAuthority();
-    const env = createTestEnv({ DB: d1 });
+    const env = createTestEnv({ DB: d1, SUBSTREAM_AGENTS: agents, AVALON_REGION: "global" });
     const validate = (capability: string) => validateAttachmentToolReceiptReplay(env, target({
       principal: { type: "user", userId: USER_ID },
       invocationId: INVOCATION_ID,
@@ -252,10 +277,9 @@ describe("attachment tool receipts", () => {
     await expect(validate("workstream.resources.read")).resolves.toBe("invalid");
     sql.exec("UPDATE tool_effects SET status = 'completed'");
 
-    database.prepare("DELETE FROM workstream_resources WHERE resource_id = ?").run(RESOURCE_ID);
+    objectStore.prepare("DELETE FROM workstream_resource_links WHERE resource_id = ?").run(RESOURCE_ID);
     await expect(validate("workstream.resources.read")).resolves.toBe("invalid");
-    database.prepare("INSERT INTO workstream_resources (workstream_id, resource_id) VALUES (?, ?)")
-      .run(WORKSTREAM_ID, RESOURCE_ID);
+    attachResource(objectStore, RESOURCE_ID);
 
     await expect(validate("workstream.resources.list")).resolves.toBe("invalid");
     await expect(validate("slack.search")).resolves.toBe("not_attachment");
@@ -266,11 +290,11 @@ describe("attachment tool receipts", () => {
   });
 
   it("removes an invalid replay and queues its durable output for cleanup", async () => {
-    const { database, d1 } = fixture();
+    const { database, d1, agents } = fixture();
     const { receipts, sql } = receiptAuthority();
 
     await invalidateAttachmentToolReplay(
-      createTestEnv({ DB: d1 }),
+      createTestEnv({ DB: d1, SUBSTREAM_AGENTS: agents, AVALON_REGION: "global" }),
       target({ invocationId: INVOCATION_ID }),
       receipts,
     );
@@ -282,11 +306,11 @@ describe("attachment tool receipts", () => {
   });
 
   it("queues nothing for a receipt that was already gone", async () => {
-    const { database, d1 } = fixture();
+    const { database, d1, agents } = fixture();
     const { receipts } = receiptAuthority();
 
     await invalidateAttachmentToolReplay(
-      createTestEnv({ DB: d1 }),
+      createTestEnv({ DB: d1, SUBSTREAM_AGENTS: agents, AVALON_REGION: "global" }),
       target({ invocationId: "00000000-0000-4000-8000-0000000000ff" }),
       receipts,
     );
@@ -299,7 +323,7 @@ describe("attachment tool receipts", () => {
   });
 
   it("rolls back every dependency when one image version changes before registration", async () => {
-    const { database, d1 } = fixture();
+    const { database, d1, agents } = fixture();
     const { receipts, sql } = receiptAuthority();
     const output = {
       requested: 2,
@@ -324,7 +348,7 @@ describe("attachment tool receipts", () => {
     database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?")
       .run("b".repeat(64), SECOND_RESOURCE_ID);
 
-    await expect(registerAttachmentToolReceipt(createTestEnv({ DB: d1 }), target({
+    await expect(registerAttachmentToolReceipt(createTestEnv({ DB: d1, SUBSTREAM_AGENTS: agents, AVALON_REGION: "global" }), target({
       invocationId: INVOCATION_ID,
       expectedOutputRef: OUTPUT_REF,
       canonicalToolName: "view_resource",
@@ -336,7 +360,7 @@ describe("attachment tool receipts", () => {
   });
 
   it("does not attach or delete dependencies after a successor replaces the output reference", async () => {
-    const { database, d1 } = fixture();
+    const { database, d1, agents } = fixture();
     const { receipts, sql } = receiptAuthority();
     // The receipt was replanned onto another call and completed again between
     // this caller's completion and its registration. Its dependency belongs to
@@ -360,7 +384,7 @@ describe("attachment tool receipts", () => {
     database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?")
       .run("b".repeat(64), RESOURCE_ID);
 
-    await expect(registerAttachmentToolReceipt(createTestEnv({ DB: d1 }), target({
+    await expect(registerAttachmentToolReceipt(createTestEnv({ DB: d1, SUBSTREAM_AGENTS: agents, AVALON_REGION: "global" }), target({
       invocationId: INVOCATION_ID,
       expectedOutputRef: OUTPUT_REF,
       canonicalToolName: "read_resource",

@@ -15,7 +15,6 @@ import {
   testWorkstreamContract,
   testWorkstreamObjectStore,
   workstreamObjectAll,
-  workstreamObjectRun,
 } from "./helpers/durable-authority";
 
 vi.mock("../src/services/integrations", () => ({
@@ -304,11 +303,8 @@ describe("a work stream a connector activity created", () => {
     const workstream = database.prepare(
       "SELECT workstream_id AS id FROM automation_runs WHERE automation_subscription_id = ?",
     ).get(subscriptionId) as { id: string };
-    workstreamObjectRun(
-      storesFor(database).get(workstream.id)!,
-      "DELETE FROM workstream_resources WHERE workstream_id = ?",
-      workstream.id,
-    );
+    storesFor(database).get(workstream.id)!
+      .prepare("DELETE FROM workstream_resource_links").run();
 
     await activityConsumerTesting.runMatchingAutomations(env, linearActivityRow() as never);
 
@@ -839,8 +835,7 @@ function attachments(database: DatabaseSync, workstreamId: string): unknown[] {
   }>(
     store,
     `SELECT resource_id, relationship_type, attached_by_user_id, watch_enabled
-       FROM workstream_resources WHERE workstream_id = ? ORDER BY attached_at, resource_id`,
-    workstreamId,
+       FROM workstream_resource_links ORDER BY attached_at, resource_id`,
   );
   return links.map((link) => {
     const resource = database.prepare(

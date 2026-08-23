@@ -1334,7 +1334,51 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "retire the wake-up, compaction, description-refresh and plugin-hint views",
     statements: schedulingAuthorityPromotion(),
   },
+  {
+    version: 20,
+    description: "retire the resource-attachment, resource-projection and revision views",
+    statements: resourceAuthorityPromotion(),
+  },
 ];
+
+/**
+ * Retires the resources slice's three compatibility objects.
+ *
+ * `_runtime_resources` is the interesting one, and it is why this slice is so
+ * much smaller than its statement count suggested: it was never a view over a
+ * table the object owns. It projected `workstream_resource_links.resource_json`
+ * — the *frozen copy* the object keeps of a workspace resource — as though it
+ * were the workspace's live `resources` row, so that a single routed statement
+ * could join the two authorities. Nothing reads it any more; each caller asks
+ * the authority that owns the half it needs.
+ *
+ * Five objects, not three: `_runtime_workstream_resources` carries an update
+ * and a delete trigger. It never carried an *insert* one — attaching has gone
+ * through the product service since before this slice — which is the clearest
+ * evidence that the link table was already the object's in everything but the
+ * reads.
+ *
+ * Asserted for the reason migrations 17-19 assert theirs: a reshaped compat
+ * schema should fail the build rather than produce a migration that quietly
+ * patches nothing.
+ */
+function resourceAuthorityPromotion(): string[] {
+  const names = /^_runtime_(?:workstream_resources|resources|resource_revisions)/;
+  const compatObjects = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.flatMap((statement) => {
+    const trigger = /CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    if (trigger) return names.test(trigger) ? [`DROP TRIGGER IF EXISTS ${trigger}`] : [];
+    const view = /CREATE VIEW IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    return view && names.test(view) ? [`DROP VIEW IF EXISTS ${view}`] : [];
+  });
+  if (compatObjects.length !== 5) {
+    throw new Error(`expected five resource compat objects, found ${compatObjects.length}`);
+  }
+  return [
+    // Triggers first, so no trigger is left orphaned in `sqlite_schema`.
+    ...compatObjects.filter((statement) => statement.startsWith("DROP TRIGGER")),
+    ...compatObjects.filter((statement) => statement.startsWith("DROP VIEW")),
+  ];
+}
 
 /**
  * Retires four of the scheduling slice's five compatibility views.
