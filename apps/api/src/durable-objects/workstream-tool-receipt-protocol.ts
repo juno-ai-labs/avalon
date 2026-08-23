@@ -53,7 +53,6 @@ const DISPATCHED_OPERATIONS = [
   "checkpoint",
   "complete",
   "fail",
-  "abandonRunReceipts",
   "settleResidualReceipts",
   "receiptForCall",
   "receiptsByIds",

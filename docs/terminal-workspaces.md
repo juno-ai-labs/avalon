@@ -450,6 +450,32 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-23 — Terminal receipt cleanup acknowledges its terminal-first handoff
+
+**What changed:** Stopped Terminal runs write their authoritative terminal state
+first, settle residual tool receipts under that exact terminal stamp, and then
+write an immutable acknowledgment. A direct stopped retry or the existing
+bounded activation sweep repairs a terminal row missing that marker. The same
+operation and acknowledgment cover stale roots and inline children.
+
+**Why:** The ordering is intentionally fail-safe but crosses two object calls. A
+transient settlement failure or lost response left the run terminal, so the
+direct path returned `already_terminal` and the live-only stale sweep never
+revisited it. The tool receipt and visible card could remain started forever.
+
+**Considered and rejected:** Receipt-first terminalization can corrupt a live or
+successor-owned run. A new alarm, queue, schema column, or second cleanup method
+would duplicate existing authority. The lifecycle ledger and activation sweep
+already provide the durable marker and bounded retry owner; the obsolete
+root-only settlement method was removed.
+
+**Consequences:** A lost settlement response is idempotent: retry writes the
+marker without adding another checkpoint or changing the terminal receipt. A
+BlockDashboard-only sweep excludes ordinary roots because it intentionally has
+no automation database; the fully authorized Substream sweep settles the
+receipt, automation row, and marker together. The injected production error UX
+gate remains open even though the failure-first regressions pass locally.
+
 ### 2026-08-23 — Accepted-command recovery requires a whole-sandbox stop
 
 **What changed:** Foreground and scheduled recovery no longer treat deletion or
@@ -495,9 +521,10 @@ reference. Final expiry preserves the existing generation and final-diff
 reference, but skips a new preservation capture on that path because a possibly
 in-flight submission could make the snapshot torn; no new diff is safer than a
 falsely authoritative one. A future optimization must preserve provider-proven
-quiescence before reusing that sandbox or publishing a final diff. Fresh
-production verification remains required after this change deploys; the
-ambiguous command is never replayed or declared resolved.
+quiescence before reusing that sandbox or publishing a final diff. PR #251's
+fresh production sequence stopped an accepted 120-second command, immediately
+admitted linked reads, and still found the late marker absent after the original
+deadline. The ambiguous command was never replayed or declared resolved.
 
 ### 2026-08-22 — A yielded harness run no longer holds Terminal for sixteen minutes
 
@@ -590,10 +617,10 @@ deletion without a hidden whole-sandbox stop.
 settle any terminal event already returned by Bind for that exact receipt,
 provided its attempt id, owner, running state, unexpired lease, and
 unterminalized parent still match. Any receipt still `pending` or `started` at
-the stopped commit is classified in that same lease-fenced transaction — an
-unresolved write becomes ambiguous and a read fails — whether it came from the
-current executor or survived an expired attempt. The parent transition retains
-its no-unsettled-receipt guard after that bulk settlement.
+the stopped commit is classified immediately afterward under the exact terminal
+stamp — an unresolved write becomes ambiguous and a read fails — whether it came
+from the current executor or survived an expired attempt. The immutable marker
+above makes that second call retryable.
 
 **Why:** Production Computer Use stopped a sleeping command and correctly
 prevented its late marker, but its tool row remained `started`; a follow-up
@@ -607,16 +634,16 @@ in the renderer, automatically retrying the command, or removing cancellation
 from all ownership fences. The first hides contradictory durable state, the
 second can duplicate a write, and the third would let ordinary post-cancel work
 continue. Only terminal receipt settlement by the exact live owner and the
-owner's atomic stopped commit receive the narrow exception; ordinary tool work
-remains fenced. An obsolete executor defers and terminates its drain instead of
+terminal-stamp-fenced residual cleanup receive the narrow exception; ordinary
+tool work remains fenced. An obsolete executor defers and terminates its drain instead of
 writing an unfenced failure over the successor.
 
 **Consequences:** A stopped command is displayed from its durable completed,
 failed, or ambiguous receipt rather than a stale started row. This includes a
 tool that naturally returns inside the stop poll window, not only the aborted
-path, and a residual set of any size is closed with two bulk statements rather
-than one statement pair per tool. Provider outcome remains conservative, and
-every other post-cancellation write stays fenced.
+path, and a residual set of any size is closed inside one object transaction.
+Provider outcome remains conservative, and every other post-cancellation write
+stays fenced.
 
 ### 2026-08-22 — A held deadline is re-checked, not counted
 
