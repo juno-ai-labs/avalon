@@ -146,9 +146,10 @@ anywhere:
    fingerprint is a trap with no exit: the read path calls it unranked and asks
    for a ranking, the scheduler cache-hits on the fingerprint and clears the
    request without ranking, and the two do that to each other forever — a
-   candidate load and a ranking slot per pass. The read-path half is still
-   asserted in `suggested-work-scheduling.test.ts`; the scheduler half is the
-   alarm's now.
+   candidate load and a ranking slot per pass. The read-path half is asserted
+   against a real WorkspaceDO in `test-workers/durable-object-runtime.test.ts`
+   ("treats an empty ranking with no candidates as a steady state"); the
+   scheduler half is the product alarm's now, and is the part still unasserted.
 
 **What would settle it.** A `test-workers/` suite over WorkspaceDO's product
 alarm: one active and one dormant member both due, assert only the active one's
