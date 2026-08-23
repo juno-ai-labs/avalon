@@ -410,7 +410,7 @@ Several error boundaries collapse distinct faults:
 - A failure in the harness's durable host callbacks is intentionally fatal but maps to `harness_execution_failed`.
 - The UI displays that generic member-safe code and offers Retry even when the write outcome is unknown or a durable receipt is missing.
 
-Implemented locally: the Terminal object port returns `terminal_operation_not_committed` with `outcome=not_committed` and `retryable=true` only when the transaction rolled back. A later alarm failure is logged but returns the committed result. The shared runtime receipt path applies the same boundary. Bind carries `tool_receipt_persistence_failed` and `run_state_persistence_failed`, while stale write receipts settle the card to `ambiguous` with conservative do-not-repeat guidance.
+Implemented and deployed: the Terminal object port returns `terminal_operation_not_committed` with `outcome=not_committed` and `retryable=true` only when the transaction rolled back. A later alarm failure is logged but returns the committed result. The shared runtime receipt path applies the same boundary. Bind carries `tool_receipt_persistence_failed` and `run_state_persistence_failed`, while stale write receipts settle the card to `ambiguous` with conservative do-not-repeat guidance.
 
 Production status: the Global pass produced no durable-host failure, so it
 proved the healthy path but did not exercise these participant-safe error
