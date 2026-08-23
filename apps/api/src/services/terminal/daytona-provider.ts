@@ -9,6 +9,9 @@ import {
 
 type SupportedTerminalConfiguration = Extract<TerminalRegionConfiguration, { capability: "supported" }>;
 
+/** Existing Daytona client request bound used by durable submission fencing. */
+export const DAYTONA_REQUEST_TIMEOUT_MS = 120_000;
+
 export type TerminalSandboxState =
   | "starting"
   | "running"
@@ -299,7 +302,7 @@ export function createDaytonaTerminalProvider(
     apiKey: configuration.apiKey,
     apiUrl: configuration.apiUrl,
     target: configuration.target,
-    requestTimeoutMs: 120_000,
+    requestTimeoutMs: DAYTONA_REQUEST_TIMEOUT_MS,
   });
 
   const load = async (idOrName: string): Promise<DaytonaSandboxLike> => client.get(idOrName);

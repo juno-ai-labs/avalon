@@ -4,6 +4,7 @@ import {
   type TerminalPortFactory,
 } from "./object-port";
 import type { TerminalObjectPort } from "../../durable-objects/workstream-terminal-protocol";
+import { TERMINAL_OPERATION_LEASE_MS } from "../../durable-objects/workstream-terminal-storage";
 
 import type { Env } from "../../env";
 import { sha256Hex } from "../../lib/crypto";
@@ -16,11 +17,6 @@ import { isTerminalProviderNotFound, type TerminalSandboxProvider } from "./dayt
 import { TerminalToolError } from "./tools";
 
 const MAX_WORKSPACE_BACKUP_BYTES = 50 * 1_048_576;
-const LIFECYCLE_TASK_CLEANUP_BATCH = 20;
-// Daytona requests are bounded at two minutes. Each exact claim is renewed
-// before a provider mutation, so one request cannot outlive its authority and
-// a degraded cleanup batch cannot leave a stale stop/delete continuation.
-const LIFECYCLE_CLAIM_TTL_MS = 3 * 60_000;
 
 export interface TerminalWorkspaceBackup {
   resourceId: string;
@@ -49,7 +45,7 @@ async function quiesceUnsettledTasks(
   claimId: string,
   now: number,
   claimNow: () => number,
-): Promise<{ sandboxStopped: boolean; sandboxAbsent: boolean; batchRemaining: boolean }> {
+): Promise<{ sandboxStopped: boolean; sandboxAbsent: boolean }> {
   let sandboxStopped = false;
   let sandboxAbsent = false;
   const renewClaim = async (): Promise<void> => {
@@ -58,14 +54,14 @@ async function quiesceUnsettledTasks(
       generation,
       sandboxId: providerSandboxId,
       claimId,
-      claimExpiresAt: renewedAt + LIFECYCLE_CLAIM_TTL_MS,
+      claimExpiresAt: renewedAt + TERMINAL_OPERATION_LEASE_MS,
       now: renewedAt,
     });
     if (!renewed) throw new Error("terminal_lifecycle_claim_lost");
   };
-  for (let index = 0; index < LIFECYCLE_TASK_CLEANUP_BATCH; index += 1) {
+  while (true) {
     const task = await terminal.unsettledTask(generation);
-    if (!task) return { sandboxStopped, sandboxAbsent, batchRemaining: false };
+    if (!task) return { sandboxStopped, sandboxAbsent };
 
     if (!sandboxStopped && !sandboxAbsent) {
       // A `submitting` task has no accepted provider command id yet. A missing
@@ -145,11 +141,6 @@ async function quiesceUnsettledTasks(
     });
     if (!settled) throw new Error("terminal_task_cleanup_fence_lost");
   }
-  return {
-    sandboxStopped,
-    sandboxAbsent,
-    batchRemaining: Boolean(await terminal.unsettledTask(generation)),
-  };
 }
 
 export async function reconcileDueTerminalSandbox(
@@ -200,7 +191,7 @@ export async function reconcileDueTerminalSandbox(
   const claimed = await terminal.claimLifecycleTransition({
     lifecycleState: intermediate,
     claimId,
-    claimExpiresAt: now.getTime() + LIFECYCLE_CLAIM_TTL_MS,
+    claimExpiresAt: now.getTime() + TERMINAL_OPERATION_LEASE_MS,
     generation: row.generation,
     version: row.version,
     now: now.getTime(),
@@ -219,20 +210,6 @@ export async function reconcileDueTerminalSandbox(
       claimNow,
     );
     let providerStopped = cleanup.sandboxStopped;
-    if (cleanup.batchRemaining) {
-      const stableState = desired === "stopped"
-        ? "running" as const
-        : desired === "archived"
-          ? "stopped" as const
-          : row.lifecycleState === "archived" ? "archived" as const : "stopped" as const;
-      await terminal.failLifecycleClaim({
-        lifecycleState: stableState,
-        failureCode: "terminal_task_cleanup_batch_remaining",
-        claimId,
-        now: now.getTime(),
-      });
-      return { transition: "deferred" };
-    }
     if (cleanup.sandboxAbsent) {
       const retired = await terminal.retireMissingSandboxAfterLifecycleClaim({
         generation: row.generation,
@@ -249,7 +226,7 @@ export async function reconcileDueTerminalSandbox(
         generation: row.generation,
         sandboxId: claimedSandboxId,
         claimId,
-        claimExpiresAt: renewedAt + LIFECYCLE_CLAIM_TTL_MS,
+        claimExpiresAt: renewedAt + TERMINAL_OPERATION_LEASE_MS,
         now: renewedAt,
       });
       if (!renewed) throw new Error("terminal_lifecycle_claim_lost");

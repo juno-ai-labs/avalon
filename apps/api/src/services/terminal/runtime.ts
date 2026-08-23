@@ -3,7 +3,11 @@ import { newId } from "@avalon/db";
 
 import { sha256Hex } from "../../lib/crypto";
 import type { AcquiredTerminalSandbox, TerminalSandboxCoordinator } from "./coordinator";
-import { isTerminalProviderNotFound, type TerminalSandboxProvider } from "./daytona-provider";
+import {
+  DAYTONA_REQUEST_TIMEOUT_MS,
+  isTerminalProviderNotFound,
+  type TerminalSandboxProvider,
+} from "./daytona-provider";
 import type {
   TerminalCommandOutput,
   TerminalImportResourceOutput,
@@ -23,11 +27,6 @@ const OUTPUT_ROOT = ".avalon-output";
 const MAX_PROVIDER_CAPTURE_BYTES = 128 * 1_024;
 const MAX_COMMAND_LOG_BYTES = 5_000_000;
 const OUTPUT_LIMIT_MARKER_RESERVE_BYTES = 256;
-// Daytona's client request timeout is two minutes. A task remains in
-// `submitting` through that window so recovery cannot delete a not-yet-visible
-// named session and hand the sandbox to another run while submission is still
-// capable of reaching the provider.
-const PROVIDER_SUBMISSION_RECOVERY_GRACE_MS = 2 * 60_000;
 
 type ImportInput = Parameters<TerminalRuntime["importResource"]>[1];
 type PublishInput = Parameters<TerminalRuntime["publishResource"]>[1];
@@ -382,7 +381,7 @@ export function createDaytonaTerminalRuntime(
 
       const startedAt = existing?.startedAt ?? Date.now();
       const deadlineAt = existing?.commandDeadlineAt
-        ?? Date.now() + input.timeoutMs + PROVIDER_SUBMISSION_RECOVERY_GRACE_MS;
+        ?? Date.now() + input.timeoutMs + DAYTONA_REQUEST_TIMEOUT_MS;
       const taskAdmitted = await terminal.insertTask({
         taskId: newId(),
         runId: context.harnessRunId,
@@ -420,7 +419,7 @@ export function createDaytonaTerminalRuntime(
               runId: context.harnessRunId,
               sandboxGeneration: sandbox.generation,
               sandboxId: sandbox.providerSandboxId,
-              commandDeadlineAt: renewedAt + input.timeoutMs + PROVIDER_SUBMISSION_RECOVERY_GRACE_MS,
+              commandDeadlineAt: renewedAt + input.timeoutMs + DAYTONA_REQUEST_TIMEOUT_MS,
               now: renewedAt,
             });
             if (!authorized) {

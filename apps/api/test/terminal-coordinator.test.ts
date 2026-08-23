@@ -248,7 +248,7 @@ describe("Terminal sandbox coordinator", () => {
       .resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
   });
 
-  it("continues yielded-task cleanup in bounded batches", async () => {
+  it("settles every retained task before handing the lease to a linked run", async () => {
     const { objectStore, db, provider, clock } = fixture();
     const otherRun = "00000000-0000-4000-8000-000000000099";
     const coordinator = new TerminalSandboxCoordinator(
@@ -293,17 +293,6 @@ describe("Terminal sandbox coordinator", () => {
     }
     const contender = { ...context(), harnessRunId: otherRun, toolCallId: "batch-contender" };
 
-    await expect(coordinator.acquire(contender)).rejects.toMatchObject({ code: "sandbox_busy" });
-    expect(provider.cleanupCommand).toHaveBeenCalledTimes(20);
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT COUNT(*) AS count FROM terminal_tasks WHERE state = 'running'",
-    )).toEqual({ count: 1 });
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT lifecycle_claim_id, operation_run_id FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ lifecycle_claim_id: null, operation_run_id: RUN_ID });
-
     await expect(coordinator.acquire(contender)).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
     expect(provider.cleanupCommand).toHaveBeenCalledTimes(21);
     expect(workstreamObjectGet(
@@ -316,7 +305,7 @@ describe("Terminal sandbox coordinator", () => {
     )).toEqual({ operation_run_id: otherRun });
   });
 
-  it("does not stop a successor after a degraded cleanup batch loses its renewed token", async () => {
+  it("does not stop a successor after degraded cleanup loses its renewed token", async () => {
     const { objectStore, db, provider, clock, advance } = fixture();
     const linkedRun = "00000000-0000-4000-8000-000000000098";
     const successorRun = "00000000-0000-4000-8000-000000000099";
@@ -390,7 +379,7 @@ describe("Terminal sandbox coordinator", () => {
       toolCallId: "renew-race-linked",
     });
     await vi.waitFor(() => expect(provider.cleanupCommand).toHaveBeenCalledOnce());
-    advance(4);
+    advance(17);
     rejectCleanup();
     await pausedRenew;
 

@@ -466,10 +466,10 @@ retired provider id. Provider-level 404 follows the same token-fenced task
 cancellation and generation-retirement path. An exact object-local cleanup
 token excludes competing tools and lifecycle work across each provider await;
 that token is renewed before every provider mutation and cannot be revived
-after expiry, so a stale cleanup batch cannot stop or delete a successor's
-sandbox. Foreground and scheduled recovery use a three-minute claim—one minute
-beyond the provider's request bound—instead of inheriting the normal
-sixteen-minute operation lease. Each claim is renewed before another provider
+after expiry, so a stale cleanup continuation cannot stop or delete a
+successor's sandbox. Foreground and scheduled recovery reuse Terminal's
+established sixteen-minute operation-authority window rather than introducing
+another defensive timeout. Each claim is renewed before another provider
 mutation. Scheduled lifecycle cleanup retires a `submitting` task whose named
 session is missing without waiting for a later human-linked run;
 ordinary successful-command cleanup never stops the whole sandbox on a session
@@ -507,12 +507,12 @@ operation lease. Active harness executions still return `sandbox_busy` while
 their operation lease is valid; every unsettled retained task does so regardless
 of task or lease expiry. Exact-token task settlement blocks a late continuation
 from rewriting the cancellation or deleting the successor's provider session.
-Cleanup processes at most 20 tasks per claim and safely continues residue on a
-later attempt, including a lifecycle cleanup that already used the fallback
-stop. A lifecycle transition's token cannot be converted directly into an
-operation lease when it expires. Lifecycle reconciliation remains its only
-successor, and an exact token renewal before each provider mutation both covers
-the two-minute request bound and refuses to revive expired authority. Real-
+Cleanup has no item cap: the input is the finite set of durable tasks already
+present, and each successful iteration settles one before handoff. A lifecycle
+transition's token cannot be converted directly into an operation lease when it
+expires. Lifecycle reconciliation remains its only successor, and an exact
+token renewal before each provider mutation both uses the established authority
+window and refuses to revive expired authority. Real-
 workerd tests pin the lease/task/claim predicates, runtime
 tests pin pre-admission and pre-provider-confirmation races, contender
 exclusion, confirmed-stop fallback, and cleanup-failure behavior, and Daytona

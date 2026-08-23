@@ -118,7 +118,7 @@ describe("Terminal scheduled lifecycle", () => {
     );
     await renewalStarted;
 
-    const replacementNow = new Date(NOW.getTime() + 21 * 60_000);
+    const replacementNow = new Date(NOW.getTime() + 17 * 60_000);
     await expect(reconcileDueTerminalSandbox(
       db,
       baseFactory,
@@ -492,7 +492,7 @@ describe("Terminal scheduled lifecycle", () => {
     })).resolves.toMatchObject({ operationRunId: "run-expired-linked" });
   });
 
-  it("continues task cleanup after a fallback stop reaches the batch bound", async () => {
+  it("settles every retained task after a fallback stop before lifecycle transition", async () => {
     const { objectStore, db, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
     });
@@ -543,29 +543,8 @@ describe("Terminal scheduled lifecycle", () => {
       W,
       S,
       NOW,
-    )).resolves.toEqual({ transition: "deferred" });
-    expect(provider.stopSandbox).toHaveBeenCalledOnce();
-    expect(workstreamObjectGet(
-      objectStore,
-      `SELECT lifecycle_state, failure_code, idle_expires_at FROM terminal_workspace WHERE id = 1`,
-    )).toEqual({
-      lifecycle_state: "running",
-      failure_code: "terminal_task_cleanup_batch_remaining",
-      idle_expires_at: Date.parse("2026-08-13T11:55:00.000Z"),
-    });
-    expect(workstreamObjectGet(
-      objectStore,
-      `SELECT COUNT(*) AS count FROM terminal_tasks WHERE state IN ('planned', 'submitting', 'running')`,
-    )).toEqual({ count: 1 });
-
-    await expect(reconcileDueTerminalSandbox(
-      db,
-      testTerminalPortFactory(objectStore),
-      provider,
-      W,
-      S,
-      NOW,
     )).resolves.toEqual({ transition: "stopped" });
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
     expect(workstreamObjectGet(
       objectStore,
       `SELECT COUNT(*) AS count FROM terminal_tasks WHERE state IN ('planned', 'submitting', 'running')`,
