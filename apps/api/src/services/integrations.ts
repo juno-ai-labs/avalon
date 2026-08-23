@@ -184,6 +184,7 @@ import {
 import type { ToolReceiptRecord } from "../durable-objects/workstream-tool-receipt-storage";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { createBlockDashboardObjectPort } from "../runtime/block-dashboard-port";
+import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import {
   admitInlineChildAttempt,
@@ -4437,7 +4438,12 @@ async function loadRunPromptContext(
     triggerMessage = renderTriggerActivityMessage(triggerContext);
   }
   if (input.scheduledWakeupId) {
-    const wakeup = await loadWorkstreamWakeup(env, input.workspaceId, input.scheduledWakeupId);
+    const wakeup = await loadWorkstreamWakeup(
+      createSchedulingObjectPort(env, input.workspaceId, input.workstreamId),
+      input.workspaceId,
+      input.workstreamId,
+      input.scheduledWakeupId,
+    );
     // Re-read against this work stream rather than trusting the workflow input:
     // the id travels through a durable parameter that outlives the row it names.
     if (!wakeup || wakeup.workstream_id !== input.workstreamId) {
@@ -6617,10 +6623,9 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         // A replay resolves to the wake-up the first attempt persisted. Check it
         // before the cap, so a retry cannot be refused by a limit its own first
         // attempt filled.
+        const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.workstreamId);
         const replayed = await findWorkstreamWakeupByIdempotencyKey(
-          env,
-          input.workspaceId,
-          input.workstreamId,
+          scheduling,
           providerIdempotencyKey,
         );
         if (replayed) {
@@ -6653,17 +6658,9 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           };
         }
 
-        const pending = await countPendingWorkstreamWakeups(
-          env,
-          input.workspaceId,
-          input.workstreamId,
-        );
+        const pending = await countPendingWorkstreamWakeups(scheduling);
         if (pending >= MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM) {
-          const pendingWakeups = await listPendingWorkstreamWakeups(
-            env,
-            input.workspaceId,
-            input.workstreamId,
-          );
+          const pendingWakeups = await listPendingWorkstreamWakeups(scheduling);
           throw new WakeupInputError(
             "wakeup_limit_reached",
             `This work stream already has ${pending} pending wake-ups, the maximum of ${MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM}. Cancel one before scheduling another.`,
@@ -6672,9 +6669,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           );
         }
 
-        const { wakeupId } = await createWorkstreamWakeup(env, {
-          workspaceId: input.workspaceId,
-          workstreamId: input.workstreamId,
+        const { wakeupId } = await createWorkstreamWakeup(scheduling, {
           harnessRunId: input.harnessRunId,
           executionPrincipal: input.executionPrincipal,
           prompt: args.prompt,
@@ -6694,10 +6689,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           // so the model is told the wake-up was not scheduled, rather than
           // being told it was and having it never arrive. If this delete also
           // fails, the replay branch above re-arms on the retry.
-          await deleteUnarmedWorkstreamWakeup(env, {
-            workspaceId: input.workspaceId,
-            wakeupId,
-          }).catch(() => undefined);
+          await deleteUnarmedWorkstreamWakeup(scheduling, { wakeupId }).catch(() => undefined);
           throw error;
         }
         const dueAtLocal = formatWakeupLocalTime(resolved.dueAt, resolved.timezone);
@@ -6726,9 +6718,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       },
       execute: async () => {
         const pending = await listPendingWorkstreamWakeups(
-          env,
-          input.workspaceId,
-          input.workstreamId,
+          createSchedulingObjectPort(env, input.workspaceId, input.workstreamId),
         );
         const zones = await runLocalTimezones(env, input);
         return {
@@ -6767,17 +6757,10 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       },
       execute: async (raw) => {
         const args = z.object({ wakeupId: z.string().uuid() }).strict().parse(raw);
-        const outcome = await cancelWorkstreamWakeup(env, {
-          workspaceId: input.workspaceId,
-          workstreamId: input.workstreamId,
-          wakeupId: args.wakeupId,
-        });
+        const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.workstreamId);
+        const outcome = await cancelWorkstreamWakeup(scheduling, { wakeupId: args.wakeupId });
         if (outcome === "not_found") {
-          const pending = await listPendingWorkstreamWakeups(
-            env,
-            input.workspaceId,
-            input.workstreamId,
-          );
+          const pending = await listPendingWorkstreamWakeups(scheduling);
           throw new WakeupInputError(
             "wakeup_not_found",
             "No pending wake-up with that ID is available in this work stream. Call workstream_list_wakeups and retry with one of its IDs.",
@@ -6786,7 +6769,12 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           );
         }
         if (outcome === "not_pending") {
-          const row = await loadWorkstreamWakeup(env, input.workspaceId, args.wakeupId);
+          const row = await loadWorkstreamWakeup(
+            scheduling,
+            input.workspaceId,
+            input.workstreamId,
+            args.wakeupId,
+          );
           throw new WakeupInputError(
             "wakeup_not_pending",
             `That wake-up is already ${row?.status ?? "resolved"}. Only a pending wake-up can be cancelled.`,

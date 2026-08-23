@@ -96,7 +96,8 @@ import {
   type TerminalPortFactory,
 } from "../services/terminal/object-port";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
-import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
+import { loadWorkstreamWakeup } from "../services/workstream-wakeup-service";
+import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import type { WorkstreamRuntimeResourceAttacher } from "../services/workstream-object-client";
 import {
   acceptsNewWorkstreamWork,
@@ -2897,6 +2898,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * cancelled since the entry was written is a no-op rather than a run nobody
    * asked for. Throwing puts this timer — and only this timer — behind the
    * shared retry gate.
+   *
+   * The reload reads this object's own storage rather than routing a statement
+   * out to the compatibility view and back to itself. The port it hands
+   * `fireWorkstreamWakeup` is built over the same storage instance, so the
+   * claim runs in this isolate too: an object dispatching an RPC to itself
+   * would be a round trip to its own SQLite through the network stack that
+   * exists to reach *other* objects.
    */
   protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<void> {
     if (alarm.kind !== AGENT_TIMER_ALARM_KIND) {
@@ -2909,15 +2917,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       identity.workstreamId,
       this.externalSubstreamId(),
     );
-    const wakeup = await executionEnv.DB.prepare(
-      `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
-              due_at, status, version, created_at
-         FROM workstream_wakeups
-        WHERE workspace_id = ? AND workstream_id = ? AND id = ? AND status = 'pending'`,
-    ).bind(identity.workspaceId, identity.workstreamId, alarm.key)
-      .first<WorkstreamWakeupRow>();
-    if (!wakeup) return;
-    await fireWorkstreamWakeup(executionEnv, wakeup);
+    const scheduling = createSchedulingObjectPort(
+      this.env,
+      identity.workspaceId,
+      identity.workstreamId,
+      this.scheduling,
+    );
+    const wakeup = await loadWorkstreamWakeup(
+      scheduling,
+      identity.workspaceId,
+      identity.workstreamId,
+      alarm.key,
+    );
+    if (!wakeup || wakeup.status !== "pending") return;
+    await fireWorkstreamWakeup(executionEnv, wakeup, scheduling);
   }
 
   /**

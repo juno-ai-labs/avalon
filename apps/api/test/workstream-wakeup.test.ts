@@ -30,6 +30,7 @@ import {
   executeWorkstreamObjectSql,
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
+  testSchedulingPort,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
@@ -264,14 +265,45 @@ function executionEnvironment(env: Env): Env {
 }
 
 function pendingRow(objectStore: DatabaseSync, wakeupId: string): WorkstreamWakeupRow {
-  const row = workstreamObjectGet(
+  // The object's own columns, and the identity the retired view invented from
+  // its root row. A fixture written in the view's vocabulary would be seeding
+  // the thing this slice deletes.
+  const row = objectGet<{
+    wakeup_id: string; execution_principal_json: string; prompt: string;
+    due_at: number; status: string; version: number; created_at: number;
+  }>(
     objectStore,
-    `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
-            due_at, status, version, created_at
-       FROM workstream_wakeups WHERE id = ?`,
+    `SELECT wakeup_id, execution_principal_json, prompt, due_at, status, version, created_at
+       FROM workstream_wakeups WHERE wakeup_id = ?`,
     wakeupId,
-  );
-  return WorkstreamWakeupRowSchema.parse(row);
+  )!;
+  return WorkstreamWakeupRowSchema.parse({
+    id: row.wakeup_id,
+    workspace_id: WORKSPACE_ID,
+    workstream_id: WORKSTREAM_ID,
+    execution_principal_json: row.execution_principal_json,
+    prompt: row.prompt,
+    due_at: new Date(row.due_at).toISOString(),
+    status: row.status,
+    version: row.version,
+    created_at: new Date(row.created_at).toISOString(),
+  });
+}
+
+/**
+ * Read the object's own tables, without the compatibility rewrite.
+ *
+ * `workstreamObjectGet` sends its SQL through the runtime router, which renames
+ * `workstream_wakeups` onto `_runtime_wakeups` — the view this slice deletes.
+ * A converted fixture has to read what the object actually stores.
+ */
+function objectGet<T>(objectStore: DatabaseSync, sql: string, ...params: SQLInputValue[]): T | null {
+  return (objectStore.prepare(sql).get(...params) as T | undefined) ?? null;
+}
+
+/** The port the owning object hands `fireWorkstreamWakeup`, over its own store. */
+function schedulingPort(objectStore: DatabaseSync) {
+  return testSchedulingPort(objectStore);
 }
 
 describe("wake-up delay grammar", () => {
@@ -510,11 +542,11 @@ describe("wake-up tools", () => {
   it("keeps the earliest pending wake-up for a marker in the object as wake-ups come and go", async () => {
     const { objectStore, env } = fixture();
     const { schedule, cancel } = wakeupTools(env);
-    const earliestPending = () => workstreamObjectGet(
+    const earliestPending = () => objectGet<{ prompt: string; due_at: number }>(
       objectStore,
       `SELECT prompt, due_at FROM workstream_wakeups
-        WHERE status = 'pending' ORDER BY due_at, id LIMIT 1`,
-    ) as { prompt: string; due_at: string } | null;
+        WHERE status = 'pending' ORDER BY due_at, wakeup_id LIMIT 1`,
+    );
 
     expect(earliestPending()).toBeNull();
 
@@ -529,7 +561,9 @@ describe("wake-up tools", () => {
     );
     expect(earliestPending()).toEqual({
       prompt: earlierPrompt,
-      due_at: (earlier.output as { dueAt: string }).dueAt,
+      // The object's own instant. The tool still answers ISO-8601 — that is a
+      // boundary format now rather than a stored one.
+      due_at: Date.parse((earlier.output as { dueAt: string }).dueAt),
     });
     expect(`${earlierPrompt.slice(0, WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH).trimEnd()}…`)
       .toBe("Check whether the production deployment…");
@@ -540,7 +574,7 @@ describe("wake-up tools", () => {
     );
     expect(earliestPending()).toEqual({
       prompt: "Send the final deployment recap",
-      due_at: (later.output as { dueAt: string }).dueAt,
+      due_at: Date.parse((later.output as { dueAt: string }).dueAt),
     });
 
     await cancel.execute(
@@ -569,10 +603,10 @@ describe("wake-up tools", () => {
     // inserted the row, not the workspace scheduler.
     expect(timerRefreshes).toEqual([WORKSTREAM_ID]);
 
-    const row = workstreamObjectGet(objectStore, "SELECT status, prompt FROM workstream_wakeups") as {
-      status: string;
-      prompt: string;
-    };
+    const row = objectGet<{ status: string; prompt: string }>(
+      objectStore,
+      "SELECT status, prompt FROM workstream_wakeups",
+    );
     expect(row).toMatchObject({ status: "pending", prompt: "Check whether the deploy finished" });
   });
 
@@ -588,7 +622,7 @@ describe("wake-up tools", () => {
       .toBe((first.output as { wakeupId: string }).wakeupId);
     expect((second.output as { dueAt: string }).dueAt)
       .toBe((first.output as { dueAt: string }).dueAt);
-    const count = workstreamObjectGet(objectStore, "SELECT COUNT(*) AS n FROM workstream_wakeups") as { n: number };
+    const count = objectGet<{ n: number }>(objectStore, "SELECT COUNT(*) AS n FROM workstream_wakeups")!;
     expect(count.n).toBe(1);
   });
 
@@ -604,7 +638,7 @@ describe("wake-up tools", () => {
 
     // Either it is scheduled and armed, or it does not exist. A pending row with
     // no alarm behind it would never fire in a workspace with nothing else due.
-    const rows = workstreamObjectGet(objectStore, "SELECT COUNT(*) AS n FROM workstream_wakeups") as { n: number };
+    const rows = objectGet<{ n: number }>(objectStore, "SELECT COUNT(*) AS n FROM workstream_wakeups")!;
     expect(rows.n).toBe(0);
   });
 
@@ -613,21 +647,19 @@ describe("wake-up tools", () => {
     const { schedule } = wakeupTools(env);
     // Stand in for a first attempt that persisted the row and then failed before
     // arming: the row is present, the workspace has never been refreshed.
-    workstreamObjectRun(
-      objectStore,
+    objectStore.prepare(
       `INSERT INTO workstream_wakeups
-         (id, workspace_id, workstream_id, execution_principal_json, prompt, due_at,
+         (wakeup_id, created_by_run_id, execution_principal_json, prompt, due_at,
           status, idempotency_key, version, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?, ?)`,
+       VALUES (?, NULL, ?, ?, ?, 'pending', ?, 1, ?, ?)`,
+    ).run(
       "00000000-0000-4000-8000-0000000000b1",
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
       JSON.stringify({ type: "user", userId: USER_ID }),
       "Orphaned by a failed refresh",
-      "2026-12-01T00:00:00.000Z",
+      Date.parse("2026-12-01T00:00:00.000Z"),
       "receipt-orphan",
-      "2026-08-11",
-      "2026-08-11",
+      Date.parse("2026-08-11"),
+      Date.parse("2026-08-11"),
     );
     expect(timerRefreshes).toHaveLength(0);
 
@@ -639,7 +671,7 @@ describe("wake-up tools", () => {
     expect((replay.output as { wakeupId: string }).wakeupId)
       .toBe("00000000-0000-4000-8000-0000000000b1");
     expect(timerRefreshes).toHaveLength(1);
-    const count = workstreamObjectGet(objectStore, "SELECT COUNT(*) AS n FROM workstream_wakeups") as { n: number };
+    const count = objectGet<{ n: number }>(objectStore, "SELECT COUNT(*) AS n FROM workstream_wakeups")!;
     expect(count.n).toBe(1);
   });
 
@@ -745,16 +777,17 @@ describe("wake-up tools", () => {
     openDatabases.push(foreignStore);
     seedWorkstreamObjectRoot(foreignStore, { workstreamId: otherWorkstream, workspaceId: WORKSPACE_ID });
     objectStores.set(otherWorkstream, foreignStore);
-    workstreamObjectRun(
-      foreignStore,
+    foreignStore.prepare(
       `INSERT INTO workstream_wakeups
-         (id, workspace_id, workstream_id, execution_principal_json, prompt, due_at,
+         (wakeup_id, created_by_run_id, execution_principal_json, prompt, due_at,
           status, idempotency_key, version, created_at, updated_at)
-       VALUES ('00000000-0000-4000-8000-00000000000a', ?, ?, ?, 'Foreign', '2026-08-12T00:00:00.000Z',
-               'pending', 'foreign-receipt', 1, '2026-08-11', '2026-08-11')`,
-      WORKSPACE_ID,
-      otherWorkstream,
+       VALUES ('00000000-0000-4000-8000-00000000000a', NULL, ?, 'Foreign', ?,
+               'pending', 'foreign-receipt', 1, ?, ?)`,
+    ).run(
       JSON.stringify({ type: "user", userId: USER_ID }),
+      Date.parse("2026-08-12T00:00:00.000Z"),
+      Date.parse("2026-08-11"),
+      Date.parse("2026-08-11"),
     );
     const { list, cancel } = wakeupTools(env);
 
@@ -779,16 +812,20 @@ describe("firing a due wake-up", () => {
     );
     const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
 
-    const outcome = await fireWorkstreamWakeup(executionEnvironment(env), pendingRow(objectStore, wakeupId));
+    const outcome = await fireWorkstreamWakeup(
+      executionEnvironment(env),
+      pendingRow(objectStore, wakeupId),
+      schedulingPort(objectStore),
+    );
 
     expect(outcome.fired).toBe(true);
     expect(dispatches).toHaveLength(1);
     expect(dispatches[0]?.scheduledWakeupId).toBe(wakeupId);
     expect(dispatches[0]?.reason).toBe("scheduled_wakeup");
 
-    const row = workstreamObjectGet(
+    const row = objectGet(
       objectStore,
-      "SELECT status, fired_at FROM workstream_wakeups WHERE id = ?",
+      "SELECT status, fired_at FROM workstream_wakeups WHERE wakeup_id = ?",
       wakeupId,
     ) as { status: string; fired_at: string | null };
     expect(row.status).toBe("fired");
@@ -818,6 +855,7 @@ describe("firing a due wake-up", () => {
     await fireWorkstreamWakeup(
       executionEnvironment(env),
       pendingRow(objectStore, (scheduled.output as { wakeupId: string }).wakeupId),
+      schedulingPort(objectStore),
     );
 
     const message = workstreamObjectGet(
@@ -843,8 +881,8 @@ describe("firing a due wake-up", () => {
     const row = pendingRow(objectStore, (scheduled.output as { wakeupId: string }).wakeupId);
 
     const outcomes = [
-      await fireWorkstreamWakeup(executionEnvironment(env), row),
-      await fireWorkstreamWakeup(executionEnvironment(env), row),
+      await fireWorkstreamWakeup(executionEnvironment(env), row, schedulingPort(objectStore)),
+      await fireWorkstreamWakeup(executionEnvironment(env), row, schedulingPort(objectStore)),
     ];
 
     expect(outcomes.filter((outcome) => outcome.fired)).toHaveLength(1);
@@ -861,11 +899,15 @@ describe("firing a due wake-up", () => {
     const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
     dispatchControl.error = new Error("substream agent unavailable");
 
-    await expect(fireWorkstreamWakeup(executionEnvironment(env), pendingRow(objectStore, wakeupId))).rejects.toThrow();
+    await expect(fireWorkstreamWakeup(
+      executionEnvironment(env),
+      pendingRow(objectStore, wakeupId),
+      schedulingPort(objectStore),
+    )).rejects.toThrow();
 
-    const row = workstreamObjectGet(
+    const row = objectGet(
       objectStore,
-      "SELECT status, fired_at FROM workstream_wakeups WHERE id = ?",
+      "SELECT status, fired_at FROM workstream_wakeups WHERE wakeup_id = ?",
       wakeupId,
     ) as { status: string; fired_at: string | null };
     expect(row).toMatchObject({ status: "pending", fired_at: null });
@@ -899,14 +941,14 @@ describe("firing a due wake-up", () => {
       },
     );
 
-    await expect(fireWorkstreamWakeup(executionEnv, row)).rejects.toThrow("runtime SQL port unavailable");
+    await expect(fireWorkstreamWakeup(executionEnv, row, schedulingPort(objectStore))).rejects.toThrow("runtime SQL port unavailable");
 
     expect(dispatches).toHaveLength(0);
-    const after = workstreamObjectGet(
+    const after = objectGet<{ status: string; fired_at: number | null }>(
       objectStore,
-      "SELECT status, fired_at FROM workstream_wakeups WHERE id = ?",
+      "SELECT status, fired_at FROM workstream_wakeups WHERE wakeup_id = ?",
       wakeupId,
-    ) as { status: string; fired_at: string | null };
+    );
     expect(after).toMatchObject({ status: "pending", fired_at: null });
   });
 
@@ -920,9 +962,17 @@ describe("firing a due wake-up", () => {
     const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
     dispatchControl.error = new Error("substream agent unavailable");
 
-    await expect(fireWorkstreamWakeup(executionEnvironment(env), pendingRow(objectStore, wakeupId))).rejects.toThrow();
+    await expect(fireWorkstreamWakeup(
+      executionEnvironment(env),
+      pendingRow(objectStore, wakeupId),
+      schedulingPort(objectStore),
+    )).rejects.toThrow();
     dispatchControl.error = null;
-    expect((await fireWorkstreamWakeup(executionEnvironment(env), pendingRow(objectStore, wakeupId))).fired).toBe(true);
+    expect((await fireWorkstreamWakeup(
+      executionEnvironment(env),
+      pendingRow(objectStore, wakeupId),
+      schedulingPort(objectStore),
+    )).fired).toBe(true);
 
     const messages = workstreamObjectGet(
       objectStore,
@@ -943,13 +993,17 @@ describe("firing a due wake-up", () => {
     database.prepare("UPDATE workspace_members SET status = 'suspended' WHERE user_id = ?")
       .run(USER_ID);
 
-    const outcome = await fireWorkstreamWakeup(executionEnvironment(env), pendingRow(objectStore, wakeupId));
+    const outcome = await fireWorkstreamWakeup(
+      executionEnvironment(env),
+      pendingRow(objectStore, wakeupId),
+      schedulingPort(objectStore),
+    );
 
     expect(outcome.fired).toBe(false);
     expect(dispatches).toHaveLength(0);
-    const row = workstreamObjectGet(
+    const row = objectGet(
       objectStore,
-      "SELECT status FROM workstream_wakeups WHERE id = ?",
+      "SELECT status FROM workstream_wakeups WHERE wakeup_id = ?",
       wakeupId,
     ) as { status: string };
     expect(row.status).toBe("fired");
@@ -974,7 +1028,11 @@ describe("firing a due wake-up", () => {
       WORKSTREAM_ID,
     );
 
-    expect((await fireWorkstreamWakeup(executionEnvironment(env), pendingRow(objectStore, wakeupId))).fired).toBe(false);
+    expect((await fireWorkstreamWakeup(
+      executionEnvironment(env),
+      pendingRow(objectStore, wakeupId),
+      schedulingPort(objectStore),
+    )).fired).toBe(false);
     expect(dispatches).toHaveLength(0);
   });
 });
