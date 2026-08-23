@@ -202,7 +202,13 @@ describe("the transcript the harness reads", () => {
     append(storage, 1, {
       authorType: "external",
       authorUserId: null,
-      externalActorJson: JSON.stringify({ provider: "slack", displayName: "Ana" }),
+      externalActorJson: JSON.stringify({
+        provider: "slack",
+        providerAccountId: "T-1",
+        providerUserId: "U-1",
+        displayName: "Ana",
+        avatarUrl: null,
+      }),
     });
 
     // What a person said through Slack. Avalon has no account for them, so the
@@ -211,5 +217,21 @@ describe("the transcript the harness reads", () => {
     expect(await readMessage(port, IDENTITY, "client-1")).toMatchObject({
       author: { type: "external", actor: { provider: "slack", displayName: "Ana" } },
     });
+  });
+
+  it("falls back to the author columns when the stored actor does not parse", async () => {
+    const { storage, port } = open();
+    append(storage, 1, {
+      authorType: "external",
+      authorUserId: null,
+      externalActorJson: JSON.stringify({ provider: "slack", displayName: "Ana" }),
+    });
+
+    // Half an actor, which is what a connector writing an older payload shape
+    // would leave. The retired `toMessage` ran `safeParse` here and fell
+    // through on failure; publishing this one unparsed would put a value that
+    // is not an `ExternalActor` in front of every client on the work stream.
+    expect(await readMessage(port, IDENTITY, "client-1"))
+      .toMatchObject({ author: { type: "system" } });
   });
 });

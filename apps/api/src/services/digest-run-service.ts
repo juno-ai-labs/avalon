@@ -373,7 +373,7 @@ async function appendDigestBriefMessage(
 ): Promise<string> {
   const clientMessageId = `digest:${input.deliveryId}`;
   const messages = createMessageObjectPort(env, input.workspaceId, input.workstreamId);
-  await messages.appendMessage({
+  const appended = await messages.appendMessage({
     messageId: newId(),
     clientMessageId,
     authorType: "system",
@@ -397,9 +397,11 @@ async function appendDigestBriefMessage(
     });
     return stored.id;
   }
-  // Nothing to publish means the append was a redelivery of a digest already in
-  // the transcript; the caller wants the id of the row that is there.
-  return (await messages.messageByClientId({ clientMessageId }))?.id ?? "";
+  // Only reachable if the row went away between the append and the read, since
+  // `readMessage` resolves by client message id and answers on a redelivery
+  // too. A redelivery publishes `message_created` again, which is what the
+  // routed path did — the reader it used had no way to know either.
+  return appended.messageId;
 }
 
 /**
