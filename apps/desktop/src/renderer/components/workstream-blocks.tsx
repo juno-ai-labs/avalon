@@ -24,7 +24,7 @@ import {
   LoaderCircle,
   TerminalSquare,
 } from 'lucide-react';
-import { Children, useEffect, useMemo, useRef, useState } from 'react';
+import { Children, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
@@ -320,61 +320,181 @@ function MentionChip({ fallbackLabel, mention, personId }: {
   );
 }
 
-export function MarkdownBody({ children, mentions = [], telemetry }: {
+const REMARK_PLUGINS = [remarkGfm];
+
+type MarkdownComponents = NonNullable<React.ComponentProps<typeof ReactMarkdown>['components']>;
+type MarkdownUrlTransform = NonNullable<React.ComponentProps<typeof ReactMarkdown>['urlTransform']>;
+
+/**
+ * Where a streaming markdown source can be cut so everything before the cut is
+ * finished. A cut lands at the start of a non-blank line that follows a blank
+ * line, is outside any code fence, and does not begin a construct that can
+ * continue what came before it — a list item, a blockquote line, or an
+ * indented continuation, any of which a blank line does not necessarily
+ * terminate. Splitting inside those would render a loose list as two lists
+ * mid-stream; not splitting only means the tail stays larger.
+ *
+ * `settled.join('') + tail === source`, and for an append-only source each
+ * settled segment is final: later text can only add segments or grow the tail,
+ * which is what lets a segment's rendering be memoised while the message
+ * streams. What segmentation cannot preserve — a reference link or a footnote
+ * whose definition arrives in a later segment — renders literally until the
+ * turn completes and the settled message re-renders whole.
+ */
+export function splitStreamingMarkdown(source: string): { settled: string[]; tail: string } {
+  const settled: string[] = [];
+  let segmentStart = 0;
+  let offset = 0;
+  let previousBlank = false;
+  let fence: { marker: string; length: number } | null = null;
+  for (const line of source.split('\n')) {
+    const blank = /^\s*$/u.test(line);
+    if (fence === null) {
+      const opens = /^ {0,3}(`{3,}|~{3,})/u.exec(line);
+      if (opens?.[1]) {
+        if (previousBlank && offset > segmentStart) {
+          settled.push(source.slice(segmentStart, offset));
+          segmentStart = offset;
+        }
+        fence = { marker: opens[1][0]!, length: opens[1].length };
+      } else if (!blank && previousBlank && offset > segmentStart) {
+        const continuesPrevious = /^( {0,3}([-*+]|\d{1,9}[.)])(\s|$)| {4}|\t| {0,3}>)/u.test(line);
+        if (!continuesPrevious) {
+          settled.push(source.slice(segmentStart, offset));
+          segmentStart = offset;
+        }
+      }
+    } else {
+      const closes = /^ {0,3}(`{3,}|~{3,})\s*$/u.exec(line);
+      if (closes?.[1] && closes[1][0] === fence.marker && closes[1].length >= fence.length) {
+        fence = null;
+      }
+    }
+    previousBlank = blank && fence === null;
+    offset += line.length + 1;
+  }
+  return { settled, tail: source.slice(segmentStart) };
+}
+
+/**
+ * A finished chunk of a streaming message. `memo` on the source string is what
+ * makes a paced reveal affordable: each animation-frame commit re-parses only
+ * the open tail, while every settled segment's element is reused untouched.
+ */
+const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components, source, urlTransform }: {
+  components: MarkdownComponents;
+  source: string;
+  urlTransform: MarkdownUrlTransform;
+}): React.JSX.Element {
+  return (
+    <ReactMarkdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={urlTransform}>
+      {source}
+    </ReactMarkdown>
+  );
+});
+
+/**
+ * The default for an absent `mentions` prop, hoisted for identity: a `= []`
+ * default is a new array per render, which would invalidate the memoised
+ * components below on every commit and with them every settled segment —
+ * turning the streaming fast path back into a whole-body re-parse.
+ */
+const NO_MENTIONS: MessageMention[] = [];
+
+export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = false, telemetry }: {
   children: string;
   mentions?: MessageMention[];
+  /**
+   * The message is still growing. Rendering switches to settled segments plus
+   * an open tail so a per-frame commit does not re-parse the whole body; the
+   * commit that ends the stream renders the source whole again, which is also
+   * what heals any seam segmentation could not preserve.
+   */
+  streaming?: boolean;
   telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
   // One token per mounted body, so the links keep stable identity across renders.
   const token = useMemo(createConnectorMentionToken, []);
   const markdown = withConnectorMentionLinks(children, mentions, token);
-  return (
-    <div className="markdown-body">
-      <ReactMarkdown
-        components={{
-          a: ({ children: linkChildren, href, node, ...props }) => {
-            void node;
-            const personId = personIdFromHref(href);
-            if (personId) {
-              const mention = mentions.find((candidate) => (
-                candidate.type === 'person' && candidate.personId?.toLowerCase() === personId
-              ));
-              if (!mention) return <span className="mention-text-fallback">{linkChildren}</span>;
-              return <MentionChip fallbackLabel={linkChildren} mention={mention} personId={personId} />;
-            }
-            if (isConnectorHref(href)) {
-              const connectorType = connectorTypeFromHref(href, token);
-              const label = linkLabelText(linkChildren);
-              // Without this render's token the link is text someone wrote, not a
-              // mention: it neither earns a chip nor becomes something clickable.
-              if (connectorType === undefined || label === undefined) {
-                return <span className="mention-text-fallback">{linkChildren}</span>;
-              }
-              return (
-                <span className="mention-chip mention-chip-connector" data-connector-type={connectorType}>
-                  <span className="mention-chip-label">{label}</span>
-                </span>
-              );
-            }
-            return <a {...props} href={href} rel="noopener noreferrer" target="_blank">{linkChildren}</a>;
-          },
-          code: (properties) => <MarkdownCode {...properties} telemetry={telemetry} />,
-          pre: ({ children: preChildren }) => <>{preChildren}</>,
-          table: MarkdownTable,
-        }}
-        remarkPlugins={[remarkGfm]}
-        urlTransform={(url, key, node) => (
-          // Both schemes reach the `a` component intact so it can decide there;
-          // neither is ever rendered as a navigable link.
-          key === 'href' && node.tagName === 'a' && (personIdFromHref(url) || isConnectorHref(url))
-            ? url
-            : defaultUrlTransform(url)
-        )}
-      >
-        {markdown}
-      </ReactMarkdown>
-    </div>
-  );
+  const messageId = telemetry?.messageId;
+  const workstreamId = telemetry?.workstreamId;
+  // Stable across commits that change nothing they depend on, for two reasons:
+  // the settled segments' memo compares them by identity, and the memoised
+  // element below reuses the whole rendered body while they hold still.
+  const { components, urlTransform } = useMemo(() => ({
+    components: {
+      a: ({ children: linkChildren, href, node, ...props }) => {
+        void node;
+        const personId = personIdFromHref(href);
+        if (personId) {
+          const mention = mentions.find((candidate) => (
+            candidate.type === 'person' && candidate.personId?.toLowerCase() === personId
+          ));
+          if (!mention) return <span className="mention-text-fallback">{linkChildren}</span>;
+          return <MentionChip fallbackLabel={linkChildren} mention={mention} personId={personId} />;
+        }
+        if (isConnectorHref(href)) {
+          const connectorType = connectorTypeFromHref(href, token);
+          const label = linkLabelText(linkChildren);
+          // Without this render's token the link is text someone wrote, not a
+          // mention: it neither earns a chip nor becomes something clickable.
+          if (connectorType === undefined || label === undefined) {
+            return <span className="mention-text-fallback">{linkChildren}</span>;
+          }
+          return (
+            <span className="mention-chip mention-chip-connector" data-connector-type={connectorType}>
+              <span className="mention-chip-label">{label}</span>
+            </span>
+          );
+        }
+        return <a {...props} href={href} rel="noopener noreferrer" target="_blank">{linkChildren}</a>;
+      },
+      code: (properties) => (
+        <MarkdownCode
+          {...properties}
+          telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId } : undefined}
+        />
+      ),
+      pre: ({ children: preChildren }) => <>{preChildren}</>,
+      table: MarkdownTable,
+    } satisfies MarkdownComponents,
+    urlTransform: ((url, key, node) => (
+      // Both schemes reach the `a` component intact so it can decide there;
+      // neither is ever rendered as a navigable link.
+      key === 'href' && node.tagName === 'a' && (personIdFromHref(url) || isConnectorHref(url))
+        ? url
+        : defaultUrlTransform(url)
+    )) satisfies MarkdownUrlTransform,
+  }), [mentions, messageId, token, workstreamId]);
+  // A settled body's element is reused whenever the markdown has not changed,
+  // so a commit elsewhere on the screen — another message streaming at 60
+  // commits a second included — skips this subtree instead of re-parsing it.
+  const rendered = useMemo(() => {
+    if (!streaming) {
+      return (
+        <ReactMarkdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={urlTransform}>
+          {markdown}
+        </ReactMarkdown>
+      );
+    }
+    const { settled, tail } = splitStreamingMarkdown(markdown);
+    return (
+      <>
+        {settled.map((segment, index) => (
+          <SettledMarkdownSegment
+            components={components}
+            key={index}
+            source={segment}
+            urlTransform={urlTransform}
+          />
+        ))}
+        <ReactMarkdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={urlTransform}>
+          {tail}
+        </ReactMarkdown>
+      </>
+    );
+  }, [components, markdown, streaming, urlTransform]);
+  return <div className="markdown-body">{rendered}</div>;
 }
 
 /**
@@ -478,7 +598,9 @@ function AssistantMessageActions({ mentions, telemetry, text }: {
 }
 
 export function AssistantMessageContent({
-  mentions = [],
+  // The hoisted constant, not `= []`: a per-render array here would feed
+  // MarkdownBody an always-new `mentions` and defeat its streaming memo.
+  mentions = NO_MENTIONS,
   showCopy = true,
   streaming = false,
   text,
@@ -492,7 +614,7 @@ export function AssistantMessageContent({
 }): React.JSX.Element {
   return (
     <>
-      {text ? <MarkdownBody mentions={mentions} telemetry={telemetry}>{text}</MarkdownBody> : null}
+      {text ? <MarkdownBody mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody> : null}
       {showCopy && !streaming && text && (
         <AssistantMessageActions mentions={mentions} telemetry={telemetry} text={text} />
       )}
