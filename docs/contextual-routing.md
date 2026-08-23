@@ -247,6 +247,12 @@ skips inference while preserving Suggested work batching. Work-opportunity,
 work-stream REST and room-snapshot, and desktop transcript/socket tests
 separately assert that the pause creates and shows no cards.
 
+`test-workers/workspace-directory-reads.test.ts` covers `suggestionFeedback`,
+which is where both bar reads get their evidence: that a resolution is scoped to
+the producer that wrote it, that one older than the window is forgotten, and
+that a run reads oldest-first. The Node file reads it through a stub, so those
+three are only asserted there.
+
 **The candidate exclusions are not in that file, and must not be put back.**
 The dismissal run, its producer scoping, its window and the already-routed set
 are subqueries inside WorkspaceDO's `routingCandidates`, so a Node test can only
