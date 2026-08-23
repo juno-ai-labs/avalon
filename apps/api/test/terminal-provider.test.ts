@@ -336,7 +336,7 @@ describe("Daytona Terminal provider", () => {
 
     expect(get).toHaveBeenCalledWith("avalon-ws-stream");
     expect(sandbox.start).toHaveBeenCalledWith(60);
-    expect(sandbox.stop).toHaveBeenCalledOnce();
+    expect(sandbox.stop).toHaveBeenCalledWith(60);
     expect(sandbox.archive).toHaveBeenCalledOnce();
     expect(sandbox.updateNetworkSettings).toHaveBeenCalledWith({ domainAllowList: "pypi.org,*.pythonhosted.org" });
     expect(sandbox.delete).toHaveBeenCalledWith(60, true);
