@@ -1315,7 +1315,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           : "Sign in again to continue",
       }, 401);
     }
-    // Set once the object's own session query has answered, rather than taken
+    // Set once the object's own authorization query — session or connector
+    // membership — has answered, rather than taken
     // from the caller: a correlation value that arrives from outside is one the
     // object would have to decide whether to trust, for something it resolves
     // anyway. Only the workspace surrogate — see `socketAuth` for why the
