@@ -851,10 +851,10 @@ describe("discarding a receipt whose replay is no longer valid", () => {
   });
 });
 
-// ------------------------------------------------------------ the lease sweep
+// ------------------------------------------------------------ terminal-run cleanup
 
 /**
- * Settling the receipts of a run whose lease was reaped.
+ * Settling the residual receipts of a terminal run.
  *
  * This one cannot be `fail()` with different arguments. Every other operation
  * here opens with `#fence`, which requires a live lease — and the sweep's whole
@@ -863,7 +863,7 @@ describe("discarding a receipt whose replay is no longer valid", () => {
  * here rather than trusted from the caller, so the method is safe to call
  * outside the batch that terminalized the run.
  */
-describe("abandoning the receipts of a reaped run", () => {
+describe("settling the residual receipts of a terminal run", () => {
   function reaped(sql: ReturnType<typeof createTestSqlStorage>, at = NOW): void {
     sql.exec(
       `UPDATE runs SET status = 'failed', terminalized_at = ?, lease_owner = NULL WHERE run_id = ?`,
@@ -872,12 +872,28 @@ describe("abandoning the receipts of a reaped run", () => {
     );
   }
 
+  function settleResidual(
+    storage: WorkstreamToolReceiptStorage,
+    at = NOW,
+  ): ReturnType<WorkstreamToolReceiptStorage["settleResidualReceipts"]> {
+    return storage.settleResidualReceipts({
+      runId: RUN,
+      attemptId: ATTEMPT,
+      phase: "failed",
+      errorJson: '{"code":"parent_run_terminated","message":"The parent run lost its durable lease"}',
+      payloadJson: '{"code":"parent_run_terminated"}',
+      ambiguousMessage: "The parent run lost its durable lease while an external write was in flight",
+      lease: { kind: "terminalized", at },
+      now: at,
+    });
+  }
+
   it("fails a read receipt that never started talking to a provider", () => {
     const { storage, sql } = open();
     storage.admit(plan());
     reaped(sql);
 
-    expect(storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW })).toBe(1);
+    expect(settleResidual(storage)).toEqual({ settled: 1, open: 0 });
     expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
       .toEqual([{ status: "failed" }]);
   });
@@ -890,7 +906,7 @@ describe("abandoning the receipts of a reaped run", () => {
     }));
     reaped(sql);
 
-    expect(storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW })).toBe(1);
+    expect(settleResidual(storage)).toEqual({ settled: 1, open: 0 });
     expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
       .toEqual([{ status: "ambiguous" }]);
   });
@@ -905,7 +921,7 @@ describe("abandoning the receipts of a reaped run", () => {
     sql.exec(`UPDATE tool_effects SET execution_plan_json = NULL`);
     reaped(sql);
 
-    storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW });
+    settleResidual(storage);
 
     expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
       .toEqual([{ status: "ambiguous" }]);
@@ -921,7 +937,7 @@ describe("abandoning the receipts of a reaped run", () => {
     });
     reaped(sql);
 
-    expect(storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW })).toBe(0);
+    expect(settleResidual(storage)).toEqual({ settled: 0, open: 0 });
     expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
       .toEqual([{ status: "completed" }]);
   });
@@ -940,7 +956,7 @@ describe("abandoning the receipts of a reaped run", () => {
     );
     reaped(sql);
 
-    storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW });
+    settleResidual(storage);
 
     // Without this the receipt goes terminal and the card spins forever. It
     // used to be the compatibility trigger's job — object schema migration 14
@@ -968,7 +984,7 @@ describe("abandoning the receipts of a reaped run", () => {
     // The guard is the sweep's own fence, re-proved here. A caller passing a
     // stale timestamp is describing a different terminalization than the one
     // that happened, and must move nothing.
-    expect(storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW - 1 })).toBe(0);
+    expect(settleResidual(storage, NOW - 1)).toEqual({ settled: 0, open: 1 });
     expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
       .toEqual([{ status: "executing" }]);
   });
@@ -977,7 +993,7 @@ describe("abandoning the receipts of a reaped run", () => {
     const { storage, sql } = open();
     storage.admit(plan());
 
-    expect(storage.abandonRunReceipts({ runId: RUN, terminalizedAt: NOW })).toBe(0);
+    expect(settleResidual(storage)).toEqual({ settled: 0, open: 1 });
     expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
       .toEqual([{ status: "executing" }]);
   });

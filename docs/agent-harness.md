@@ -419,9 +419,9 @@ That split — a labelled trigger message for the model, a system row for the pe
 
 ### Cancellation and deferred systems
 
-Stopping a run persists `cancellation_requested_at`; it does not terminate an in-flight model request or tool call out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. If that observation aborts a tool, the same live attempt may settle that exact in-flight receipt even though cancellation has been requested; the narrow settlement path still requires the current attempt id, lease owner, unexpired lease, `running` parent, and no prior terminalization. A `record_before_execute` write remains ambiguous, while a definitive read failure remains failed. In every checkpoint, successful-completion, failure, and stop-settlement batch, the live-lease fence admits the checkpoint insert; the immediately following receipt update is tied to that admitted checkpoint rather than re-reading wall-clock expiry. Crossing the lease deadline between serialized statements therefore cannot leave an immutable checkpoint beside a still-started receipt. Parent terminalization still requires the live lease. Any receipt already stranded behind such a checkpoint by an older deployment is healed by allocating stop cleanup after the greatest persisted checkpoint index and advancing the receipt to that exact new checkpoint. Any receipt still unfinished when the leased owner commits a requested `stopped` transition is closed in that same batch — unresolved writes become ambiguous and reads fail — whether it came from the current executor or survived an expired attempt. A definite completion or failure that wins before the batch remains terminal. Only after every receipt is durable does the child commit the fenced `stopped` lifecycle event and return the work stream to `idle`, preventing both a stop/complete race and a permanently `started` tool row. If an obsolete executor loses ownership, its local dispatch is deferred to adopt the successor's result; it cannot write an unfenced product failure.
+Stopping a run persists `cancellation_requested_at`; it does not terminate an in-flight model request or tool call out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. If that observation aborts a tool, the same live attempt may settle that exact in-flight receipt even though cancellation has been requested; the narrow settlement path still requires the current attempt id, lease owner, unexpired lease, `running` parent, and no prior terminalization. A `record_before_execute` write remains ambiguous, while a definitive read failure remains failed. In every checkpoint, successful-completion, and failure batch, the live-lease fence admits the checkpoint insert; the immediately following receipt update is tied to that admitted checkpoint rather than re-reading wall-clock expiry. Crossing the lease deadline between serialized statements therefore cannot leave an immutable checkpoint beside a still-started receipt. Parent terminalization still requires the live lease. The leased owner first commits the requested `stopped` transition, then closes any still-unfinished receipt through the object-local exact-terminal-stamp fence — unresolved writes become ambiguous and reads fail — whether it came from the current executor or survived an expired attempt. Cleanup advances past any checkpoint stranded by an older deployment. A definite completion or failure that wins first remains terminal. An immutable lifecycle marker acknowledges successful residual settlement; a direct retry or the bounded activation sweep repairs a terminal run missing that marker, preventing a transient second-call failure from leaving a permanently `started` tool row. If an obsolete executor loses ownership, its local dispatch is deferred to adopt the successor's result; it cannot write an unfenced product failure.
 
-Cancellation-requested or orphaned inline children are reaped only after their own lease expires. The same attempt, owner, lease snapshot, expiry, and parent-liveness predicates first classify every pending or started child tool receipt in two bulk statements; unresolved writes become ambiguous and reads fail. The lifecycle and child-result commit then repeat the fences and require no unsettled receipt. Thus neither a stopped parent nor its eventual child reaper can leave a descendant tool card looking live.
+Cancellation-requested or orphaned inline children are reaped only after their own lease expires. The same attempt, owner, lease snapshot, expiry, and parent-liveness predicates fence the terminal lifecycle and child-result commit. Residual child receipts are then classified under that exact terminal stamp; unresolved writes become ambiguous and reads fail, and the same marker-backed sweep retries a lost response. Thus neither a stopped parent nor its eventual child reaper can leave a descendant tool card looking live.
 
 The work-stream transcript, attached resources, activation hints, run scope, inference ledger, tool receipts, inline child results, and scoped memory remain distinct durable records. Nested child delegation, personas, roles, autonomous heartbeats, and general child participants remain deferred product work.
 
@@ -680,6 +680,38 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-23 — Terminal receipt reconciliation survives a transient object failure
+
+**What changed:** Stopped terminalization, stale-root reaping, and stale-child
+reaping now write an immutable `residual_receipts_settled` lifecycle marker only
+after object-local residual receipt settlement succeeds. A repeated stopped
+terminalization retries when its exact terminal row lacks the marker. The
+existing bounded stale-run sweep repairs missing markers before claiming new
+expired rows, including already-terminal roots and children, and then records
+the acknowledgment so the scan makes forward progress.
+
+**Why:** A run's terminal state and its receipt settlement are necessarily two
+object calls. The safer terminal-first ordering was already established, but a
+transient failure in the second call left the run terminal. Every retry then
+returned `already_terminal`, while the stale-run query selected only live
+`running` rows. The receipt therefore remained `admitted` or `executing`
+forever and the member-visible tool card kept spinning, contrary to the stated
+recovery contract.
+
+**Considered and rejected:** Settling receipts before terminalization would
+reintroduce the takeover corruption this ordering was designed to prevent.
+Adding a queue, alarm, schema column, or separate reaper would duplicate the
+activation sweep and create another recovery owner. The immutable lifecycle
+ledger already provides the one durable acknowledgment needed, and the sweep's
+existing limit bounds historical catch-up.
+
+**Consequences:** The first failed settlement remains fail-safe: the terminal
+run cannot execute again and its receipt stays visibly open until recovery.
+The next direct retry or bounded sweep replays the idempotent settlement, then
+marks it complete. Three regressions inject the failure after stopped, root,
+and child terminalization; removing either retry path makes the corresponding
+receipt remain `executing`.
+
 ### 2026-08-22 — Tool receipts leave the compatibility layer
 
 **What changed:** Every read and write of a durable tool receipt now goes through
@@ -718,8 +750,9 @@ The reason is which failure each ordering leaves behind. Settling first and then
 failing to terminalize closes the receipts of a run that is still live and may
 have just been taken over by a successor — corrupting a running run. Terminalizing
 first and then failing to settle leaves a terminal run with open receipts, which
-the next sweep's `abandonRunReceipts` closes; the tool card resolves late instead
-of wrongly. A future change must keep that order for that reason, and must not
+the next bounded sweep retries because the immutable receipt-settlement marker
+is absent; the tool card resolves late instead of wrongly. A future change must
+keep that order and marker for that reason, and must not
 "restore atomicity" by moving the settlement back ahead of the terminal write.
 
 Two fences the entry below added to the D1 statements moved with the code
@@ -756,10 +789,11 @@ host settles a post-start rejection against its already-recorded real-input
 receipt rather than creating a conflicting empty-input plan. A
 lease-owning attempt may settle any terminal event already returned by Bind for
 the exact in-flight receipt after durable cancellation. Stopped terminalization
-atomically classifies any residual receipt from the current or an expired
-attempt before committing the parent and advances past any orphan checkpoint
-index from an older partially admitted settlement. Child reaping applies the same bulk
-classification before a stopped or orphaned descendant becomes terminal. An
+commits the parent first, then classifies any residual receipt from the current
+or an expired attempt under the exact terminal stamp and advances past any
+orphan checkpoint index from an older partially admitted settlement. Child
+reaping applies the same terminal-first classification after a stopped or
+orphaned descendant becomes terminal. An
 obsolete executor defers instead of failing its successor; abandoned drain
 identity is rechecked after the pre-claim await, and Substream and BlockDashboard
 executor-owned dispatch releases and terminal transitions require the exact
@@ -804,10 +838,11 @@ partial keyword matches but reports its full match count when the ranked list is
 bounded. The
 cancellation exception is not a general fence relaxation: attempt, owner, lease,
 running status, and terminalization checks still apply. Residual receipts are
-classified and closed in the atomic stopped commit, and every admitted receipt
-settlement finishes even if the lease deadline passes between its serialized
-checkpoint and receipt writes. Cleanup advances beyond an older orphan
-checkpoint rather than conflicting on it. Child reaping closes descendant receipts first. Stop
+classified after the stopped commit under its exact terminal stamp; a missing
+settlement marker makes the direct retry or bounded sweep repeat that idempotent
+operation. Every live admitted receipt settlement finishes even if the lease
+deadline passes between its serialized checkpoint and receipt writes. Cleanup
+advances beyond an older orphan checkpoint rather than conflicting on it. Stop
 therefore cannot degrade into a contradictory started row or a stale executor's
 later failed outcome, and an abandoned drain cannot continue beside its
 replacement. A

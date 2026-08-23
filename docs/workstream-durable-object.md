@@ -1126,9 +1126,9 @@ the both-disagree case would pass against either half being dropped. Keep the
 ### 2026-08-23 — Residual receipt settlement becomes an object operation
 
 **What changed:** `WorkstreamToolReceiptStorage` gained `settleResidualReceipts`,
-which classifies and closes every receipt a run still has open. Both callers that
-end a run reach it: `terminalizeHarnessAttempt` for a stopped parent and
-`reapStaleHarnessRuns` for an expired inline child. Its fence is the run's exact
+which classifies and closes every receipt a run still has open. Stopped-parent,
+expired-root, and expired-child cleanup all reach this one operation; the older
+root-only `abandonRunReceipts` duplicate is removed. Its fence is the run's exact
 `terminalized_at`, and it is called *after* the terminal write rather than before.
 `complete` and `fail` also gained `allowCancellationRequested`, and the
 attachment-dependency operations gained an `expectedOutputRef` fence.
@@ -1141,16 +1141,17 @@ settlement and the terminal lifecycle row were a single D1 batch fenced on each
 other; they are now in different stores with no transaction between them, so the
 ordering became a real choice. Terminalize-then-settle is the one whose failure is
 recoverable: a settle that does not run leaves a terminal run with open receipts,
-which `abandonRunReceipts` closes on the next sweep, whereas settle-then-fail
-closes the receipts of a run that is still live and may already have a successor.
+which the next marker-backed sweep retries through `settleResidualReceipts`,
+whereas settle-then-fail closes the receipts of a run that is still live and may
+already have a successor.
 
 **What a future change has to respect:** do not move the settlement back ahead of
 the terminal write in the name of atomicity — the atomicity is not available, and
 that order corrupts live runs rather than delaying dead ones.
 `allowCancellationRequested` relaxes exactly one condition of `#fence` and must
-keep the rest: a run may not admit new work after a member stop, but the receipt
-Bind already returned has to be settleable or `terminalizeHarnessAttempt`
-deadlocks against its own open-receipt fence.
+keep the rest: a run may not admit new work after a member stop, but the exact
+receipt Bind already returned remains settleable so a known result is not
+demoted to residual failure or ambiguity.
 
 ### 2026-08-22 — Every closed-authority arm is gone, and the routing is unconditional
 
@@ -1210,9 +1211,9 @@ have taken both.
 transcript settlement out of the update trigger first. That trigger projects a
 settled receipt into its same-id tool part, and the stale-run sweep depends on
 it because it has no event publisher and never rewrites the transcript row. The
-projection moved into `abandonRunReceipts` in the preceding change and has its
-own spec; dropping the trigger before that would have left reaped runs showing a
-spinning tool card with nothing failing.
+projection moved into `settleResidualReceipts` in the preceding change and has
+its own spec; dropping the trigger before that would have left reaped runs
+showing a spinning tool card with nothing failing.
 
 **Consequences:** migration 16's trigger repair is now historical — it still has
 to exist for objects that applied it before 17 arrived, but the allocation it
