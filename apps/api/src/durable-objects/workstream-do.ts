@@ -40,6 +40,7 @@ import {
   WorkstreamRegionalEffectAckSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
   WorkstreamRegionalEffectSchema,
+  isPersonNotificationEffect,
   workstreamRegionalEffectHash,
   workstreamRegionalEffectWakeMessage,
   type WorkstreamRegionalEffect,
@@ -366,6 +367,52 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   version: 2,
   description: "shared multi-alarm index behind this object's single alarm",
   statements: [...SCHEDULED_ALARM_SCHEMA_STATEMENTS],
+}, {
+  version: 3,
+  description: "carry the participant-added notification through this object's outbox",
+  statements: [
+    // The outbox enumerates the effect kinds it will hold, and a person being
+    // added to a work stream is a new one. Enumerating them is worth keeping:
+    // this row is what a poison delivery would be stuck on, and a kind nobody
+    // downstream handles should fail here rather than in a Queue consumer.
+    //
+    // SQLite cannot widen a CHECK in place, so the table is rebuilt. Version 1
+    // still creates the narrow shape and must — its statements are hashed into
+    // every deployed object's `_sql_schema_migrations` receipt, and editing
+    // them throws `workstream_do_schema_hash_mismatch:1` in the constructor of
+    // every work stream that ran an earlier release.
+    `CREATE TABLE durable_outbox_kinds (
+      message_id TEXT PRIMARY KEY,
+      partition_key TEXT NOT NULL,
+      source_version INTEGER NOT NULL CHECK (source_version > 0),
+      source_epoch INTEGER NOT NULL CHECK (source_epoch > 0),
+      effect_kind TEXT NOT NULL CHECK (effect_kind IN (
+        'directory_common', 'directory_user', 'suggestion_feedback',
+        'activity_event', 'mention_notification', 'participant_notification'
+      )),
+      payload_json TEXT NOT NULL CHECK (
+        json_valid(payload_json) AND length(CAST(payload_json AS BLOB)) <= 1900000
+      ),
+      payload_hash TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('pending', 'inflight')),
+      attempts INTEGER NOT NULL CHECK (attempts >= 0),
+      not_before INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    ) STRICT`,
+    // An effect mid-flight keeps its place in the queue rather than being
+    // dropped and rediscovered: this runs in the constructor, before the
+    // object serves anything, so the copy is of a settled table.
+    `INSERT INTO durable_outbox_kinds
+       (message_id, partition_key, source_version, source_epoch, effect_kind,
+        payload_json, payload_hash, state, attempts, not_before, created_at)
+     SELECT message_id, partition_key, source_version, source_epoch, effect_kind,
+        payload_json, payload_hash, state, attempts, not_before, created_at
+       FROM durable_outbox`,
+    `DROP TABLE durable_outbox`,
+    `ALTER TABLE durable_outbox_kinds RENAME TO durable_outbox`,
+    `CREATE INDEX durable_outbox_delivery_idx
+      ON durable_outbox(state, not_before, created_at, message_id)`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -2233,7 +2280,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
 
   private enqueueImmutable(substreamId: string, source: WorkstreamRegionalEffectEnvelope, now: number): void {
     let requiredProjectionVersion: number | null = null;
-    if (source.effect.kind === "mention_notification") {
+    if (isPersonNotificationEffect(source.effect)) {
       const key = `user:${source.effect.recipientUserId}`;
       const projection = first(this.state.storage.sql.exec<ProjectionKeyRow>(
         `SELECT next_version, last_payload_hash FROM projection_keys WHERE projection_key = ?`,

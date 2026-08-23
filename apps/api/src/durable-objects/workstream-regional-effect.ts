@@ -89,6 +89,33 @@ export const WorkstreamMentionNotificationEffectSchema = z.object({
   occurredAt: TimestampSchema,
 }).strict();
 
+/**
+ * Somebody was added to a work stream and should be told.
+ *
+ * Deliberately a sibling of the mention effect rather than a field on it. The
+ * two carry different facts — a mention has a message, this has an actor who
+ * did the adding — and the envelope's payload hash is computed over the effect
+ * object, so widening the mention schema would change the hash of every
+ * mention effect already in an outbox.
+ *
+ * `sourceId` stands where a mention puts its message id: it is what the
+ * intent's `(source_message_id, recipient_user_id, notification_kind)`
+ * uniqueness is keyed on. It carries the participant epoch, so re-adding
+ * somebody who was removed notifies them again while a redelivery of the same
+ * add does not.
+ */
+export const WorkstreamParticipantNotificationEffectSchema = z.object({
+  kind: z.literal("participant_notification"),
+  intentId: z.string().min(1).max(300),
+  sourceId: z.string().min(1).max(300),
+  recipientUserId: IdSchema,
+  actorUserId: IdSchema,
+  actorNameSnapshot: z.string().max(300),
+  workstreamTitleSnapshot: ShortTextSchema,
+  workstreamObjectiveSnapshot: ShortTextSchema,
+  occurredAt: TimestampSchema,
+}).strict();
+
 export const WorkstreamSuggestionFeedbackEffectSchema = z.object({
   kind: z.literal("suggestion_feedback"),
   actionId: IdSchema,
@@ -104,8 +131,22 @@ export const WorkstreamRegionalEffectSchema = z.discriminatedUnion("kind", [
   WorkstreamDirectoryUserEffectSchema,
   WorkstreamActivityEffectSchema,
   WorkstreamMentionNotificationEffectSchema,
+  WorkstreamParticipantNotificationEffectSchema,
   WorkstreamSuggestionFeedbackEffectSchema,
 ]);
+
+/**
+ * The effects that tell one person something, and therefore may not be
+ * delivered before that person's own directory projection has landed. Both are
+ * gated on `requiredProjectionVersion`; see the refinement below.
+ */
+export function isPersonNotificationEffect(
+  effect: WorkstreamRegionalEffect,
+): effect is Extract<WorkstreamRegionalEffect, {
+  kind: "mention_notification" | "participant_notification";
+}> {
+  return effect.kind === "mention_notification" || effect.kind === "participant_notification";
+}
 
 export type WorkstreamRegionalEffect = z.infer<typeof WorkstreamRegionalEffectSchema>;
 
@@ -123,14 +164,14 @@ export const WorkstreamRegionalEffectEnvelopeSchema = z.object({
   payloadHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
   effect: WorkstreamRegionalEffectSchema,
 }).strict().superRefine((envelope, context) => {
-  const requiresViewer = envelope.effect.kind === "mention_notification";
+  const requiresViewer = isPersonNotificationEffect(envelope.effect);
   if (requiresViewer !== (envelope.requiredProjectionVersion !== null)) {
     context.addIssue({
       code: "custom",
       path: ["requiredProjectionVersion"],
       message: requiresViewer
-        ? "mention notifications require a viewer projection version"
-        : "only mention notifications may require a viewer projection version",
+        ? "person notifications require a viewer projection version"
+        : "only person notifications may require a viewer projection version",
     });
   }
 });
