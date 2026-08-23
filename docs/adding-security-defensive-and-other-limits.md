@@ -105,6 +105,20 @@ is cheap to add, which is exactly why an unjustified one still costs: it lands o
 the handover report, spends somebody's attention, and gets a number attached to
 it precisely because it was asked about.
 
+**A worked rejection.** A cap on the bytes of one hosted-MCP tool result looks
+like a textbook defensive limit: the caller is a third-party server, the payload
+lands in an isolate's memory, and the model is downstream of it. It dies on the
+third test. `tools/call` goes through `mcpRequest` to
+`readMcpResponse(response, input.maxResponseBytes, …)`; `maxResponseBytes`
+resolves to `config.maxResponseBytes ?? DEFAULT_RESPONSE_BYTES`; and
+`DEFAULT_RESPONSE_BYTES` is `2_000_000` in
+`packages/connectors/src/hosted-mcp.ts`. A 40 MB result is already refused with
+`payload_too_large`, on both the `content-length` pre-check and the streaming
+accumulator in `readResponseBytes`. Adding a second constant there would be a
+permanent open row against a resource that is already capped; wiring one into the
+existing call site would be [opening a live limit](#keeping-it-open). One grep of
+the file the candidate names settles it — which is what that test is for.
+
 Where the bar is already met, do not litigate it — add the guard, open it, and
 report it: anything sized by untrusted input and held in memory, any loop with a
 model or a provider inside it, anything that spends money per iteration, anything
@@ -149,8 +163,9 @@ limit at all:
 
 - **Timers.** `setTimeout(fn, Number.POSITIVE_INFINITY)` does not wait forever.
   Node clamps an out-of-range delay to `1`, warns `TimeoutOverflowWarning`, and
-  fires almost immediately. The same applies to anything built on a delay,
-  including `AbortSignal.timeout`.
+  fires almost immediately; workerd — the runtime these guards actually protect —
+  offers no better guarantee, and neither is a contract to lean on. The same
+  applies to anything built on a delay, including `AbortSignal.timeout`.
 - **SQL.** A non-finite value bound into `LIMIT ?` is not a query without a
   limit; it is a query that fails or coerces.
 - **Anything serialized.** `JSON.stringify({ a: Infinity })` is `{"a":null}`. An
@@ -175,30 +190,38 @@ be found later as though somebody decided it.
 
 ## Writing the placeholder
 
-One exported constant, one definition site, and enforcement that takes the limit
-as an argument. That last part is not ceremony: it is what lets a test prove the
-trip while the constant is open, and the shape already in the tree —
-`readResponseBytes(response, maxBytes)` in
-`packages/connectors/src/provider-utils.ts` — is the one to copy.
+One constant holding the number, and enforcement that receives it as an
+argument. The second half is not ceremony: it is what lets a test pass a finite
+limit and prove the trip while the shipped constant is still open. The shape is
+already in the tree — `readResponseBytes(response, maxBytes)` in
+`packages/connectors/src/provider-utils.ts`, called with a limit each caller
+resolves.
+
+The constant below is **illustrative and is not in the tree**: a guard on a
+hypothetical plugin path that reads a body with no size argument of its own. Copy
+the shape, not the claim — a `Without it:` line is only true once you have
+checked, and the [worked rejection](#premature-limits-are-not-preferred) above is
+what that check looks like when it fails.
 
 ```ts
 /**
  * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
  * docs/adding-security-defensive-and-other-limits.md.
  *
- * Bounds: bytes of one hosted-MCP tool result held in memory before it is
- *   returned to the model.
- * Without it: a server that returns a 40 MB document fills the isolate's memory
- *   and kills the run for everyone in that work stream. The caller is a third
- *   party we do not control, and no other bound in this path caps a tool result.
+ * Bounds: bytes of one plugin document held in memory before it is returned to
+ *   the model.
+ * Without it: a third-party server that returns a 40 MB document fills the
+ *   isolate's memory and kills the run for everyone in that work stream. Checked
+ *   2026-08-23: this path reads the body with no size argument, and nothing
+ *   upstream of it refuses the response first.
  * Direction: upper bound; the open value is +Infinity.
- * Trips: the call fails with `result_too_large`, the run continues, and the
- *   model is told the result was too large to return.
- * Derive from: the model's context window against the largest result a real
- *   server returns — arithmetic against published numbers, not a benchmark
- *   nobody here can run.
+ * Trips: the read fails with `payload_too_large` — the code `readResponseBytes`
+ *   already uses — the run continues, and the model is told the document was too
+ *   large to return.
+ * Derive from: the context window against how many documents one run holds;
+ *   arithmetic against published numbers, not a benchmark nobody here can run.
  */
-export const MAX_HOSTED_MCP_RESULT_BYTES = Number.POSITIVE_INFINITY;
+export const MAX_PLUGIN_DOCUMENT_BYTES = Number.POSITIVE_INFINITY;
 ```
 
 - **`LIMIT UNSET` is a literal marker**, spelled exactly that way. `rg "LIMIT
@@ -206,9 +229,15 @@ export const MAX_HOSTED_MCP_RESULT_BYTES = Number.POSITIVE_INFINITY;
   audits what is still open; a paraphrase is invisible to both.
 - **Write `Number.POSITIVE_INFINITY`, not `Infinity`.** It greps, it reads as
   deliberate rather than accidental, and it is symmetric with the negative form.
-- **One definition site.** No second copy inline, no `?? 64 * 1024` default at a
-  call site, no per-caller override that quietly reintroduces a number. The
-  constant is the single edit point, which is the whole reason this works.
+- **The number has one definition site.** One constant, and no second literal
+  anywhere — no `?? 64 * 1024` at a call site, no copy inline. That constant is
+  the single edit point, which is the whole reason this works.
+- **Passing the limit through a parameter is not a second site.** The connectors
+  idiom — `config.maxResponseBytes ?? DEFAULT_RESPONSE_BYTES`, then
+  `readResponseBytes(response, maxBytes)` — is one number with a documented
+  override, and it is exactly what makes the guard testable while it is open.
+  What is forbidden is a *different* number appearing at the call site, not the
+  plumbing that carries this one.
 - **Export it**, so the open-value test can read it without importing a private.
 - The fields are the handover. `Without it:` is the
   [justification](#premature-limits-are-not-preferred) in one place a reviewer
@@ -263,7 +292,7 @@ rg -n "LIMIT UNSET" --glob '!docs/**'
 
 | Constant | File | Bounds | Open value | On trip | Derive from | Safe open? |
 | --- | --- | --- | --- | --- | --- | --- |
-| `MAX_HOSTED_MCP_RESULT_BYTES` | `packages/connectors/src/hosted-mcp.ts` | bytes of one tool result | `+Infinity` | call fails `result_too_large`, run continues | context window ÷ plausible results per run | yes — path was already unbounded |
+| `MAX_PLUGIN_DOCUMENT_BYTES` | `packages/connectors/src/<plugin>.ts` | bytes of one document returned to the model | `+Infinity` | read fails `payload_too_large`, run continues | context window ÷ documents held per run | yes — the path reads the body unbounded today, so the open guard rejects nothing that is not already accepted |
 
 Every row carries its `Without it:` justification into the pull request. A row
 that cannot state one does not belong on this table, and the constant behind it
@@ -274,9 +303,20 @@ limit nobody needed.
 is the useful half of the handover; installing it is not yours to do. Frame it as
 arithmetic against a published limit the way
 [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md#deciding-without-measurement)
-requires — "a 200k-token window at ~4 bytes per token is ~800 KB, so a single
-result above ~128 KB cannot be a normal one" — never as a benchmark nobody here
-can reproduce. State plainly what stays unprotected until each is set.
+requires — never as a benchmark nobody here can reproduce — and **write out every
+assumption the sum rests on**, because those, not the total, are what the team is
+being asked to confirm:
+
+> The window is 200k tokens at roughly 4 bytes per token, so about 800 KB in
+> total. A run holds up to eight of these documents alongside its prompt and its
+> output; reserving half the window for those leaves ~400 KB across eight, so
+> call it 50 KB each.
+
+A number whose divisor is not shown is the guess this document exists to prevent,
+no matter who writes it down: "800 KB of context, therefore 128 KB per result"
+skips the two assumptions — how many coexist, how much is reserved — that the
+figure entirely depends on. State plainly what stays unprotected until each row
+is set.
 
 ## Setting the value once the team answers
 
