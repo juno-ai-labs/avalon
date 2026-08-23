@@ -166,7 +166,13 @@ import {
 } from "./workstream-runtime-sql";
 import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 import { DurableAgentDrain, DurableAgentKeepAlive } from "./durable-agent-runtime";
-import { responseToRpcResult, rpcResultBody, type DurableObjectRpcResult } from "./rpc-result";
+import {
+  objectPortRpcResult,
+  responseToRpcResult,
+  rpcResultBody,
+  type DurableObjectRpcResult,
+  type ObjectPortOutcome,
+} from "./rpc-result";
 
 export { applyActiveStreamCheckpointEvent, splitActiveStreamCheckpointText } from "./workstream-object-storage";
 
@@ -869,7 +875,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   async executeMessageOperation(input: MessageOperationRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
-    return responseToRpcResult(await this.acceptMessageOperation(this.rpcRequest(input)));
+    return objectPortRpcResult(await this.messageOperationOutcome(input));
   }
 
   async executeSchedulingOperation(
@@ -1050,7 +1056,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       parsed.data,
       "workstream_tool_receipt_identity_mismatch",
     );
-    if (refusal) return refusal;
+    if (refusal) return jsonResponse(refusal.payload, refusal.status);
     const method = this.toolReceipts[parsed.data.operation] as (...args: unknown[]) => unknown;
     const value = method.apply(this.toolReceipts, parsed.data.args);
     return jsonResponse({ ok: true, value: value ?? null });
@@ -1074,16 +1080,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private objectPortRefusal(
     request: { workspaceId: string; workstreamId: string },
     identityMismatchCode: string,
-  ): Response | null {
+  ): ObjectPortOutcome | null {
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== request.workspaceId
       || identity.workstreamId !== request.workstreamId
       || this.externalSubstreamId() !== "0") {
-      return jsonResponse({ ok: false, error: identityMismatchCode }, 409);
+      return { status: 409, payload: { ok: false, error: identityMismatchCode } };
     }
     if (!this.objectStore.isAuthoritative()) {
-      return jsonResponse({ ok: false, error: "workstream_runtime_authority_fenced" }, 409);
+      return { status: 409, payload: { ok: false, error: "workstream_runtime_authority_fenced" } };
     }
     return null;
   }
@@ -1126,7 +1132,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return jsonResponse({ ok: false, error: "invalid_scheduling_operation" }, 400);
     }
     const refusal = this.objectPortRefusal(parsed.data, "workstream_scheduling_identity_mismatch");
-    if (refusal) return refusal;
+    if (refusal) return jsonResponse(refusal.payload, refusal.status);
     const method = this.scheduling[parsed.data.operation] as (...args: unknown[]) => unknown;
     const mutates = mutatesWakeups(parsed.data.operation);
     const value = mutates
@@ -1168,11 +1174,28 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * matching `messages` in statement text, which is the rule this replaces.
    */
   private async acceptMessageOperation(request: Request): Promise<Response> {
-    const parsed = MessageOperationRequestSchema.safeParse(
-      await request.json().catch(() => null),
-    );
+    const outcome = await this.messageOperationOutcome(await request.json().catch(() => null));
+    return jsonResponse(outcome.payload, outcome.status);
+  }
+
+  /**
+   * The endpoint's body, with no `Request` or `Response` in the middle.
+   *
+   * Every port call made from inside this object resolves to itself through the
+   * self-registration, and the RPC entry point marshalled its already-parsed
+   * input into a `Request` so it could share the `fetch` handler, then read a
+   * `Response` body back out. For a local call that is six serializations of
+   * one value to move it nowhere — and the drain runs the description refresh
+   * through this path at the end of every harness run, where it cost enough to
+   * leave a dispatch queued past the end of the run.
+   *
+   * The module that hands out the self-registration says the point of it is
+   * "the same object with the boundary removed". This is the rest of that.
+   */
+  private async messageOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
+    const parsed = MessageOperationRequestSchema.safeParse(body);
     if (!parsed.success) {
-      return jsonResponse({ ok: false, error: "invalid_message_operation" }, 400);
+      return { status: 400, payload: { ok: false, error: "invalid_message_operation" } };
     }
     const refusal = this.objectPortRefusal(parsed.data, "workstream_message_identity_mismatch");
     if (refusal) return refusal;
@@ -1184,7 +1207,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         true,
       )
       : method.apply(this.messages, parsed.data.args);
-    return jsonResponse({ ok: true, value: value ?? null });
+    return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
   /**
@@ -1207,7 +1230,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       parsed.data,
       "workstream_block_dashboard_identity_mismatch",
     );
-    if (refusal) return refusal;
+    if (refusal) return jsonResponse(refusal.payload, refusal.status);
     const method = this.blockDashboard[parsed.data.operation] as (...args: unknown[]) => unknown;
     const value = method.apply(this.blockDashboard, parsed.data.args);
     return jsonResponse({ ok: true, value: value ?? null });

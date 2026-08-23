@@ -108,6 +108,38 @@ function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageVa
   return cursor.toArray()[0];
 }
 
+/**
+ * Which message types a window is about, as the question its caller asks.
+ *
+ * Not one list. `parts.message_type` carries no CHECK constraint, so "these
+ * types" and "everything but these" are genuinely different questions about it:
+ * an `include` list silently drops a type nobody has added yet, and an
+ * `exclude` list silently admits one. Naming means the first — `text` alone,
+ * because an elicitation or a host notice is not the conversation a name should
+ * describe — and the description refresh means the second, because a host
+ * notice *is* part of where a work stream has got to and a type added later
+ * would be too. Both readers wrote their own predicate before this, and the
+ * difference between them was invisible.
+ */
+export type MessageTypeFilter =
+  | { include: readonly string[] }
+  | { exclude: readonly string[] };
+
+function messageTypePredicate(
+  filter: MessageTypeFilter,
+  column: string,
+): { sql: string; params: string[] } {
+  const types = "include" in filter ? filter.include : filter.exclude;
+  if (types.length === 0) {
+    return { sql: "include" in filter ? "0" : "1", params: [] };
+  }
+  const placeholders = types.map(() => "?").join(", ");
+  return {
+    sql: `${column} ${"include" in filter ? "IN" : "NOT IN"} (${placeholders})`,
+    params: [...types],
+  };
+}
+
 export class WorkstreamMessageStorage {
   constructor(private readonly storage: DurableObjectStorage) {}
 
@@ -164,6 +196,160 @@ export class WorkstreamMessageStorage {
       input.afterSequence,
       input.limit,
     ).toArray();
+  }
+
+  /** One message at a transcript position, or nothing. */
+  messageAtSequence(input: { sequenceNumber: number }): MessageRow | undefined {
+    return first(this.sql.exec<MessageRow>(
+      `SELECT ${MESSAGE_COLUMNS}
+         FROM parts part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+        WHERE part.substream_id = '0' AND part.sequence_number = ?`,
+      input.sequenceNumber,
+    ));
+  }
+
+  /**
+   * The messages someone actually said, oldest or newest first.
+   *
+   * Two readers want this window — naming and the description refresh — and
+   * each wrote its own predicate before this. They agree that an empty message
+   * is not something *said*, and they disagree, on purpose, about what else
+   * counts; {@link MessageTypeFilter} is where that disagreement lives now.
+   *
+   * `order` is the same difference read the other way: a name describes what a
+   * work stream is *for*, established in its opening exchange, so naming reads
+   * oldest-first; a description says where it has got to, so it reads the most
+   * recent. Both come back in reading order.
+   */
+  saidMessages(input: {
+    messageTypes: MessageTypeFilter;
+    order: "oldest" | "newest";
+    limit: number;
+    /** Only messages at or after this instant, for a windowed read. */
+    since?: number | null;
+  }): MessageRow[] {
+    const types = messageTypePredicate(input.messageTypes, "part.message_type");
+    const rows = this.sql.exec<MessageRow>(
+      `SELECT ${MESSAGE_COLUMNS}
+         FROM parts part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+        WHERE part.substream_id = '0' AND ${types.sql}
+          AND trim(COALESCE(part.content, '')) <> ''
+          AND (? IS NULL OR part.created_at >= ?)
+        ORDER BY part.sequence_number ${input.order === "newest" ? "DESC" : "ASC"}
+        LIMIT ?`,
+      ...types.params,
+      input.since ?? null,
+      input.since ?? null,
+      input.limit,
+    ).toArray();
+    return input.order === "newest" ? rows.reverse() : rows;
+  }
+
+  /**
+   * How many of those there are, up to a ceiling the caller names.
+   *
+   * Bounded by the caller because both readers only ever ask a threshold
+   * question — "are there at least N" for naming, "how many in the last window,
+   * capped" for the description — and neither wants the count of a work stream
+   * that has been talking for a year.
+   */
+  saidMessageCount(input: {
+    messageTypes: MessageTypeFilter;
+    limit: number;
+    since?: number | null;
+  }): number {
+    const types = messageTypePredicate(input.messageTypes, "message_type");
+    return Number(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count FROM (
+         SELECT 1 FROM parts
+          WHERE substream_id = '0' AND ${types.sql}
+            AND trim(COALESCE(content, '')) <> ''
+            AND (? IS NULL OR created_at >= ?)
+          LIMIT ?)`,
+      ...types.params,
+      input.since ?? null,
+      input.since ?? null,
+      input.limit,
+    ).one().count);
+  }
+
+  /**
+   * The whole window the description refresh reads, in one round trip.
+   *
+   * Three questions that are one question: how many turns the window holds, the
+   * page that fits, and who wrote them. Asked separately they are three round
+   * trips on a path that runs at the end of every harness run, and the count is
+   * only ever asked in order to size the page — so the arithmetic between them
+   * belongs on the side of the boundary that already has the rows.
+   *
+   * The numbers stay the caller's. `minimum` and `maximum` are the refresh's
+   * own window policy and are not this class's to know; what is here is the
+   * order they combine in, which is the part that has to happen in one
+   * transaction to describe a single transcript.
+   */
+  saidWindow(input: {
+    messageTypes: MessageTypeFilter;
+    since: number | null;
+    /** The floor on the page, so a quiet work stream is still judged on enough. */
+    minimum: number;
+    /** The ceiling, which is what a single Worker request can render and send. */
+    maximum: number;
+  }): { rows: MessageRow[]; authors: MessageAuthorRow[]; requested: number } {
+    return this.storage.transactionSync(() => {
+      // One past the ceiling, so `requested > limit` can still be true at the
+      // ceiling — that comparison is how the caller knows the window capped,
+      // and a count clamped at the ceiling could never say so.
+      const recent = this.saidMessageCount({
+        messageTypes: input.messageTypes,
+        limit: input.maximum + 1,
+        since: input.since,
+      });
+      const requested = Math.max(input.minimum, recent);
+      const rows = this.saidMessages({
+        messageTypes: input.messageTypes,
+        order: "newest",
+        limit: Math.min(requested, input.maximum),
+      });
+      const authors = this.authorsFor({
+        userIds: [...new Set(rows.flatMap((row) => row.author_user_id ? [row.author_user_id] : []))],
+      });
+      return { rows, authors, requested };
+    });
+  }
+
+  /**
+   * Whether a message was written by someone still in the work stream.
+   *
+   * The join Terminal's admission check wrote as `messages JOIN
+   * workstream_participants`, which was two compatibility views over two tables
+   * in this same object. What it is asking is whether the person who sent the
+   * trigger message is a participant, because a repository command runs with
+   * their authorization.
+   */
+  messageFromParticipant(input: {
+    messageId: string;
+    authorUserId: string;
+  }): { text_content: string } | undefined {
+    return first(this.sql.exec<{ text_content: string } & Record<string, SqlStorageValue>>(
+      `SELECT COALESCE(part.content, '') AS text_content
+         FROM parts part
+         JOIN participants participant ON participant.user_id = part.author_user_id
+        WHERE part.substream_id = '0' AND part.id = ?1
+          AND part.author_type = 'member' AND part.author_user_id = ?2
+          AND participant.removed_at IS NULL`,
+      input.messageId,
+      input.authorUserId,
+    ));
+  }
+
+  /** How many attachments the work stream's opening message carries. */
+  openingAttachmentCount(): number {
+    return Number(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count
+         FROM part_attachments attachment
+         JOIN parts part ON part.id = attachment.part_id
+        WHERE part.substream_id = '0' AND part.sequence_number = 1`,
+    ).one().count);
   }
 
   /** The mentions on a page of messages, in one read rather than one per row. */

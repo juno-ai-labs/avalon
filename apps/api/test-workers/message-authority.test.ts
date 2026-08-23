@@ -194,6 +194,28 @@ describe("message authority on real workerd", () => {
     });
   });
 
+  it("answers the description window's read through the endpoint", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
+    await messages(stub, "appendMessage", append());
+
+    const count = await messages(stub, "saidMessageCount", {
+      messageTypes: { exclude: ["tool"] },
+      limit: 601,
+      since: null,
+    });
+    const window = await messages(stub, "saidMessages", {
+      messageTypes: { exclude: ["tool"] },
+      order: "newest",
+      limit: 200,
+    });
+
+    expect(count.value).toBe(1);
+    expect(window.status).toBe(200);
+    expect(window.value).toHaveLength(1);
+  });
+
   it("refuses an operation that is not on the contract", async () => {
     const stub = agent();
     await boot(stub);

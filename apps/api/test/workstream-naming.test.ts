@@ -10,10 +10,11 @@ import {
 } from "../src/services/workstream-naming-service";
 import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
@@ -419,7 +420,8 @@ describe("work-stream naming", () => {
     );
     seedMessages(database, 40);
     const counted: string[] = [];
-    const env = environment(database, []);
+    const transcriptOperations: string[] = [];
+    const env = environment(database, [], transcriptOperations);
     const settled = createTestEnv({
       ...env,
       DB: {
@@ -435,10 +437,13 @@ describe("work-stream naming", () => {
 
     // A settled work stream is the overwhelmingly common case, and this runs
     // after every message and every run: the status has to be a `WHERE` clause
-    // rather than a check in JS after a transcript-wide count.
+    // rather than a check in JS after a transcript-wide count. The count used
+    // to ride in that same statement, bounded by its own `LIMIT`; it is a
+    // separate operation now, so the cheaper thing is provable — a settled work
+    // stream does not read the transcript at all.
     expect(counted).toHaveLength(1);
     expect(counted[0]).toContain("title_status IN ('naming', 'automatic')");
-    expect(counted[0]).toContain("LIMIT ?");
+    expect(transcriptOperations).toEqual([]);
   });
 
   it("writes a name a person would read rather than whatever the model returned", () => {
@@ -533,19 +538,46 @@ function stubOpenRouter(
   }));
 }
 
-function environment(database: DatabaseSync, published: Array<Record<string, unknown>>): Env {
-  const rooms = {
-    jurisdiction: () => rooms,
-    idFromName: (name: string) => createTestDurableObjectId(name),
-    get: () => ({
+function environment(
+  database: DatabaseSync,
+  published: Array<Record<string, unknown>>,
+  transcriptOperations: string[] = [],
+): Env {
+  const objectStore = objectStoreOf(database);
+  // The naming service reads its transcript through the message port, which
+  // dispatches `executeMessageOperation` on this binding. The helper answers it
+  // against the same object store the fixture seeds, so the read under test is
+  // the real storage class rather than a stub of it.
+  const rooms = testSubstreamAgentsBinding(objectStore, {
+    extra: {
       publishEvent: async (input: { event: Record<string, unknown> }) => {
-        const event = input.event;
-        published.push(event);
+        published.push(input.event);
         return { status: 202, bodyJson: "null" };
       },
-    }),
-  };
-  const objectStore = objectStoreOf(database);
+    },
+  });
+  // Records which transcript operations the service actually dispatches, so a
+  // test can assert that a settled work stream reads no transcript at all.
+  const recorded = new Proxy(rooms, {
+    get(namespaceTarget, namespaceProperty, namespaceReceiver) {
+      if (namespaceProperty !== "get") {
+        return Reflect.get(namespaceTarget, namespaceProperty, namespaceReceiver);
+      }
+      return (id: DurableObjectId) => new Proxy(namespaceTarget.get(id), {
+        get(target, property, receiver) {
+          if (property !== "executeMessageOperation") {
+            return Reflect.get(target, property, receiver);
+          }
+          const dispatch = Reflect.get(target, property, receiver) as
+            (input: { operation: string }) => unknown;
+          return (input: { operation: string }) => {
+            transcriptOperations.push(input.operation);
+            return dispatch.call(target, input);
+          };
+        },
+      });
+    },
+  });
   // Production hands the naming service a routed environment (the substream
   // agent's local runtime environment, or the creation service's explicit
   // wrap); the local executor is that agent-side port over the object store.
@@ -559,7 +591,7 @@ function environment(database: DatabaseSync, published: Array<Record<string, unk
       OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
       OPENROUTER_FALLBACK_MODELS: "",
       PUBLIC_API_BASE_URL: "https://api.test.with-avalon.com",
-      SUBSTREAM_AGENTS: rooms,
+      SUBSTREAM_AGENTS: recorded,
     }),
     workspaceId,
     workstreamId,
