@@ -20,10 +20,22 @@ const WORKSPACE_ID = "00000000-0000-7000-8000-000000000601";
 const WORKSTREAM_ID = "00000000-0000-7000-8000-000000000602";
 
 describe("work-stream runtime database routing", () => {
-  it("routes wake-up persistence to the owning WorkstreamDO", () => {
+  it("routes elicitation persistence to the owning WorkstreamDO", () => {
+    expect(__workstreamRuntimeDatabaseTesting.localStatement(
+      "SELECT id FROM elicitations WHERE workstream_id = ?",
+    )).toBe(true);
+  });
+
+  it("leaves a statement naming a table whose slice has landed for the parent router", () => {
+    // `workstream_wakeups` left the routed set with the scheduling slice: it is
+    // reached through `/internal/scheduling` now, and its compatibility view is
+    // gone. A statement still naming it is a caller that missed the conversion,
+    // and the honest answer is to stop claiming this router can serve it —
+    // where it fails loudly against a regional database that has no such table
+    // — rather than to route it at a view that no longer exists.
     expect(__workstreamRuntimeDatabaseTesting.localStatement(
       "SELECT id FROM workstream_wakeups WHERE workstream_id = ?",
-    )).toBe(true);
+    )).toBe(false);
   });
 
   it("routes a bare tool_effects write to the owning object, where the table lives", () => {
