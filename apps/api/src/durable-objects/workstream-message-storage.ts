@@ -38,6 +38,8 @@
  * Timestamps are unix milliseconds, the object's convention.
  */
 
+import { boundParameterChunks } from "./bound-parameters";
+
 /** One transcript row, in the vocabulary the retired view projected. */
 export interface MessageRow extends Record<string, SqlStorageValue> {
   id: string;
@@ -355,13 +357,19 @@ export class WorkstreamMessageStorage {
   /** The mentions on a page of messages, in one read rather than one per row. */
   mentionsFor(input: { messageIds: readonly string[] }): MessageMentionRow[] {
     if (input.messageIds.length === 0) return [];
-    return this.sql.exec<MessageMentionRow>(
-      `SELECT part_id, mention_kind, target_user_id, connector_type, start_offset, end_offset
-         FROM part_mentions
-        WHERE part_id IN (${input.messageIds.map(() => "?").join(", ")})
-        ORDER BY part_id, mention_index`,
-      ...input.messageIds,
-    ).toArray();
+    // Chunked, because a page is wider than one statement can bind. The
+    // transcript walk asks for up to 250 messages and the engine takes 100
+    // parameters, so an unchunked `IN` list fails the whole page rather than
+    // returning part of it. `WorkstreamObjectProductService` reads these two
+    // tables the same way, for the same reason.
+    return boundParameterChunks(input.messageIds).flatMap((ids) =>
+      this.sql.exec<MessageMentionRow>(
+        `SELECT part_id, mention_kind, target_user_id, connector_type, start_offset, end_offset
+           FROM part_mentions
+          WHERE part_id IN (${ids.map(() => "?").join(", ")})
+          ORDER BY part_id, mention_index`,
+        ...ids,
+      ).toArray());
   }
 
   /**
@@ -375,19 +383,20 @@ export class WorkstreamMessageStorage {
    */
   attachmentsFor(input: { messageIds: readonly string[] }): MessageAttachmentRow[] {
     if (input.messageIds.length === 0) return [];
-    return this.sql.exec<MessageAttachmentRow>(
-      `SELECT attachment.part_id, attachment.resource_id, attachment.position,
-              json_extract(link.resource_json, '$.title') AS title,
-              json_extract(link.resource_json, '$.mimeType') AS mime_type,
-              json_extract(link.resource_json, '$.contentRef') AS content_ref,
-              json_extract(link.resource_json, '$.metadata') AS metadata_json,
-              link.attached_at
-         FROM part_attachments attachment
-         JOIN workstream_resource_links link ON link.resource_id = attachment.resource_id
-        WHERE attachment.part_id IN (${input.messageIds.map(() => "?").join(", ")})
-        ORDER BY attachment.part_id, attachment.position`,
-      ...input.messageIds,
-    ).toArray();
+    return boundParameterChunks(input.messageIds).flatMap((ids) =>
+      this.sql.exec<MessageAttachmentRow>(
+        `SELECT attachment.part_id, attachment.resource_id, attachment.position,
+                json_extract(link.resource_json, '$.title') AS title,
+                json_extract(link.resource_json, '$.mimeType') AS mime_type,
+                json_extract(link.resource_json, '$.contentRef') AS content_ref,
+                json_extract(link.resource_json, '$.metadata') AS metadata_json,
+                link.attached_at
+           FROM part_attachments attachment
+           JOIN workstream_resource_links link ON link.resource_id = attachment.resource_id
+          WHERE attachment.part_id IN (${ids.map(() => "?").join(", ")})
+          ORDER BY attachment.part_id, attachment.position`,
+        ...ids,
+      ).toArray());
   }
 
   /**
@@ -406,11 +415,12 @@ export class WorkstreamMessageStorage {
    */
   authorsFor(input: { userIds: readonly string[] }): MessageAuthorRow[] {
     if (input.userIds.length === 0) return [];
-    return this.sql.exec<MessageAuthorRow>(
-      `SELECT user_id, added_at FROM participants
-        WHERE user_id IN (${input.userIds.map(() => "?").join(", ")})`,
-      ...input.userIds,
-    ).toArray();
+    return boundParameterChunks(input.userIds).flatMap((ids) =>
+      this.sql.exec<MessageAuthorRow>(
+        `SELECT user_id, added_at FROM participants
+          WHERE user_id IN (${ids.map(() => "?").join(", ")})`,
+        ...ids,
+      ).toArray());
   }
 
   /**

@@ -216,6 +216,74 @@ describe("message authority on real workerd", () => {
     expect(window.value).toHaveLength(1);
   });
 
+  it("reads a page wider than one statement can bind", async () => {
+    const stub = agent();
+    await boot(stub);
+    const messageIds = Array.from({ length: 250 }, (_, index) => `m${String(index).padStart(3, "0")}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      for (const [index, id] of messageIds.entries()) {
+        state.storage.sql.exec(
+          `INSERT INTO parts
+             (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
+              author_user_id, content, client_message_id, visibility, pinned, message_type,
+              created_at, updated_at)
+           VALUES (?, '0', ?, ?, 'user', 'text', 'member', ?, 'hi', ?, 'both', 0, 'text', 1, 1)`,
+          id,
+          index + 1,
+          index + 1,
+          `u${index}`,
+          `c${index}`,
+        );
+        state.storage.sql.exec(
+          `INSERT INTO part_mentions
+             (part_id, mention_index, mention_kind, target_user_id, connector_type,
+              start_offset, end_offset, attention_ordinal)
+           VALUES (?, 0, 'person', ?, NULL, 0, 1, 1)`,
+          id,
+          `u${index}`,
+        );
+        state.storage.sql.exec(
+          `INSERT INTO participants
+             (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+              added_at, removed_at, updated_at)
+           VALUES (?, 'message', ?, 'active', 0, 1, NULL, 1)`,
+          `u${index}`,
+          `u${index}`,
+        );
+        state.storage.sql.exec(
+          `INSERT INTO workstream_resource_links
+             (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+              resource_json, attached_at, updated_at)
+           VALUES (?, NULL, 0, 'explicit', '{}', 1, 1)`,
+          `r${index}`,
+        );
+        state.storage.sql.exec(
+          `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+           VALUES (?, ?, 0, '{}')`,
+          id,
+          `r${index}`,
+        );
+      }
+    });
+
+    // 250 is what `transcriptLister` asks the object for, and this engine binds
+    // 100 parameters per statement. An unchunked `IN` list does not return a
+    // short answer — the statement is refused and the whole page fails. Only
+    // the runtime has that ceiling; `node:sqlite` accepts far more, which is
+    // why this cannot live in the Node suite.
+    const mentions = await messages(stub, "mentionsFor", { messageIds });
+    const attachments = await messages(stub, "attachmentsFor", { messageIds });
+    const authors = await messages(stub, "authorsFor", {
+      userIds: messageIds.map((_, index) => `u${index}`),
+    });
+
+    expect(mentions.status).toBe(200);
+    expect(mentions.value).toHaveLength(250);
+    expect(attachments.value).toHaveLength(250);
+    expect(authors.value).toHaveLength(250);
+  });
+
   it("refuses an operation that is not on the contract", async () => {
     const stub = agent();
     await boot(stub);
