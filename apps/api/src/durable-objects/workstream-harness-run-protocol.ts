@@ -34,6 +34,9 @@ const DISPATCHED_OPERATIONS = [
   "inlineChildOwnership",
   "admitInlineChild",
   "heartbeatInlineChild",
+  "inlineChildByToolCall",
+  "terminalizeInlineChild",
+  "cancelDescendants",
 ] as const satisfies readonly HarnessRunOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */

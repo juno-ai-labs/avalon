@@ -3255,17 +3255,10 @@ async function waitForInlineChildResult(
   parentToolCallId: string,
   signal: AbortSignal,
 ): Promise<InlineChildResult | null> {
+  const runs = createHarnessRunObjectPort(env, parentInput.workspaceId, parentInput.workstreamId);
   while (!signal.aborted) {
-    await assertHarnessAttemptOwned(
-      createHarnessRunObjectPort(env, parentInput.workspaceId, parentInput.workstreamId),
-      parentInput.harnessRunId,
-      parentLease,
-    );
-    const lookup = await loadInlineChildResult(
-      env.DB,
-      parentInput.harnessRunId,
-      parentToolCallId,
-    );
+    await assertHarnessAttemptOwned(runs, parentInput.harnessRunId, parentLease);
+    const lookup = await loadInlineChildResult(runs, parentInput, parentToolCallId);
     if (lookup.state === "replay") return lookup.outcome;
     if (lookup.state === "missing") return null;
     const expiresAt = lookup.leaseExpiresAt ? Date.parse(lookup.leaseExpiresAt) : Number.NaN;
@@ -3619,7 +3612,6 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
       const childMonitor = childLiveness.startMonitor(5_000);
       try {
         await persistInlineChildScope(
-          options.env.DB,
           runs,
           parentInput,
           options.parentLease(),
@@ -4139,7 +4131,6 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
       }
 
       await terminalizeInlineChildAttempt(
-        options.env.DB,
         runs,
         parentInput,
         options.parentLease(),
