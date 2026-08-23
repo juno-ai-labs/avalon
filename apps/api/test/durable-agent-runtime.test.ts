@@ -97,6 +97,44 @@ describe("DurableAgentDrain", () => {
     expect(drain.active).toBe(false);
     expect(drain.abandonActive()).toBe(false);
   });
+
+  it("revokes an abandoned continuation before it can drain another dispatch", async () => {
+    const drain = new DurableAgentDrain();
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstHeld = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const secondHeld = new Promise<void>((resolve) => { releaseSecond = resolve; });
+    const firstIterations: number[] = [];
+    const secondIterations: number[] = [];
+
+    const first = drain.resume(async (ownsDrain) => {
+      while (ownsDrain()) {
+        firstIterations.push(firstIterations.length + 1);
+        if (firstIterations.length > 1) return;
+        await firstHeld;
+      }
+    }, () => undefined);
+    await vi.waitFor(() => expect(firstIterations).toEqual([1]));
+
+    expect(drain.abandonActive()).toBe(true);
+    const second = drain.resume(async (ownsDrain) => {
+      while (ownsDrain()) {
+        secondIterations.push(secondIterations.length + 1);
+        await secondHeld;
+        return;
+      }
+    }, () => undefined);
+    await vi.waitFor(() => expect(secondIterations).toEqual([1]));
+
+    releaseFirst();
+    await first;
+    expect(firstIterations).toEqual([1]);
+    expect(drain.active).toBe(true);
+
+    releaseSecond();
+    await second;
+    expect(drain.active).toBe(false);
+  });
 });
 
 describe("DurableAgentPublicationQueue", () => {
