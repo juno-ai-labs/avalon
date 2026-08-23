@@ -1012,8 +1012,8 @@ export class WorkstreamTerminalStorage {
 
   /**
    * One unsettled task for lifecycle reconciliation, irrespective of owner.
-   * Submitting comes first because mixed residue must retire its generation
-   * before a running-task stop could make that same sandbox reusable.
+   * Pre-acceptance states come first because mixed residue must retire its
+   * generation before a running-task stop could make that sandbox reusable.
    */
   unsettledTask(generation: number): TerminalTaskRecord | null {
     const row = first<TaskRow>(this.sql.exec<TaskRow>(
@@ -1025,7 +1025,7 @@ export class WorkstreamTerminalStorage {
          FROM terminal_tasks
         WHERE sandbox_generation = ?
           AND state IN ('planned', 'submitting', 'running')
-        ORDER BY CASE state WHEN 'submitting' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,
+        ORDER BY CASE state WHEN 'running' THEN 1 ELSE 0 END,
                  task_id
         LIMIT 1`,
       generation,

@@ -125,9 +125,10 @@ Daytona revalidates that authority immediately before every mutating submission
 step. Provider acceptance atomically changes the task to `running` and installs
 the requested command-plus-observation horizon. The follow-up repair now stops
 the whole sandbox before settling an accepted command; deleting a named session
-is not accepted as process-quiescence evidence. A `submitting` command instead
-retires the old provider sandbox and advances to a fresh generation before
-handoff. A due expiry settles `expired` and preserves its final-diff reference
+is not accepted as process-quiescence evidence. A pre-acceptance `planned` or
+`submitting` command instead retires the old provider sandbox and advances to a
+fresh generation before handoff. A due expiry settles `expired` and preserves
+its final-diff reference
 instead of creating a replacement generation. An
 object-local cleanup token keeps competing tools and lifecycle work
 excluded across each provider await. It is renewed before every provider
@@ -136,7 +137,7 @@ cannot touch a successor. Transient cleanup failure does not become a stale
 member-facing sandbox failure. A definitive late result is preserved only
 inside the obsolete runtime; the harness receipt fence discards it, and no
 command-log attachment or provider cleanup runs after recovery wins. Scheduled lifecycle cleanup cancels every retained task under that token before
-retiring the provider sandbox; every `submitting` task takes that path without
+retiring the provider sandbox; every pre-acceptance task takes that path without
 waiting for a later human-linked run. That provider boundary matters because
 `command_outcome_unknown` does not prove the command stopped. The earlier
 command remains ambiguous and must not be replayed or called resolved.
@@ -158,7 +159,7 @@ It also disproved the original provider proof. Run
 `PR249_STRICT_LATE_SHOULD_NOT_EXIST`. Daytona had removed the named session
 while the accepted shell continued in the sandbox. The branch-local correction
 therefore requires whole-sandbox stop/restart for a `running` task and provider-
-sandbox retirement for a `submitting` task. Runtime and scheduled-lifecycle
+sandbox retirement for a pre-acceptance task. Runtime and scheduled-lifecycle
 tests both failed before that stop boundary was restored and now prove the task
 stays unsettled and contenders stay fenced across the provider await. This
 Global stop/recovery gate remains open until a deployed post-deadline

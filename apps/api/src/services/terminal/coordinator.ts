@@ -410,11 +410,12 @@ export class TerminalSandboxCoordinator {
         const task = await terminal.unsettledTask(row.generation);
         if (!task) return finishRecovery();
 
-        if (!sandboxRetired && task.state === "submitting") {
-          // A provider session is an observation handle, not a process-liveness
-          // authority. A submission can outlive removal of that handle and
-          // arrive later, so only retirement of the provider sandbox excludes
-          // a stale mutation from the successor generation.
+        if (!sandboxRetired && task.state !== "running") {
+          // Pre-acceptance work can outlive removal of an observation handle
+          // and arrive later, so only retirement of the provider sandbox
+          // excludes a stale mutation from the successor generation. This also
+          // keeps the schema-admitted `planned` state fail-safe if task
+          // admission ever moves before provider submission.
           try {
             await renewClaim();
             await this.provider.deleteSandbox(sandboxId);

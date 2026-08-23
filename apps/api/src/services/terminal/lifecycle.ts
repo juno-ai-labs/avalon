@@ -62,10 +62,11 @@ async function quiesceUnsettledTasks(
     const task = await terminal.unsettledTask(generation);
     if (!task) return { sandboxStopped, sandboxAbsent };
 
-    if (!sandboxAbsent && task.state === "submitting") {
-      // Session deletion cannot exclude an in-flight submission that has not
-      // returned its provider command id. Retire the sandbox so any stale
-      // request targets only the old generation.
+    if (!sandboxAbsent && task.state !== "running") {
+      // Stop/restart cannot exclude pre-acceptance work that may still reach
+      // the provider. Retire the sandbox so any stale request targets only the
+      // old generation; `planned` stays fail-safe if admission ever moves
+      // before provider submission.
       try {
         await renewClaim();
         await provider.deleteSandbox(providerSandboxId);

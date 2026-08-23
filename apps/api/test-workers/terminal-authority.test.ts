@@ -840,6 +840,7 @@ describe("Terminal authority on real workerd", () => {
         expireDueAt: 4_000_000,
         now: 1_000,
       });
+      await terminal(stub, "setFinalDiffResourceId", "pre-acceptance-retirement-diff", 1_001);
       await terminal(stub, "insertTask", {
         taskId: TASK_A,
         runId: RUN_A,
@@ -927,6 +928,7 @@ describe("Terminal authority on real workerd", () => {
         sandboxId: null,
         lifecycleState: "starting",
         operationRunId: RUN_B,
+        finalDiffResourceId: null,
       });
     });
 
@@ -948,6 +950,7 @@ describe("Terminal authority on real workerd", () => {
         expireDueAt: 4_000_000,
         now: 1_000,
       });
+      await terminal(stub, "setFinalDiffResourceId", "lifecycle-retirement-diff", 1_001);
       await terminal(stub, "insertTask", {
         taskId: TASK_A,
         runId: RUN_A,
@@ -1017,6 +1020,7 @@ describe("Terminal authority on real workerd", () => {
         sandboxId: null,
         lifecycleState: "starting",
         operationRunId: RUN_A,
+        finalDiffResourceId: null,
       });
     });
 

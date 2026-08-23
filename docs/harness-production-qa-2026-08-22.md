@@ -379,15 +379,16 @@ and installs the requested command-plus-observation horizon instead of extending
 the pre-submit fence. When a linked run encounters a retained accepted command,
 the follow-up repair now stops the whole Daytona sandbox before settling the
 exact durable task as cancelled and atomically handing the lease to the cleanup
-claimant. A `submitting` task instead retires the provider sandbox, advances to
-a fresh generation, and only then admits the successor. An object-local cleanup
+claimant. A pre-acceptance `planned` or `submitting` task instead retires the
+provider sandbox, advances to a fresh generation, and only then admits the
+successor. An object-local cleanup
 token excludes competing tools and lifecycle work across those provider awaits.
 The exact token is renewed before every provider mutation and cannot be revived
 after expiry, so a degraded cleanup
 cannot leave an obsolete stop/delete continuation behind after a successor
 takes over. The lifecycle sweep uses the same provider-cleanup-before-
 settlement order and token-fenced generation retirement for provider absence or
-any `submitting` task before final expiry; when
+any pre-acceptance task before final expiry; when
 expiry is due, provider absence settles `expired` and preserves the final diff
 instead of creating a replacement generation. Scheduled cleanup does not
 depend on a later human-linked run. An aborted or late provider continuation stays unsettled
@@ -482,12 +483,12 @@ read are the acceptance evidence.
 
 Accepted `running` tasks now require a token-renewed whole-sandbox stop before
 task cancellation or lease handoff. Acquisition restarts that same sandbox, so
-the filesystem remains available without the old process. A `submitting` task
+the filesystem remains available without the old process. A pre-acceptance task
 still deletes the provider sandbox and advances the generation, because a
 not-yet-returned submission could arrive after stop/restart. The same rule runs
 in scheduled lifecycle cleanup. Once a stop covers the generation, every
 residual running task is settled under that one claim instead of issuing a
-session deletion per task. `submitting` residue is selected first even when its
+session deletion per task. Pre-acceptance residue is selected first even when its
 task id sorts after a running row. A lost sandbox-delete response that is
 reconciled as provider absence stays inside the cleanup loop, which cancels all
 generation tasks before linked handoff or final expiry. Final expiry itself is
@@ -499,11 +500,11 @@ stop occurred, then passed with stop and restart ordered before the linked read
 while a second contender remained fenced. The scheduled-lifecycle regression
 likewise failed before the repair and now leaves the task `running` while stop is
 paused, then settles it only after stop completes. The four focused Terminal
-files pass 62/62 (21 runtime, 12 lifecycle, 10 coordinator, and 19 provider),
+files pass 64/64 (21 runtime, 13 lifecycle, 11 coordinator, and 19 provider),
 and the real-workerd authority file passes 38/38. The redundant second
 stop/restart happy-path test was removed because the paused-stop case already
 proves ordering, contender exclusion, task cancellation, and handoff. In its
-place, the coordinator regression proves a `submitting` task is selected before
+place, the coordinator regression proves a pre-acceptance task is selected before
 an earlier-sorting `running` residue, remains retirement-bound even when its
 late provider callback changes it to `running`, and prevents stop/restart reuse
 of that generation.
@@ -593,15 +594,16 @@ EU Wrangler dry-run build, `docs:check`, and `git diff --check`.
 
 The HQA-06 follow-up initially left the full Terminal authority file at 37/37
 and the four focused files at 61/61 (22 runtime, 11 lifecycle, 9 coordinator,
-and 19 provider). HQA-07 reaches 38/38 and 62/62 after replacing the redundant
+and 19 provider). HQA-07 reached 38/38 and 62/62 after replacing the redundant
 runtime case with the mixed-residue coordinator regression and adding the
-expiry-settlement/cancellation-failure pair, giving the current 21/12/10/19
-split. The
+expiry-settlement/cancellation-failure pair, giving a 21/12/10/19 split.
+Planned-task retirement coverage then raised the final focused total to 64/64
+with a 21/13/11/19 split. The
 pre-fix status predicate, a deliberate retained-task-fence removal, and a
 deliberate lifecycle-status rollback each failed the named regression before
 the repair was restored. After the final provider-quiescence repair, root lint
 passed with zero warnings, typecheck and `docs:check` passed, the full root test
-command passed (including 1,740 API Node tests, 234 API real-workerd tests, and
+command passed (including 1,742 API Node tests, 234 API real-workerd tests, and
 1,234 desktop tests), repository script tests passed 357/357, desktop release
 invariants passed 110/110, and both Global and EU Worker dry-run builds passed.
 

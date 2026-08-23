@@ -252,71 +252,83 @@ describe("Terminal scheduled lifecycle", () => {
     )).toEqual({ state: "cancelled", termination_reason: "cancelled" });
   });
 
-  it("retires an unconfirmed submitting sandbox without waiting for a linked run", async () => {
-    const { objectStore, db, provider } = fixture("running", {
-      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
-    });
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
+  it.each(["planned", "submitting"] as const)(
+    "retires an unconfirmed %s sandbox without waiting for a linked run",
+    async (taskState) => {
+      const { objectStore, db, provider } = fixture("running", {
+        warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+      });
+      workstreamObjectRun(
+        objectStore,
+        `INSERT INTO harness_runs
         (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
       VALUES ('run-submitting-lifecycle', ?, ?, 'test', ?, 'needs_input', '2026-08-13')`,
-      W, S, JSON.stringify({ type: "user", userId: U }),
-    );
-    workstreamObjectRun(
-      objectStore,
-      `UPDATE terminal_workspace
-          SET operation_run_id = 'run-submitting-lifecycle', operation_lease_expires_at = ?
+        W, S, JSON.stringify({ type: "user", userId: U }),
+      );
+      workstreamObjectRun(
+        objectStore,
+        `UPDATE terminal_workspace
+          SET operation_run_id = 'run-submitting-lifecycle', operation_lease_expires_at = ?,
+              final_diff_resource_id = 'pre-acceptance-old-final-diff'
         WHERE id = 1`,
-      Date.parse("2026-08-13T12:16:00.000Z"),
-    );
-    seedToolReceipt(objectStore, {
-      id: "invocation-submitting-lifecycle",
-      runId: "run-submitting-lifecycle",
-      toolCallId: "call",
-      toolName: "terminal_run_command",
-    });
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO terminal_tasks
+        Date.parse("2026-08-13T12:16:00.000Z"),
+      );
+      seedToolReceipt(objectStore, {
+        id: "invocation-submitting-lifecycle",
+        runId: "run-submitting-lifecycle",
+        toolCallId: "call",
+        toolName: "terminal_run_command",
+      });
+      workstreamObjectRun(
+        objectStore,
+        `INSERT INTO terminal_tasks
         (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name, state,
          command_sha256, command_deadline_at, stdout_head, stdout_tail, stderr_head,
          stderr_tail, stdout_bytes, stderr_bytes, created_at, updated_at)
       VALUES ('task-submitting-lifecycle', 'run-submitting-lifecycle',
-              'invocation-submitting-lifecycle', 1, 'task-submitting', 'submitting',
+              'invocation-submitting-lifecycle', 1, 'task-submitting', ?,
               'hash', ?, '', '', '', '', 0, 0, ?, ?)`,
-      Date.parse("2026-08-13T11:59:00.000Z"),
-      Date.parse("2026-08-13T11:00:00.000Z"),
-      Date.parse("2026-08-13T11:00:00.000Z"),
-    );
-    await expect(reconcileDueTerminalSandbox(
-      db,
-      testTerminalPortFactory(objectStore),
-      provider,
-      W,
-      S,
-      NOW,
-    )).resolves.toEqual({ transition: "deferred" });
-    expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
-    expect(provider.stopSandbox).not.toHaveBeenCalled();
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT state FROM terminal_tasks WHERE task_id = 'task-submitting-lifecycle'",
-    )).toEqual({ state: "cancelled" });
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT generation, sandbox_id, lifecycle_state, failure_code FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ generation: 2, sandbox_id: null, lifecycle_state: "starting", failure_code: null });
-    await expect(reconcileDueTerminalSandbox(
-      db,
-      testTerminalPortFactory(objectStore),
-      provider,
-      W,
-      S,
-      NOW,
-    )).resolves.toEqual({ transition: "none" });
-    expect(provider.deleteSandbox).toHaveBeenCalledOnce();
-  });
+        taskState,
+        Date.parse("2026-08-13T11:59:00.000Z"),
+        Date.parse("2026-08-13T11:00:00.000Z"),
+        Date.parse("2026-08-13T11:00:00.000Z"),
+      );
+      await expect(reconcileDueTerminalSandbox(
+        db,
+        testTerminalPortFactory(objectStore),
+        provider,
+        W,
+        S,
+        NOW,
+      )).resolves.toEqual({ transition: "deferred" });
+      expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
+      expect(provider.stopSandbox).not.toHaveBeenCalled();
+      expect(workstreamObjectGet(
+        objectStore,
+        "SELECT state FROM terminal_tasks WHERE task_id = 'task-submitting-lifecycle'",
+      )).toEqual({ state: "cancelled" });
+      expect(workstreamObjectGet(
+        objectStore,
+        `SELECT generation, sandbox_id, lifecycle_state, final_diff_resource_id, failure_code
+           FROM terminal_workspace WHERE id = 1`,
+      )).toEqual({
+        generation: 2,
+        sandbox_id: null,
+        lifecycle_state: "starting",
+        final_diff_resource_id: null,
+        failure_code: null,
+      });
+      await expect(reconcileDueTerminalSandbox(
+        db,
+        testTerminalPortFactory(objectStore),
+        provider,
+        W,
+        S,
+        NOW,
+      )).resolves.toEqual({ transition: "none" });
+      expect(provider.deleteSandbox).toHaveBeenCalledOnce();
+    },
+  );
 
   it("cancels retained tasks before expiry after a lost delete response", async () => {
     const { objectStore, db, provider } = fixture("archived", {
