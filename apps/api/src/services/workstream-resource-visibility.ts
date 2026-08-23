@@ -1,5 +1,6 @@
 import { classifyAttachmentKind, type AttachmentKind, type ExecutionPrincipal } from "@avalon/contracts";
 import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
+import { BOUND_PARAMETER_ID_CHUNK } from "../durable-objects/bound-parameters";
 import { sha256 } from "../lib/crypto";
 
 export interface VisibleWorkstreamResourceRow extends Record<string, unknown> {
@@ -62,21 +63,20 @@ export class WorkstreamResourceInventoryChangedError extends Error {
  *
  * Bounds: entries in the `IN (…)` list of the resource lookup below, and so the
  *   bound parameters of that statement — this many ids plus two.
- * Without it: a work stream with a thousand attachments builds one statement
- *   with a thousand placeholders, which is past what the binding accepts and
- *   fails the whole rail rather than paging through it.
- * Direction: upper bound. Lowering it costs round trips; raising it risks the
- *   statement being refused outright.
- * Trips: the loop simply runs more times. Nothing is dropped and no caller
- *   sees a partial answer — the batches are concatenated before projection.
- * Derive from: **not recorded.** This number predates the authority split and
- *   came across unchanged; the obvious candidate is the binding's parameter
- *   ceiling, but nothing in the history says so and 100 ids is 102 parameters,
- *   which does not sit neatly under any limit named in this repository.
- *   Whoever needs to move it should establish the ceiling first rather than
- *   inherit this guess.
+ * Without it: a work stream with more attachments than this builds a statement
+ *   past the engine's 100-parameter ceiling, which is refused outright: the
+ *   member's rail fails to load rather than loading slowly.
+ * Direction: upper bound, imposed by the engine rather than chosen.
+ * Trips: nothing. The loop runs more times, the batches are concatenated, and
+ *   no caller sees a partial answer.
+ * Derive from: the engine's 100-parameter limit, less the two scalars this
+ *   statement binds beside its ids. **This was 100 and had been since before
+ *   the authority split, which is 102 parameters — one statement over the
+ *   ceiling at a full batch.** It is 90 now, matching
+ *   `BOUND_PARAMETER_ID_CHUNK`, so the margin is the same one the object side
+ *   uses rather than a second guess about the same limit.
  */
-const RESOURCE_LOOKUP_BATCH = 100;
+const RESOURCE_LOOKUP_BATCH = BOUND_PARAMETER_ID_CHUNK;
 
 /**
  * Resolve the cross-authority resource projection without a cross-database
