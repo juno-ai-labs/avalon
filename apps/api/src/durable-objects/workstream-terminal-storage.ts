@@ -31,16 +31,24 @@ export type TerminalLifecycleState =
   | "archived" | "restoring" | "expiring" | "expired" | "failed";
 
 /**
- * The run statuses that are finished — used as `NOT IN` to find a live holder.
+ * The run statuses that have yielded execution — used as `NOT IN` to find a
+ * live holder.
  *
  * Named for what it contains rather than what it decides: the compatibility
  * view projected `admitted` as `scheduled` and both `waiting` and `steering`
  * as `running`, so the lease's liveness test read
  * `status IN ('scheduled', 'running', 'needs_input')`. Against the real column
- * that is every status which is not terminal. Someone reading a name like
- * `LIVE_RUN_STATUSES` here and adding `'running'` would invert the test.
+ * that included `needs_input` even though an answer is admitted as a new run;
+ * the yielded run does not resume execution or release this lease itself. A
+ * yielded run's still-live Terminal task is checked separately below, because
+ * `command_outcome_unknown` retains its named provider session for recovery.
+ * Renaming this to `LIVE_RUN_STATUSES` and adding `'running'` would invert the
+ * test, which is why the constant names the values it actually contains.
  */
-const TERMINAL_RUN_STATUSES = "('completed', 'failed', 'cancelled')";
+const TERMINAL_YIELDED_RUN_STATUSES = "('needs_input', 'completed', 'failed', 'cancelled')";
+
+/** Existing Terminal operation-authority window, shared by cleanup claims. */
+export const TERMINAL_OPERATION_LEASE_MS = 16 * 60_000;
 
 export interface TerminalSandboxRecord {
   lifecycleState: TerminalLifecycleState;
@@ -329,8 +337,9 @@ export class WorkstreamTerminalStorage {
    * Take the work stream's exclusive Terminal operation lease for one run.
    *
    * The lease yields when it is unheld, already this run's, expired, or held by
-   * a run that is no longer live — the last case is what stops an evicted run
-   * from holding the workspace until its lease clock runs out.
+   * a run that has yielded. Every takeover from another run is additionally
+   * fenced on the absence of an unsettled Terminal task. A nominal command or
+   * lease deadline is not proof that the provider process is quiescent.
    */
   claimOperation(input: {
     runId: string;
@@ -341,17 +350,28 @@ export class WorkstreamTerminalStorage {
     return this.storage.transactionSync(() => {
       const claimed = first<{ operation_run_id: string }>(this.sql.exec(
         `UPDATE terminal_workspace
-            SET operation_run_id = ?, operation_lease_expires_at = ?, updated_at = ?
+            SET operation_run_id = ?, operation_lease_expires_at = ?,
+                version = version + 1, updated_at = ?
           WHERE id = 1 AND generation = ?
+            AND lifecycle_claim_id IS NULL
             AND (
-              operation_run_id IS NULL
-              OR operation_run_id = ?
-              OR operation_lease_expires_at IS NULL
-              OR operation_lease_expires_at <= ?
-              OR NOT EXISTS (
-                SELECT 1 FROM runs holder
-                 WHERE holder.run_id = terminal_workspace.operation_run_id
-                   AND holder.status NOT IN ${TERMINAL_RUN_STATUSES}
+              operation_run_id = ?
+              OR (
+                NOT EXISTS (
+                  SELECT 1 FROM terminal_tasks task
+                   WHERE task.sandbox_generation = terminal_workspace.generation
+                     AND task.state IN ('planned', 'submitting', 'running')
+                )
+                AND (
+                  operation_run_id IS NULL
+                  OR operation_lease_expires_at IS NULL
+                  OR operation_lease_expires_at <= ?
+                  OR NOT EXISTS (
+                    SELECT 1 FROM runs holder
+                     WHERE holder.run_id = terminal_workspace.operation_run_id
+                       AND holder.status NOT IN ${TERMINAL_YIELDED_RUN_STATUSES}
+                  )
+                )
               )
             )
           RETURNING operation_run_id`,
@@ -364,6 +384,225 @@ export class WorkstreamTerminalStorage {
       ));
       return claimed ? this.sandbox() : null;
     });
+  }
+
+  /**
+   * Exclusively claim provider cleanup for a yielded operation holder.
+   *
+   * The claim is workspace-local authority across the provider await. Normal
+   * operation claims and lifecycle transitions cannot enter until the exact
+   * token settles or is explicitly released.
+   */
+  claimYieldedOperationRecovery(input: {
+    runId: string;
+    generation: number;
+    sandboxId: string;
+    version: number;
+    claimId: string;
+    claimExpiresAt: number;
+    now: number;
+  }): boolean {
+    return first<{ id: number }>(this.sql.exec(
+      `UPDATE terminal_workspace
+          SET lifecycle_claim_id = ?, lifecycle_claim_expires_at = ?,
+              version = version + 1, updated_at = ?
+        WHERE id = 1 AND generation = ? AND sandbox_id = ? AND version = ?
+          AND operation_run_id IS NOT NULL AND operation_run_id <> ?
+          AND lifecycle_state NOT IN ('stopping', 'archiving', 'expiring')
+          AND (lifecycle_claim_id IS NULL OR lifecycle_claim_expires_at <= ?)
+          AND EXISTS (
+            SELECT 1 FROM runs holder
+             WHERE holder.run_id = terminal_workspace.operation_run_id
+               AND holder.status IN ${TERMINAL_YIELDED_RUN_STATUSES}
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM terminal_tasks task
+             WHERE task.sandbox_generation = terminal_workspace.generation
+               AND task.state = 'submitting'
+               AND task.command_deadline_at > ?
+          )
+          AND EXISTS (
+            SELECT 1 FROM terminal_tasks task
+             WHERE task.sandbox_generation = terminal_workspace.generation
+               AND task.state IN ('planned', 'submitting', 'running')
+          )
+        RETURNING id`,
+      input.claimId,
+      input.claimExpiresAt,
+      input.now,
+      input.generation,
+      input.sandboxId,
+      input.version,
+      input.runId,
+      input.now,
+      input.now,
+    )) !== null;
+  }
+
+  /** Atomically hand the recovered sandbox lease to the cleanup claimant. */
+  settleYieldedOperationRecovery(input: {
+    runId: string;
+    generation: number;
+    sandboxId: string;
+    claimId: string;
+    leaseExpiresAt: number;
+    sandboxStopped: boolean;
+    now: number;
+  }): TerminalSandboxRecord | null {
+    return this.storage.transactionSync(() => {
+      const settled = first<{ id: number }>(this.sql.exec(
+        `UPDATE terminal_workspace
+            SET operation_run_id = ?, operation_lease_expires_at = ?,
+                lifecycle_state = CASE WHEN ? = 1 THEN 'stopped' ELSE lifecycle_state END,
+                idle_expires_at = CASE WHEN ? = 1 THEN NULL ELSE idle_expires_at END,
+                lifecycle_claim_id = NULL, lifecycle_claim_expires_at = NULL,
+                failure_code = NULL, version = version + 1, updated_at = ?
+          WHERE id = 1 AND generation = ? AND sandbox_id = ?
+            AND lifecycle_claim_id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM terminal_tasks task
+               WHERE task.sandbox_generation = terminal_workspace.generation
+                 AND task.state IN ('planned', 'submitting', 'running')
+            )
+          RETURNING id`,
+        input.runId,
+        input.leaseExpiresAt,
+        input.sandboxStopped ? 1 : 0,
+        input.sandboxStopped ? 1 : 0,
+        input.now,
+        input.generation,
+        input.sandboxId,
+        input.claimId,
+      ));
+      return settled ? this.sandbox() : null;
+    });
+  }
+
+  /**
+   * Retire a provider sandbox that cannot prove a pre-submission command
+   * quiescent, then hand a fresh generation to the exact cleanup claimant.
+   * The provider delete/404 observation happens before this transaction; the
+   * claim and no-live-task predicates keep that observation attached to the
+   * generation it actually covered.
+   */
+  retireYieldedOperationRecovery(input: {
+    runId: string;
+    generation: number;
+    sandboxId: string;
+    claimId: string;
+    leaseExpiresAt: number;
+    idleExpiresAt: number;
+    archiveDueAt: number;
+    expireDueAt: number;
+    now: number;
+  }): TerminalSandboxRecord | null {
+    return this.storage.transactionSync(() => {
+      const retired = first<{ id: number }>(this.sql.exec(
+        `UPDATE terminal_workspace
+            SET generation = generation + 1, sandbox_id = NULL,
+                lifecycle_state = 'starting', operation_run_id = ?,
+                operation_lease_expires_at = ?, last_command_at = ?,
+                idle_expires_at = ?, archive_due_at = ?, expire_due_at = ?,
+                lifecycle_claim_id = NULL, lifecycle_claim_expires_at = NULL,
+                final_diff_resource_id = NULL, failure_code = NULL,
+                version = version + 1, updated_at = ?
+          WHERE id = 1 AND generation = ? AND sandbox_id = ?
+            AND lifecycle_claim_id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM terminal_tasks task
+               WHERE task.sandbox_generation = terminal_workspace.generation
+                 AND task.state IN ('planned', 'submitting', 'running')
+            )
+          RETURNING id`,
+        input.runId,
+        input.leaseExpiresAt,
+        input.now,
+        input.idleExpiresAt,
+        input.archiveDueAt,
+        input.expireDueAt,
+        input.now,
+        input.generation,
+        input.sandboxId,
+        input.claimId,
+      ));
+      if (!retired) return null;
+      this.sql.exec(
+        `DELETE FROM terminal_imported_resources WHERE sandbox_generation <= ?`,
+        input.generation,
+      );
+      return this.sandbox();
+    });
+  }
+
+  /**
+   * Retire a sandbox that a lifecycle claim proved absent at the provider.
+   * Unlike normal expiry, this advances the generation so repository and
+   * imported-resource provenance can never describe a future replacement.
+   */
+  retireMissingSandboxAfterLifecycleClaim(input: {
+    generation: number;
+    sandboxId: string;
+    claimId: string;
+    now: number;
+  }): TerminalSandboxRecord | null {
+    return this.storage.transactionSync(() => {
+      const retired = first<{ id: number }>(this.sql.exec(
+        `UPDATE terminal_workspace
+            SET generation = generation + 1, sandbox_id = NULL,
+                lifecycle_state = 'starting', idle_expires_at = NULL,
+                archive_due_at = NULL, expire_due_at = NULL,
+                lifecycle_claim_id = NULL, lifecycle_claim_expires_at = NULL,
+                final_diff_resource_id = NULL, failure_code = NULL,
+                version = version + 1, updated_at = ?
+          WHERE id = 1 AND generation = ? AND sandbox_id = ?
+            AND lifecycle_claim_id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM terminal_tasks task
+               WHERE task.sandbox_generation = terminal_workspace.generation
+                 AND task.state IN ('planned', 'submitting', 'running')
+            )
+          RETURNING id`,
+        input.now,
+        input.generation,
+        input.sandboxId,
+        input.claimId,
+      ));
+      if (!retired) return null;
+      this.sql.exec(
+        `DELETE FROM terminal_imported_resources WHERE sandbox_generation <= ?`,
+        input.generation,
+      );
+      return this.sandbox();
+    });
+  }
+
+  /**
+   * Extend one exact provider-await claim without reviving an already-expired
+   * token. A stale continuation must fail here before its next provider
+   * mutation; a contender may replace the token only after this deadline.
+   */
+  renewLifecycleClaim(input: {
+    generation: number;
+    sandboxId: string;
+    claimId: string;
+    claimExpiresAt: number;
+    now: number;
+  }): boolean {
+    return first<{ id: number }>(this.sql.exec(
+      `UPDATE terminal_workspace
+          SET lifecycle_claim_expires_at = ?, updated_at = ?
+        WHERE id = 1 AND generation = ? AND sandbox_id = ?
+          AND lifecycle_claim_id = ?
+          AND lifecycle_claim_expires_at IS NOT NULL
+          AND lifecycle_claim_expires_at > ?
+        RETURNING id`,
+      input.claimExpiresAt,
+      input.now,
+      input.generation,
+      input.sandboxId,
+      input.claimId,
+      input.now,
+    )) !== null;
   }
 
   /**
@@ -618,10 +857,10 @@ export class WorkstreamTerminalStorage {
     return claimed ? { sandboxId: claimed.sandbox_id } : null;
   }
 
-  /** Fail a claimed transition and release the claim. */
+  /** Fail or cleanly release a claimed transition. */
   failLifecycleClaim(input: {
     lifecycleState: TerminalLifecycleState;
-    failureCode: string;
+    failureCode: string | null;
     claimId: string;
     now: number;
   }): void {
@@ -762,6 +1001,23 @@ export class WorkstreamTerminalStorage {
     return row ? toTask(row) : null;
   }
 
+  /** One unsettled task for lifecycle reconciliation, irrespective of owner. */
+  unsettledTask(generation: number): TerminalTaskRecord | null {
+    const row = first<TaskRow>(this.sql.exec<TaskRow>(
+      `SELECT task_id, run_id, effect_intent_id, sandbox_generation,
+              provider_task_name, provider_task_id, state, command_sha256,
+              command_deadline_at, exit_code, termination_reason, stdout_head,
+              stdout_tail, stderr_head, stderr_tail, stdout_bytes, stderr_bytes,
+              output_resource_id, started_at, completed_at
+         FROM terminal_tasks
+        WHERE sandbox_generation = ?
+          AND state IN ('planned', 'submitting', 'running')
+        ORDER BY task_id LIMIT 1`,
+      generation,
+    ));
+    return row ? toTask(row) : null;
+  }
+
   /** True while any task for this generation is still inside its deadline. */
   hasLiveTask(generation: number, now: number): boolean {
     return first<{ task_id: string }>(this.sql.exec(
@@ -781,51 +1037,138 @@ export class WorkstreamTerminalStorage {
   }
 
   /**
-   * Record a submitted command.
+   * Admit one command into its provider-submission window.
    *
-   * `INSERT OR IGNORE` is for the replay: the unique effect intent makes a
-   * second submission of the same command a no-op, which is what lets a
-   * Worker interrupted mid-command re-enter its own receipt.
-   *
-   * It does not soften the foreign key. SQLite's ON CONFLICT algorithms do not
-   * apply to FOREIGN KEY constraints, so an effect intent with no row in
-   * `tool_effects` aborts rather than being skipped. That is unreachable
-   * today — the id comes from the caller's own `tool_invocations` lookup, so
-   * the parent is known to exist — but it is a constraint, not a fallback.
+   * The existing-row identity check handles exact replay before the insert.
+   * A mismatched receipt, sandbox generation, provider name, or command hash
+   * fails closed instead of being treated as the same command.
    */
   insertTask(input: {
     taskId: string;
     runId: string;
     effectIntentId: string;
     sandboxGeneration: number;
+    sandboxId: string;
     providerTaskName: string;
     commandSha256: string;
     commandDeadlineAt: number;
     startedAt: number;
     now: number;
-  }): void {
-    this.sql.exec(
-      `INSERT OR IGNORE INTO terminal_tasks
-         (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name,
-          state, command_sha256, command_deadline_at, stdout_head, stdout_tail,
-          stderr_head, stderr_tail, stdout_bytes, stderr_bytes, started_at,
-          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'running', ?, ?, '', '', '', '', 0, 0, ?, ?, ?)`,
-      input.taskId,
-      input.runId,
-      input.effectIntentId,
-      input.sandboxGeneration,
-      input.providerTaskName,
-      input.commandSha256,
+  }): boolean {
+    return this.storage.transactionSync(() => {
+      const authorized = first<{ id: number }>(this.sql.exec(
+        `SELECT workspace.id
+           FROM terminal_workspace workspace
+           JOIN runs holder ON holder.run_id = ?
+          WHERE workspace.id = 1
+            AND workspace.generation = ? AND workspace.sandbox_id = ?
+            AND workspace.operation_run_id = ?
+            AND workspace.lifecycle_claim_id IS NULL
+            AND holder.status NOT IN ${TERMINAL_YIELDED_RUN_STATUSES}`,
+        input.runId,
+        input.sandboxGeneration,
+        input.sandboxId,
+        input.runId,
+      ));
+      if (!authorized) return false;
+
+      const existing = this.taskByEffect(input.effectIntentId);
+      if (existing) {
+        return existing.runId === input.runId
+          && existing.sandboxGeneration === input.sandboxGeneration
+          && existing.providerTaskName === input.providerTaskName
+          && existing.commandSha256 === input.commandSha256
+          && (existing.state === "submitting" || existing.state === "running");
+      }
+
+      return first<{ task_id: string }>(this.sql.exec(
+        `INSERT INTO terminal_tasks
+           (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name,
+            state, command_sha256, command_deadline_at, stdout_head, stdout_tail,
+            stderr_head, stderr_tail, stdout_bytes, stderr_bytes, started_at,
+            created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'submitting', ?, ?, '', '', '', '', 0, 0, ?, ?, ?)
+         RETURNING task_id`,
+        input.taskId,
+        input.runId,
+        input.effectIntentId,
+        input.sandboxGeneration,
+        input.providerTaskName,
+        input.commandSha256,
+        input.commandDeadlineAt,
+        input.startedAt,
+        input.now,
+        input.now,
+      )) !== null;
+    });
+  }
+
+  /**
+   * Renew the bounded provider-submission window only while the exact run,
+   * sandbox generation, and operation lease still authorize this task.
+   */
+  renewTaskSubmissionAuthority(input: {
+    effectIntentId: string;
+    runId: string;
+    sandboxGeneration: number;
+    sandboxId: string;
+    commandDeadlineAt: number;
+    now: number;
+  }): boolean {
+    return first<{ task_id: string }>(this.sql.exec(
+      `UPDATE terminal_tasks
+          SET command_deadline_at = MAX(command_deadline_at, ?), updated_at = ?
+        WHERE effect_intent_id = ? AND run_id = ?
+          AND sandbox_generation = ? AND state = 'submitting'
+          AND EXISTS (
+            SELECT 1 FROM terminal_workspace workspace
+            JOIN runs holder ON holder.run_id = ?
+             WHERE workspace.id = 1
+               AND workspace.generation = terminal_tasks.sandbox_generation
+               AND workspace.sandbox_id = ?
+               AND workspace.operation_run_id = ?
+               AND workspace.lifecycle_claim_id IS NULL
+               AND holder.status NOT IN ${TERMINAL_YIELDED_RUN_STATUSES}
+          )
+        RETURNING task_id`,
       input.commandDeadlineAt,
-      input.startedAt,
       input.now,
+      input.effectIntentId,
+      input.runId,
+      input.sandboxGeneration,
+      input.runId,
+      input.sandboxId,
+      input.runId,
+    )) !== null;
+  }
+
+  /** Record that Daytona accepted the named command before observation begins. */
+  markTaskRunning(input: {
+    effectIntentId: string;
+    providerTaskId: string;
+    commandDeadlineAt: number;
+    now: number;
+  }): boolean {
+    return first<{ task_id: string }>(this.sql.exec(
+      `UPDATE terminal_tasks
+          SET state = 'running', provider_task_id = ?,
+              command_deadline_at = MAX(command_deadline_at, ?), updated_at = ?
+        WHERE effect_intent_id = ? AND state IN ('submitting', 'running')
+          AND (provider_task_id IS NULL OR provider_task_id = ?)
+        RETURNING task_id`,
+      input.providerTaskId,
+      input.commandDeadlineAt,
       input.now,
-    );
+      input.effectIntentId,
+      input.providerTaskId,
+    )) !== null;
   }
 
   settleTask(input: {
     effectIntentId: string;
+    runId: string;
+    sandboxGeneration: number;
+    sandboxId: string;
     state: string;
     exitCode: number | null;
     terminationReason: string | null;
@@ -835,16 +1178,28 @@ export class WorkstreamTerminalStorage {
     stderrTail: string;
     stdoutBytes: number;
     stderrBytes: number;
-    outputResourceId: string | null;
     completedAt: number | null;
     now: number;
-  }): void {
-    this.sql.exec(
+  }): boolean {
+    return first<{ task_id: string }>(this.sql.exec(
       `UPDATE terminal_tasks
           SET state = ?, exit_code = ?, termination_reason = ?, stdout_head = ?,
               stdout_tail = ?, stderr_head = ?, stderr_tail = ?, stdout_bytes = ?,
-              stderr_bytes = ?, output_resource_id = ?, completed_at = ?, updated_at = ?
-        WHERE effect_intent_id = ?`,
+              stderr_bytes = ?, completed_at = ?, updated_at = ?
+        WHERE effect_intent_id = ?
+          AND run_id = ? AND sandbox_generation = ?
+          AND state IN ('planned', 'submitting', 'running')
+          AND EXISTS (
+            SELECT 1 FROM terminal_workspace workspace
+            JOIN runs holder ON holder.run_id = ?
+             WHERE workspace.id = 1
+               AND workspace.generation = terminal_tasks.sandbox_generation
+               AND workspace.sandbox_id = ?
+               AND workspace.operation_run_id = ?
+               AND workspace.lifecycle_claim_id IS NULL
+               AND holder.status NOT IN ${TERMINAL_YIELDED_RUN_STATUSES}
+          )
+        RETURNING task_id`,
       input.state,
       input.exitCode,
       input.terminationReason,
@@ -854,11 +1209,82 @@ export class WorkstreamTerminalStorage {
       input.stderrTail,
       input.stdoutBytes,
       input.stderrBytes,
-      input.outputResourceId,
       input.completedAt,
       input.now,
       input.effectIntentId,
-    );
+      input.runId,
+      input.sandboxGeneration,
+      input.runId,
+      input.sandboxId,
+      input.runId,
+    )) !== null;
+  }
+
+  /** Attach an idempotently published command log to one terminal result. */
+  attachTaskOutputResource(input: {
+    effectIntentId: string;
+    runId: string;
+    sandboxGeneration: number;
+    state: string;
+    completedAt: number;
+    outputResourceId: string;
+    now: number;
+  }): boolean {
+    return first<{ task_id: string }>(this.sql.exec(
+      `UPDATE terminal_tasks
+          SET output_resource_id = ?, updated_at = ?
+        WHERE effect_intent_id = ?
+          AND run_id = ? AND sandbox_generation = ?
+          AND state = ? AND completed_at = ?
+          AND state IN ('completed', 'failed', 'timed_out')
+          AND output_resource_id IS NULL
+        RETURNING task_id`,
+      input.outputResourceId,
+      input.now,
+      input.effectIntentId,
+      input.runId,
+      input.sandboxGeneration,
+      input.state,
+      input.completedAt,
+    )) !== null;
+  }
+
+  /**
+   * Settle exactly one task only after its provider session, or its whole
+   * sandbox, has been confirmed quiescent by the caller.
+   */
+  cancelTaskAfterProviderCleanup(input: {
+    taskId: string;
+    runId: string;
+    effectIntentId: string;
+    sandboxGeneration: number;
+    providerTaskName: string;
+    claimId: string;
+    now: number;
+  }): boolean {
+    return first<{ task_id: string }>(this.sql.exec(
+      `UPDATE terminal_tasks
+          SET state = 'cancelled', termination_reason = 'cancelled',
+              completed_at = ?, updated_at = ?
+        WHERE task_id = ? AND run_id = ? AND effect_intent_id = ?
+          AND sandbox_generation = ? AND provider_task_name = ?
+          AND state IN ('planned', 'submitting', 'running')
+          AND EXISTS (
+            SELECT 1 FROM terminal_workspace workspace
+             WHERE workspace.id = 1
+               AND workspace.generation = terminal_tasks.sandbox_generation
+               AND workspace.lifecycle_claim_id = ?
+          )
+        RETURNING task_id`,
+      input.now,
+      input.now,
+      input.taskId,
+      input.runId,
+      input.effectIntentId,
+      input.sandboxGeneration,
+      input.providerTaskName,
+      input.claimId,
+    )) !== null;
   }
 
   cancelUnsettledTasks(now: number): void {

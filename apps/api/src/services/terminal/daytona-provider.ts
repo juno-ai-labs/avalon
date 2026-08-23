@@ -9,6 +9,9 @@ import {
 
 type SupportedTerminalConfiguration = Extract<TerminalRegionConfiguration, { capability: "supported" }>;
 
+/** Existing Daytona client request bound used by durable submission fencing. */
+export const DAYTONA_REQUEST_TIMEOUT_MS = 120_000;
+
 export type TerminalSandboxState =
   | "starting"
   | "running"
@@ -147,8 +150,19 @@ export interface TerminalSandboxProvider {
     timeoutMs: number;
     signal?: AbortSignal;
     retainSessionForRecovery?: boolean;
+    /**
+     * Re-check durable submission authority immediately before each provider
+     * mutation that could create or execute the named command session.
+     */
+    assertSubmissionAuthority?: () => Promise<void>;
+    onSubmitted?: (providerTaskId: string) => Promise<void>;
   }): Promise<{ exitCode: number; stdout: string; stderr: string; timedOut?: boolean }>;
-  cleanupCommand?(idOrName: string, taskName: string): Promise<void>;
+  /**
+   * Delete one named command session. Success confirms that session is
+   * quiescent; failure leaves whole-sandbox stop/reconciliation to the caller
+   * that owns the durable cleanup claim.
+   */
+  cleanupCommand?(idOrName: string, taskName: string): Promise<"deleted" | "missing" | void>;
   publishGitBundle(input: {
     operationId: string;
     bundle: Uint8Array;
@@ -288,7 +302,7 @@ export function createDaytonaTerminalProvider(
     apiKey: configuration.apiKey,
     apiUrl: configuration.apiUrl,
     target: configuration.target,
-    requestTimeoutMs: 120_000,
+    requestTimeoutMs: DAYTONA_REQUEST_TIMEOUT_MS,
   });
 
   const load = async (idOrName: string): Promise<DaytonaSandboxLike> => client.get(idOrName);
@@ -596,8 +610,7 @@ export function createDaytonaTerminalProvider(
         try {
           await sandbox.process!.deleteSession(input.taskName);
         } catch (error) {
-          await sandbox.stop?.();
-          if (!suppressFailure) throw error;
+          if (!suppressFailure && !isTerminalProviderNotFound(error)) throw error;
         }
       };
       try {
@@ -620,6 +633,11 @@ export function createDaytonaTerminalProvider(
           try {
             commands = (await sandbox.process!.getSession!(input.taskName)).commands;
           } catch {
+            if (input.signal?.aborted) {
+              cancelled = true;
+              throw new Error("Terminal command cancelled");
+            }
+            await input.assertSubmissionAuthority?.();
             try {
               await sandbox.process!.createSession(input.taskName);
             } catch {
@@ -632,8 +650,15 @@ export function createDaytonaTerminalProvider(
             throw new Error("The stable Daytona command session contains more than one command");
           }
           if (commands[0] && commands[0].command !== command) {
+            await input.assertSubmissionAuthority?.();
             try {
               await sandbox.process!.deleteSession(input.taskName);
+            } catch (error) {
+              await sandbox.stop?.();
+              throw error;
+            }
+            await input.assertSubmissionAuthority?.();
+            try {
               await sandbox.process!.createSession(input.taskName);
               commands = [];
             } catch (error) {
@@ -646,6 +671,11 @@ export function createDaytonaTerminalProvider(
           let initialStdout: string | undefined;
           let initialStderr: string | undefined;
           if (!commandId) {
+            if (input.signal?.aborted) {
+              cancelled = true;
+              throw new Error("Terminal command cancelled");
+            }
+            await input.assertSubmissionAuthority?.();
             const submitted = await sandbox.process!.executeSessionCommand(input.taskName, {
               command,
               runAsync: true,
@@ -657,6 +687,7 @@ export function createDaytonaTerminalProvider(
             initialStdout = submitted.stdout;
             initialStderr = submitted.stderr;
           }
+          await input.onSubmitted?.(commandId);
           let delayMs = 250;
           const observationDeadline = Date.now() + input.timeoutMs + 15_000;
           while (observedExitCode === undefined) {
@@ -724,8 +755,13 @@ export function createDaytonaTerminalProvider(
       if (!sandbox.process) throw new Error("Daytona sandbox process service is unavailable");
       try {
         await sandbox.process.deleteSession(taskName);
+        return "deleted";
       } catch (error) {
-        await sandbox.stop?.();
+        // Recovery is token-fenced in the work-stream object, but an abandoned
+        // provider request can return after its token expires. A missing named
+        // session is already quiescent; treating that idempotent outcome as a
+        // reason to stop the whole sandbox could disrupt the successor.
+        if (isTerminalProviderNotFound(error)) return "missing";
         throw error;
       }
     },

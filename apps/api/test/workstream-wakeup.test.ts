@@ -329,15 +329,15 @@ describe("wake-up delay grammar", () => {
     expect(() => parseWakeupDelay(text)).toThrow(expect.objectContaining({ code }));
   });
 
-  it("names every accepted unit in the hint on every delay rejection", () => {
+  it("names every accepted unit in the model-visible reason on every delay rejection", () => {
     for (const text of ["5", "1.5h", "5 fortnights", "5m 10m"]) {
       try {
         parseWakeupDelay(text);
         expect.unreachable(`expected ${text} to be rejected`);
       } catch (error) {
-        const hint = (error as WakeupInputError).hint;
+        const reason = (error as WakeupInputError).details.reason;
         for (const unit of ["seconds", "minutes", "hours", "days", "weeks", "ISO-8601"]) {
-          expect(hint).toContain(unit);
+          expect(reason).toContain(unit);
         }
       }
     }
@@ -468,15 +468,15 @@ describe("wake-up instant resolution", () => {
         resolveWakeupInstant(request);
         expect.unreachable(`expected ${code}`);
       } catch (error) {
-        const { hint } = error as WakeupInputError;
+        const reason = (error as WakeupInputError).details.reason;
         expect((error as WakeupInputError).code).toBe(code);
         // A caller who passed `at` gets the timestamp grammar, not duration units.
         if (form === "delay") {
-          expect(hint).toContain("Accepted units are seconds");
-          expect(hint).not.toContain("ISO-8601 date and time");
+          expect(reason).toContain("Accepted units are seconds");
+          expect(reason).not.toContain("ISO-8601 date and time");
         } else {
-          expect(hint).toContain("ISO-8601 date and time");
-          expect(hint).not.toContain("Accepted units are seconds");
+          expect(reason).toContain("ISO-8601 date and time");
+          expect(reason).not.toContain("Accepted units are seconds");
         }
       }
     }
@@ -495,13 +495,13 @@ describe("wake-up instant resolution", () => {
     })).toThrow(expect.objectContaining({ code: "wakeup_too_distant" }));
   });
 
-  it("carries a remediation hint on every rejection", () => {
+  it("carries a model-visible remediation reason on every rejection", () => {
     try {
       resolveWakeupInstant({ defaultTimezone: "UTC", now });
       expect.unreachable("expected a rejection");
     } catch (error) {
       expect(error).toBeInstanceOf(WakeupInputError);
-      expect((error as WakeupInputError).hint.length).toBeGreaterThan(0);
+      expect((error as WakeupInputError).details.reason.length).toBeGreaterThan(0);
     }
   });
 });

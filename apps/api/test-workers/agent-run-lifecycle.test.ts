@@ -212,8 +212,7 @@ describe("executing an admitted run", () => {
   it("starts the run and settles the dispatch", async () => {
     const stub = await readyAgent();
     await runInDurableObject(stub, (_instance, state) => seedRun(state, RUN_A));
-    await post(stub, "/internal/run-dispatch", runInput(RUN_A));
-    await runInDurableObject(stub, (_instance, state) => state.storage.setAlarm(Date.now() + 600_000));
+    await dispatchWithoutDraining(stub, RUN_A);
 
     expect(await runDurableObjectAlarm(stub)).toBe(true);
 
@@ -229,8 +228,7 @@ describe("executing an admitted run", () => {
   it("releases the lease on whatever outcome the run reaches", async () => {
     const stub = await readyAgent();
     await runInDurableObject(stub, (_instance, state) => seedRun(state, RUN_A));
-    await post(stub, "/internal/run-dispatch", runInput(RUN_A));
-    await runInDurableObject(stub, (_instance, state) => state.storage.setAlarm(Date.now() + 600_000));
+    await dispatchWithoutDraining(stub, RUN_A);
 
     await runDurableObjectAlarm(stub);
 
@@ -248,9 +246,8 @@ describe("executing an admitted run", () => {
       seedRun(state, RUN_A);
       seedRun(state, RUN_B);
     });
-    await post(stub, "/internal/run-dispatch", runInput(RUN_A));
-    await post(stub, "/internal/run-dispatch", runInput(RUN_B));
-    await runInDurableObject(stub, (_instance, state) => state.storage.setAlarm(Date.now() + 600_000));
+    await dispatchWithoutDraining(stub, RUN_A);
+    await dispatchWithoutDraining(stub, RUN_B);
 
     await runDurableObjectAlarm(stub);
 
