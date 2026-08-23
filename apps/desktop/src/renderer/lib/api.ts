@@ -907,7 +907,14 @@ export class AvalonApi {
 
   async getWorkspaceMembers(signal?: AbortSignal): Promise<WorkspaceMember[]> {
     const page = await this.request('/workspace/members', { schema: wireMemberPageSchema, signal });
-    return page.items.map((member) => ({ ...mapUser(member.user), role: member.role }));
+    return page.items.map((member) => ({
+      ...mapUser(member.user),
+      role: member.role,
+      // Carried, not dropped: the roster is the only list that can contain a
+      // membership the work-stream endpoints will refuse, and a caller that
+      // cannot see the status has no way to keep one out of a picker.
+      status: member.status,
+    }));
   }
 
   async getInvitationPreview(token: string, signal?: AbortSignal): Promise<WorkspaceInvitationPreview> {

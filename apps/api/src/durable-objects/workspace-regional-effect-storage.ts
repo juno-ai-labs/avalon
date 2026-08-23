@@ -2,6 +2,7 @@ import type {
   WorkspaceRegionalEffectApplyRequest,
   WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
+import { isPersonNotificationEffect } from "./workstream-regional-effect";
 
 // WorkstreamDO effect receipts are a replay fence, not history. After this
 // window a redelivery falls back to the idempotent product guards
@@ -69,7 +70,12 @@ export function applyWorkstreamRegionalEnvelope(
       }
       return {
         replayed: true,
-        notificationIntentId: effect.kind === "mention_notification" ? effect.intentId : null,
+        // Every person notification, not only a mention. The caller schedules
+        // delivery from this id, so returning null for a kind that has one
+        // means a redelivery is acknowledged without anything being sent —
+        // which is exactly the path a transient Slack or email failure takes
+        // to get its second attempt.
+        notificationIntentId: isPersonNotificationEffect(effect) ? effect.intentId : null,
       };
     }
     let notificationIntentId: string | null = null;
@@ -119,16 +125,23 @@ export function applyWorkstreamRegionalEnvelope(
           now,
         );
       }
-    } else if (effect.kind === "mention_notification") {
+    } else if (isPersonNotificationEffect(effect)) {
       if (request.recipientIsActiveMember) {
+        // A mention is identified by the message that carried it; being added
+        // has no message, so the effect names its own source. Both land in
+        // `source_message_id`, which together with the recipient and the kind
+        // is what makes a redelivery of either one intent rather than two.
+        const notificationKind = effect.kind === "mention_notification" ? "mention" : "participant_added";
+        const sourceId = effect.kind === "mention_notification" ? effect.messageId : effect.sourceId;
         const existing = storage.sql.exec<{ intent_id: string; payload_hash: string }>(
           `SELECT intent_id, payload_hash FROM workstream_notification_intents
             WHERE intent_id = ?
                OR (source_message_id = ? AND recipient_user_id = ?
-                   AND notification_kind = 'mention')`,
+                   AND notification_kind = ?)`,
           effect.intentId,
-          effect.messageId,
+          sourceId,
           effect.recipientUserId,
+          notificationKind,
         ).toArray()[0];
         if (
           existing
@@ -146,17 +159,18 @@ export function applyWorkstreamRegionalEnvelope(
               payload_hash, state, attempts,
               lease_id, lease_expires_at, last_error_code, created_at, updated_at,
               delivered_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'mention', ?, ?, 'pending', 0,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0,
                    NULL, NULL, NULL, ?, ?, NULL)
            ON CONFLICT(intent_id) DO NOTHING`,
           effect.intentId,
           envelope.workspaceId,
           envelope.workstreamId,
           effect.recipientUserId,
-          effect.messageId,
+          sourceId,
           envelope.generation,
           envelope.sourceVersion,
           envelope.requiredProjectionVersion,
+          notificationKind,
           JSON.stringify(effect),
           envelope.payloadHash,
           at,

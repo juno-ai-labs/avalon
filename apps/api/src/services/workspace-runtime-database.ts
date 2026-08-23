@@ -114,6 +114,52 @@ const WORKSPACE_LOCAL_TABLE_PATTERNS = WORKSPACE_LOCAL_TABLES.map((table) => ({
   pattern: new RegExp(`\\b${table}\\b`, "iu"),
 }));
 
+/**
+ * Identity, tenancy, and routing tables that only the regional database has.
+ *
+ * WorkspaceDO holds product state and nothing else, so a statement that names
+ * one of these alongside a local table is asking two databases one question.
+ * The list is deliberately short and explicit rather than "everything not in
+ * `WORKSPACE_LOCAL_TABLES`": the object also holds tables that list does not
+ * name — `workspace_workstream_directory`, `work_opportunities`,
+ * `workspace_activity_events` and their neighbours — and treating those as
+ * regional would refuse statements that are correct today.
+ *
+ * These are the ones a workspace-local query actually reaches for: the person
+ * behind a connector identity, and the membership that says they still belong
+ * here. `slackUserIsLinked` joined `slack_user_links` to `workspace_members`
+ * and was routed into an object with no such table, which surfaced as
+ * `no such table: workspace_members` on every Slack run-outcome delivery in
+ * production rather than as anything naming the boundary it crossed.
+ */
+const WORKSPACE_REGIONAL_ONLY_TABLES = [
+  "users",
+  "workspaces",
+  "workspace_members",
+  "workspace_invitations",
+  "sessions",
+  "audit_events",
+  "platform_workspace_bindings",
+] as const;
+
+const WORKSPACE_REGIONAL_ONLY_TABLE_PATTERNS = WORKSPACE_REGIONAL_ONLY_TABLES.map((table) => ({
+  table,
+  // The boundaries keep each name to itself: `workspaces` would otherwise
+  // match inside `workspace_members`, and `sessions` inside
+  // `slack_agent_sessions`.
+  //
+  // What they do not do is tell a table name from any other bare word in the
+  // statement. This matches the whole text, so a column alias
+  // (`COUNT(*) AS sessions`), a string literal (`WHERE scope = 'workspaces'`),
+  // or a CTE by one of these names would be refused as cross-authority even
+  // though the statement only touches local tables — and the error would read
+  // like the boundary bug rather than like the typo it is. Nothing under
+  // `apps/api/src` does that today. The alternative is parsing SQL here, which
+  // is a great deal of machinery to protect a name nobody has used yet; if one
+  // appears, rename the alias rather than teaching this to parse.
+  pattern: new RegExp(`\\b${table}\\b`, "iu"),
+}));
+
 function localStatement(sql: string): boolean {
   // Work-stream authority outranks this layer. The harness wraps the
   // workspace router outside the work-stream router, so this matcher sees
@@ -135,7 +181,19 @@ function localStatement(sql: string): boolean {
   const writeTarget = /^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+([\w"]+)/iu
     .exec(sql)?.[1]?.replaceAll('"', "").toLowerCase();
   if (writeTarget && !WORKSPACE_LOCAL_TABLES.some((table) => table === writeTarget)) {
-    throw new Error("workspace_runtime_cross_authority_statement");
+    throw new Error(`workspace_runtime_cross_authority_statement:${writeTarget}`);
+  }
+
+  // The same rule for a read. A SELECT that joins a local table to a regional
+  // one has no correct destination either, and until now it was sent here and
+  // failed as `no such table` — a message that names the column the object
+  // lacks rather than the boundary the query crossed, which is how one sat in
+  // production being retried. Refusing it at the router says which table put
+  // the statement on the wrong side.
+  const regionalTable = WORKSPACE_REGIONAL_ONLY_TABLE_PATTERNS
+    .find(({ pattern }) => pattern.test(sql))?.table;
+  if (regionalTable) {
+    throw new Error(`workspace_runtime_cross_authority_statement:${regionalTable}`);
   }
   return true;
 }

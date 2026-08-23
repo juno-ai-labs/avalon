@@ -743,6 +743,71 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     // sent and onto one they may have stopped looking at hours ago.
     ...SLACK_REACTION_COLUMN_STATEMENTS,
   ],
+}, {
+  version: 9,
+  description: "admit a second person-notification kind alongside the mention",
+  statements: [
+    // `notification_kind` was pinned to a single literal, so being added to a
+    // work stream — the other thing that is worth telling one person about —
+    // had nowhere to be recorded. SQLite cannot alter a CHECK in place, so the
+    // table is rebuilt the way `terminal_workspace` was in the work-stream
+    // object's schema: new table, copy, drop, rename.
+    //
+    // Version 1 still creates the narrow table and must: its statements are
+    // hashed into every deployed object's `_sql_schema_migrations` receipt,
+    // and editing them in place throws `workspace_do_schema_hash_mismatch:1`
+    // in the constructor of every workspace that ran an earlier release. A new
+    // object therefore creates the old shape and immediately rebuilds it,
+    // which costs one empty copy once.
+    `CREATE TABLE workstream_notification_intents_kinds (
+      intent_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      workstream_id TEXT NOT NULL,
+      recipient_user_id TEXT NOT NULL,
+      source_message_id TEXT NOT NULL,
+      source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+      source_version INTEGER NOT NULL CHECK (source_version > 0),
+      required_directory_version INTEGER NOT NULL CHECK (required_directory_version > 0),
+      notification_kind TEXT NOT NULL CHECK (notification_kind IN ('mention', 'participant_added')),
+      payload_json TEXT CHECK (payload_json IS NULL OR json_valid(payload_json)),
+      payload_hash TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('pending', 'processing', 'delivered', 'skipped', 'failed')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      lease_id TEXT,
+      lease_expires_at TEXT,
+      last_error_code TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      delivered_at TEXT,
+      UNIQUE (source_message_id, recipient_user_id, notification_kind)
+    ) STRICT`,
+    `INSERT INTO workstream_notification_intents_kinds
+       (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id,
+        source_generation, source_version, required_directory_version, notification_kind,
+        payload_json, payload_hash, state, attempts, lease_id, lease_expires_at,
+        last_error_code, created_at, updated_at, delivered_at)
+     SELECT intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id,
+        source_generation, source_version, required_directory_version, notification_kind,
+        payload_json, payload_hash, state, attempts, lease_id, lease_expires_at,
+        last_error_code, created_at, updated_at, delivered_at
+       FROM workstream_notification_intents`,
+    // Takes the old table's indexes and identity-fence triggers with it, which
+    // is why both are restated below rather than left to version 1.
+    `DROP TABLE workstream_notification_intents`,
+    `ALTER TABLE workstream_notification_intents_kinds RENAME TO workstream_notification_intents`,
+    `CREATE INDEX workstream_notification_intents_delivery_idx
+      ON workstream_notification_intents(state, lease_expires_at, created_at, intent_id)`,
+    `CREATE INDEX workstream_notification_intents_terminal_idx
+      ON workstream_notification_intents(workstream_id, state, created_at)`,
+    `CREATE TRIGGER workstream_notification_intents_workspace_identity_insert
+      BEFORE INSERT ON workstream_notification_intents
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+    `CREATE TRIGGER workstream_notification_intents_workspace_identity_update
+      BEFORE UPDATE OF workspace_id ON workstream_notification_intents
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+  ],
 }];
 
 function json(body: unknown, status = 200): Response {

@@ -41,6 +41,12 @@ export interface WorkspaceMember {
   avatarUrl?: string;
   timezone: string;
   role?: string;
+  /**
+   * Present only on people read from the workspace roster, which is the one
+   * place a membership that is not yet active can appear. Participants and
+   * viewers are members by construction and carry no status.
+   */
+  status?: 'active' | 'invited' | 'suspended';
 }
 
 export interface Workspace {

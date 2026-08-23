@@ -40,7 +40,38 @@ export interface WorkstreamSlackMention {
   messageText: string;
 }
 
+export interface WorkstreamSlackParticipantAdded {
+  sourceId: string;
+  recipientUserId: string;
+  recipientEmail: string;
+  actorName: string;
+  workspaceId: string;
+  workspaceName: string;
+  workstreamId: string;
+  workstreamTitle: string;
+  workstreamObjective: string;
+}
+
 export type SlackMentionDelivery = "sent" | "partial" | "skipped";
+
+/**
+ * What the delivery below needs regardless of what it is telling somebody.
+ *
+ * The two kinds differ only in their text and in the identity their retry is
+ * keyed on. Everything else — resolving the workspace bot, finding the
+ * recipient's Slack account, opening the DM, chunking, retrying, and marking a
+ * connection for reconnect — is one path, because a second copy of it would be
+ * a second place for a Slack authorization failure to be handled differently.
+ */
+interface WorkstreamSlackDelivery {
+  workspaceId: string;
+  recipientUserId: string;
+  recipientEmail: string;
+  /** Seeds the per-chunk `client_msg_id`, so a retry posts the same message. */
+  sourceId: string;
+  kind: "mention" | "participant_added";
+  chunks: (target: string, maximum: number) => string[];
+}
 
 /**
  * Delivers one transactional person-mention notification through the installed
@@ -50,6 +81,46 @@ export type SlackMentionDelivery = "sent" | "partial" | "skipped";
 export async function sendWorkstreamMentionSlack(
   env: Env,
   input: WorkstreamSlackMention,
+  request: typeof fetch = fetch,
+  sleep: (milliseconds: number) => Promise<void> = delay,
+): Promise<SlackMentionDelivery> {
+  return deliverWorkstreamSlack(env, {
+    workspaceId: input.workspaceId,
+    recipientUserId: input.recipientUserId,
+    recipientEmail: input.recipientEmail,
+    sourceId: input.messageId,
+    kind: "mention",
+    chunks: (target, maximum) => slackMentionChunks(input, target, maximum),
+  }, input.workstreamId, request, sleep);
+}
+
+/**
+ * Tells somebody they were added to a work stream, through the same bot.
+ *
+ * Reaches the same person the same way a mention does, and for the same
+ * reason: being put in a room is the other thing that happens to a person in
+ * Avalon which they cannot discover by looking at what they already have open.
+ */
+export async function sendWorkstreamParticipantAddedSlack(
+  env: Env,
+  input: WorkstreamSlackParticipantAdded,
+  request: typeof fetch = fetch,
+  sleep: (milliseconds: number) => Promise<void> = delay,
+): Promise<SlackMentionDelivery> {
+  return deliverWorkstreamSlack(env, {
+    workspaceId: input.workspaceId,
+    recipientUserId: input.recipientUserId,
+    recipientEmail: input.recipientEmail,
+    sourceId: input.sourceId,
+    kind: "participant_added",
+    chunks: (target, maximum) => slackParticipantAddedChunks(input, target, maximum),
+  }, input.workstreamId, request, sleep);
+}
+
+async function deliverWorkstreamSlack(
+  env: Env,
+  input: WorkstreamSlackDelivery,
+  workstreamId: string,
   request: typeof fetch = fetch,
   sleep: (milliseconds: number) => Promise<void> = delay,
 ): Promise<SlackMentionDelivery> {
@@ -118,8 +189,8 @@ export async function sendWorkstreamMentionSlack(
       AbortSignal.timeout(10_000),
       request,
     );
-    const target = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, input.workstreamId);
-    const chunks = slackMentionChunks(input, target, 40_000);
+    const target = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, workstreamId);
+    const chunks = input.chunks(target, 40_000);
     let threadTs: string | undefined;
     for (const [index, chunk] of chunks.entries()) {
       if (index > 0) await sleep(1_000);
@@ -128,7 +199,9 @@ export async function sendWorkstreamMentionSlack(
         {
           channel: opened.channel.id,
           ...(threadTs ? { thread_ts: threadTs } : {}),
-          client_msg_id: await stableUuid(`avalon-workstream-mention:${input.messageId}:${input.recipientUserId}:${index}`),
+          client_msg_id: await stableUuid(
+            `avalon-workstream-${input.kind}:${input.sourceId}:${input.recipientUserId}:${index}`,
+          ),
           text: chunk,
         },
         request,
@@ -153,10 +226,12 @@ export async function sendWorkstreamMentionSlack(
     const outcome = postedChunks > 0 ? "partial" : "skipped";
     // One event with the outcome as a field, not an event name interpolated
     // from it: a template literal splits the same failure across two values no
-    // saved view can filter on as one.
-    logWarn(env, "slack_mention_delivery_incomplete", {
+    // saved view can filter on as one. The notification kind is a field for
+    // the same reason, now that two of them come through here.
+    logWarn(env, "slack_notification_delivery_incomplete", {
       outcome,
-      message_id: input.messageId,
+      kind: input.kind,
+      source_id: input.sourceId,
       recipient_user_id: input.recipientUserId,
       connection_id: connectionId,
       reason,
@@ -257,8 +332,26 @@ function humanReadableMessage(value: string): string {
   );
 }
 
+function slackParticipantAddedChunks(
+  input: WorkstreamSlackParticipantAdded,
+  target: string,
+  maximum: number,
+): string[] {
+  const objective = input.workstreamObjective.trim();
+  return chunkSlackTokens([
+    ...escapedSlackTokens(input.actorName),
+    " added you to “",
+    ...escapedSlackTokens(input.workstreamTitle),
+    "” in ",
+    ...escapedSlackTokens(input.workspaceName),
+    ".\n\n",
+    ...(objective ? [...escapedSlackTokens(objective), "\n\n"] : []),
+    `<${target}|Open in Avalon>`,
+  ], maximum);
+}
+
 function slackMentionChunks(input: WorkstreamSlackMention, target: string, maximum: number): string[] {
-  const tokens = [
+  return chunkSlackTokens([
     ...escapedSlackTokens(input.authorName),
     " mentioned you in “",
     ...escapedSlackTokens(input.workstreamTitle),
@@ -268,7 +361,16 @@ function slackMentionChunks(input: WorkstreamSlackMention, target: string, maxim
     ...escapedSlackTokens(humanReadableMessage(input.messageText)),
     "\n\n",
     `<${target}|Open in Avalon>`,
-  ];
+  ], maximum);
+}
+
+/**
+ * Packs already-escaped tokens into messages no larger than Slack's limit.
+ *
+ * Tokens are single characters apart from the trailing link, which must not be
+ * split: half a `<url|label>` is not a link, it is visible markup.
+ */
+function chunkSlackTokens(tokens: readonly string[], maximum: number): string[] {
   const chunks: string[] = [];
   let chunk = "";
   for (const token of tokens) {
