@@ -34,7 +34,7 @@ function isDue(value: number | null, now: Date): boolean {
 }
 
 /**
- * Make every expired durable command task quiescent at Daytona before a
+ * Make every unsettled durable command task quiescent at Daytona before a
  * lifecycle transition runs preservation or another provider operation.
  */
 async function quiesceUnsettledTasks(
@@ -80,6 +80,7 @@ async function quiesceUnsettledTasks(
           if (!sandboxAbsent) throw error;
         }
       }
+      // Successful deletion and provider-confirmed absence both retire this generation.
       sandboxAbsent = true;
       sandboxStopped = false;
     } else if (!sandboxAbsent && !sandboxStopped && task.state === "running") {
