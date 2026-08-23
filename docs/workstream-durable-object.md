@@ -1305,6 +1305,46 @@ of the three. If the product ever settles on a single busy status, retire the
 other two from the CHECK constraint rather than from the fences, so the
 narrowing is enforced where it can be seen.
 
+### 2026-08-23 — The sub-agent family finishes, and two fences nothing was holding
+
+**What changed:** `terminalizeInlineChildAttempt`, `loadInlineChildResult`,
+`cancelDescendantHarnessRuns` and `persistInlineChildScope` moved onto the port.
+No function in the inline-child family takes a `D1Database` any more.
+
+**Why:** the settlement was two statements where the second was guarded on the
+first — its `UPDATE`'s `WHERE` carried `EXISTS (SELECT 1 FROM
+harness_run_lifecycle_events WHERE lifecycle.id = ?1 …)` for no reason except
+to ask whether the batch's *own* first statement had landed. That is a
+transaction spelled as a correlated subquery, so it became a transaction.
+
+**Two behaviours had no test, and the mutation pass is what found them.**
+Deleting the parent's attempt/owner fence from the settlement broke nothing —
+so a parent that had already lost its own attempt could still collect its
+sub-agent's result. And `cancelDescendants` survived both removing its
+`chain_root_run_id` reach (which is the only thing connecting a *grandchild* to
+the run being stopped, since its `parent_run_id` is the child) and removing the
+`COALESCE` that keeps the first cancellation's reason. All three now have specs
+that fail when the behaviour is removed. A fourth — `persistInlineChildScope`
+comparing the child's `inherited_scope_hash` against the parent's frozen scope —
+was uncovered for the same reason the others were: as a join, its failure was
+indistinguishable from the parent having no scope, so nothing had ever asserted
+on it separately.
+
+**What a future change has to respect:** `status === "cancelled"` relaxes the
+cancellation fence on *both* sides of the settlement, and only for the stop
+itself. A stop is exactly when a live owner must still be allowed to write —
+refusing it leaves the parent waiting forever on a child that will never answer
+— but an ordinary `completed` settlement after a requested cancellation is still
+refused, because a child asked to stop must not report success as though nothing
+had happened. The two are one line apart and a mutation test separates them.
+
+Two vocabularies now meet in this file. `TERMINAL_RUN_STATUSES` is exported from
+the storage class in the object's words, where `stopped` is `cancelled`;
+`TERMINAL_STATUSES` in the runtime is the published spelling. Which applies
+depends on whether the value came off a `RunRow` or out of a published payload,
+and `storedRunStatus`/`publishedRunStatus` are the only sanctioned crossings.
+
+
 ### 2026-08-23 — Sub-agent admission, and a cap that stopped meaning what it says
 
 **What changed:** `admitInlineChildAttempt` became `admitInlineChild` on the
