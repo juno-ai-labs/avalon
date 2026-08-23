@@ -82,13 +82,36 @@ export function isToolReceiptOperation(value: string): value is ToolReceiptOpera
  * a stub for its own object, and the per-argument shapes are enforced at the
  * call site by `ToolReceiptObjectPort`, where a mismatch is a compile error.
  */
+/**
+ * Positional arguments one receipt operation may carry over the wire.
+ *
+ * Bounds: elements in the `args` array of a `/internal/tool-receipt` request,
+ *   before any of them is parsed.
+ * Without it: `args` is `z.unknown()`, so an oversized array is held and walked
+ *   before dispatch refuses it. The bound is not what makes that cheap — each
+ *   element is still unbounded in size — it is what keeps the array's shape a
+ *   fact rather than caller input.
+ * Direction: upper bound. It is 1 because every method on
+ *   `WorkstreamToolReceiptStorage` takes exactly one options object, so 1 is the
+ *   protocol rather than a margin around it; the previous 4 was slack with
+ *   nothing behind it.
+ * Trips: the request fails Zod parsing and the endpoint answers 400
+ *   `invalid_tool_receipt_operation` — the same code an unknown operation name
+ *   takes, because both are a malformed request rather than a lost lease, and
+ *   the port surfaces it as an error rather than an outcome.
+ * Derive from: the arity of the storage class. An operation that ever needs a
+ *   second positional argument changes this number in the same commit, and the
+ *   `Exhaustive` guard above is what makes such an addition visible.
+ */
+export const MAX_TOOL_RECEIPT_OPERATION_ARGS = 1;
+
 export const ToolReceiptOperationRequestSchema = z.object({
   workspaceId: z.string().uuid(),
   workstreamId: z.string().uuid(),
   operation: z.string().min(1).max(64).refine(isToolReceiptOperation, {
     message: "unknown_tool_receipt_operation",
   }),
-  args: z.array(z.unknown()).max(4),
+  args: z.array(z.unknown()).max(MAX_TOOL_RECEIPT_OPERATION_ARGS),
 }).strict();
 
 export type ToolReceiptOperationRequest = z.infer<typeof ToolReceiptOperationRequestSchema>;

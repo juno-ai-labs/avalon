@@ -1056,6 +1056,28 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-23 — The receipt wire's argument cap becomes a named bound
+
+**What changed:** `args: z.array(z.unknown()).max(4)` on
+`ToolReceiptOperationRequestSchema` is now
+`MAX_TOOL_RECEIPT_OPERATION_ARGS = 1`, exported, and carrying the fields
+[`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)
+requires. A workerd spec drives the refusal through the real endpoint.
+
+**Why:** review flagged the 4 as an arbitrary wire limit that would reject a
+future method while TypeScript still compiled. The number was worse than
+arbitrary — every method on `WorkstreamToolReceiptStorage` takes exactly one
+options object, so 4 was slack around a protocol that is 1, and it was a bare
+literal where this repository requires a named constant with a stated `Without
+it:` and `Trips:`. Tightening it to the real arity makes the array's shape a
+fact rather than caller input.
+
+**What a future change has to respect:** an operation that genuinely needs a
+second positional argument changes this constant in the same commit rather than
+working around it. The reviewer's underlying point stands — the schema can
+reject what the mapped type accepts — and the `Exhaustive` guard plus the
+dispatch probe are what make that divergence visible rather than silent.
+
 ### 2026-08-23 — The rebind gate stops trusting the caller's summary of the mode
 
 **What changed:** `admit` no longer takes `incomingIsRead`. `#mayRebind` derives
