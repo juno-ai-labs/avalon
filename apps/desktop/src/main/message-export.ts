@@ -324,7 +324,8 @@ ${syntax}
   .markdown-code-block-header { display: block; }
   /* The copy button is a control, and a picture of a control is a lie. */
   .markdown-code-block-header button { display: none; }
-  .markdown-code-language { color: #85867c; font-size: 10px; letter-spacing: 0.08em; margin-bottom: 6px; text-transform: uppercase; }
+  /* display: block so margin-bottom below actually opens a gap — an inline span ignores vertical margin. */
+  .markdown-code-language { color: #85867c; display: block; font-size: 10px; letter-spacing: 0.08em; margin-bottom: 6px; text-transform: uppercase; }
   .markdown-code-block pre {
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     font-size: 12.5px;

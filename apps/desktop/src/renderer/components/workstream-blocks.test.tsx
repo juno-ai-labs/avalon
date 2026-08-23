@@ -635,6 +635,27 @@ describe('MessageBlock markdown', () => {
     expect(document.querySelector('.markdown-body hr')).toBeInTheDocument();
     expect(document.querySelector('.markdown-code-block')).toHaveAttribute('data-language', 'ts');
     expect(screen.getByText('TypeScript')).toHaveClass('markdown-code-language');
+    const copyButton = screen.getByRole('button', { name: 'Copy code' });
+    expect(copyButton).toBeInTheDocument();
+    // The point of the header is that the button sits outside the scrolling
+    // `pre`, reachable at any scroll position — this pins that structure down
+    // rather than just the button's presence somewhere in the document.
+    expect(copyButton.closest('.markdown-code-block-header')).not.toBeNull();
+  });
+
+  it('gives an unlabelled fence no language caption, just the copy button', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-unlabelled-fence',
+      authorType: 'agent',
+      author: undefined,
+      text: '```\nconst ready = true;\n```',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(document.querySelector('.markdown-code-block')).toHaveAttribute('data-language', 'plain');
+    expect(document.querySelector('.markdown-code-language')).toHaveTextContent('');
     expect(screen.getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
   });
 
