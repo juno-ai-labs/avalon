@@ -11,6 +11,7 @@ import {
   seedWorkstreamObjectRoot,
   testWorkstreamObjectStore,
   workstreamObjectRun,
+  seedToolReceipt,
 } from './helpers/durable-authority';
 
 const userId = asUserId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1');
@@ -116,6 +117,20 @@ describe('authoritative run outcome telemetry', () => {
       workspaceId,
       workstreamId,
     );
+    // Two receipts, one of them a write. Nothing else in this suite covered the
+    // outcome event's tool counts, so retargeting their subqueries at
+    // `tool_effects` would otherwise have been an unasserted change.
+    seedToolReceipt(objectStore, {
+      id: '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901', runId, toolCallId: 'call-1',
+      toolName: 'read_resource', status: 'completed', requestHash: 'hash-1',
+      executionPlanJson: '{"mode":"read"}',
+    });
+    seedToolReceipt(objectStore, {
+      id: '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902', runId, toolCallId: 'call-2',
+      toolName: 'publish_branch', mode: 'write', status: 'completed',
+      requestHash: 'hash-2', position: 1,
+      executionPlanJson: '{"mode":"write"}',
+    });
     const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: 'global',
@@ -184,8 +199,11 @@ describe('authoritative run outcome telemetry', () => {
         duration: '5s_30s',
         timeToFirstOutput: '1s_5s',
         turnCount: 'two_to_five',
-        toolCallCount: 'zero',
-        writeToolCallCount: 'zero',
+        // Two receipts, one of them a write. These previously read `zero`
+        // against a run with no receipts at all, which meant breaking the
+        // subqueries outright left the assertion green.
+        toolCallCount: 'two_to_five',
+        writeToolCallCount: 'one',
         modelRoute: 'openai/gpt-5',
         fallbackUsed: true,
       },

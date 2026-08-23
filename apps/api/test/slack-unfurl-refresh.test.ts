@@ -68,7 +68,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     const body = unfurlBody(calls);
     expect(body).toContain("Needs input");
@@ -83,7 +83,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
   });
@@ -96,7 +96,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
     expect(renderedStatus(database)).toBe("idle");
@@ -107,7 +107,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     const body = unfurlBody(calls);
     expect(body).toContain("Quarterly planning");
@@ -120,7 +120,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls, { external: true }));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     const body = unfurlBody(calls);
     expect(body).toContain("*Avalon*");
@@ -140,13 +140,13 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(1);
     // And it settles: the row now carries a hash, so a second pass posts nothing.
     const second: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(second));
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
     expect(second.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
   });
 
@@ -161,7 +161,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     expect(unfurlBody(calls)).toContain("Quarterly planning (revised)");
   });
@@ -177,7 +177,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls, { external: true }));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
     expect(renderedStatus(database)).toBe("needs_input");
@@ -194,7 +194,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
 
     // The row must no longer select, or the sweep spins on it forever.
@@ -213,7 +213,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
   });
@@ -222,7 +222,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const database = await seed({ harnessStatus: "completed", renderedStatus: "running" });
     vi.stubGlobal("fetch", slackFixture([], { unfurlError: "cannot_find_message" }));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     expect(rowCount(database)).toBe(0);
   });
@@ -231,7 +231,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const database = await seed({ harnessStatus: "completed", renderedStatus: "running" });
     vi.stubGlobal("fetch", slackFixture([], { unfurlError: "ratelimited" }));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     expect(rowCount(database)).toBe(1);
     // Unchanged, so the work stream still reads as drifted on the next pass.
@@ -250,7 +250,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls, { external: true }));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     const body = unfurlBody(calls);
     expect(body).toContain("*Avalon*");
@@ -267,7 +267,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     // Checked, found unchanged, and left alone — rewriting an identical card
     // would spend the workspace's chat.unfurl budget for no visible change.
@@ -284,7 +284,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls, { infoError: "ratelimited" }));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
     // Still drifted, so the next sweep retries rather than believing it is current.
@@ -299,7 +299,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
   });
@@ -361,7 +361,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     expect(calls.length).toBeGreaterThan(0);
   });
@@ -374,7 +374,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     expect(calls).toHaveLength(0);
   });
@@ -407,7 +407,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     const unfurled = calls.filter((call) => call.method === "chat.unfurl");
     const quietCalls = unfurled.filter((call) => call.body.channel === "CQUIET");
@@ -428,7 +428,7 @@ describe("Slack work-stream unfurl refresh", () => {
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
-    await refreshSlackWorkstreamUnfurls(environment(database));
+    await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(2);
     expect(calls.filter((call) => call.method === "conversations.info")).toHaveLength(1);
@@ -596,11 +596,52 @@ function migratedDatabase(): DatabaseSync {
   return database;
 }
 
+/**
+ * The workspace directory the sweep reads, over the same seeded rows.
+ *
+ * The sweep asks WorkspaceDO which of the linked work streams changed; a test
+ * that binds nothing here used to fall through to a D1 query that migration
+ * 0090 made unreachable, so its selection, hash-gate and bound assertions were
+ * proving a path production does not run. The stub answers the lookup and
+ * nothing else — the object's own directory SQL is
+ * `test-workers/durable-object-runtime.test.ts`'s.
+ */
+function directoryNamespace(database: DatabaseSync): DurableObjectNamespace {
+  return testSubstreamAgentsBinding(database, {
+    extra: {
+      lookupWorkstreamDirectory: async (input: { workstreamIds: string[] }) => ({
+        items: database.prepare(
+          `SELECT id, title, harness_status, last_activity_at, origin_type,
+                  archived_at, updated_at
+             FROM workstreams
+            WHERE id IN (${input.workstreamIds.map(() => "?").join(", ")})`,
+        ).all(...input.workstreamIds as SQLInputValue[]).map((row) => {
+          const item = row as Record<string, unknown>;
+          return {
+            workstreamId: String(item.id),
+            title: String(item.title),
+            description: "",
+            scope: "workspace",
+            state: String(item.harness_status),
+            systemKind: null,
+            originType: String(item.origin_type),
+            originLabel: null,
+            lastActivityAt: String(item.last_activity_at),
+            archivedAt: item.archived_at == null ? null : String(item.archived_at),
+            updatedAt: String(item.updated_at),
+          };
+        }),
+      }),
+    },
+  });
+}
+
 function environment(
   database: DatabaseSync,
   overrides: { APP_ENV?: Env["APP_ENV"]; WORKSPACE_DOS?: DurableObjectNamespace } = {},
 ): Env {
   return createTestEnv({
+    WORKSPACE_DOS: directoryNamespace(database),
     ...overrides,
     DB: sqliteD1(database),
     AVALON_REGION: "global",

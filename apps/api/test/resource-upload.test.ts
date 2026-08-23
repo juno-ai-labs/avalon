@@ -261,6 +261,9 @@ function attachmentDatabase(): DatabaseSync {
     CREATE TABLE workstreams (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, automation_subscription_id TEXT);
     CREATE TABLE workstream_participants (workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, removed_at TEXT);
     CREATE TABLE workstream_resources (workstream_id TEXT NOT NULL, resource_id TEXT NOT NULL, relationship_type TEXT NOT NULL);
+    -- The workspace object's link table. The draft-hiding statement reads it
+    -- now that the closed-authority arm reading message_attachments is gone.
+    CREATE TABLE workspace_workstream_resource_links (workstream_id TEXT NOT NULL, resource_id TEXT NOT NULL);
     CREATE TABLE message_attachments (message_id TEXT NOT NULL, resource_id TEXT NOT NULL);
     CREATE TABLE resource_watches (
       id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, workstream_id TEXT NOT NULL,

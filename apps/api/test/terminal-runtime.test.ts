@@ -24,6 +24,7 @@ import {
   workstreamObjectGet,
   workstreamObjectRun,
   testTerminalPortFactory,
+  seedToolReceipt,
 } from "./helpers/durable-authority";
 
 const W = "00000000-0000-4000-8000-000000000011";
@@ -68,14 +69,9 @@ function fixture() {
      VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-13')`,
     R, W, S, JSON.stringify({ type: "user", userId: U }),
   );
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO tool_invocations
-       (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
-        input_hash, input_json, status)
-     VALUES (?, ?, ?, ?, 'call-runtime', 'terminal_run_command', 'hash', '{}', 'started')`,
-    I, W, S, R,
-  );
+  seedToolReceipt(objectStore, {
+    id: I, runId: R, toolCallId: 'call-runtime', toolName: 'terminal_run_command',
+  });
   const files = new Map<string, Uint8Array>();
   files.set("/workspace/src/file.txt", new TextEncoder().encode("hello\n"));
   const provider: TerminalSandboxProvider = {
