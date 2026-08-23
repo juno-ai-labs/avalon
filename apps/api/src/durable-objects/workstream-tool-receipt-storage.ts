@@ -759,23 +759,6 @@ export class WorkstreamToolReceiptStorage {
   }
 
   /**
-   * Settle every in-flight receipt of a run whose lease was reaped.
-   *
-   * This is the one operation here that is not fenced on a lease, and it could
-   * not be: `#fence` demands a live one, and the sweep's entire premise is that
-   * none exists. Every other method would answer `ownership_lost` by
-   * construction. The guard is the run's own `terminalized_at`, re-read here
-   * rather than trusted from the caller, so this is safe to call after the batch
-   * that terminalized the run rather than only inside it.
-   *
-   * Write-ness comes from the execution plan, not from `tool_effects.mode`, and
-   * the two disagree on purpose. For an absent or malformed plan the column says
-   * `read`, while this treats it as possibly-a-write and settles `ambiguous`.
-   * Preferring the column would silently turn "we could not confirm the write"
-   * into "it definitely failed" for exactly the receipts whose provider request
-   * may have landed — the wrong direction for the only case that matters.
-   */
-  /**
    * Close every receipt a run still has open, because the run is ending now.
    *
    * The stop and the reap both reach this after committing the terminal run.
