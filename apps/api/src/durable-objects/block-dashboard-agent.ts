@@ -1191,6 +1191,14 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       workstreamId: dispatch.workstreamId,
       limit: 25,
       automationDatabase: null,
+      onReceiptRepairFailure: (failure) => logWarn(this.env, "harness_residual_receipt_repair_failed", {
+        workspace_id: failure.workspaceId,
+        workstream_id: failure.workstreamId,
+        harness_run_id: failure.runId,
+        attempt_id: failure.attemptId,
+        repair_phase: failure.phase,
+        reason: failure.reason,
+      }),
     });
     const attemptId = uuidV7();
     const owner = `block-dashboard-agent:${dispatch.blockId}:${dispatch.blockRunId}:${attemptId}`;

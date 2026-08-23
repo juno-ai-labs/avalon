@@ -991,6 +991,7 @@ describe("durable harness attempt runtime", () => {
         return sqlite.receipts.settleResidualReceipts(repair);
       },
     } satisfies typeof sqlite.receipts;
+    const repairFailures: unknown[] = [];
 
     // BlockDashboard has receipt authority but deliberately no automation
     // database. It must leave an ordinary automation root for Substream's
@@ -1006,11 +1007,20 @@ describe("durable harness attempt runtime", () => {
     ).get(RUN_ONE)).toEqual({ status: "running" });
     expect(settlementCalls).toBe(0);
 
-    await expect(reapStaleHarnessRuns(sqlite.binding, {
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => flakyReceipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-    })).rejects.toThrow("transient_receipt_rpc_failure");
+      onReceiptRepairFailure: (failure) => repairFailures.push(failure),
+    })).toEqual([RUN_ONE]);
+    expect(repairFailures).toEqual([{
+      phase: "stale_root",
+      runId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      attemptId: claim.lease.attemptId,
+      reason: "transient_receipt_rpc_failure",
+    }]);
     expect(sqlite.object.prepare(
       "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
     ).get(RUN_ONE)).toMatchObject({ status: "failed" });
@@ -1097,6 +1107,148 @@ describe("durable harness attempt runtime", () => {
     ).get("invocation-stale-hypersight")).toEqual({
       status: "ambiguous",
       error_json: '{"code":"ambiguous_external_write","message":"The parent run lost its durable lease while an external write was in flight"}',
+    });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+  });
+
+  it("steps over an unsettleable terminal repair and still reaps stale work behind it", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const stopped = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-unsettleable-repair",
+      owner: "owner-unsettleable-repair",
+    });
+    if (stopped.state !== "claimed") throw new Error("expected claimed stopped attempt");
+    await persistToolExecutionPlan(sqlite.receipts, stopped.lease, {
+      invocationId: "invocation-unsettleable-repair",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-unsettleable-repair",
+      toolName: "linear_issue_get",
+      inputHash: "unsettleable-repair-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "linear.issue.get", mode: "read" },
+      mode: "read",
+    });
+    const failBeforeSettlement = {
+      ...sqlite.receipts,
+      settleResidualReceipts: async () => {
+        throw new Error("receipt_rpc_unavailable");
+      },
+    } satisfies typeof sqlite.receipts;
+    await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), stopped.lease, {
+      status: "stopped",
+    }, failBeforeSettlement)).rejects.toThrow("receipt_rpc_unavailable");
+
+    const stale = await claimHarnessAttempt(sqlite.binding, input(RUN_TWO), {
+      attemptId: "attempt-behind-unsettleable-repair",
+      owner: "owner-behind-unsettleable-repair",
+    });
+    if (stale.state !== "claimed") throw new Error("expected claimed stale attempt");
+    sqlite.object.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_TWO);
+
+    const repairFailures: unknown[] = [];
+    const refusingReceipts = {
+      ...sqlite.receipts,
+      settleResidualReceipts: async (
+        repair: Parameters<typeof sqlite.receipts.settleResidualReceipts>[0],
+      ) => repair.runId === RUN_ONE
+        ? { settled: 0, open: 1 }
+        : sqlite.receipts.settleResidualReceipts(repair),
+    } satisfies typeof sqlite.receipts;
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => refusingReceipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      limit: 1,
+      onReceiptRepairFailure: (failure) => repairFailures.push(failure),
+    })).toEqual([RUN_TWO]);
+    expect(repairFailures).toEqual([{
+      phase: "terminal_repair",
+      runId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      attemptId: stopped.lease.attemptId,
+      reason: "residual_receipts_not_settled",
+    }]);
+    expect(sqlite.object.prepare(
+      "SELECT status FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-unsettleable-repair")).toEqual({ status: "executing" });
+    expect(sqlite.object.prepare(
+      "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
+    ).get(RUN_TWO)).toMatchObject({ status: "failed" });
+    expect(sqlite.object.prepare(
+      `SELECT harness_run_id, event_key FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_TWO)).toEqual({
+      harness_run_id: RUN_TWO,
+      event_key: "residual_receipts_settled",
+    });
+  });
+
+  it("does not let historical receipt repair fail a later automation elicitation", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const automationRunId = seedAutomationRun(sqlite, "receipt-repair-needs-input");
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-repair-before-needs-input",
+      owner: "owner-repair-before-needs-input",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed stale attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-repair-before-needs-input",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-repair-before-needs-input",
+      toolName: "terminal_run_command",
+      inputHash: "repair-before-needs-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
+    sqlite.object.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_ONE);
+    let settlementCalls = 0;
+    const flakyReceipts = {
+      ...sqlite.receipts,
+      settleResidualReceipts: async (
+        repair: Parameters<typeof sqlite.receipts.settleResidualReceipts>[0],
+      ) => {
+        settlementCalls += 1;
+        if (settlementCalls === 1) throw new Error("transient_receipt_rpc_failure");
+        return sqlite.receipts.settleResidualReceipts(repair);
+      },
+    } satisfies typeof sqlite.receipts;
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => flakyReceipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).toEqual([RUN_ONE]);
+    sqlite.database.prepare(
+      `UPDATE automation_runs
+          SET status = 'needs_input', result_summary = 'Waiting for the member'
+        WHERE id = ?`,
+    ).run(automationRunId);
+
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => flakyReceipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).toEqual([]);
+    expect(sqlite.database.prepare(
+      "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = ?",
+    ).get(automationRunId)).toEqual({
+      status: "needs_input",
+      completed_at: null,
+      result_summary: "Waiting for the member",
     });
     expect(sqlite.object.prepare(
       `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
@@ -2825,16 +2977,15 @@ describe("durable harness attempt runtime", () => {
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       toolCallId: "call-stopped-receipt-retry",
-      toolName: "terminal_run_command",
+      toolName: "linear_issue_get",
       inputHash: "stopped-receipt-retry-input",
-      input: { command: "sleep 60" },
-      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
-      mode: "write",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "linear.issue.get", mode: "read" },
+      mode: "read",
     });
     const outcome = {
       status: "stopped" as const,
       error: { code: "run_cancelled", message: "The member stopped this run" },
-      memberSafePayload: { code: "run_cancelled" },
     };
     let settlementCalls = 0;
     const flakyReceipts = {
@@ -2861,15 +3012,20 @@ describe("durable harness attempt runtime", () => {
     ).get(RUN_ONE)).toMatchObject({ status: "stopped" });
     expect(sqlite.object.prepare(
       "SELECT status FROM tool_effects WHERE effect_intent_id = ?",
-    ).get("invocation-stopped-receipt-retry")).toEqual({ status: "ambiguous" });
+    ).get("invocation-stopped-receipt-retry")).toEqual({ status: "failed" });
     expect(sqlite.object.prepare(
       `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
         WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
     ).get(RUN_ONE)).toEqual({ count: 0 });
     const checkpointsAfterLostResponse = sqlite.object.prepare(
-      `SELECT checkpoint_index, phase FROM tool_effect_checkpoints
-        WHERE effect_intent_id = ? ORDER BY checkpoint_index`,
+      `SELECT checkpoint_index, phase, member_safe_payload_json FROM tool_effect_checkpoints
+        WHERE effect_intent_id = ? AND phase = 'cancelled' ORDER BY checkpoint_index`,
     ).all("invocation-stopped-receipt-retry");
+    expect(checkpointsAfterLostResponse).toEqual([{
+      checkpoint_index: 1,
+      phase: "cancelled",
+      member_safe_payload_json: '{"code":"run_cancelled"}',
+    }]);
 
     await expect(terminalizeHarnessAttempt(
       sqlite.binding,
@@ -2881,16 +3037,16 @@ describe("durable harness attempt runtime", () => {
     expect(sqlite.object.prepare(
       "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
     ).get("invocation-stopped-receipt-retry")).toEqual({
-      status: "ambiguous",
-      error_json: '{"code":"ambiguous_external_write","message":"The run stopped while an external write was unresolved"}',
+      status: "failed",
+      error_json: '{"code":"run_cancelled","message":"The run stopped before the tool produced a result"}',
     });
     expect(sqlite.object.prepare(
       `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
         WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
     ).get(RUN_ONE)).toEqual({ count: 1 });
     expect(sqlite.object.prepare(
-      `SELECT checkpoint_index, phase FROM tool_effect_checkpoints
-        WHERE effect_intent_id = ? ORDER BY checkpoint_index`,
+      `SELECT checkpoint_index, phase, member_safe_payload_json FROM tool_effect_checkpoints
+        WHERE effect_intent_id = ? AND phase = 'cancelled' ORDER BY checkpoint_index`,
     ).all("invocation-stopped-receipt-retry")).toEqual(checkpointsAfterLostResponse);
     expect(settlementCalls).toBe(2);
   });
@@ -4047,12 +4203,22 @@ describe("inline child-run durability", () => {
         return sqlite.receipts.settleResidualReceipts(repair);
       },
     } satisfies typeof sqlite.receipts;
+    const repairFailures: unknown[] = [];
 
-    await expect(reapStaleHarnessRuns(sqlite.binding, {
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => flakyReceipts,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-    })).rejects.toThrow("transient_receipt_rpc_failure");
+      onReceiptRepairFailure: (failure) => repairFailures.push(failure),
+    })).toEqual([child.childInput.harnessRunId]);
+    expect(repairFailures).toEqual([{
+      phase: "stale_child",
+      runId: child.childInput.harnessRunId,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      attemptId: child.lease.attemptId,
+      reason: "transient_receipt_rpc_failure",
+    }]);
     expect(sqlite.object.prepare(
       "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
     ).get(child.childInput.harnessRunId)).toMatchObject({ status: "failed" });
