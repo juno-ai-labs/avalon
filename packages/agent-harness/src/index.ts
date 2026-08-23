@@ -957,7 +957,7 @@ const automationDraftSubmissionJsonSchema = {
     expectedOutputs: { type: "array", items: { type: "string" } },
     requestedDelivery: {
       type: "array",
-      description: "Where the person asked for the result to be sent, if they said: \"email\" for their own email address, \"slack_agent_dm\" for their Avalon Slack DM. Use [] when they asked for neither. Avalon does the sending; this only records what was asked for.",
+      description: "The destinations the owner asked to receive the result themselves: \"email\" for their own email address, \"slack_agent_dm\" for their Avalon Slack Agent DM. Use [] when they asked for neither, or when they asked for it to be sent to somebody else. Avalon does the sending; this only records what was asked for.",
       items: { type: "string", enum: ["email", "slack_agent_dm"] }
     },
     defaultBehavior: {
@@ -1978,10 +1978,13 @@ function normalizeAutomationDraft(
     memoryTables: Array.isArray(draft.memoryTables) ? draft.memoryTables : [],
     // A destination named twice is one destination, and one the schema does not
     // know is dropped rather than failing the whole submission — the draft is
-    // still usable, the create screen just does not pre-tick that box.
+    // still usable, the create screen just does not pre-tick that box. Sorted
+    // as well as de-duplicated: the normalized draft is rendered back into the
+    // compiler's own prefix on every later turn, so letting the model's word
+    // order decide those bytes costs a prompt-cache hit per turn for nothing.
     requestedDelivery: Array.isArray(draft.requestedDelivery)
       ? [...new Set(draft.requestedDelivery.filter((entry) =>
-        entry === "email" || entry === "slack_agent_dm"))]
+        entry === "email" || entry === "slack_agent_dm"))].sort()
       : [],
     ready,
     followUpQuestion: null,

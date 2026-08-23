@@ -137,15 +137,17 @@ run's result outward, and may change that afterwards from the automation itself:
 request is accepted. Every run always lands in its own Avalon work stream — that
 is the canonical record and is not a destination the creator can turn off. On top
 of it the creator may freeze email to their own account address and one
-connector-provided personal surface, chosen once on the create screen and stored in
-`automation_delivery_targets`. Which connectors offer such a surface is the
+connector-provided personal surface, chosen on the create screen, changed afterwards
+from the automation, and stored in `automation_delivery_targets`. Which connectors offer such a surface is the
 connector's own declaration rather than a list held by the create screen; see
 [connector architecture](connectors.md#delivering-automation-results-to-a-person).
 Slack's Agent DM is the one shipped today.
 
-Email delivery resolves the owner's account address when the automation is saved
+Email delivery resolves the owner's account address when the destination is added
 and stores that literal address, so a later account change cannot silently redirect
-results. Each result is sent through Resend from the notification sender —
+results. Editing the set does not re-resolve a destination that is already
+delivering; switching one off and on again does, because a retired row is not
+treated as current. Each result is sent through Resend from the notification sender —
 `RESEND_NOTIFICATION_FROM_EMAIL`, which is set in both Workers' vars; unset, it
 falls back to the transactional sender and a morning briefing arrives from the
 invitations address. Delivery is keyed for idempotency on the delivery target and
@@ -413,6 +415,47 @@ hashes remain; changing the words after them is not.
 
 ## Changelog
 
+### 2026-08-23 — A destination that is switched off is retired, not deleted
+
+**What changed:** `deliveryTargetStatements` no longer diffs against a set it
+read a moment earlier. It now states the end state: one upsert per requested
+destination keyed on `(automation_subscription_id, target_type)`, and one
+statement retiring every other type to `status = 'disabled'`. Switching a
+destination off keeps its row; switching it on again reuses that row. `PATCH`
+validates the destination set through the same schema `POST` does, and a
+destination already delivering is not re-resolved.
+
+**Why:** Every dedupe layer is keyed on the target row's *id* — the
+`last_delivered_workstream_id` fence, the Resend idempotency key, and the Slack
+`client_msg_id` are all derived from it. The previous shape preserved the row
+for a destination that survived an edit, which is what the entry below claims,
+and quietly failed to for one turned off and on again: that deleted the row and
+minted a new id with no fence and a fresh provider key, so a retry landing in
+that window sent the result a second time. A feature added to remove a duplicate
+had become a way to cause one.
+
+Two smaller failures had the same root. Inserts were queued ahead of the
+deletes, so replacing a Slack destination onto a reconnected connection tripped
+the unique index inside the batch and failed the whole edit with a 500 — an
+ordinary reconnect, not an edge case. And re-resolving destinations the edit was
+not touching meant one lapsed Slack link rejected *every* subsequent edit,
+leaving the dead destination impossible to remove.
+
+**Considered and rejected:** Reordering the statements so deletes run first,
+which fixes the 500 and neither of the others. Also rejected: deleting on
+"off" and accepting the fence gap as a narrow window — the window is exactly
+when somebody is most likely to be toggling, because a delivery that just
+failed is what makes them look.
+
+**Consequences:** A retired row still exists. Every sender names the statuses it
+will deliver to and `disabled` is in none of them, and the detail query does not
+return them, so it is off in every sense except forgetting — but a query written
+against this table must filter on status rather than assume presence means
+delivering. Re-choosing a retired destination re-resolves it, so a Slack
+connection that lapsed while switched off is rejected at that point rather than
+waking silently. Because each request states the whole set, two concurrent edits
+resolve last-writer-wins instead of one deleting a row the other just added.
+
 ### 2026-08-23 — The destination is the compiler's answer, and it can be changed
 
 **What changed:** A draft carries `requestedDelivery` — the destinations the
@@ -433,6 +476,8 @@ pattern, which is what the previous change did — it narrows the false positive
 without removing the class. Also rejected: replacing every target row on an edit,
 which is simpler than reconciling but clears `last_delivered_workstream_id`, so an
 edit between a run finishing and its delivery settling would re-send the result.
+Reconciling as shipped here still lost that fence when a destination was switched
+off and on again; the entry above records what it took to actually hold it.
 
 **Consequences:** `requestedDelivery` is a *request*, never authority: the
 destinations that actually deliver are the rows on the automation, and a draft

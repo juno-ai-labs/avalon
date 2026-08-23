@@ -278,7 +278,13 @@ describe("agent harness", () => {
     expect(submitTool!.function.parameters.properties).not.toHaveProperty("elicitation");
     expect(submitTool!.function.parameters.properties).not.toHaveProperty("followUpQuestion");
     expect(submitTool!.function.parameters.properties).not.toHaveProperty("requiredCapabilities");
-    expect(submitTool!.function.parameters.required).toEqual(expect.arrayContaining(["ready"]));
+    // The enum is what stops "post it to #eng" reaching the draft as a
+    // destination; the prose around it cannot do that job. Required, because an
+    // omitted optional array is indistinguishable from a model that forgot, and
+    // the create screen pre-ticks a real checkbox from the answer.
+    expect(submitTool!.function.parameters.properties.requestedDelivery)
+      .toMatchObject({ items: { enum: ["email", "slack_agent_dm"] } });
+    expect(submitTool!.function.parameters.required).toEqual(expect.arrayContaining(["ready", "requestedDelivery"]));
     expect(submitTool!.function.parameters.required).not.toEqual(expect.arrayContaining([
       "followUpQuestion",
       "requiredCapabilities",
@@ -4100,6 +4106,33 @@ describe("agent harness", () => {
     ]));
     expect(requestBodies[0]!.messages.some((message) => message.tool_call_id === "orphan-call")).toBe(false);
     expect(JSON.stringify(requestBodies[0]!.messages)).not.toContain("dangling-call");
+  });
+
+  it("normalizes what the compiler said the person asked for", () => {
+    const base = {
+      name: "Weekly update",
+      description: "Summarize the week",
+      instructions: "Write a short update.",
+      triggers: [{ type: "manual", summary: "On request" }],
+    };
+
+    const normalized = (draft: Record<string, unknown>): unknown =>
+      (__testing.normalizeAutomationDraft(draft) as { requestedDelivery: unknown }).requestedDelivery;
+
+    // Model output, so tolerated rather than trusted: a destination named twice
+    // is one destination, and one Avalon does not offer is dropped rather than
+    // failing a submission the person can still use — the create screen simply
+    // does not pre-tick that box.
+    expect(normalized({ ...base, requestedDelivery: ["email", "email", "sms"] })).toEqual(["email"]);
+
+    // Sorted, because this draft is re-rendered into the compiler's own cached
+    // prefix on every later turn.
+    expect(normalized({ ...base, requestedDelivery: ["slack_agent_dm", "email"] }))
+      .toEqual(["email", "slack_agent_dm"]);
+
+    // Not an array at all, and absent, both mean nothing was asked for.
+    expect(normalized({ ...base, requestedDelivery: "email" })).toEqual([]);
+    expect(normalized(base)).toEqual([]);
   });
 
   it("normalizes provider-compatible flat automation triggers", () => {
