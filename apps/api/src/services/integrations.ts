@@ -186,6 +186,7 @@ import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { createBlockDashboardObjectPort } from "../runtime/block-dashboard-port";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
+import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { transcriptLister } from "../runtime/message-projection";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
@@ -916,7 +917,7 @@ async function persistWorkstreamContextCompaction(
  * same window rather than whatever has arrived by the time it runs.
  */
 async function loadTriggerFencedTranscriptMessages(
-  env: Pick<Env, "DB">,
+  transcript: MessageObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">
     & Partial<Pick<WorkstreamWorkflowInput, "transcriptFenceMessageId">>,
   listMessages: TranscriptMessageLister,
@@ -924,12 +925,7 @@ async function loadTriggerFencedTranscriptMessages(
   pageSize = 250,
 ): Promise<Message[]> {
   const sequenceOf = async (messageId: string, code: string): Promise<number> => {
-    const row = await env.DB.prepare(
-      `SELECT sequence_number
-         FROM messages
-        WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3`,
-    ).bind(messageId, input.workspaceId, input.workstreamId)
-      .first<{ sequence_number: number }>();
+    const row = await transcript.message({ messageId });
     const sequence = row?.sequence_number;
     if (!Number.isSafeInteger(sequence) || (sequence ?? -1) < 0) {
       throw Object.assign(new Error("The run trigger message is not available in this work stream"), { code });
@@ -2030,15 +2026,16 @@ export async function runWorkstreamHarness(
     undefined,
     input.compactionFence,
   );
+  const transcript = createMessageObjectPort(env, input.workspaceId, input.workstreamId);
   const storedMessages = await loadTriggerFencedTranscriptMessages(
-    env,
+    transcript,
     input,
     // The transcript comes from the object rather than from a routed reader
     // whose four-table join was rewritten onto three compatibility views. The
     // paging contract is unchanged, which is what lets this stay an injected
     // lister: the loader's fence walk is the same walk.
     transcriptLister(
-      createMessageObjectPort(env, input.workspaceId, input.workstreamId),
+      transcript,
       { workspaceId: input.workspaceId, workstreamId: input.workstreamId },
     ),
     priorCompaction?.compactedThroughSequence ?? -1,
@@ -4367,11 +4364,8 @@ async function loadRunPromptContext(
     memoryQueryParts.push(JSON.stringify(recallable));
   }
   if (input.triggerMessageId) {
-    const triggerMessage = await env.DB.prepare(
-      `SELECT text_content FROM messages
-        WHERE id = ? AND workspace_id = ? AND workstream_id = ?`,
-    ).bind(input.triggerMessageId, input.workspaceId, input.workstreamId)
-      .first<{ text_content: string }>();
+    const triggerMessage = await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
+      .message({ messageId: input.triggerMessageId });
     if (triggerMessage?.text_content.trim()) memoryQueryParts.push(triggerMessage.text_content);
   }
   let triggerMessage: ModelMessage | null = null;
@@ -4425,11 +4419,8 @@ async function loadRunPromptContext(
       `SELECT planned_for, event_count FROM digest_deliveries WHERE id = ? AND workspace_id = ?`,
     ).bind(input.digestDeliveryId, input.workspaceId)
       .first<{ planned_for: string; event_count: number }>();
-    const digestMessage = await env.DB.prepare(
-      `SELECT text_content FROM messages
-        WHERE workspace_id = ? AND workstream_id = ? AND client_message_id = ?`,
-    ).bind(input.workspaceId, input.workstreamId, `digest:${input.digestDeliveryId}`)
-      .first<{ text_content: string }>();
+    const digestMessage = await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
+      .messageByClientId({ clientMessageId: `digest:${input.digestDeliveryId}` });
     // Failing the attempt rather than running without the window: a digest with
     // no brief cannot be written, and settlement folds an unsettled window into
     // the next occurrence instead of consuming it.
