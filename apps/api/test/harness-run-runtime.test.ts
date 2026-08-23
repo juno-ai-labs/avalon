@@ -1056,6 +1056,54 @@ describe("durable harness attempt runtime", () => {
     expect(settlementCalls).toBe(2);
   });
 
+  it("lets a BlockDashboard-only sweep reap and reconcile a stale HyperSight root", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    sqlite.objectDatabase.prepare(
+      "UPDATE runs SET origin = 'block_dashboard_block' WHERE run_id = ?",
+    ).run(RUN_ONE);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-stale-hypersight",
+      owner: "owner-stale-hypersight",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed HyperSight attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-stale-hypersight",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-stale-hypersight",
+      toolName: "terminal_run_command",
+      inputHash: "stale-hypersight-input",
+      input: { command: "sleep 60" },
+      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
+      mode: "write",
+    });
+    sqlite.object.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_ONE);
+
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => sqlite.receipts,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      automationDatabase: null,
+    })).toEqual([RUN_ONE]);
+    expect(sqlite.object.prepare(
+      "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toMatchObject({ status: "failed" });
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-stale-hypersight")).toEqual({
+      status: "ambiguous",
+      error_json: '{"code":"ambiguous_external_write","message":"The parent run lost its durable lease while an external write was in flight"}',
+    });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+  });
+
   it("persists exactly one inference-ledger row for every Bind defect, retry, and fallback attempt", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
