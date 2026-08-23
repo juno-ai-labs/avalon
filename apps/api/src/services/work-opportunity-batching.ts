@@ -116,26 +116,6 @@ export async function enqueueActivityOpportunity(
   });
 }
 
-export async function enqueueMentionOpportunities(
-  env: Env,
-  workspaceId: WorkspaceId,
-  messageId: string,
-  targetUserIds: string[],
-): Promise<void> {
-  if (targetUserIds.length === 0) return;
-  const message = await env.DB.prepare(
-    "SELECT created_at, text_content FROM messages WHERE id = ? AND workspace_id = ? LIMIT 1",
-  ).bind(messageId, workspaceId).first<{ created_at: string; text_content: string }>();
-  if (!message) return;
-  await enqueueMentionOpportunitySnapshot(env, {
-    workspaceId,
-    messageId,
-    targetUserIds,
-    occurredAt: message.created_at,
-    inputCharacters: message.text_content.length,
-  });
-}
-
 export async function enqueueMentionOpportunitySnapshot(
   env: Env,
   input: {
