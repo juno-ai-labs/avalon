@@ -82,6 +82,12 @@ describe("normalizeModelMarkdown", () => {
     expect(normalizeModelMarkdown("Coil is $12 \\ohm$ nominal.")).toBe("Coil is 12 ohm nominal.");
   });
 
+  it("keeps an unknown command's operands apart instead of running them into one word", () => {
+    // `fracab` reads as Avalon garbling a word; `frac a b` reads as the
+    // unrendered math it is — which is the failure the module prefers.
+    expect(normalizeModelMarkdown("Ratio \\[ \\frac{a}{b} \\] here")).toBe("Ratio frac a b here");
+  });
+
   it("is idempotent, so a surface that normalizes twice is not a bug", () => {
     const once = normalizeModelMarkdown("Backlog $\\rightarrow$ Done, $a_{key}$, cost $40");
     expect(normalizeModelMarkdown(once)).toBe(once);
@@ -95,6 +101,34 @@ describe("normalizeModelMarkdown", () => {
   it("does not treat a lone dollar pair spanning a line break as math", () => {
     expect(normalizeModelMarkdown("Budget is $40\nand \\times is separate"))
       .toBe("Budget is $40\nand × is separate");
+  });
+
+  it("maps the comparison commands models actually reach for", () => {
+    expect(normalizeModelMarkdown("Fails when $x \\lt y$ or $y \\gt z$"))
+      .toBe("Fails when x \\< y or y \\> z");
+    expect(normalizeModelMarkdown("Proof $A \\Longrightarrow B$")).toBe("Proof A ⇒ B");
+  });
+
+  // The delimited pass pairs the first two dollars it sees, so a price eats
+  // the opening delimiter of the real span and the bare pass repairs what is
+  // left inside the orphaned pair. The stray delimiters are the documented
+  // cost of the money guard — this pins the artifact as a known one.
+  it("repairs the command in a money-and-TeX sentence, leaving the orphaned dollars", () => {
+    expect(normalizeModelMarkdown("Costs $50 and moves $\\rightarrow$ done"))
+      .toBe("Costs $50 and moves $→$ done");
+  });
+
+  it("leaves a backslash inside a path or hyphenation alone, repairing only a standalone token", () => {
+    expect(normalizeModelMarkdown("Migrate C:\\to\\dist keeps \\in-flight work"))
+      .toBe("Migrate C:\\to\\dist keeps \\in-flight work");
+  });
+
+  it("does not unwrap its own escaped output as a second bracket span", () => {
+    // `escapeForMarkdown` writes `\[…\]` around what it unwrapped; a second
+    // pass reading that back as display math would eat the brackets.
+    const once = normalizeModelMarkdown("$\\text{[a\\_b]}$");
+    expect(once).toBe("\\[a\\_b\\]");
+    expect(normalizeModelMarkdown(once)).toBe(once);
   });
 });
 
@@ -116,5 +150,13 @@ describe("normalizeModelText", () => {
 
   it("returns text with no TeX in it untouched", () => {
     expect(normalizeModelText("Q3 planning for the EU region")).toBe("Q3 planning for the EU region");
+  });
+
+  // This surface is one of the two that *store* the result, so a false
+  // positive here outlives the render that made it: a title with a Windows
+  // path or a hyphenated word must come back exactly as written.
+  it("leaves a backslash inside a path or hyphenation alone on the stored surfaces", () => {
+    expect(normalizeModelText("Migrate C:\\to\\dist and \\in-flight work"))
+      .toBe("Migrate C:\\to\\dist and \\in-flight work");
   });
 });
