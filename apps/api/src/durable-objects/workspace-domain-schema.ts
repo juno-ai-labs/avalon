@@ -54,6 +54,21 @@ function workspaceIdentityFences(): string[] {
 }
 
 /**
+ * Where Avalon's Slack status reaction sits, and which one it is.
+ *
+ * Separate from the frozen `CREATE TABLE` below because these arrived after the
+ * D1 cutover: WorkspaceDO applies them as a schema migration, and the test
+ * fixture that stands in for an object database applies them to the snapshot it
+ * builds. One definition, so the two cannot drift.
+ */
+export const SLACK_REACTION_COLUMN_STATEMENTS = [
+  `ALTER TABLE slack_agent_sessions ADD COLUMN reaction_channel_id TEXT`,
+  `ALTER TABLE slack_agent_sessions ADD COLUMN reaction_message_ts TEXT`,
+  `ALTER TABLE slack_agent_sessions ADD COLUMN reaction_current TEXT`,
+  `ALTER TABLE slack_agent_sessions ADD COLUMN reaction_cursor INTEGER NOT NULL DEFAULT 0`,
+] as const;
+
+/**
  * Workspace-scoped product authorities that do not belong to one work stream.
  *
  * `workspace_id` remains on imported rows during this maintenance-window
