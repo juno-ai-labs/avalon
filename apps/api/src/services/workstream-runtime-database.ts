@@ -315,16 +315,19 @@ export function withWorkstreamRuntimeDatabase(
   });
 }
 
-/** Use object-local SQL only after the regional cutover fence is open. */
+/**
+ * Route this work stream's SQL at its own object.
+ *
+ * Still async, and still separate from `withWorkstreamRuntimeDatabase`: callers
+ * await an execution environment, and the two are not interchangeable at a call
+ * site that also bootstraps.
+ */
 export async function workstreamExecutionEnvironment(
   env: Env,
   workspaceId: string,
   workstreamId: string,
 ): Promise<Env> {
-  const authority = await readWorkstreamAuthorityControl(env);
-  return authority.phase === "durable_object_open"
-    ? withWorkstreamRuntimeDatabase(env, workspaceId, workstreamId)
-    : env;
+  return withWorkstreamRuntimeDatabase(env, workspaceId, workstreamId);
 }
 
 /**
@@ -431,7 +434,6 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
   workstreamId: string,
 ): Promise<Env> {
   const authority = await readWorkstreamAuthorityControl(env);
-  if (authority.phase !== "durable_object_open") return env;
   const at = new Date().toISOString();
   await writeRegionalWorkstreamAnchorBatch(env, { workspaceId, workstreamId, at }, () => [
     env.DB.prepare(

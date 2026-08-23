@@ -12,15 +12,12 @@ import { ensureFreshConnectorCredentials } from "./connector-credential-refresh"
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import {
   TERMINAL_UNFURL_REASONS,
-  WORKSTREAM_UNFURL_COLUMNS,
-  WORKSTREAM_UNFURL_JOINS,
   slackChannelIsExternallyShared,
   slackUnfurlErrorReason,
   workstreamUnfurlBlocks,
   workstreamUnfurlCardHash,
   workstreamUnfurlSummary,
 } from "./slack-workstream-card";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 /**
@@ -100,33 +97,7 @@ export async function refreshSlackWorkstreamUnfurls(env: Env, workspaceId?: stri
   // The per-connection cap is applied by ROW_NUMBER *before* the global limit.
   // Taking the global 100 first and trimming per connection afterwards lets one
   // busy workspace fill every slot and starve the rest indefinitely.
-  const authority = await readWorkstreamAuthorityControl(env);
-  const rows = authority.phase === "durable_object_open"
-    ? await loadDurableObjectStaleUnfurls(env, since, audienceCutoff)
-    : (await env.DB.prepare(`SELECT * FROM (
-       SELECT l.connection_id, l.slack_channel_id, l.slack_message_ts, l.url, l.workstream_id,
-              l.rendered_status AS rendered_status, l.rendered_anonymous, l.rendered_hash,
-              w.id, ${WORKSTREAM_UNFURL_COLUMNS},
-              w.last_activity_at AS ordered_activity_at,
-              ROW_NUMBER() OVER (
-                PARTITION BY l.connection_id ORDER BY w.last_activity_at DESC
-              ) AS connection_rank
-         FROM slack_unfurled_links l
-         JOIN workstreams w ON w.id = l.workstream_id AND w.workspace_id = l.workspace_id
-         JOIN connector_connections c ON c.id = l.connection_id AND c.status <> 'disabled'
-         ${WORKSTREAM_UNFURL_JOINS}
-        WHERE l.shared_at >= ?1
-          AND w.archived_at IS NULL
-          AND (w.harness_status <> l.rendered_status
-               OR w.updated_at > l.refreshed_at
-               OR l.audience_checked_at < ?2
-               OR l.rendered_hash IS NULL)
-     )
-     WHERE connection_rank <= ?3
-     ORDER BY ordered_activity_at DESC
-     LIMIT ?4`)
-      .bind(since, audienceCutoff, MAX_REFRESHES_PER_CONNECTION, MAX_REFRESHES_PER_SWEEP + 1)
-      .all<Record<string, unknown>>()).results;
+  const rows = await loadDurableObjectStaleUnfurls(env, since, audienceCutoff);
   if (rows.length > MAX_REFRESHES_PER_SWEEP) {
     // Never let a bounded sweep read as "everything is current".
     logInfo(env, "slack_unfurl_refresh_ceiling_reached", {

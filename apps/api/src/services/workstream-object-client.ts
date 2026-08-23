@@ -36,7 +36,6 @@ import type { WorkstreamObjectCreateSuggestionInput } from "../durable-objects/w
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 const MessagePageSchema = z.object({
   items: z.array(MessageSchema),
@@ -91,22 +90,6 @@ export async function attachWorkstreamRuntimeResource(
   env: Env,
   input: WorkstreamRuntimeResourceAttachment,
 ): Promise<void> {
-  const authority = await readWorkstreamAuthorityControl(env);
-  if (authority.phase !== "durable_object_open") {
-    await env.DB.prepare(
-      `INSERT OR IGNORE INTO workstream_resources
-         (workstream_id, resource_id, attached_by_user_id, watch_enabled,
-          relationship_type, attached_at)
-       VALUES (?, ?, ?, 0, ?, ?)`,
-    ).bind(
-      input.workstreamId,
-      input.resourceId,
-      input.attachedByUserId,
-      input.relationshipType ?? "generated",
-      new Date().toISOString(),
-    ).run();
-    return;
-  }
   const response = await (await objectStub(env, input.workspaceId, input.workstreamId))
     .attachRuntimeResource(input);
   if (response.status < 200 || response.status >= 300) {

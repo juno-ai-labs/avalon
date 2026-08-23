@@ -3,7 +3,6 @@ import { workspaceDOName } from "../durable-objects/names";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 interface EnqueueInput {
   workspaceId: WorkspaceId;
@@ -37,18 +36,18 @@ async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
 export async function enqueueActivityOpportunity(
   env: Env,
   activityId: string,
-  knownWorkspaceId?: WorkspaceId,
+  knownWorkspaceId: WorkspaceId,
 ): Promise<void> {
-  const authority = await readWorkstreamAuthorityControl(env);
-  const durableActivity = authority.phase === "durable_object_open" && knownWorkspaceId
-    ? WorkspaceConnectorEventSchema.nullable().parse(await durableObjectStubForWorkspace(
+  const durableActivity = WorkspaceConnectorEventSchema.nullable().parse(
+    await durableObjectStubForWorkspace(
       env,
       env.WORKSPACE_DOS,
       knownWorkspaceId,
       workspaceDOName(env.AVALON_REGION, knownWorkspaceId),
-    ).then((workspace) => workspace.connectorEvent({ workspaceId: knownWorkspaceId, eventId: activityId })))
-    : null;
-  const activity = durableActivity ? {
+    ).then((workspace) => workspace.connectorEvent({ workspaceId: knownWorkspaceId, eventId: activityId })),
+  );
+  if (!durableActivity) return;
+  const activity = {
     workspace_id: durableActivity.activity.workspaceId,
     connection_id: durableActivity.activity.connectionId,
     connection_scope: durableActivity.activity.connectionScope,
@@ -61,13 +60,7 @@ export async function enqueueActivityOpportunity(
     subject_json: JSON.stringify(durableActivity.activity.subject),
     visibility_json: JSON.stringify(durableActivity.activity.visibility),
     target_user_ids_json: JSON.stringify(durableActivity.activity.targetUserIds),
-  } : await env.DB.prepare(
-    `SELECT a.workspace_id, a.connection_id, a.connection_scope, a.connection_owner_user_id, a.occurred_at,
-            a.title, a.summary, a.text_snippet, a.actor_json, a.subject_json,
-            a.visibility_json, a.target_user_ids_json
-     FROM activities a WHERE a.id = ? LIMIT 1`,
-  ).bind(activityId).first<Record<string, unknown>>();
-  if (!activity) return;
+  };
   const personal = activity.connection_scope === "personal";
   const ownerId = activity.connection_owner_user_id == null ? null : String(activity.connection_owner_user_id);
   if (personal && !ownerId) return;
