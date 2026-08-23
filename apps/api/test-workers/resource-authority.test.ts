@@ -189,6 +189,62 @@ describe("resource authority on real workerd", () => {
     });
   });
 
+  it("reads an attachment list wider than one statement can bind", async () => {
+    const stub = agent();
+    await boot(stub);
+    const resourceIds = Array.from(
+      { length: 250 },
+      (_, index) => `00000000-0000-7000-8000-${String(index).padStart(12, "0")}`,
+    );
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      for (const [index, resourceId] of resourceIds.entries()) {
+        state.storage.sql.exec(
+          `INSERT INTO workstream_resource_links
+             (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+              resource_json, attached_at, updated_at)
+           VALUES (?, NULL, 0, 'explicit', '{}', ?, ?)`,
+          resourceId,
+          index + 1,
+          index + 1,
+        );
+        state.storage.sql.exec(
+          `INSERT INTO parts
+             (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
+              author_user_id, content, client_message_id, visibility, pinned, message_type,
+              created_at, updated_at)
+           VALUES (?, '0', ?, ?, 'user', 'text', 'member', 'u1', 'hi', ?, 'both', 0, 'text', 1, 1)`,
+          `p${index}`,
+          index + 1,
+          index + 1,
+          `c${index}`,
+        );
+        state.storage.sql.exec(
+          `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+           VALUES (?, ?, 0, '{}')`,
+          `p${index}`,
+          resourceId,
+        );
+      }
+    });
+
+    // Nothing bounds a work stream's attachment list, and this engine binds 100
+    // parameters per statement. An unchunked `IN` list is refused outright, so
+    // the rail fails to load rather than loading slowly. Only the runtime has
+    // that ceiling — `node:sqlite` accepts far more — which is why this cannot
+    // live in the Node suite.
+    const links = await resources(stub, "attachedLinks", { resourceIds });
+    const onMessages = await resources(stub, "resourceIdsOnMessages", { resourceIds });
+
+    expect(links.status).toBe(200);
+    expect(links.value).toHaveLength(250);
+    expect(onMessages.value).toHaveLength(250);
+    // Ordering survives the chunking: each chunk is ordered, so the
+    // concatenation is re-sorted rather than assumed.
+    expect((links.value as Array<{ resource_id: string }>)[0]?.resource_id)
+      .toBe(resourceIds.at(-1));
+  });
+
   it("refuses an operation that is not on the contract", async () => {
     const stub = agent();
     await boot(stub);

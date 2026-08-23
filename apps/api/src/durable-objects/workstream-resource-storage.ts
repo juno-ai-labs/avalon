@@ -16,6 +16,8 @@
  * that failed to bump it would let a stale checkpoint keep matching.
  */
 
+import { boundParameterChunks } from "./bound-parameters";
+
 /** One attachment, as a reader of the work stream's rail sees it. */
 export interface ResourceLinkRow extends Record<string, SqlStorageValue> {
   resource_id: string;
@@ -44,14 +46,26 @@ export class WorkstreamResourceStorage {
   attachedLinks(input: { resourceIds?: readonly string[] } = {}): ResourceLinkRow[] {
     const ids = input.resourceIds ? [...new Set(input.resourceIds)] : null;
     if (ids && ids.length === 0) return [];
-    const filter = ids ? `AND resource_id IN (${ids.map(() => "?").join(", ")})` : "";
-    return this.sql.exec<ResourceLinkRow>(
-      `SELECT resource_id, relationship_type, attached_at, watch_enabled
-         FROM workstream_resource_links
-        WHERE 1 = 1 ${filter}
-        ORDER BY attached_at DESC, resource_id ASC`,
-      ...(ids ?? []),
-    ).toArray();
+    // Chunked when the caller names ids, because the engine binds 100
+    // parameters per statement and a work stream's attachment list is not
+    // bounded by anything smaller. Each chunk is ordered by the same key, so
+    // the concatenation is re-sorted rather than assumed.
+    if (!ids) {
+      return this.sql.exec<ResourceLinkRow>(
+        `SELECT resource_id, relationship_type, attached_at, watch_enabled
+           FROM workstream_resource_links
+          ORDER BY attached_at DESC, resource_id ASC`,
+      ).toArray();
+    }
+    return boundParameterChunks(ids).flatMap((chunk) =>
+      this.sql.exec<ResourceLinkRow>(
+        `SELECT resource_id, relationship_type, attached_at, watch_enabled
+           FROM workstream_resource_links
+          WHERE resource_id IN (${chunk.map(() => "?").join(", ")})`,
+        ...chunk,
+      ).toArray(),
+    ).sort((left, right) =>
+      right.attached_at - left.attached_at || left.resource_id.localeCompare(right.resource_id));
   }
 
   /** The ids alone, for a caller that only needs to know what is attached. */
@@ -85,14 +99,15 @@ export class WorkstreamResourceStorage {
    */
   resourceIdsOnMessages(input: { resourceIds: readonly string[] }): string[] {
     if (input.resourceIds.length === 0) return [];
-    return this.sql.exec<{ resource_id: string } & Record<string, SqlStorageValue>>(
-      `SELECT DISTINCT attachment.resource_id
-         FROM part_attachments attachment
-         JOIN parts part ON part.id = attachment.part_id
-        WHERE part.substream_id = '0'
-          AND attachment.resource_id IN (${input.resourceIds.map(() => "?").join(", ")})`,
-      ...input.resourceIds,
-    ).toArray().map((row) => row.resource_id);
+    return boundParameterChunks(input.resourceIds).flatMap((chunk) =>
+      this.sql.exec<{ resource_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT DISTINCT attachment.resource_id
+           FROM part_attachments attachment
+           JOIN parts part ON part.id = attachment.part_id
+          WHERE part.substream_id = '0'
+            AND attachment.resource_id IN (${chunk.map(() => "?").join(", ")})`,
+        ...chunk,
+      ).toArray().map((row) => row.resource_id));
   }
 
   /**
