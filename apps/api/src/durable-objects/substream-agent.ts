@@ -978,9 +978,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    *
    * No `commitRuntimeMutation` wrapper, unlike the Terminal endpoint: receipts
    * move no deadline `workspace_workstream_directory` projects, so there is no
-   * `directory_common` effect to enqueue. `toolReceiptOperationAffectsDirectory`
-   * states that rather than leaving it to be inferred — inference is what let
-   * the Terminal port silently stop publishing.
+   * `directory_common` effect to enqueue. That is asserted rather than assumed,
+   * against this object's real outbox, in `test-workers/tool-receipt-authority.test.ts`
+   * — with a publishing Terminal operation beside it as the control, because
+   * inference is what let the Terminal port silently stop publishing once
+   * already.
    */
   private async acceptToolReceiptOperation(request: Request): Promise<Response> {
     const parsed = ToolReceiptOperationRequestSchema.safeParse(

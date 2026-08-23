@@ -71,55 +71,6 @@ const TOOL_RECEIPT_OPERATION_SET = new Set<string>(TOOL_RECEIPT_OPERATIONS);
 export function isToolReceiptOperation(value: string): value is ToolReceiptOperation {
   return TOOL_RECEIPT_OPERATION_SET.has(value);
 }
-
-/**
- * None of these settles anything the workspace directory projects.
- *
- * Stated rather than assumed, because the Terminal port shipped a regression by
- * inferring it: its writes had published the directory deadline only because a
- * regex happened to match a table name, and naming the operations properly
- * stopped the publication with no test noticing. Receipts move no deadline the
- * workspace alarm reads — `workspace_workstream_directory` projects run and
- * Terminal state, not tool receipts.
- *
- * A total `Record` rather than a default, so an operation added later cannot
- * inherit the answer: it is a compile error until someone decides. Terminal's
- * set defaults toward publishing because over-publishing costs an outbox row
- * there; here neither default is safe, because a receipt operation that did
- * move a deadline would be silently stranded, which is the regression Terminal
- * shipped.
- *
- * The two additions worth pausing on, since both are more than a receipt write:
- *
- * - `abandonRunReceipts` settles every in-flight receipt of a *terminalized*
- *   run. The run's own terminalization is what moves the directory, and the
- *   caller has already published that; these receipts follow it and add
- *   nothing.
- * - `discardReceipt` deletes a row and hands its stored output ref back so the
- *   Worker can queue the payload for deletion. That queue is
- *   `resource_object_deletion_outbox`, which belongs to the *workspace* object
- *   and is written by the Worker, not from here — so it is not a directory
- *   effect of this operation either. It only looks like one because a deletion
- *   is involved.
- */
-const DIRECTORY_EFFECT: Record<ToolReceiptOperation, boolean> = {
-  admit: false,
-  checkpoint: false,
-  complete: false,
-  fail: false,
-  abandonRunReceipts: false,
-  receiptForCall: false,
-  receiptsByIds: false,
-  attachmentDependencies: false,
-  recordAttachmentDependencies: false,
-  clearAttachmentDependencies: false,
-  discardReceipt: false,
-};
-
-export function toolReceiptOperationAffectsDirectory(operation: ToolReceiptOperation): boolean {
-  return DIRECTORY_EFFECT[operation];
-}
-
 /**
  * The request envelope.
  *
