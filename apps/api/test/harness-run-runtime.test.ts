@@ -148,6 +148,8 @@ interface RuntimeFixture {
   object: ObjectFacade;
   /** The raw object database, for the rare normalized-table statement. */
   objectDatabase: DatabaseSync;
+  /** Statement counts sent through each object-local transaction. */
+  statementBatchSizes: number[];
 }
 
 function fixture(): RuntimeFixture {
@@ -172,6 +174,7 @@ function fixture(): RuntimeFixture {
   openDatabases.push(objectDatabase);
   seedWorkstreamObjectRoot(objectDatabase, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
   const object = objectFacade(objectDatabase);
+  const statementBatchSizes: number[] = [];
   object.exec(`
     INSERT INTO workstreams
       (id, workspace_id, title, objective, origin_type, created_by_user_id,
@@ -205,11 +208,15 @@ function fixture(): RuntimeFixture {
       WORKSPACE_ID,
       WORKSTREAM_ID,
       "0",
-      async (statements) => executeWorkstreamObjectSql(objectDatabase, statements),
+      async (statements) => {
+        statementBatchSizes.push(statements.length);
+        return executeWorkstreamObjectSql(objectDatabase, statements);
+      },
     ),
     database,
     object,
     objectDatabase,
+    statementBatchSizes,
   };
 }
 
@@ -2270,11 +2277,6 @@ describe("durable harness attempt runtime", () => {
 
     await expect(heartbeatHarnessAttempt(sqlite.binding, RUN_ONE, claim.lease))
       .rejects.toMatchObject({ code: "run_cancelled" });
-    await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
-      status: "stopped",
-      error: { code: "run_cancelled", message: "The member stopped this run" },
-      memberSafePayload: { code: "run_cancelled" },
-    })).rejects.toMatchObject({ code: "run_ownership_lost" });
     expect(await completeToolInvocation(sqlite.binding, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-cancelled-read",
@@ -2335,7 +2337,7 @@ describe("durable harness attempt runtime", () => {
     });
   });
 
-  it("refuses to stop around an unsettled receipt after a successor claims an expired run", async () => {
+  it("settles inherited receipts before a successor stops an expired run", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
     const expired = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
@@ -2355,6 +2357,18 @@ describe("durable harness attempt runtime", () => {
       plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
       mode: "write",
     });
+    await persistToolExecutionPlan(sqlite.binding, expired.lease, {
+      invocationId: "invocation-expired-read",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-expired-read",
+      toolName: "linear_issue_get",
+      inputHash: "expired-read-input",
+      input: { issueId: "AVA-1" },
+      plan: { operation: "issue.get", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
     sqlite.object.prepare(
       "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
     ).run(RUN_ONE);
@@ -2372,24 +2386,97 @@ describe("durable harness attempt runtime", () => {
       attempt_id: successor.lease.attemptId,
       status: "started",
     });
-    sqlite.object.prepare(
-      `UPDATE harness_runs
-          SET cancellation_requested_at = '2026-08-03T00:00:00.000Z',
-              cancellation_reason = 'member_stop'
-        WHERE id = ?`,
-    ).run(RUN_ONE);
-
+    // Steering aborts the loop with a stopped outcome but intentionally does
+    // not persist cancellation_requested_at. Residual cleanup belongs to the
+    // stopped outcome, not only to member cancellation.
     await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), successor.lease, {
       status: "stopped",
       error: { code: "run_cancelled", message: "The member stopped this run" },
       memberSafePayload: { code: "run_cancelled" },
-    })).rejects.toMatchObject({ code: "run_ownership_lost" });
+    })).resolves.toBe("terminalized");
     expect(sqlite.object.prepare(
       "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
-    ).get(RUN_ONE)).toEqual({ status: "running", terminalized_at: null });
+    ).get(RUN_ONE)).toMatchObject({ status: "stopped" });
     expect(sqlite.object.prepare(
       "SELECT COUNT(*) AS count FROM harness_run_lifecycle_events WHERE harness_run_id = ? AND event_key = 'terminal'",
-    ).get(RUN_ONE)).toEqual({ count: 0 });
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+    expect(sqlite.object.prepare(
+      "SELECT id, status, error_json FROM tool_invocations WHERE harness_run_id = ? ORDER BY id",
+    ).all(RUN_ONE)).toEqual([
+      {
+        id: "invocation-expired-attempt",
+        status: "ambiguous",
+        error_json: '{"code":"ambiguous_external_write","message":"The run stopped while an external write was unresolved"}',
+      },
+      {
+        id: "invocation-expired-read",
+        status: "failed",
+        error_json: '{"code":"run_cancelled","message":"The run stopped before the tool produced a result"}',
+      },
+    ]);
+    expect(sqlite.object.prepare(
+      `SELECT tool_invocation_id, attempt_id, phase, member_safe_payload_json
+         FROM tool_invocation_checkpoints
+        WHERE harness_run_id = ? AND checkpoint_index = 1
+        ORDER BY tool_invocation_id`,
+    ).all(RUN_ONE)).toEqual([
+      {
+        tool_invocation_id: "invocation-expired-attempt",
+        attempt_id: successor.lease.attemptId,
+        phase: "ambiguous_external_write",
+        member_safe_payload_json: '{"code":"ambiguous_external_write"}',
+      },
+      {
+        tool_invocation_id: "invocation-expired-read",
+        attempt_id: successor.lease.attemptId,
+        phase: "cancelled",
+        member_safe_payload_json: '{"code":"run_cancelled"}',
+      },
+    ]);
+  });
+
+  it("bulk-settles more residual receipts than one runtime transaction may contain", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-many-stopped-receipts",
+      owner: "owner-many-stopped-receipts",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+
+    for (let index = 0; index < 60; index += 1) {
+      const mode = index % 2 === 0 ? "write" : "read";
+      await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+        invocationId: `invocation-residual-${index}`,
+        harnessRunId: RUN_ONE,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        toolCallId: `call-residual-${index}`,
+        toolName: mode === "write" ? "terminal_run_command" : "linear_issue_get",
+        inputHash: `residual-input-${index}`,
+        input: { index },
+        plan: { operation: `residual.${index}`, mode, idempotency: "record_before_execute" },
+        mode,
+      });
+    }
+
+    await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
+      status: "stopped",
+      error: { code: "run_cancelled", message: "The run was steered" },
+      memberSafePayload: { code: "run_cancelled" },
+    })).resolves.toBe("terminalized");
+
+    expect(sqlite.object.prepare(
+      `SELECT status, COUNT(*) AS count FROM tool_invocations
+        WHERE harness_run_id = ? GROUP BY status ORDER BY status`,
+    ).all(RUN_ONE)).toEqual([
+      { status: "ambiguous", count: 30 },
+      { status: "failed", count: 30 },
+    ]);
+    // Cleanup stays two bulk statements plus the four parent terminalization
+    // statements, independent of receipt count; the runtime port caps one
+    // transaction at 100 statements.
+    expect(sqlite.statementBatchSizes.at(-1)).toBe(6);
   });
 
   it("fences every durable write from an executor after its lease ownership is replaced", async () => {

@@ -449,9 +449,11 @@ update lag before changing the default.
 **What changed:** After durable cancellation, the current harness attempt may
 settle any terminal event already returned by Bind for that exact receipt,
 provided its attempt id, owner, running state, unexpired lease, and
-unterminalized parent still match. The parent cannot terminalize as stopped
-while any receipt for the run remains `pending` or `started`, including one left
-by an expired prior attempt.
+unterminalized parent still match. Any receipt still `pending` or `started` at
+the stopped commit is classified in that same lease-fenced transaction — an
+unresolved write becomes ambiguous and a read fails — whether it came from the
+current executor or survived an expired attempt. The parent transition retains
+its no-unsettled-receipt guard after that bulk settlement.
 
 **Why:** Production Computer Use stopped a sleeping command and correctly
 prevented its late marker, but its tool row remained `started`; a follow-up
@@ -464,14 +466,17 @@ failure event emitted by the owner that just observed that request.
 in the renderer, automatically retrying the command, or removing cancellation
 from all ownership fences. The first hides contradictory durable state, the
 second can duplicate a write, and the third would let ordinary post-cancel work
-continue. Only terminal receipt settlement by the exact live owner receives the
-narrow exception; ordinary tool work remains fenced.
+continue. Only terminal receipt settlement by the exact live owner and the
+owner's atomic stopped commit receive the narrow exception; ordinary tool work
+remains fenced. An obsolete executor defers and terminates its drain instead of
+writing an unfenced failure over the successor.
 
 **Consequences:** A stopped command is displayed from its durable completed,
 failed, or ambiguous receipt rather than a stale started row. This includes a
 tool that naturally returns inside the stop poll window, not only the aborted
-path. Provider outcome remains conservative, and every other post-cancellation
-write stays fenced.
+path, and a residual set of any size is closed with two bulk statements rather
+than one statement pair per tool. Provider outcome remains conservative, and
+every other post-cancellation write stays fenced.
 
 ### 2026-08-22 — A held deadline is re-checked, not counted
 

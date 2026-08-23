@@ -105,7 +105,7 @@ Every connector adapter supplies a static agent-plugin descriptor whose provider
 - Automation runs include explicitly bound connection/capability pairs and eligible connections attached through work-stream resources. Attached connections remain limited to the immutable grants frozen for the run.
 - Inbound-email runs remove external connector writes.
 
-Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `avalon_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches. It uses OR discovery rather than requiring the entire query to occur in one catalog field. Activation is durably recorded before the plugin's tools or trusted guidance become visible.
+Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `avalon_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. Activation is durably recorded before the plugin's tools or trusted guidance become visible.
 
 A hosted-MCP connection may supply `HarnessPlugin.loadTools` instead of a
 code-authored tool array. It still appears through the same static trusted
@@ -168,9 +168,9 @@ The prompt sections are a pure render of run state. Bodies are rebuilt from the 
 
 Skill scope misses, load-budget refusals, reads before activation, and missing
 bundled resources are also typed failures rather than successful `output.error`
-envelopes. Their messages carry the shortest next action; bounded values such as
-loaded skill refs or available resource paths travel only through the structured
-failure allowlist.
+envelopes. Their messages carry the shortest next action; already-loaded skill
+refs remain in the active catalog rather than being mislabeled as `available`,
+and only bounded resource paths travel through the structured failure allowlist.
 
 ### Loop
 
@@ -211,7 +211,11 @@ branch, while valid input means the failure came from downstream data.
 Validation failures are labelled `phase: "validation"` on the lifecycle event.
 The attachment grounding guard discards such a call from its started-access
 bookkeeping because no executor content read occurred; only an execution-phase
-content failure can create an unresolved attachment claim.
+content failure can create an unresolved attachment claim. A validation event
+may arrive either before `tool_started` or after an executor rejects its parsed
+arguments. In the latter case the host settles the exact receipt identity it
+recorded for that start and never replans the call as an empty-input validation
+receipt; validation-only receipts exist only for failures that never started.
 
 Completed receipts replay without another provider call only while their owning
 subsystem's authorization and dependency checks still pass. Attachment list
@@ -415,7 +419,7 @@ That split — a labelled trigger message for the model, a system row for the pe
 
 ### Cancellation and deferred systems
 
-Stopping a run persists `cancellation_requested_at`; it does not terminate an in-flight model request or tool call out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. If that observation aborts a tool, the same live attempt may settle that exact in-flight receipt even though cancellation has been requested; the narrow settlement path still requires the current attempt id, lease owner, unexpired lease, `running` parent, and no prior terminalization. A `record_before_execute` write remains ambiguous, while a definitive read failure remains failed. Only after the receipt is durable does the leased child commit the fenced `stopped` lifecycle event and return the work stream to `idle`, preventing both a stop/complete race and a permanently `started` tool row.
+Stopping a run persists `cancellation_requested_at`; it does not terminate an in-flight model request or tool call out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. If that observation aborts a tool, the same live attempt may settle that exact in-flight receipt even though cancellation has been requested; the narrow settlement path still requires the current attempt id, lease owner, unexpired lease, `running` parent, and no prior terminalization. A `record_before_execute` write remains ambiguous, while a definitive read failure remains failed. Any receipt still unfinished when the leased owner commits a requested `stopped` transition is closed in that same batch — unresolved writes become ambiguous and reads fail — whether it came from the current executor or survived an expired attempt. A definite completion or failure that wins before the batch remains terminal. Only after every receipt is durable does the child commit the fenced `stopped` lifecycle event and return the work stream to `idle`, preventing both a stop/complete race and a permanently `started` tool row. If an obsolete executor loses ownership, its local dispatch is deferred to adopt the successor's result; it cannot write an unfenced product failure.
 
 The work-stream transcript, attached resources, activation hints, run scope, inference ledger, tool receipts, inline child results, and scoped memory remain distinct durable records. Nested child delegation, personas, roles, autonomous heartbeats, and general child participants remain deferred product work.
 
@@ -627,7 +631,7 @@ outputs, summaries, token content, and provider responses remain excluded.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, terminal commits, durable structured failures, production root completion/failure settlement after cancellation, attachment dependency ordering, dependency/replan interleavings, and stopped-parent refusal while any tool effect remains unsettled. |
+| `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, terminal commits, durable structured failures, production root completion/failure settlement after cancellation, bulk residual-receipt settlement for stop/steering, attachment dependency ordering, and dependency/replan interleavings. |
 | `apps/api/test/harness-liveness-monitor-lifecycle.test.ts` | Heartbeats, expiry reaping, and the compare-and-swap that fails an abandoned attempt. |
 | `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
 | `apps/api/test/core-tool-idempotency.test.ts` | Receipt identity, plan hashes, and the `ambiguous_external_write` path. |
@@ -638,7 +642,7 @@ outputs, summaries, token content, and provider responses remain excluded.
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
 | `apps/api/test/block-dashboard-submission.test.ts` | The single nudge, the `block_dashboard_block_not_submitted` failure, and the discarded trailing text. |
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, and claim-before-launch. |
-| `apps/api/test/bind-host-durability.test.ts` | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction. |
+| `apps/api/test/bind-host-durability.test.ts` | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction and post-start validation receipt reuse. |
 | `apps/api/test/attachment-tool-receipts.test.ts` | Exact derivative and completed-output-reference dependency fencing, replay reauthorization, all-or-nothing multi-image registration, and successor-safe mismatch cleanup. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The pending-wake-up clock appears only on marked work streams, with the next due time and bounded prompt in its tooltip. |
 | `apps/api/test/agent-inference-logging.test.ts` | That the diagnostic path is best-effort and cannot fail a run. |
@@ -673,12 +677,18 @@ silently return every test to the shared key while each still passes alone.
 
 **What changed:** Plugin activation, skill loading/resource access, and wake-up
 refusals now throw typed failures instead of returning successful results with
-an `error` field. Plugin search is normalized, ranked keyword discovery capped
-at twenty results. Bind labels rejected arguments as validation-phase failures,
-and the attachment grounding guard excludes them from unresolved content. A
+an `error` field. Producer recovery values are bounded before the fail-closed
+sanitizer, already-loaded skills are not mislabeled as available, and plugin
+search is normalized, ranked keyword discovery capped at twenty results with a
+model-visible total match count. Bind labels rejected arguments as validation-phase failures,
+the attachment grounding guard excludes them from unresolved content, and the
+host settles a post-start rejection against its already-recorded real-input
+receipt rather than creating a conflicting empty-input plan. A
 lease-owning attempt may settle any terminal event already returned by Bind for
-the exact in-flight receipt after durable cancellation, while parent stop is
-rejected until every receipt from any attempt is terminal. An attachment replay
+the exact in-flight receipt after durable cancellation. Stopped terminalization
+atomically classifies any residual receipt from the current or an expired
+attempt before committing the parent, and an obsolete executor defers instead
+of failing its successor. An attachment replay
 dependency is registered only after the completion receipt passes that authority
 fence and only while its exact output reference remains current; a successor
 replan repeats both durable-dependency predicates inside its atomic write.
@@ -705,10 +715,12 @@ contradictory started child.
 **Consequences:** Expected refusals now produce `tool_failed`, failed durable
 receipts, and actionable structured model results. New deterministic refusal
 paths must throw a code-bearing error with allowlisted details. Search may return
-partial keyword matches but is bounded and deterministically ranked. The
+partial keyword matches but reports its full match count when the ranked list is
+bounded. The
 cancellation exception is not a general fence relaxation: attempt, owner, lease,
-running status, and terminalization checks still apply, and the parent cannot
-stop around an unsettled receipt from either the live or an expired attempt. A
+running status, and terminalization checks still apply. Residual receipts are
+classified and closed in the atomic stopped commit, so Stop cannot degrade into
+a contradictory started row or a stale executor's later failed outcome. A
 stale executor cannot mutate attachment replay dependencies before its completion
 is accepted or race that dependency past a successor's preliminary replan check.
 New inference callers must add their source to the typed union and the D1 check

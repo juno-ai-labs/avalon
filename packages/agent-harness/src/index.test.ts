@@ -3529,6 +3529,7 @@ describe("agent harness", () => {
           searchAliases: ["issue tracker", "project management"],
           description: "Authorized workspace connector.",
         }],
+        totalMatches: 1,
       },
     }));
   });
@@ -3585,11 +3586,17 @@ describe("agent harness", () => {
     })).resolves.toMatchObject({ status: "completed", content: "searched" });
 
     const ranked = JSON.parse(String(requestBodies[1]!.messages.find((message) =>
-      message.role === "tool")?.content)) as { data: { plugins: Array<{ id: string }> } };
+      message.role === "tool")?.content)) as {
+        data: { plugins: Array<{ id: string }>; totalMatches: number };
+      };
     expect(ranked.data.plugins.map((plugin) => plugin.id)).toEqual(["plugin_x", "plugin_web"]);
+    expect(ranked.data.totalMatches).toBe(2);
     const empty = JSON.parse(String(requestBodies[2]!.messages.filter((message) =>
-      message.role === "tool").pop()?.content)) as { data: { plugins: unknown[] } };
+      message.role === "tool").pop()?.content)) as {
+        data: { plugins: unknown[]; totalMatches: number };
+      };
     expect(empty.data.plugins).toEqual([]);
+    expect(empty.data.totalMatches).toBe(0);
   });
 
   it("bounds broad plugin discovery and preserves a one-character display name", async () => {
@@ -3639,14 +3646,20 @@ describe("agent harness", () => {
     })).resolves.toMatchObject({ status: "completed", content: "searched" });
 
     const broad = JSON.parse(String(requestBodies[1]!.messages.find((message) =>
-      message.role === "tool")?.content)) as { data: { plugins: Array<{ id: string }> } };
+      message.role === "tool")?.content)) as {
+        data: { plugins: Array<{ id: string }>; totalMatches: number };
+      };
     expect(broad.data.plugins).toHaveLength(20);
+    expect(broad.data.totalMatches).toBe(26);
     expect(broad.data.plugins.map((plugin) => plugin.id)).toEqual(
       Array.from({ length: 20 }, (_, index) => `plugin_p${String(index).padStart(2, "0")}`),
     );
     const exact = JSON.parse(String(requestBodies[2]!.messages.filter((message) =>
-      message.role === "tool").pop()?.content)) as { data: { plugins: Array<{ id: string }> } };
+      message.role === "tool").pop()?.content)) as {
+        data: { plugins: Array<{ id: string }>; totalMatches: number };
+      };
     expect(exact.data.plugins.map((plugin) => plugin.id)).toEqual(["plugin_x"]);
+    expect(exact.data.totalMatches).toBe(1);
   });
 
   it("does not activate a preload candidate without a durable activation hint", async () => {
