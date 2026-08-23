@@ -781,6 +781,11 @@ const SlackWebApiSchemas = {
     request: z.object({
       channel: SlackIdSchema,
       text: z.string().min(1).max(40_000),
+      // Slack parses `text` as its own mrkdwn, which has no headings, no
+      // `[label](url)` and no tables. `markdown_text` is the field that parses
+      // the Markdown a model writes; it carries Slack's own 12,000 ceiling, and
+      // Slack rejects it alongside `blocks`, so a caller sends one or the other.
+      markdown_text: z.string().min(1).max(12_000).optional(),
       thread_ts: SlackTimestampSchema.optional(),
       client_msg_id: z.string().uuid().optional(),
       blocks: z.array(SlackBlockSchema).max(50).optional(),

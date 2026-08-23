@@ -606,6 +606,35 @@ This document predates the [module document](module-documents.md) convention and
 had no changelog until the entries below; the reasoning behind everything above them
 was not recorded and is not reconstructed here.
 
+### 2026-08-22 — An answer posted to Slack is sent as Markdown, and cut where it can be
+
+**What changed:** `postSlackTextChunks` sends `markdown_text` alongside `text`,
+and `chat.postMessage`'s request schema accepts the field. Chunking moved from
+40,000 characters to Slack's 12,000-character `markdown_text` ceiling, and
+`splitSlackText` now cuts at a paragraph break, a line break, or a space rather
+than at whatever character the limit lands on — closing and reopening a code
+fence it had to cut through. The two call sites that hand-built a mrkdwn title
+with `*…*` write `**…**`.
+
+**Why:** `text` is parsed as Slack's own mrkdwn, which is a different language
+from the Markdown a model writes: no headings, no `[label](url)`, no tables, and
+`**bold**` shown as literal asterisks. Every Markdown answer that went through
+this function — an automation result delivered to a DM, a written digest, a
+delivery that fell back after the stream failed — arrived with its syntax
+showing. The streaming path was already appending `markdown_text`, so the field
+was available the whole time; only this path had not moved to it.
+
+The chunker was cutting mid-word and mid-fence. An answer long enough to split
+could leave half a code block in one message and render the whole of the next
+one as code.
+
+**Consequences:** Both fields are sent deliberately. `text` is what a push
+notification quotes, and it is also what a Slack deployment that does not honour
+`markdown_text` falls back to — which is precisely the behaviour this replaced,
+so the change can render better and cannot render worse. `markdown_text` may not
+be combined with `blocks`; the schema comment says so, and the calls that post
+blocks are untouched. This has not been exercised against a live Slack workspace.
+
 ### 2026-08-18 — Slack work-stream discovery reads WorkspaceDO
 
 **What changed:** App Home recent work, unfurl creation, and unfurl refresh now

@@ -1226,7 +1226,7 @@ export class SlackAgentService {
     let deliveryError: unknown;
     try {
       if (session.slack_stream_ts) {
-        for (const chunk of splitSlackText(responseText, 12_000)) {
+        for (const chunk of splitSlackText(responseText)) {
           await slackApi(token, "chat.appendStream", { channel: session.slack_channel_id, ts: session.slack_stream_ts, markdown_text: chunk }, AbortSignal.timeout(10_000));
         }
         streamContentComplete = true;
@@ -1365,7 +1365,7 @@ export class SlackAgentService {
       const channelId = opened.channel.id;
       const title = input.outcomeStatus === "needs_input" ? `Action needed · ${input.title}` : input.title;
       const deliveryKey = `${target.id}:${input.workstreamId}`;
-      const threadTs = await postSlackTextChunks(token, channelId, `${title}\n${input.text}`, undefined, `${deliveryKey}:result`);
+      const threadTs = await postSlackTextChunks(token, channelId, `**${title}**\n${input.text}`, undefined, `${deliveryKey}:result`);
       await slackApi(token, "chat.postMessage", {
         channel: channelId,
         thread_ts: threadTs,
@@ -1434,7 +1434,7 @@ export class SlackAgentService {
     await postSlackTextChunks(
       token,
       opened.channel.id,
-      `*${input.title}*\n${input.markdown}`,
+      `**${input.title}**\n${input.markdown}`,
       undefined,
       `digest:${input.targetId}:${input.deliveryId}`,
     );
@@ -3327,8 +3327,23 @@ async function postSlackResponse(responseUrl: string, message: z.input<typeof Sl
   if (!response.ok) throw new ApiError(502, "slack_response_failed", `Slack response URL returned HTTP ${response.status}`);
 }
 
+/**
+ * Posts an answer to Slack as the Markdown a model actually wrote.
+ *
+ * `text` alone is parsed as Slack's own mrkdwn, which is a different language:
+ * it has no headings, no `[label](url)`, no tables, and reads `**bold**` as
+ * literal asterisks. Every Markdown answer sent through it — an automation
+ * result, a digest, a delivery that fell back from the stream — arrived with
+ * its syntax showing. `markdown_text` is the field that parses Markdown, and it
+ * is already what the streaming path appends with.
+ *
+ * Both fields are sent. `text` is what a push notification quotes, and it is
+ * also what a Slack deployment that does not know `markdown_text` falls back
+ * to — which is exactly the behaviour this replaced, so the change can only
+ * render better, never worse.
+ */
 async function postSlackTextChunks(token: string, channel: string, text: string, threadTs?: string, clientMessageKey?: string): Promise<string> {
-  const chunks = splitSlackText(text || "Avalon completed the task without a text response.", 40_000);
+  const chunks = splitSlackText(text || "Avalon completed the task without a text response.");
   let rootTs = threadTs;
   let firstMessageTs: string | null = null;
   for (const [index, chunk] of chunks.entries()) {
@@ -3336,6 +3351,7 @@ async function postSlackTextChunks(token: string, channel: string, text: string,
       channel,
       ...(rootTs ? { thread_ts: rootTs } : {}),
       ...(clientMessageKey ? { client_msg_id: await stableUuid(`${clientMessageKey}:${index}`) } : {}),
+      markdown_text: chunk,
       text: chunk,
     }, AbortSignal.timeout(10_000));
     firstMessageTs ??= result.ts;
@@ -3353,17 +3369,65 @@ async function stableUuid(value: string): Promise<string> {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
-function splitSlackText(value: string, maximum: number): string[] {
+/**
+ * Slack's ceiling for one `markdown_text` field. The same bound is used for the
+ * plain `text` companion, which tolerates far more, so that one long answer is
+ * cut in the same places whichever field the workspace's Slack honours.
+ */
+const SLACK_MARKDOWN_MAX_CHARACTERS = 12_000;
+
+/** The fence lines opening or closing a code block, in a chunk of Markdown. */
+const SLACK_FENCE_LINE = /^[ \t]*(?:```|~~~)/u;
+
+/**
+ * Whether a chunk ends with a code fence still open, and so would render the
+ * next chunk's prose as code unless it is closed here and reopened there.
+ */
+function endsInsideFence(chunk: string): boolean {
+  let open = false;
+  for (const line of chunk.split("\n")) if (SLACK_FENCE_LINE.test(line)) open = !open;
+  return open;
+}
+
+/**
+ * One answer cut into messages Slack will accept.
+ *
+ * Cutting at an arbitrary character is what a length limit asks for and what a
+ * reader never wants: it lands mid-word, mid-link, or between the asterisks of
+ * a bold run, and Slack then renders the halves as two broken messages. Each
+ * cut is taken at the last structural boundary before the limit instead — a
+ * blank line, failing that a line break, failing that a space — and only falls
+ * back to a hard cut when a single unbroken run is longer than the limit.
+ *
+ * A block left fenced open at a cut is closed and reopened, because the
+ * alternative is one message ending in half a code block and the next one
+ * rendering an entire answer as code.
+ */
+function splitSlackText(value: string, maximum: number = SLACK_MARKDOWN_MAX_CHARACTERS): string[] {
+  if (!value) return ["Avalon completed the task without a text response."];
   const chunks: string[] = [];
-  let chunk = "";
-  for (const character of value) {
-    if (chunk.length + character.length > maximum) {
-      chunks.push(chunk);
-      chunk = "";
-    }
-    chunk += character;
+  let rest = value;
+  let reopenFence = false;
+  while (rest.length > maximum) {
+    const window = rest.slice(0, maximum);
+    // Ordered by how much structure the break preserves. `lastIndexOf` on the
+    // window keeps each candidate inside the limit by construction.
+    //
+    // A candidate has to fall in the back half of the window to be taken. The
+    // first one that qualifies wins, so an answer with one blank line near its
+    // start does not get cut there and then dribble out over twice as many
+    // messages as it needs — the line break further down is the better cut, and
+    // a hard cut is right for the run that genuinely has no boundary at all.
+    const cut = [window.lastIndexOf("\n\n"), window.lastIndexOf("\n"), window.lastIndexOf(" ")]
+      .find((candidate) => candidate > maximum / 2) ?? maximum;
+    let chunk = rest.slice(0, cut);
+    rest = rest.slice(cut).replace(/^\s+/u, "");
+    const prefix = reopenFence ? "```\n" : "";
+    reopenFence = endsInsideFence(prefix + chunk);
+    if (reopenFence) chunk += "\n```";
+    chunks.push(prefix + chunk);
   }
-  if (chunk) chunks.push(chunk);
+  if (rest) chunks.push((reopenFence ? "```\n" : "") + rest);
   return chunks.length ? chunks : ["Avalon completed the task without a text response."];
 }
 
@@ -3976,4 +4040,5 @@ export const __slackAgentTesting = {
   recordableUnfurlLinks,
   slackIngressRetryable,
   slackReconnectRequired,
+  splitSlackText,
 };
