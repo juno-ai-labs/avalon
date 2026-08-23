@@ -43,7 +43,6 @@ async function quiesceUnsettledTasks(
   providerSandboxId: string,
   generation: number,
   claimId: string,
-  now: number,
   claimNow: () => number,
 ): Promise<{ sandboxStopped: boolean; sandboxAbsent: boolean }> {
   let sandboxStopped = false;
@@ -137,7 +136,7 @@ async function quiesceUnsettledTasks(
       sandboxGeneration: task.sandboxGeneration,
       providerTaskName: task.providerTaskName,
       claimId,
-      now,
+      now: claimNow(),
     });
     if (!settled) throw new Error("terminal_task_cleanup_fence_lost");
   }
@@ -160,7 +159,11 @@ export async function reconcileDueTerminalSandbox(
   const row = await terminal.sandbox();
   if (!row?.sandboxId || row.lifecycleState === "expired") return { transition: "none" };
 
-  if (row.operationRunId) {
+  if (
+    row.operationRunId
+    && row.operationLeaseExpiresAt
+    && row.operationLeaseExpiresAt > now.getTime()
+  ) {
     const activeRun = await database.prepare(
       `SELECT 1 AS active FROM harness_runs
         WHERE id = ? AND workspace_id = ? AND workstream_id = ?
@@ -198,6 +201,24 @@ export async function reconcileDueTerminalSandbox(
   });
   if (!claimed?.sandboxId) return { transition: "none" };
   const claimedSandboxId = claimed.sandboxId;
+  const settleMissingSandbox = async (): Promise<{ transition: TerminalLifecycleTransition }> => {
+    if (desired === "expired") {
+      await terminal.settleLifecycleTransition({
+        lifecycleState: "expired",
+        claimId,
+        now: now.getTime(),
+      });
+      return { transition: "expired" };
+    }
+    const retired = await terminal.retireMissingSandboxAfterLifecycleClaim({
+      generation: row.generation,
+      sandboxId: claimedSandboxId,
+      claimId,
+      now: now.getTime(),
+    });
+    if (!retired) throw new Error("terminal_lifecycle_missing_sandbox_retirement_lost");
+    return { transition: "deferred" };
+  };
 
   try {
     const cleanup = await quiesceUnsettledTasks(
@@ -206,19 +227,11 @@ export async function reconcileDueTerminalSandbox(
       claimedSandboxId,
       row.generation,
       claimId,
-      now.getTime(),
       claimNow,
     );
     let providerStopped = cleanup.sandboxStopped;
     if (cleanup.sandboxAbsent) {
-      const retired = await terminal.retireMissingSandboxAfterLifecycleClaim({
-        generation: row.generation,
-        sandboxId: claimedSandboxId,
-        claimId,
-        now: now.getTime(),
-      });
-      if (!retired) throw new Error("terminal_lifecycle_missing_sandbox_retirement_lost");
-      return { transition: "deferred" };
+      return settleMissingSandbox();
     }
     const renewClaim = async (): Promise<void> => {
       const renewedAt = claimNow();
@@ -272,13 +285,7 @@ export async function reconcileDueTerminalSandbox(
       observedNotFound = isTerminalProviderNotFound(observationError);
     }
     if (isTerminalProviderNotFound(error) || observedNotFound) {
-      const retired = await terminal.retireMissingSandboxAfterLifecycleClaim({
-        generation: row.generation,
-        sandboxId: claimedSandboxId,
-        claimId,
-        now: now.getTime(),
-      });
-      if (retired) return { transition: "deferred" };
+      return settleMissingSandbox();
     }
     const reconciled = desired === "stopped"
       ? observed?.state === "stopped" || observed?.state === "archived"

@@ -6,6 +6,7 @@ import {
   TerminalSandboxCoordinator,
   type TerminalClock,
 } from "../src/services/terminal/coordinator";
+import { TERMINAL_OPERATION_LEASE_MS } from "../src/durable-objects/workstream-terminal-storage";
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-policy";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -305,6 +306,70 @@ describe("Terminal sandbox coordinator", () => {
     )).toEqual({ operation_run_id: otherRun });
   });
 
+  it("releases a transient recovery claim without publishing a stale failure", async () => {
+    const { objectStore, db, provider, clock } = fixture();
+    const linkedRun = "00000000-0000-4000-8000-000000000099";
+    const effectId = "transient-recovery-effect";
+    const terminal = testTerminalPortFactory(objectStore)(WORKSPACE_ID, WORKSTREAM_ID);
+    const coordinator = new TerminalSandboxCoordinator(
+      db,
+      testTerminalPortFactory(objectStore),
+      provider,
+      clock,
+    );
+    await coordinator.acquire(context());
+    seedToolReceipt(objectStore, {
+      id: effectId,
+      runId: RUN_ID,
+      toolCallId: "transient-recovery-call",
+      toolName: "terminal_run_command",
+    });
+    await expect(terminal.insertTask({
+      taskId: "transient-recovery-task",
+      runId: RUN_ID,
+      effectIntentId: effectId,
+      sandboxGeneration: 1,
+      sandboxId: "sandbox-1",
+      providerTaskName: "transient-recovery-provider-task",
+      commandSha256: "transient-recovery-hash",
+      commandDeadlineAt: clock.now().getTime() + 60_000,
+      startedAt: clock.now().getTime(),
+      now: clock.now().getTime(),
+    })).resolves.toBe(true);
+    await expect(terminal.markTaskRunning({
+      effectIntentId: effectId,
+      providerTaskId: "transient-recovery-provider-command",
+      commandDeadlineAt: clock.now().getTime() + 60_000,
+      now: clock.now().getTime(),
+    })).resolves.toBe(true);
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
+      linkedRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
+    );
+    workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'failed' WHERE id = ?", RUN_ID);
+    vi.mocked(provider.cleanupCommand!).mockRejectedValueOnce(new Error("cleanup unavailable"));
+    vi.mocked(provider.stopSandbox).mockRejectedValueOnce(new Error("stop unavailable"));
+    const linked = { ...context(), harnessRunId: linkedRun, toolCallId: "transient-recovery-linked" };
+
+    await expect(coordinator.acquire(linked)).rejects.toMatchObject({ code: "sandbox_busy" });
+    await expect(terminal.sandbox()).resolves.toMatchObject({
+      lifecycleState: "running",
+      failureCode: null,
+      lifecycleClaimId: null,
+      operationRunId: RUN_ID,
+    });
+
+    await expect(coordinator.acquire(linked)).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+    await expect(terminal.sandbox()).resolves.toMatchObject({
+      lifecycleState: "running",
+      failureCode: null,
+      operationRunId: linkedRun,
+    });
+  });
+
   it("does not stop a successor after degraded cleanup loses its renewed token", async () => {
     const { objectStore, db, provider, clock, advance } = fixture();
     const linkedRun = "00000000-0000-4000-8000-000000000098";
@@ -354,6 +419,7 @@ describe("Terminal sandbox coordinator", () => {
     await expect(terminal.markTaskRunning({
       effectIntentId: effectId,
       providerTaskId: "renew-race-command",
+      commandDeadlineAt: clock.now().getTime() + 60_000,
       now: clock.now().getTime(),
     })).resolves.toBe(true);
     workstreamObjectRun(
@@ -390,7 +456,7 @@ describe("Terminal sandbox coordinator", () => {
       sandboxId: "sandbox-1",
       version: claimed!.version,
       claimId: "successor-cleanup-claim",
-      claimExpiresAt: clock.now().getTime() + 3 * 60_000,
+      claimExpiresAt: clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS,
       now: clock.now().getTime(),
     })).resolves.toBe(true);
     await expect(terminal.cancelTaskAfterProviderCleanup({

@@ -362,12 +362,14 @@ sixteen-minute lease deadline is accepted as proof that Daytona stopped the
 process. Command admission is now one object-local transaction fenced by the
 exact sandbox generation, provider sandbox, live run, operation owner, and
 absence of a cleanup or lifecycle claim. The task remains `submitting` until
-Daytona returns the exact command ID; an unexpired command-plus-provider-request
-window excludes recovery, so cleanup cannot observe a not-yet-visible session
+Daytona returns the exact command ID; an unexpired provider-request window
+excludes recovery, so cleanup cannot observe a not-yet-visible session
 and hand the sandbox away while submission can still arrive. Daytona rechecks
 that exact durable authority immediately before every session-create,
 session-replace, and command-submit mutation and renews the bounded submission
-window each time. When a linked run encounters a retained accepted command,
+window each time. Provider acceptance atomically changes the task to `running`
+and installs the requested command-plus-observation horizon instead of extending
+the pre-submit fence. When a linked run encounters a retained accepted command,
 Avalon deletes its exact named Daytona session (or confirms the whole sandbox
 stopped), then settles the exact durable task as cancelled and atomically hands
 the lease to the cleanup claimant. If a `submitting` task has no provider
@@ -379,9 +381,17 @@ provider mutation and cannot be revived after expiry, so a degraded cleanup
 cannot leave an obsolete stop/delete continuation behind after a successor
 takes over. The lifecycle sweep uses the same provider-cleanup-before-
 settlement order and token-fenced generation retirement for provider absence or
-a `submitting` task whose named session is missing; scheduled cleanup does not
+a `submitting` task whose named session is missing before final expiry; when
+expiry is due, provider absence settles `expired` and preserves the final diff
+instead of creating a replacement generation. Scheduled cleanup does not
 depend on a later human-linked run. An aborted or late provider continuation stays unsettled
-until that cleanup wins and cannot delete the successor's session. `admitted`,
+until that cleanup wins and cannot delete the successor's session. A transient
+recovery failure releases its internal claim without leaving a member-facing
+failure on an otherwise healthy sandbox. A definitive late result is still
+preserved inside the obsolete runtime, but the harness receipt fence discards
+it; no command-log attachment or provider cleanup runs after recovery wins, and
+the continuation cannot overwrite durable cancellation. Automatic log
+publication starts only after exact active-task settlement. `admitted`,
 `running`, `waiting`, and `steering`
 holders continue to block while their operation lease is valid; an unsettled
 task blocks regardless of either deadline.
@@ -405,22 +415,24 @@ non-destructive ordinary cleanup failure. These tests prove
 Avalon orders admission after the provider cleanup contract; the required fresh
 production pass remains the evidence for a live Daytona process. The lifecycle
 regressions prove expired tasks are cleaned before sandbox stop and a contender
-cannot enter during the provider await. A transitional lifecycle token cannot
-be converted into operation ownership merely because its deadline passed. The
-exact token is renewed before each provider mutation, while a renewal after
-expiry fails rather than reviving obsolete authority; the degraded-cleanup race
-proves the obsolete claimant cannot stop its successor.
+cannot enter during a provider-await claim. Claim expiry does not turn
+lifecycle authority into operation authority; the scheduled lifecycle path is
+the only reconciler for the transitional state. Exact renewal before each
+provider mutation cannot revive an expired token, so an obsolete claimant
+cannot begin another mutation after the scheduler replaces its claim; the
+degraded-cleanup race proves it cannot stop its successor.
 Cleanup has no agent-selected item cap: every successful iteration settles one
 of the finite durable tasks already present, and handoff waits for the set to be
 empty. Both linked-operation and scheduled-lifecycle 21-task regressions prove
 all residue is settled under the exact claim, including after a whole-sandbox
-fallback stop. Provider-404 cases prove
-linked recovery and scheduled lifecycle cleanup cancel retained tasks under the
-cleanup token, retire the missing sandbox, and advance the generation before
-another operation can claim it. Removing the yielded-
-status rule, retained-task or submission fence, lifecycle-claim fence, late-
-settlement guard, or lifecycle status repair made the corresponding test fail
-before restoration.
+fallback stop. Provider-404 cases prove linked recovery and pre-expiry scheduled
+lifecycle cleanup cancel retained tasks under the cleanup token, retire the
+missing sandbox, and advance the generation before another operation can claim
+it; expiry instead commits `expired` without discarding its final-diff
+reference. Removing the yielded-
+status rule, retained-task or phase-specific submission fence, lifecycle-claim
+fence, late-publication guard, expiry settlement, transient-failure cleanup, or
+lifecycle status repair made the corresponding test fail before restoration.
 
 Status: fixed locally; deployment and fresh Computer Use recovery retest
 pending. The repair restores access only after provider cleanup is confirmed;
@@ -505,13 +517,22 @@ zero warnings, typecheck, the full root test command, all 357 repository script
 tests, all 110 desktop release-invariant tests, the root production build, the
 EU Wrangler dry-run build, `docs:check`, and `git diff --check`.
 
-The HQA-06 follow-up leaves the full Terminal authority file at 36/36 and the
-focused runtime, lifecycle, coordinator, and provider files at 59/59 (21
-runtime, 11 lifecycle, 8 coordinator, and 19 provider). The
+The HQA-06 follow-up leaves the full Terminal authority file at 37/37 and the
+focused runtime, lifecycle, coordinator, and provider files at 61/61 (22
+runtime, 11 lifecycle, 9 coordinator, and 19 provider). The
 pre-fix status predicate, a deliberate retained-task-fence removal, and a
 deliberate lifecycle-status rollback each failed the named regression before
 the repair was restored. The complete branch gates are rerun after the final
 provider-cleanup repair and recorded before merge.
+
+The final full-test run also exposed a workerd fixture race in three dispatch
+lifecycle cases: each posted a dispatch and parked its one-millisecond alarm in
+separate object invocations, allowing the automatic alarm to start between the
+two setup calls. The pre-fix full suite observed one terminal run whose test
+assertion raced its still-held dispatch token, while the isolated shuffled file
+passed 20/20. Reusing the file's existing atomic `dispatchWithoutDraining`
+helper removes that input-gate gap; the repaired shuffled file passed 20/20 and
+the complete root test command then passed, including all 233 workerd tests.
 
 ## Remaining acceptance work
 

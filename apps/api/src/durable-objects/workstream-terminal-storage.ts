@@ -421,16 +421,10 @@ export class WorkstreamTerminalStorage {
                AND task.state = 'submitting'
                AND task.command_deadline_at > ?
           )
-          AND (
-            EXISTS (
-              SELECT 1 FROM terminal_tasks task
-               WHERE task.sandbox_generation = terminal_workspace.generation
-                 AND task.state IN ('planned', 'submitting', 'running')
-            )
-            OR (
-              lifecycle_claim_id IS NOT NULL
-              AND lifecycle_claim_expires_at <= ?
-            )
+          AND EXISTS (
+            SELECT 1 FROM terminal_tasks task
+             WHERE task.sandbox_generation = terminal_workspace.generation
+               AND task.state IN ('planned', 'submitting', 'running')
           )
         RETURNING id`,
       input.claimId,
@@ -440,7 +434,6 @@ export class WorkstreamTerminalStorage {
       input.sandboxId,
       input.version,
       input.runId,
-      input.now,
       input.now,
       input.now,
     )) !== null;
@@ -864,10 +857,10 @@ export class WorkstreamTerminalStorage {
     return claimed ? { sandboxId: claimed.sandbox_id } : null;
   }
 
-  /** Fail a claimed transition and release the claim. */
+  /** Fail or cleanly release a claimed transition. */
   failLifecycleClaim(input: {
     lifecycleState: TerminalLifecycleState;
-    failureCode: string;
+    failureCode: string | null;
     claimId: string;
     now: number;
   }): void {
@@ -1046,15 +1039,9 @@ export class WorkstreamTerminalStorage {
   /**
    * Admit one command into its provider-submission window.
    *
-   * `INSERT OR IGNORE` is for the replay: the unique effect intent makes a
-   * second admission of the same command a no-op, which is what lets a
-   * Worker interrupted mid-command re-enter its own receipt.
-   *
-   * It does not soften the foreign key. SQLite's ON CONFLICT algorithms do not
-   * apply to FOREIGN KEY constraints, so an effect intent with no row in
-   * `tool_effects` aborts rather than being skipped. That is unreachable
-   * today — the id comes from the caller's own `tool_invocations` lookup, so
-   * the parent is known to exist — but it is a constraint, not a fallback.
+   * The existing-row identity check handles exact replay before the insert.
+   * A mismatched receipt, sandbox generation, provider name, or command hash
+   * fails closed instead of being treated as the same command.
    */
   insertTask(input: {
     taskId: string;
@@ -1095,7 +1082,7 @@ export class WorkstreamTerminalStorage {
       }
 
       return first<{ task_id: string }>(this.sql.exec(
-        `INSERT OR IGNORE INTO terminal_tasks
+        `INSERT INTO terminal_tasks
            (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name,
             state, command_sha256, command_deadline_at, stdout_head, stdout_tail,
             stderr_head, stderr_tail, stdout_bytes, stderr_bytes, started_at,
@@ -1159,15 +1146,18 @@ export class WorkstreamTerminalStorage {
   markTaskRunning(input: {
     effectIntentId: string;
     providerTaskId: string;
+    commandDeadlineAt: number;
     now: number;
   }): boolean {
     return first<{ task_id: string }>(this.sql.exec(
       `UPDATE terminal_tasks
-          SET state = 'running', provider_task_id = ?, updated_at = ?
+          SET state = 'running', provider_task_id = ?,
+              command_deadline_at = MAX(command_deadline_at, ?), updated_at = ?
         WHERE effect_intent_id = ? AND state IN ('submitting', 'running')
           AND (provider_task_id IS NULL OR provider_task_id = ?)
         RETURNING task_id`,
       input.providerTaskId,
+      input.commandDeadlineAt,
       input.now,
       input.effectIntentId,
       input.providerTaskId,
@@ -1176,6 +1166,9 @@ export class WorkstreamTerminalStorage {
 
   settleTask(input: {
     effectIntentId: string;
+    runId: string;
+    sandboxGeneration: number;
+    sandboxId: string;
     state: string;
     exitCode: number | null;
     terminationReason: string | null;
@@ -1185,7 +1178,6 @@ export class WorkstreamTerminalStorage {
     stderrTail: string;
     stdoutBytes: number;
     stderrBytes: number;
-    outputResourceId: string | null;
     completedAt: number | null;
     now: number;
   }): boolean {
@@ -1193,9 +1185,20 @@ export class WorkstreamTerminalStorage {
       `UPDATE terminal_tasks
           SET state = ?, exit_code = ?, termination_reason = ?, stdout_head = ?,
               stdout_tail = ?, stderr_head = ?, stderr_tail = ?, stdout_bytes = ?,
-              stderr_bytes = ?, output_resource_id = ?, completed_at = ?, updated_at = ?
+              stderr_bytes = ?, completed_at = ?, updated_at = ?
         WHERE effect_intent_id = ?
+          AND run_id = ? AND sandbox_generation = ?
           AND state IN ('planned', 'submitting', 'running')
+          AND EXISTS (
+            SELECT 1 FROM terminal_workspace workspace
+            JOIN runs holder ON holder.run_id = ?
+             WHERE workspace.id = 1
+               AND workspace.generation = terminal_tasks.sandbox_generation
+               AND workspace.sandbox_id = ?
+               AND workspace.operation_run_id = ?
+               AND workspace.lifecycle_claim_id IS NULL
+               AND holder.status NOT IN ${TERMINAL_YIELDED_RUN_STATUSES}
+          )
         RETURNING task_id`,
       input.state,
       input.exitCode,
@@ -1206,10 +1209,43 @@ export class WorkstreamTerminalStorage {
       input.stderrTail,
       input.stdoutBytes,
       input.stderrBytes,
-      input.outputResourceId,
       input.completedAt,
       input.now,
       input.effectIntentId,
+      input.runId,
+      input.sandboxGeneration,
+      input.runId,
+      input.sandboxId,
+      input.runId,
+    )) !== null;
+  }
+
+  /** Attach an idempotently published command log to one terminal result. */
+  attachTaskOutputResource(input: {
+    effectIntentId: string;
+    runId: string;
+    sandboxGeneration: number;
+    state: string;
+    completedAt: number;
+    outputResourceId: string;
+    now: number;
+  }): boolean {
+    return first<{ task_id: string }>(this.sql.exec(
+      `UPDATE terminal_tasks
+          SET output_resource_id = ?, updated_at = ?
+        WHERE effect_intent_id = ?
+          AND run_id = ? AND sandbox_generation = ?
+          AND state = ? AND completed_at = ?
+          AND state IN ('completed', 'failed', 'timed_out')
+          AND output_resource_id IS NULL
+        RETURNING task_id`,
+      input.outputResourceId,
+      input.now,
+      input.effectIntentId,
+      input.runId,
+      input.sandboxGeneration,
+      input.state,
+      input.completedAt,
     )) !== null;
   }
 
