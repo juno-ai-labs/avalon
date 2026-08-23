@@ -43,29 +43,24 @@ export interface BlockRunFence {
 }
 
 /**
- * Whether a fenced write landed, and if not, which of the two reasons.
+ * Whether a fenced write landed.
  *
  * Returned rather than thrown, as the receipt operations are, because an
  * exception crossing the RPC boundary arrives as an opaque string and the
  * caller has to tell "your lease is gone" — an ordinary end to a run — apart
  * from "the object failed".
  *
- * `already_terminal` is kept apart from `ownership_lost` because the two are
- * different facts about the caller: a lost lease means another attempt speaks
- * for this run now, while an already-terminal block means *this* attempt still
- * holds the lease and the row it is writing has already been settled — a
- * redelivery, not a takeover. The routed statements could not tell them apart:
- * they restated the fence inside the `UPDATE` and read back one `meta.changes`
- * count, so both arrived as zero. Folding them back together here would throw
- * that distinction away again.
- *
- * `already_terminal` is precisely "the fence held and no open row moved". A
- * block run that does not exist at all would report the same, and there is no
- * fourth outcome for it because there is no path to it: `admitDispatch` writes
- * the block row in the same transaction as the run whose lease is being
- * checked, so a held lease implies the row.
+ * `ownership_lost` covers two states on purpose, and the PR description that
+ * claimed otherwise was wrong. A lost lease and an already-settled block both
+ * answer it: the first means another attempt speaks for this run now, the
+ * second that this attempt is settling twice. The object can tell them apart
+ * where the routed statement could not — it restated the fence inside the
+ * `UPDATE` and read back one `meta.changes` count — but no caller does anything
+ * different with the answer. Both end the write, both throw, and the extra
+ * outcome bought a wider type and an error code nothing catches. If a caller
+ * ever needs to retry one and not the other, split it then.
  */
-export type BlockWriteOutcome = "written" | "ownership_lost" | "already_terminal";
+export type BlockWriteOutcome = "written" | "ownership_lost";
 
 export interface BlockRunRow extends Record<string, SqlStorageValue> {
   block_run_id: string;
@@ -190,7 +185,7 @@ export class WorkstreamBlockDashboardStorage {
         input.blockRunId,
         input.fence.harnessRunId,
       );
-      return this.#changed() ? "written" : "already_terminal";
+      return this.#changed() ? "written" : "ownership_lost";
     });
   }
 
@@ -223,7 +218,7 @@ export class WorkstreamBlockDashboardStorage {
         input.blockRunId,
         input.fence.harnessRunId,
       );
-      return this.#changed() ? "written" : "already_terminal";
+      return this.#changed() ? "written" : "ownership_lost";
     });
   }
 
@@ -369,16 +364,13 @@ export class WorkstreamBlockDashboardStorage {
    * `admitted` status, the main substream, a `{}` budget, zeroed counters, and
    * `started_at` defaulted to the creation instant.
    *
-   * `dispatch_conflict` is what the retired rescue answered without saying so.
-   * That rescue caught the UNIQUE violation and re-read the row by
-   * `(id, harness_run_id, workspace_id, workstream_id, block_id)` — five
-   * columns, of which `block_id` is the one that is not already the row's
-   * identity. Finding no row, it rethrew. It could not have been merged into
-   * "already admitted" then and cannot be now: `blockRunId` is a fresh
-   * `uuidV7()` at each dispatch rather than a value derived from `blockId`, so
-   * a pair naming a *different* block is a real, if remote, possibility, and
-   * admitting it would leave one block's markdown being written under another
-   * block's row. The dispatch is refused instead.
+   * The retired rescue caught the UNIQUE violation and re-read the row by five
+   * columns, one of which was `block_id`, and rethrew when it found none. This
+   * compares only the row's own identity, and that is enough: `blockRunId` is a
+   * fresh `uuidV7()` per dispatch (`workstream-do.ts:1101`), so for the pair to
+   * recur under a different block you would need a UUIDv7 collision *and* the
+   * same run id. Comparing `block_id` here would be a branch for an event that
+   * cannot happen, and the guard it fed on the calling side is gone with it.
    */
   admitDispatch(input: {
     configurationVersionId: string;
@@ -394,15 +386,13 @@ export class WorkstreamBlockDashboardStorage {
     executionPrincipalJson: string;
     model: string;
     createdAt: number;
-  }): "admitted" | "already_admitted" | "dispatch_conflict" {
+  }): "admitted" | "already_admitted" {
     return this.storage.transactionSync(() => {
       const existing = this.blockRun({
         blockRunId: input.blockRunId,
         harnessRunId: input.harnessRunId,
       });
-      if (existing) {
-        return existing.block_id === input.blockId ? "already_admitted" : "dispatch_conflict";
-      }
+      if (existing) return "already_admitted";
       this.sql.exec(
         `INSERT OR IGNORE INTO block_dashboard_configuration_versions
            (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)
