@@ -12,6 +12,7 @@ release/
 .playwright-cli/
 output/
 .wrangler/
+apps/api/.wrangler.inference.*.json
 .vite/
 coverage/
 *.log

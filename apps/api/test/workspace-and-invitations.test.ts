@@ -149,31 +149,29 @@ describe("workspace preferences", () => {
     slug: "avalon-studio",
     region: "global",
     timezone: "America/Los_Angeles",
-    log_agent_inference: 1,
     role: "owner",
     created_at: "2026-08-01T00:00:00.000Z",
   };
 
-  it("returns and updates the opt-in inference logging preference", async () => {
+  it("returns and updates the workspace timezone", async () => {
     const database = new StubDatabase(({ sql }) =>
       sql.includes("FROM workspaces w JOIN workspace_members") ? workspaceRow : undefined
     );
     const service = new WorkspaceService(environment(database), ownerAuth);
 
-    await expect(service.getWorkspace()).resolves.toMatchObject({ logAgentInference: true });
-    await expect(service.updateWorkspace({ logAgentInference: false }))
-      .resolves.toMatchObject({ logAgentInference: true });
+    await expect(service.getWorkspace()).resolves.toMatchObject({ timezone: "America/Los_Angeles" });
+    await expect(service.updateWorkspace({ timezone: "Europe/London" }))
+      .resolves.toMatchObject({ timezone: "America/Los_Angeles" });
 
     const update = database.runs.find((statement) => statement.sql.startsWith("UPDATE workspaces"));
-    expect(update?.values[0]).toBeNull();
-    expect(update?.values[1]).toBe(0);
+    expect(update?.values[0]).toBe("Europe/London");
   });
 
   it("keeps workspace preferences admin-only", async () => {
     const database = new StubDatabase(() => undefined);
     const service = new WorkspaceService(environment(database), { ...ownerAuth, role: "member" });
 
-    await expect(service.updateWorkspace({ logAgentInference: true }))
+    await expect(service.updateWorkspace({ timezone: "Europe/London" }))
       .rejects.toMatchObject({ status: 403 });
     expect(database.runs).toHaveLength(0);
   });

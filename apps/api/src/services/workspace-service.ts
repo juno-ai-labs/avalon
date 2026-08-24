@@ -341,7 +341,7 @@ export class WorkspaceService {
 
   async getWorkspace() {
     const row = await this.env.DB.prepare(
-      `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.log_agent_inference, w.created_at, m.role
+      `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.created_at, m.role
        FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id
        WHERE w.id = ? AND m.user_id = ? AND m.status = 'active'`,
     )
@@ -354,7 +354,6 @@ export class WorkspaceService {
       slug: String(row.slug),
       region: String(row.region),
       timezone: String(row.timezone),
-      logAgentInference: Number(row.log_agent_inference ?? 0) === 1,
       role: String(row.role),
       createdAt: String(row.created_at),
     };
@@ -395,18 +394,15 @@ export class WorkspaceService {
     };
   }
 
-  async updateWorkspace(input: { timezone?: string | undefined; logAgentInference?: boolean | undefined }) {
+  async updateWorkspace(input: { timezone: string }) {
     this.requireAdmin();
     await this.env.DB.prepare(
       `UPDATE workspaces
-       SET timezone = COALESCE(?, timezone),
-           log_agent_inference = COALESCE(?, log_agent_inference),
-           updated_at = ?
+       SET timezone = ?, updated_at = ?
        WHERE id = ?`,
     )
       .bind(
-        input.timezone ?? null,
-        input.logAgentInference === undefined ? null : input.logAgentInference ? 1 : 0,
+        input.timezone,
         nowIso(),
         this.auth.workspaceId,
       )

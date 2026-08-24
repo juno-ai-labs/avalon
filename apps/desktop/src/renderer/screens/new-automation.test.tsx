@@ -37,7 +37,6 @@ const workspace: Workspace = {
   name: 'Juno Labs',
   region: 'global',
   timezone: 'America/Los_Angeles',
-  logAgentInference: false,
   currentUser: { id: 'user-1', name: 'Adam Juhasz', email: 'adam@juno-labs.com', timezone: 'America/Los_Angeles' },
 };
 

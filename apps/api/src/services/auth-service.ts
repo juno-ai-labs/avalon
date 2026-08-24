@@ -46,7 +46,6 @@ interface IdentityRow {
   workspace_slug: string | null;
   workspace_region: Region | null;
   workspace_timezone: string | null;
-  workspace_log_agent_inference: number | null;
   workspace_created_at: string | null;
   role: "owner" | "admin" | "member" | null;
 }
@@ -492,7 +491,6 @@ export class AuthService {
         workspace_slug: null,
         workspace_region: null,
         workspace_timezone: null,
-        workspace_log_agent_inference: null,
         workspace_created_at: null,
         role: null,
       };
@@ -502,7 +500,6 @@ export class AuthService {
          u.timezone AS user_timezone,
          u.created_at AS user_created_at, w.id AS workspace_id, w.name AS workspace_name,
          w.slug AS workspace_slug, w.region AS workspace_region, w.timezone AS workspace_timezone,
-         w.log_agent_inference AS workspace_log_agent_inference,
          w.created_at AS workspace_created_at, m.role
        FROM users u JOIN workspace_members m ON m.user_id = u.id
        JOIN workspaces w ON w.id = m.workspace_id
@@ -572,7 +569,6 @@ export class AuthService {
             region: identity.workspace_region,
             role: identity.role,
             timezone: identity.workspace_timezone,
-            logAgentInference: identity.workspace_log_agent_inference === 1,
             createdAt: identity.workspace_created_at,
           }
         : null,

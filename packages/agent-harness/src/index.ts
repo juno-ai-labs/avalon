@@ -112,6 +112,7 @@ export interface InferenceAttemptEvent {
   turnId: string;
   model: string;
   provider: string;
+  providerInvocationModel: string;
   cursor: {
     structuredOutputAttempt: number;
     stageIndex: number;
@@ -127,6 +128,14 @@ export interface InferenceAttemptEvent {
   cachedInputTokens?: number | null;
   costCents?: number;
   responseBytes?: number;
+  /** The successful provider result before Bind projects it into transcript rows. */
+  response?: {
+    content: string;
+    toolCalls: ModelToolCall[];
+    usage: Record<string, number> | null;
+    finishReason: string | null;
+    generationId: string | null;
+  };
   failureKind?: string;
   /** The provider's own classification of a rejected request, when it gave one. */
   providerError?: OpenRouterProviderError;
@@ -168,6 +177,8 @@ export type StructuredModelDiagnostic = {
   attempt: number;
   fallbackAttempt: number;
   repairAttempt: number;
+  /** Stable for one provider request, including its validation outcome. */
+  inferenceRequestId?: string;
   latencyMs?: number;
   responseBytes?: number;
   inputTokens?: number;
@@ -179,6 +190,10 @@ export type StructuredModelDiagnostic = {
   /** The provider's own classification of a rejected request, when it gave one. */
   providerError?: OpenRouterProviderError;
   validationIssues?: Array<{ path: string; code: string }>;
+  /** Exact provider request body. Present only on `model_request`. */
+  requestPayload?: Record<string, unknown>;
+  /** Exact successful provider response envelope. */
+  responsePayload?: Record<string, unknown>;
 };
 
 export interface ModelToolCall {
@@ -279,7 +294,33 @@ export class OpenRouterClient {
       let repairAttempt = 0;
       for (let attempt = 0; attempt <= this.sameModelRetries(); attempt += 1) {
         const startedAt = Date.now();
+        const inferenceRequestId = crypto.randomUUID();
+        let responsePayload: Record<string, unknown> | undefined;
+        let responseMetrics: Partial<Pick<
+          StructuredModelDiagnostic,
+          | "latencyMs"
+          | "responseBytes"
+          | "inputTokens"
+          | "outputTokens"
+          | "reasoningTokens"
+          | "cachedInputTokens"
+        >> | undefined;
         try {
+          const requestPayload = {
+            model,
+            messages: repairMessages ?? schemaMessages,
+            stream: false,
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: input.schemaName,
+                strict: true,
+                schema: input.jsonSchema
+              }
+            },
+            plugins: [{ id: "response-healing" }],
+            reasoning: structuredReasoning(input.reasoningEffort),
+          };
           await input.onDiagnostic?.({
             stage: "model_request",
             schemaName: input.schemaName,
@@ -287,29 +328,20 @@ export class OpenRouterClient {
             attempt,
             fallbackAttempt,
             repairAttempt,
+            inferenceRequestId,
+            requestPayload,
           });
           const response = await this.fetcher("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: this.headers(),
-            body: JSON.stringify({
-              model,
-              messages: repairMessages ?? schemaMessages,
-              stream: false,
-              response_format: {
-                type: "json_schema",
-                json_schema: {
-                  name: input.schemaName,
-                  strict: true,
-                  schema: input.jsonSchema
-                }
-              },
-              plugins: [{ id: "response-healing" }],
-              reasoning: structuredReasoning(input.reasoningEffort),
-            }),
+            body: JSON.stringify(requestPayload),
             ...(input.signal ? { signal: input.signal } : {})
           });
           const payload = await readJsonResponse<{
-            choices?: Array<{ message?: { content?: string | null } }>;
+            id?: string;
+            model?: string;
+            choices?: Array<{ message?: { content?: string | null }; finish_reason?: string | null }>;
+            usage?: Record<string, number>;
             error?: { message?: string };
           }>(response);
           if (!response.ok) {
@@ -323,6 +355,19 @@ export class OpenRouterClient {
           }
           const content = payload?.choices?.[0]?.message?.content;
           if (!content) throw new OpenRouterError("OpenRouter returned no structured content");
+          responsePayload = payload as Record<string, unknown>;
+          const inputTokens = providerUsageNumber(payload?.usage ?? null, "prompt_tokens");
+          const outputTokens = providerUsageNumber(payload?.usage ?? null, "completion_tokens");
+          const reasoningTokens = providerUsageNumber(payload?.usage ?? null, "reasoning_tokens");
+          const cachedInputTokens = providerCachedTokens(payload?.usage ?? null);
+          responseMetrics = {
+            latencyMs: Date.now() - startedAt,
+            responseBytes: new TextEncoder().encode(content).byteLength,
+            ...(inputTokens === undefined ? {} : { inputTokens }),
+            ...(outputTokens === undefined ? {} : { outputTokens }),
+            ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+            ...(cachedInputTokens === null ? {} : { cachedInputTokens }),
+          };
           await input.onDiagnostic?.({
             stage: "model_response",
             schemaName: input.schemaName,
@@ -330,8 +375,9 @@ export class OpenRouterClient {
             attempt,
             fallbackAttempt,
             repairAttempt,
-            latencyMs: Date.now() - startedAt,
-            responseBytes: new TextEncoder().encode(content).byteLength,
+            inferenceRequestId,
+            ...(responseMetrics ?? {}),
+            ...(responsePayload ? { responsePayload } : {}),
           });
           let parsedJson: unknown;
           try {
@@ -355,6 +401,7 @@ export class OpenRouterClient {
                 attempt,
                 fallbackAttempt,
                 repairAttempt,
+                inferenceRequestId,
                 validationIssues,
               });
               attempt -= 1;
@@ -362,10 +409,10 @@ export class OpenRouterClient {
             }
             throw new OpenRouterError("OpenRouter returned invalid structured JSON");
           }
-          await input.onDiagnostic?.({ stage: "normalize", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt });
+          await input.onDiagnostic?.({ stage: "normalize", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt, inferenceRequestId });
           try {
             const parsed = input.parse(parsedJson);
-            await input.onDiagnostic?.({ stage: "validate", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt });
+            await input.onDiagnostic?.({ stage: "validate", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt, inferenceRequestId });
             await input.onDiagnostic?.({
               stage: "complete",
               schemaName: input.schemaName,
@@ -373,7 +420,10 @@ export class OpenRouterClient {
               attempt,
               fallbackAttempt,
               repairAttempt,
+              inferenceRequestId,
               success: true,
+              ...(responseMetrics ?? {}),
+              ...(responsePayload ? { responsePayload } : {}),
             });
             return parsed;
           } catch (error) {
@@ -398,6 +448,7 @@ export class OpenRouterClient {
                 attempt,
                 fallbackAttempt,
                 repairAttempt,
+                inferenceRequestId,
                 validationIssues,
               });
               attempt -= 1;
@@ -411,6 +462,7 @@ export class OpenRouterClient {
                 attempt,
                 fallbackAttempt,
                 repairAttempt,
+                inferenceRequestId,
                 validationIssues: error.issues.slice(0, 25).map((issue) => ({
                   path: issue.path.map(String).join("."),
                   code: issue.code,
@@ -430,9 +482,11 @@ export class OpenRouterClient {
             attempt,
             fallbackAttempt,
             repairAttempt,
+            inferenceRequestId,
             latencyMs: Date.now() - startedAt,
             success: false,
             failureKind: structuredFailureKind(error, input.signal),
+            ...(responsePayload ? { responsePayload } : {}),
             ...(providerError ? { providerError } : {}),
           });
           if (input.signal?.aborted) throw error;
@@ -805,6 +859,16 @@ async function readJsonResponse<T>(response: Response): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+function providerUsageNumber(usage: Record<string, number> | null, key: string): number | undefined {
+  const value = usage?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function providerCachedTokens(usage: Record<string, number> | null): number | null {
+  const value = usage?.cached_tokens ?? usage?.cached_prompt_tokens;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 const addressingJsonSchema = {
