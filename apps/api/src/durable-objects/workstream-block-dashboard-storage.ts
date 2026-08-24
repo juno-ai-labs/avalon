@@ -95,21 +95,26 @@ export class WorkstreamBlockDashboardStorage {
    * decision and the write cannot be interleaved, so a lease that lapses
    * mid-operation is no longer a state a caller can observe.
    *
-   * `status = 'running'` is deliberately narrower than the subquery it
-   * replaces, and is not a behaviour change today. That subquery read
+   * The three statuses are the ones the retired view called `running`: it read
    * `_runtime_harness_runs`, whose projection mapped `waiting` and `steering`
-   * onto `running`, so it accepted a run in either. Nothing writes those two
-   * statuses — the `runs` CHECK constraint admits them and several readers
-   * tolerate them, but no code path produces one — so widening the fence here
-   * would be handling for a state the product cannot reach. Whoever adds the
-   * first writer of `waiting` or `steering` revisits this fence and the receipt
-   * storage's `#fence`, which narrowed identically and for the same reason.
+   * onto `running`, so the subquery this replaces accepted a run in any of
+   * them. Nothing writes `waiting` or `steering` today — the `runs` CHECK
+   * constraint admits them and several readers tolerate them, but no code path
+   * produces one — so fencing on `running` alone would also pass. It is spelled
+   * out anyway because the two are not equally safe to be wrong about: a
+   * narrower fence answers a lease it does not recognise by writing nothing,
+   * which is indistinguishable from a genuinely lost lease, so the first writer
+   * of either status would silently drop block-dashboard writes rather than
+   * fail somewhere anyone would look. Retiring a compatibility view should not
+   * quietly narrow what the product accepts. The receipt storage's `#fence`
+   * carries the same set for the same reason.
    */
   #holdsLease(fence: BlockRunFence, now: number): boolean {
     return first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
       `SELECT 1 AS ok FROM runs
         WHERE run_id = ? AND legacy_attempt_id = ? AND lease_owner = ?
-          AND status = 'running' AND terminalized_at IS NULL AND lease_expires_at > ?`,
+          AND status IN ('running', 'waiting', 'steering')
+          AND terminalized_at IS NULL AND lease_expires_at > ?`,
       fence.harnessRunId,
       fence.attemptId,
       fence.owner,

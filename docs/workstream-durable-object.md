@@ -1061,6 +1061,37 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-24 — Lease fences keep the projection the compatibility view had
+
+**What changed:** the block dashboard's `#holdsLease` and the tool receipt
+storage's `#fence` accept `waiting` and `steering` alongside `running`, spelled
+out in a named `LEASE_HOLDING_STATUSES` on the receipt side. Both had narrowed
+to `status = 'running'` when they moved off the routed SQL.
+
+**Why:** the routed versions read `_runtime_harness_runs`, whose projection
+mapped both statuses onto `running`, so the fences they replaced accepted a run
+in any of the three. Nothing writes `waiting` or `steering` today — the `runs`
+CHECK constraint admits them and several readers tolerate them, but no code path
+produces one — which is why the narrowing was not a behaviour change and why the
+first version of this slice left it, with a comment for whoever added the first
+writer.
+
+Review made the better argument: retiring a compatibility view should not
+quietly narrow what the product accepts, and the two directions are not equally
+safe to be wrong about. A fence that does not recognise a status refuses the
+write, and both fences report a refusal as a lost lease — so the first writer of
+either status would silently drop settled block results and demote returned tool
+results to the residual stop fallback, with nothing failing anywhere a person
+would look. Carrying three statuses instead of one costs a `Set` membership test
+and removes the trap.
+
+**What a future change has to respect:** these two fences and the view's old
+`CASE` are one decision. A new lease fence written against `runs.status` decides
+the same question, and `running` alone is the wrong default — a busy run is any
+of the three. If the product ever settles on a single busy status, retire the
+other two from the CHECK constraint rather than from the fences, so the
+narrowing is enforced where it can be seen.
+
 ### 2026-08-23 — One object-port factory, and the fence the typed endpoints dropped
 
 **What changed:** the four typed object ports stop being four copies of one
