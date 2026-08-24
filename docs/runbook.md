@@ -1086,10 +1086,18 @@ audit, and telemetry remain valid D1 writers.
 ## Timezones
 
 - Store only supported IANA names. Existing users and Global workspaces are migrated to `America/Los_Angeles`; existing EU workspaces are migrated to `Europe/London`.
-- Electron supplies the Mac timezone during ticket exchange. Browser and undetected clients use `America/Los_Angeles`.
+- Electron supplies the Mac timezone during ticket exchange. It seeds an account whose
+  `timezone_source` is still `client` and never writes over one somebody chose in settings;
+  a client that sends no zone leaves the account alone, because there is no server-side default.
 - New Global workspaces default to `America/Los_Angeles`; new EU workspaces default to `Europe/London`.
-- Owners and admins may change the workspace timezone. Every user may change their personal timezone.
-- Calendar automation precedence is explicit trigger timezone, then the initiating user's timezone for personal scope, then the workspace timezone for workspace scope.
+- Owners and admins may change the workspace timezone. Every user may change their personal
+  timezone, which records `timezone_source = 'user'` and stops sign-in reseeding it.
+- Calendar automation precedence is explicit trigger timezone, then the automation **owner's**
+  timezone for personal scope, then the workspace timezone — resolved where the `schedules`
+  row is derived rather than when the draft was compiled, so the scope chosen on the create
+  screen and the account adopting a shared template are the ones that answer it. The owner is
+  not always the caller: adopting a new version of somebody else's automation resolves against
+  the subscription's owner.
 
 ## Observability views and retention
 

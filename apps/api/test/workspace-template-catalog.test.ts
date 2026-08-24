@@ -139,6 +139,28 @@ const WEEKLY_CALENDAR = JSON.stringify([{
   timezone: "America/Los_Angeles",
   summary: "Every Friday at 2:00 PM",
 }]);
+// An unzoned calendar trigger — the ordinary shape now — beside an activity
+// trigger that does produce a source. `templateTriggers` answers a parse
+// failure with an empty list for the whole array, so a contract that rejected
+// the null would silently drop the GitHub source next to it rather than fail
+// loudly. Mixed on purpose: a calendar-only template lists no sources either
+// way, so it could not tell the two apart.
+const UNZONED_CALENDAR = JSON.stringify([
+  {
+    type: "calendar",
+    rrule: "FREQ=DAILY;BYHOUR=9",
+    timezone: null,
+    summary: "Every morning at 9:00 AM",
+  },
+  {
+    type: "connector_activity",
+    connectorType: "github",
+    sourceBindingKey: "github_pushes",
+    suggestedSourcePluginId: "plugin_github",
+    eventTypes: ["push"],
+    deterministicFilters: {},
+  },
+]);
 const SEMANTIC_ACTIVITY = JSON.stringify([
   {
     type: "semantic_activity",
@@ -218,6 +240,12 @@ describe("the workspace template catalog", () => {
         name: "Changelog",
         triggers: WEEKLY_CALENDAR,
       },
+      {
+        id: "74000000-0000-7000-8000-000000000025",
+        versionId: "74000000-0000-7000-8000-000000000026",
+        name: "Briefing",
+        triggers: UNZONED_CALENDAR,
+      },
     ]);
 
     const response = await app.request("/automation-templates", undefined, env);
@@ -225,6 +253,11 @@ describe("the workspace template catalog", () => {
     expect(response.status).toBe(200);
     const body = await response.json() as { items: Array<Record<string, unknown>> };
     expect(body.items.map((item) => [item.name, item.activitySources])).toEqual([
+      ["Briefing", [{
+        bindingKey: "github_pushes",
+        connectorType: "github",
+        suggestedPluginId: "plugin_github",
+      }]],
       ["Changelog", []],
       ["Review watcher", [{
         bindingKey: "github_reviews",
@@ -233,9 +266,9 @@ describe("the workspace template catalog", () => {
       }]],
     ]);
     // A template nobody has installed yet reports zero rather than dropping out
-    // of the catalog: `usedBy` counts visible subscriptions, and neither of
-    // these has one.
-    expect(body.items.map((item) => item.usedBy)).toEqual([0, 0]);
+    // of the catalog: `usedBy` counts visible subscriptions, and none of these
+    // has one.
+    expect(body.items.map((item) => item.usedBy)).toEqual([0, 0, 0]);
   });
 
   it("binds a semantic trigger that names a connector, and skips one that cannot", async () => {

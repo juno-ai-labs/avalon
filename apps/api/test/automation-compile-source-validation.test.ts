@@ -51,8 +51,11 @@ describe("automation compile activity-source validation", () => {
     });
     const prepare = vi.fn((sql: string) => ({
       bind: vi.fn(() => ({
+        // `user_id` because the real statement selects it: a fixture that omits
+        // it leaves `row.user_id` undefined rather than the null D1 returns, and
+        // the existence guard would then pass for the wrong reason.
         first: vi.fn(async () => sql.includes("AS user_timezone")
-          ? { user_timezone: "America/Los_Angeles", workspace_timezone: "UTC" }
+          ? { user_id: "user-1", user_timezone: "America/Los_Angeles", workspace_timezone: "UTC" }
           : null),
       })),
     }));
@@ -72,6 +75,15 @@ describe("automation compile activity-source validation", () => {
     // which is the very thing the person comes back to the conversation to fix.
     expect(prepare.mock.calls.map(([sql]) => sql).join("\n")).toContain("INSERT INTO automation_subscriptions");
     expect(batch).toHaveBeenCalledOnce();
+    // The zones the compiler schedules by, in the order it reads them. Swapping
+    // these two is half the defect this change exists for — the model told the
+    // wrong zone — and nothing else in the suite would notice.
+    expect(compileAutomationDraft).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        defaultTimezones: { personal: "America/Los_Angeles", workspace: "UTC" },
+      }),
+    );
   });
 
   it("refuses a compile for somebody the workspace's region has no user row for", async () => {

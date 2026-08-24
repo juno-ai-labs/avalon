@@ -82,11 +82,17 @@ class AdoptionStatement {
         ? this.database.version as T
         : null;
     }
-    if (sql.includes("(SELECT u.timezone FROM users u WHERE u.id = ?) AS user_timezone")) {
+    // Matched on the aliases the caller actually reads rather than on the
+    // statement's text: this stub stands in for a query whose shape is not the
+    // behaviour under test, and keying on the whole string made an unrelated
+    // rewrite of it look like a failure here.
+    if (sql.includes("AS workspace_timezone") && sql.includes("AS user_timezone")) {
       this.database.timezoneLookups.push(this.values[0]);
+      const owner = this.values[0] === this.database.subscription.owner_user_id;
       return {
         workspace_timezone: "Europe/London",
-        user_timezone: this.values[0] === this.database.subscription.owner_user_id ? "America/New_York" : null,
+        user_id: owner ? this.values[0] : null,
+        user_timezone: owner ? "America/New_York" : null,
       } as T;
     }
     throw new Error(`Unexpected first() query: ${sql}`);
@@ -173,7 +179,11 @@ describe("automation template version adoption", () => {
 
   it.each([
     {
-      name: "reads a personal automation's occurrences in its owner's day",
+      // Not owner-versus-caller: `loadSubscription` admits a personal row only
+      // when the two are the same person, so that distinction is unreachable
+      // here and is covered where it is real — a shared template adopted by
+      // somebody who is not its author, in `automation-draft-persistence`.
+      name: "reads a personal automation's occurrences in the account's day",
       scope: "personal",
       ownerUserId: "d6d77053-92bc-4af6-8332-8bea8c4c6904",
       lookedUpUserId: "d6d77053-92bc-4af6-8332-8bea8c4c6904",
