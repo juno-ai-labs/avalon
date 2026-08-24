@@ -206,6 +206,26 @@ describe("claiming a run's attempt", () => {
       .toMatchObject({ exact_state: "idle" });
   });
 
+  it("reports the contended run's own lease when a duplicate dispatch races it", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN);
+    storage.claimAttempt({
+      ...fence, runId: RUN, leaseSeconds: 300, lifecycleEventId: "event-first",
+    });
+
+    // An at-least-once dispatch delivering the same run twice: the second
+    // executor is refused, and the lease it must wait for is *this run's own*.
+    // Answering null would be read by both agents as "retry in five seconds",
+    // so a duplicate dispatch would wake and reattempt every five seconds for
+    // the whole five-minute lease instead of once at the end of it.
+    expect(storage.claimAttempt({
+      ...fence, runId: RUN, attemptId: "attempt-2", owner: "owner-2",
+      leaseSeconds: 300, lifecycleEventId: "event-second",
+    })).toEqual({ outcome: "busy", activeLeaseExpiresAt: NOW + 300_000 });
+    expect(sql.exec(`SELECT lease_owner FROM runs WHERE run_id = ?`, RUN).one())
+      .toMatchObject({ lease_owner: "owner-1" });
+  });
+
   it("lets a HyperSight block claim beside a live interactive run", () => {
     const { storage, sql } = open();
     seedRun(sql, OTHER);
