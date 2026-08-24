@@ -1,8 +1,30 @@
 import { type KeyboardEvent, useCallback, useEffect, useState } from 'react';
 
+/**
+ * The `@`-query the caret is standing in, or `null` when it is not standing in
+ * one. Read at the caret rather than at the end of the draft, and recomputed on
+ * every caret move as well as every keystroke: a popover that outlives the
+ * mention it belongs to still answers `Enter`, and the insert it performs is
+ * measured from an `@` the caret has already left.
+ */
+export function mentionQueryAtCaret(value: string, caret: number | null | undefined): string | null {
+  return value.slice(0, caret ?? value.length).match(/(?:^|\s)@([^\s@]*)$/u)?.[1] ?? null;
+}
+
+/**
+ * The DOM id of one option, so the textarea can name the active one through
+ * `aria-activedescendant`. Focus never moves onto these rows, so without it a
+ * screen reader is told nothing when the highlight moves.
+ */
+export function mentionOptionId(key: string): string {
+  return `mention-option-${key}`;
+}
+
 export interface MentionNavigation {
   /** The option Enter would choose, or `-1` while the popover holds nothing. */
   activeIndex: number;
+  /** `aria-activedescendant` for the textarea, while the popover holds rows. */
+  activeOptionId: string | undefined;
   /** Moves the highlight under the pointer so hover and the keyboard agree. */
   setActiveIndex: (index: number) => void;
   /**
@@ -64,6 +86,7 @@ export function useMentionNavigation(
 
   return {
     activeIndex,
+    activeOptionId: activeIndex >= 0 ? mentionOptionId(optionKeys[activeIndex]!) : undefined,
     setActiveIndex: (index) => setActiveKey(optionKeys[index] ?? null),
     activeOptionRef,
     handleKeyDown: (event) => {

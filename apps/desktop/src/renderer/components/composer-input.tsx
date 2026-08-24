@@ -49,6 +49,23 @@ interface ComposerInputProps {
   /** Labels of the resources an `@` can name here; typing one highlights it in the draft. */
   mentionLabels?: readonly string[];
   /**
+   * The mention list this draft is currently driving, if one is open.
+   *
+   * Focus deliberately stays in the textarea while that list is walked, so the
+   * options never receive it and a screen reader is never told which row `Enter`
+   * would take. These two attributes are what answer that.
+   *
+   * Two attributes and no `role="combobox"`: `aria-activedescendant` is
+   * supported on a textbox, and that is what a screen reader needs to follow the
+   * highlight. Taking the full editable-combobox shape instead would swap the
+   * composer's announced role from multiline textbox to combobox the moment an
+   * `@` opened a list and back when it closed — a change to how the main writing
+   * surface introduces itself, in the middle of a sentence, which is a worse
+   * trade than the pattern purity is worth. `aria-expanded` is only valid
+   * alongside that role, so it is not here either.
+   */
+  mentionListbox?: { id: string; activeOptionId: string | undefined };
+  /**
    * The model pill in the toolbar. Composers that pass nothing show none; those
    * that do still only show it while Application → Developer → **Debug enabled**
    * is on, because which model the work runs on is a developer's question rather
@@ -102,6 +119,13 @@ interface ComposerInputProps {
   onAttach: (files: FileList | File[]) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onMention: () => void;
+  /**
+   * The caret moved, by arrow key, click, or drag. A composer whose `@` list is
+   * open re-reads what the caret is naming from here: the list has to close when
+   * the caret leaves the mention it belongs to, and no value change accompanies
+   * that move.
+   */
+  onSelect?: () => void;
   onOpenAttachment: (preview: AttachmentPreview) => void;
   onRemoveAttachment: (localId: string) => void;
   onRetryAttachment: (localId: string) => void;
@@ -144,6 +168,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   mentionDisabled = false,
   mentionLabel = 'Mention a participant',
   mentionLabels = NO_MENTION_LABELS,
+  mentionListbox,
   model,
   onAttach,
   onKeyDown,
@@ -151,6 +176,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   onOpenAttachment,
   onRemoveAttachment,
   onRetryAttachment,
+  onSelect,
   onSubmit,
   onValueChange,
   placeholder,
@@ -288,6 +314,8 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
             </div>
           )}
           <textarea
+            aria-activedescendant={mentionListbox?.activeOptionId}
+            aria-controls={mentionListbox?.id}
             aria-label={ariaLabel}
             autoFocus={autoFocus}
             onCompositionEnd={() => setComposing(false)}
@@ -310,6 +338,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
               }
             }}
             onScroll={syncHighlightScroll}
+            onSelect={onSelect}
             placeholder={placeholder}
             readOnly={dictationEditingBlocked}
             ref={(element) => {

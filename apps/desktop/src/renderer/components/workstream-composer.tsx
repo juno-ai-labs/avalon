@@ -3,7 +3,7 @@ import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { AvalonApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { NO_MENTIONS, useDraftText } from '../lib/use-draft-text';
-import { useMentionNavigation } from '../lib/use-mention-navigation';
+import { mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { AttachmentPreview } from './attachments';
@@ -131,9 +131,26 @@ export function WorkstreamComposer({
     // `mention-highlight.ts`, which uses the locale-independent one so a Turkish
     // dotted I does not make a name highlighted here unmatched there.
     setSelectedMentions((current) => current.filter((mention) => value.toLowerCase().includes(`@${mention.label.toLowerCase()}`)));
-    const beforeCaret = value.slice(0, textareaRef.current?.selectionStart ?? value.length);
-    const match = beforeCaret.match(/(?:^|\s)@([^\s@]*)$/u);
-    setMentionQuery(match?.[1] ?? null);
+    syncMentionQuery(value);
+  };
+
+  /** What the caret is naming, recomputed as the draft changes. */
+  const syncMentionQuery = (value: string): void => {
+    setMentionQuery(mentionQueryAtCaret(value, textareaRef.current?.selectionStart));
+  };
+
+  /**
+   * The caret moved without the draft changing — an arrow key, a click, a drag.
+   * This may only *close* the list: a list that outlives the mention the caret
+   * was in still answers `Enter` and inserts against an `@` the caret has left.
+   * It may not open one, or `Escape` would last exactly until the next arrow
+   * key, and wandering back through an old mention would raise a list nobody
+   * asked for.
+   */
+  const refreshOpenMentionQuery = (value: string): void => {
+    setMentionQuery((current) => current === null
+      ? null
+      : mentionQueryAtCaret(value, textareaRef.current?.selectionStart));
   };
 
   const resetDraft = (): void => {
@@ -190,6 +207,13 @@ export function WorkstreamComposer({
     const before = text.slice(0, caret);
     const after = text.slice(caret);
     const atIndex = before.lastIndexOf('@');
+    // Nothing to replace: the caret is no longer standing after an `@`, so
+    // there is no mention here to complete. `slice(0, -1)` would silently eat
+    // the character before the caret instead.
+    if (atIndex < 0) {
+      setMentionQuery(null);
+      return;
+    }
     // The separator is the name's own, unless what follows already begins with
     // one: picking mid-sentence otherwise leaves two spaces where the caret was.
     const separator = /^\s/u.test(after) ? '' : ' ';
@@ -273,11 +297,12 @@ export function WorkstreamComposer({
         </div>
       )}
       {visibleCandidates.length > 0 && (
-        <div className="mention-popover" role="listbox" aria-label="Mentions">
+        <div className="mention-popover" id="workstream-mention-listbox" role="listbox" aria-label="Mentions">
           {visibleCandidates.map((candidate, index) => (
             <button
               aria-selected={index === mentionNavigation.activeIndex}
               className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
+              id={mentionOptionId(candidate.id)}
               key={candidate.id}
               onClick={() => insertMention(candidate)}
               /* Move rather than enter: the list scrolls under a still pointer
@@ -314,6 +339,9 @@ export function WorkstreamComposer({
           }
         }}
         mentionLabels={mentionLabels}
+        mentionListbox={visibleCandidates.length > 0
+          ? { id: 'workstream-mention-listbox', activeOptionId: mentionNavigation.activeOptionId }
+          : undefined}
         // The run first, the pin second. What a run recorded is what actually
         // ran — the pin where it was pinned, the flag's served answer where it
         // was not, and the only place that served variation is visible to a
@@ -342,6 +370,7 @@ export function WorkstreamComposer({
         onOpenAttachment={onOpenAttachment}
         onRemoveAttachment={onRemoveAttachment}
         onRetryAttachment={onRetryAttachment}
+        onSelect={() => refreshOpenMentionQuery(text)}
         onSubmit={send}
         onValueChange={updateText}
         placeholder="Message the work stream…"
