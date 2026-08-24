@@ -182,6 +182,33 @@ export type TerminalizeOutcome =
   | { outcome: "not_found" };
 
 /** One run the reaper found terminal but never receipt-reconciled. */
+/**
+ * The run statuses that mean a run is busy, as SQL.
+ *
+ * The retired `_runtime_harness_runs` view projected `waiting` and `steering`
+ * onto `running`, so every routed predicate these fences replace accepted all
+ * three. `docs/workstream-durable-object.md` carries the rule an earlier slice
+ * wrote after review caught the same narrowing in the receipt and
+ * block-dashboard fences: a new fence written against `runs.status` decides the
+ * same question, and `running` alone is the wrong default — a busy run is any
+ * of the three.
+ *
+ * Nothing writes `waiting` or `steering` today, so every one of these reads the
+ * same as `= 'running'` would. It is spelled out because the directions are not
+ * equally safe: a fence that does not recognise a status refuses, and every
+ * refusal here is reported as a lost lease or an unsupervised child — the two
+ * answers nobody investigates, because they are the expected ones. If the
+ * product settles on a single busy status, retire the other two from the CHECK
+ * constraint rather than from the fences.
+ */
+const BUSY_RUN_STATUSES = `('running', 'waiting', 'steering')`;
+
+/** The same three, for a fence that reads a row rather than filtering in SQL. */
+const BUSY_RUN_STATUS_SET = new Set(["running", "waiting", "steering"]);
+
+/** The same set, plus the status a claimed-but-unlaunched run still holds. */
+const OPEN_RUN_STATUSES = `('admitted', 'running', 'waiting', 'steering')`;
+
 export interface ResidualRepairRow extends Record<string, SqlStorageValue> {
   run_id: string;
   attempt_id: string;
@@ -324,7 +351,7 @@ export class WorkstreamHarnessRunStorage {
                 updated_at = ?5
           WHERE run_id = ?1
             AND parent_tool_call_id IS NULL
-            AND status IN ('admitted', 'running')
+            AND status IN ${OPEN_RUN_STATUSES}
             AND terminalized_at IS NULL
             AND cancellation_requested_at IS NULL
             AND (
@@ -345,7 +372,7 @@ export class WorkstreamHarnessRunStorage {
                  WHERE active.run_id != ?1
                    AND active.origin != 'block_dashboard_block'
                    AND active.parent_tool_call_id IS NULL
-                   AND active.status = 'running'
+                   AND active.status IN ${BUSY_RUN_STATUSES}
                    AND active.terminalized_at IS NULL
                    AND active.lease_expires_at > ?5
               )
@@ -447,7 +474,7 @@ export class WorkstreamHarnessRunStorage {
       `SELECT MAX(lease_expires_at) AS lease_expires_at FROM runs
         WHERE (? = 'block_dashboard_block' OR origin != 'block_dashboard_block')
           AND parent_tool_call_id IS NULL
-          AND status = 'running' AND terminalized_at IS NULL`,
+          AND status IN ${BUSY_RUN_STATUSES} AND terminalized_at IS NULL`,
       origin,
     ));
     return row?.lease_expires_at ?? null;
@@ -1000,12 +1027,21 @@ export class WorkstreamHarnessRunStorage {
       if (!parent
         || parent.legacy_attempt_id !== input.parentAttemptId
         || parent.lease_owner !== input.parentOwner
-        || parent.status !== "running"
+        || !BUSY_RUN_STATUS_SET.has(parent.status)
         || parent.terminalized_at !== null
-        || parent.cancellation_requested_at !== null
         || parent.lease_expires_at === null
         || parent.lease_expires_at <= input.now) {
         return { outcome: "ownership_lost" as const };
+      }
+      // Cancellation is answered separately, and only once the rest of the
+      // fence has held. The routed version reached this through
+      // `assertHarnessAttemptOwned`, which threw `RunCancelledError` here —
+      // folding it into `ownership_lost` tells a member who pressed stop that
+      // their run "was superseded by another executor", which is not what
+      // happened. A parent that still holds its lease and has been asked to
+      // stop is a person stopping the work.
+      if (parent.cancellation_requested_at !== null) {
+        return { outcome: "cancelled" as const };
       }
       if (!this.scope({ runId: input.parentRunId })) {
         return { outcome: "parent_scope_missing" as const };
@@ -1026,7 +1062,10 @@ export class WorkstreamHarnessRunStorage {
             childResultHash: existing.child_result_hash,
           };
         }
-        if (existing.cancellation_requested_at !== null) return { outcome: "cancelled" as const };
+        // Busy before cancelled, as the routed version answered it. A child
+        // under a live lease is still going to write a result, and `busy` is
+        // what makes its parent wait for one; answering `cancelled` first
+        // abandons a result that is about to exist.
         if (existing.lease_expires_at !== null && existing.lease_expires_at > input.now) {
           return {
             outcome: "busy" as const,
@@ -1034,7 +1073,8 @@ export class WorkstreamHarnessRunStorage {
             leaseExpiresAt: existing.lease_expires_at,
           };
         }
-        if (existing.status !== "running"
+        if (existing.cancellation_requested_at !== null) return { outcome: "cancelled" as const };
+        if (!BUSY_RUN_STATUS_SET.has(existing.status)
           || existing.legacy_attempt_id === null
           || existing.lease_owner === null) {
           return { outcome: "ownership_lost" as const };
@@ -1370,6 +1410,15 @@ export class WorkstreamHarnessRunStorage {
    * their idempotent takeover path — `reapableInlineChildren` asks the
    * narrower question instead.
    */
+  //
+  // This pass is the only recovery for an executor that died without
+  // terminalizing at all, and nothing schedules it: `reapStaleHarnessRuns` is
+  // called from one place, immediately before a new attempt is claimed
+  // (`substream-agent.ts`, and its BlockDashboard twin). A work stream nobody
+  // sends another message to therefore keeps such a run `running` and its tool
+  // card spinning indefinitely. Closing that needs the object to wake on its
+  // own expired lease, which is a wake reason and belongs to
+  // `docs/durable-object-alarms.md` rather than to this operation.
   staleLeaseRuns(input: {
     blockOnly: boolean;
     now: number;
@@ -1379,7 +1428,7 @@ export class WorkstreamHarnessRunStorage {
       `SELECT run_id, legacy_attempt_id AS attempt_id, lease_owner, lease_expires_at,
               origin, parent_run_id, parent_tool_call_id, cancellation_requested_at
          FROM runs
-        WHERE status = 'running' AND terminalized_at IS NULL
+        WHERE status IN ${BUSY_RUN_STATUSES} AND terminalized_at IS NULL
           AND parent_tool_call_id IS NULL
           AND legacy_attempt_id IS NOT NULL AND lease_expires_at IS NOT NULL
           AND lease_expires_at <= ?1
@@ -1464,7 +1513,7 @@ export class WorkstreamHarnessRunStorage {
               child.lease_expires_at, child.origin, child.parent_run_id,
               child.parent_tool_call_id, child.cancellation_requested_at
          FROM runs child
-        WHERE child.status = 'running' AND child.terminalized_at IS NULL
+        WHERE child.status IN ${BUSY_RUN_STATUSES} AND child.terminalized_at IS NULL
           AND child.parent_run_id IS NOT NULL
           AND child.parent_tool_call_id IS NOT NULL
           AND child.legacy_attempt_id IS NOT NULL AND child.lease_owner IS NOT NULL
@@ -1475,7 +1524,7 @@ export class WorkstreamHarnessRunStorage {
             OR NOT EXISTS (
               SELECT 1 FROM runs parent
                WHERE parent.run_id = child.parent_run_id
-                 AND parent.status = 'running' AND parent.terminalized_at IS NULL
+                 AND parent.status IN ${BUSY_RUN_STATUSES} AND parent.terminalized_at IS NULL
                  AND parent.cancellation_requested_at IS NULL
                  AND parent.legacy_attempt_id IS NOT NULL AND parent.lease_owner IS NOT NULL
                  AND parent.lease_expires_at > ?1
@@ -1610,7 +1659,7 @@ export class WorkstreamHarnessRunStorage {
                   updated_at = ?1
             WHERE origin != 'block_dashboard_block'
               AND parent_tool_call_id IS NULL
-              AND status IN ('admitted', 'running')
+              AND status IN ${OPEN_RUN_STATUSES}
               AND terminalized_at IS NULL`,
           input.now,
         );
@@ -1805,6 +1854,14 @@ export class WorkstreamHarnessRunStorage {
    * `terminalized_at` is the fence rather than the attempt alone: the marker
    * must belong to the terminalization the caller just made or observed, so a
    * late repair for a superseded attempt cannot claim a newer one's work.
+   *
+   * The `replayed` answer is fenced on the attempt too. The routed version
+   * compared `attempt_id` in its fallback read, and dropping that here would
+   * report success to a caller whose own marker was never written, because some
+   * *other* attempt had written one under the same key. That row is then
+   * re-selected by every sweep forever while each sweep calls it settled — a
+   * wedged page that never emits the repair-failure warning the reap's own
+   * comment promises is how you would find it.
    */
   recordReceiptReconciliation(input: {
     runId: string;
@@ -1819,7 +1876,8 @@ export class WorkstreamHarnessRunStorage {
       if (!run
         || run.legacy_attempt_id !== input.attemptId
         || run.terminalized_at !== input.terminalizedAt) {
-        return this.lifecycleEvent({ runId: input.runId, eventKey: input.eventKey })
+        const marker = this.lifecycleEvent({ runId: input.runId, eventKey: input.eventKey });
+        return marker?.attempt_id === input.attemptId
           ? { outcome: "replayed" as const }
           : { outcome: "not_terminal" as const };
       }
@@ -1841,9 +1899,16 @@ export class WorkstreamHarnessRunStorage {
    *
    * `COALESCE` on both columns keeps the *first* cancellation's reason: a run
    * stopped by a member and then swept again by its parent's terminalization
-   * should still say the member stopped it. The count is the one place a
-   * changes count is the honest answer, because "how many descendants were
-   * still live" is exactly the question.
+   * should still say the member stopped it.
+   *
+   * The count is read before the write rather than from the cursor.
+   * `rowsWritten` counts index rows on this engine, and `updated_at` is a
+   * column of both `runs_status_idx` and `runs_substream_idx` — so the cursor
+   * reports three writes per descendant, not one. The Node fixture hides that
+   * by reporting SQLite's true `changes`, which is why the existing specs pass
+   * either way; `terminal-authority.test.ts` documents the same trap from the
+   * other side. Counting the rows the predicate matches answers the question
+   * the caller is actually asking.
    */
   cancelDescendants(input: {
     rootRunId: string;
@@ -1851,20 +1916,28 @@ export class WorkstreamHarnessRunStorage {
     now: number;
   }): { cancelled: number } {
     return this.storage.transactionSync(() => {
-      const cursor = this.sql.exec(
+      const cancelled = first(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+        `SELECT COUNT(*) AS count FROM runs
+          WHERE (chain_root_run_id = ?1 OR parent_run_id = ?1)
+            AND parent_tool_call_id IS NOT NULL
+            AND status IN ${OPEN_RUN_STATUSES}
+            AND terminalized_at IS NULL`,
+        input.rootRunId,
+      ))?.count ?? 0;
+      this.sql.exec(
         `UPDATE runs
             SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?2),
                 cancellation_reason = COALESCE(cancellation_reason, ?3),
                 updated_at = ?2
           WHERE (chain_root_run_id = ?1 OR parent_run_id = ?1)
             AND parent_tool_call_id IS NOT NULL
-            AND status IN ('admitted', 'running')
+            AND status IN ${OPEN_RUN_STATUSES}
             AND terminalized_at IS NULL`,
         input.rootRunId,
         input.now,
         input.reason,
       );
-      return { cancelled: cursor.rowsWritten };
+      return { cancelled };
     });
   }
 

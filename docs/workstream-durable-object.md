@@ -1063,11 +1063,60 @@ directory write at all.
 
 ## Changelog
 
-### 2026-08-24 — The harness-run migration renumbers to 22, the third collision today
+### 2026-08-24 — Two reviews on the converted harness runs, and the rule this slice had broken
 
-**What changed:** `harnessRunAuthorityPromotion` is object schema migration 22,
-and `WORKSTREAM_OBJECT_SCHEMA_VERSION` is 22. It was written as 21, which the
-resource slice took on the way in.
+**What changed:** a code review and a rebase audit, run separately over the same
+branch. Between them:
+
+- Eight lease and liveness fences move from `status = 'running'` to
+  `BUSY_RUN_STATUSES` / `OPEN_RUN_STATUSES`, and two row-level fences in
+  `admitInlineChild` to `BUSY_RUN_STATUS_SET`.
+- `recordReceiptReconciliation`'s replay fallback compares `attempt_id` again.
+- `cancelDescendants` counts the rows its predicate matches instead of reading
+  `cursor.rowsWritten`.
+- A cancelled parent answers `cancelled` rather than `ownership_lost`, and a
+  live child answers `busy` before `cancelled`.
+- `isHarnessStopped` is back to `!= null`.
+- Two comments and a changelog number that the rebase had silently dropped.
+
+**Why:** the fences are the one that matters, because the rule was already
+written down. An earlier slice in this stack narrowed the receipt and
+block-dashboard fences the same way, review caught it, and the entry below
+records the conclusion: *a busy run is any of the three, and `running` alone is
+the wrong default*. This slice was the first written after that and broke it in
+eight places — which is the argument for the named constant rather than eight
+correct literals. A rule that lives only in a changelog is a rule the next
+conversion breaks.
+
+None of it is reachable today. Nothing writes `waiting` or `steering`, a
+terminalized run cannot take a new attempt, `cancelDescendantHarnessRuns` has no
+production caller, and `isHarnessStopped` is only reached for a run that exists.
+That is exactly why they were worth fixing now: each one is a trap set for
+whoever adds the first writer, and the eight would have fired together.
+
+**On the rebase audit, which is the finding worth keeping:** this branch
+converts routed SQL by deleting and rewriting whole functions. When `main`
+changes those same functions, git reports **no conflict** — the branch's side
+wins and the fix vanishes. That happened here: the branch forked before the
+residual-receipt work landed and reverted five commits, and every gate stayed
+green. `pnpm test`, `pnpm lint`, `pnpm typecheck` and CI cannot see it, because
+the reverted code is not the code being tested.
+
+**What a future change has to respect:** a conversion slice that rewrites a
+function `main` has touched needs a diff against `main`'s version of that
+function, not a clean rebase. The audit's method is the cheap version: list
+`main`'s commits since the merge base, intersect their files with the branch's,
+and read both sides of every overlap. A comment on `main` saying "do not narrow
+this back" marks a fix somebody already paid for, and its absence from the
+branch is the tell.
+
+### 2026-08-24 — The harness-run migration renumbers to 23, after two collisions
+
+**What changed:** `harnessRunAuthorityPromotion` is object schema migration 23,
+and `WORKSTREAM_OBJECT_SCHEMA_VERSION` is 23. It was written as 21, which the
+resource slice took on the way in; 22 then went the same way to the
+accepted-suggestion audience triggers while this branch was in review, which is
+the fourth time in this stack and the reason the number is 23 rather than 22.
 
 **Why:** the two entries above record the same thing happening to scheduling and
 to resources. This one is the silent shape again — the rebase was clean, every
