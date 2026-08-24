@@ -1972,6 +1972,12 @@ interface TerminalizedReceiptRepair {
  * call or the bounded sweep — has to reproduce the wording its first pass would
  * have written, or the same receipt gets two different explanations depending
  * on which retry happened to close it.
+ *
+ * `stale_run_reaped` is read as the reaper's signature, not as one error code
+ * among many: it is written in exactly one place, by the pass that terminalizes
+ * a root whose lease lapsed. A future path that writes that code without having
+ * observed a lease lapse would silently start telling members their lease was
+ * lost, so it belongs to the reaper alone.
  */
 function terminalizationOf(
   errorJson: string | null,
