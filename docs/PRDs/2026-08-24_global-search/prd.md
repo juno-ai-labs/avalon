@@ -151,17 +151,17 @@ to route around it.
 9. **No first-party activity events (`workspace_activity_events`) in results.**
    Rejected. Ranking recent activity by keyword *is* the global activity feed,
    and it would arrive without anyone deciding to build one.
-10. **No find-in-page within an open work stream's transcript.** Deferred, and
+11. **No find-in-page within an open work stream's transcript.** Deferred, and
     genuinely wanted — but it is a different surface with a different
     interaction (in-place highlight, next/previous, scroll-to-match) that would
     distort this one if bolted on.
-11. **Not a general command palette.** Actions are limited to what the sidebar
+12. **Not a general command palette.** Actions are limited to what the sidebar
     already offers — **New work stream**, **New automation**, **New
     meeting/notes**, **Settings** — plus starting work from the query text.
     Deferred: exposing arbitrary app commands here is a separate argument about
     discoverability, and every command added is a row competing with a real
     result.
-12. **No search operators or filter syntax.** Deferred, and unaffected by group
+13. **No search operators or filter syntax.** Deferred, and unaffected by group
     scoping. `from:`, `in:`, `is:` and friends are the natural second version;
     shipping them in the first makes the query field a language to learn before
     it is a box to type in. Scoping is deliberately the other shape: a key
@@ -171,13 +171,13 @@ to route around it.
     no vocabulary. `is:unread`, `from:alex`, and date ranges remain the deferred
     conversation, and a typed `doc:` prefix is part of that one rather than a
     shorthand for this.
-13. **Not available signed out or on the public site.** Out of scope: search
+14. **Not available signed out or on the public site.** Out of scope: search
     runs against one workspace under an authenticated session.
-14. **Archived work streams and archived notes do not appear.** Deferred, and
+15. **Archived work streams and archived notes do not appear.** Deferred, and
     called out because it is the first thing someone will ask for: archiving is
     currently how a person says "stop showing me this", and search re-showing it
     would undo that. Revisit behind an explicit filter, which is non-goal 12.
-15. **Changing the resource picker's own match behaviour is out of scope; making
+16. **Changing the resource picker's own match behaviour is out of scope; making
     the two searches agree on *authorization* is not.** The picker matches four
     columns by substring, including `resource_type` and `provider_resource_id`,
     which an FTS index over title and body does not carry — so re-pointing it at
@@ -564,14 +564,20 @@ Two new tables in WorkspaceDO, beside the directory they are joined to:
   `message`, `note`, `note_segment`, `document`, `automation`. Carries a single
   `scope_id` naming the row the authorization join runs against, a `title`, the
   indexed `body`, `updated_at` for recency ranking, and the
-  `authority_generation`, `waterline`, and `payload_hash` that make a
-  re-delivered projection idempotent. All three of those, not two: the directory
-  compares generation *then* waterline because `sourceVersion` restarts on an
-  authority bump, and a waterline-only test freezes that work stream's index
-  silently and permanently.
+  `authority_generation`, `waterline`, and `payload_hash` carried by the kinds
+  that arrive over the outbox. **Generation *and* waterline, not waterline
+  alone** — the directory compares generation *then* waterline because
+  `sourceVersion` restarts on an authority bump, and a waterline-only test
+  freezes that work stream's index silently and permanently. Those two are
+  paired by a `CHECK`; `payload_hash` is separate and unconstrained, since it
+  detects divergence rather than ordering it.
 - **`workspace_search_fts`** — an external-content FTS5 table over `title` and
-  `body`, with a `prefix` index because every request prefix-matches its
-  trailing token.
+  `body`, and deliberately **without** a `prefix` index. Every request
+  prefix-matches its trailing token, so one looks obviously right, but FTS5
+  consults a prefix index only at exactly the configured lengths — it would buy
+  the first two keystrokes of a query's life and be paid for on every message
+  ever indexed. [`design.md`](design.md#schema) carries the measurement and the
+  conditions under which to revisit it.
 
 Both land as a **new version** of `WORKSPACE_DO_SCHEMA_MIGRATIONS`. They cannot
 be appended to `WORKSPACE_DOMAIN_SCHEMA_STATEMENTS`, which is hashed into
@@ -608,9 +614,15 @@ typing a word. The rules below are the change's real acceptance criteria.
    them use the rule the sidebar list actually applies —
    `scope = 'workspace' OR is_participant = 1`, against a viewer row pinned to
    the directory row's `authority_generation`. Notes are filtered by `scope` and
-   `owner_user_id`. Documents use the three fragments `resource-service.ts`
-   already applies — connector scope, the draft-upload rule, the note-backed
-   rule — lifted into shared SQL rather than restated. Automations follow their
+   `owner_user_id`. Documents use **all four** rules `resource-service.ts`
+   applies — connector scope, the draft-upload rule, the note-backed rule, and
+   the **inbound-email rule**, which is the one most easily lost because it is
+   applied per row rather than as SQL, so a reading that counts only the SQL
+   fragments finds three. Dropping it lets every one of the other three pass an
+   email row vacuously, making an email sent to a member's *personal* automation
+   address searchable by the whole workspace. The exact predicates are in
+   [`design.md`](design.md#the-visibility-join); this section names four so that
+   a reader building from it cannot arrive at three. Automations follow their
    subscription's `You`/`Workspace` scope, plus its template's archive state.
    Search adds no new authorization rule and is permitted to relax none.
 
@@ -767,25 +779,31 @@ the pause duration is a number, it is not set here, and it is on the list above.
    backed by a `resources` row that is born `model_content_status = 'ready'`, so
    this is the test that catches the note's text reappearing under the document
    authorization rule rather than the note one.
-9. **A member with no viewer row for a `workspace`-scoped work stream still
-   finds its messages.** Viewer rows are written only for authors, mentions, and
-   participants, so a rule that keys solely on the viewer row makes every shared
-   work stream unsearchable to everyone who has not yet spoken in it.
-10. **A query whose Documents group is truncated: `→` scopes to Documents, the
+9. **A phrase from an email sent to another member's *personal* automation
+   address returns nothing, and does not raise the `N MORE RESULTS` count.**
+   This is the inbound-email arm of the document rule, which is applied per row
+   rather than as SQL and was argued away once already; the three remaining
+   fragments all pass such a row vacuously, so nothing else in this list catches
+   its loss.
+10. **A member with no viewer row for a `workspace`-scoped work stream still
+    finds its messages.** Viewer rows are written only for authors, mentions, and
+    participants, so a rule that keys solely on the viewer row makes every shared
+    work stream unsearchable to everyone who has not yet spoken in it.
+11. **A query whose Documents group is truncated: `→` scopes to Documents, the
     other groups disappear, a **Documents** chip appears beside the field, and
     the sixth-ranked document — invisible before — is on screen. `←` restores
     the mixed list with the same query and the same five-row preview.** Repeated
     with the group heading clicked instead of `→`.
-11. Scrolling to the bottom of a scoped group loads more rather than stopping,
+12. Scrolling to the bottom of a scoped group loads more rather than stopping,
     until the group is exhausted, and the footer's remainder count falls to zero
     as it goes.
-12. A scope applied while the API is unreachable shows the quiet line rather than
+13. A scope applied while the API is unreachable shows the quiet line rather than
     an empty list.
-13. A query matching nothing shows the start-a-work-stream row selected; `⏎`
+14. A query matching nothing shows the start-a-work-stream row selected; `⏎`
     opens the new-work-stream surface with the query in the composer.
-14. With the API unreachable, the panel still opens and still matches names, and
+15. With the API unreachable, the panel still opens and still matches names, and
     shows the single quiet line about message and document text.
-15. With `global-search` off, the glyph is absent and `⌘K` does nothing.
+16. With `global-search` off, the glyph is absent and `⌘K` does nothing.
 
 Where these become durable checks, they land in [`e2e.md`](../../e2e.md).
 
@@ -871,13 +889,24 @@ name and nothing else, phase 2's cost is not yet justified.
    `scope === 'workspace' || participant || created_by_user_id === userId`. So
    `listable` is the **creator-inclusive** half. Choosing it would not hide a
    creator's work stream — it would surface the full message text of a
-   `personal` work stream to someone the socket and the sidebar both refuse,
-   permanently, with no revocation path. This PRD therefore specifies the
-   sidebar's own rule (`scope = 'workspace' OR is_participant = 1`) as the
-   interim predicate, written in one fragment, and still needs the decision
-   before phase 1 ships: the answer is worth making for every caller at once,
-   and `removeParticipant` permits self-removal with no creator exemption, so
-   the gap is reachable rather than theoretical.
+   `personal` work stream to someone the sidebar and `WorkstreamDO`'s socket
+   both refuse. This PRD therefore specifies the sidebar's own rule
+   (`scope = 'workspace' OR is_participant = 1`) as the interim predicate,
+   written in one fragment.
+
+   **But the gap is already open elsewhere, and that makes the question more
+   urgent rather than less.** There are two `canRead`s.
+   `WorkstreamDO.canRead` is participation-only, as above. But
+   `WorkstreamObjectProduct.canRead` delegates straight to `participantVisible`
+   and is therefore creator-inclusive — and it is what admits a person to
+   `SubstreamAgent`'s room socket, which serves the transcript search would
+   index. So a creator who left a `personal` work stream is *already* admitted
+   to the messages in question; search would not be opening something nothing
+   else opens. That is not a reason to copy the broader rule, but it does mean
+   the decision is overdue rather than merely pending, and it is why "worth
+   making for every caller at once" is the operative sentence here.
+   `removeParticipant` permits self-removal with no creator exemption, so the
+   gap is reachable rather than theoretical.
 3. **Do automation *runs* deserve their own group?** Every run owns a work
    stream, so runs are already reachable through the **Work streams** group — but
    a person looking for "the competitor digest from last Tuesday" is thinking
