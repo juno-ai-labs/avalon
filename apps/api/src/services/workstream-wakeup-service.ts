@@ -631,19 +631,26 @@ export async function refreshWorkspaceSchedule(
 }
 
 /**
- * Arm the owner of an agent-created timer.
+ * Arm the object that holds this work stream's wake-ups.
  *
- * After authority cutover that owner is the exact SubstreamAgent whose tool
- * inserted the row, which indexes the wake-up as an `agent_timer` entry and
- * re-arms its own alarm. Before cutover the row is still regional, and only
- * WorkspaceDO's schedule reaches it.
+ * That is always the main child. It used to be "the exact SubstreamAgent whose
+ * tool inserted the row", which was true while the insert arrived as routed SQL
+ * following the caller's substream binding; the scheduling port names the main
+ * child for every call, so an arm sent anywhere else would reconcile an object
+ * whose `workstream_wakeups` is empty while the object that holds the row went
+ * unarmed. Taking no substream id is what keeps the two from disagreeing.
+ *
+ * This is still needed beside the endpoint's own arming, which is deliberately
+ * best-effort and swallowed: the endpoint cannot fail a committed write just
+ * because the alarm did not set, so somebody outside the transaction has to be
+ * able to see that failure and roll the row back.
  */
 export async function refreshAgentTimerAlarm(
   env: Env,
   workspaceId: string,
   workstreamId: string,
-  substreamId = "0",
 ): Promise<void> {
+  const substreamId = "0";
   const agent = await durableObjectStubForWorkspace(
     env,
     env.SUBSTREAM_AGENTS,

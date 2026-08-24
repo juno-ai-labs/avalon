@@ -559,8 +559,10 @@ describe("the Workstream Durable Object relational schema", () => {
       // So is the scheduling slice, and for the same reason: version 19 dropped
       // the wake-up, compaction, description-refresh and plugin-hint views, so
       // a `workstream_context_compactions` statement has nothing to be
-      // rewritten onto either. What that slice writes is proved against the
-      // storage class in `workstream-scheduling-storage.test.ts`.
+      // rewritten onto either. What that slice writes is proved against a real
+      // object store in `workstream-resource-inventory.test.ts` — the fence
+      // refusing a write, the fenced and unfenced reads, and the principal
+      // scoping — rather than against a statement's bindings.
 
       expect(database.prepare("SELECT run_id, status FROM runs").get()).toEqual({
         run_id: RUN_ID,
