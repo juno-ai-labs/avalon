@@ -586,6 +586,54 @@ describe("telemetry registry", () => {
     }).success).toBe(false);
   });
 
+  it("accepts a bounded realtime-socket transition and refuses an unbounded one", () => {
+    const socketEnvelope = (properties: unknown) => ({
+      ...envelope("realtime_socket_state", properties),
+      identityScope: "workspace-user",
+    });
+    expect(TelemetryEnvelopeSchema.parse(socketEnvelope({
+      socket: "substream_feed",
+      state: "retrying",
+      cause: "resync_required",
+      attempts: "two_to_five",
+    }))).toMatchObject({ name: "realtime_socket_state" });
+
+    // A close code, a URL, a work-stream id, and an unregistered socket are all
+    // things this event must not be able to grow into.
+    expect(TelemetryEnvelopeSchema.safeParse(socketEnvelope({
+      socket: "workspace", state: "retrying", cause: "server_closed", attempts: "one", closeCode: 1006,
+    })).success).toBe(false);
+    // Dictation's audio socket is deliberately outside this contract: it is an
+    // Azure transport with its own lifecycle, not one of the room sockets.
+    expect(TelemetryEnvelopeSchema.safeParse(socketEnvelope({
+      socket: "dictation", state: "connected", cause: "opened", attempts: "zero",
+    })).success).toBe(false);
+    expect(TelemetryEnvelopeSchema.parse(socketEnvelope({
+      socket: "block_dashboard", state: "connected", cause: "opened", attempts: "zero",
+    }))).toMatchObject({ name: "realtime_socket_state" });
+    expect(TelemetryEnvelopeSchema.safeParse(socketEnvelope({
+      socket: "workspace", state: "retrying", cause: "server_closed", attempts: 3,
+    })).success).toBe(false);
+  });
+
+  it("refuses a socket state and cause that describe different transitions", () => {
+    const socketEnvelope = (properties: unknown) => ({
+      ...envelope("realtime_socket_state", properties),
+      identityScope: "workspace-user",
+    });
+    // A socket that opened has no failure cause, and a failure cause did not
+    // open a socket. Either combination would be counted as both.
+    expect(TelemetryEnvelopeSchema.safeParse(socketEnvelope({
+      socket: "workspace", state: "connected", cause: "transport_error", attempts: "zero",
+    })).success).toBe(false);
+    expect(TelemetryEnvelopeSchema.safeParse(socketEnvelope({
+      socket: "workspace", state: "retrying", cause: "opened", attempts: "one",
+    })).success).toBe(false);
+    expect(TelemetryEnvelopeSchema.safeParse(socketEnvelope({
+      socket: "workstream_control", state: "stopped", cause: "access_revoked", attempts: "zero",
+    })).success).toBe(true);
+  });
+
   it("accepts only bounded bundle-relative generated frames for JavaScript diagnostics", () => {
     const candidate = (errorCode: "react_boundary" | "network_error") => ({
       ...envelope("javascript_exception", {

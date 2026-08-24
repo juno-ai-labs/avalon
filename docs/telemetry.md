@@ -22,7 +22,9 @@ terminates in Avalon's EU-isolated Cloudflare resources.
 | `apps/desktop/src/main/native-crash-*.ts` | Route-final Crashpad generations and the bounded, authenticated next-launch uploader. |
 | `apps/desktop/src/main/product-analytics-settings.ts` | Local-first disable, fail-closed enable/refresh, preference synchronization, crash invalidation, and spool purge. |
 | `apps/desktop/src/main/index.ts` | Startup ordering, Crashpad start, process observers, IPC sender validation, upload scheduling, and product integration points. |
+| `apps/desktop/src/main/telemetry-intent.ts` | The renderer-intent allowlist and validator every `telemetry:product-intent` call passes through, kept out of the entry point so it can be tested by running it. |
 | `apps/desktop/src/renderer/lib/telemetry.ts` | Narrow renderer facade for registered screen, product-intent, and error-candidate calls. |
+| `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, WorkstreamDO-control, SubstreamAgent-feed, and per-block HyperSight hooks. |
 | `apps/api/src/routes/telemetry.ts` | Bounded bootstrap, anonymous/authenticated event, identity-link, preference, and crash-ingest routes. |
 | `apps/api/src/routes/telemetry-operations.ts`, `apps/api/src/telemetry/operator-auth.ts` | Bearer-authenticated, role-restricted regional status, replay, raw-crash access, and EU analysis HTTP surface. |
 | `apps/api/src/telemetry/` | Regional collector, identity/preference logic, PostHog adapter, EU sink, replay, crash processing, operations, and lifecycle jobs. |
@@ -89,6 +91,29 @@ dismissal are likewise server-owned and idempotent. Released clients that omit
 the richer position fall back to the legacy successful-start event, but one
 request never emits both versions. None of these events includes routes, titles,
 or prompts.
+
+Every realtime socket reports its own connection transitions. The renderer is the
+authoritative source because it is the only party that can tell a first
+connection from a reconnection, and how many attempts one took: the room sees an
+admission either way. One `realtime_socket_state` names which socket
+(`workspace`, `workstream_control`, `substream_feed`, `block_dashboard`), whether
+it is connected, retrying, or stopped, the bounded cause, and the retry depth as
+a count bucket. HyperSight opens one socket per configured block, so a dashboard
+of six blocks reports six connections; the event names no block, so what it
+measures is the drop rate of that socket kind rather than of any one block.
+Dictation's audio socket is deliberately outside this contract: it is an Azure
+transport with its own lifecycle, not one of the room sockets.
+The cause is stated where it is known rather than derived from a close code,
+which carries none of it — a heartbeat that went unanswered, a transport error, a
+ticket that could not be issued, a room that could not replay, going offline, and
+losing access are each their own value, and a close nobody asked for is the
+server's. Offline is checked once more after the socket ticket resolves, because
+a client that drops off the network while that request is in flight has no socket
+for its offline handler to close: dialling anyway fails a moment later and would
+be counted as a transport error, which is the one reading this event exists to
+keep apart from losing the network. A close from the effect's own teardown is not a transition at all and
+is not reported; counting it would put every ordinary navigation in the drop
+rate. The event carries no work-stream ID, URL, close code, or ticket.
 
 Resource telemetry uses successful semantic operations, not generic click
 autocapture. A loaded work stream records open/switch/reopen, visibility, origin,
@@ -581,6 +606,119 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-24 — One drop is one event, whichever listener sees it first
+
+**What changed:** The substream feed's `resync_required` branch arms its cause
+only when a close is still coming, and reports nothing itself. Every `error`
+listener in the four loops now checks socket identity before arming a cause.
+
+**Why:** Review on #271. `readyState` reaches CLOSED before the `close` event is
+dispatched, so a resync frame delivered in the same task batch as an abrupt close
+reached a branch that reported the drop *and* left the close listener to report
+it again — one transition, two events, the second labelled `server_closed`
+because the cause had already been consumed. The `error` listeners were the
+mirror image: the pending cause belongs to the loop rather than to one socket, so
+an error for a superseded socket armed `transport_error` on the live one and
+mislabelled its next drop. Neither could be demonstrated from outside, and both
+corrupt a measurement rather than costing a reconnect, which is the failure mode
+worth paying a line to close.
+
+**Consequences:** The rule for the producer is now uniform: a cause is armed only
+by the site that is about to close a socket that will still report, and every
+listener that writes one first proves the socket is the live one.
+
+### 2026-08-24 — The intent allowlist is tested by running it, and offline is not a transport error
+
+**What changed:** `parseTelemetryProductIntent` and the UUID pattern beside it
+moved out of `main/index.ts` into `main/telemetry-intent.ts`, with a suite that
+runs the parser. Every socket loop now re-checks `navigator.onLine` after its
+ticket resolves and reports `offline` there.
+
+**Why:** Both came out of review on #271. The allowlist decides whether any
+renderer event reaches the reporter at all, and it was covered by a test that
+matched the source text of `index.ts` — which passes on a build whose dispatch is
+broken and fails on one that was merely reformatted. The entry point cannot be
+imported by a test because importing it starts Electron, so the function moved to
+where it can be called. Separately, a client that goes offline while its socket
+ticket is in flight leaves the offline handler nothing to close; three of the four
+loops then dialled anyway and recorded the failure as `transport_error`, which is
+precisely the distinction this event was added to make.
+
+**Considered and rejected:** Keeping the source assertion and noting the
+limitation in the pull request, which is what the first version did. The
+repository's own testing rule is that an assertion which survives breaking the
+code is not coverage, and this one would have.
+
+**Consequences:** `main/index.ts` no longer holds the validator, so a new
+renderer event is admitted in `telemetry-intent.ts` and gets a case in its suite
+rather than a string match. The offline re-check also changes product behaviour
+very slightly: those three loops no longer dial a socket they know will fail, and
+wait for the `online` event exactly as they already did when they started offline.
+
+### 2026-08-24 — HyperSight's per-block sockets join the same contract
+
+**What changed:** `block_dashboard` is a fourth value in
+`TELEMETRY_REALTIME_SOCKETS`, and `use-block-dashboard-sockets.ts` reports
+through the same producer, one instance per block connection.
+
+**Why:** It was left out of the first pass because it is shaped differently —
+one loop holds N sockets, one per configured block, rather than one per screen —
+and that difference needed a decision rather than a copy. The decision is that
+the socket kind is the unit, not the block: the event names no block, so a
+dashboard's six connections aggregate into the drop rate for this kind. Leaving
+it uninstrumented would have made the other three look like the whole picture
+while the noisiest, shortest-lived sockets in the client went unmeasured.
+
+**Considered and rejected:** Adding a block ID so a single flapping block could
+be found. It is an opaque UUID the registry would permit, but it answers a
+debugging question, not a product one, and every block on every dashboard would
+carry one into the destination for the life of the retention window.
+
+**Consequences:** Volume scales with configured blocks rather than with screens,
+which is the one place this event could grow faster than the surfaces around it;
+if that becomes a cost, the sample rate on this contract is the lever, not the
+call sites. Dictation remains outside the contract, and adding it would need a
+fifth registry value and a decision about an audio transport whose failures are
+not the room's.
+
+### 2026-08-24 — The three realtime sockets report their own connections
+
+**What changed:** A `realtime_socket_state` contract, and one producer —
+`renderer/lib/socket-telemetry.ts` — instantiated per live socket loop by the
+workspace, WorkstreamDO-control, and SubstreamAgent-feed hooks. Each reports a
+connection, a drop with its bounded cause, and whether anything is scheduled to
+bring the socket back, with the retry depth as a count bucket.
+
+**Why:** Nothing measured whether a client stayed connected. A work stream's
+sidebar row went stale for a member who never opened it, and the first question —
+did the push miss that client, or was there no push — could not be answered from
+anything Avalon collects: the perf trace covers one socket's open latency, and
+the room's own admission logs cannot tell a first connection from the fourth
+attempt of a reconnect. The renderer is the authoritative source for the same
+reason: only it holds the retry counter, the heartbeat, and the offline
+transition. Bucketing the count keeps a reconnect storm from becoming
+high-cardinality, and rules out a client-supplied number entering the destination
+at all.
+
+**Considered and rejected:** Emitting it from the API at socket admission, which
+needs no new renderer path — but a Durable Object sees an upgrade, not an
+attempt, and cannot distinguish a client reconnecting for the fourth time from
+four clients connecting once. Also rejected: registering it `essential` so it
+survives an opt-out, the way the lifecycle and crash signals do. Those are the
+signals needed to keep the application working at all; socket churn is a product
+reliability question that aggregates fine over people who opted in, and an event
+that fires whenever a work stream is opened is not something to place outside the
+preference. The category can widen later; what was collected under an opt-out
+cannot be taken back.
+
+**Consequences:** Socket drop rates are visible per socket kind, and
+`resync_required` — the room telling a client its cursor is beyond replay — is
+now a first-class cause rather than an indistinguishable drop. Any further socket
+must add its own value to `TELEMETRY_REALTIME_SOCKETS` before reporting rather
+than borrowing one of these three — the entry above did exactly that for
+HyperSight — and any new close path has to name its cause through `willClose` or
+it will be counted as the server's.
 
 ### 2026-08-20 — Global Worker telemetry is exported to PostHog, traces included
 

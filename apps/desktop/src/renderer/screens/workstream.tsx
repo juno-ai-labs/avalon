@@ -27,13 +27,14 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@avalon/contracts';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
 import { ApiError, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
 import { answerElicitationOptimistically } from '../lib/elicitation';
 import { formatDateTime } from '../lib/format';
+import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
 import {
@@ -271,41 +272,6 @@ export function AddResourceDialog({
       </div>
     </Modal>
   );
-}
-
-/**
- * Whether to hold this work stream's title for a name that is still coming.
- *
- * `titleStatus` alone is not enough here. The API stops reporting `naming` past
- * the grace, but that only applies to a read, and this query has no refetch of
- * its own — so a client that was already connected when the rename event failed
- * to reach it would keep a `naming` row, and the skeleton, for the session. The
- * same rule applied to what the client already holds closes that: past the
- * grace the provisional title is the title, whatever the row still says.
- */
-function useNamingSkeleton(workstream: WorkstreamDetail): boolean {
-  const naming = workstream.titleStatus === 'naming';
-  const createdAt = Date.parse(workstream.createdAt);
-  const expiresAt = naming && Number.isFinite(createdAt)
-    ? createdAt + WORKSTREAM_NAMING_GRACE_MS
-    : null;
-  const [expired, setExpired] = useState(() => expiresAt !== null && Date.now() >= expiresAt);
-
-  useEffect(() => {
-    if (expiresAt === null) return undefined;
-    const remaining = expiresAt - Date.now();
-    if (remaining <= 0) {
-      setExpired(true);
-      return undefined;
-    }
-    // The name almost always arrives long before this fires; the timer exists
-    // for the case where nothing arrives at all.
-    setExpired(false);
-    const timer = setTimeout(() => setExpired(true), remaining);
-    return () => clearTimeout(timer);
-  }, [expiresAt]);
-
-  return naming && !expired;
 }
 
 const RENAME_HINT = 'Double-click to rename';

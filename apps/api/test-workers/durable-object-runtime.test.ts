@@ -2157,6 +2157,125 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  it("pushes a generated name to a participant who never opened the work stream", async () => {
+    await seedOpenAuthority();
+    const participantId = "00000000-0000-7000-8000-000000000406";
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+        VALUES (?, ?, 'active', 'member', '2026-08-24T20:00:00.000Z')`).bind(WORKSPACE_ID, participantId),
+      env.DB.prepare(`INSERT INTO sessions
+        (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+        .bind(`${SESSION_ID}-${participantId}`, participantId, WORKSPACE_ID),
+    ]);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    // Created the way `POST /workstreams` creates one it has no title for: the
+    // first line of the request stands in, and `naming` promises a name.
+    await runInDurableObject(child, async (instance) => {
+      const product = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      await product.initialize({
+        sessionId: SESSION_ID,
+        userId: USER_ID,
+        workspaceId: WORKSPACE_ID,
+        region: "global" as const,
+        role: "member" as const,
+      }, {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        generation: 1,
+        title: "let's talk about avalon pricing",
+        objective: "let's talk about avalon pricing",
+        descriptionSource: "authored" as const,
+        titleStatus: "naming" as const,
+        emailAddress: null,
+        creatorUserId: USER_ID,
+        openingMessage: "let's talk about avalon pricing",
+        openingStructuredContent: null,
+        clientMessageId: "naming-push-client-message",
+        participantUserIds: [participantId],
+        attachmentIds: [],
+        originResourceIds: [],
+        scope: "workspace" as const,
+        modelOverride: "test-model",
+        originType: "ad_hoc" as const,
+        automationSubscriptionId: null,
+        automationRunId: null,
+        plannedFor: null,
+        systemKind: null,
+        createdFromOpportunityId: null,
+        opportunityVersion: null,
+        opportunityDisplayPromptHash: null,
+        opportunityExecutionPromptHash: null,
+        executionPrincipal: { type: "user", userId: USER_ID },
+        reason: "user_message",
+      });
+    });
+    await child.flushEffectsToWorkstreamDO();
+    await parent.flushWorkspaceDirectoryEffects();
+
+    // The participant is watching the sidebar and nothing else: no work-stream
+    // room socket, so the `workstream_renamed` event the naming service
+    // publishes to the room reaches nobody here. This frame is their only path
+    // to the name.
+    const response = await workspace.fetch("https://workspace.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-avalon-workspace-id": WORKSPACE_ID,
+        "x-avalon-placement-affinity": "wnam",
+        "x-avalon-user-id": participantId,
+        "x-avalon-session-id": `${SESSION_ID}-${participantId}`,
+        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000407",
+        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    const subscribed = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+    expect(JSON.parse(String((await subscribed).data))).toMatchObject({ type: "workspace_sync" });
+    const push = nextMessage(socket);
+
+    // Exactly the statement the naming service issues once the model answers,
+    // through the port it issues it on.
+    const named = await child.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      requestId: "00000000-0000-7000-8000-000000000408",
+      statements: [{
+        sql: `UPDATE workstreams SET title = COALESCE(?, title), title_status = ?, updated_at = ?
+               WHERE id = ? AND workspace_id = ? AND title_status = ?`,
+        params: [
+          "Avalon pricing conversation",
+          "automatic",
+          new Date().toISOString(),
+          WORKSTREAM_ID,
+          WORKSPACE_ID,
+          "naming",
+        ],
+      }],
+    });
+    expect(named.status).toBe(200);
+
+    // Nothing is flushed by hand from here: the child's own alarm forwards the
+    // effect, and WorkstreamDO hands it to WorkspaceDO eagerly on arrival.
+    await runDurableObjectAlarm(child);
+
+    expect(JSON.parse(String((await push).data))).toMatchObject({
+      type: "workspace_workstream_state",
+      workstreamId: WORKSTREAM_ID,
+      workstream: { title: "Avalon pricing conversation", titleStatus: "automatic" },
+    });
+  });
+
   it("owns and pages the viewer-specific work-stream directory in WorkspaceDO SQL", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(

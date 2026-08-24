@@ -386,7 +386,10 @@ verifying it, and answering the handshake. It exposes the transport helpers in
 It does not own what happens next. Workspace command authorization/routing and
 child subscription, event replay, presence, and `resync_required` are described in
 [`architecture.md`](architecture.md); the reconnect and heartbeat behavior of
-the client is in [`runbook.md`](runbook.md); dictation's audio limits and Azure
+the client is in [`runbook.md`](runbook.md), and how often that reconnect
+actually happens is measured by `realtime_socket_state` in
+[`telemetry.md`](telemetry.md) — from the client, because admission cannot tell a
+first connection from a fourth attempt; dictation's audio limits and Azure
 contract are in [`architecture.md`](architecture.md); which data belongs on an
 admitted socket at all, rather than behind a REST read, is
 [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md). It depends on

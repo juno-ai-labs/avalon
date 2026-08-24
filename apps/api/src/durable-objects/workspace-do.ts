@@ -15,6 +15,7 @@ import {
   WorkspaceSocketClientEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceSyncTopicSchema,
+  WORKSTREAM_NAMING_GRACE_MS,
   WorkstreamSchema,
   WorkstreamSocketCommandResultSchema,
   type AutomationSummary,
@@ -980,7 +981,7 @@ function directoryWorkstream(row: WorkspaceDirectoryRow, workspaceId: string): W
     : Number(row.manual_unread_from_ordinal);
   const firstUnread = manual ?? (latest > seen ? Math.min(latest, seen + 1) : null);
   const titleStatus = row.title_status === "naming"
-    && Date.now() - row.source_created_at > 60_000
+    && Date.now() - row.source_created_at > WORKSTREAM_NAMING_GRACE_MS
     ? "automatic"
     : row.title_status;
   return WorkstreamSchema.parse({
