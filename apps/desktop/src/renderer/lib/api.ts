@@ -357,6 +357,7 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
     manualUnreadGeneration: workstream.manualUnreadGeneration,
     hasUnread: workstream.hasUnread,
     youAreMentioned: workstream.youAreMentioned,
+    unseen: workstream.unseen,
     firstUnreadSequenceNumber: workstream.firstUnreadSequenceNumber,
     lastActivityAt: workstream.lastActivityAt,
     createdAt: workstream.createdAt,

@@ -1,0 +1,252 @@
+/// <reference types="@cloudflare/vitest-pool-workers/types" />
+
+/**
+ * The state a work stream is in for somebody who has never opened it.
+ *
+ * "Unseen" is per-person and lives on the membership row, so nothing about it
+ * can be proved against a mock: it is written by the same commit that enqueues
+ * the viewer effect the sidebar's dot is drawn from, and cleared by the open
+ * path — which is a durable write issued from what otherwise reads like a read.
+ * This drives the real product endpoint against real Durable Object SQLite so
+ * the participant row, the outbox envelopes, and the ordering between them are
+ * the production ones.
+ */
+
+import { env } from "cloudflare:workers";
+import { reset, runInDurableObject } from "cloudflare:test";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+
+import { substreamAgentName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import {
+  WorkstreamRegionalEffectSchema,
+  type WorkstreamRegionalEffect,
+} from "../src/durable-objects/workstream-regional-effect";
+
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000007b1");
+const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000007b2");
+const CREATOR_ID = "00000000-0000-7000-8000-0000000007b3";
+const CREATOR_SESSION_ID = "00000000-0000-7000-8000-0000000007b4";
+const INVITEE_ID = "00000000-0000-7000-8000-0000000007b5";
+const INVITEE_SESSION_ID = "00000000-0000-7000-8000-0000000007b6";
+
+const AUTH = {
+  sessionId: CREATOR_SESSION_ID,
+  userId: CREATOR_ID,
+  workspaceId: WORKSPACE_ID,
+  region: "global" as const,
+  role: "owner" as const,
+};
+
+const INVITEE_AUTH = {
+  sessionId: INVITEE_SESSION_ID,
+  userId: INVITEE_ID,
+  workspaceId: WORKSPACE_ID,
+  region: "global" as const,
+  role: "member" as const,
+};
+
+beforeEach(async () => {
+  await reset();
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE workstream_authority_control (
+      id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
+      required_serving_contract_version INTEGER NOT NULL,
+      serving_contract_version INTEGER NOT NULL
+    )`),
+    env.DB.prepare(`INSERT INTO workstream_authority_control
+      (id, phase, generation, required_serving_contract_version, serving_contract_version)
+      VALUES (1, 'durable_object_open', 1, 1, 1)`),
+    env.DB.prepare(`CREATE TABLE workspaces (
+      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT
+    )`),
+    env.DB.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(WORKSPACE_ID),
+    env.DB.prepare(`CREATE TABLE workspace_members (
+      workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
+      role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
+    )`),
+    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+      VALUES (?, ?, 'active', 'owner', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, CREATOR_ID),
+    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+      VALUES (?, ?, 'active', 'member', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, INVITEE_ID),
+    env.DB.prepare(`CREATE TABLE sessions (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
+    )`),
+    env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+      .bind(CREATOR_SESSION_ID, CREATOR_ID, WORKSPACE_ID),
+    env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+      .bind(INVITEE_SESSION_ID, INVITEE_ID, WORKSPACE_ID),
+    env.DB.prepare(`CREATE TABLE users (
+      id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+    )`),
+    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+      VALUES (?, 'creator@example.com', 'Creator', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
+      .bind(CREATOR_ID),
+    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+      VALUES (?, 'invitee@example.com', 'Invitee', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
+      .bind(INVITEE_ID),
+  ]);
+  const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+    workspaceDOName("global", WORKSPACE_ID),
+  ));
+  await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
+});
+
+function agentStub(): DurableObjectStub {
+  return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+    substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+  ));
+}
+
+async function product(stub: DurableObjectStub, body: unknown): Promise<{
+  status: number;
+  body: Record<string, unknown>;
+}> {
+  const response = await stub.fetch("https://object.test/internal/product", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json() };
+}
+
+async function startWorkstream(stub: DurableObjectStub, participantUserIds: string[]): Promise<void> {
+  const opened = await product(stub, {
+    operation: "initialize",
+    auth: AUTH,
+    input: {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+      title: "Warehouse migration",
+      objective: "Move the warehouse",
+      descriptionSource: "authored",
+      titleStatus: "settled",
+      emailAddress: null,
+      creatorUserId: CREATOR_ID,
+      openingMessage: "starting the migration",
+      clientMessageId: "unseen-open",
+      participantUserIds,
+      attachmentIds: [],
+      modelOverride: null,
+      executionPrincipal: { type: "user", userId: CREATOR_ID },
+      reason: "user_message",
+    },
+  });
+  expect(opened.status).toBe(200);
+}
+
+/**
+ * What the sidebar is currently being told about one person.
+ *
+ * Read from the parent object's projection of the child's effects rather than
+ * from the child's outbox: the outbox is drained by the alarm the moment an
+ * effect lands in it, so counting rows there races the delivery it is meant to
+ * be describing. Flushing first is the same RPC the create path uses, which
+ * makes the read deterministic instead of alarm-timed.
+ */
+async function viewerState(stub: DurableObjectStub, userId: string): Promise<
+  Extract<WorkstreamRegionalEffect, { kind: "directory_user" }> | null
+> {
+  await (stub as unknown as { flushEffectsToWorkstreamDO(): Promise<unknown> })
+    .flushEffectsToWorkstreamDO();
+  const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+    workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+  ));
+  const rows = await runInDurableObject(parent, (_instance, state) =>
+    state.storage.sql.exec<{ effect_json: string }>(
+      `SELECT effect_json FROM substream_user_directory WHERE user_id = ? ORDER BY substream_id`,
+      userId,
+    ).toArray());
+  const effects = rows
+    .map((row) => WorkstreamRegionalEffectSchema.parse(JSON.parse(row.effect_json)))
+    .filter((effect): effect is Extract<WorkstreamRegionalEffect, { kind: "directory_user" }> => (
+      effect.kind === "directory_user"
+    ));
+  return effects.at(-1) ?? null;
+}
+
+async function firstOpenedAt(stub: DurableObjectStub, userId: string): Promise<number | null | undefined> {
+  const rows = await runInDurableObject(stub, (_instance, state) =>
+    state.storage.sql.exec<{ first_opened_at: number | null }>(
+      `SELECT first_opened_at FROM participants WHERE user_id = ?`,
+      userId,
+    ).toArray());
+  return rows[0]?.first_opened_at;
+}
+
+describe("a work stream nobody has shown this person yet", () => {
+  it("is unseen for everybody named at the start except the person who started it", async () => {
+    const stub = agentStub();
+    await startWorkstream(stub, [INVITEE_ID]);
+
+    expect(await firstOpenedAt(stub, CREATOR_ID)).toEqual(expect.any(Number));
+    expect(await firstOpenedAt(stub, INVITEE_ID)).toBeNull();
+    // The dot is drawn from the projected effect, not from the row here, so
+    // the effect is what has to carry it.
+    expect((await viewerState(stub, INVITEE_ID))?.unseen).toBe(true);
+    expect((await viewerState(stub, CREATOR_ID))?.unseen).toBe(false);
+
+    const creatorView = await product(stub, { operation: "get", auth: AUTH });
+    expect(creatorView.body.unseen).toBe(false);
+  });
+
+  it("is unseen for somebody added to a work stream that already exists", async () => {
+    const stub = agentStub();
+    await startWorkstream(stub, []);
+
+    const added = await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+    expect(added.status).toBe(200);
+
+    expect(await firstOpenedAt(stub, INVITEE_ID)).toBeNull();
+    expect((await viewerState(stub, INVITEE_ID))?.unseen).toBe(true);
+  });
+
+  it("stops being unseen the first time that person opens it, and says so in the same answer", async () => {
+    const stub = agentStub();
+    await startWorkstream(stub, [INVITEE_ID]);
+    expect((await viewerState(stub, INVITEE_ID))?.unseen).toBe(true);
+
+    const opened = await product(stub, { operation: "get", auth: INVITEE_AUTH });
+    expect(opened.status).toBe(200);
+    // The detail returned by the open already says seen. Answering `true` here
+    // and correcting it over the socket a beat later would light the dot on the
+    // work stream they are looking at.
+    expect(opened.body.unseen).toBe(false);
+    expect(await firstOpenedAt(stub, INVITEE_ID)).toEqual(expect.any(Number));
+    expect((await viewerState(stub, INVITEE_ID))?.unseen).toBe(false);
+  });
+
+  it("does not make a work stream new again when somebody adds a person who is already in it", async () => {
+    const stub = agentStub();
+    await startWorkstream(stub, [INVITEE_ID]);
+    await product(stub, { operation: "get", auth: INVITEE_AUTH });
+    const opened = await firstOpenedAt(stub, INVITEE_ID);
+
+    const again = await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+    expect(again.status).toBe(200);
+
+    expect(await firstOpenedAt(stub, INVITEE_ID)).toBe(opened);
+    expect((await viewerState(stub, INVITEE_ID))?.unseen).toBe(false);
+  });
+
+  it("is unseen again for somebody taken out of a work stream and put back in", async () => {
+    const stub = agentStub();
+    await startWorkstream(stub, [INVITEE_ID]);
+    await product(stub, { operation: "get", auth: INVITEE_AUTH });
+
+    const removed = await product(stub, { operation: "remove_participant", auth: AUTH, userId: INVITEE_ID });
+    expect(removed.status).toBe(200);
+    const readded = await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+    expect(readded.status).toBe(200);
+
+    // The work stream moved on without them, and the add is announced to them
+    // again — the epoch beside this says so too, so the marker agrees.
+    expect(await firstOpenedAt(stub, INVITEE_ID)).toBeNull();
+    expect((await viewerState(stub, INVITEE_ID))?.unseen).toBe(true);
+  });
+});

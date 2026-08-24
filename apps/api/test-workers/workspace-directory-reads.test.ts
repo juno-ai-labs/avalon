@@ -91,6 +91,8 @@ interface SeedInput {
   automationSubscriptionId?: string | null;
   plannedFor?: string | null;
   participants?: UserId[];
+  /** Participants who have been put in it and have not opened it. */
+  unseenFor?: UserId[];
 }
 
 /** Publish one work stream into the directory, the way its own object would. */
@@ -123,6 +125,7 @@ async function seedWorkstream(input: SeedInput): Promise<WorkstreamId> {
     isParticipant: true,
     unreadCount: 0,
     youAreMentioned: false,
+    unseen: (input.unseenFor ?? []).includes(userId),
     listable: true,
     seenAttentionOrdinal: 0,
     manualUnreadFromOrdinal: null,
@@ -356,6 +359,33 @@ describe("what the workspace object answers about its work streams", () => {
       });
 
       expect(page.items.map((item) => item.workstreamId)).not.toContain(theirs);
+    });
+
+    it("keeps one person's unseen work stream unseen for them alone", async () => {
+      const workstreamId = await seedWorkstream({
+        title: "Warehouse migration",
+        lastActivityAt: "2026-08-14T09:00:00.000Z",
+        participants: [OWNER, OUTSIDER],
+        unseenFor: [OUTSIDER],
+      });
+
+      const theirs = await workspace().listWorkstreams({
+        workspaceId: WORKSPACE_ID,
+        userId: OUTSIDER,
+        includeSystem: false,
+        limit: 50,
+      });
+      const mine = await workspace().listWorkstreams({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        includeSystem: false,
+        limit: 50,
+      });
+
+      // Same work stream, one row per reader: the flag is the viewer's, so it
+      // has to survive the projection as the viewer's rather than the row's.
+      expect(theirs.items.find((item) => item.id === workstreamId)?.unseen).toBe(true);
+      expect(mine.items.find((item) => item.id === workstreamId)?.unseen).toBe(false);
     });
 
     it("orders by last activity and honours the limit", async () => {

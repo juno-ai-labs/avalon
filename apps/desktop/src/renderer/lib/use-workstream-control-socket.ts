@@ -61,6 +61,7 @@ function metadataState(metadata: WorkstreamControlMetadata): {
     manualUnreadGeneration: metadata.viewer.manualUnreadGeneration,
     hasUnread: firstUnread !== null,
     youAreMentioned: metadata.viewer.youAreMentioned,
+    unseen: metadata.viewer.unseen,
     firstUnreadSequenceNumber: firstUnread,
   };
   return {
@@ -84,6 +85,7 @@ function metadataState(metadata: WorkstreamControlMetadata): {
       manualUnreadGeneration: metadata.viewer.manualUnreadGeneration,
       hasUnread: firstUnread !== null,
       youAreMentioned: metadata.viewer.youAreMentioned,
+      unseen: metadata.viewer.unseen,
       firstUnreadSequenceNumber: firstUnread,
       lastActivityAt: metadata.lastActivityAt,
       createdAt: metadata.createdAt,

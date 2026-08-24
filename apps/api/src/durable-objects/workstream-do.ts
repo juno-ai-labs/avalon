@@ -1880,6 +1880,11 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       isParticipant: effects.some((effect) => effect.isParticipant),
       unreadCount: effects.reduce((count, effect) => count + effect.unreadCount, 0),
       youAreMentioned: effects.some((effect) => effect.youAreMentioned),
+      // An OR across substreams, which is only the top level's answer because
+      // there is exactly one substream today. A second one would mean a room
+      // nobody opened lighting the parent's dot, so whoever adds substreams
+      // decides then whether unseen is per-substream or the root's alone.
+      unseen: effects.some((effect) => effect.unseen === true),
       listable: effects.some((effect) => effect.listable),
       seenAttentionOrdinal: Math.max(...effects.map((effect) => effect.seenAttentionOrdinal ?? 0)),
       manualUnreadFromOrdinal: effects.reduce<number | null>((earliest, effect) => {
@@ -2004,6 +2009,11 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       isParticipant: effects.some((effect) => effect.isParticipant),
       unreadCount: effects.reduce((count, effect) => count + effect.unreadCount, 0),
       youAreMentioned: effects.some((effect) => effect.youAreMentioned),
+      // An OR across substreams, which is only the top level's answer because
+      // there is exactly one substream today. A second one would mean a room
+      // nobody opened lighting the parent's dot, so whoever adds substreams
+      // decides then whether unseen is per-substream or the root's alone.
+      unseen: effects.some((effect) => effect.unseen === true),
       listable: effects.some((effect) => effect.listable),
       seenAttentionOrdinal: Math.max(...effects.map((effect) => effect.seenAttentionOrdinal ?? 0)),
       manualUnreadFromOrdinal: effects.reduce<number | null>((earliest, effect) => {
@@ -2086,6 +2096,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
           && (viewer?.listable ?? true),
         unreadCount: viewer?.unreadCount ?? 0,
         youAreMentioned: viewer?.youAreMentioned ?? false,
+        unseen: viewer?.unseen ?? false,
         readThroughSequenceNumber: readThrough,
         manualUnreadFromSequenceNumber: viewer?.manualUnreadFromOrdinal ?? null,
         manualUnreadGeneration: viewer?.manualUnreadGeneration ?? 0,

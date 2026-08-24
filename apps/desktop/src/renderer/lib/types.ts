@@ -121,6 +121,13 @@ export interface WorkstreamSummary {
   hasUnread: boolean;
   /** A person mention exists above this viewer's read waterline. */
   youAreMentioned?: boolean;
+  /**
+   * This viewer was put in the work stream and has not opened it once. It
+   * outranks every run state on the sidebar marker: whatever the agent is
+   * doing, the first thing to know about a room you have never been in is
+   * that you have never been in it. Cleared by opening it.
+   */
+  unseen?: boolean;
   firstUnreadSequenceNumber: number | null;
   lastActivityAt: string;
   createdAt?: string;

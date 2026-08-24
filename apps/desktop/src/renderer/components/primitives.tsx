@@ -13,8 +13,8 @@ import {
   type RefObject,
   type ReactNode,
 } from 'react';
-import { statusDescription, statusLabel } from '../lib/format';
-import type { HarnessStatus, WorkspaceMember } from '../lib/types';
+import { statusDescription, statusLabel, type WorkstreamMarkerStatus } from '../lib/format';
+import type { WorkspaceMember } from '../lib/types';
 import type { SocketState } from '../lib/use-workstream-socket';
 
 export function AvalonMark({ className }: { className?: string }): React.JSX.Element {
@@ -56,7 +56,7 @@ export function StatusDot({
   compact = false,
   tooltip = false,
 }: {
-  status: HarnessStatus;
+  status: WorkstreamMarkerStatus;
   compact?: boolean;
   /** Explain the color on hover. For a compact dot that carries no visible label. */
   tooltip?: boolean;

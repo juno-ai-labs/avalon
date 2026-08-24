@@ -74,7 +74,12 @@ const createdWorkstream = {
   harnessRunId: 'run-new-workstream',
 };
 
-function workstream(id: string, title: string, harnessStatus: WorkstreamSummary['harnessStatus']): WorkstreamSummary {
+function workstream(
+  id: string,
+  title: string,
+  harnessStatus: WorkstreamSummary['harnessStatus'],
+  overrides: Partial<WorkstreamSummary> = {},
+): WorkstreamSummary {
   return {
     id,
     title,
@@ -92,6 +97,7 @@ function workstream(id: string, title: string, harnessStatus: WorkstreamSummary[
     nextPendingWakeup: null,
     pinPosition: null,
     preview: `${title} preview`,
+    ...overrides,
   };
 }
 
@@ -154,16 +160,70 @@ describe('New work-stream home', () => {
     });
   });
 
-  it('shows only work streams explicitly waiting for input', async () => {
+  it('shows only work streams waiting for input', async () => {
     renderScreen();
 
     expect(await screen.findByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
-    const waiting = await screen.findByRole('region', { name: 'Waiting for input' });
-    expect(within(waiting).getByRole('link', { name: /Board decision/u })).toHaveAttribute('href', '/workstreams/waiting');
-    expect(within(waiting).getByText('Needs input')).toBeVisible();
+    const attention = await screen.findByRole('region', { name: 'Needs attention' });
+    expect(within(attention).getByRole('link', { name: /Board decision/u })).toHaveAttribute('href', '/workstreams/waiting');
+    expect(within(attention).getByText('Needs input')).toBeVisible();
     expect(screen.queryByText('Pricing restructure')).not.toBeInTheDocument();
     expect(screen.queryByText('Release notes')).not.toBeInTheDocument();
     expect(screen.queryByText('Broken connector')).not.toBeInTheDocument();
+  });
+
+  it('lists a work stream this person has never opened, newest activity first', async () => {
+    workspaceSocket.listWorkstreams.mockResolvedValue({
+      items: [
+        workstream('waiting', 'Board decision', 'needs_input', { lastActivityAt: '2026-07-31T18:00:00.000Z' }),
+        // Running, so nothing about the work stream itself puts it here: it is
+        // listed because this person was added and has not opened it.
+        workstream('unseen', 'Warehouse migration', 'running', {
+          lastActivityAt: '2026-07-31T20:00:00.000Z',
+          unseen: true,
+        }),
+        workstream('running', 'Pricing restructure', 'running', { lastActivityAt: '2026-07-31T21:00:00.000Z' }),
+      ],
+      nextCursor: null,
+    });
+    renderScreen();
+
+    const attention = await screen.findByRole('region', { name: 'Needs attention' });
+    const rows = within(attention).getAllByRole('link');
+    expect(rows.map((row) => row.getAttribute('href')))
+      .toEqual(['/workstreams/unseen', '/workstreams/waiting']);
+    // The marker says the room is new rather than what its run is doing.
+    expect(within(rows[0]!).getByText('New to you')).toBeInTheDocument();
+    expect(within(rows[0]!).queryByText('Running')).not.toBeInTheDocument();
+    expect(screen.queryByText('Pricing restructure')).not.toBeInTheDocument();
+  });
+
+  it('lists the work streams that mention this person and the ones they have not read', async () => {
+    workspaceSocket.listWorkstreams.mockResolvedValue({
+      items: [
+        workstream('mentioned', 'Launch blockers', 'running', {
+          lastActivityAt: '2026-07-31T21:00:00.000Z',
+          youAreMentioned: true,
+          hasUnread: true,
+        }),
+        workstream('unread', 'Vendor contract', 'completed', {
+          lastActivityAt: '2026-07-31T19:00:00.000Z',
+          hasUnread: true,
+        }),
+        workstream('read', 'Pricing restructure', 'running', { lastActivityAt: '2026-07-31T22:00:00.000Z' }),
+      ],
+      nextCursor: null,
+    });
+    renderScreen();
+
+    const attention = await screen.findByRole('region', { name: 'Needs attention' });
+    const rows = within(attention).getAllByRole('link');
+    expect(rows.map((row) => row.getAttribute('href')))
+      .toEqual(['/workstreams/mentioned', '/workstreams/unread']);
+    expect(within(rows[0]!).getByText('You were mentioned')).toBeInTheDocument();
+    expect(within(rows[1]!).getByText('Unread')).toBeInTheDocument();
+    // Nothing is asking anything of this person here, however recently it moved.
+    expect(screen.queryByText('Pricing restructure')).not.toBeInTheDocument();
   });
 
   it('shows only the short ranked prompt, records its impression, and starts the displayed version', async () => {
