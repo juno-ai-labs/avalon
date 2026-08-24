@@ -37,6 +37,14 @@ const DISPATCHED_OPERATIONS = [
   "inlineChildByToolCall",
   "terminalizeInlineChild",
   "cancelDescendants",
+  "terminalizeAttempt",
+  "terminalizeQueuedRun",
+  "residualRepairCandidates",
+  "staleLeaseRuns",
+  "reapStaleRoot",
+  "reapableInlineChildren",
+  "reapStaleInlineChild",
+  "recordReceiptReconciliation",
 ] as const satisfies readonly HarnessRunOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */
@@ -46,15 +54,27 @@ export const HARNESS_RUN_OPERATIONS:
 /**
  * The operations that change what the sidebar shows about a run.
  *
- * A claim is the one that does: `workstreams.harness_status` was the third
- * statement of the routed claim batch, guarded on the first having landed, and
- * it is the directory's projection of exactly this row. Running the claim
- * inside `commitRuntimeMutation` is what replaces that guard — the projection
- * is committed with the claim rather than after it.
+ * The two ends of a run: a claim marks the work stream busy and a
+ * terminalization hands it back. Both were guarded statements in a routed batch
+ * — `workstreams.harness_status`, written only if the batch's earlier statement
+ * had landed — and both are the directory's projection of exactly this row.
+ * Running them inside `commitRuntimeMutation` is what replaces that guard: the
+ * projection is committed with the write rather than after it.
  *
- * A heartbeat is not on this list. It moves a deadline nobody renders.
+ * A heartbeat is not on this list. It moves a deadline nobody renders. Nor is a
+ * sub-agent's settlement: a delegated run is a tool call inside the parent's
+ * turn, and the work stream stays busy until the parent itself finishes.
  */
-const RUN_STATE_WRITES = new Set<HarnessRunOperation>(["claimAttempt"]);
+const RUN_STATE_WRITES = new Set<HarnessRunOperation>([
+  "claimAttempt",
+  "terminalizeAttempt",
+  "terminalizeQueuedRun",
+  "residualRepairCandidates",
+  "staleLeaseRuns",
+  "reapStaleRoot",
+  "reapableInlineChildren",
+  "reapStaleInlineChild",
+]);
 
 export function mutatesRunState(operation: HarnessRunOperation): boolean {
   return RUN_STATE_WRITES.has(operation);

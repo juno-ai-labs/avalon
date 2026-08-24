@@ -82,6 +82,7 @@ import {
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
+import { createMessageObjectPort } from "../runtime/message-port";
 import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
 import {
   createBlockDashboardObjectPort,
@@ -2222,7 +2223,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
       return this.settleAgentRunWithRetry(executionEnv, input, terminalOutcome);
     }
-    await reapStaleHarnessRuns(executionEnv.DB, {
+    const runs = createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId);
+    await reapStaleHarnessRuns(runs, {
       receipts: createToolReceiptPortFactory(executionEnv),
       blocks: createBlockDashboardPortFactory(executionEnv),
       workspaceId: input.workspaceId,
@@ -2240,7 +2242,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     });
     const attemptId = uuidV7();
     const claim = await claimHarnessAttempt(
-      createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+      runs,
       input,
       {
         attemptId,
@@ -2292,7 +2294,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     if (claim.state === "cancelled") {
       await terminalizeQueuedHarnessRun(
-        executionEnv.DB,
+        runs,
         input,
         { attemptId, owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}` },
         { code: "run_cancelled", message: "The run was stopped before it started" },
@@ -2359,14 +2361,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const effectiveStatus = stopState?.status === "stopped" || stopState?.cancellation_requested_at
       ? "stopped"
       : outcome.status;
-    await terminalizeHarnessAttempt(executionEnv.DB, input, claim.lease, {
-      status: effectiveStatus,
-      ...(outcome.messageId ? { finalMessageId: outcome.messageId } : {}),
-      ...(outcome.error ? { error: outcome.error } : {}),
-      memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
-    },
-    createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
-    createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId));
+    await terminalizeHarnessAttempt(
+      runs,
+      createMessageObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+      input,
+      claim.lease,
+      {
+        status: effectiveStatus,
+        ...(outcome.messageId ? { finalMessageId: outcome.messageId } : {}),
+        ...(outcome.error ? { error: outcome.error } : {}),
+        memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
+      },
+      createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+      createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+    );
     if (outcome.messageId) {
       const messages = await this.product.messagesForRuntime(250);
       const message = messages.items.find((candidate) => candidate.id === outcome.messageId);
