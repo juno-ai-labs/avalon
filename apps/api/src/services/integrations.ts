@@ -75,7 +75,7 @@ import {
   type WorkstreamCompactionFence,
   type WorkstreamWorkflowInput,
 } from "@avalon/contracts";
-import { createDatabase, newId, nowIso } from "@avalon/db";
+import { newId, nowIso } from "@avalon/db";
 import {
   connectorCapabilitySupportsScope,
   ConnectorError,
@@ -185,6 +185,9 @@ import type { ToolReceiptRecord } from "../durable-objects/workstream-tool-recei
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { createBlockDashboardObjectPort } from "../runtime/block-dashboard-port";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
+import { createMessageObjectPort } from "../runtime/message-port";
+import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
+import { transcriptLister } from "../runtime/message-projection";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import {
@@ -914,7 +917,7 @@ async function persistWorkstreamContextCompaction(
  * same window rather than whatever has arrived by the time it runs.
  */
 async function loadTriggerFencedTranscriptMessages(
-  env: Pick<Env, "DB">,
+  transcript: MessageObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">
     & Partial<Pick<WorkstreamWorkflowInput, "transcriptFenceMessageId">>,
   listMessages: TranscriptMessageLister,
@@ -922,12 +925,7 @@ async function loadTriggerFencedTranscriptMessages(
   pageSize = 250,
 ): Promise<Message[]> {
   const sequenceOf = async (messageId: string, code: string): Promise<number> => {
-    const row = await env.DB.prepare(
-      `SELECT sequence_number
-         FROM messages
-        WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3`,
-    ).bind(messageId, input.workspaceId, input.workstreamId)
-      .first<{ sequence_number: number }>();
+    const row = await transcript.message({ messageId });
     const sequence = row?.sequence_number;
     if (!Number.isSafeInteger(sequence) || (sequence ?? -1) < 0) {
       throw Object.assign(new Error("The run trigger message is not available in this work stream"), { code });
@@ -1979,7 +1977,6 @@ export async function runWorkstreamHarness(
   // actual authority without copying connector/resource state into the agent.
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const runStartedAtMs = Date.now();
-  const database = createDatabase(env.DB);
   const workstream = await env.DB.prepare(
     `SELECT title, objective FROM workstreams WHERE id = ? AND workspace_id = ? AND archived_at IS NULL`,
   ).bind(input.workstreamId, input.workspaceId).first<{ title: string; objective: string }>();
@@ -2029,10 +2026,18 @@ export async function runWorkstreamHarness(
     undefined,
     input.compactionFence,
   );
+  const transcript = createMessageObjectPort(env, input.workspaceId, input.workstreamId);
   const storedMessages = await loadTriggerFencedTranscriptMessages(
-    env,
+    transcript,
     input,
-    database.workstreams.listMessages,
+    // The transcript comes from the object rather than from a routed reader
+    // whose four-table join was rewritten onto three compatibility views. The
+    // paging contract is unchanged, which is what lets this stay an injected
+    // lister: the loader's fence walk is the same walk.
+    transcriptLister(
+      transcript,
+      { workspaceId: input.workspaceId, workstreamId: input.workstreamId },
+    ),
     priorCompaction?.compactedThroughSequence ?? -1,
   );
   const transcriptProjection = await projectModelProtocolTranscript(env, input, storedMessages);
@@ -4359,11 +4364,8 @@ async function loadRunPromptContext(
     memoryQueryParts.push(JSON.stringify(recallable));
   }
   if (input.triggerMessageId) {
-    const triggerMessage = await env.DB.prepare(
-      `SELECT text_content FROM messages
-        WHERE id = ? AND workspace_id = ? AND workstream_id = ?`,
-    ).bind(input.triggerMessageId, input.workspaceId, input.workstreamId)
-      .first<{ text_content: string }>();
+    const triggerMessage = await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
+      .message({ messageId: input.triggerMessageId });
     if (triggerMessage?.text_content.trim()) memoryQueryParts.push(triggerMessage.text_content);
   }
   let triggerMessage: ModelMessage | null = null;
@@ -4417,11 +4419,8 @@ async function loadRunPromptContext(
       `SELECT planned_for, event_count FROM digest_deliveries WHERE id = ? AND workspace_id = ?`,
     ).bind(input.digestDeliveryId, input.workspaceId)
       .first<{ planned_for: string; event_count: number }>();
-    const digestMessage = await env.DB.prepare(
-      `SELECT text_content FROM messages
-        WHERE workspace_id = ? AND workstream_id = ? AND client_message_id = ?`,
-    ).bind(input.workspaceId, input.workstreamId, `digest:${input.digestDeliveryId}`)
-      .first<{ text_content: string }>();
+    const digestMessage = await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
+      .messageByClientId({ clientMessageId: `digest:${input.digestDeliveryId}` });
     // Failing the attempt rather than running without the window: a digest with
     // no brief cannot be written, and settlement folds an unsettled window into
     // the next occurrence instead of consuming it.
@@ -7299,59 +7298,32 @@ function summarize(value: unknown, maxLength: number): string {
  * messages. The invocation UUID is also the message UUID, which makes every
  * lifecycle update idempotent without adding another cross-table identifier.
  *
- * The guarded sequence increment is important: completion and replay updates
- * refresh the existing block without consuming a new transcript position.
+ * This was a two-statement `DB.batch`: an upsert that took the work stream's
+ * next sequence number, and a follow-up increment guarded on the inserted row
+ * having actually taken it, so a refresh did not advance the transcript. The
+ * two were one fact split across a batch, which is exactly what a batch cannot
+ * make atomic. The object does both inside one `transactionSync`, and decides
+ * from the row it just read rather than from a guard on a second statement.
  */
 async function persistToolTranscriptMessage(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId">,
   invocation: ToolInvocation,
 ): Promise<void> {
-  const createdAt = invocation.startedAt ?? invocation.completedAt ?? nowIso();
-  const editedAt = invocation.status === "pending" || invocation.status === "started"
-    ? null
-    : invocation.completedAt ?? nowIso();
-  await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO messages
-       (id, client_message_id, workspace_id, workstream_id, author_type, message_type,
-        text_content, structured_content_json, sequence_number, created_at, edited_at)
-       SELECT ?, ?, ?, w.id, 'agent', 'tool', '', ?, w.next_sequence_number, ?, ?
-       FROM workstreams w
-       WHERE w.id = ? AND w.workspace_id = ?
-       ON CONFLICT(id) DO UPDATE SET
-         structured_content_json = excluded.structured_content_json,
-         edited_at = excluded.edited_at
-       WHERE messages.workspace_id = excluded.workspace_id
-         AND messages.workstream_id = excluded.workstream_id
-         AND messages.message_type = 'tool'`,
-    ).bind(
-      invocation.id,
-      `tool:${invocation.id}`,
-      input.workspaceId,
-      JSON.stringify({ invocation }),
-      createdAt,
-      editedAt,
-      input.workstreamId,
-      input.workspaceId,
-    ),
-    env.DB.prepare(
-      `UPDATE workstreams
-       SET next_sequence_number = next_sequence_number + 1, updated_at = ?
-       WHERE id = ? AND workspace_id = ?
-         AND next_sequence_number = (
-           SELECT sequence_number FROM messages
-           WHERE id = ? AND workspace_id = ? AND workstream_id = ? AND message_type = 'tool'
-         )`,
-    ).bind(
-      nowIso(),
-      input.workstreamId,
-      input.workspaceId,
-      invocation.id,
-      input.workspaceId,
-      input.workstreamId,
-    ),
-  ]);
+  // The wire carries ISO-8601 and the object stores unix milliseconds; the
+  // retired view converted between them in SQL, so the conversion moves here.
+  const settled = invocation.status !== "pending" && invocation.status !== "started";
+  const asMillis = (value: string | null): number => (
+    value === null ? Date.now() : Date.parse(value)
+  );
+  await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
+    .upsertToolMessage({
+      messageId: invocation.id,
+      clientMessageId: `tool:${invocation.id}`,
+      structuredContentJson: JSON.stringify({ invocation }),
+      createdAt: asMillis(invocation.startedAt ?? invocation.completedAt),
+      editedAt: settled ? asMillis(invocation.completedAt) : null,
+    });
 }
 
 /**

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
+import type { MessageObjectPort } from "../src/durable-objects/workstream-message-protocol";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import type { DatabaseSync } from "node:sqlite";
 import { seedWorkstreamObjectRoot, testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
@@ -197,6 +198,31 @@ function streamResponse(content: string): Response {
     status: 200,
     headers: { "content-type": "text/event-stream" },
   });
+}
+
+/**
+ * The transcript port's one read this walk makes: a message's sequence number.
+ *
+ * A typed stub rather than a fake `prepare`/`bind`/`first` chain, because the
+ * walk's contract with the object is an operation now rather than a statement.
+ * What is under test here is the walk — which sequence it starts from, how far
+ * back it pages, when it refuses — so the object behind it is stood in for; the
+ * operation itself is proved against real SQLite in
+ * `workstream-message-storage.test.ts`.
+ */
+function transcriptPort(
+  sequences: Record<string, number | undefined>,
+  asked: string[] = [],
+): MessageObjectPort {
+  return {
+    message: async ({ messageId }: { messageId: string }) => {
+      asked.push(messageId);
+      const sequence = sequences[messageId];
+      return sequence === undefined
+        ? undefined
+        : { sequence_number: sequence } as Awaited<ReturnType<MessageObjectPort["message"]>>;
+    },
+  } as MessageObjectPort;
 }
 
 describe("durable UI-to-model transcript projection", () => {
@@ -524,9 +550,7 @@ describe("durable UI-to-model transcript projection", () => {
       textContent: "Question for queued run B",
     });
     const allMessages = [prior, trigger, queued];
-    const first = vi.fn(async () => ({ sequence_number: trigger.sequenceNumber }));
-    const bind = vi.fn(() => ({ first }));
-    const prepare = vi.fn(() => ({ bind }));
+    const asked: string[] = [];
     const listMessages = vi.fn(async (
       _workspaceId: string,
       _workstreamId: string,
@@ -535,7 +559,7 @@ describe("durable UI-to-model transcript projection", () => {
     ) => allMessages.filter((entry) => entry.sequenceNumber < (beforeSequence ?? Infinity)).slice(-limit));
 
     const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: createTestD1Database({ prepare }) },
+      transcriptPort({ [trigger.id]: trigger.sequenceNumber }, asked),
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -544,7 +568,7 @@ describe("durable UI-to-model transcript projection", () => {
       listMessages,
     );
 
-    expect(bind).toHaveBeenCalledWith(trigger.id, WORKSPACE_ID, WORKSTREAM_ID);
+    expect(asked).toEqual([trigger.id]);
     expect(listMessages).toHaveBeenCalledWith(WORKSPACE_ID, WORKSTREAM_ID, 250, 3);
     expect(stored.map((entry) => entry.id)).toEqual([prior.id, trigger.id]);
     expect(stored.map((entry) => entry.textContent)).not.toContain(queued.textContent);
@@ -568,12 +592,6 @@ describe("durable UI-to-model transcript projection", () => {
       [correction.id]: correction.sequenceNumber,
     };
     const bound: string[] = [];
-    const prepare = vi.fn(() => ({
-      bind: (messageId: string) => {
-        bound.push(messageId);
-        return { first: async () => ({ sequence_number: sequences[messageId] }) };
-      },
-    }));
     const listMessages = vi.fn(async (
       _workspaceId: string,
       _workstreamId: string,
@@ -582,7 +600,7 @@ describe("durable UI-to-model transcript projection", () => {
     ) => allMessages.filter((entry) => entry.sequenceNumber < (beforeSequence ?? Infinity)).slice(-limit));
 
     const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: createTestD1Database({ prepare }) },
+      transcriptPort(sequences, bound),
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -613,9 +631,6 @@ describe("durable UI-to-model transcript projection", () => {
       [earlier.id]: earlier.sequenceNumber,
       [trigger.id]: trigger.sequenceNumber,
     };
-    const prepare = vi.fn(() => ({
-      bind: (messageId: string) => ({ first: async () => ({ sequence_number: sequences[messageId] }) }),
-    }));
     const listMessages = vi.fn(async (
       _workspaceId: string,
       _workstreamId: string,
@@ -624,7 +639,7 @@ describe("durable UI-to-model transcript projection", () => {
     ) => [earlier, trigger].filter((entry) => entry.sequenceNumber < (beforeSequence ?? Infinity)).slice(-limit));
 
     const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: createTestD1Database({ prepare }) },
+      transcriptPort(sequences),
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -638,12 +653,10 @@ describe("durable UI-to-model transcript projection", () => {
   });
 
   it("fails closed when the immutable trigger message cannot be resolved", async () => {
-    const first = vi.fn(async () => null);
-    const bind = vi.fn(() => ({ first }));
     const listMessages = vi.fn(async () => [] as Message[]);
 
     await expect(__integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: createTestD1Database({ prepare: vi.fn(() => ({ bind })) }) },
+      transcriptPort({}),
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -670,7 +683,7 @@ describe("durable UI-to-model transcript projection", () => {
       .slice(-limit));
 
     const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: createTestD1Database({}) },
+      transcriptPort({}),
       { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
       listMessages,
     );
@@ -688,7 +701,7 @@ describe("durable UI-to-model transcript projection", () => {
     });
 
     await expect(__integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: createTestD1Database({}) },
+      transcriptPort({}),
       { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
       async () => [oversized],
     )).rejects.toMatchObject({ code: "context_limit_exceeded" });

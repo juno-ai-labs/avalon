@@ -1,5 +1,5 @@
 import { ExecutionPrincipalSchema, asWorkspaceId, asWorkstreamId, type WorkstreamId } from "@avalon/contracts";
-import { createDatabase, newId, nowIso } from "@avalon/db";
+import { newId, nowIso } from "@avalon/db";
 
 import type { Env } from "../env";
 import { truncateUtf16Safe } from "../lib/text";
@@ -11,6 +11,8 @@ import {
 } from "./activity-event-service";
 import { publishWorkstreamEvent } from "./integrations";
 import { workflowInstanceWasCreated } from "../lib/workflow-launch-signal";
+import { createMessageObjectPort } from "../runtime/message-port";
+import { readMessage } from "../runtime/message-projection";
 import { launchWorkstreamHarness } from "./workstream-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
@@ -369,33 +371,23 @@ async function appendDigestBriefMessage(
   env: Env,
   input: { workspaceId: string; workstreamId: string; deliveryId: string; brief: string },
 ): Promise<string> {
-  const executionEnv = await workstreamExecutionEnvironment(
-    env,
-    input.workspaceId,
-    input.workstreamId,
-  );
-  const messageId = newId();
   const clientMessageId = `digest:${input.deliveryId}`;
-  const at = nowIso();
-  await executionEnv.DB.batch([
-    executionEnv.DB.prepare(
-      `INSERT INTO messages
-         (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-          message_type, text_content, structured_content_json, sequence_number, created_at)
-       SELECT ?, ?, ?, w.id, 'system', NULL, 'system', ?, NULL, w.next_sequence_number, ?
-         FROM workstreams w WHERE w.id = ? AND w.workspace_id = ?
-       ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
-    ).bind(messageId, clientMessageId, input.workspaceId, input.brief, at, input.workstreamId, input.workspaceId),
-    executionEnv.DB.prepare(
-      `UPDATE workstreams
-          SET next_sequence_number = next_sequence_number + 1, last_activity_at = ?, updated_at = ?
-        WHERE id = ? AND workspace_id = ?
-          AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`,
-    ).bind(at, at, input.workstreamId, input.workspaceId, messageId),
-  ]);
-  const stored = await createDatabase(executionEnv.DB).workstreams.getMessageByClientId(
-    input.workspaceId,
-    input.workstreamId,
+  const messages = createMessageObjectPort(env, input.workspaceId, input.workstreamId);
+  const appended = await messages.appendMessage({
+    messageId: newId(),
+    clientMessageId,
+    authorType: "system",
+    authorUserId: null,
+    externalActorJson: null,
+    messageType: "system",
+    text: input.brief,
+    structuredContentJson: null,
+    producedByRunId: null,
+    now: Date.now(),
+  });
+  const stored = await readMessage(
+    messages,
+    { workspaceId: input.workspaceId, workstreamId: input.workstreamId },
     clientMessageId,
   );
   if (stored) {
@@ -405,7 +397,11 @@ async function appendDigestBriefMessage(
     });
     return stored.id;
   }
-  return messageId;
+  // Only reachable if the row went away between the append and the read, since
+  // `readMessage` resolves by client message id and answers on a redelivery
+  // too. A redelivery publishes `message_created` again, which is what the
+  // routed path did — the reader it used had no way to know either.
+  return appended.messageId;
 }
 
 /**

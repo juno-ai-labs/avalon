@@ -10,6 +10,7 @@ import { newId } from "@avalon/db";
 
 import type { Env } from "../../env";
 import { githubConnectorConfig } from "../../lib/connector-registry";
+import { createMessageObjectPort } from "../../runtime/message-port";
 import { executionPrincipalKey } from "../workstream-resource-visibility";
 import { terminalGitCaSetupCommands, type TerminalSandboxProvider } from "./daytona-provider";
 import type { AcquiredTerminalSandbox } from "./coordinator";
@@ -326,21 +327,11 @@ export async function admitTerminalPublicationGrant(
     terminalPortFactory,
   );
   if (!selection) return { admitted: false, reason: "repository_not_configured" };
-  const message = await env.DB.prepare(
-    `SELECT message.text_content
-       FROM messages message
-       JOIN workstream_participants participant
-         ON participant.workstream_id = message.workstream_id
-        AND participant.user_id = message.author_user_id
-        AND participant.removed_at IS NULL
-      WHERE message.id = ? AND message.workspace_id = ? AND message.workstream_id = ?
-        AND message.author_type = 'human' AND message.author_user_id = ?`,
-  ).bind(
-    input.triggerMessageId,
-    input.workspaceId,
-    input.workstreamId,
-    input.executionPrincipal.userId,
-  ).first<{ text_content: string }>();
+  const message = await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
+    .messageFromParticipant({
+      messageId: input.triggerMessageId,
+      authorUserId: input.executionPrincipal.userId,
+    });
   if (!message) return { admitted: false, reason: "participant_message_required" };
   const terminal = terminalPortFactory(input.workspaceId, input.workstreamId);
   await terminal.admitPublicationGrant({
