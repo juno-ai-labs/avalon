@@ -1305,6 +1305,54 @@ of the three. If the product ever settles on a single busy status, retire the
 other two from the CHECK constraint rather than from the fences, so the
 narrowing is enforced where it can be seen.
 
+### 2026-08-23 — The callers outside the runtime, and what a half-converted path costs
+
+**What changed:** the harness-run callers in `workstream-service`,
+`automation-service`, `workspace-schedule-execution`, `activity-consumer`,
+`integrations` and both Terminal services moved onto the port, through eight new
+operations: `admitRun`, `launchRun`, `bindWorkflowInstance`,
+`failUnlaunchedRun`, `recordRunProgress`, `latestRootRun`, `runIsActive` and
+`triggerPartId`. `reconcileDueTerminalSandbox` no longer takes a database at
+all — it took one solely to ask whether a run was still active, so its first
+parameter is now a `HarnessRunPortFactory`.
+
+**Why:** the same guarded-batch shape as everything before it. Admission was a
+supersede, an `INSERT … SELECT … WHERE ? = (SELECT latest.id …)` whose subquery
+*was* the staleness check, and a sidebar update guarded on `EXISTS (SELECT 1
+FROM harness_runs WHERE id = ?)` asking whether the insert had landed. The
+staleness check is the one worth naming: expressed as a subquery inside the
+insert, it could only answer by writing nothing — which is also what a duplicate
+id does — so the caller could not tell "someone else got here first" from "this
+is a retry of my own request". `admitRun` answers `stale` and `exists`
+separately.
+
+**Two run insertions stay routed, and that decides slice 7's order.** The
+automation and inbound-activity paths create their run inside the *work-stream
+bootstrap* batch — `workstreams`, `messages` and `harness_runs` in one atomic
+routed batch. Pulling the run out would introduce a partial failure that does
+not exist today: a work stream with no run. So `_runtime_harness_runs` cannot be
+dropped until the transcript and work-stream rows move too, which means slice 6
+cannot retire its own view without slice 7. That is a scheduling fact, not a
+preference.
+
+**What a half-converted path costs, in one test.** `automation-run-recovery`
+hand-builds a model of the regional database and answers the runtime SQL port
+from it. With the run still created by a routed statement but now *read* through
+the port, the two halves stopped talking about the same run — the write went to
+the hand-built model and the read to a real object store. The fixture now
+answers `executeHarnessRunOperation` from the same model, and throws on any
+operation it has not modelled rather than returning nothing, because a fixture
+that answers "no such run" to a question it does not understand makes a passing
+test that proves the opposite of what it claims.
+
+**What a future change has to respect:** `failUnlaunchedRun` routes its sidebar
+write through `settleWorkstreamState` like every other ending, which adds a
+guard the routed version lacked — it will not report `failed` over a work stream
+some other live run still holds. That case is unreachable from where it is
+called today, because the admission immediately before it superseded everything
+else. The guard is there for when that stops being true.
+
+
 ### 2026-08-23 — Terminalization and the reaper, and the end of the changes count
 
 **What changed:** `terminalizeHarnessAttempt`, `terminalizeQueuedHarnessRun`,
