@@ -130,13 +130,17 @@ describe('work-stream presentation rules', () => {
     expect(workstreamMarkerStatus({ harnessStatus: 'failed' })).toBe('failed');
   });
 
-  it('asks for attention on anything only this person can clear', () => {
+  it('asks for attention only where somebody named this person', () => {
     expect(workstreamNeedsAttention({ harnessStatus: 'needs_input' })).toBe(true);
     expect(workstreamNeedsAttention({ harnessStatus: 'completed', unseen: true })).toBe(true);
     expect(workstreamNeedsAttention({ harnessStatus: 'completed', youAreMentioned: true })).toBe(true);
-    // Unread while the agent is working: the dot shows the run, and the work
-    // stream is still one this person has to read.
-    expect(workstreamNeedsAttention({ harnessStatus: 'running', hasUnread: true })).toBe(true);
+    // Unread on its own is the ordinary condition of a work stream somebody is
+    // working in. Listing it here buried the states that are addressed to this
+    // person among everything they simply had not got to yet.
+    expect(workstreamNeedsAttention({ harnessStatus: 'running', hasUnread: true })).toBe(false);
+    expect(workstreamNeedsAttention({ harnessStatus: 'completed', hasUnread: true })).toBe(false);
+    // Unread beside one of the three still qualifies — on their account.
+    expect(workstreamNeedsAttention({ harnessStatus: 'completed', hasUnread: true, unseen: true })).toBe(true);
     expect(workstreamNeedsAttention({ harnessStatus: 'running' })).toBe(false);
     expect(workstreamNeedsAttention({ harnessStatus: 'failed' })).toBe(false);
   });
