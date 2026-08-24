@@ -1316,18 +1316,23 @@ export class WorkstreamHarnessRunStorage {
          FROM runs run
          LEFT JOIN run_lifecycle_events terminal
            ON terminal.run_id = run.run_id AND terminal.event_key = 'terminal'
-        WHERE run.status IN ('failed', 'cancelled') AND run.terminalized_at IS NOT NULL
+        WHERE run.status IN ('completed', 'needs_input', 'failed', 'cancelled')
+          AND run.terminalized_at IS NOT NULL
           AND run.legacy_attempt_id IS NOT NULL
-          -- Exactly the terminal-first paths that attempt residual settlement
-          -- today: member-stopped roots, reaped children, and stale-lease
-          -- roots. Direct completed, needs-input and failed root
-          -- terminalization does not start this protocol. If that changes, its
-          -- first-pass call and this retry predicate must change together.
-          AND (
-            run.status = 'cancelled'
-            OR run.parent_tool_call_id IS NOT NULL
-            OR json_extract(run.error_json, '$.code') = 'stale_run_reaped'
-          )
+          -- Every terminal-first path attempts residual settlement, so every
+          -- terminal row is a candidate for the retry. The predicate used to
+          -- name the three paths that did -- member-stopped roots, reaped
+          -- children, stale-lease roots -- which meant a completed or directly
+          -- failed root that lost its settlement response was matched by
+          -- nothing at all and kept a tool card spinning forever. Naming paths
+          -- here is what made that possible; do not narrow it back to a list.
+          --
+          -- The four statuses are the object's vocabulary for the published set
+          -- the routed predicate named: 'cancelled' is how 'stopped' is stored.
+          -- The cost of the width is that rows terminalized before this
+          -- became universal have no marker either, so the walk backfills them
+          -- a bounded page at a time. Each repaired row records its marker, so
+          -- it is paid once rather than on every activation.
           AND (?1 = 0 OR run.parent_tool_call_id IS NOT NULL OR run.origin = 'block_dashboard_block')
           AND NOT EXISTS (
             SELECT 1 FROM run_lifecycle_events settled
@@ -1335,7 +1340,20 @@ export class WorkstreamHarnessRunStorage {
                AND settled.attempt_id = run.legacy_attempt_id
                AND settled.event_key = ?2
           )
-        ORDER BY run.terminalized_at ASC, run.run_id ASC
+        -- Newest first, for one reason: a card stranded minutes ago is the one
+        -- a member is looking at, and it must not wait behind every historical
+        -- row in the work stream.
+        --
+        -- Not because it helps with a row that can never settle. One whose
+        -- terminal stamp does not match records no marker however often it is
+        -- tried, so it is re-selected forever and holds a slot in every page;
+        -- ordering only decides which such rows do the holding, and neither
+        -- direction drops them. Paginating past them needs durable per-row
+        -- retry state and a backoff nobody here can derive a number for, so it
+        -- is not built on speculation: each failure reports through the
+        -- caller's onReceiptRepairFailure hook, and a wedged page is that
+        -- warning repeating the same run id.
+        ORDER BY run.terminalized_at DESC, run.run_id DESC
         LIMIT ?3`,
       input.blockOnly ? 1 : 0,
       input.markerEventKey,
