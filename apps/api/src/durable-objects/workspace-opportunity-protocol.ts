@@ -1,4 +1,5 @@
 import { IdSchema, RegionSchema, UserIdSchema, WorkspaceIdSchema } from "@avalon/contracts";
+import { TELEMETRY_CONNECTOR_TYPES } from "@avalon/contracts/telemetry";
 import { z } from "zod";
 
 import { WorkspaceConnectorEventSchema } from "./workspace-connector-event-protocol";
@@ -247,6 +248,25 @@ export const WorkspaceOpportunityImpressionsRequestSchema = WorkspaceOpportunity
   rerankBefore: z.string().datetime(),
 }).strict();
 
+export const WorkspaceOpportunityTelemetryContextSchema = z.object({
+  opportunityId: IdSchema,
+  version: z.number().int().positive(),
+  audienceScope: z.enum(["personal", "workspace"]),
+  createdAt: z.string().datetime(),
+  impressionCount: z.number().int().nonnegative(),
+  firstImpressedAt: z.string().datetime().nullable(),
+  connectorTypes: z.array(z.enum(TELEMETRY_CONNECTOR_TYPES)).max(TELEMETRY_CONNECTOR_TYPES.length),
+}).strict();
+
+export const WorkspaceOpportunityTelemetryContextsSchema = z.array(
+  WorkspaceOpportunityTelemetryContextSchema,
+).max(4);
+
+export const WorkspaceOpportunityDismissResultSchema = z.object({
+  dismissed: z.boolean(),
+  telemetryContext: WorkspaceOpportunityTelemetryContextSchema.nullable(),
+}).strict();
+
 export const WorkspaceOpportunityDismissRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
   opportunityId: IdSchema,
   now: z.string().datetime(),
@@ -268,6 +288,12 @@ export const WorkspaceOpportunityOriginEventsResultSchema = z.array(
 export const WorkspaceOpportunityClaimStartRequestSchema = WorkspaceOpportunityGetRequestSchema.extend({
   version: z.number().int().positive(),
   idempotencyKey: z.string().min(1).max(200),
+}).strict();
+
+export const WorkspaceOpportunityClaimStartResultSchema = z.object({
+  outcome: z.enum(["not_found", "stale", "claimed", "busy", "replay"]),
+  opportunity: z.record(z.string(), z.unknown()).nullable(),
+  telemetryContext: WorkspaceOpportunityTelemetryContextSchema.nullable(),
 }).strict();
 
 export const WorkspaceOpportunityReleaseStartRequestSchema = WorkspaceOpportunityClaimStartRequestSchema;
@@ -292,6 +318,7 @@ export type WorkspaceOpportunityStoreRankingRequest = z.infer<typeof WorkspaceOp
 export type WorkspaceOpportunityRankingSettleRequest = z.infer<typeof WorkspaceOpportunityRankingSettleRequestSchema>;
 export type WorkspaceOpportunityListRequest = z.infer<typeof WorkspaceOpportunityListRequestSchema>;
 export type WorkspaceOpportunityImpressionsRequest = z.infer<typeof WorkspaceOpportunityImpressionsRequestSchema>;
+export type WorkspaceOpportunityTelemetryContext = z.infer<typeof WorkspaceOpportunityTelemetryContextSchema>;
 export type WorkspaceOpportunityDismissRequest = z.infer<typeof WorkspaceOpportunityDismissRequestSchema>;
 export type WorkspaceOpportunityGetRequest = z.infer<typeof WorkspaceOpportunityGetRequestSchema>;
 export type WorkspaceOpportunityOriginEventsRequest = z.infer<

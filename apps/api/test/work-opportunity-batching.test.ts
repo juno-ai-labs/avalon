@@ -616,7 +616,11 @@ describe("suggested-work aggregation", () => {
               admissionReasoning: "Extensive internal admission reasoning that must never appear in the suggestion API.",
             }],
           })),
-          claimOpportunityStart: vi.fn(async () => ({ outcome: "stale", opportunity: null })),
+          claimOpportunityStart: vi.fn(async () => ({
+            outcome: "stale",
+            opportunity: null,
+            telemetryContext: null,
+          })),
         },
       }),
     });
@@ -667,6 +671,7 @@ describe("suggested-work aggregation", () => {
           claimOpportunityStart: vi.fn(async () => ({
             outcome: "claimed",
             opportunity: database.prepare("SELECT * FROM work_opportunities WHERE id = ?").get(opportunityId),
+            telemetryContext: null,
           })),
           completeOpportunityStart: complete,
           releaseOpportunityStart: releaseClaim,
@@ -735,9 +740,9 @@ describe("suggested-work aggregation", () => {
             const opportunity = database.prepare("SELECT * FROM work_opportunities WHERE id = ?").get(opportunityId);
             if (!claimed) {
               claimed = true;
-              return { outcome: "claimed", opportunity };
+              return { outcome: "claimed", opportunity, telemetryContext: null };
             }
-            return { outcome: "replay", opportunity };
+            return { outcome: "replay", opportunity, telemetryContext: null };
           }),
           completeOpportunityStart: complete,
           releaseOpportunityStart: vi.fn(async () => ({})),

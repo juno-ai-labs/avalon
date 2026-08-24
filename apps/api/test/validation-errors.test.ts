@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
 import type { Env } from "../src/env";
 import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
@@ -43,7 +43,87 @@ async function expectSafeInvalidRequest(response: Response, requestId: string): 
   expect(serialized).not.toMatch(/ZodError|invalid_format|pattern|regex|desktopAttemptId|token/iu);
 }
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("public validation errors", () => {
+  it("logs rejected request fields and issue codes without logging their values", async () => {
+    const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const requestId = "validation-diagnostic";
+    const invalidParticipantId = "member-supplied-participant-value";
+    const env = { ...authenticatedTestEnv(), LOG_LEVEL: "info" } satisfies Env;
+
+    const response = await createApp().request(
+      "https://api.example.com/workstreams/00000000-0000-7000-8000-0000000000f1/messages",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": requestId,
+          "x-avalon-dev-user-id": "00000000-0000-7000-8000-0000000000e1",
+          "x-avalon-dev-workspace-id": "00000000-0000-7000-8000-0000000000e2",
+        },
+        body: JSON.stringify({
+          text: "A valid message body",
+          clientMessageId: "second-attempt",
+          mentions: [],
+          confirmedParticipantUserIds: [invalidParticipantId],
+          attachmentIds: [],
+          diagnosticShape: {
+            label: "member-supplied-label",
+            count: 47,
+            enabled: true,
+            missing: null,
+            tokenLikeValue: "member-supplied-token-value",
+            nested: [{ value: "member-supplied-nested-value" }],
+          },
+        }),
+      },
+      env,
+    );
+
+    await expectSafeInvalidRequest(response, requestId);
+    const entry = logged.mock.calls
+      .map(([value]) => value as Record<string, unknown>)
+      .find((value) => value.event === "request_failed");
+    expect(entry).toBeDefined();
+    expect(entry).toMatchObject({
+      event: "request_failed",
+      status: 400,
+      code: "invalid_request",
+      method: "POST",
+      path: "/workstreams/00000000-0000-7000-8000-0000000000f1/messages",
+      route: "/workstreams/:id/messages",
+      validation_target: "json",
+      validation_issues: expect.arrayContaining([
+        expect.objectContaining({ path: "confirmedParticipantUserIds.0" }),
+      ]),
+      request_body: {
+        text: "***",
+        clientMessageId: "***",
+        mentions: [],
+        confirmedParticipantUserIds: ["***"],
+        attachmentIds: [],
+        diagnosticShape: {
+          label: "***",
+          count: -1,
+          enabled: "***",
+          missing: "***",
+          tokenLikeValue: "***",
+          nested: [{ value: "***" }],
+        },
+      },
+    });
+    const serialized = JSON.stringify(entry);
+    expect(serialized).not.toContain(invalidParticipantId);
+    expect(serialized).not.toContain("A valid message body");
+    expect(serialized).not.toContain("member-supplied-label");
+    expect(serialized).not.toContain("member-supplied-nested-value");
+    expect(serialized).not.toContain("member-supplied-token-value");
+    expect(JSON.stringify(entry?.request_body)).not.toContain("47");
+  });
+
   it.each(["global", "eu"] as const)(
     "uses the standard error envelope without schema details in the %s region",
     async (region) => {

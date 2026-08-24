@@ -375,6 +375,12 @@ client sends one and no block-ticket bearer is ever issued in a URL.
   `ALLOWED_ORIGINS`, so a lookalike host cannot spend a ticket.
 - **A ticket is single-use.** Each target object and the dictation bridge consume
   the `jti` atomically; a replay is refused rather than opening a second socket.
+- **A close code says why the socket closed.** On the workspace command socket,
+  released clients reserve `1008` for an actual access revocation. Invalid JSON
+  or an event that fails the shared schema closes with application code `4400`;
+  a current session that no longer authenticates closes with `4401`. Reusing
+  `1008` for either would permanently stop reconnect and tell the member an
+  access decision occurred when none did.
 
 ## Boundary
 
@@ -413,6 +419,24 @@ namespace helper.
 - **Dictation at capacity** — 429 `dictation_concurrency_limit`, at two
   concurrent sessions per user and twenty per workspace.
 
+Once a workspace socket is open, its terminal close outcomes are distinct:
+
+- **Access was revoked** — `1008`. Electron stops reconnecting and reports
+  `workspace_access_revoked`.
+- **The session is inactive** — `4401`. Electron stops reconnecting and asks the
+  member to sign in again under `workspace_session_inactive`.
+- **The command frame is invalid** — `4400`. Electron stops resending the same
+  invalid command and reports `workspace_socket_invalid_message`, asking the
+  member to restart the app and retry.
+
+WorkspaceDO records every identity, protocol, or inactive-session close as
+`workspace_socket_closed`, with the close code, fixed cause, operation, frame
+size, connection identity when available, and at most 25 schema issue paths and
+codes. It never logs the frame, rejected values, Zod messages, or schema regexes.
+The access-revocation consumer retains its separate
+`workspace_socket_access_revoked` count because that close is an authorization
+event rather than a protocol diagnostic.
+
 The client treats every one of these as a failed connect and reconnects with
 jittered backoff; it does not distinguish them, which is why the status is worth
 keeping correct for whoever reads the logs.
@@ -430,8 +454,8 @@ client message IDs make reconnect resend idempotent.
 | `packages/contracts/src/socket-tickets.test.ts` | `pnpm --filter @avalon/contracts test` | The wire format: offers, parsing, refusal of non-tickets, URL stripping. |
 | `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @avalon/api test` | Precedence and the negotiation decision, on Node. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
-| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @avalon/desktop test` | One persistent workspace connection, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @avalon/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @avalon/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @avalon/desktop test` | Direct SubstreamAgent feed reconnect/resync, streaming, switching streams, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
@@ -466,6 +490,32 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-24 — Workspace socket closes stop impersonating access revocation
+
+**What changed:** WorkspaceDO now closes malformed JSON/schema frames with
+`4400`, inactive sessions with `4401`, and reserves the released `1008` contract
+for an actual access revocation. Every server-initiated protocol/session close
+emits a payload-free `workspace_socket_closed` diagnostic. Electron stops
+resending terminal failures and maps the three codes to separate access,
+sign-in, and invalid-command errors.
+
+**Why:** Production treated every `1008` as “You can no longer access this
+workspace,” even though WorkspaceDO also used it when a client frame failed
+validation or an already-open socket's session became inactive. The UI could
+therefore state a permission decision that never happened, while the server log
+did not retain enough context to identify the actual path.
+
+**Considered and rejected:** Parsing close-reason prose on the client leaves
+behavior coupled to copy and does not help structured production queries.
+Continuing to reconnect malformed commands resends the same rejected bytes
+forever. Changing the established access-revocation code would make a mixed
+desktop/API rollout fail open against older servers, so `1008` remains reserved
+and only the overloaded conditions move to application codes.
+
+**Consequences:** New workspace-socket terminal causes need a distinct shared
+code and a desktop mapping. Diagnostics may add bounded fixed fields, paths, or
+codes, but never raw frames or rejected values.
 
 ### 2026-08-22 — The sidebar push does not re-ask who may listen
 

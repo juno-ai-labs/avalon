@@ -377,7 +377,15 @@ Structured logs include correlation IDs and domain IDs needed for operations.
 Redaction removes authorization headers, tokens, OAuth codes, credential
 ciphertext, email and file bodies, raw provider payloads, and model context.
 User-visible failures are persisted in product state so recovery does not depend
-on provider logs.
+on provider logs. HTTP request-validation failures keep the public
+`invalid_request` envelope generic while the operator log records the method,
+resolved path, route template, validation target, and at most 25 Zod issue paths
+and codes. For parsed JSON failures it also records `request_body` with the
+original object keys, array positions, and empty containers, after replacing
+every numeric leaf with `-1` and every other leaf with `"***"`. Rejected values,
+issue messages, regexes, and complete Zod objects are never logged. Malformed
+JSON uses `(root)` / `invalid_json` and has no body shape because no parsed value
+exists.
 
 Workspace invitation tokens are random bearer secrets stored only as SHA-256
 hashes in D1. The plaintext token exists transiently in the regional Worker, the
@@ -498,6 +506,11 @@ bound it on the thing a placeholder cannot fake, and add the bound to
 - **Every desktop HTTP header is covered by the regional CORS allowlist and an
   exact preflight test.** A header implemented only in the renderer cannot reach
   the Worker.
+- **A request-validation log retains shape, never rejected content.** Route,
+  target, field path, issue code, JSON keys, array positions, and empty
+  containers are operational metadata; every logged body leaf is `"***"` or
+  `-1`, and raw values, Zod messages, regexes, and unmasked request bodies do not
+  enter the log.
 - **A document built out of model output is never same-origin with the
   application.** The exported message card gets `avalon-export://`, no preload,
   and a policy that forbids script; putting it on `app://avalon` would buy one
@@ -597,6 +610,7 @@ no unit test standing in for them.
 | `apps/api/test/connector-credential-envelope.test.ts` | The AES-GCM envelope, its connection-bound additional authenticated data, and key-version rotation reads. |
 | `apps/api/test/auth-session-lifecycle.test.ts` | Session minting, revocation, and single-use consumption. |
 | `apps/api/test/security-and-config.test.ts` | Exact desktop CORS origin/method/header preflights and environment guardrails. |
+| `apps/api/test/validation-errors.test.ts` | Generic public 400 envelopes plus operator-only request target, field paths, issue codes, and recursively masked JSON body shape with rejected values absent. |
 | `apps/api/test/rpc-contracts.test.ts` | That a cross-region rejection names field paths and never values. |
 | `apps/desktop/src/main/telemetry-*.test.ts`, `native-crash-*.test.ts` | Sender/schema boundaries, redacted inspection, owner-only bounded spools, route-final generations, opt-out invalidation, and authenticated next-launch upload. |
 | `apps/api/test/telemetry-*.test.ts`, `crash-*.test.ts`, `posthog-adapter.test.ts` | Regional acceptance, capabilities, preference/identity ordering, immutable deadlines, raw-object access, sanitization, and exact destination negative space. |
@@ -623,6 +637,33 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-24 — Input validation keeps body shape without keeping content
+
+**What changed:** Avalon's Hono validator now throws a typed internal validation
+error carrying the request target, bounded Zod issue paths/codes, and a parsed
+JSON body whose terminal values have already been replaced with `"***"` or
+`-1`. The error middleware adds those fields plus method and route to
+`request_failed`; malformed JSON records a root `invalid_json` issue without a
+body. Public 400 responses are unchanged.
+
+**Why:** Production recorded that a request returned 400 but discarded the
+field that failed, making a rejected message attempt impossible to diagnose
+afterward. Paths identify the rejected field, while the recursively masked body
+shows the complete client payload shape needed to diagnose version skew without
+retaining member-supplied values.
+
+**Considered and rejected:** Returning field details to the desktop broadens the
+public contract and can expose validation internals; logging the raw Zod error,
+issue message, or unmasked body captures rejected values and regexes. Logging
+only issue paths omits sibling fields and nesting that distinguish an old client
+contract from a malformed individual value.
+
+**Consequences:** New request validators automatically receive this diagnostic.
+Every parsed JSON leaf is masked before the error reaches the logger, including
+under credential-shaped key names. Any custom 400 path that bypasses
+`zValidator` must perform the same value-free transformation if operators need
+its body shape.
 
 ### 2026-08-20 — A theme's backdrop runs its own script, in a box with no doors
 

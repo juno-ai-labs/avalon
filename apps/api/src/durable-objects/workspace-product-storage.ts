@@ -1,3 +1,8 @@
+import {
+  TELEMETRY_CONNECTOR_TYPES,
+  type TelemetryConnectorType,
+} from "@avalon/contracts/telemetry";
+
 import { uuidV7 } from "../lib/uuid-v7";
 import type {
   WorkspaceOpportunityBatchEventsRequest,
@@ -15,6 +20,7 @@ import type {
   WorkspaceOpportunityRankingRoundRequest,
   WorkspaceOpportunityRankingSettleRequest,
   WorkspaceOpportunityStoreRankingRequest,
+  WorkspaceOpportunityTelemetryContext,
   WorkspaceOpportunityWindowRequest,
   WorkspaceOpportunityWindowSettleRequest,
 } from "./workspace-opportunity-protocol";
@@ -28,6 +34,7 @@ const MAX_PROVENANCE_NODES = 32;
 // Generous fences against the 10 GB object ceiling, not product semantics.
 const RANKING_ROUND_RETENTION_MS = 180 * 24 * 60 * 60_000;
 const EXPIRED_OPPORTUNITY_GRACE_MS = 180 * 24 * 60 * 60_000;
+const TELEMETRY_CONNECTOR_TYPE_SET = new Set<string>(TELEMETRY_CONNECTOR_TYPES);
 
 function epoch(value: string): number {
   const parsed = Date.parse(value);
@@ -1071,11 +1078,13 @@ export class WorkspaceProductStorage {
     });
   }
 
-  recordImpressions(input: WorkspaceOpportunityImpressionsRequest, now = Date.now()): void {
-    this.storage.transactionSync(() => {
+  recordImpressions(input: WorkspaceOpportunityImpressionsRequest, now = Date.now()) {
+    const visibleRows = this.storage.transactionSync(() => {
+      const rows: OpportunityRow[] = [];
       for (const opportunityId of new Set(input.opportunityIds)) {
         const visible = this.visibleOpportunity(input.userId, opportunityId, epoch(input.now));
         if (!visible || visible.status !== "active") continue;
+        rows.push(visible);
         this.storage.sql.exec(
           `INSERT INTO work_opportunity_user_states (
             opportunity_id, user_id, status, impression_count, first_impressed_at,
@@ -1099,13 +1108,22 @@ export class WorkspaceProductStorage {
       if (set && (set.last_ranked_at ?? set.created_at) <= epoch(input.rerankBefore)) {
         this.markRankingDue(input.userId, now, now, true);
       }
+      return rows;
     });
+    const reads = visibleRows.map((row) => this.opportunityTelemetryContext(row, input.userId));
+    return {
+      telemetryContexts: reads.flatMap((read) => read.telemetryContext ? [read.telemetryContext] : []),
+      telemetryContextReadFailed: reads.some((read) => read.readFailed),
+    };
   }
 
-  dismissOpportunity(input: WorkspaceOpportunityDismissRequest, now = Date.now()): boolean {
-    return this.storage.transactionSync(() => {
-      const visible = this.visibleOpportunity(input.userId, input.opportunityId, epoch(input.now));
-      if (!visible) return false;
+  dismissOpportunity(input: WorkspaceOpportunityDismissRequest, now = Date.now()) {
+    const visible = this.visibleOpportunity(input.userId, input.opportunityId, epoch(input.now));
+    if (!visible) {
+      return { dismissed: false, telemetryContext: null, telemetryContextReadFailed: false };
+    }
+    const telemetry = this.opportunityTelemetryContext(visible, input.userId);
+    this.storage.transactionSync(() => {
       this.storage.sql.exec(
         `INSERT INTO work_opportunity_user_states (
           opportunity_id, user_id, status, impression_count, first_impressed_at,
@@ -1119,8 +1137,12 @@ export class WorkspaceProductStorage {
         now,
       );
       this.markRankingDue(input.userId, now, now);
-      return true;
     });
+    return {
+      dismissed: true,
+      telemetryContext: telemetry.telemetryContext,
+      telemetryContextReadFailed: telemetry.readFailed,
+    };
   }
 
   private visibleOpportunity(userId: string, opportunityId: string, now: number): OpportunityRow | null {
@@ -1144,6 +1166,47 @@ export class WorkspaceProductStorage {
     return row ? this.publicOpportunityRecord(row) : null;
   }
 
+  private opportunityTelemetryContext(
+    row: OpportunityRow,
+    userId: string,
+  ): { telemetryContext: WorkspaceOpportunityTelemetryContext | null; readFailed: boolean } {
+    try {
+      const state = this.storage.sql.exec<{
+        impression_count: number;
+        first_impressed_at: number | null;
+      }>(
+        `SELECT impression_count, first_impressed_at
+           FROM work_opportunity_user_states
+          WHERE opportunity_id = ? AND user_id = ? LIMIT 1`,
+        row.opportunity_id,
+        userId,
+      ).toArray()[0];
+      const connectorTypes = [...new Set(this.boundedProvenance(row.opportunity_id, userId)
+        .flatMap((node) => typeof node.provider === "string"
+          && TELEMETRY_CONNECTOR_TYPE_SET.has(node.provider)
+          ? [node.provider as TelemetryConnectorType]
+          : []))].sort();
+      return {
+        telemetryContext: {
+          opportunityId: row.opportunity_id,
+          version: Number(row.version),
+          audienceScope: row.audience_scope,
+          createdAt: new Date(row.created_at).toISOString(),
+          impressionCount: Number(state?.impression_count ?? 0),
+          firstImpressedAt: state?.first_impressed_at == null
+            ? null
+            : new Date(state.first_impressed_at).toISOString(),
+          connectorTypes,
+        },
+        readFailed: false,
+      };
+    } catch {
+      // Measurement is optional. A bad enrichment query must not repeat the
+      // production failure where an observation prevented the product action.
+      return { telemetryContext: null, readFailed: true };
+    }
+  }
+
   opportunityActivitySourceIds(input: WorkspaceOpportunityOriginEventsRequest): string[] {
     if (!this.visibleOpportunity(input.userId, input.opportunityId, epoch(input.now))) return [];
     return this.storage.sql.exec<{ source_id: string }>(
@@ -1160,12 +1223,14 @@ export class WorkspaceProductStorage {
   }
 
   claimOpportunityStart(input: WorkspaceOpportunityClaimStartRequest, now = Date.now()) {
-    return this.storage.transactionSync(() => {
+    const claimed = this.storage.transactionSync(() => {
       const row = this.visibleOpportunity(input.userId, input.opportunityId, epoch(input.now));
-      if (!row) return { outcome: "not_found" as const, opportunity: null };
-      if (row.version !== input.version) return { outcome: "stale" as const, opportunity: this.publicOpportunityRecord(row) };
+      if (!row) return { outcome: "not_found" as const, opportunity: null, row: null };
+      if (row.version !== input.version) {
+        return { outcome: "stale" as const, opportunity: this.publicOpportunityRecord(row), row };
+      }
       if (row.start_idempotency_key === input.idempotencyKey) {
-        return { outcome: "replay" as const, opportunity: this.publicOpportunityRecord(row) };
+        return { outcome: "replay" as const, opportunity: this.publicOpportunityRecord(row), row };
       }
       const changed = this.storage.sql.exec<{ opportunity_id: string }>(
         `UPDATE work_opportunities SET status = 'starting', started_by_user_id = ?,
@@ -1185,8 +1250,18 @@ export class WorkspaceProductStorage {
       return {
         outcome: changed === 1 ? "claimed" as const : "busy" as const,
         opportunity: this.publicOpportunityRecord(current),
+        row: current,
       };
     });
+    const telemetry = claimed.row
+      ? this.opportunityTelemetryContext(claimed.row, input.userId)
+      : { telemetryContext: null, readFailed: false };
+    return {
+      outcome: claimed.outcome,
+      opportunity: claimed.opportunity,
+      telemetryContext: telemetry.telemetryContext,
+      telemetryContextReadFailed: telemetry.readFailed,
+    };
   }
 
   releaseOpportunityStart(input: WorkspaceOpportunityClaimStartRequest, now = Date.now()): void {
