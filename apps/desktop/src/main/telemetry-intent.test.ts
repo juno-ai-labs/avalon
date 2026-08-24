@@ -1,0 +1,70 @@
+import { describe, expect, it } from 'vitest';
+
+import { parseTelemetryProductIntent } from './telemetry-intent';
+
+/**
+ * The renderer cannot name an event or hand main a property bag, and this is
+ * where that is enforced. A test that matched the allowlist's source text would
+ * pass on a build whose dispatch was broken and fail on one that was merely
+ * reformatted, so every case here runs the parser.
+ */
+describe('parseTelemetryProductIntent', () => {
+  const socketIntent = {
+    kind: 'realtime_socket_state',
+    socket: 'substream_feed',
+    state: 'retrying',
+    cause: 'heartbeat_timeout',
+    attempts: 'one',
+  };
+
+  it('admits a realtime socket transition and returns it as its registered shape', () => {
+    expect(parseTelemetryProductIntent({ ...socketIntent })).toEqual(socketIntent);
+  });
+
+  it('refuses a socket transition the registry would not accept', () => {
+    // A property the contract does not declare. The registry parse is strict,
+    // so this is refused rather than quietly stripped and sent.
+    expect(() => parseTelemetryProductIntent({ ...socketIntent, closeCode: 1006 }))
+      .toThrow('Invalid telemetry intent');
+    // A cause outside the closed vocabulary.
+    expect(() => parseTelemetryProductIntent({ ...socketIntent, cause: 'because' }))
+      .toThrow('Invalid telemetry intent');
+    // A state and cause that describe different transitions, which the
+    // contract's own refinement rejects.
+    expect(() => parseTelemetryProductIntent({ ...socketIntent, state: 'connected' }))
+      .toThrow('Invalid telemetry intent');
+    // A socket kind that is not one of the four this contract covers.
+    expect(() => parseTelemetryProductIntent({ ...socketIntent, socket: 'dictation' }))
+      .toThrow('Invalid telemetry intent');
+  });
+
+  it('refuses an event name the renderer invented', () => {
+    expect(() => parseTelemetryProductIntent({ kind: 'password_entered', value: 'hunter2' }))
+      .toThrow('Invalid telemetry intent');
+    expect(() => parseTelemetryProductIntent({ kind: 'screen_viewed', screen: 'workspace_home' }))
+      .toThrow('Invalid telemetry intent');
+  });
+
+  it('refuses anything that is not an intent at all', () => {
+    for (const value of [null, undefined, 'realtime_socket_state', 42, [socketIntent]]) {
+      expect(() => parseTelemetryProductIntent(value)).toThrow('Invalid telemetry intent');
+    }
+  });
+
+  it('still admits the hand-validated intents that predate the registry path', () => {
+    // The allowlist is shared, so the socket event must not be the only kind
+    // this file proves reaches the reporter.
+    expect(parseTelemetryProductIntent({
+      kind: 'onboarding_region_selected', selectedRegion: 'eu', entrypoint: 'first_run',
+    })).toEqual({ kind: 'onboarding_region_selected', selectedRegion: 'eu', entrypoint: 'first_run' });
+    expect(() => parseTelemetryProductIntent({
+      kind: 'onboarding_region_selected', selectedRegion: 'mars', entrypoint: 'first_run',
+    })).toThrow('Invalid telemetry intent');
+    expect(() => parseTelemetryProductIntent({
+      kind: 'workspace_create_requested',
+      selectedRegion: 'global',
+      entrypoint: 'first_run',
+      operationId: 'not-a-uuid-v7',
+    })).toThrow('Invalid telemetry intent');
+  });
+});

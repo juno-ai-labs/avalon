@@ -106,7 +106,15 @@ keep that row for the session. Nothing later corrects it either — the read-tim
 relaxation is derived and advances no row version, so a fresh directory page
 carrying `automatic` is dropped by the state ledger as a repeat of what the
 client already has. The hook closes both by applying the same rule to the cached
-row, on a timer armed for the remainder of the grace.
+row.
+
+It decides on every render from that row's own `createdAt` and the clock, and
+holds no state of its own; the timer it arms for the remainder of the grace only
+schedules the render at the instant the grace lapses. That is what makes it safe
+on the work-stream header, which stays mounted while the work stream under it
+changes: an answer kept in state would be the previous work stream's until an
+effect corrected it after paint, which is a frame of one work stream's request
+text under another's header.
 
 ## Invariants
 
@@ -196,6 +204,26 @@ ordinary work-stream update and belongs to the object's product service.
   file's hard-coded date asserts nothing.
 
 ## Changelog
+
+### 2026-08-24 — The grace is derived per render rather than held in state
+
+**What changed:** `useNamingSkeleton` no longer keeps an `expired` flag. It
+computes the answer from the row's deadline and the current clock on every
+render, and the timer only forces the render at the moment the grace lapses.
+
+**Why:** Review on #271. The flag was initialised at mount and reconciled by an
+effect, and the work-stream header stays mounted across work streams by design —
+so moving from a settled work stream to a freshly created one rendered the new
+one's provisional request text for a frame before the effect replaced it with the
+skeleton, and moving the other way flashed a skeleton. Sidebar rows are keyed by
+work-stream id and remount, which is why the surface that reported the original
+bug never showed this one.
+
+**Consequences:** The hook reads `Date.now()` during render, which is honest for
+a value that is a function of the clock and is what makes the answer correct on
+the first paint. Its own suite records what the hook returned on *every* render
+rather than asserting on the DOM after effects have flushed, because Testing
+Library flushes them before an assertion can see the frame that was painted.
 
 ### 2026-08-24 — The sidebar row honours the naming grace it renders a skeleton for
 

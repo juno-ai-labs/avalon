@@ -1313,6 +1313,7 @@ export function useWorkstreamSocket(
         }
         if (isOffline()) {
           trace.end({ outcome: 'offline' });
+          socketTelemetry.disconnected({ attempts: attempts.current, retrying: false, cause: 'offline' });
           scheduleReconnect();
           return;
         }
