@@ -556,7 +556,7 @@ describe("the Workstream Durable Object relational schema", () => {
       // `terminal_workspace` and friends, so there is no compatibility view
       // left for a `workstream_sandboxes` statement to be rewritten onto.
       //
-      // So is the scheduling slice, and for the same reason: version 19 dropped
+      // So is the scheduling slice, and for the same reason: version 20 dropped
       // the wake-up, compaction, description-refresh and plugin-hint views, so
       // a `workstream_context_compactions` statement has nothing to be
       // rewritten onto either. What that slice writes is proved against a real
