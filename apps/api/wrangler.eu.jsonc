@@ -171,7 +171,7 @@
     "producers": [
       { "binding": "ACTIVITY_QUEUE", "queue": "avalon-eu-activities" },
       // Same regional staging and pointer-only transport as Global. The EU
-      // consumer reaches only the EU stream and EU-jurisdiction catalog.
+      // consumer reaches only the EU stream and EU-jurisdiction R2 Parquet sink.
       { "binding": "INFERENCE_LAKEHOUSE_QUEUE", "queue": "avalon-eu-inference-lakehouse" },
       // Access retractions on their way to open sockets. A queue rather
       // than RPC from the route that wrote the fact: the fan-out walks the
