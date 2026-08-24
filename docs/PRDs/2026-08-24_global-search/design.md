@@ -593,6 +593,42 @@ it describes. **`N MORE RESULTS` is `total_matches` minus what is actually on
 screen.** Reporting `total_matches` directly says `3 MORE RESULTS` when all three
 matches are already visible.
 
+### Scoping to one group
+
+The PRD's group scope is the same statement with two bindings changed, not a
+second query to keep in step: bind the group and raise the per-group bound.
+
+```sql
+       AND (?4 IS NULL OR d.group_key = ?4)   -- inside the innermost SELECT
+...
+ WHERE rn <= ?5                                -- 5 unscoped, the page size scoped
+```
+
+Three things follow, and each is the reason not to implement scoping on the
+client by filtering what is already on screen:
+
+- **The unscoped five are a `ROW_NUMBER` slice, not a sample.** Rows 6 and
+  beyond were never returned, so a client-side filter of the current result set
+  can only ever show the same five. Scoping has to re-ask.
+- **`total_matches` re-narrows for free.** With `?4` bound, `COUNT(*) OVER ()`
+  counts that group's authorized matches, so the scoped footer's remainder is
+  the same expression against a narrower set — no second counting rule, and no
+  second place for the authorization filter to drift.
+- **Paging is keyset, not `OFFSET`.** The sort key is `(rank, updated_at DESC,
+  source_id)` and all three are projected, so the next page binds the last row's
+  tuple as a `>` comparison. `OFFSET` over a re-ranked set double-counts and
+  skips when the index moves under a person mid-scroll, which during the phase 2
+  backfill is the normal case rather than the rare one.
+
+`group_key` — not `source_kind` — is what is bound, so scoping **Meeting notes**
+correctly reaches both `note` and `note_segment` rows, and the client's
+`scope_id` collapse still applies within the page.
+
+The page size is a product limit and is set in the PRD. The candidate cap the
+PRD hands to the team applies per request in both modes; a scoped request is
+narrower, not unbounded, and it is worth saying in the handover that scoping is
+the mode where a person deliberately asks for depth.
+
 Two honest limits on that number, which the simpler phrasing hides:
 
 - **The subtraction happens on the client, because the client is what knows what

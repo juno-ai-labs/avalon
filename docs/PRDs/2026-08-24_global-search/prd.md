@@ -99,6 +99,9 @@ to route around it.
    result counts it displays leak nothing about what it filtered out.
 7. Search remains a way *into* a work stream and never becomes a place to read
    from: no results route, no persistent view, no second home screen.
+8. A person who wants more of one kind — every matching document, not the best
+   five — can get it in one keystroke without leaving the palette, and can get
+   back to the mixed list in one more.
 
 ## Non-goals
 
@@ -107,6 +110,15 @@ to route around it.
    matching a query is the global activity feed the product contract forbids,
    reached through a text box. Results live in a transient overlay that closes
    when something is opened.
+
+   **Scoping to one group is not that**, and the line between them is worth
+   drawing precisely, because "show me all the documents" is the request that
+   most naturally grows into a results page. What the contract forbids is a
+   *place*: a URL you can bookmark, a view you can return to, a list that
+   outlives the question. A scope has none of those — it has no route, it dies
+   with the overlay, it cannot be linked or restored, and it still terminates in
+   opening one thing. It is the same transient question asked more narrowly.
+   A scope that gained a URL, or survived `Esc`, would have crossed the line.
 2. **No saved searches, pinned searches, or server-stored search history.**
    Deferred. Each carries the same risk as non-goal 1 in miniature — a saved
    search is a channel you subscribed to by keyword.
@@ -149,9 +161,16 @@ to route around it.
     Deferred: exposing arbitrary app commands here is a separate argument about
     discoverability, and every command added is a row competing with a real
     result.
-12. **No search operators or filter syntax.** Deferred. `from:`, `in:`, `is:`
-    and friends are the natural second version; shipping them in the first makes
-    the query field a language to learn before it is a box to type in.
+12. **No search operators or filter syntax.** Deferred, and unaffected by group
+    scoping. `from:`, `in:`, `is:` and friends are the natural second version;
+    shipping them in the first makes the query field a language to learn before
+    it is a box to type in. Scoping is deliberately the other shape: a key
+    pressed on a group that is already on screen, discoverable because the
+    footer names it and the group is already there to point at. It narrows by
+    *kind* only — the one axis the results are already grouped along — and adds
+    no vocabulary. `is:unread`, `from:alex`, and date ranges remain the deferred
+    conversation, and a typed `doc:` prefix is part of that one rather than a
+    shorthand for this.
 13. **Not available signed out or on the public site.** Out of scope: search
     runs against one workspace under an authenticated session.
 14. **Archived work streams and archived notes do not appear.** Deferred, and
@@ -222,9 +241,9 @@ there is no `dark` token family in the registry, and
 which theme is running and no component reads a colour — a test fails if
 `app.css` names one. It holds a single unlabelled query field with the magnifying glass at
 its leading edge and an `Esc` affordance trailing. Results fill the panel below
-the field. A footer row states the three keys that do something: `↑↓ NAVIGATE`,
-`⏎ OPEN`, `⌘⏎ START`, and on the right, the count of matching results that are
-not shown.
+the field. A footer row states the keys that do something: `↑↓ NAVIGATE`,
+`→ IN GROUP`, `⏎ OPEN`, `⌘⏎ START`, and on the right, the count of matching
+results that are not shown. Inside a group the second hint becomes `← ALL`.
 
 The panel does not resize as results arrive — it holds a stable height so that
 the row under the cursor does not move while the person is still reading it.
@@ -295,6 +314,38 @@ That count counts only results the person may see, it is produced by the same
 filtered statement that produced the rows rather than by a second query that
 could drift from it, and it is the total *minus what is on screen* — reporting
 the total says `3 MORE RESULTS` when all three matches are already visible.
+
+**Scoping to one group.** Five rows is a preview, and a preview a person cannot
+open past is a taunt: `12 MORE RESULTS` under **Documents** is worse than
+useless if the twelve are unreachable. So a group can be entered. `→` on any row
+scopes the palette to that row's group; so does clicking the group's heading, or
+its own `N more` affordance. Nothing navigates and nothing opens — the panel
+stays exactly where it is, the query text is untouched, and the group's heading
+becomes a scope chip beside the field reading **Documents**. The other groups
+drop away, and the surviving one pages rather than truncating: it fills the
+panel, and scrolling or `↓` past the last row asks for more.
+
+`←` clears the scope and restores the mixed list. So does `Backspace` when the
+caret is at the start of an empty query, which is the gesture the mention
+composer already trains. `Esc` still closes the whole palette rather than
+stepping back one level, because a person reaching for `Esc` wants out, not up.
+
+Scoping re-runs the query rather than filtering what is already on screen —
+otherwise **Documents** could only ever show the five it had. The scoped request
+is the same statement with the group bound and the per-group bound raised; the
+footer's count becomes that group's remainder.
+
+One consequence worth stating, because it makes the scoped path *simpler* rather
+than harder: the client-side matcher holds work streams, notes, automations,
+people, and actions, and never documents or messages. **Documents** and
+**Messages** are therefore server-only in both modes, so a scope on either has no
+client/server merge to reconcile and no de-duplication to do. The scopes that do
+have a local half are the ones whose unscoped groups were least likely to need
+drilling into.
+
+While a scope is applied and the request has failed or the app is offline, the
+scoped list is not merely empty — it says so, in the same quiet line, because an
+empty **Documents** scope and an unreachable one look identical otherwise.
 
 **No matches.** Search never shows an empty panel. The action row **Start a work
 stream: "<query>"** is always present and always last, and becomes the selected
@@ -615,6 +666,8 @@ the per-keystroke cost is accepted. This PRD does not choose.
 | Limit | Value |
 | --- | --- |
 | Rows shown per group before truncation | 5 |
+| Rows in a scoped group's first page | 25 |
+| Rows added per subsequent page | 25 |
 | Group order | as tabled under [Product behavior](#states) |
 | Minimum query length before a remote request | 2 characters (local matching starts at 1) |
 | Rows in the empty-query **Recent** group | 9, matching the `⌘1`–`⌘9` run |
@@ -687,11 +740,21 @@ the pause duration is a number, it is not set here, and it is on the list above.
    finds its messages.** Viewer rows are written only for authors, mentions, and
    participants, so a rule that keys solely on the viewer row makes every shared
    work stream unsearchable to everyone who has not yet spoken in it.
-10. A query matching nothing shows the start-a-work-stream row selected; `⏎`
+10. **A query whose Documents group is truncated: `→` scopes to Documents, the
+    other groups disappear, a **Documents** chip appears beside the field, and
+    the sixth-ranked document — invisible before — is on screen. `←` restores
+    the mixed list with the same query and the same five-row preview.** Repeated
+    with the group heading clicked instead of `→`.
+11. Scrolling to the bottom of a scoped group loads more rather than stopping,
+    until the group is exhausted, and the footer's remainder count falls to zero
+    as it goes.
+12. A scope applied while the API is unreachable shows the quiet line rather than
+    an empty list.
+13. A query matching nothing shows the start-a-work-stream row selected; `⏎`
     opens the new-work-stream surface with the query in the composer.
-11. With the API unreachable, the panel still opens and still matches names, and
+14. With the API unreachable, the panel still opens and still matches names, and
     shows the single quiet line about message and document text.
-12. With `global-search` off, the glyph is absent and `⌘K` does nothing.
+15. With `global-search` off, the glyph is absent and `⌘K` does nothing.
 
 Where these become durable checks, they land in [`e2e.md`](../../e2e.md).
 
