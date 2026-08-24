@@ -9,7 +9,8 @@ import {
   CHECKPOINT_TEMPLATE_VERSION,
   renderWorkstreamResourceInventory,
 } from "../src/services/workstream-resource-inventory";
-import { describe, expect, it } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it } from "vitest";
 import { __integrationTesting } from "../src/services/integrations";
 import { contextCompactionCheckpointHash } from "../src/lib/context-compaction-fence";
 import {
@@ -17,6 +18,12 @@ import {
   createTestD1PreparedStatement,
   createTestD1Result,
 } from "./helpers/cloudflare-test";
+import {
+  seedWorkstreamObjectRoot,
+  testSchedulingPort,
+  testWorkstreamObjectStore,
+} from "./helpers/durable-authority";
+import type { SchedulingObjectPort } from "../src/durable-objects/workstream-scheduling-protocol";
 
 const AS_OF = "2026-08-12T18:30:00.000Z";
 
@@ -53,6 +60,80 @@ function resource(
     attached_watch_enabled: 0,
     visibility_version: AS_OF,
   };
+}
+
+const WORKSPACE = "1629dee4-8cc4-4531-81f9-b2be8614e062";
+const WORKSTREAM = "8f2e1d40-5c3b-4a9e-9d21-6f7c8b0a1234";
+const CHECKPOINT_RUN = "00000000-0000-4000-8000-0000000000a1";
+
+const openObjectStores: DatabaseSync[] = [];
+
+afterEach(() => {
+  for (const store of openObjectStores.splice(0)) store.close();
+});
+
+/**
+ * A work stream's own object, for the half of these tests the port now reaches.
+ *
+ * The compaction rows moved off the compatibility view, so a fake `D1Database`
+ * answering `FROM workstream_context_compactions` is answering a question
+ * nothing asks any more. The real schema and the real statements run here; the
+ * resource-inventory reads beside them are still routed, and still faked,
+ * because that table belongs to a later slice.
+ */
+function objectStore(): { store: DatabaseSync; scheduling: SchedulingObjectPort } {
+  const store = testWorkstreamObjectStore();
+  openObjectStores.push(store);
+  seedWorkstreamObjectRoot(store, { workstreamId: WORKSTREAM, workspaceId: WORKSPACE });
+  store.prepare(
+    `INSERT INTO runs
+       (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+        next_action_cursor, input_fence_seq, revision, started_at,
+        active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+        tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+        origin, execution_principal_json, chain_depth, model, created_at, updated_at)
+     VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+             'member_message', '{}', 0, 'test/model', 1, 1)`,
+  ).run(CHECKPOINT_RUN);
+  return { store, scheduling: testSchedulingPort(store) };
+}
+
+/** Put the object's resource-inventory revision where a fence will accept it. */
+function setInventoryRevision(store: DatabaseSync, revision: number): void {
+  store.prepare(
+    `INSERT INTO resource_inventory_revision (id, revision, updated_at)
+     VALUES (1, ?, 1) ON CONFLICT(id) DO UPDATE SET revision = excluded.revision`,
+  ).run(revision);
+}
+
+/** One stored checkpoint, under the projection key the retired trigger built. */
+function seedCheckpoint(store: DatabaseSync, input: {
+  executionPrincipalKey: string;
+  resourceVisibilityFingerprint: string;
+  checkpointTemplateVersion: number;
+  compactedThroughSequence: number;
+  messagesJson: string;
+  summary: string;
+  model?: string;
+}): void {
+  store.prepare(
+    `INSERT INTO compaction_checkpoints
+       (projection_key, execution_principal_key, resource_visibility_fingerprint,
+        checkpoint_template_version, run_id, compacted_through_sequence, messages_json,
+        summary, model, context_tokens_before_compaction, context_window_tokens,
+        input_tokens, output_tokens, cost_micros, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, 0, 0, 0, 1, 1)`,
+  ).run(
+    `legacy:${input.executionPrincipalKey}:${input.resourceVisibilityFingerprint}:v${input.checkpointTemplateVersion}`,
+    input.executionPrincipalKey,
+    input.resourceVisibilityFingerprint,
+    input.checkpointTemplateVersion,
+    CHECKPOINT_RUN,
+    input.compactedThroughSequence,
+    input.messagesJson,
+    input.summary,
+    input.model ?? "test/model",
+  );
 }
 
 describe("work-stream compaction resource inventory", () => {
@@ -112,20 +193,21 @@ describe("work-stream compaction resource inventory", () => {
     let currentRows = [resource("current-id", "current-private.png", "image/png", true)];
     let revision = 1;
     const storedFingerprint = "inventory:1";
+    const { store, scheduling } = objectStore();
+    seedCheckpoint(store, {
+      executionPrincipalKey: "user:4b2a1529-867b-4d69-8685-b1722ccd0149",
+      resourceVisibilityFingerprint: storedFingerprint,
+      checkpointTemplateVersion: 1,
+      compactedThroughSequence: 42,
+      messagesJson: JSON.stringify([{ role: "user", content: "stale principal inventory" }]),
+      summary: "# Request\nContinue the exact work.",
+    });
     const database = createTestD1Database({
       prepare(sql: string) {
         return createTestD1PreparedStatement({
           bind() { return this; },
           async first<T>() {
-            if (!sql.includes("FROM workstream_context_compactions")) return { revision } as T;
-            return {
-              compacted_through_sequence: 42,
-              messages_json: JSON.stringify([{ role: "user", content: "stale principal inventory" }]),
-              summary: "# Request\nContinue the exact work.",
-              checkpoint_template_version: 1,
-              execution_principal_key: "user:4b2a1529-867b-4d69-8685-b1722ccd0149",
-              resource_visibility_fingerprint: storedFingerprint,
-            } as T;
+            return { revision } as T;
           },
           async all<T>() {
             const results = sql.includes("FROM workstream_resources wr")
@@ -145,8 +227,9 @@ describe("work-stream compaction resource inventory", () => {
 
     const checkpoint = await __integrationTesting.loadWorkstreamContextCompaction(
       database,
-      "1629dee4-8cc4-4531-81f9-b2be8614e062",
-      "workstream",
+      scheduling,
+      WORKSPACE,
+      WORKSTREAM,
       { type: "user", userId: asUserId("4b2a1529-867b-4d69-8685-b1722ccd0149") },
       AS_OF,
     );
@@ -164,8 +247,9 @@ describe("work-stream compaction resource inventory", () => {
     revision = 2;
     const replayAfterRemoval = await __integrationTesting.loadWorkstreamContextCompaction(
       database,
-      "1629dee4-8cc4-4531-81f9-b2be8614e062",
-      "workstream",
+      scheduling,
+      WORKSPACE,
+      WORKSTREAM,
       { type: "user", userId: asUserId("4b2a1529-867b-4d69-8685-b1722ccd0149") },
       "2026-08-12T18:31:00.000Z",
     );
@@ -173,21 +257,20 @@ describe("work-stream compaction resource inventory", () => {
   });
 
   it("never replays a raw attachment summary for a different execution principal", async () => {
+    const { store, scheduling } = objectStore();
+    seedCheckpoint(store, {
+      executionPrincipalKey: "user:original-viewer",
+      resourceVisibilityFingerprint: "inventory:1",
+      checkpointTemplateVersion: 1,
+      compactedThroughSequence: 42,
+      messagesJson: "[]",
+      summary: "Consulted private-id and found a confidential decision.",
+    });
     const database = createTestD1Database({
-      prepare(sql: string) {
+      prepare() {
         return createTestD1PreparedStatement({
           bind() { return this; },
-          async first<T>() {
-            if (!sql.includes("FROM workstream_context_compactions")) return { revision: 1 } as T;
-            return {
-              compacted_through_sequence: 42,
-              messages_json: "[]",
-              summary: "Consulted private-id and found a confidential decision.",
-              checkpoint_template_version: 1,
-              execution_principal_key: "user:original-viewer",
-              resource_visibility_fingerprint: "inventory:1",
-            } as T;
-          },
+          async first<T>() { return { revision: 1 } as T; },
           async all<T>() {
             return createTestD1Result<T>({
               success: true,
@@ -198,34 +281,23 @@ describe("work-stream compaction resource inventory", () => {
       },
     });
 
+    // The checkpoint belongs to another principal, so the operation's own
+    // `execution_principal_key` predicate never returns it. The routed SELECT
+    // returned it and the caller compared afterwards; the row is simply not
+    // this principal's to read.
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
-      "1629dee4-8cc4-4531-81f9-b2be8614e062",
-      "workstream",
+      scheduling,
+      WORKSPACE,
+      WORKSTREAM,
       { type: "user", userId: asUserId("df345be8-2f51-49ed-873d-bd48ada54749") },
       AS_OF,
     )).resolves.toBeNull();
   });
 
   it("persists the raw summary checkpoint and template version without a live inventory", async () => {
-    let sql = "";
-    let bindings: unknown[] = [];
-    const database = createTestD1Database({
-      prepare(statement: string) {
-        return createTestD1PreparedStatement({
-          bind(...values: unknown[]) {
-            if (statement.includes("INSERT INTO workstream_context_compactions")) {
-              sql = statement;
-              bindings = values;
-            }
-            return this;
-          },
-          async first<T>() { return { revision: 0 } as T; },
-          async run() { return createTestD1Result({ success: true, meta: { changes: 1 } }); },
-          async all<T>() { return createTestD1Result<T>({ success: true, results: [] }); },
-        });
-      },
-    });
+    const { store, scheduling } = objectStore();
+    setInventoryRevision(store, 0);
     const checkpoint: HarnessCompactionCheckpoint = {
       trigger: "auto",
       summary: "# Request\nContinue the exact work.",
@@ -239,11 +311,11 @@ describe("work-stream compaction resource inventory", () => {
     };
 
     await __integrationTesting.persistWorkstreamContextCompaction(
-      database,
+      scheduling,
       {
-        workspaceId: "1629dee4-8cc4-4531-81f9-b2be8614e062",
-        workstreamId: "workstream",
-        harnessRunId: "run",
+        workspaceId: WORKSPACE,
+        workstreamId: WORKSTREAM,
+        harnessRunId: CHECKPOINT_RUN,
         executionPrincipal: { type: "user", userId: "4b2a1529-867b-4d69-8685-b1722ccd0149" },
       } as WorkstreamWorkflowInput,
       42,
@@ -251,13 +323,26 @@ describe("work-stream compaction resource inventory", () => {
       "inventory:0",
     );
 
-    expect(sql).toContain("checkpoint_template_version");
-    expect(bindings[5]).toBe(checkpoint.summary);
-    expect(bindings[6]).toBe(CHECKPOINT_TEMPLATE_VERSION);
-    expect(bindings[7]).toBe("user:4b2a1529-867b-4d69-8685-b1722ccd0149");
-    expect(bindings[8]).toBe("inventory:0");
-    expect(String(bindings[4])).toContain("# Request");
-    expect(String(bindings[4])).not.toContain("Authoritative work-stream resource inventory");
+    // The row, rather than the statement's bindings. What the checkpoint must
+    // carry is the raw summary and the template version it was written under —
+    // and, just as importantly, not the rendered inventory appendix, which is
+    // this principal's visibility at one instant and would be replayed to
+    // whoever resumes.
+    const stored = store.prepare(
+      `SELECT summary, checkpoint_template_version, execution_principal_key,
+              resource_visibility_fingerprint, messages_json
+         FROM compaction_checkpoints`,
+    ).get() as {
+      summary: string; checkpoint_template_version: number;
+      execution_principal_key: string; resource_visibility_fingerprint: string;
+      messages_json: string;
+    };
+    expect(stored.summary).toBe(checkpoint.summary);
+    expect(stored.checkpoint_template_version).toBe(CHECKPOINT_TEMPLATE_VERSION);
+    expect(stored.execution_principal_key).toBe("user:4b2a1529-867b-4d69-8685-b1722ccd0149");
+    expect(stored.resource_visibility_fingerprint).toBe("inventory:0");
+    expect(stored.messages_json).toContain("# Request");
+    expect(stored.messages_json).not.toContain("Authoritative work-stream resource inventory");
   });
 
   it("rejects a visibility change between inventory preparation and appendix rendering", async () => {
@@ -285,24 +370,9 @@ describe("work-stream compaction resource inventory", () => {
   });
 
   it("does not persist a summary when visibility changes at the final fenced insert", async () => {
-    let revision = 1;
-    const insertChanges = 0;
-    const database = createTestD1Database({
-      prepare(sql: string) {
-        return createTestD1PreparedStatement({
-          bind() { return this; },
-          async first<T>() { return { revision } as T; },
-          async all<T>() { return createTestD1Result<T>({ success: true, results: [] }); },
-          async run() {
-            if (sql.includes("INSERT INTO workstream_context_compactions")) {
-              revision = 2;
-              return createTestD1Result({ success: true, meta: { changes: insertChanges } });
-            }
-            return createTestD1Result({ success: true });
-          },
-        });
-      },
-    });
+    const { store, scheduling } = objectStore();
+    // The inventory moved after this compaction prepared against revision 1.
+    setInventoryRevision(store, 2);
     const checkpoint: HarnessCompactionCheckpoint = {
       trigger: "auto",
       summary: "confidential summary",
@@ -316,36 +386,40 @@ describe("work-stream compaction resource inventory", () => {
     };
 
     await expect(__integrationTesting.persistWorkstreamContextCompaction(
-      database,
+      scheduling,
       {
-        workspaceId: "1629dee4-8cc4-4531-81f9-b2be8614e062",
-        workstreamId: "workstream",
-        harnessRunId: "run",
+        workspaceId: WORKSPACE,
+        workstreamId: WORKSTREAM,
+        harnessRunId: CHECKPOINT_RUN,
         executionPrincipal: { type: "user", userId: "4b2a1529-867b-4d69-8685-b1722ccd0149" },
       } as WorkstreamWorkflowInput,
       42,
       checkpoint,
       "inventory:1",
     )).rejects.toThrow("compaction_resource_visibility_changed");
-    expect(insertChanges).toBe(0);
+    // Nothing written, which is the point: the summary is confidential to the
+    // visibility it was produced under. The fence and the write are one
+    // transaction now, so there is no instant at which the row exists and the
+    // check has not yet run.
+    expect(store.prepare(`SELECT COUNT(*) AS n FROM compaction_checkpoints`).get())
+      .toEqual({ n: 0 });
   });
 
   it("keeps an unknown checkpoint template readable from its persisted base message", async () => {
+    const { store, scheduling } = objectStore();
+    seedCheckpoint(store, {
+      executionPrincipalKey: `workspace:${WORKSPACE}`,
+      resourceVisibilityFingerprint: "inventory:0",
+      checkpointTemplateVersion: 99,
+      compactedThroughSequence: 7,
+      messagesJson: JSON.stringify([{ role: "user", content: "future-version base checkpoint" }]),
+      summary: "raw future summary",
+    });
     const database = createTestD1Database({
-      prepare(sql: string) {
+      prepare() {
         return createTestD1PreparedStatement({
           bind() { return this; },
-          async first<T>() {
-            if (!sql.includes("FROM workstream_context_compactions")) return { revision: 0 } as T;
-            return {
-              compacted_through_sequence: 7,
-              messages_json: JSON.stringify([{ role: "user", content: "future-version base checkpoint" }]),
-              summary: "raw future summary",
-              checkpoint_template_version: 99,
-              execution_principal_key: "workspace:1629dee4-8cc4-4531-81f9-b2be8614e062",
-              resource_visibility_fingerprint: "inventory:0",
-            } as T;
-          },
+          async first<T>() { return { revision: 0 } as T; },
           async all<T>() { return createTestD1Result<T>({ success: true, results: [] }); },
         });
       },
@@ -353,9 +427,10 @@ describe("work-stream compaction resource inventory", () => {
 
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
-      "1629dee4-8cc4-4531-81f9-b2be8614e062",
-      "workstream",
-      { type: "workspace", workspaceId: asWorkspaceId("1629dee4-8cc4-4531-81f9-b2be8614e062") },
+      scheduling,
+      WORKSPACE,
+      WORKSTREAM,
+      { type: "workspace", workspaceId: asWorkspaceId(WORKSPACE) },
       AS_OF,
     )).resolves.toEqual({
       compactedThroughSequence: 7,
@@ -364,7 +439,7 @@ describe("work-stream compaction resource inventory", () => {
   });
 
   it("loads only the exact frozen compaction and detects changed checkpoint content", async () => {
-    const checkpointRunId = "00000000-0000-4000-8000-0000000000a1";
+    const checkpointRunId = CHECKPOINT_RUN;
     const stored = {
       executionPrincipalKey: "workspace:1629dee4-8cc4-4531-81f9-b2be8614e062",
       resourceVisibilityFingerprint: "inventory:0",
@@ -375,27 +450,34 @@ describe("work-stream compaction resource inventory", () => {
       summary: "# Request\nContinue from the frozen point.",
       model: "test/model",
     };
-    let compactionBindings: unknown[] = [];
+    const { store, scheduling } = objectStore();
+    seedCheckpoint(store, {
+      executionPrincipalKey: stored.executionPrincipalKey,
+      resourceVisibilityFingerprint: stored.resourceVisibilityFingerprint,
+      checkpointTemplateVersion: stored.checkpointTemplateVersion,
+      compactedThroughSequence: stored.compactedThroughSequence,
+      messagesJson: stored.messagesJson,
+      summary: stored.summary,
+      model: stored.model,
+    });
+    // A second checkpoint for the same principal, further along. Without the
+    // fence the read answers with this one; with it, the frozen sequence is
+    // what comes back — which is what makes the fence a fence rather than a
+    // label on whatever is newest.
+    seedCheckpoint(store, {
+      executionPrincipalKey: stored.executionPrincipalKey,
+      resourceVisibilityFingerprint: stored.resourceVisibilityFingerprint,
+      checkpointTemplateVersion: stored.checkpointTemplateVersion,
+      compactedThroughSequence: stored.compactedThroughSequence + 5,
+      messagesJson: JSON.stringify([{ role: "user", content: "newer representation" }]),
+      summary: "# Request\nContinue from the newer point.",
+      model: stored.model,
+    });
     const database = createTestD1Database({
-      prepare(sql: string) {
+      prepare() {
         return createTestD1PreparedStatement({
-          bind(...values: unknown[]) {
-            if (sql.includes("FROM workstream_context_compactions")) compactionBindings = values;
-            return this;
-          },
-          async first<T>() {
-            if (!sql.includes("FROM workstream_context_compactions")) return { revision: 0 } as T;
-            return {
-              harness_run_id: checkpointRunId,
-              compacted_through_sequence: stored.compactedThroughSequence,
-              messages_json: stored.messagesJson,
-              summary: stored.summary,
-              checkpoint_template_version: stored.checkpointTemplateVersion,
-              execution_principal_key: stored.executionPrincipalKey,
-              resource_visibility_fingerprint: stored.resourceVisibilityFingerprint,
-              model: stored.model,
-            } as T;
-          },
+          bind() { return this; },
+          async first<T>() { return { revision: 0 } as T; },
           async all<T>() { return createTestD1Result<T>({ success: true, results: [] }); },
         });
       },
@@ -408,25 +490,29 @@ describe("work-stream compaction resource inventory", () => {
 
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
-      "1629dee4-8cc4-4531-81f9-b2be8614e062",
-      "workstream",
-      { type: "workspace", workspaceId: asWorkspaceId("1629dee4-8cc4-4531-81f9-b2be8614e062") },
+      scheduling,
+      WORKSPACE,
+      WORKSTREAM,
+      { type: "workspace", workspaceId: asWorkspaceId(WORKSPACE) },
       AS_OF,
       fence,
     )).resolves.toMatchObject({ compactedThroughSequence: 12 });
-    expect(compactionBindings).toEqual([
-      "1629dee4-8cc4-4531-81f9-b2be8614e062",
-      "workstream",
-      "workspace:1629dee4-8cc4-4531-81f9-b2be8614e062",
-      checkpointRunId,
-      12,
-    ]);
+    // Unfenced, the same read answers with the later checkpoint.
+    await expect(__integrationTesting.loadWorkstreamContextCompaction(
+      database,
+      scheduling,
+      WORKSPACE,
+      WORKSTREAM,
+      { type: "workspace", workspaceId: asWorkspaceId(WORKSPACE) },
+      AS_OF,
+    )).resolves.toMatchObject({ compactedThroughSequence: 17 });
 
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
-      "1629dee4-8cc4-4531-81f9-b2be8614e062",
-      "workstream",
-      { type: "workspace", workspaceId: asWorkspaceId("1629dee4-8cc4-4531-81f9-b2be8614e062") },
+      scheduling,
+      WORKSPACE,
+      WORKSTREAM,
+      { type: "workspace", workspaceId: asWorkspaceId(WORKSPACE) },
       AS_OF,
       { ...fence, checkpointHash: "fnv1a64:0000000000000000" },
     )).rejects.toMatchObject({ code: "compaction_fence_changed" });

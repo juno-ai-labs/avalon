@@ -551,31 +551,18 @@ describe("the Workstream Durable Object relational schema", () => {
             message_type, text_content, sequence_number, harness_run_id, created_at)
          VALUES (?, 'runtime-message', ?, ?, 'agent', 'text', 'hello', 1, ?, ?)`,
       )).run(MESSAGE_ID, WORKSPACE_ID, WORKSTREAM_ID, RUN_ID, "2026-08-17T12:00:01.000Z");
-      for (const compactedThroughSequence of [1, 2]) {
-        database.prepare(rewriteWorkstreamRuntimeSql(
-          `INSERT INTO workstream_context_compactions
-             (workstream_id, workspace_id, harness_run_id, compacted_through_sequence,
-              messages_json, summary, checkpoint_template_version, execution_principal_key,
-              resource_visibility_fingerprint, model, context_tokens_before_compaction,
-              context_window_tokens, input_tokens, output_tokens, cost_microusd,
-              created_at, updated_at)
-           VALUES (?, ?, ?, ?, '[]', ?, 1, ?, 'inventory:0', 'test-model',
-                   100, 200000, 80, 20, 1, ?, ?)`,
-        )).run(
-          WORKSTREAM_ID,
-          WORKSPACE_ID,
-          RUN_ID,
-          compactedThroughSequence,
-          `summary-${compactedThroughSequence}`,
-          `workspace:${WORKSPACE_ID}`,
-          `2026-08-17T12:00:0${compactedThroughSequence}.000Z`,
-          `2026-08-17T12:00:0${compactedThroughSequence}.000Z`,
-        );
-      }
       // Terminal is deliberately absent here. Its tables left the legacy
       // vocabulary in schema version 12: the services hold a typed port onto
       // `terminal_workspace` and friends, so there is no compatibility view
       // left for a `workstream_sandboxes` statement to be rewritten onto.
+      //
+      // So is the scheduling slice, and for the same reason: version 20 dropped
+      // the wake-up, compaction, description-refresh and plugin-hint views, so
+      // a `workstream_context_compactions` statement has nothing to be
+      // rewritten onto either. What that slice writes is proved against a real
+      // object store in `workstream-resource-inventory.test.ts` — the fence
+      // refusing a write, the fenced and unfenced reads, and the principal
+      // scoping — rather than against a statement's bindings.
 
       expect(database.prepare("SELECT run_id, status FROM runs").get()).toEqual({
         run_id: RUN_ID,
@@ -585,8 +572,6 @@ describe("the Workstream Durable Object relational schema", () => {
         id: MESSAGE_ID,
         content: "hello",
       });
-      expect(database.prepare("SELECT COUNT(*) AS count FROM compaction_checkpoints").get())
-        .toEqual({ count: 2 });
     } finally {
       database.close();
     }

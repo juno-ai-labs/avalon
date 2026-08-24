@@ -69,11 +69,7 @@ const LOCAL_TABLES = [
   "messages",
   "workstreams",
   "elicitations",
-  "workstream_context_compactions",
-  "workstream_wakeups",
-  "workstream_plugin_activation_hints",
   "workstream_resource_inventory_revisions",
-  "workstream_description_refreshes",
   "workstream_resources",
   // The object's own receipt table, not a legacy name: when migration 17
   // retired `tool_invocations` from this list, the dev seed moved to writing

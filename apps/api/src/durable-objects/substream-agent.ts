@@ -96,7 +96,8 @@ import {
   type TerminalPortFactory,
 } from "../services/terminal/object-port";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
-import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
+import { loadWorkstreamWakeup } from "../services/workstream-wakeup-service";
+import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import type { WorkstreamRuntimeResourceAttacher } from "../services/workstream-object-client";
 import {
   acceptsNewWorkstreamWork,
@@ -123,6 +124,12 @@ import {
   ToolReceiptOperationRequestSchema,
 } from "./workstream-tool-receipt-protocol";
 import { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-storage";
+import { WorkstreamSchedulingStorage } from "./workstream-scheduling-storage";
+import {
+  type SchedulingOperationRequest,
+  mutatesWakeups,
+  SchedulingOperationRequestSchema,
+} from "./workstream-scheduling-protocol";
 import {
   type BlockDashboardOperationRequest,
   BlockDashboardOperationRequestSchema,
@@ -469,11 +476,6 @@ export type SocketReplayPlan =
  * After hibernation, clients receive an explicit resync instruction and use
  * the canonical REST surface for the current authority generation.
  */
-/** Cheap gate on re-deriving the timer index from routed SQL. */
-function touchesAgentTimers(statements: readonly { sql: string }[]): boolean {
-  return statements.some((statement) => /\bworkstream_wakeups\b/iu.test(statement.sql));
-}
-
 export function planSocketReplay(
   afterSequence: number,
   currentSequence: number,
@@ -525,6 +527,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private terminal!: WorkstreamTerminalStorage;
   private toolReceipts!: WorkstreamToolReceiptStorage;
   private blockDashboard!: WorkstreamBlockDashboardStorage;
+  private scheduling!: WorkstreamSchedulingStorage;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
@@ -580,6 +583,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
       this.blockDashboard = new WorkstreamBlockDashboardStorage(state.storage);
+      this.scheduling = new WorkstreamSchedulingStorage(state.storage);
       await this.objectStore.waitUntilReady();
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
@@ -737,6 +741,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/internal/tool-receipt") {
       return this.acceptToolReceiptOperation(request);
     }
+    if (request.method === "POST" && url.pathname === "/internal/scheduling") {
+      return this.acceptSchedulingOperation(request);
+    }
     if (request.method === "POST" && url.pathname === "/internal/block-dashboard") {
       return this.acceptBlockDashboardOperation(request);
     }
@@ -846,6 +853,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   ): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptToolReceiptOperation(this.rpcRequest(input)));
+  }
+
+  async executeSchedulingOperation(
+    input: SchedulingOperationRequest,
+  ): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptSchedulingOperation(this.rpcRequest(input)));
   }
 
   async executeBlockDashboardOperation(
@@ -969,9 +983,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // run's dispatch sweep, a later request, and any committed directory effect
     // are the recovery paths for re-deriving the object's next alarm.
     try {
-      // The wake-up tool inserts, cancels, and reaps `workstream_wakeups`
-      // through exactly this port, so this is where a timer becomes an alarm.
-      if (touchesAgentTimers(parsed.data.statements)) this.syncAgentTimerAlarms();
+      // Wake-ups no longer arrive here — `/internal/scheduling` re-derives the
+      // timer index off its own writes — so there is nothing to detect in this
+      // statement text. Arming still happens, because other routed writes can
+      // move an alarm this object owes.
       await this.armNextAlarm();
     } catch (error) {
       logError(this.env, "workstream_runtime_sql_alarm_schedule_failed", {
@@ -1025,15 +1040,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Dispatch one block-dashboard operation against this object's own storage.
-   *
-   * Identity is re-checked against the object's own before anything executes,
-   * for the reason `acceptToolReceiptOperation` gives: a misrouted stub must
-   * fail rather than settle another work stream's blocks. The main child holds
-   * these rows, so a non-main substream is refused here rather than answering
-   * from an empty table.
-   */
-  /**
    * Refuse an object-port request the routed path would have refused.
    *
    * `executeWorkstreamRuntimeSql` checked two things before running a
@@ -1065,6 +1071,86 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return null;
   }
 
+  /**
+   * Dispatch one scheduling operation against this object's own storage.
+   *
+   * `objectPortRefusal` runs first, so this endpoint refuses three things the
+   * routed path refused: another work stream's identity, a non-main substream,
+   * and an object whose `authority_mode` is not `authoritative`. The last one
+   * matters most here. `persistCompactionCheckpoint`, `recordPluginActivation`
+   * and the two description-evaluation writes are the first writes moved off
+   * the routed path whose *only* fence was `executeWorkstreamRuntimeSql`
+   * refusing every statement against a `preparing` or `quarantined` object —
+   * the wake-up mutations keep an equivalent one through
+   * `commitRuntimeMutation`, and these four would have had none.
+   *
+   * The non-main refusal is why the port names the main child and nothing
+   * carries a substream id: these rows live on the main object, so a child
+   * substream must be told so rather than served from an empty table.
+   *
+   * An operation that can change which wake-ups are pending runs through
+   * `commitRuntimeMutation`, re-derives the timer index, and arms the next
+   * alarm before answering — so a caller never has to remember to do any of it.
+   *
+   * All three used to be consequences of the routing. A wake-up write arrived
+   * as SQL, and the object matched `workstream_wakeups` in the statement text
+   * to decide both that the sidebar's next-wake-up marker had to be
+   * republished and that the alarm index had to be re-derived. Naming the
+   * operations replaces the regex; running the mutation inside
+   * `commitRuntimeMutation` is what keeps the directory effect in the same
+   * commit as the write, rather than a second write that could be lost after
+   * the first one landed.
+   */
+  private async acceptSchedulingOperation(request: Request): Promise<Response> {
+    const parsed = SchedulingOperationRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return jsonResponse({ ok: false, error: "invalid_scheduling_operation" }, 400);
+    }
+    const refusal = this.objectPortRefusal(parsed.data, "workstream_scheduling_identity_mismatch");
+    if (refusal) return refusal;
+    const method = this.scheduling[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const mutates = mutatesWakeups(parsed.data.operation);
+    const value = mutates
+      ? await this.product.commitRuntimeMutation(
+        () => method.apply(this.scheduling, parsed.data.args),
+        true,
+      )
+      : method.apply(this.scheduling, parsed.data.args);
+    if (mutates) {
+      this.syncAgentTimerAlarms();
+      // Arming is best-effort, as it is in `acceptRuntimeSql` and
+      // `runTerminalOperation`, and for the reason those two give: the
+      // operation is already durable, so raising here would tell a caller its
+      // committed write failed. The wake-up tool's own rollback would then
+      // delete a row that was legitimately cancelled. The run's dispatch sweep,
+      // any later request and the committed directory effect all re-derive the
+      // alarm.
+      try {
+        await this.armNextAlarm();
+      } catch (error) {
+        logError(this.env, "workstream_scheduling_alarm_schedule_failed", {
+          workspace_id: parsed.data.workspaceId,
+          workstream_id: parsed.data.workstreamId,
+          operation: parsed.data.operation,
+          code: "workstream_scheduling_alarm_failed_after_commit",
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return jsonResponse({ ok: true, value: value ?? null });
+  }
+
+  /**
+   * Dispatch one block-dashboard operation against this object's own storage.
+   *
+   * Identity is re-checked against the object's own before anything executes,
+   * for the reason `acceptToolReceiptOperation` gives: a misrouted stub must
+   * fail rather than settle another work stream's blocks. The main child holds
+   * these rows, so a non-main substream is refused here rather than answering
+   * from an empty table.
+   */
   private async acceptBlockDashboardOperation(request: Request): Promise<Response> {
     const parsed = BlockDashboardOperationRequestSchema.safeParse(
       await request.json().catch(() => null),
@@ -2364,13 +2450,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             statements,
           }),
         );
-        // Conditional, unlike the routed port above: this executor runs for
-        // every statement a run makes, and re-deriving the alarm for a
-        // transcript write would put a `getAlarm` in the streaming path.
-        if (touchesAgentTimers(statements)) {
-          this.syncAgentTimerAlarms();
-          await this.armNextAlarm();
-        }
+        // Nothing here can move a wake-up any more: the local executor serves
+        // a run's own statements, and every wake-up write goes through
+        // `/internal/scheduling`, which re-derives the index itself. Re-deriving
+        // it for a transcript write would have put a `getAlarm` in the
+        // streaming path for no reason even when it could.
         return result.results;
       },
     );
@@ -2863,6 +2947,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * cancelled since the entry was written is a no-op rather than a run nobody
    * asked for. Throwing puts this timer — and only this timer — behind the
    * shared retry gate.
+   *
+   * The port is built without the in-isolate storage seam, so the claim goes
+   * through `/internal/scheduling` like every other wake-up write. That is not
+   * a round trip: `this.env` was rebound through `withDurableObjectSelf` in the
+   * constructor, so the stub resolves to this instance and the endpoint runs
+   * here. Taking the seam instead would skip the endpoint — and with it the
+   * commit that republishes the sidebar's next-wake-up marker, which after a
+   * claim still advertises a wake-up that has already fired.
    */
   protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<void> {
     if (alarm.kind !== AGENT_TIMER_ALARM_KIND) {
@@ -2875,26 +2967,29 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       identity.workstreamId,
       this.externalSubstreamId(),
     );
-    const wakeup = await executionEnv.DB.prepare(
-      `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
-              due_at, status, version, created_at
-         FROM workstream_wakeups
-        WHERE workspace_id = ? AND workstream_id = ? AND id = ? AND status = 'pending'`,
-    ).bind(identity.workspaceId, identity.workstreamId, alarm.key)
-      .first<WorkstreamWakeupRow>();
-    if (!wakeup) return;
-    await fireWorkstreamWakeup(executionEnv, wakeup);
+    const scheduling = createSchedulingObjectPort(
+      this.env,
+      identity.workspaceId,
+      identity.workstreamId,
+    );
+    const wakeup = await loadWorkstreamWakeup(
+      scheduling,
+      identity.workspaceId,
+      identity.workstreamId,
+      alarm.key,
+    );
+    if (!wakeup || wakeup.status !== "pending") return;
+    await fireWorkstreamWakeup(executionEnv, wakeup, scheduling);
   }
 
   /**
    * Make the `agent_timer` entries match this object's pending wake-ups.
    *
-   * Called wherever `workstream_wakeups` can have changed — the tool's own
-   * runtime SQL, the timer refresh port, and after a timer fires — because the
-   * writers reach the table through routed SQL and cannot be asked to maintain
-   * an index they do not know about. Reconciling is what makes a wake-up
-   * scheduled *before* the armed alarm pull that alarm in, and a cancelled one
-   * push it back out.
+   * Called wherever `workstream_wakeups` can have changed — every mutating
+   * scheduling operation, the timer refresh port, and after a timer fires.
+   * Reconciling rather than patching is what makes a wake-up scheduled *before*
+   * the armed alarm pull that alarm in, and a cancelled one push it back out,
+   * without either writer having to know an index exists.
    */
   private syncAgentTimerAlarms(): void {
     const pending = this.state.storage.sql.exec<{ wakeup_id: string; due_at: number }>(

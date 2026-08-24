@@ -84,6 +84,7 @@ import {
 } from "./workstream-origin-resource";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
@@ -1211,15 +1212,13 @@ export class SlackAgentService {
     if (session.last_delivery_key === deliveryKey) return;
     const connection = await this.connectionById(session.connection_id);
     const token = await this.botToken(connection);
-    const executionEnv = outcomeStatus === "needs_input"
-      ? await workstreamExecutionEnvironment(this.env, workspaceId, workstreamId)
-      : null;
-    const openElicitation = executionEnv
-      ? await executionEnv.DB.prepare(
-          `SELECT prompt, target_user_id FROM elicitations
-           WHERE workspace_id = ? AND workstream_id = ? AND status = 'open'
-           ORDER BY created_at ASC LIMIT 1`,
-        ).bind(workspaceId, workstreamId).first<{ prompt: string; target_user_id: string | null }>()
+    // Only a run waiting on a person can have an open elicitation to deliver.
+    // This used to build a routed execution environment and read through it;
+    // the port needs no such handle, so what is left is the condition that
+    // environment was standing in for.
+    const openElicitation = outcomeStatus === "needs_input"
+      ? await createSchedulingObjectPort(this.env, workspaceId, workstreamId)
+        .oldestOpenElicitation()
       : null;
     // Trimmed rather than merely non-empty: whitespace-only text splits into no
     // chunks at all, which would close the stream having appended nothing.
@@ -2464,20 +2463,17 @@ export class SlackAgentService {
     workstreamId: string,
     response: string,
   ): Promise<boolean> {
-    const executionEnv = await workstreamExecutionEnvironment(this.env, workspaceId, workstreamId);
-    const elicitation = await executionEnv.DB.prepare(
-      `SELECT id, response_type, options_json FROM elicitations
-       WHERE workstream_id = ? AND status = 'open' ORDER BY created_at ASC LIMIT 1`,
-    ).bind(workstreamId).first<{
-      id: string;
-      response_type: "text" | "radio" | "single_select" | "multi_select";
-      options_json: string;
-    }>();
+    const elicitation = await createSchedulingObjectPort(this.env, workspaceId, workstreamId)
+      .oldestOpenElicitation();
     if (!elicitation) return false;
     await service.answerElicitation(
       workstreamId,
-      elicitation.id,
-      slackElicitationRequest(elicitation, response),
+      elicitation.elicitation_id,
+      slackElicitationRequest({
+        response_type: elicitation.response_type as
+          "text" | "radio" | "single_select" | "multi_select",
+        options_json: elicitation.options_json,
+      }, response),
     );
     return true;
   }
@@ -2486,12 +2482,9 @@ export class SlackAgentService {
     workspaceId: string,
     workstreamId: string,
   ): Promise<{ id: string; targetUserId: string | null } | null> {
-    const executionEnv = await workstreamExecutionEnvironment(this.env, workspaceId, workstreamId);
-    const row = await executionEnv.DB.prepare(
-      `SELECT id, target_user_id FROM elicitations
-       WHERE workstream_id = ? AND status = 'open' ORDER BY created_at ASC LIMIT 1`,
-    ).bind(workstreamId).first<{ id: string; target_user_id: string | null }>();
-    return row ? { id: row.id, targetUserId: row.target_user_id } : null;
+    const row = await createSchedulingObjectPort(this.env, workspaceId, workstreamId)
+      .oldestOpenElicitation();
+    return row ? { id: row.elicitation_id, targetUserId: row.target_user_id } : null;
   }
 
   /**
