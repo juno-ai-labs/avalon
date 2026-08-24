@@ -121,14 +121,27 @@ export function workstreamMarkerStatus(
  * is merely working is not one of them, however recently it moved.
  */
 export function workstreamNeedsAttention(
+  // `hasUnread` is accepted and deliberately not read. Callers pass a whole
+  // work stream, and the tests pass the field explicitly to state that being
+  // unread does not put a row in this section — a signature that refused it
+  // could not say that.
   workstream: { harnessStatus: HarnessStatus; hasUnread?: boolean; unseen?: boolean; youAreMentioned?: boolean },
 ): boolean {
-  // Asked of the states rather than of the marker above: a running work stream
-  // with unread messages shows the run on its dot, and is still something this
-  // person has to read.
+  // Asked of the states rather than of the marker, so a work stream whose dot
+  // shows something else can still be listed: a room somebody was added to
+  // reads as `unseen` here whatever its run is doing.
+  //
+  // `hasUnread` is deliberately not one of them. It was, and it drowned the
+  // section: unread is the ordinary condition of a work stream somebody is
+  // working in, so a person with a normal backlog saw most of what they had
+  // listed here, and the one mention among them was indistinguishable from the
+  // rest. The three that remain each name somebody by hand — you were put in
+  // this room, you were named in it, or the agent stopped and asked you
+  // something — which is what makes the section short enough to be read. The
+  // sidebar still marks unread, in its own colour; this section is for the
+  // subset that is addressed to this person.
   return workstream.unseen === true
     || workstream.youAreMentioned === true
-    || workstream.hasUnread === true
     || workstream.harnessStatus === 'needs_input';
 }
 

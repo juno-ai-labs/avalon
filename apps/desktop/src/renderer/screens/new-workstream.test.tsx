@@ -198,7 +198,7 @@ describe('New work-stream home', () => {
     expect(screen.queryByText('Pricing restructure')).not.toBeInTheDocument();
   });
 
-  it('lists the work streams that mention this person and the ones they have not read', async () => {
+  it('lists the work streams that name this person, and not the merely unread', async () => {
     workspaceSocket.listWorkstreams.mockResolvedValue({
       items: [
         workstream('mentioned', 'Launch blockers', 'running', {
@@ -206,9 +206,16 @@ describe('New work-stream home', () => {
           youAreMentioned: true,
           hasUnread: true,
         }),
+        // Unread and nothing else: the ordinary condition of a work stream
+        // somebody is working in, and what buried the rest of the section.
         workstream('unread', 'Vendor contract', 'completed', {
           lastActivityAt: '2026-07-31T19:00:00.000Z',
           hasUnread: true,
+        }),
+        workstream('added', 'Warehouse migration', 'completed', {
+          lastActivityAt: '2026-07-31T18:00:00.000Z',
+          hasUnread: true,
+          unseen: true,
         }),
         workstream('read', 'Pricing restructure', 'running', { lastActivityAt: '2026-07-31T22:00:00.000Z' }),
       ],
@@ -218,10 +225,12 @@ describe('New work-stream home', () => {
 
     const attention = await screen.findByRole('region', { name: 'Needs attention' });
     const rows = within(attention).getAllByRole('link');
+    // The unseen row is unread too, and is listed on the unseen account.
     expect(rows.map((row) => row.getAttribute('href')))
-      .toEqual(['/workstreams/mentioned', '/workstreams/unread']);
+      .toEqual(['/workstreams/mentioned', '/workstreams/added']);
     expect(within(rows[0]!).getByText('You were mentioned')).toBeInTheDocument();
-    expect(within(rows[1]!).getByText('Unread')).toBeInTheDocument();
+    expect(within(rows[1]!).getByText('New to you')).toBeInTheDocument();
+    expect(screen.queryByText('Vendor contract')).not.toBeInTheDocument();
     // Nothing is asking anything of this person here, however recently it moved.
     expect(screen.queryByText('Pricing restructure')).not.toBeInTheDocument();
   });
