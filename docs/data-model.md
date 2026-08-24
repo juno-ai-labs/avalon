@@ -791,10 +791,13 @@ was created with — and freezes into a shared template the zone of whoever wrot
 it rather than of whoever adopts it.
 
 **Considered and rejected:** letting the compiler write the resolved zone into
-the field. It reads simpler and keeps the summary and the field in step by
-construction, but it leaves the one value the scheduler reads as something a
-model produced. Null means "nobody named one", the server answers it, and the
-model's only remaining job is prose. Also rejected: overwriting a template's
+the field, either from the model or from the normalizer. It reads simpler and
+keeps the summary and the field in step by construction, but it leaves the one
+value the scheduler reads as something a model produced, and — the reason it was
+reverted during review — a filled default is byte-identical to a zone somebody
+named, which is the distinction every later reader depends on. Null means
+"nobody named one", the server answers it, and the model's only remaining job is
+prose. Also rejected: overwriting a template's
 explicit zone on adoption. A zone the author named may be the point of the
 automation — an American market open is not a British one — so an explicit zone
 survives adoption and only an unnamed one follows the adopter.
@@ -802,9 +805,11 @@ survives adoption and only an unnamed one follows the adopter.
 **Consequences:** an account that has never opened settings still follows its
 machine, which is what a new account wants. One that has chosen no longer moves,
 including when its owner signs in while travelling; changing zones is a settings
-change from now on. Nothing on the wire carries a null timezone — the compiler's
-normalizer still fills the applicable default into the draft it returns — so the
-nullable field is a storage and submission shape, not a client-visible one.
+change from now on. A calendar trigger with no named zone carries `null` on the
+wire as well as in storage, so a desktop build older than this release cannot
+parse a newly compiled draft; the alternative — filling the default in before the
+draft is returned — was tried first and made the resolution above unreachable,
+since a filled default is indistinguishable from a zone somebody named.
 
 ### 2026-08-24 — Active participation is the sole private-reader authority
 

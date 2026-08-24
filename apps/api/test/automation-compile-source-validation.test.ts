@@ -73,4 +73,23 @@ describe("automation compile activity-source validation", () => {
     expect(prepare.mock.calls.map(([sql]) => sql).join("\n")).toContain("INSERT INTO automation_subscriptions");
     expect(batch).toHaveBeenCalledOnce();
   });
+
+  it("refuses a compile for somebody the workspace's region has no user row for", async () => {
+    // The row's absence is the refusal, not the timezone's value: the two are
+    // separate answers, and reading one off the other would turn a member whose
+    // zone is unset into somebody with no workspace access.
+    const prepare = vi.fn((sql: string) => ({
+      bind: vi.fn(() => ({
+        first: vi.fn(async () => sql.includes("AS user_timezone")
+          ? { workspace_timezone: "UTC", user_id: null, user_timezone: null }
+          : null),
+      })),
+    }));
+    const service = new AutomationService(createTestEnv({ DB: { prepare, batch: vi.fn(async () => []) } }), auth);
+
+    await expect(service.compile({
+      messages: [{ role: "user", content: "Summarize my day." }],
+    }, "request-1")).rejects.toMatchObject({ status: 403, code: "workspace_access_denied" });
+    expect(compileAutomationDraft).not.toHaveBeenCalled();
+  });
 });
