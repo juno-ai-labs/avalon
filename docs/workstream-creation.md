@@ -267,13 +267,24 @@ see
   idempotent drain and activation.
 - **A create is refused.** The participant and attachment checks run ahead of the
   reservation deliberately, so a create that is going to be refused does not leave
-  an address reserved for a work stream that never exists.
+  an address reserved for a work stream that never exists. The message-length
+  check is the same rule one step earlier: `requireSendableMessageLength` is the
+  first middleware on the route, ahead of `zValidator`, because a length is the
+  one bound here whose remedy belongs to the person who typed it.
+- **The message is too long.** Over `MESSAGE_MAX_CHARACTERS` the create is
+  refused with `message_too_long` and `MESSAGE_TOO_LONG_MESSAGE`, and the
+  composer refuses it before that without a round trip at all. Nothing is
+  truncated on either side: the person is told to shorten it and keeps every
+  character while they do.
 - **Typing during the launch window.** The composer stays live; anything typed
   lands in the `new-workstream:<workspaceId>` draft and is not carried into the
   created work stream. Attachment tiles and the file input are frozen for the
   window, because the files they stand for are already on their way into a
   message.
-- **Limits.** `HOME_HAND_OFF_MS` is 190ms and must equal the stylesheet's
+- **Limits.** `MESSAGE_MAX_CHARACTERS` is 100,000 — the ceiling on one composed
+  message, and the only bound the opening message has. The description derived
+  from it is bounded separately and far lower; see
+  [`workstream-descriptions.md`](workstream-descriptions.md). `HOME_HAND_OFF_MS` is 190ms and must equal the stylesheet's
   `launch-home-leave` duration. The arrival stagger is 70ms per index with a 60ms
   lead-in. Geometry transitions run at 240ms and the header at 220ms.
 
@@ -292,6 +303,18 @@ see
   code for a request that violates both pre-flight checks. That last one loops
   five creates rather than asserting once — a fixed order that only held by luck
   would pass a single run.
+- `apps/api/test/message-length-limit.test.ts` —
+  `pnpm --filter @avalon/api exec vitest run test/message-length-limit.test.ts`.
+  Covers the ceiling from both sides: the guard's exact boundary on both routes,
+  the sentence itself, that an unreadable body is left to the validator, and the
+  incident this module's changelog records — a description derived from a
+  message at the ceiling, parsed through `InitializeWorkstreamObjectInputSchema`,
+  which is the schema that refused the create in production.
+- `apps/api/test-workers/workspace-socket-message-length.test.ts` — the same rule
+  on the socket follow-up messages actually travel over, on real workerd: an
+  over-long frame is answered rather than closed, and a malformed one still
+  closes. The composer's own guard on that screen is untested; see
+  [`potential-bugs.md`](potential-bugs.md).
 - `apps/api/test/substream-agent-snapshot.test.ts` — includes the case that the
   snapshot describes the latest run rather than naming its id. The snapshot
   replaces the client's whole detail, so a field dropped there is invisible until
@@ -319,6 +342,41 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-08-24 — One ceiling on a composed message, and a refusal a person can act on
+
+**What changed:** `MESSAGE_MAX_CHARACTERS` (100,000) is the single bound on the
+opening message, on a reply, and on every schema either travels through.
+`requireSendableMessageLength` runs ahead of `zValidator` on `POST /workstreams`
+and `POST /workstreams/:id/messages` and answers `message_too_long` with
+`MESSAGE_TOO_LONG_MESSAGE`; the composer refuses the same message with the same
+sentence without sending it. The description the create derives no longer
+inherits the message's bound — `provisionalWorkstreamDescription` takes the
+opening *line*.
+
+**Why:** The route took 50,000 characters and the object's `objective` took
+4,000, and the gap was a working create path for messages nobody sends and a
+broken one for the pasted templates people actually open work streams with. A
+message in the gap passed the route, reserved an email address, wrote its D1
+rows, and then failed `ProductRequestSchema` inside the SubstreamAgent with
+`invalid_product_request` — which reached the person as "The work stream could
+not be loaded", a sentence about reading a work stream, on a request that was
+creating one, naming nothing they could do about it. It happened in production
+on 2026-08-24 and left an orphaned `verified` route row and a `reserved` receipt
+behind it.
+
+The two bounds disagreed because they were two numbers. They are now one, and it
+sits in `@avalon/contracts` where the composer reads it too, so the surface that
+accepts a message and the object that stores it cannot drift apart again.
+
+**Consequences:** Truncation was considered and rejected: a silently shortened
+message is one whose author does not know what Avalon read. Raising the
+description to match the message was rejected for the reason
+[`workstream-descriptions.md`](workstream-descriptions.md#2026-08-24--the-provisional-description-is-the-opening-line)
+records — it is a sidebar line and a classifier input backed by a 4,000-character
+column CHECK, not a place to put a paste. A create path added later gets the
+guard by registering the middleware; a bound added to a composed message
+elsewhere is a second number, and this changelog is the argument against it.
 
 ### 2026-08-21 — A create that names no audience writes a private work stream
 

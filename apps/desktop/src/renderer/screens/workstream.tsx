@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
@@ -1380,6 +1380,13 @@ export function WorkstreamScreen(): React.JSX.Element {
     confirmedParticipantUserIds: string[] = [],
   ): Promise<void> => {
     if (!api || !workstream.data) throw new Error('This work stream is not ready to receive messages.');
+    // Ahead of the optimistic turn and of `sending`. A message the server will
+    // refuse must not appear in the transcript first and be pulled back out of
+    // it, and the person is the only one who can resolve this.
+    if (text.length > MESSAGE_MAX_CHARACTERS) {
+      setSendError(MESSAGE_TOO_LONG_MESSAGE);
+      return;
+    }
     // Sending is the strongest statement anyone can make that they mean to be
     // at the end: they are about to add to it, and the answer is what they are
     // waiting for. Before the follow could be stopped at all this happened by
