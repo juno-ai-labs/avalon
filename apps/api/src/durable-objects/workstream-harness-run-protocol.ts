@@ -29,6 +29,8 @@ const DISPATCHED_OPERATIONS = [
   "lifecycleEvent",
   "persistScope",
   "scope",
+  "memoryContext",
+  "persistMemoryContext",
   "persistPluginActivation",
   "recordInferenceAttempt",
   "inlineChildOwnership",

@@ -1305,6 +1305,47 @@ of the three. If the product ever settles on a single busy status, retire the
 other two from the CHECK constraint rather than from the fences, so the
 narrowing is enforced where it can be seen.
 
+### 2026-08-23 — Three of the six harness-run views retire, and why the other three cannot
+
+**What changed:** migration 21 drops `_runtime_run_scopes`,
+`_runtime_run_plugin_activations` and `_runtime_run_memory_contexts` with their
+insert triggers, and removes all three from `LOCAL_TABLES` and `TABLE_REWRITES`.
+`freezeRunMemoryContext` moved onto the port to make the third of them possible.
+
+**Why only three.** The other three are held by *other* slices rather than by
+anything this authority still does, and each for a reason worth stating so the
+next person does not try again:
+
+- `_runtime_harness_runs` is written by the work-stream bootstrap batch, which
+  creates the work stream, its opening transcript row and its first run in one
+  atomic routed statement set. Pulling the run out introduces a partial failure
+  that does not exist today — a work stream with no run — so it goes when the
+  transcript does.
+- `_runtime_run_lifecycle_events` is joined to `messages` by the two functions
+  that verify a run published its final message. Same slice, same reason.
+- `_runtime_inference_attempts` is joined to `_runtime_harness_runs` by run
+  telemetry, so it cannot outlive the view it joins.
+
+All three dropped here carried an insert trigger and nothing else: a scope, a
+plugin activation and a memory context are written once and never updated, which
+is why none of them ever needed more.
+
+**One test's subject had to be restated rather than deleted.** `scoped-memory`
+proved a frozen memory context is immutable by showing a routed `UPDATE` was
+refused — which worked only because the compat view carried an insert trigger
+and no update one. That is a guarantee stated as a *missing* trigger, and it
+disappears with the view. The same guarantee is now stated positively:
+`persistMemoryContext` answers `reused` and returns the stored row, so the test
+asserts the second write neither lands nor is reported as having landed.
+
+**What a future change has to respect:** `persistMemoryContext` returns the
+winner's row rather than an outcome to interpret, and that is not convenience.
+The value costs a vector search to compute, so the read and the write cannot be
+one operation; freezing recall exists so every replay of an attempt sees the
+same memories, which makes the row the run will actually use the only useful
+answer to give a loser.
+
+
 ### 2026-08-23 — The callers outside the runtime, and what a half-converted path costs
 
 **What changed:** the harness-run callers in `workstream-service`,

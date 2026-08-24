@@ -16,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 22;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 23;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1344,7 +1344,51 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "prevent accepted restricted suggestions from outliving their reader audience",
     statements: acceptedSuggestionAudienceTriggers(),
   },
+  {
+    version: 23,
+    description: "retire the run-scope, plugin-activation and memory-context views",
+    statements: harnessRunAuthorityPromotion(),
+  },
 ];
+
+/**
+ * Retires three of the harness-run slice's six compatibility views.
+ *
+ * Three, not six, and the three left behind are held by other slices rather
+ * than by anything this authority still does:
+ *
+ * - `_runtime_harness_runs` is written by the *work-stream bootstrap* batch,
+ *   which creates the work stream, its opening transcript row and its first run
+ *   in one atomic routed statement set. Pulling the run out would introduce a
+ *   partial failure that does not exist today — a work stream with no run — so
+ *   it goes when the transcript does.
+ * - `_runtime_run_lifecycle_events` is joined to `messages` by the two
+ *   functions that verify a run's final message was published. Same slice, same
+ *   reason.
+ * - `_runtime_inference_attempts` is joined to `_runtime_harness_runs` by run
+ *   telemetry, so it cannot outlive the view it joins.
+ *
+ * The three dropped here carry an insert trigger each and nothing else: a
+ * scope, a plugin activation and a memory context are all written once and
+ * never updated, which is why none of them ever needed one.
+ */
+function harnessRunAuthorityPromotion(): string[] {
+  const names = /^_runtime_run_(?:scopes|plugin_activations|memory_contexts)/;
+  const compatObjects = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.flatMap((statement) => {
+    const trigger = /CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    if (trigger) return names.test(trigger) ? [`DROP TRIGGER IF EXISTS ${trigger}`] : [];
+    const view = /CREATE VIEW IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    return view && names.test(view) ? [`DROP VIEW IF EXISTS ${view}`] : [];
+  });
+  if (compatObjects.length !== 6) {
+    throw new Error(`expected six harness-run compat objects, found ${compatObjects.length}`);
+  }
+  return [
+    // Triggers first, so no trigger is left orphaned in `sqlite_schema`.
+    ...compatObjects.filter((statement) => statement.startsWith("DROP TRIGGER")),
+    ...compatObjects.filter((statement) => statement.startsWith("DROP VIEW")),
+  ];
+}
 
 /**
  * Retires the resources slice's three compatibility objects.
