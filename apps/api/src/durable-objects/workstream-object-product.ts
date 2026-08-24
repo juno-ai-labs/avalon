@@ -33,6 +33,7 @@ import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { logWarn } from "../observability/logger";
 import { prepareMentionMarkdown, type MentionPerson } from "../lib/message-mentions";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -648,18 +649,40 @@ export class WorkstreamObjectProductService {
    * Writes at most once per participant, and only through the effect commit,
    * so the sidebar the dot is on hears about it the same way it heard about
    * every other viewer change.
+   *
+   * **Never allowed to fail the open.** This is bookkeeping about a dot running
+   * inside what every caller treats as a read, so a marker that stays lit until
+   * the next open is the better failure — the same rule
+   * `GET /workstreams/:id` already applies to the block-dashboard preference it
+   * fetches alongside the detail.
+   *
+   * Not a guard against the authority fence, which was the first suspicion:
+   * `commitWithRegionalEffects` refuses a non-authoritative object, but the
+   * product route ahead of this refuses one too, with `workstream_maintenance`
+   * and a 503 — on either half of the fence, mode or generation — so a request
+   * that reaches here has already proved it can commit. What is left is
+   * everything else a commit can fail on, none of which is worth a work stream
+   * that will not open.
    */
   private async markOpened(userId: string): Promise<void> {
     if (!this.isUnseen(userId)) return;
     const now = Date.now();
-    await this.objectStore.commitWithRegionalEffects(
-      (sql) => sql.exec(
-        `UPDATE participants SET first_opened_at = ?, updated_at = ?
-          WHERE user_id = ? AND status = 'active' AND first_opened_at IS NULL`,
-        now, now, userId,
-      ),
-      () => [{ partitionKey: `user:${userId}`, effect: this.userEffect(this.root(), userId) }],
-    );
+    try {
+      await this.objectStore.commitWithRegionalEffects(
+        (sql) => sql.exec(
+          `UPDATE participants SET first_opened_at = ?, updated_at = ?
+            WHERE user_id = ? AND status = 'active' AND first_opened_at IS NULL`,
+          now, now, userId,
+        ),
+        () => [{ partitionKey: `user:${userId}`, effect: this.userEffect(this.root(), userId) }],
+      );
+    } catch (error) {
+      logWarn(this.env, "workstream_mark_opened_failed", {
+        workstreamId: this.root().workstream_key,
+        userId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }
   }
 
   canRead(userId: string): boolean {

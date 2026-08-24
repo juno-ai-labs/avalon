@@ -2113,8 +2113,16 @@ pre {
 /* The row carries whichever marker the work stream is in, so the label beside
    the dot takes its colour from the same state rather than from the one state
    this section used to hold. */
-.waiting-workstream-row .status-indicator { font-size: 10.5px; }
+/* Every row used to say "Needs input", so the first column was the same width
+   in all of them for free. Five labels can reach a row now, and a per-row
+   `auto` column gives each one its own width — a ragged left edge down a
+   section whose whole value is that it can be scanned. The floor is the widest
+   label the ranking can put here ("You were mentioned"); a longer one would
+   push its own row out again, so a label added to `statusLabel` is a reason to
+   come back and re-measure. */
+.waiting-workstream-row .status-indicator { font-size: 10.5px; min-width: 112px; }
 .waiting-workstream-row .status-needs_input { color: var(--av-sys-color-workstream-needs-input); }
+.waiting-workstream-row .status-running { color: var(--av-sys-color-workstream-running); }
 .waiting-workstream-row .status-unread { color: var(--av-sys-color-workstream-unread); }
 .waiting-workstream-row .status-mentioned { color: var(--av-sys-color-workstream-mentioned); }
 .waiting-workstream-row .status-unseen { color: var(--av-sys-color-workstream-unseen); }

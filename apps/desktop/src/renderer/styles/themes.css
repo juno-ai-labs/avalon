@@ -155,7 +155,7 @@
    * the home screen. Every marker in the product draws from this group and
    * nowhere else, so a state has one colour wherever it appears; which state
    * wins when several are true at once is the client’s ordering, not the
-   * palette’s. Three of them are the run’s (`running`, `needs-input`,
+   * palette’s. Five of them are the run’s (`running`, `needs-input`,
    * `completed`, `failed`, `stopped`) and three are the reader’s own
    * (`unread`, `mentioned`, `unseen`), which is why they are one vocabulary:
    * they compete for one dot. */
