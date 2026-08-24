@@ -39,6 +39,7 @@ import {
 } from "./workstream-origin-resource";
 import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 import { activityIsWorkspaceVisible } from "../lib/activity-visibility";
+import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import {
   claimDueWorkstreamWakeup,
   releaseClaimedWorkstreamWakeup,
@@ -352,8 +353,17 @@ export async function launchWorkstreamHarness(
 export async function fireWorkstreamWakeup(
   env: Env,
   row: WorkstreamWakeupRow,
+  /**
+   * The scheduling authority to claim through.
+   *
+   * Passed in rather than derived from `env` so a test can stand where the
+   * owning object stands. Every caller — including the object's own alarm —
+   * hands it a port over the endpoint, because the endpoint is what commits the
+   * claim together with the sidebar projection it invalidates.
+   */
+  scheduling: SchedulingObjectPort,
 ): Promise<{ fired: boolean; harnessRunId?: string }> {
-  if (!await claimDueWorkstreamWakeup(env, row)) return { fired: false };
+  if (!await claimDueWorkstreamWakeup(scheduling, row)) return { fired: false };
 
   // Everything after the claim runs under one release-on-throw path. A claim is
   // only safe to hold if every way out of this function either starts a run or
@@ -390,7 +400,7 @@ export async function fireWorkstreamWakeup(
     // Nothing durable ran, so the wake-up has not happened. Hand it back to the
     // scheduler's retry backoff rather than consuming it. A failure to release
     // must not replace the diagnosis of what actually went wrong.
-    await releaseClaimedWorkstreamWakeup(env, row).catch(() => undefined);
+    await releaseClaimedWorkstreamWakeup(scheduling, row).catch(() => undefined);
     throw error;
   }
 }
