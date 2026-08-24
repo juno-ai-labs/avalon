@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { zValidator } from "../middleware/validation";
+import { requireSendableMessageLength, zValidator } from "../middleware/validation";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   ActivitySuggestionSchema,
@@ -176,7 +176,8 @@ workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
     query.limit, query.before, query.includeSystem === "true",
   )));
 });
-workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), async (c) => {
+workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
+  zValidator("json", CreateWorkstreamRequestSchema), async (c) => {
   const body = c.req.valid("json");
   const auth = getAuth(c);
   const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
@@ -322,7 +323,8 @@ workstreamRoutes.get("/:id/messages", zValidator("param", idParam), zValidator("
     return c.json(MessagePageSchema.parse(page));
   });
 });
-workstreamRoutes.post("/:id/messages", zValidator("param", idParam), zValidator("json", CreateMessageRequestSchema), async (c) => {
+workstreamRoutes.post("/:id/messages", zValidator("param", idParam), requireSendableMessageLength("text"),
+  zValidator("json", CreateMessageRequestSchema), async (c) => {
   const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
   const id = c.req.valid("param").id;
   const body = c.req.valid("json");

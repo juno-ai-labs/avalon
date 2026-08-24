@@ -35,12 +35,42 @@ import {
 } from "@avalon/agent-harness";
 import { z } from "zod";
 
+import { WORKSTREAM_DESCRIPTION_MAX_CHARACTERS } from "@avalon/contracts";
+
 import type { Env } from "../env";
-import { createMessageObjectPort } from "../runtime/message-port";
+import { firstNonEmptyLine, truncateUtf16Safe } from "../lib/text";
 import { logStructuredEvent } from "../observability/logger";
+import { createMessageObjectPort } from "../runtime/message-port";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import { runStructuredInference } from "./structured-inference";
+
+/**
+ * The description a work stream carries between being created and this loop's
+ * first pass over it.
+ *
+ * The opening line, not the opening message. Those were the same thing while a
+ * message was bounded at 4,000 characters and a description at the same 4,000,
+ * and taking the whole message was free. Raising the message ceiling to
+ * `MESSAGE_MAX_CHARACTERS` separates them: a description is the line the sidebar
+ * shows, the text the routing classifier reads, and the context every run starts
+ * from, and none of those wanted a 100,000-character paste even when the schema
+ * would have held one.
+ *
+ * Nothing a person typed is lost here — the message itself is stored whole, as
+ * the work stream's first message — and this value is the shortest-lived one in
+ * the work stream: the loop below replaces it after the first run, at a quarter
+ * of even this length. The bound is the storage ceiling rather than
+ * {@link MAXIMUM_DESCRIPTION_CHARACTERS} because this is the fallback that
+ * stands when naming and the loop both fail, and truncating a person's own
+ * first line further than the column requires would be inventing a summary.
+ */
+export function provisionalWorkstreamDescription(openingMessage: string, fallback: string): string {
+  const firstLine = firstNonEmptyLine(openingMessage);
+  return firstLine
+    ? truncateUtf16Safe(firstLine, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS)
+    : fallback;
+}
 
 /**
  * The recency half of the window. Long enough that a work stream worked on

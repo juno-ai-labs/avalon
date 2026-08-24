@@ -47,6 +47,35 @@ everything above it that can return.
 
 ---
 
+## The work-stream composer's own length refusal is unexercised
+
+**Severity:** coverage-gap
+
+**Observed.** `sendMessage` in
+`apps/desktop/src/renderer/screens/workstream.tsx` refuses a message over
+`MESSAGE_MAX_CHARACTERS` before the optimistic turn is inserted, setting
+`sendError` to `MESSAGE_TOO_LONG_MESSAGE`. Nothing tests it. `WorkstreamScreen`
+is mocked out in every suite that references it — `App.session-gate.test.tsx`
+replaces it with a `<div>` — and `workstream.test.tsx` renders only the header
+and the notice components, never the screen.
+
+**Why it is suspicious.** The equivalent guard on the new-work-stream composer
+is covered three ways, and the two were written together. This one holds the
+same rule on the other composer and rests on a code read. Its failure is not
+silent — the WorkspaceDO answers the same refusal with the same sentence, which
+`test-workers/workspace-socket-message-length.test.ts` does prove — but the
+client guard is what stops the optimistic turn from appearing in the transcript
+and being pulled back out of it, and that part nothing checks.
+
+**What would settle it.** A harness that renders `WorkstreamScreen` for real —
+session, query client, router, workspace and work-stream sockets — and asserts
+that a message over the ceiling shows `MESSAGE_TOO_LONG_MESSAGE`, never calls
+`createMessage` on the socket, and leaves the transcript untouched. That harness
+does not exist and is worth more than this one assertion: it is the reason the
+screen with the most behaviour in the renderer is the least covered.
+
+---
+
 ## `completeOpportunityStart` throws across an RPC boundary its caller does not catch
 
 **Severity:** wrong-answer
