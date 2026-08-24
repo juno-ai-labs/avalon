@@ -308,6 +308,27 @@ function seedAutomationRun(sqlite: RuntimeFixture, suffix: string): string {
   return runId;
 }
 
+/**
+ * The member-visible half of a started tool call: the transcript row the host
+ * writes on `tool_started`, keyed by the receipt it was planned against. The
+ * spinner these tests are about is this row's `tool_status`, so asserting on
+ * the receipt alone would not have caught the symptom.
+ */
+function seedPendingToolCard(sqlite: RuntimeFixture, invocationId: string, toolName: string): void {
+  sqlite.object.prepare(
+    `INSERT INTO messages
+      (id, client_message_id, workspace_id, workstream_id, author_type, message_type,
+       text_content, structured_content_json, sequence_number, created_at, edited_at)
+     VALUES (?, ?, ?, ?, 'agent', 'tool', '', ?, 90, '2026-08-03T00:00:00.000Z', NULL)`,
+  ).run(
+    invocationId,
+    `tool:${invocationId}`,
+    WORKSPACE_ID,
+    WORKSTREAM_ID,
+    JSON.stringify({ invocation: { id: invocationId, toolName, status: "started" } }),
+  );
+}
+
 function childScope(overrides: Partial<ImmutableRunScope> = {}): ImmutableRunScope {
   return {
     ...PARENT_SCOPE,
@@ -3069,6 +3090,357 @@ describe("durable harness attempt runtime", () => {
     expect(settlementCalls).toBe(2);
   });
 
+  it("closes the tool card of a run that terminalizes failed with a receipt still open", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-direct-failure",
+      owner: "owner-direct-failure",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-direct-failure",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: `${RUN_ONE}:turn:2:tool:0`,
+      toolName: "load_plugin",
+      inputHash: "direct-failure-input",
+      input: { pluginId: "plugin_x" },
+      plan: { operation: "avalon.plugins.load", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    seedPendingToolCard(sqlite, "invocation-direct-failure", "load_plugin");
+    expect(sqlite.object.prepare(
+      "SELECT tool_status FROM parts WHERE id = ?",
+    ).get("invocation-direct-failure")).toEqual({ tool_status: "pending" });
+
+    // The run dies between `tool_started` and the guard that reports
+    // `tool_failed` — a required host port throwing, an evicted executor — so
+    // the receipt is never settled by the tool's own path.
+    expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
+      status: "failed",
+      error: { code: "tool_receipt_persistence_failed", message: "A required host persistence port failed" },
+      memberSafePayload: { code: "tool_receipt_persistence_failed" },
+    }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
+
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-direct-failure")).toEqual({
+      status: "failed",
+      // Not the reaper's "lost its durable lease": this run wrote its own
+      // terminal row, so nothing here observed a lease being lost.
+      error_json: '{"code":"run_terminated","message":"The run ended before the tool produced a result"}',
+    });
+    expect(sqlite.object.prepare(
+      "SELECT tool_status FROM parts WHERE id = ?",
+    ).get("invocation-direct-failure")).toEqual({ tool_status: "failed" });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+  });
+
+  it("closes the tool card of a run that answered while a receipt stayed open", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-completed-residual",
+      owner: "owner-completed-residual",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-completed-residual",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: `${RUN_ONE}:turn:2:tool:1`,
+      toolName: "load_plugin",
+      inputHash: "completed-residual-input",
+      input: { pluginId: "plugin_x" },
+      plan: { operation: "avalon.plugins.load", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    seedPendingToolCard(sqlite, "invocation-completed-residual", "load_plugin");
+    await persistHarnessFinalMessage(sqlite.binding, input(RUN_ONE), claim.lease, {
+      id: "message-completed-residual",
+      sequenceNumber: 1,
+      text: "Here is what those teams use",
+      createdAt: "2026-08-03T00:00:00.000Z",
+    }, { status: "completed" });
+
+    // The worst case of the two: Bind synthesizes a tool error for the call
+    // whose terminal event never reached the host, the model answers anyway,
+    // and the run reaches `completed` with the card still spinning.
+    expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
+      status: "completed",
+      finalMessageId: "message-completed-residual",
+    }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
+
+    expect(sqlite.object.prepare(
+      "SELECT status FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-completed-residual")).toEqual({ status: "failed" });
+    expect(sqlite.object.prepare(
+      "SELECT tool_status FROM parts WHERE id = ?",
+    ).get("invocation-completed-residual")).toEqual({ tool_status: "failed" });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+  });
+
+  it("repairs a directly-failed root that lost its settlement response, sparing a live automation run", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const automationRunId = seedAutomationRun(sqlite, "direct-failure-repair");
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-direct-failure-repair",
+      owner: "owner-direct-failure-repair",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-direct-failure-repair",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: `${RUN_ONE}:turn:3:tool:0`,
+      toolName: "load_plugin",
+      inputHash: "direct-failure-repair-input",
+      input: { pluginId: "plugin_x" },
+      plan: { operation: "avalon.plugins.load", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    seedPendingToolCard(sqlite, "invocation-direct-failure-repair", "load_plugin");
+
+    let settlementCalls = 0;
+    const flakyReceipts = {
+      ...sqlite.receipts,
+      settleResidualReceipts: async (
+        repair: Parameters<typeof sqlite.receipts.settleResidualReceipts>[0],
+      ) => {
+        settlementCalls += 1;
+        if (settlementCalls === 1) throw new Error("lost_receipt_rpc_response");
+        return sqlite.receipts.settleResidualReceipts(repair);
+      },
+    } satisfies typeof sqlite.receipts;
+
+    await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
+      status: "failed",
+      error: { code: "harness_execution_failed", message: "The Avalon harness could not complete this run" },
+      memberSafePayload: { code: "harness_execution_failed" },
+    }, flakyReceipts, sqlite.blocks)).rejects.toThrow("lost_receipt_rpc_response");
+    expect(sqlite.object.prepare(
+      "SELECT status FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toEqual({ status: "failed" });
+    expect(sqlite.object.prepare(
+      "SELECT tool_status FROM parts WHERE id = ?",
+    ).get("invocation-direct-failure-repair")).toEqual({ tool_status: "pending" });
+
+    // The dispatch does not retry a run whose terminal row already landed, so
+    // the bounded sweep on the next dispatch is the only thing left that can
+    // close this card.
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => flakyReceipts,
+      blocks: () => sqlite.blocks,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).toEqual([]);
+    expect(settlementCalls).toBe(2);
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-direct-failure-repair")).toEqual({
+      status: "failed",
+      error_json: '{"code":"run_terminated","message":"The run ended before the tool produced a result"}',
+    });
+    expect(sqlite.object.prepare(
+      "SELECT tool_status FROM parts WHERE id = ?",
+    ).get("invocation-direct-failure-repair")).toEqual({ tool_status: "failed" });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+    // The automation settlement this walk performs for a reaped root matches
+    // every unfinished automation row in the work stream rather than this run's
+    // own, so a directly-failed root must not trigger it.
+    expect(sqlite.database.prepare(
+      "SELECT status FROM automation_runs WHERE id = ?",
+    ).get(automationRunId)).toEqual({ status: "running" });
+  });
+
+  it("closes the tool card of a run that suspended for input with a receipt still open", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-needs-input-residual",
+      owner: "owner-needs-input-residual",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-needs-input-residual",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: `${RUN_ONE}:turn:2:tool:0`,
+      toolName: "load_plugin",
+      inputHash: "needs-input-residual-input",
+      input: { pluginId: "plugin_x" },
+      plan: { operation: "avalon.plugins.load", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    seedPendingToolCard(sqlite, "invocation-needs-input-residual", "load_plugin");
+
+    // The fourth terminal status, and the one whose safety the change argues
+    // rather than demonstrates elsewhere: an elicitation returns a normal result
+    // carrying `halt`, so its own receipt settles before the run suspends and a
+    // receipt still open here belongs to some earlier call. Settling it is
+    // therefore right, and a continuation gets a fresh run id, so nothing is
+    // closed out from under a run that will resume.
+    expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
+      status: "needs_input",
+      memberSafePayload: {},
+    }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
+
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-needs-input-residual")).toEqual({
+      status: "failed",
+      error_json: '{"code":"run_terminated","message":"The run ended before the tool produced a result"}',
+    });
+    expect(sqlite.object.prepare(
+      "SELECT tool_status FROM parts WHERE id = ?",
+    ).get("invocation-needs-input-residual")).toEqual({ tool_status: "failed" });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+    // Settling the receipt does not relabel the run itself: it is still waiting
+    // on a person, not failed. (Asserted on the run rather than the work stream,
+    // whose status is held back here by the fixture's second scheduled run --
+    // an interaction this change has nothing to do with.)
+    expect(sqlite.object.prepare(
+      "SELECT status FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toEqual({ status: "needs_input" });
+  });
+
+  it("repairs a marker backfill without delaying the stale-lease reap behind it", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    // An ordinary completed run carrying no settlement marker — the shape every
+    // row terminalized before settlement became universal has, and which the
+    // repair walk now enrols. Terminalized by hand, so no marker is recorded.
+    const backfill = await claimHarnessAttempt(sqlite.binding, input(RUN_TWO), {
+      attemptId: "attempt-marker-backfill",
+      owner: "owner-marker-backfill",
+    });
+    if (backfill.state !== "claimed") throw new Error("expected claimed attempt");
+    sqlite.object.prepare(
+      `UPDATE harness_runs
+          SET status = 'completed', completed_at = '2026-08-01T00:00:00.000Z',
+              terminalized_at = '2026-08-01T00:00:00.000Z',
+              lease_owner = NULL, lease_expires_at = NULL
+        WHERE id = ?`,
+    ).run(RUN_TWO);
+
+    // An executor that died without terminalizing at all. Its expired lease is
+    // the only signal it leaves, and this reap is the only thing that will ever
+    // close its card.
+    const stale = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-stale-behind-backfill",
+      owner: "owner-stale-behind-backfill",
+    });
+    if (stale.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, stale.lease, {
+      invocationId: "invocation-stale-behind-backfill",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: `${RUN_ONE}:turn:1:tool:0`,
+      toolName: "load_plugin",
+      inputHash: "stale-behind-backfill-input",
+      input: { pluginId: "plugin_x" },
+      plan: { operation: "avalon.plugins.load", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    seedPendingToolCard(sqlite, "invocation-stale-behind-backfill", "load_plugin");
+    sqlite.object.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_ONE);
+
+    // One slot per pass. The backfill row fills the repair page; sharing a
+    // budget would return here having reaped nothing.
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => sqlite.receipts,
+      blocks: () => sqlite.blocks,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      limit: 1,
+    })).toEqual([RUN_ONE]);
+    expect(sqlite.object.prepare(
+      "SELECT tool_status FROM parts WHERE id = ?",
+    ).get("invocation-stale-behind-backfill")).toEqual({ tool_status: "failed" });
+    // Both halves of the activation did their work, not one at the other's cost.
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_TWO)).toEqual({ count: 1 });
+  });
+
+  it("finishes a reaped root's lost settlement with the reaper's wording, not its own", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-reaped-then-returned",
+      owner: "owner-reaped-then-returned",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-reaped-then-returned",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: `${RUN_ONE}:turn:1:tool:0`,
+      toolName: "load_plugin",
+      inputHash: "reaped-then-returned-input",
+      input: { pluginId: "plugin_x" },
+      plan: { operation: "avalon.plugins.load", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    sqlite.object.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_ONE);
+
+    // The reaper terminalizes the lapsed root but loses its settlement response,
+    // so the row is terminal, unmarked, and its receipt still open.
+    const losingReceipts = {
+      ...sqlite.receipts,
+      settleResidualReceipts: async () => { throw new Error("lost_receipt_rpc_response"); },
+    } satisfies typeof sqlite.receipts;
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      receipts: () => losingReceipts,
+      blocks: () => sqlite.blocks,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).toEqual([RUN_ONE]);
+    expect(sqlite.object.prepare(
+      "SELECT status FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-reaped-then-returned")).toEqual({ status: "executing" });
+
+    // The reaper keeps `attempt_id` and only clears the lease, so the original
+    // executor's own repeat of its terminalization lands in `already_terminal`
+    // and finishes the protocol. It must not relabel the reaper's work.
+    expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
+      status: "failed",
+      error: { code: "harness_execution_failed", message: "The Avalon harness could not complete this run" },
+      memberSafePayload: { code: "harness_execution_failed" },
+    }, sqlite.receipts, sqlite.blocks)).toBe("already_terminal");
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-reaped-then-returned")).toEqual({
+      status: "failed",
+      error_json: '{"code":"parent_run_terminated","message":"The parent run lost its durable lease"}',
+    });
+  });
+
   it("bulk-settles more residual receipts than one runtime transaction may contain", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
@@ -4213,6 +4585,23 @@ describe("inline child-run durability", () => {
               lease_owner = NULL, lease_expires_at = NULL
         WHERE id = ?`,
     ).run(RUN_ONE);
+    // The parent is scaffolding here, and terminalizing it by hand skips the
+    // settlement its own terminal path performs — which the repair walk would
+    // otherwise, correctly, spend this test's one flaky call on. Record what
+    // that path would have recorded so the child stays the subject.
+    sqlite.object.prepare(
+      `INSERT INTO harness_run_lifecycle_events
+        (id, harness_run_id, workspace_id, workstream_id, attempt_id, event_key,
+         event_type, status, member_safe_payload_json, created_at)
+       VALUES (?, ?, ?, ?, ?, 'residual_receipts_settled', 'receipt_reconciliation',
+               'completed', '{}', '2026-08-03T00:00:00.000Z')`,
+    ).run(
+      "lifecycle-parent-receipts-settled",
+      RUN_ONE,
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      parentLease.attemptId,
+    );
 
     let settlementCalls = 0;
     const flakyReceipts = {
