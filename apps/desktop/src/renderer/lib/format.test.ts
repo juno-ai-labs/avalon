@@ -130,7 +130,7 @@ describe('work-stream presentation rules', () => {
     expect(workstreamMarkerStatus({ harnessStatus: 'failed' })).toBe('failed');
   });
 
-  it('asks for attention only where somebody named this person', () => {
+  it('asks for attention only where somebody named this person: unseen, mentioned, needs_input', () => {
     expect(workstreamNeedsAttention({ harnessStatus: 'needs_input' })).toBe(true);
     expect(workstreamNeedsAttention({ harnessStatus: 'completed', unseen: true })).toBe(true);
     expect(workstreamNeedsAttention({ harnessStatus: 'completed', youAreMentioned: true })).toBe(true);
