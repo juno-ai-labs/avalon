@@ -77,6 +77,7 @@ import { ensureFreshConnectorCredentials } from "./connector-credential-refresh"
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { persistNormalizedActivity } from "./normalized-activity-service";
 import { SlackWorkspaceWorkstreamService } from "./slack-workspace-workstream-service";
+import { provisionalWorkstreamDescription } from "./workstream-description-service";
 import { WorkstreamService } from "./workstream-service";
 import {
   describeWorkstreamOrigin,
@@ -2013,7 +2014,7 @@ export class SlackAgentService {
     // replace it — a title supplied here would read as a deliberate choice.
     const created = input.identity
       ? await new WorkstreamService(this.env, input.identity.auth).create({
-          objective: input.prompt.slice(0, 4_000),
+          objective: provisionalWorkstreamDescription(input.prompt, "Slack task"),
           participantUserIds: audience.userIds.filter((id) => id !== input.identity?.auth.userId),
           openingMessage: input.prompt,
           clientMessageId: input.clientMessageId.slice(0, 120),
@@ -2023,7 +2024,7 @@ export class SlackAgentService {
         }, input.slackOrigin, input.slackSearchAuthorization)
       : await new SlackWorkspaceWorkstreamService(this.env, asWorkspaceId(input.connection.workspace_id)).create({
           actor: ExternalActorSchema.parse(input.actor),
-          objective: input.prompt.slice(0, 4_000),
+          objective: provisionalWorkstreamDescription(input.prompt, "Slack task"),
           text: input.prompt,
           clientMessageId: input.clientMessageId.slice(0, 120),
           // The Slack member is not a linked Avalon identity, but when the

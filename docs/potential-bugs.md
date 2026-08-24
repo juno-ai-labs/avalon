@@ -47,6 +47,45 @@ everything above it that can return.
 
 ---
 
+## The work-stream composer's own length refusal is unexercised
+
+**Severity:** coverage-gap
+
+**Observed.** `sendMessage` in
+`apps/desktop/src/renderer/screens/workstream.tsx` refuses a message over
+`MESSAGE_MAX_CHARACTERS` before the optimistic turn is inserted, setting
+`sendError` to `MESSAGE_TOO_LONG_MESSAGE`. Nothing tests it. `WorkstreamScreen`
+is mocked out in every suite that references it — `App.session-gate.test.tsx`
+replaces it with a `<div>` — and `workstream.test.tsx` renders only the header
+and the notice components, never the screen.
+
+**Why it is suspicious.** It has already been wrong once. The guard shipped into
+review returning rather than throwing, and `WorkstreamComposer.send` clears the
+draft *before* awaiting `onSend` and restores it only if `onSend` rejects — so
+the refusal deleted the message it was asking the person to shorten. A review bot
+caught it on the pull request that introduced it; nothing in the suite did, and
+the composer's own reject-restores-the-draft tests passed throughout, because
+they exercise the composer against a mock rather than against this screen.
+
+That is the shape of the gap: the equivalent guard on the new-work-stream
+composer is covered three ways, and the two were written together. This one
+holds the same rule on the other composer, across a contract — resolve means
+sent — that only the screen and the component together express, and rests on a
+code read. Its failure is not silent at the server: the WorkspaceDO answers the
+same refusal with the same sentence, which
+`test-workers/workspace-socket-message-length.test.ts` proves. But everything
+between the keystroke and that socket frame — the draft surviving, the optimistic
+turn never appearing — nothing checks.
+
+**What would settle it.** A harness that renders `WorkstreamScreen` for real —
+session, query client, router, workspace and work-stream sockets — and asserts
+that a message over the ceiling shows `MESSAGE_TOO_LONG_MESSAGE`, never calls
+`createMessage` on the socket, and leaves the transcript untouched. That harness
+does not exist and is worth more than this one assertion: it is the reason the
+screen with the most behaviour in the renderer is the least covered.
+
+---
+
 ## `completeOpportunityStart` throws across an RPC boundary its caller does not catch
 
 **Severity:** wrong-answer
