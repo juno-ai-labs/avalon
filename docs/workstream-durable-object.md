@@ -1305,6 +1305,55 @@ of the three. If the product ever settles on a single busy status, retire the
 other two from the CHECK constraint rather than from the fences, so the
 narrowing is enforced where it can be seen.
 
+### 2026-08-23 — Terminalization and the reaper, and the end of the changes count
+
+**What changed:** `terminalizeHarnessAttempt`, `terminalizeQueuedHarnessRun`,
+`reapStaleHarnessRuns` and the residual-receipt marker moved onto the port, as
+`terminalizeAttempt`, `terminalizeQueuedRun`, `reapStaleRoot`,
+`reapStaleInlineChild`, two bounded scans and `recordReceiptReconciliation`.
+`d1Changes` is deleted: nothing in the runtime interprets a changed-row count
+any more.
+
+**Why:** these were the last and worst of the guarded batches. Terminalization
+was four statements in which the third and fourth each carried `EXISTS (SELECT 1
+FROM harness_runs … AND terminalized_at = ?)` — a correlated subquery whose only
+job was to ask whether the batch's own *second* statement had landed, because D1
+gives a batch no way to branch on its own progress. The reaper did the same
+thing twice more, and spelled its parent-supervision test three times: once in
+the scan and twice inside the batch that acted on it, the second copy produced
+by rewriting `child.` to `harness_runs.` with a string replacement. That test is
+now one private method, read once.
+
+**Two of the three sidebar writes now live together.** `markWorkstreamRunning`
+(the claim) and `settleWorkstreamState` (every ending) are the two halves of
+what the member sees, and `settleWorkstreamState`'s `NOT EXISTS` is the part
+that matters: a superseding turn admitted while this one was finishing must keep
+the work stream busy, or the member watches it go idle and immediately start
+again. `terminalizeAttempt`, `terminalizeQueuedRun` and `reapStaleRoot` all join
+`claimAttempt` in `RUN_STATE_WRITES`, so each commits its projection with its
+write.
+
+**What a future change has to respect.** Receipt settlement stays *outside* the
+terminalization transaction, and that is not an oversight: the receipts are a
+different authority, and of the two possible orderings only "terminalize, then
+settle" fails safe. The price is a window where a run is terminal and its tool
+card still spins, which is why `already_terminal` reports whether the marker was
+ever written and why `residualRepairCandidates` exists at all. Moving the
+settlement inside, or dropping the marker, reintroduces a permanently spinning
+tool card with nothing to find it.
+
+The lifecycle event's `status` column now holds the object's vocabulary, where
+`stopped` is `cancelled`. No production code outside this authority reads it;
+the compat view passes it through untranslated, and both are retired together.
+
+**Three functions in `harness-run-runtime.ts` still take a database, and each
+for a stated reason.** `persistHarnessFinalMessage` and
+`loadPersistedHarnessFinalOutcome` join `messages`, which waits for slice 7.
+`settleStaleAutomationRun` writes `automation_runs` — a regional D1 table, not
+an object-local one — and is the one place a terminalization instant crosses
+back into ISO-8601 text.
+
+
 ### 2026-08-23 — The sub-agent concurrency cap is removed, not renamed
 
 **What changed:** `HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS` is gone — the env

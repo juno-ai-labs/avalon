@@ -749,3 +749,55 @@ describe("sweeping a run's descendants", () => {
       .toEqual({ cancelled: 1 });
   });
 });
+
+describe("ending a run that was never claimed", () => {
+  const queued = {
+    runId: RUN,
+    attemptId: "attempt-queued",
+    status: "failed",
+    errorJson: '{"code":"never_started"}',
+    memberSafePayloadJson: '{"code":"never_started"}',
+    lifecycleEventId: "event-queued",
+    now: NOW,
+  };
+
+  it("stamps an attempt so the ending has an owner", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN);
+
+    expect(storage.terminalizeQueuedRun(queued)).toEqual({ outcome: "terminalized" });
+    expect(sql.exec(
+      `SELECT status, legacy_attempt_id, terminalized_at, error_json FROM runs WHERE run_id = ?`,
+      RUN,
+    ).one()).toMatchObject({
+      status: "failed",
+      legacy_attempt_id: "attempt-queued",
+      terminalized_at: NOW,
+      error_json: '{"code":"never_started"}',
+    });
+    expect(sql.exec(`SELECT exact_state FROM workstream WHERE id = 1`).one())
+      .toMatchObject({ exact_state: "failed" });
+  });
+
+  it("refuses a run an executor has already claimed", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN);
+    storage.claimAttempt({ ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-claim" });
+
+    // This path exists for a run whose executor never arrived. A run that *is*
+    // being worked on has an attempt, and ending it from here would terminalize
+    // it out from under a live owner that still holds the lease.
+    expect(storage.terminalizeQueuedRun(queued)).toEqual({ outcome: "ownership_lost" });
+    expect(sql.exec(`SELECT status, terminalized_at FROM runs WHERE run_id = ?`, RUN).one())
+      .toMatchObject({ status: "running", terminalized_at: null });
+  });
+
+  it("replays the same ending rather than writing it twice", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN);
+    storage.terminalizeQueuedRun(queued);
+
+    expect(storage.terminalizeQueuedRun({ ...queued, lifecycleEventId: "event-2" }))
+      .toEqual({ outcome: "already_terminal" });
+  });
+});
