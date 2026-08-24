@@ -121,6 +121,27 @@ function activity(overrides: Record<string, unknown> = {}) {
 }
 
 describe("projecting connector activity into the activity log", () => {
+  it("moves restricted activity only into a target whose whole audience is permitted", () => {
+    const permitted = [MEMBER_A, MEMBER_B];
+
+    expect(__testing.contentAudienceContainsWorkstream(
+      { scope: "users", userIds: permitted },
+      { scope: "personal", userIds: [MEMBER_A] },
+    )).toBe(true);
+    expect(__testing.contentAudienceContainsWorkstream(
+      { scope: "users", userIds: permitted },
+      { scope: "personal", userIds: [MEMBER_A, MEMBER_B] },
+    )).toBe(true);
+    expect(__testing.contentAudienceContainsWorkstream(
+      { scope: "users", userIds: permitted },
+      { scope: "personal", userIds: [MEMBER_A, "00000000-0000-7000-8000-000000000099"] },
+    )).toBe(false);
+    expect(__testing.contentAudienceContainsWorkstream(
+      { scope: "users", userIds: permitted },
+      { scope: "workspace" },
+    )).toBe(false);
+  });
+
   it("shares a public workspace activity with every member", async () => {
     const { env, recorded } = envFor(seededDatabase());
 

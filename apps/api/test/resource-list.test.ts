@@ -138,7 +138,8 @@ describe("resource listing", () => {
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL, owner_user_id TEXT
       );
       CREATE TABLE workstreams (
-        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, automation_subscription_id TEXT
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        created_by_user_id TEXT, automation_subscription_id TEXT
       );
       CREATE TABLE workstream_participants (
         workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, removed_at TEXT
@@ -162,8 +163,11 @@ describe("resource listing", () => {
       );
       INSERT INTO automation_subscriptions (id, workspace_id, scope, owner_user_id)
         VALUES ('personal-subscription', '${workspaceId}', 'personal', 'c0000000-0000-4000-8000-000000000c01');
-      INSERT INTO workstreams (id, workspace_id, automation_subscription_id)
-        VALUES ('private-workstream', '${workspaceId}', 'personal-subscription');
+      INSERT INTO workstreams (id, workspace_id, scope, created_by_user_id, automation_subscription_id)
+        VALUES ('private-workstream', '${workspaceId}', 'personal',
+                'c0000000-0000-4000-8000-000000000c01', 'personal-subscription'),
+               ('private-ad-hoc-workstream', '${workspaceId}', 'personal',
+                'c0000000-0000-4000-8000-000000000c01', NULL);
       INSERT INTO workstream_participants (workstream_id, user_id, removed_at)
         VALUES ('private-workstream', 'c0000000-0000-4000-8000-000000000c03', NULL);
       INSERT INTO resources
@@ -171,7 +175,10 @@ describe("resource listing", () => {
          title, mime_type, canonical_url, content_ref, last_hydrated_at, created_at, updated_at)
         VALUES ('email-resource', '${workspaceId}', NULL, 'email', 'resend', 'email-1',
                 'Private email', 'application/json', NULL, 'private/email.json',
-                '2026-08-02T18:00:00.000Z', '2026-08-02T18:00:00.000Z', '2026-08-02T18:00:00.000Z');
+                '2026-08-02T18:00:00.000Z', '2026-08-02T18:00:00.000Z', '2026-08-02T18:00:00.000Z'),
+               ('ad-hoc-email-resource', '${workspaceId}', NULL, 'email', 'resend', 'email-2',
+                'Private ad hoc email', 'application/json', NULL, 'private/ad-hoc-email.json',
+                '2026-08-02T19:00:00.000Z', '2026-08-02T19:00:00.000Z', '2026-08-02T19:00:00.000Z');
     `);
     const d1 = sqliteD1(database);
     const payloadReads: string[] = [];
@@ -200,12 +207,15 @@ describe("resource listing", () => {
 
     database.exec(`
       INSERT INTO workstream_resources (workstream_id, resource_id, relationship_type)
-        VALUES ('private-workstream', 'email-resource', 'inbound_email');
+        VALUES ('private-workstream', 'email-resource', 'inbound_email'),
+               ('private-ad-hoc-workstream', 'ad-hoc-email-resource', 'inbound_email');
     `);
 
     await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c02"))).list({ limit: 10 }))
       .resolves.toMatchObject({ items: [] });
     await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c02"))).get("email-resource"))
+      .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
+    await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c02"))).get("ad-hoc-email-resource"))
       .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
     await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c02"))).content("email-resource"))
       .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
@@ -217,6 +227,8 @@ describe("resource listing", () => {
       .resolves.toMatchObject({ items: [expect.objectContaining({ id: "email-resource" })] });
     await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c01"))).get("email-resource"))
       .resolves.toMatchObject({ id: "email-resource", provider: "resend" });
+    await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c01"))).get("ad-hoc-email-resource"))
+      .resolves.toMatchObject({ id: "ad-hoc-email-resource", provider: "resend" });
     database.close();
   });
 });
@@ -232,7 +244,7 @@ describe("resource listing", () => {
 function resourceAccessFrom(database: DatabaseSync) {
   return async (input: { resourceId: string; userId: string }) => ({
     items: database.prepare(
-      `SELECT wr.workstream_id, w.automation_subscription_id,
+      `SELECT wr.workstream_id, w.scope, w.created_by_user_id, w.automation_subscription_id,
               EXISTS (
                 SELECT 1 FROM workstream_participants p
                  WHERE p.workstream_id = wr.workstream_id AND p.user_id = ?
@@ -245,8 +257,8 @@ function resourceAccessFrom(database: DatabaseSync) {
       const item = row as Record<string, unknown>;
       return {
         workstreamId: String(item.workstream_id),
-        scope: "workspace" as const,
-        createdByUserId: null,
+        scope: String(item.scope) as "personal" | "workspace",
+        createdByUserId: item.created_by_user_id == null ? null : String(item.created_by_user_id),
         automationSubscriptionId: item.automation_subscription_id == null
           ? null
           : String(item.automation_subscription_id),

@@ -303,15 +303,16 @@ Finally, revoke a test provider grant and repeat an affected read. Confirm the c
 
 Pass evidence: two independently selectable preset connections, exact stored capability sets, bounded native Docs and Sheets operations, Mail/Calendar and Drive cursors, one Drive-derived Doc activity, one Drive-derived Sheet activity, one authorized automation run per tested connection, and a sanitized reconnect state. Sending email is not required for this flow.
 
-## PRD flow 4 — contextual routing (paused)
+## PRD flow 4 — contextual routing
 
-1. Create a long-lived **CFO of Calm** work stream with at least one participant.
-2. Create a signed generic-webhook connection and ingest a transcript activity mentioning Calm and the CFO search.
-3. Confirm no Suggested context card appears inside that work stream and no pending `activity_suggestions` row is created.
-4. Confirm the unclaimed activity proceeds to suggested-work batching instead of buying the contextual-routing classifier inference.
-5. Repeat the same signed delivery identifier and confirm ingestion reports a duplicate without creating a second activity or work opportunity source.
+1. Create a long-lived workspace-scoped **CFO of Calm** work stream, a solo private **CFO private inbox** for the webhook connection's member, and a private control work stream shared with a second member outside the webhook activity's audience.
+2. Create a signed generic-webhook connection and ingest a restricted transcript activity mentioning Calm and the CFO search.
+3. Confirm one Suggested context card appears inside **CFO private inbox**, one pending suggestion exists, and the classifier candidate set contains neither the workspace-scoped **CFO of Calm** nor the shared private control title or objective.
+4. Accept the card and confirm the activity attaches once and the accepted card remains in the transcript. Repeat with a second activity, dismiss the card, reconnect the desktop, and confirm it remains absent from canonical, paginated, and realtime reconstruction.
+5. Add the connection's member to the private control and repeat the restricted activity. Confirm it still cannot be considered because its complete audience includes the second member. Ingest the same evidence as a workspace-audience activity and confirm contextual routing considers only workspace-scoped candidates, then accept a card in **CFO of Calm**. Repeat with contextual routing forced to decline: confirm Suggested Work creates one personal admission window per active member, each window can inspect that member's own private work plus workspace work, and neither can inspect the other member's private-only title.
+6. Repeat the same signed delivery identifier and confirm ingestion reports a duplicate without creating a second activity, suggestion, or work-opportunity source.
 
-Pass evidence: one activity, no work-stream suggestion or attachment, one batched suggested-work source, stable participant membership, and idempotent webhook replay.
+Pass evidence: explicit source and target audience traces for workspace and restricted activity, per-member fan-out of an unclaimed workspace source, cards only in audience-contained targets, one accepted attachment, one dismissal that survives reconstruction, no unauthorized or broader-audience title/objective in model input, and idempotent webhook replay.
 
 ## Flow 9 — inbound work-stream email
 
@@ -324,7 +325,7 @@ Pass evidence: one activity, no work-stream suggestion or attachment, one batche
 ## Flow 10 — inbound automation email
 
 1. Create one Global and one EU automation and confirm each exposes a permanent four-segment address from the same account-wide namespace as work streams.
-2. Send one message to each address. Confirm each owning region stores the untrusted email resource, creates exactly one new work stream and automation run, and passes only that labelled opening message to the harness.
+2. Send one message to each address. Confirm each owning region stores the untrusted email resource, creates exactly one new **private** work stream and automation run, records the automation owner as creator and participant, and passes only that labelled opening message to the harness. Confirm another workspace member cannot list or read either the run or its email resource.
 3. Replay the same Resend email ID while processing and after completion. Confirm an active lease returns a retryable response, an expired lease can be reclaimed, and the completed replay returns the original work-stream and run IDs without launching again.
 4. Pause an automation and confirm its route is disabled and mail cannot start a run. Resume it and confirm the exact same address is active again.
 5. Confirm a work-stream reservation cannot claim an automation local part (or vice versa), even across regions, and that removing an owner leaves a permanent tombstone.

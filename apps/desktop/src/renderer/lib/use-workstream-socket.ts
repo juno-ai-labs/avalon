@@ -18,6 +18,7 @@ import {
   messagesWithTransientBlocks,
   mapParticipant,
   mapResource,
+  mapSuggestion,
   mapToolInvocation,
   mapViewer,
   mapWorkstreamDetail,
@@ -30,9 +31,11 @@ import { startPerfTrace, type PerfTrace } from './perf-trace';
 import { advanceStreamReveal, applyRevealedText, flushStreamReveal } from './streaming-reveal';
 import { reportTelemetryProductIntent, uuidV7 } from './telemetry';
 import {
+  appendDismissedSuggestionId,
   createElicitationMessage,
   createTextMessage,
   createToolEventMessage,
+  dismissedSuggestionIdsQueryKey,
   isSameLogicalMessage,
   removeTranscriptMessage,
   upsertTranscriptMessage,
@@ -891,7 +894,11 @@ export function useWorkstreamSocket(
         // no canonical message yet. Without it a question the agent is waiting
         // on vanishes from the transcript the moment the run goes idle.
         const detail = mapWorkstreamDetail(event.workstream);
-        const downloaded = messagesWithTransientBlocks(feed.items.map(mapMessage), detail);
+        const downloaded = messagesWithTransientBlocks(
+          feed.items.map(mapMessage),
+          detail,
+          queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId)),
+        );
         queryClient.setQueryData<Message[]>(['messages', workstreamId],
           applyActiveStreamCheckpoints(downloaded, event.activeStreams, workstreamId, streamCursors));
         queryClient.setQueryData(['messages-cursor', workstreamId], feed.nextCursor);
@@ -1057,6 +1064,37 @@ export function useWorkstreamSocket(
               : [...current.resources, resource],
           };
         });
+      } else if (event.type === 'activity_suggestion_created' || event.type === 'activity_suggestion_resolved') {
+        // Detail is what transcript reconstruction uses, so update it together
+        // with the synthetic message or a later snapshot would revive a card
+        // that has already been resolved.
+        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) => {
+          if (!current) return current;
+          const remaining = (current.suggestions ?? []).filter((suggestion) => suggestion.id !== event.suggestion.id);
+          return {
+            ...current,
+            suggestions: event.suggestion.status === 'pending'
+              ? [mapSuggestion(event.suggestion), ...remaining]
+              : remaining,
+          };
+        });
+        if (event.suggestion.status === 'dismissed') {
+          queryClient.setQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId), (dismissed) =>
+            appendDismissedSuggestionId(dismissed, event.suggestion.id));
+        }
+        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
+          const messageId = `suggestion-${event.suggestion.id}`;
+          if (event.suggestion.status === 'dismissed') return removeTranscriptMessage(current, messageId);
+          return insertMessage(current, {
+            id: messageId,
+            workstreamId,
+            sequenceNumber: event.sequence,
+            authorType: 'system',
+            messageType: 'activity_suggestion',
+            createdAt: event.suggestion.createdAt,
+            activitySuggestion: mapSuggestion(event.suggestion),
+          });
+        });
       } else if (event.type === 'block_dashboard_configuration_updated') {
         queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], event.blockDashboard);
       } else if (event.type === 'block_dashboard_block_run_updated') {
@@ -1184,7 +1222,11 @@ export function useWorkstreamSocket(
             api.getWorkstream(workstreamId),
             api.getMessages(workstreamId),
           ]);
-          const canonicalMessages = messagesWithTransientBlocks(canonicalMessagePage, canonicalWorkstream);
+          const canonicalMessages = messagesWithTransientBlocks(
+            canonicalMessagePage,
+            canonicalWorkstream,
+            queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId)),
+          );
           if (closedByEffect) return;
           queryClient.setQueryData(['workstream', workstreamId], canonicalWorkstream);
           const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);

@@ -26,6 +26,7 @@ import {
   type WorkspaceConnectorEvent,
 } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
+import { contentAudienceContainsWorkstream } from "../lib/audience-containment";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { createMessageObjectPort } from "../runtime/message-port";
@@ -106,6 +107,7 @@ interface SubscriptionRow {
   id: string;
   scope: "personal" | "workspace";
   owner_user_id: string | null;
+  template_owner_user_id: string;
   execution_principal_json: string;
   connector_bindings_json: string;
   activity_trigger_bindings_json: string;
@@ -570,14 +572,14 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
   const restrictedUserIds = restrictedActivityUserIds(activity);
   for (const workstreamId of directWorkstreamIds) {
     if (restrictedUserIds != null) {
-      let visible = false;
-      for (const userId of restrictedUserIds) {
-        if (await isWorkstreamVisibleToUser(env, asWorkspaceId(activity.workspace_id), workstreamId, userId)) {
-          visible = true;
-          break;
-        }
-      }
-      if (!visible) continue;
+      const targetAudience = await workspace.workstreamAudience({
+        workspaceId: activity.workspace_id,
+        workstreamId,
+      });
+      if (!contentAudienceContainsWorkstream(
+        { scope: "users", userIds: restrictedUserIds },
+        targetAudience,
+      )) continue;
     }
     if (await injectActivityMessage(env, activity, workstreamId)) {
       routed.add(workstreamId);
@@ -649,7 +651,8 @@ async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<
   const subscriptions = await env.DB.prepare(
     `SELECT s.id, s.scope, s.owner_user_id, s.execution_principal_json,
             s.connector_bindings_json, s.activity_trigger_bindings_json, s.model_override,
-            tv.trigger_definitions_json, t.name AS template_name,
+            tv.trigger_definitions_json, t.owner_user_id AS template_owner_user_id,
+            t.name AS template_name,
             t.description AS template_description
        FROM automation_subscriptions s
        JOIN automation_template_versions tv ON tv.id = s.template_version_id
@@ -783,6 +786,7 @@ async function startActivityAutomation(
   subscription: SubscriptionRow
 ): Promise<string | null> {
   const emailRouting = new WorkstreamEmailRoutingService(env);
+  const audienceUserId = subscription.owner_user_id ?? subscription.template_owner_user_id;
   let run = await env.DB.prepare(
     `SELECT id, workstream_id, workflow_instance_id, status
        FROM automation_runs
@@ -835,25 +839,27 @@ async function startActivityAutomation(
     try {
       await executionEnv.DB.batch([
       executionEnv.DB.prepare(
-        // `scope` is stated rather than defaulted, for the reason
-        // `AutomationService.createRun` states it: an automation's work stream
-        // carries no participants, so the participant-only default would leave
-        // it readable by nobody at all.
         `INSERT INTO workstreams (
            id, workspace_id, title, objective, email_address, email_route_status, origin_type, created_by_user_id,
            automation_subscription_id, automation_run_id, planned_for, harness_status,
            next_sequence_number, last_activity_at, created_at, updated_at, archived_at, model_override, scope
-         ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', NULL, ?6, NULL, NULL, 'running', 1, ?7, ?7, ?7, NULL, ?8, 'workspace')`
+         ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', ?6, ?7, NULL, NULL, 'running', 1, ?8, ?8, ?8, NULL, ?9, 'personal')`
       ).bind(
         workstreamId,
         activity.workspace_id,
         `${subscription.template_name}: ${activity.title}`.slice(0, 180),
         subscription.template_description,
         emailRoute.emailAddress,
+        audienceUserId,
         subscription.id,
         now,
         modelOverride
       ),
+      executionEnv.DB.prepare(
+        `INSERT INTO workstream_participants
+           (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
+         VALUES (?1, ?2, ?2, 'creator', ?3, NULL)`,
+      ).bind(workstreamId, audienceUserId, now),
       executionEnv.DB.prepare(
         `INSERT INTO harness_runs (
            id, workspace_id, workstream_id, origin, execution_principal_json,
@@ -1066,13 +1072,17 @@ async function routeContextually(
     return false;
   }
   const restrictedUserIds = restrictedActivityUserIds(activity);
+  if (restrictedUserIds?.length === 0) return false;
+  const sourceAudience = restrictedUserIds === null
+    ? { scope: "workspace" as const }
+    : { scope: "users" as const, userIds: restrictedUserIds };
   // The dismissal run and the already-routed exclusion the D1 arm expressed as
   // subqueries are the object's now; the shape it returns is mapped to the
   // candidate rows the prompt renderer takes.
   const candidates = await (await workspaceDirectory(env, asWorkspaceId(activity.workspace_id)))
     .routingCandidates({
       workspaceId: activity.workspace_id,
-      restrictedUserIds,
+      audience: sourceAudience,
       excludedWorkstreamIds: [...excludedWorkstreamIds],
       feedbackSince: dismissalRunCutoff(),
       dismissalLimit: DISMISSAL_RUN_LIMIT,
@@ -1127,21 +1137,9 @@ async function routeContextually(
     reason: result.reason,
     matchedEntities: result.matchedEntities,
     source: "contextual_routing",
+    sourceAudience,
   });
   return true;
-}
-
-async function isWorkstreamVisibleToUser(
-  env: Env,
-  workspaceId: WorkspaceId,
-  workstreamId: string,
-  userId: string
-): Promise<boolean> {
-  return (await workspaceDirectory(env, workspaceId)).canReadWorkstream({
-    workspaceId,
-    workstreamId,
-    userId,
-  });
 }
 
 function workspaceDirectory(env: Env, workspaceId: WorkspaceId) {
@@ -1159,5 +1157,6 @@ export const __testing = {
   restrictedActivityUserIds,
   routeContextually,
   runMatchingAutomations,
+  contentAudienceContainsWorkstream,
   triggerMatches,
 };

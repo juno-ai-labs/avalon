@@ -93,6 +93,7 @@ interface SeedInput {
   participants?: UserId[];
   /** Participants who have been put in it and have not opened it. */
   unseenFor?: UserId[];
+  createdByUserId?: UserId;
 }
 
 /** Publish one work stream into the directory, the way its own object would. */
@@ -110,7 +111,7 @@ async function seedWorkstream(input: SeedInput): Promise<WorkstreamId> {
     completedAt: null,
     archivedAt: input.archivedAt ?? null,
     originType: input.originType ?? "ad_hoc",
-    createdByUserId: OWNER,
+    createdByUserId: input.createdByUserId ?? OWNER,
     automationSubscriptionId: input.automationSubscriptionId ?? null,
     plannedFor: input.plannedFor ?? null,
     latestAttentionOrdinal: 0,
@@ -264,6 +265,32 @@ async function seedFeedback(input: {
 }
 
 describe("what the workspace object answers about its work streams", () => {
+  describe("workstreamAudience — exact content-movement boundary", () => {
+    it("returns every private reader and distinguishes workspace scope", async () => {
+      const personal = await seedWorkstream({
+        title: "Private watched target",
+        lastActivityAt: "2026-01-01T09:00:00.000Z",
+        scope: "personal",
+        participants: [OUTSIDER],
+        createdByUserId: OWNER,
+      });
+      const shared = await seedWorkstream({
+        title: "Workspace watched target",
+        lastActivityAt: "2026-01-01T10:00:00.000Z",
+        scope: "workspace",
+      });
+
+      await expect(workspace().workstreamAudience({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: personal,
+      })).resolves.toEqual({ scope: "personal", userIds: [OWNER, OUTSIDER] });
+      await expect(workspace().workstreamAudience({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: shared,
+      })).resolves.toEqual({ scope: "workspace" });
+    });
+  });
+
   describe("lookupWorkstreamDirectory — Slack's unfurl summaries", () => {
     it("returns exactly the ids asked for, and no others", async () => {
       const wanted = await seedWorkstream({
@@ -329,7 +356,7 @@ describe("what the workspace object answers about its work streams", () => {
 
       const page = await workspace().recentWorkstreamDirectory({
         workspaceId: WORKSPACE_ID,
-        userId: OWNER,
+        audience: { scope: "user", userId: OWNER },
         includeSystem: false,
         participantsOnly: true,
         limit: 50,
@@ -348,11 +375,12 @@ describe("what the workspace object answers about its work streams", () => {
         lastActivityAt: "2026-08-13T09:00:00.000Z",
         scope: "personal",
         participants: [OUTSIDER],
+        createdByUserId: OUTSIDER,
       });
 
       const page = await workspace().recentWorkstreamDirectory({
         workspaceId: WORKSPACE_ID,
-        userId: OWNER,
+        audience: { scope: "user", userId: OWNER },
         includeSystem: false,
         participantsOnly: true,
         limit: 50,
@@ -400,7 +428,7 @@ describe("what the workspace object answers about its work streams", () => {
 
       const page = await workspace().recentWorkstreamDirectory({
         workspaceId: WORKSPACE_ID,
-        userId: OWNER,
+        audience: { scope: "user", userId: OWNER },
         includeSystem: false,
         participantsOnly: true,
         limit: 1,
@@ -409,6 +437,42 @@ describe("what the workspace object answers about its work streams", () => {
       expect(page.items).toHaveLength(1);
       expect(page.items[0]?.workstreamId).toBe(newer);
       expect(page.items.map((item) => item.workstreamId)).not.toContain(older);
+    });
+
+    it("never treats a workspace audience as permission to inspect private rows", async () => {
+      const shared = await seedWorkstream({
+        title: "Shared planning",
+        lastActivityAt: "2026-08-14T10:00:00.000Z",
+        scope: "workspace",
+      });
+      const privateWorkstream = await seedWorkstream({
+        title: "Private acquisition plan",
+        lastActivityAt: "2026-08-14T12:00:00.000Z",
+        scope: "personal",
+        participants: [OWNER],
+      });
+
+      const workspacePage = await workspace().recentWorkstreamDirectory({
+        workspaceId: WORKSPACE_ID,
+        audience: { scope: "workspace" },
+        includeSystem: false,
+        participantsOnly: false,
+        limit: 50,
+      });
+      const userPage = await workspace().recentWorkstreamDirectory({
+        workspaceId: WORKSPACE_ID,
+        audience: { scope: "user", userId: OWNER },
+        includeSystem: false,
+        participantsOnly: false,
+        limit: 50,
+      });
+
+      expect(workspacePage.items.map((item) => item.workstreamId)).toContain(shared);
+      expect(workspacePage.items.map((item) => item.workstreamId)).not.toContain(privateWorkstream);
+      expect(userPage.items.map((item) => item.workstreamId)).toEqual(expect.arrayContaining([
+        shared,
+        privateWorkstream,
+      ]));
     });
   });
 
@@ -424,7 +488,7 @@ describe("what the workspace object answers about its work streams", () => {
 
       await expect(workspace().plannedWorkstream({
         workspaceId: WORKSPACE_ID,
-        userId: null,
+        userId: OWNER,
         automationSubscriptionId: AUTOMATION,
         plannedFor: PLANNED_FOR,
       })).resolves.toMatchObject({ id: planned, title: "Daily product brief" });
@@ -443,7 +507,7 @@ describe("what the workspace object answers about its work streams", () => {
       // scheduler yesterday's work stream to reuse for today's run.
       await expect(workspace().plannedWorkstream({
         workspaceId: WORKSPACE_ID,
-        userId: null,
+        userId: OWNER,
         automationSubscriptionId: AUTOMATION,
         plannedFor: "2026-08-21T09:00:00.000Z",
       })).resolves.toBeNull();
@@ -462,7 +526,7 @@ describe("what the workspace object answers about its work streams", () => {
 
       await expect(workspace().plannedWorkstream({
         workspaceId: WORKSPACE_ID,
-        userId: null,
+        userId: OWNER,
         automationSubscriptionId: subscription,
         plannedFor: PLANNED_FOR,
       })).resolves.toBeNull();
@@ -496,6 +560,7 @@ describe("what the workspace object answers about its work streams", () => {
         lastActivityAt: "2026-08-18T09:00:00.000Z",
         scope: "personal",
         participants: [OUTSIDER],
+        createdByUserId: OUTSIDER,
       });
 
       await expect(workspace().canReadWorkstream({
@@ -503,6 +568,30 @@ describe("what the workspace object answers about its work streams", () => {
         userId: OWNER,
         workstreamId: theirs,
       })).resolves.toBe(false);
+    });
+
+    it("keeps a private work stream visible to its creator even after participation is absent", async () => {
+      const created = await seedWorkstream({
+        title: "Creator-owned private work",
+        lastActivityAt: "2026-08-18T10:00:00.000Z",
+        scope: "personal",
+        participants: [OUTSIDER],
+        createdByUserId: OWNER,
+      });
+
+      await expect(workspace().canReadWorkstream({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        workstreamId: created,
+      })).resolves.toBe(true);
+      await expect(workspace().recentWorkstreamDirectory({
+        workspaceId: WORKSPACE_ID,
+        audience: { scope: "user", userId: OWNER },
+        includeSystem: false,
+        participantsOnly: true,
+        limit: 50,
+      }).then((page) => page.items.map((item) => item.workstreamId)))
+        .resolves.toContain(created);
     });
 
     it("refuses a work stream it has never heard of", async () => {

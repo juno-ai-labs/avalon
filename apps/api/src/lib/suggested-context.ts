@@ -1,6 +1,6 @@
 /**
- * Suggested context is paused until its routing quality is useful enough to
- * justify interrupting a work stream. Both producers and both work-stream read
- * paths use this answer so the surface cannot be revived only halfway.
+ * Suggested context is enabled end to end. Candidate selection always carries
+ * an explicit workspace or user audience; no producer may interpret a missing
+ * viewer as permission to inspect private work streams.
  */
-export const SUGGESTED_CONTEXT_ENABLED = false;
+export const SUGGESTED_CONTEXT_ENABLED = true;
