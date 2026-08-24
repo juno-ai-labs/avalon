@@ -246,9 +246,22 @@ path will see.
 
 ### Phase 2a — message text, over the existing outbox
 
-`SubstreamAgent` publishes to WorkspaceDO through the durable regional-effect
-outbox. `search_document` joins the existing effect kinds — but **it is not an
-additive change**, and three specifics matter more than the general shape:
+**First, which object.** There are two `durable_outbox` tables and they are not
+the same table. `WorkstreamDO`'s (in `workstream-do.ts`) has the CHECK-enumerated
+`effect_kind` column; `SubstreamAgent`'s (in `workstream-object-schema.ts`) has
+no `effect_kind` column at all — its kind is read with
+`json_extract(payload_json, '$.effect.kind')`. Message text originates in
+`SubstreamAgent`, whose effects reach WorkspaceDO through the activity queue
+rather than through `WorkstreamDO`, so **the choice of producer decides which of
+the costs below this change actually pays.** Routing message projections through
+`WorkstreamDO` buys the ordering and priority machinery and owes the rebuild;
+publishing from `SubstreamAgent` owes no rebuild and inherits neither. This
+design assumes the `WorkstreamDO` route; the bullets below are its price, and
+they are the reason the alternative deserves a look before implementation
+starts.
+
+On that route `search_document` joins the existing effect kinds — but **it is
+not an additive change**, and four specifics matter more than the general shape:
 
 - **It is the seventh kind, not the fourth.** `durable_outbox.effect_kind`'s live
   `CHECK` in `workstream-do.ts` admits six: `directory_common`, `directory_user`,
@@ -293,9 +306,23 @@ and `steer_request` parts with `people` visibility are shown to people, and
 projection matches the transcript's rule, then excludes the kinds the PRD's
 non-goal 8 names.
 
-A message whose `content` spilled to `content_ref_id` is projected from R2 at
-publish time, truncated by bytes to the indexed bound. Editing republishes with
-a higher waterline.
+**Two things not to write into this, both of which the obvious draft gets
+wrong.** A message whose `content` spilled to `content_ref_id` cannot be
+projected from R2 at publish time: the enqueue runs inside `transactionSync`,
+which cannot await object I/O, and the read would have to be hoisted before the
+transaction opens — before the producer knows which parts spilled. It is moot
+today in any case: `content_ref_id` and the `content_refs` table have no writer
+anywhere in the repo, `parts.content` is bounded at 256 KiB, and so nothing
+spills. Index what is in `content`, and treat a spilled part as a state to
+handle when something creates one.
+
+And **editing does not republish with a higher waterline** — not on this arm.
+The bullet above is the binding one: a non-projection effect's `sourceVersion`
+is caller-supplied and the only existing caller passes `1`. Until a per-message
+monotonic source exists, an edited message's republish ties the compound compare
+and is dropped. Either the projection-keyed arm is used, with its per-message
+`projection_keys` bookkeeping, or edits do not reach the index and the PRD
+should say so.
 
 ### Phase 2b — document contents
 
