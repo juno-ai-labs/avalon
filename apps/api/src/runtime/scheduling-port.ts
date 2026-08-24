@@ -1,7 +1,3 @@
-import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
-
-import { substreamAgentName } from "../durable-objects/names";
-import { rpcResultBody } from "../durable-objects/rpc-result";
 import {
   SCHEDULING_OPERATIONS,
   type SchedulingObjectPort,
@@ -9,7 +5,7 @@ import {
 } from "../durable-objects/workstream-scheduling-protocol";
 import type { WorkstreamSchedulingStorage } from "../durable-objects/workstream-scheduling-storage";
 import type { Env } from "../env";
-import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { createObjectPort, type ObjectPortContract } from "./object-port";
 
 /** Builds a port for one work stream; injected so callers stay testable. */
 export type SchedulingPortFactory = (
@@ -17,18 +13,12 @@ export type SchedulingPortFactory = (
   workstreamId: string,
 ) => SchedulingObjectPort;
 
-/**
- * The object rejected the request itself — a bad protocol or a misrouted stub.
- *
- * Distinct from a lost claim, which is an ordinary outcome and is returned in
- * the operation's own result rather than thrown.
- */
-export class SchedulingPortError extends Error {
-  constructor(readonly code: string, message: string) {
-    super(message);
-    this.name = "SchedulingPortError";
-  }
-}
+const CONTRACT: ObjectPortContract<WorkstreamSchedulingStorage, SchedulingOperation> = {
+  operations: SCHEDULING_OPERATIONS,
+  dispatch: (stub, request) => stub.executeSchedulingOperation(request),
+  failureCode: "scheduling_operation_failed",
+  failureMessage: "Avalon's scheduling authority rejected an internal request. Retry after the application and service versions are aligned.",
+};
 
 export function createSchedulingPortFactory(
   env: Env,
@@ -52,45 +42,11 @@ export function createSchedulingObjectPort(
   /** The same in-isolate seam the receipt and block-dashboard ports take. */
   localStorage?: WorkstreamSchedulingStorage,
 ): SchedulingObjectPort {
-  const call = async (operation: SchedulingOperation, args: unknown[]): Promise<unknown> => {
-    if (localStorage) {
-      const method = localStorage[operation] as (...rest: unknown[]) => unknown;
-      // `?? null` so this path answers exactly as the remote one does; see the
-      // receipt port, where the same coalesce is explained at length.
-      return method.apply(localStorage, args) ?? null;
-    }
-    const stub = await durableObjectStubForWorkspace(
-      env,
-      env.SUBSTREAM_AGENTS,
-      asWorkspaceId(workspaceId),
-      substreamAgentName(
-        env.AVALON_REGION,
-        asWorkspaceId(workspaceId),
-        asWorkstreamId(workstreamId),
-      ),
-    );
-    const result = await stub.executeSchedulingOperation({
-      workspaceId,
-      workstreamId,
-      operation,
-      args,
-    });
-    const body = rpcResultBody(result) as { ok?: boolean; value?: unknown; error?: string } | null;
-    if (!body?.ok) {
-      throw new SchedulingPortError(
-        body?.error ?? "scheduling_operation_failed",
-        "Avalon's scheduling authority rejected an internal request. Retry after the application and service versions are aligned.",
-      );
-    }
-    return body.value ?? null;
-  };
-
-  // Built from the operation list rather than method by method, so a name
-  // cannot be forwarded wrong; the mapped type fixes each signature already.
-  return Object.fromEntries(
-    SCHEDULING_OPERATIONS.map((operation) => [
-      operation,
-      (...args: unknown[]) => call(operation, args),
-    ]),
-  ) as SchedulingObjectPort;
+  return createObjectPort(
+    env,
+    workspaceId,
+    workstreamId,
+    CONTRACT,
+    localStorage,
+  );
 }
