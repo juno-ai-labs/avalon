@@ -14,9 +14,9 @@ import {
  * route onward to, so a model swap is a flag change rather than a deploy.
  *
  * The first five names match `AgentInferenceSource` in
- * `agent-inference-logging.ts`, so a ledger row and a flag key describe the
- * same agent. The rest are the standalone structured-output agents, which call
- * OpenRouter directly rather than through the harness.
+ * `agent-inference-logging.ts`, so a lakehouse record and a flag key describe
+ * the same agent. The rest are the standalone structured-output agents, which
+ * call OpenRouter directly rather than through the harness.
  *
  * A new model-using service belongs here. One that reads `OPENROUTER_*`
  * directly cannot be retargeted or rolled out, and nothing in the type system

@@ -35,7 +35,6 @@ const storedSessionSchema = z.object({
     region: RegionSchema,
     role: MemberRoleSchema,
     timezone: IanaTimezoneSchema,
-    logAgentInference: z.boolean().default(false),
     createdAt: TimestampSchema,
   }).nullable(),
   apiBaseUrl: HttpUrlSchema,

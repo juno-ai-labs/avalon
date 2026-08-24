@@ -25,7 +25,6 @@ const api = vi.hoisted(() => ({
   testConnection: vi.fn(),
   disconnectConnection: vi.fn(),
   revokeWorkspaceInvitation: vi.fn(),
-  updateWorkspaceLogAgentInference: vi.fn(),
   getTerminalWorkspaceSettings: vi.fn(),
   previewTerminalNetworkPolicy: vi.fn(),
   applyTerminalNetworkPolicy: vi.fn(),
@@ -99,7 +98,6 @@ const workspace: Workspace = {
   name: 'Avalon Studio',
   region: 'eu',
   timezone: 'Europe/London',
-  logAgentInference: false,
   currentUser: owner,
 };
 const invitation: WorkspaceInvitation = {
@@ -258,10 +256,6 @@ describe('Workspace settings', () => {
     });
     api.createWorkspaceInvitation.mockResolvedValue({ invitation, inviteUrl, emailDelivery: 'sent' });
     api.revokeWorkspaceInvitation.mockResolvedValue(undefined);
-    api.updateWorkspaceLogAgentInference.mockImplementation(async (enabled: boolean) => ({
-      ...workspace,
-      logAgentInference: enabled,
-    }));
     api.getTerminalWorkspaceSettings.mockResolvedValue({
       availability: 'supported', mode: 'trusted_only', revision: 1, verificationState: 'verified',
       customDomains: [], remainingCustomSlots: 7, failureCode: null,
@@ -372,18 +366,6 @@ describe('Workspace settings', () => {
       supported: true,
     }));
     resetApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
-  });
-
-  it('lets workspace admins enable full agent inference logging', async () => {
-    renderSettings();
-    openSettingsSection('Workspace');
-
-    const toggle = screen.getByRole('switch', { name: 'Log agent inference' });
-    expect(toggle).not.toBeChecked();
-    fireEvent.click(toggle);
-
-    await waitFor(() => expect(api.updateWorkspaceLogAgentInference).toHaveBeenCalledWith(true));
-    expect(toggle).toBeChecked();
   });
 
   it('previews and confirms full Terminal internet access before applying it', async () => {

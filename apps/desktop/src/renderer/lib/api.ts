@@ -852,7 +852,6 @@ export class AvalonApi {
       name: raw.name,
       region: raw.region,
       timezone: raw.timezone,
-      logAgentInference: raw.logAgentInference,
       currentUser,
     };
   }
@@ -871,15 +870,6 @@ export class AvalonApi {
 
   async updateWorkspaceTimezone(timezone: string): Promise<Workspace> {
     await this.request('/workspace', { method: 'PATCH', body: { timezone }, schema: WireWorkspaceSchema });
-    return this.getWorkspace();
-  }
-
-  async updateWorkspaceLogAgentInference(logAgentInference: boolean): Promise<Workspace> {
-    await this.request('/workspace', {
-      method: 'PATCH',
-      body: { logAgentInference },
-      schema: WireWorkspaceSchema,
-    });
     return this.getWorkspace();
   }
 

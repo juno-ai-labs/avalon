@@ -72,6 +72,7 @@ The same Worker source is deployed twice:
 | D1 | global database | EU-jurisdiction database |
 | Agent memory vectors | `avalon-global-memory` Vectorize index | `avalon-eu-memory` Vectorize index |
 | R2 | global bucket | EU-jurisdiction bucket |
+| Inference lakehouse | Global payload archive, Queue, Pipeline stream/sink, and default-jurisdiction R2 Data Catalog | EU payload archive, Queue, Pipeline stream/sink, and EU-jurisdiction R2 Data Catalog |
 | Telemetry R2 | dedicated `avalon-global-telemetry` bucket | dedicated `avalon-eu-telemetry` bucket with EU jurisdiction |
 | Durable Objects | `jurisdiction("us")`, workspace affinity `wnam` or `enam` | `jurisdiction("eu")`, workspace affinity `weur` or `eeur` |
 | Secrets | global key set | independent EU key set |
@@ -84,6 +85,14 @@ The same Worker source is deployed twice:
 Queues and Workflows carry region plus opaque record IDs, never sensitive payload
 bodies. Every service receives a fixed regional dependency container; repositories
 cannot choose a region from user-controlled object IDs.
+
+Inference analytics follows that rule by archiving the sensitive record in the
+regional payload bucket first and putting only its object key, byte count, and
+SHA-256 on the regional Queue. The same regional Worker validates and sends the
+record through its generated Pipeline stream binding to that region's R2 Data
+Catalog. There is no shared inference queue, bucket, stream, sink, table, or
+query surface. [`inference-lakehouse.md`](inference-lakehouse.md) owns the full
+record and provisioning contract.
 
 ### The shared ingresses
 
@@ -339,6 +348,49 @@ these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
+
+### 2026-08-24 — Inference analytics leaves regional D1
+
+**What changed:** Migration 0094 removes the workspace inference preference and
+`agent_inference_payload_logs` from both regional D1 databases. The old
+request-only payload writer is gone; all new hosted raw-inference capture uses
+the already-split regional lakehouse.
+
+**Why:** Region splitting did not justify keeping two analytical systems inside
+each region. The D1 index duplicated fields already queryable in the regional
+Iceberg table and made completeness depend on a workspace opt-in.
+
+**Considered and rejected:** Keeping D1 as a regional lookup cache. That would
+preserve a second sensitive-data lifecycle and product-database dependency for
+an operator-only query path.
+
+**Consequences:** D1 remains identity, membership, routing, migration/control,
+and operational storage; inference analytics no longer expands that role.
+Historical `agent-inference/` R2 objects are retained pending a separate
+deletion decision.
+
+### 2026-08-24 — Inference analytics comes to rest in two regional lakehouses
+
+**What changed:** Global and EU each gained an inference payload prefix, Queue,
+Pipeline stream/sink, and R2 Data Catalog Iceberg table. Queue bodies carry only
+a verified pointer; prompt, tool, response, error, identity, and usage content
+stays in the producer's region from capture through query.
+
+**Why:** A shared analytical destination would undo the existing workspace
+boundary, while putting full inference bodies on Queue would create another
+sensitive surface and exceed its message ceiling for valid requests. The
+regional payload archive is already the fixed storage dependency and is the only
+place large exact records can be staged without crossing or truncating them.
+
+**Considered and rejected:** One account-wide inference table with a `region`
+column. A column labels data after it has crossed; it does not constrain which
+Worker, Queue consumer, bucket jurisdiction, sink credential, or query principal
+can access it.
+
+**Consequences:** Operators query two catalogs, the deployment creates and
+validates both resource chains, and the Pipeline stream IDs are materialized
+into ignored per-deploy Wrangler configs rather than committed as cross-account
+identifiers.
 
 ### 2026-08-17 — Workspace routing persists west/east Durable Object affinity
 
