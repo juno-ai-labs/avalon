@@ -4,8 +4,27 @@ type TextMessageInput = Omit<Message, 'messageType' | 'text'> & { text: string }
 type ToolEventMessageInput = Omit<Message, 'messageType' | 'toolEvent'> & { toolEvent: ToolEventData };
 type ElicitationMessageInput = Omit<Message, 'messageType' | 'elicitation'> & { elicitation: ElicitationData };
 
-export function visibleTranscriptMessages(messages: Message[]): Message[] {
-  return messages.filter((message) => message.messageType !== 'activity_suggestion');
+export function dismissedSuggestionIdsQueryKey(workstreamId: string): readonly ['dismissed-suggestion-ids', string] {
+  return ['dismissed-suggestion-ids', workstreamId];
+}
+
+export function appendDismissedSuggestionId(
+  current: readonly string[] | undefined,
+  suggestionId: string,
+): readonly string[] {
+  return current?.includes(suggestionId) ? current : [...(current ?? []), suggestionId];
+}
+
+export function visibleTranscriptMessages(
+  messages: Message[],
+  dismissedSuggestionIds: readonly string[] = [],
+): Message[] {
+  const dismissed = new Set(dismissedSuggestionIds);
+  return messages.filter((message) => !(
+    message.messageType === 'activity_suggestion'
+    && message.activitySuggestion
+    && (message.activitySuggestion.status === 'dismissed' || dismissed.has(message.activitySuggestion.id))
+  ));
 }
 
 export function createTextMessage({ text, ...message }: TextMessageInput): Message {

@@ -19,6 +19,11 @@ import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { activityContentAudience } from "../lib/activity-visibility";
+import {
+  contentAudienceContainsWorkstream,
+  type ContentAudience,
+} from "../lib/audience-containment";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
 import {
@@ -170,6 +175,7 @@ interface ModelSource {
   canonicalUrl: string | null;
   workstreamId: string | null;
   occurredAt: string;
+  sourceAudience: ContentAudience;
 }
 
 function parseRecord(value: unknown): Record<string, unknown> {
@@ -394,7 +400,24 @@ async function mapConcurrent<T, R>(items: T[], limit: number, work: (item: T) =>
   return results;
 }
 
-async function loadSource(env: Env, workspaceId: WorkspaceId, event: BatchEventRow): Promise<ModelSource | null> {
+function sourceVisibleToWindow(sourceAudience: ContentAudience, window: WindowRow): boolean {
+  if (window.audience_scope === "workspace") return sourceAudience.scope === "workspace";
+  return sourceAudience.scope === "workspace"
+    || Boolean(window.audience_user_id && sourceAudience.userIds.includes(window.audience_user_id));
+}
+
+function persistedSource(source: ModelSource) {
+  const { sourceAudience, ...persisted } = source;
+  void sourceAudience;
+  return persisted;
+}
+
+async function loadSource(
+  env: Env,
+  workspaceId: WorkspaceId,
+  event: BatchEventRow,
+  window: WindowRow,
+): Promise<ModelSource | null> {
   const workspace = await durableObjectStubForWorkspace(
     env,
     env.WORKSPACE_DOS,
@@ -408,6 +431,13 @@ async function loadSource(env: Env, workspaceId: WorkspaceId, event: BatchEventR
     );
     if (!durable) return null;
     const activity = durable.activity;
+    const sourceAudience = activityContentAudience({
+      connection_scope: activity.connectionScope,
+      connection_owner_user_id: activity.connectionOwnerUserId,
+      target_user_ids_json: JSON.stringify(activity.targetUserIds),
+      visibility_json: JSON.stringify(activity.visibility),
+    });
+    if (!sourceAudience || !sourceVisibleToWindow(sourceAudience, window)) return null;
     const connection = await workspaceEnv.DB.prepare(
       `SELECT provider_account_id FROM connector_connections
         WHERE id = ? AND workspace_id = ? LIMIT 1`,
@@ -469,6 +499,7 @@ async function loadSource(env: Env, workspaceId: WorkspaceId, event: BatchEventR
         .find((value): value is string => typeof value === "string")?.slice(0, 2_000) ?? null,
       workstreamId: null,
       occurredAt: activity.occurredAt,
+      sourceAudience,
     };
   }
   const activity = await workspace.activityEventSource({
@@ -477,6 +508,16 @@ async function loadSource(env: Env, workspaceId: WorkspaceId, event: BatchEventR
     sourceId: event.source_id,
   });
   if (!activity?.audienceWorkstreamId) return null;
+  const readerAudience = await workspace.workstreamAudience({
+    workspaceId,
+    workstreamId: activity.audienceWorkstreamId,
+  });
+  const sourceAudience: ContentAudience | null = readerAudience?.scope === "workspace"
+    ? { scope: "workspace" }
+    : readerAudience?.userIds.length
+      ? { scope: "users", userIds: readerAudience.userIds }
+      : null;
+  if (!sourceAudience || !sourceVisibleToWindow(sourceAudience, window)) return null;
   const author = activity.actorUserId
     ? await env.DB.prepare("SELECT id, name, email FROM users WHERE id = ? LIMIT 1")
       .bind(activity.actorUserId).first<{ id: string; name: string; email: string }>()
@@ -497,6 +538,7 @@ async function loadSource(env: Env, workspaceId: WorkspaceId, event: BatchEventR
     canonicalUrl: null,
     workstreamId: activity.audienceWorkstreamId,
     occurredAt: activity.occurredAt,
+    sourceAudience,
   };
 }
 
@@ -645,7 +687,9 @@ async function loadAdmissionContext(env: Env, window: WindowRow) {
   const workRowsPromise = workspacePromise
     .then((workspace) => workspace.recentWorkstreamDirectory({
       workspaceId: window.workspace_id,
-      userId: window.audience_scope === "workspace" ? null : window.audience_user_id,
+      audience: window.audience_scope === "workspace"
+        ? { scope: "workspace" as const }
+        : { scope: "user" as const, userId: window.audience_user_id! },
       includeSystem: false,
       participantsOnly: false,
       limit: 20,
@@ -892,7 +936,6 @@ async function routeExistingDecision(
   existingWork: Array<{ id: string; title: string; objective: string }>,
 ): Promise<boolean> {
   if (!SUGGESTED_CONTEXT_ENABLED) return false;
-  if (window.audience_scope !== "workspace") return false;
   const targetId = decision.existingTargetId;
   if (!targetId || !existingWork.some((workstream) => workstream.id === targetId)) return false;
   const referenced = sources.filter((source) => decision.sourceIds.includes(source.id));
@@ -900,8 +943,19 @@ async function routeExistingDecision(
   if (activities.length === 0) {
     return referenced.some((source) => source.kind === "message" && source.workstreamId === targetId);
   }
+  const targetAudience = await (await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    asWorkspaceId(window.workspace_id),
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(window.workspace_id)),
+  )).workstreamAudience({ workspaceId: window.workspace_id, workstreamId: targetId });
+  const routableActivities = activities.filter((source) => (
+    source.sourceAudience
+    && contentAudienceContainsWorkstream(source.sourceAudience, targetAudience)
+  ));
+  if (routableActivities.length === 0) return false;
   const reason = decision.displayPrompt.trim() || "Recent connected activity belongs in this existing work stream.";
-  const routed = await Promise.all(activities.map((source) => createActivitySuggestion(env, {
+  const routed = await Promise.all(routableActivities.map((source) => createActivitySuggestion(env, {
     region: env.AVALON_REGION,
     workspaceId: asWorkspaceId(window.workspace_id),
     activityId: source.id,
@@ -917,6 +971,7 @@ async function routeExistingDecision(
     // counted as evidence that *that* one's per-event guess was wrong.
     // `docs/contextual-routing.md` owns what the distinction is used for.
     source: "suggested_work",
+    sourceAudience: source.sourceAudience,
   })));
   return routed.some(Boolean);
 }
@@ -1034,7 +1089,7 @@ async function persistDecision(
     displayPromptHash: await sha256(displayPrompt),
     executionPromptHash: await sha256(executionPrompt),
     expiresAt: new Date(Date.now() + OPPORTUNITY_TTL_MS).toISOString(),
-    sources: referenced,
+    sources: referenced.map(persistedSource),
     links: normalizedLinks,
     rankUserIds,
     eagerUserIds,
@@ -1064,7 +1119,10 @@ async function processModelBatch(
         members: context.members,
         existingWork: context.existingWork,
         existingOpportunities: context.existingOpportunities,
-        sources: batch.map(({ source }) => source),
+        sources: batch.map(({ source }) => ({
+          ...persistedSource(source),
+          visibility: source.sourceAudience.scope === "workspace" ? "workspace" : "restricted",
+        })),
       }),
       schemaName: "work_opportunity_admission",
       jsonSchema: admissionJsonSchema,
@@ -1166,7 +1224,7 @@ export async function processClaimedOpportunityWindow(
   }));
   const loaded = await Promise.all(events.map(async (event) => ({
     event,
-    source: await loadSource(env, input.workspaceId, event),
+    source: await loadSource(env, input.workspaceId, event, window),
   })));
   const valid = loaded.filter(
     (item): item is { event: BatchEventRow; source: ModelSource } => item.source !== null,

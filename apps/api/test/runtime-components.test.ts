@@ -53,6 +53,76 @@ afterEach(() => {
 });
 
 describe("runtime component invariants", () => {
+  it("persists suggestions only when their source audience contains every work-stream reader", async () => {
+    const database = new DatabaseSync(":memory:");
+    const sql = createTestSqlStorage(database);
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
+      transactionSync: (callback: () => unknown) => callback(),
+      sql,
+    });
+    const store = new WorkstreamObjectStore(storage, "test", "global");
+    const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000000a1");
+    const workstreamId = asWorkstreamId("00000000-0000-4000-8000-0000000000a2");
+    const creatorId = "00000000-0000-4000-8000-0000000000a3";
+    const participantId = "00000000-0000-4000-8000-0000000000a4";
+    store.ensureIdentity({ workspaceId, workstreamId }, "global");
+    sql.exec(
+      `UPDATE workstream
+          SET authority_mode = 'authoritative', authority_generation = 1,
+              scope = 'personal', created_by_user_id = ?
+        WHERE id = 1`,
+      creatorId,
+    );
+    const now = Date.now();
+    for (const userId of [creatorId, participantId]) {
+      sql.exec(
+        `INSERT INTO participants
+           (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+            added_at, removed_at, updated_at)
+         VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, ?)`,
+        userId,
+        creatorId,
+        now,
+        now,
+      );
+    }
+    const product = new WorkstreamObjectProductService(storage, store, createTestEnv({}));
+    const suggestion = {
+      id: "00000000-0000-4000-8000-0000000000a5",
+      activityId: "00000000-0000-4000-8000-0000000000a6",
+      title: "Private activity",
+      summary: "Only its source audience may read this",
+      confidence: 0.9,
+      reason: "Relevant to this work stream",
+      matchedEntities: [],
+      source: "contextual_routing" as const,
+    };
+
+    await expect(product.createSuggestion(workspaceId, {
+      ...suggestion,
+      sourceAudience: { scope: "users", userIds: [creatorId] },
+    })).rejects.toMatchObject({ status: 403, code: "suggestion_audience_mismatch" });
+    await expect(product.createSuggestion(workspaceId, {
+      ...suggestion,
+      sourceAudience: { scope: "users", userIds: [creatorId, participantId] },
+    })).resolves.toMatchObject({ inserted: true });
+
+    const visibleSuggestions = () => (
+      product as unknown as { suggestions(): Array<{ id: string }> }
+    ).suggestions();
+    expect(visibleSuggestions()).toEqual([expect.objectContaining({ id: suggestion.id })]);
+
+    // Pre-contract rows carry no auditable source audience. Keeping one hidden
+    // is safer than reviving a card whose title may already be a disclosure.
+    sql.exec(
+      `UPDATE suggested_actions SET share_intent_json = ? WHERE action_id = ?`,
+      JSON.stringify({ confidence: 0.9, reason: suggestion.reason }),
+      suggestion.id,
+    );
+    expect(visibleSuggestions()).toEqual([]);
+    database.close();
+  });
+
   it("rechecks drain identity after the pre-claim regional-effects await", () => {
     const source = readFileSync(
       new URL("../src/durable-objects/substream-agent.ts", import.meta.url),

@@ -2,6 +2,7 @@ import type { WorkspaceId, WorkstreamId } from "@avalon/contracts";
 import { newId } from "@avalon/db";
 import { substreamAgentName } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
+import type { ContentAudience } from "../lib/audience-containment";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
 import { createWorkstreamRuntimeSuggestion } from "./workstream-object-client";
@@ -28,6 +29,7 @@ interface CreateActivitySuggestionInput {
   reason: string;
   matchedEntities: string[];
   source: ActivitySuggestionSource;
+  sourceAudience: ContentAudience;
 }
 
 export async function publishSubstreamAgentEvent(
@@ -69,6 +71,7 @@ export async function createActivitySuggestion(
       reason,
       matchedEntities: input.matchedEntities.slice(0, 100),
       source: input.source,
+      sourceAudience: input.sourceAudience,
     },
   });
   return result.inserted;
