@@ -275,6 +275,149 @@ describe("automation drafts", () => {
     expect(database.prepare(
       "SELECT timezone FROM schedules WHERE automation_subscription_id = ?",
     ).get(created.id)).toEqual({ timezone: expected });
+
+    // Storage keeps the null so every later reader can answer it; a response
+    // carries the answer, because a client that cannot parse null cannot open
+    // the automation at all, and because the zone a person is shown should be
+    // the one it fires on rather than one a model wrote into prose.
+    const stored = database.prepare(
+      "SELECT trigger_definitions_json AS json FROM automation_template_versions WHERE id = ?",
+    ).get(String((database.prepare(
+      "SELECT template_version_id AS id FROM automation_subscriptions WHERE id = ?",
+    ).get(created.id) as { id: string }).id)) as { json: string };
+    expect(JSON.parse(stored.json)[0].timezone).toBe(triggerTimezone);
+    expect(created.triggers[0]).toMatchObject({ type: "calendar", timezone: expected });
+    expect((await service.get(created.id)).triggers[0]).toMatchObject({ timezone: expected });
+  });
+
+  it("answers a pending version's zone with what adopting it would resolve to", async () => {
+    const database = seededDatabase();
+    database.exec(`UPDATE users SET timezone = 'America/New_York' WHERE id = '${userId}'`);
+    compileAutomationDraft.mockResolvedValue(draft({
+      followUpQuestion: null,
+      ready: true,
+      triggers: [{
+        type: "calendar",
+        rrule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
+        timezone: null,
+        summary: "Every morning at 9:00 AM",
+      }],
+    }));
+    const service = serviceFor(database);
+    const compiled = await service.compile({
+      messages: [{ role: "user", content: "Brief me every morning." }],
+    }, "request-1");
+    const created = await service.create({
+      draftId: compiled.draftId,
+      draft: compiled.draft,
+      scope: "personal",
+      defaultPluginIds: [],
+      activitySourcePluginIds: {},
+      resourceIds: [],
+      deliveryTargets: [],
+    });
+
+    // A newer version nobody has adopted has no `schedules` row of its own, so
+    // its preview cannot borrow one — and an unfilled null there is the same
+    // unparseable response as anywhere else.
+    const versionRow = database.prepare(
+      "SELECT template_id AS templateId FROM automation_subscriptions WHERE id = ?",
+    ).get(created.id) as { templateId: string };
+    database.prepare(
+      `INSERT INTO automation_template_versions
+         (id, template_id, version_number, overview, instructions, trigger_definitions_json,
+          required_capabilities_json, expected_outputs_json, default_behavior_json,
+          recommended_plugins_json, memory_tables_json, created_by_user_id, created_at)
+       VALUES (?, ?, 2, '', 'Check the blog twice.', ?, '[]', '[]', '{}', '[]', '[]', ?, '2026-02-01')`,
+    ).run(
+      "version-2",
+      versionRow.templateId,
+      JSON.stringify([{
+        type: "calendar",
+        rrule: "FREQ=DAILY;BYHOUR=7;BYMINUTE=0;BYSECOND=0",
+        timezone: null,
+        summary: "Every morning at 7:00 AM",
+      }]),
+      userId,
+    );
+    database.prepare("UPDATE automation_templates SET latest_version_number = 2 WHERE id = ?")
+      .run(versionRow.templateId);
+
+    const detail = await service.get(created.id);
+    expect(detail.templateUpdate?.triggers[0]).toMatchObject({ timezone: "America/New_York" });
+  });
+
+  it("schedules a shared template in the adopter's day, not its author's", async () => {
+    const database = seededDatabase();
+    // The author is in New York, the adopter in Tokyo, and the workspace on
+    // Pacific — so whichever of the three the schedule lands on is unambiguous.
+    database.exec(`
+      UPDATE users SET timezone = 'America/New_York' WHERE id = '${userId}';
+      UPDATE users SET timezone = 'Asia/Tokyo' WHERE id = '${otherUserId}';
+      INSERT INTO automation_templates
+        (id, workspace_id, owner_user_id, name, description, sharing_state, latest_version_number, created_at, updated_at)
+      VALUES ('template-shared', '${workspaceId}', '${userId}', 'Morning brief', 'A brief.', 'workspace', 1, '2026-01-01', '2026-01-01');
+    `);
+    database.prepare(
+      `INSERT INTO automation_template_versions
+         (id, template_id, version_number, overview, instructions, trigger_definitions_json,
+          required_capabilities_json, expected_outputs_json, default_behavior_json,
+          recommended_plugins_json, memory_tables_json, created_by_user_id, created_at)
+       VALUES ('version-shared', 'template-shared', 1, '', 'Brief them.', ?, '[]', '[]', '{}', '[]', '[]', ?, '2026-01-01')`,
+    ).run(
+      JSON.stringify([{
+        type: "calendar",
+        rrule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
+        timezone: null,
+        summary: "Every morning at 9:00 AM",
+      }]),
+      userId,
+    );
+
+    const adopted = await serviceFor(database, { ...auth, userId: otherUserId })
+      .subscribe("template-shared", { defaultPluginIds: [], activitySourcePluginIds: {} });
+
+    // The null is what makes this answerable: a zone the author had merely been
+    // defaulted to would be indistinguishable from one they asked for, and
+    // every adopter would inherit the drafting session's guess.
+    expect(database.prepare(
+      "SELECT timezone FROM schedules WHERE automation_subscription_id = ?",
+    ).get(adopted.id)).toEqual({ timezone: "Asia/Tokyo" });
+    expect(adopted.triggers[0]).toMatchObject({ timezone: "Asia/Tokyo" });
+  });
+
+  it("keeps a zone a shared template's author actually named", async () => {
+    const database = seededDatabase();
+    database.exec(`
+      UPDATE users SET timezone = 'Asia/Tokyo' WHERE id = '${otherUserId}';
+      INSERT INTO automation_templates
+        (id, workspace_id, owner_user_id, name, description, sharing_state, latest_version_number, created_at, updated_at)
+      VALUES ('template-named', '${workspaceId}', '${userId}', 'Market open', 'A brief.', 'workspace', 1, '2026-01-01', '2026-01-01');
+    `);
+    database.prepare(
+      `INSERT INTO automation_template_versions
+         (id, template_id, version_number, overview, instructions, trigger_definitions_json,
+          required_capabilities_json, expected_outputs_json, default_behavior_json,
+          recommended_plugins_json, memory_tables_json, created_by_user_id, created_at)
+       VALUES ('version-named', 'template-named', 1, '', 'Brief them.', ?, '[]', '[]', '{}', '[]', '[]', ?, '2026-01-01')`,
+    ).run(
+      JSON.stringify([{
+        type: "calendar",
+        rrule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=30;BYSECOND=0",
+        timezone: "America/New_York",
+        summary: "Every weekday at 9:30 AM America/New_York",
+      }]),
+      userId,
+    );
+
+    const adopted = await serviceFor(database, { ...auth, userId: otherUserId })
+      .subscribe("template-named", { defaultPluginIds: [], activitySourcePluginIds: {} });
+
+    // An American market open is not a Japanese one: a zone somebody named is
+    // the point of the automation and does not follow whoever adopts it.
+    expect(database.prepare(
+      "SELECT timezone FROM schedules WHERE automation_subscription_id = ?",
+    ).get(adopted.id)).toEqual({ timezone: "America/New_York" });
   });
 
   it("refuses to reopen the conversation behind an automation that already runs", async () => {

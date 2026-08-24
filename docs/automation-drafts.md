@@ -315,14 +315,22 @@ on Pacific time. The compiler had never been told the account's zone, and the
 zone it invented was frozen into the definition at compile time — before the
 scope was even chosen — so nothing downstream could correct it.
 
-**Consequences:** The draft — and the wire — now carry `timezone: null` for a
-recurrence nobody named a zone for. A first draft of this change filled the
-default in at compile time to keep the wire non-null, and review found that this
-left the server's resolution unreachable for everything the pipeline produced,
-including the scope-switch case above. Desktop builds that predate this cannot
-parse such a draft; nothing in the renderer reads the field, and an automation
-already stored keeps its concrete zone, so the exposure is a build older than
-this release opening the *builder*.
+**Consequences:** A draft now carries `timezone: null` for a recurrence nobody
+named a zone for. A first draft of this change filled the default in at compile
+time to keep the wire non-null, and review found that this left the server's
+resolution unreachable for everything the pipeline produced, including the
+scope-switch case above.
+
+A second round of review found the correction had over-reached: the null was
+reaching the *automation detail* response too, where `create` stores the draft's
+triggers verbatim and `get` returns them, so a desktop build older than this
+release could not parse any automation created after it — including a workspace
+automation a colleague created, and including an old automation once a newer
+template version existed. So a response now resolves the zone before returning
+it, from the `schedules` row the automation actually fires on, while storage
+keeps the null. Nothing posts those triggers back, so this cannot re-freeze the
+distinction the null exists to carry. The remaining skew is the builder alone:
+the draft response is the one place a null still reaches a client.
 
 ### 2026-08-23 — The compiler names the destination it was asked for
 

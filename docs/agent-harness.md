@@ -709,41 +709,6 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
-### 2026-08-24 — The compiler is told the timezone it was being asked to schedule in
-
-**What changed:** `renderAutomationCompilerMessages` takes the account's
-personal and workspace zones and renders them as a user-role scheduling-defaults
-message. The policy line that said to use "the user's timezone" now says to set
-a calendar trigger's timezone only to a zone the person named, otherwise to
-leave it null for that default, and to name the zone that applies in the trigger
-summary. The submit-draft schema's `timezone` field carries the same contract in
-its own description. Two sentences left the policy to pay for it — "Flat trigger
-records require null for every unused field" and the JSON-string encoding rule —
-both of which the rendered submit schema already states per field.
-
-**Why:** the rule referred to a fact the model was never given. Asked to
-schedule in a timezone it could not read, a model supplies a popular one, and a
-New York account got a 9:00 AM briefing on Pacific time — in the field *and* in
-the summary sentence the person reads on the automation, which is model prose
-and would still have named the wrong zone had only the field been repaired.
-The defaults are a user-role message rather than an interpolation into the
-policy: the policy is one constant string every workspace shares, which is the
-block a prompt-cache hit is worth the most on, and an account's zones do not
-change between turns, so they sit ahead of the draft state that is rewritten
-every turn.
-
-**Consequences:** the policy is back to 9,943 bytes against its 10,000 ceiling,
-so the byte cap held without being raised. The field is now expected to be null
-in the ordinary case, and the normalizer no longer substitutes a default for it —
-`AutomationService` resolves it where the `schedules` row is derived, so a model
-that ignores the rule can no longer decide when an automation runs. The
-substitution was kept in a first draft of this change to keep the wire non-null,
-which made the server's resolution unreachable for everything the pipeline
-produced: review of #263 found the two cases that cost, and the normalizer's
-fill went. `prompts.test.ts` pins the message, its position, and the policy's
-deference to it; `index.test.ts` pins that `compileAutomation` sends both halves
-and that an unnamed zone comes back null.
-
 ### 2026-08-25 — A platform refusal stops being the asking port's fault
 
 **What changed:** `platform_limit_exceeded`, kind `platform`, joins the failure
@@ -792,6 +757,53 @@ already `execution`.
 lands anywhere. *Adding a retry* for it inside the harness: the invocation is
 already spent, so a retry inside it fails identically; the honest recovery is
 the next run, which is what the member-facing message says.
+
+### 2026-08-24 — The compiler is told the timezone it was being asked to schedule in
+
+**What changed:** `renderAutomationCompilerMessages` takes the account's
+personal and workspace zones and renders them as a user-role scheduling-defaults
+message. The policy line that said to use "the user's timezone" now says to set
+a calendar trigger's timezone only to a zone the person named, otherwise to
+leave it null for that default, and to name the zone that applies in the trigger
+summary. The submit-draft schema's `timezone` field carries the same contract in
+its own description. Two sentences left the policy to pay for it — "Flat trigger
+records require null for every unused field" and the JSON-string encoding rule —
+both of which the rendered submit schema already states per field.
+
+**Why:** the rule referred to a fact the model was never given. Asked to
+schedule in a timezone it could not read, a model supplies a popular one, and a
+New York account got a 9:00 AM briefing on Pacific time — in the field *and* in
+the summary sentence the person reads on the automation, which is model prose
+and would still have named the wrong zone had only the field been repaired.
+The defaults are a user-role message rather than an interpolation into the
+policy: the policy is one constant string every workspace shares, which is the
+block a prompt-cache hit is worth the most on, and an account's zones do not
+change between turns, so they sit ahead of the draft state that is rewritten
+every turn.
+
+**Consequences:** the policy is back to 9,943 bytes against its 10,000 ceiling,
+so the byte cap held without being raised. The field is now expected to be null
+in the ordinary case, and the normalizer no longer substitutes a default for it —
+`AutomationService` resolves it where the `schedules` row is derived. A zone the
+model *writes* is still honoured, deliberately: a shared template naming an
+American market open must not follow its adopter. So the policy line is what
+keeps a model from deciding when an automation runs, not a server-side guard, and
+`prompts.test.ts` asserts its wording for that reason. The
+substitution was kept in a first draft of this change to keep the wire non-null,
+which made the server's resolution unreachable for everything the pipeline
+produced: review of #263 found the two cases that cost, and the normalizer's
+fill went. `prompts.test.ts` pins the message, its position, and the policy's
+deference to it; `index.test.ts` pins that `compileAutomation` sends both halves
+and that an unnamed zone comes back null.
+
+A second review round caught the trigger enumeration two paragraphs above still
+defining a calendar trigger as "RRULE and timezone", with no tie-break against
+the new rule — the reading a medium model is likeliest to take is the earlier
+definitional one, which fills the field and puts the resolution back where it
+was. It now says "optional timezone". The summary rule was conditioned on the
+same predicate at the same time: naming "the zone that applies" asked the model
+to pick by a scope chosen after it writes, so an unnamed zone now gets a summary
+with no zone in it rather than a guess in the one sentence a person reads.
 
 ### 2026-08-24 — EU hosts intentionally discard analytical inference events
 
