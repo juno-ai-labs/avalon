@@ -288,6 +288,38 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(screen.getByLabelText('Message the work stream')).toHaveValue('');
   });
 
+  it('offers people only, leaving the work stream\'s connections out of the list and out of the highlight', async () => {
+    const connected: WorkstreamDetail = {
+      ...workstream,
+      connections: [{
+        id: 'connection-slack',
+        modelPluginId: 'plugin_slack',
+        connectorType: 'slack',
+        displayName: 'Slack',
+        scope: 'workspace',
+        status: 'healthy',
+      }],
+    };
+    renderComposer(undefined, false, undefined, connected);
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual([
+      'Adamadam@example.comPerson',
+      'Bob Builderbob@example.com · not participatingPerson',
+      'Cara Chencara@example.com · not participatingPerson',
+    ]);
+    expect(screen.queryByText('Workspace connection')).not.toBeInTheDocument();
+
+    // The draft's highlight names what the composer can mention, so a
+    // connection typed into it by hand stays plain text too.
+    fireEvent.change(composer, { target: { value: 'ask @Slack and @Adam' } });
+
+    expect([...document.querySelectorAll('.composer-mention')].map((mark) => mark.textContent)).toEqual(['@Adam']);
+  });
+
   it('walks the mention list with the arrow keys and inserts the highlighted candidate on Enter', async () => {
     const onSend = vi.fn(async () => undefined);
     renderComposer(onSend);

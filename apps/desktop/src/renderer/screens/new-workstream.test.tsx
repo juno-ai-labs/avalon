@@ -259,11 +259,11 @@ describe('New work-stream home', () => {
   it('uses the shared mention, attachment, and dictation controls', async () => {
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Mention a participant or connection' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Mention a participant' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Attach a file' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Click or hold to dictate' })).toBeVisible();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Mention a participant or connection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mention a participant' }));
     expect(await screen.findByRole('dialog', { name: 'Add people' })).toBeVisible();
   });
 
