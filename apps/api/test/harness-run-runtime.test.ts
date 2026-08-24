@@ -3162,8 +3162,8 @@ describe("durable harness attempt runtime", () => {
       "SELECT tool_status FROM parts WHERE id = ?",
     ).get("invocation-direct-failure")).toEqual({ tool_status: "failed" });
     expect(sqlite.object.prepare(
-      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
-        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+      `SELECT COUNT(*) AS count FROM run_lifecycle_events
+        WHERE run_id = ? AND event_key = 'residual_receipts_settled'`,
     ).get(RUN_ONE)).toEqual({ count: 1 });
   });
 
@@ -3188,11 +3188,9 @@ describe("durable harness attempt runtime", () => {
       mode: "read",
     });
     seedPendingToolCard(sqlite, "invocation-completed-residual", "load_plugin");
-    await persistHarnessFinalMessage(sqlite.binding, sqlite.runs, input(RUN_ONE), claim.lease, {
+    await persistHarnessFinalMessage(sqlite.runs, sqlite.messages, input(RUN_ONE), claim.lease, {
       id: "message-completed-residual",
-      sequenceNumber: 1,
       text: "Here is what those teams use",
-      createdAt: "2026-08-03T00:00:00.000Z",
     }, { status: "completed" });
 
     // The worst case of the two: Bind synthesizes a tool error for the call
@@ -3210,8 +3208,8 @@ describe("durable harness attempt runtime", () => {
       "SELECT tool_status FROM parts WHERE id = ?",
     ).get("invocation-completed-residual")).toEqual({ tool_status: "failed" });
     expect(sqlite.object.prepare(
-      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
-        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+      `SELECT COUNT(*) AS count FROM run_lifecycle_events
+        WHERE run_id = ? AND event_key = 'residual_receipts_settled'`,
     ).get(RUN_ONE)).toEqual({ count: 1 });
   });
 
@@ -3283,8 +3281,8 @@ describe("durable harness attempt runtime", () => {
       "SELECT tool_status FROM parts WHERE id = ?",
     ).get("invocation-direct-failure-repair")).toEqual({ tool_status: "failed" });
     expect(sqlite.object.prepare(
-      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
-        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+      `SELECT COUNT(*) AS count FROM run_lifecycle_events
+        WHERE run_id = ? AND event_key = 'residual_receipts_settled'`,
     ).get(RUN_ONE)).toEqual({ count: 1 });
     // The automation settlement this walk performs for a reaped root matches
     // every unfinished automation row in the work stream rather than this run's
@@ -3337,8 +3335,8 @@ describe("durable harness attempt runtime", () => {
       "SELECT tool_status FROM parts WHERE id = ?",
     ).get("invocation-needs-input-residual")).toEqual({ tool_status: "failed" });
     expect(sqlite.object.prepare(
-      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
-        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+      `SELECT COUNT(*) AS count FROM run_lifecycle_events
+        WHERE run_id = ? AND event_key = 'residual_receipts_settled'`,
     ).get(RUN_ONE)).toEqual({ count: 1 });
     // Settling the receipt does not relabel the run itself: it is still waiting
     // on a person, not failed. (Asserted on the run rather than the work stream,
@@ -3408,8 +3406,8 @@ describe("durable harness attempt runtime", () => {
     ).get("invocation-stale-behind-backfill")).toEqual({ tool_status: "failed" });
     // Both halves of the activation did their work, not one at the other's cost.
     expect(sqlite.object.prepare(
-      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
-        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+      `SELECT COUNT(*) AS count FROM run_lifecycle_events
+        WHERE run_id = ? AND event_key = 'residual_receipts_settled'`,
     ).get(RUN_TWO)).toEqual({ count: 1 });
   });
 
@@ -4662,17 +4660,16 @@ describe("inline child-run durability", () => {
     // otherwise, correctly, spend this test's one flaky call on. Record what
     // that path would have recorded so the child stays the subject.
     sqlite.object.prepare(
-      `INSERT INTO harness_run_lifecycle_events
-        (id, harness_run_id, workspace_id, workstream_id, attempt_id, event_key,
-         event_type, status, member_safe_payload_json, created_at)
-       VALUES (?, ?, ?, ?, ?, 'residual_receipts_settled', 'receipt_reconciliation',
-               'completed', '{}', '2026-08-03T00:00:00.000Z')`,
+      `INSERT INTO run_lifecycle_events
+        (event_id, run_id, attempt_id, event_key, event_type, status,
+         member_safe_payload_json, created_at)
+       VALUES (?, ?, ?, 'residual_receipts_settled', 'receipt_reconciliation',
+               'completed', '{}', ?)`,
     ).run(
       "lifecycle-parent-receipts-settled",
       RUN_ONE,
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
       parentLease.attemptId,
+      Date.parse("2026-08-03T00:00:00.000Z"),
     );
 
     let settlementCalls = 0;
