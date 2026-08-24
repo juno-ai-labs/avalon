@@ -178,6 +178,32 @@ describe('New automation composer', () => {
     expect(screen.queryByRole('listbox', { name: 'Connections' })).not.toBeInTheDocument();
   });
 
+  it('inserts a connection at the caret without truncating the rest of the draft', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: 'connection-slack',
+      modelPluginId: 'plugin_slack',
+      connectorType: 'slack',
+      displayName: 'Slack',
+      scope: 'workspace',
+      status: 'healthy',
+      capabilities: [],
+    }]);
+    renderScreen();
+
+    const composer = screen.getByRole('textbox', { name: 'Describe an automation' });
+    // The caret sits just after the half-typed name, in the middle of the
+    // draft, the way it does when someone clicks back into a sentence.
+    fireEvent.change(composer, { target: { value: 'post to @sla every Friday', selectionStart: 12, selectionEnd: 12 } });
+
+    expect(await screen.findByRole('listbox', { name: 'Connections' })).toBeVisible();
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    // The words after the caret survive. The doubled space is what every
+    // composer's insert does — the name is always followed by one, whatever
+    // came next — and is left alone here rather than changed on one surface.
+    await waitFor(() => expect(composer).toHaveValue('post to @Slack  every Friday'));
+  });
+
   it('dismisses the connection list with Escape', async () => {
     api.getConnections.mockResolvedValue([{
       id: 'connection-slack',

@@ -769,7 +769,11 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
 
   const updateInput = (value: string): void => {
     setInput(value);
-    setMentionQuery(value.match(/(?:^|\s)@([^\s@]*)$/u)?.[1] ?? null);
+    // Read at the caret rather than at the end of the draft, so an `@` typed
+    // back into the middle of a sentence opens the list the same way it does in
+    // the work-stream composers.
+    const beforeCaret = value.slice(0, textareaRef.current?.selectionStart ?? value.length);
+    setMentionQuery(beforeCaret.match(/(?:^|\s)@([^\s@]*)$/u)?.[1] ?? null);
   };
 
   const beginConnectionMention = (): void => {
@@ -783,10 +787,19 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   };
 
   const insertConnectionMention = (connection: WorkstreamConnection): void => {
-    const atIndex = input.lastIndexOf('@');
-    setInput(`${input.slice(0, atIndex)}@${connection.displayName} `);
+    const textarea = textareaRef.current;
+    const caret = textarea?.selectionStart ?? input.length;
+    const before = input.slice(0, caret);
+    const atIndex = before.lastIndexOf('@');
+    // Whatever followed the caret is kept and the caret lands after the name,
+    // so picking mid-sentence does not truncate the rest of it.
+    setInput(`${before.slice(0, atIndex)}@${connection.displayName} ${input.slice(caret)}`);
     setMentionQuery(null);
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      const nextCaret = atIndex + connection.displayName.length + 2;
+      textarea?.setSelectionRange(nextCaret, nextCaret);
+    });
   };
 
   // Avalon's suggestion is the default; the creator can still redirect the
