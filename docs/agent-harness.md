@@ -423,7 +423,7 @@ That split — a labelled trigger message for the model, a system row for the pe
 
 ### Cancellation and deferred systems
 
-Stopping a run persists `cancellation_requested_at`; it does not terminate an in-flight model request or tool call out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. If that observation aborts a tool, the same live attempt may settle that exact in-flight receipt even though cancellation has been requested; the narrow settlement path still requires the current attempt id, lease owner, unexpired lease, `running` parent, and no prior terminalization. A `record_before_execute` write remains ambiguous, while a definitive read failure remains failed. In every checkpoint, successful-completion, and failure batch, the live-lease fence admits the checkpoint insert; the immediately following receipt update is tied to that admitted checkpoint rather than re-reading wall-clock expiry. Crossing the lease deadline between serialized statements therefore cannot leave an immutable checkpoint beside a still-started receipt. Parent terminalization still requires the live lease. The leased owner first commits the requested `stopped` transition, then closes any still-unfinished receipt through the object-local exact-terminal-stamp fence — unresolved writes become ambiguous and reads fail — whether it came from the current executor or survived an expired attempt. Cleanup advances past any checkpoint stranded by an older deployment. A definite completion or failure that wins first remains terminal. An immutable lifecycle marker acknowledges successful residual settlement; a direct retry or the bounded activation sweep repairs a terminal run missing that marker, preventing a transient second-call failure from leaving a permanently `started` tool row. If an obsolete executor loses ownership, its local dispatch is deferred to adopt the successor's result; it cannot write an unfenced product failure.
+Stopping a run persists `cancellation_requested_at`; it does not terminate an in-flight model request or tool call out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. If that observation aborts a tool, the same live attempt may settle that exact in-flight receipt even though cancellation has been requested; the narrow settlement path still requires the current attempt id, lease owner, unexpired lease, `running` parent, and no prior terminalization. A `record_before_execute` write remains ambiguous, while a definitive read failure remains failed. In every checkpoint, successful-completion, and failure batch, the live-lease fence admits the checkpoint insert; the immediately following receipt update is tied to that admitted checkpoint rather than re-reading wall-clock expiry. Crossing the lease deadline between serialized statements therefore cannot leave an immutable checkpoint beside a still-started receipt. Parent terminalization still requires the live lease. The leased owner first commits the requested `stopped` transition, then closes any still-unfinished receipt through the object-local exact-terminal-stamp fence — unresolved writes become ambiguous and reads fail — whether it came from the current executor or survived an expired attempt. Cleanup advances past any checkpoint stranded by an older deployment. A definite completion or failure that wins first remains terminal. **Every** terminal transition closes residual receipts, not only the stopped one: a run that reaches `completed`, `needs_input`, or `failed` is supposed to have settled each receipt as its tool returned, so one still open at that point is a defect, and one whose only symptom is a permanently spinning tool card. A run that wrote its own terminal row says so — its residual receipts carry `run_terminated`, never the reaper's `parent_run_terminated`, because no lease was observed to be lost. An immutable lifecycle marker acknowledges successful residual settlement; a direct retry or the bounded activation sweep repairs any terminal run missing that marker, preventing a transient second-call failure from leaving a permanently `started` tool row. The sweep's retry predicate is every terminal row without the marker rather than a list of the paths known to write one, so a path added later is covered without being named. Because that walk now also visits ordinary terminal rows, the stale-automation settlement it performs — which matches every unfinished automation row in the work stream rather than the run's own — is restricted to a reaped root. If an obsolete executor loses ownership, its local dispatch is deferred to adopt the successor's result; it cannot write an unfenced product failure.
 
 Cancellation-requested or orphaned inline children are reaped only after their own lease expires. The same attempt, owner, lease snapshot, expiry, and parent-liveness predicates fence the terminal lifecycle and child-result commit. Residual child receipts are then classified under that exact terminal stamp; unresolved writes become ambiguous and reads fail, and the same marker-backed sweep retries a lost response. Thus neither a stopped parent nor its eventual child reaper can leave a descendant tool card looking live.
 
@@ -640,7 +640,7 @@ outputs, summaries, token content, and provider responses remain excluded.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, terminal commits, durable structured failures, successful/failure/stop receipt settlement across a mid-batch lease deadline, healing an occupied checkpoint index, bulk residual-receipt settlement for stop/steering, descendant receipt settlement during child reaping, attachment dependency ordering, and dependency/replan interleavings. |
+| `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, terminal commits, durable structured failures, successful/failure/stop receipt settlement across a mid-batch lease deadline, residual settlement on every terminal status and the marker-driven repair of a directly-failed root that lost its settlement response, healing an occupied checkpoint index, bulk residual-receipt settlement for stop/steering, descendant receipt settlement during child reaping, attachment dependency ordering, and dependency/replan interleavings. |
 | `apps/api/test/durable-agent-runtime.test.ts`, `agent-run-dispatch-queue.test.ts` | One drain per isolate, abandonment revoking the obsolete loop before another claim, durable wake derivation, reclaim ordering, and exact lease-token fences for Substream and BlockDashboard dispatch settlement. |
 | `apps/api/test-workers/agent-run-dispatch-reliability.test.ts`, `durable-object-runtime.test.ts` | Real workerd alarms, eviction/reclaim, abandoned-run recovery, queue progress against the same authoritative workstream root required by production product mutations, and the direct BlockDashboard terminal transition refusing an obsolete lease token without changing the successor's token, outcome, or stream checkpoint. |
 | `apps/api/test/harness-liveness-monitor-lifecycle.test.ts` | Heartbeats, expiry reaping, and the compare-and-swap that fails an abandoned attempt. |
@@ -683,6 +683,51 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-24 — Every terminal run closes its residual receipts, not only a stopped one
+
+**What changed:** `terminalizeHarnessAttempt` settles residual tool receipts on
+every terminal status instead of only `stopped`, on both the first commit and
+the `already_terminal` repeat that finishes a lost settlement. The bounded
+activation sweep's retry predicate became "any terminal row missing the
+`residual_receipts_settled` marker" rather than the three paths that used to
+write one. A root that wrote its own terminal row now settles with
+`run_terminated`/"The run ended before the tool produced a result" instead of
+the reaper's `parent_run_terminated`/"lost its durable lease".
+
+**Why:** a `load_plugin` card spun for fourteen hours in a work stream whose run
+had already ended. `tool_started` is emitted at `bind-runtime.ts:981` and the
+guard that reports `tool_failed` does not open until `:1007`, so a throw in
+between — `emit` itself converts any host `onEvent` failure into a
+`FatalHarnessPortError` — leaves the receipt `executing` and the transcript part
+`pending` with no terminal tool event. Nothing downstream closed it: HQA-08's
+repair was written for the stopped, reaped-child, and stale-lease paths, and its
+predicate named exactly those, so a root that terminalized `failed` matched
+neither the first-pass call nor the retry. The window itself is not reliably
+fixable where it opens — emitting `tool_failed` through the same host that just
+failed would usually fail again — which is why the fix is at the durable layer
+that runs after it. Scoping the settlement rule to the paths then known to need
+it is what made a fourteen-hour spinner possible; a future change must not
+re-narrow it to a list.
+
+**Consequences:** one extra object RPC and one lifecycle row per terminal run,
+against the several RPCs each tool call already costs. Rows terminalized before
+this became universal carry no marker either, so the sweep backfills them a
+bounded page at a time ahead of the stale-lease reap in the same walk; it is
+per work stream, records a marker per repaired row, and therefore drains within
+a few dispatches rather than repeating. Widening the walk also broke the
+implication that a `failed` root in it was always `stale_run_reaped`, which
+`settleStaleAutomationRun` relied on — it matches every unfinished automation
+row in the work stream, so it is now explicitly restricted to a reaped root, and
+`harness-run-runtime.test.ts` pins that a directly-failed root leaves a live
+automation run alone. **Still open:** a run whose executor dies without
+terminalizing at all leaves the row `running` with a lapsing lease, and
+`reapStaleHarnessRuns` is called from exactly one place — immediately before
+`claimHarnessAttempt` — so nothing recovers it until someone sends another
+message into that work stream. Giving the object a wake reason for its own
+expired lease is a
+[`durable-object-alarms.md`](durable-object-alarms.md) decision and is not this
+change's to make.
 
 ### 2026-08-23 — The work-stream prompt states what a written answer is made of
 
