@@ -9,7 +9,7 @@ import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import { formatRelative, workstreamMarkerStatus, workstreamNeedsAttention } from '../lib/format';
 import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { useDraftText } from '../lib/use-draft-text';
-import { useMentionNavigation } from '../lib/use-mention-navigation';
+import { mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
@@ -531,8 +531,26 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
 
   const updateMessage = (value: string): void => {
     setMessage(value);
-    const beforeCaret = value.slice(0, textareaRef.current?.selectionStart ?? value.length);
-    setMentionQuery(beforeCaret.match(/(?:^|\s)@([^\s@]*)$/u)?.[1] ?? null);
+    syncMentionQuery(value);
+  };
+
+  /** What the caret is naming, recomputed as the draft changes. */
+  const syncMentionQuery = (value: string): void => {
+    setMentionQuery(mentionQueryAtCaret(value, textareaRef.current?.selectionStart));
+  };
+
+  /**
+   * The caret moved without the draft changing — an arrow key, a click, a drag.
+   * This may only *close* the list: a list that outlives the mention the caret
+   * was in still answers `Enter` and inserts against an `@` the caret has left.
+   * It may not open one, or `Escape` would last exactly until the next arrow
+   * key, and wandering back through an old mention would raise a list nobody
+   * asked for.
+   */
+  const refreshOpenMentionQuery = (value: string): void => {
+    setMentionQuery((current) => current === null
+      ? null
+      : mentionQueryAtCaret(value, textareaRef.current?.selectionStart));
   };
 
   const beginMention = (): void => {
@@ -559,6 +577,12 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     const caret = textarea?.selectionStart ?? message.length;
     const before = message.slice(0, caret);
     const atIndex = before.lastIndexOf('@');
+    // The caret has left the mention this list belongs to; there is nothing
+    // here to complete, and `slice(0, -1)` would eat the character before it.
+    if (atIndex < 0) {
+      setMentionQuery(null);
+      return;
+    }
     const after = message.slice(caret);
     // One separator, not two: the name brings its own unless the rest of the
     // line already starts with one.
@@ -698,11 +722,12 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
 
         <div className="composer-stack">
           {visibleCandidates.length > 0 && (
-            <div className="mention-popover" role="listbox" aria-label="Mentions">
+            <div className="mention-popover" id="launch-mention-listbox" role="listbox" aria-label="Mentions">
               {visibleCandidates.map((member, index) => (
                 <button
                   aria-selected={index === mentionNavigation.activeIndex}
                   className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
+                  id={mentionOptionId(member.id)}
                   key={member.id}
                   onClick={() => insertMention(member)}
                   onMouseMove={() => mentionNavigation.setActiveIndex(index)}
@@ -729,6 +754,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             maxHeight={220}
             model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
             mentionLabels={mentionLabels}
+            mentionListbox={visibleCandidates.length > 0
+              ? { id: 'launch-mention-listbox', activeOptionId: mentionNavigation.activeOptionId }
+              : undefined}
             onAttach={attachmentDraft.addFiles}
             onKeyDown={(event) => {
               if (mentionNavigation.handleKeyDown(event)) return;
@@ -740,6 +768,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             onOpenAttachment={setAttachmentPreview}
             onRemoveAttachment={attachmentDraft.removeAttachment}
             onRetryAttachment={attachmentDraft.retryAttachment}
+            onSelect={() => { if (!draftHidden) refreshOpenMentionQuery(message); }}
             onSubmit={submit}
             // Held back rather than merely hidden: the composer is controlled,
             // so a keystroke during a suggested-work launch would otherwise
