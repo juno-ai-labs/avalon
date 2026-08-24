@@ -122,7 +122,9 @@ regardless of which state put it there.
   it was eyeballed in; the stylesheet test fails on it.
 - **`unseen` is settled once.** Nothing sets `first_opened_at` back to null
   except a removal followed by a re-add. A later message makes a work stream
-  unread, never new again.
+  unread, never new again — that difference is the whole reason the column
+  exists rather than a derivation from the attention waterline, which a newly
+  added person also trips but which comes back on every message after it.
 - **A new writer of `participants` owes the column an answer.** The membership
   row is reachable through the runtime compatibility views as well as through
   this object's own methods, and a writer that reactivates a removed row without
@@ -233,19 +235,27 @@ states that ask something of the reader, ordered by recency.
 agent happened to be doing — usually `running` or `completed` — so a room a
 colleague had just put somebody in looked exactly like the forty rooms they had
 already read, and the only signal was a notification they may not have been
-looking at. `hasUnread` could not carry it either: a newly added person's
-tracking waterline starts at the moment they are added, so a work stream with
-months of transcript and no new messages is *read* by construction. The state
-being asked about is not "are there messages you have not seen" but "have you
-ever been here", and nothing in the model answered that. Once three personal
+looking at. `hasUnread` could not carry it either. It is true for a newly added
+person — the root's tracking start is 0 and the add writes no attention row, so
+their waterline is 0 and the whole transcript sits above it — but it is true
+again after every subsequent message and after a manual mark-unread. Reusing it
+would mean a work stream somebody has been in for months turning violet and
+reading **New to you** because a colleague posted. The state being asked about
+is "have you ever been here", which is answered once and then never again;
+unread answers "is there something to read", which is answered continuously. Once three personal
 states could be true at once with one dot to show them, an ordering had to exist
 somewhere; putting it in one array is what stops each surface from inventing its
 own.
 
-**Considered and rejected:** Deriving unseen from `member_attention` — the row
-does not exist for somebody who has only been added, and its absence cannot be
-told apart from the absence of any relationship at all, which is why the flag
-sits on the membership row instead. Clearing it on `acknowledgeRead` — the
+**Considered and rejected:** Reusing `hasUnread`, which is free and is already
+true at the moment of the add — rejected because it does not stay true-once, as
+above, and because the ranking needs the two to be separable: `unseen` outranks
+a mention and a working run, `unread` sits below both, and one fact cannot hold
+two places in one order. Deriving unseen from the *existence* of a
+`member_attention` row — the closest cheap approximation — rejected because a
+mention writes that row, so being named in a work stream you have never opened
+would clear the very marker that should be shouting; and because no existing
+membership has one, so the deploy would light every dot in the product. Clearing it on `acknowledgeRead` — the
 client only sends that when a message it has not accounted for is on screen, so
 a work stream somebody opens with nothing new would never clear, and the dot
 would stay lit on the room they were looking at; the clear is on the open path
