@@ -1395,6 +1395,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 : "success",
             model: candidate.canonicalModelId,
             provider: candidate.providerId,
+            providerInvocationModel: candidate.providerInvocationModel,
             cursor,
             latencyMs: Date.now() - startedAt,
             ttftMs: result.ttftMs,
@@ -1404,6 +1405,13 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             cachedInputTokens: cachedTokens(result.usage),
             costCents: costCents(result.usage),
             responseBytes: result.responseBytes,
+            response: {
+              content: result.content,
+              toolCalls: result.toolCalls,
+              usage: result.usage,
+              finishReason: result.finishReason,
+              generationId: result.generationId,
+            },
           }));
           return { kind: "success", value: result };
         } catch (error) {
@@ -1437,6 +1445,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                     : "failed",
             model: candidate.canonicalModelId,
             provider: candidate.providerId,
+            providerInvocationModel: candidate.providerInvocationModel,
             cursor,
             latencyMs: target.durationMs,
             failureKind: classified.kind,

@@ -82,4 +82,16 @@ describe("dispatching a queue batch", () => {
     await expect(worker.queue?.(batchOf("avalon-do-runtime-test-activities", {}), contractComplete))
       .rejects.toThrow(/workstream_maintenance/);
   });
+
+  it("carries inference lakehouse delivery while maintenance refuses product work", async () => {
+    // An invalid pointer is poison and is acknowledged by the inference
+    // consumer. Reaching that consumer proves dispatch happens before the D1
+    // maintenance fence; an unknown queue would reject below instead.
+    await expect(
+      worker.queue?.(
+        batchOf("avalon-global-inference-lakehouse", { invalid: true }),
+        contractComplete,
+      ),
+    ).resolves.toBeUndefined();
+  });
 });

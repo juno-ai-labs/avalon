@@ -21,7 +21,6 @@ export const workspaceSchema = z
     id: z.string(),
     name: z.string(),
     region: z.enum(['global', 'eu']),
-    logAgentInference: z.boolean().default(false),
     currentUser: workspaceMemberSchema,
   })
   .passthrough();

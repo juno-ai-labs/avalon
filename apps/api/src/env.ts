@@ -1,4 +1,5 @@
 import { AvalonUrlSchema, HttpUrlSchema } from "@avalon/contracts/url-schemas";
+import type { Pipeline } from "cloudflare:pipelines";
 import { z } from "zod";
 import type { Region, UserId, WorkspaceId } from "@avalon/contracts";
 import type { RegionalIdentityBridgeRpcBinding } from "./services/platform-onboarding-service";
@@ -50,6 +51,8 @@ export interface Env {
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   SLACK_REACTION_TICKERS: DurableObjectNamespace;
   ACTIVITY_QUEUE: Queue;
+  /** Regional durable hand-off from inference capture to Pipeline ingestion. */
+  INFERENCE_LAKEHOUSE_QUEUE: Queue;
   /** The one path from a D1 access retraction to an open socket. */
   ACCESS_REVOCATION_QUEUE: Queue;
   CONNECTOR_POLL_WORKFLOW: Workflow;
@@ -76,6 +79,8 @@ export interface Env {
    * `docs/durable-object-migration-tracking.md`.
    */
   MIGRATION_REPORT_QUEUE?: Queue<DurableObjectMigrationReport>;
+  /** Materialized into production Wrangler configs after the stream is ensured. */
+  INFERENCE_LAKEHOUSE?: Pipeline;
 
   APP_ENV: "development" | "test" | "staging" | "production";
   APP_VERSION?: string;
@@ -289,7 +294,9 @@ const EnvContractSchema = z.object({
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   SLACK_REACTION_TICKERS: binding<DurableObjectNamespace>(),
   ACTIVITY_QUEUE: binding<Queue>(),
+  INFERENCE_LAKEHOUSE_QUEUE: binding<Queue>(),
   ACCESS_REVOCATION_QUEUE: binding<Queue>(),
+  INFERENCE_LAKEHOUSE: binding<Pipeline>().optional(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
   CONNECTOR_EVENT_WORKFLOW: binding<Workflow>(),
   WORK_OPPORTUNITY_WORKFLOW: binding<Workflow>(),
@@ -399,6 +406,8 @@ const productionOnlySecrets = [
   { key: "OPENROUTER_API_KEY", regions: ["global", "eu"] },
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
+const productionOnlyBindings = ["INFERENCE_LAKEHOUSE"] as const satisfies readonly (keyof Env)[];
+
 /**
  * Drift guard. If a key is required by the schema but optional on `Env` — or
  * carries a different type — this assignment stops compiling. The schema cannot
@@ -446,6 +455,9 @@ export function assertEnvContract(env: Env): void {
           && !env[secret.key])
         .map((secret) => secret.key)
     : [];
+  const missingBindings = env.APP_ENV === "production" || env.APP_ENV === "staging"
+    ? productionOnlyBindings.filter((key) => !env[key])
+    : [];
   const terminalRequiredKeys = ["DAYTONA_API_KEY", "DAYTONA_API_URL", "DAYTONA_TARGET", "DAYTONA_TERMINAL_SNAPSHOT"] as const;
   const terminalConfigurationComplete = terminalRequiredKeys.every(
     (key) => typeof env[key] === "string" && env[key]!.trim().length > 0,
@@ -463,7 +475,12 @@ export function assertEnvContract(env: Env): void {
           : []),
       ]
     : [];
-  if (result.success && missingSecrets.length === 0 && terminalConfigurationIssues.length === 0) {
+  if (
+    result.success
+    && missingSecrets.length === 0
+    && missingBindings.length === 0
+    && terminalConfigurationIssues.length === 0
+  ) {
     validated.add(env);
     return;
   }
@@ -478,6 +495,7 @@ export function assertEnvContract(env: Env): void {
       return `${key} ${present ? "is invalid" : "is missing"}`;
     })),
     ...missingSecrets.map((key) => `${key} is missing`),
+    ...missingBindings.map((key) => `${key} is missing`),
     ...terminalConfigurationIssues,
   ];
   throw new EnvContractError([...new Set(keys)].sort());

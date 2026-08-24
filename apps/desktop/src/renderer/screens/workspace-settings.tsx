@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AtSign,
   Building2,
-  Bug,
   CalendarDays,
   Check,
   Clock3,
@@ -381,7 +380,6 @@ export function WorkspaceSettingsScreen({
   const [copied, setCopied] = useState(false);
   const [userTimezone, setUserTimezone] = useState(workspace.currentUser.timezone);
   const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
-  const [logAgentInference, setLogAgentInference] = useState(workspace.logAgentInference);
   const [terminalMode, setTerminalMode] = useState<'trusted_only' | 'full_internet'>('trusted_only');
   const [terminalDomains, setTerminalDomains] = useState('');
   const [terminalPreview, setTerminalPreview] = useState<TerminalNetworkPolicyPreview | null>(null);
@@ -645,11 +643,6 @@ export function WorkspaceSettingsScreen({
   const updateWorkspaceTimezone = useMutation({
     mutationFn: (timezone: string) => api!.updateWorkspaceTimezone(timezone),
     onSuccess: (updated) => setWorkspaceTimezone(updated.timezone),
-  });
-  const updateLogAgentInference = useMutation({
-    mutationFn: (enabled: boolean) => api!.updateWorkspaceLogAgentInference(enabled),
-    onSuccess: (updated) => setLogAgentInference(updated.logAgentInference),
-    onError: (_error, attemptedValue) => setLogAgentInference(!attemptedValue),
   });
   const updateLockdownMode = useMutation({
     mutationFn: (enabled: boolean) => bridge.setLockdownMode(enabled),
@@ -1036,31 +1029,8 @@ export function WorkspaceSettingsScreen({
                       variant="secondary"
                     />
                   </label>
-                  <label className="settings-preference-row">
-                    <span className="settings-row-icon"><Bug aria-hidden="true" size={18} /></span>
-                    <span className="settings-row-copy">
-                      <strong>Log agent inference</strong>
-                      <small>Store full agent messages, metadata, and tool definitions in the workspace region for debugging.</small>
-                    </span>
-                    <span className="settings-toggle">
-                      <input
-                        aria-label="Log agent inference"
-                        checked={logAgentInference}
-                        disabled={!isAdmin || updateLogAgentInference.isPending}
-                        onChange={(event) => {
-                          const enabled = event.currentTarget.checked;
-                          setLogAgentInference(enabled);
-                          updateLogAgentInference.mutate(enabled);
-                        }}
-                        role="switch"
-                        type="checkbox"
-                      />
-                      <span aria-hidden="true" />
-                    </span>
-                  </label>
                 </div>
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
-                {updateLogAgentInference.error && <InlineError>{updateLogAgentInference.error.message}</InlineError>}
                 <div className="settings-pane-heading settings-pane-heading-spaced">
                   <h2>Terminal network access</h2>
                   <p>Choose where code running in Daytona may connect. Avalon-managed platform access is applied automatically.</p>

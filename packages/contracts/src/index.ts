@@ -196,7 +196,6 @@ export const WorkspaceSchema = z.object({
   region: RegionSchema,
   role: MemberRoleSchema,
   timezone: IanaTimezoneSchema,
-  logAgentInference: z.boolean().default(false),
   createdAt: TimestampSchema
 });
 
@@ -1307,13 +1306,7 @@ export const ConnectorOAuthAttemptSchema = z.object({
 export const RefreshTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{20,500}$/u);
 export const RefreshRequestSchema = z.object({ refreshToken: RefreshTokenSchema });
 export const UpdateUserTimezoneRequestSchema = z.object({ timezone: IanaTimezoneSchema });
-export const UpdateWorkspaceRequestSchema = z.object({
-  timezone: IanaTimezoneSchema.optional(),
-  logAgentInference: z.boolean().optional(),
-}).refine(
-  (value) => value.timezone !== undefined || value.logAgentInference !== undefined,
-  "At least one workspace preference is required",
-);
+export const UpdateWorkspaceRequestSchema = z.object({ timezone: IanaTimezoneSchema });
 
 // --- Digest ---------------------------------------------------------------
 
