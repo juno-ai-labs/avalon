@@ -1341,11 +1341,14 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
   },
   {
     version: 22,
+<<<<<<< HEAD
     description: "prevent accepted restricted suggestions from outliving their reader audience",
     statements: acceptedSuggestionAudienceTriggers(),
   },
   {
     version: 23,
+=======
+>>>>>>> 8a734e21 (Renumber the harness-run migration to 22, the third collision today)
     description: "retire the run-scope, plugin-activation and memory-context views",
     statements: harnessRunAuthorityPromotion(),
   },
