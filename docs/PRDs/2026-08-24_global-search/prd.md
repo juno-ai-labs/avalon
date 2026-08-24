@@ -180,14 +180,28 @@ to route around it.
 only as a window-drag region. The glyph is placed at the strip's leading edge,
 inset clear of the macOS traffic lights at `x: 18, y: 17`, and carries
 `window-no-drag` so that it is clickable rather than draggable. Its accessible
-label is `Search`. On hover it shows the `⌘K` hint the sidebar's other affordances
-use.
+label is `Search`, and its tooltip names the `⌘K` shortcut. That tooltip is new:
+the sidebar's existing shortcut hints are not a hover affordance to match — they
+are `aria-hidden` ⌘-digit pills that appear only while the Command key is
+physically held, and disappear on `keyup` or window blur.
 
-**The shortcut.** `⌘K` (`Ctrl+K` off macOS) opens search from every surface —
-home, a work stream, a note, an automation, settings. It is captured at the
-window, so it works while the composer has focus; it is the one shortcut that
-takes precedence over a focused text field, because a person reaching for search
-mid-sentence means search.
+**The shortcut.** `⌘K` (`Ctrl+K` off macOS) opens search from every surface in
+the main window — home, a work stream, a note, an automation. It is captured at
+the window, so it works while the composer has focus; it is the one shortcut
+that takes precedence over a focused text field, because a person reaching for
+search mid-sentence means search.
+
+**Not from the standalone windows.** Settings and meeting notes open as separate
+Electron `BrowserWindow`s whose renderer branches before `AppShell` into a
+single-route router — no sidebar, no shell, and no route to a work stream, so a
+result opened there would have nowhere to go (`App.tsx` returns early on
+`surface=settings` and `surface=meeting`; `app-shell.tsx` says so in its own
+comment). Reaching search from those windows means either a main-window
+navigation bridge over IPC — which does not exist today, the preload surface
+exposes only `openSettings`, `openMeetingNotes`, and
+`openMeetingAudioSettings` — or mounting a second palette that can only ever
+match within that window. Both are out of scope here; `⌘K` is a main-window
+affordance, and the acceptance criteria say so.
 
 **Closing.** `Esc` closes and returns focus to whatever had it. Clicking the
 scrim closes. Opening a result closes.
@@ -199,8 +213,14 @@ working around it: while search is open, digits are query text.
 
 ### The overlay
 
-A centered panel over a scrim, above all surfaces, at the app's dark-surface
-tokens. It holds a single unlabelled query field with the magnifying glass at
+A centered panel over a scrim, above all surfaces, drawn entirely in theme
+tokens — `--av-sys-color-scrim-default` behind it and a surface token for the
+panel, exactly as `.dialog-overlay` and `.dialog-content` already do. **Not a
+dark palette:** two of Avalon's four themes are light (`air`, `terra-light`),
+there is no `dark` token family in the registry, and
+[`theming.md`](../../theming.md) is explicit that nothing in the interface knows
+which theme is running and no component reads a colour — a test fails if
+`app.css` names one. It holds a single unlabelled query field with the magnifying glass at
 its leading edge and an `Esc` affordance trailing. Results fill the panel below
 the field. A footer row states the three keys that do something: `↑↓ NAVIGATE`,
 `⏎ OPEN`, `⌘⏎ START`, and on the right, the count of matching results that are
@@ -297,9 +317,15 @@ remains fully usable for opening things by name. Search never presents a
 blocking error dialog — it is an accelerator, and an accelerator that interrupts
 is worse than one that degrades.
 
-**Offline.** Identical to the error state, reached without a request. The
-`SocketStatusIndicator` already tells the person the app is offline; search does
-not repeat that, it just says which half of itself is unavailable.
+**Offline.** Identical to the error state, reached without a request — the same
+quiet line naming which half of search is unavailable. It cannot lean on an
+existing offline indicator, because there isn't one on most of these surfaces:
+`SocketStatusIndicator` reports *live-update* state ("Reconnecting live
+updates", "Live updates unavailable") rather than offline-ness, and its only
+mount is the work-stream header. The one surface-wide notice is
+`app-shell.tsx`'s connection banner, which renders only after a navigation query
+has already errored. So the palette's own line is the whole signal a person gets
+on home, notes, and automations, and it has to stand alone.
 
 ### Results are a read, not a subscription
 
@@ -631,8 +657,9 @@ the pause duration is a number, it is not set here, and it is on the list above.
 
 ## Acceptance
 
-1. `⌘K` from the home screen, a work stream, a note, and settings each open the
-   panel with focus in the field; `Esc` returns focus where it was.
+1. `⌘K` from the home screen, a work stream, a note, and an automation each open
+   the panel with focus in the field; `Esc` returns focus where it was. In the
+   standalone Settings and meeting-notes windows it does nothing, deliberately.
 2. The glyph is visible in the sidebar titlebar, is not covered by the traffic
    lights at any window width, and is clickable rather than draggable. Verified
    in a real window per

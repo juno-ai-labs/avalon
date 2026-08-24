@@ -719,9 +719,12 @@ Per [`testing.md`](../../testing.md), the default is the real pipeline:
 ## Documents this change updates
 
 - [`data-model.md`](../../data-model.md) — the two new WorkspaceDO tables, and a
-  correction: the `personal`-visibility passage states that the `listable` flag
-  "tests participation alone", which `participantVisible` contradicts by also
-  admitting `created_by_user_id`.
+  correction: its `personal`-visibility passage says "`WorkstreamDO.canRead` and
+  the `listable` flag it projects test participation alone". That is right about
+  `canRead` and wrong about `listable`, which is computed through
+  `participantVisible` and therefore also admits `created_by_user_id`. Only the
+  second half of the compound subject moves — rewriting the sentence whole would
+  falsify the first.
 - [`implementation-plan.md`](../../implementation-plan.md) — its release gate
   independently names global search as a completion blocker. See the PRD's
   [Impact on the product contract](prd.md#impact-on-the-product-contract).
