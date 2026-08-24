@@ -788,7 +788,17 @@ const SlackWebApiSchemas = {
     response: SlackOkSchema,
   },
   "auth.revoke": { request: z.object({}).strict(), response: SlackOkSchema.extend({ revoked: z.boolean().optional() }) },
-  "auth.test": { request: z.object({}).strict(), response: SlackOkSchema },
+  // `user_id` is optional only because `auth.test` is also called for its
+  // `x-oauth-scopes` header alone. Slack itself always names the principal a
+  // token belongs to, which is what makes this the authority for a personal
+  // identity the OAuth body did not carry. `team_id` is deliberately not
+  // typed here: `SlackOAuthSuccessSchema` requires `team`, so the team is
+  // never the missing field, and a second source for it would be one more
+  // shape nothing reads.
+  "auth.test": {
+    request: z.object({}).strict(),
+    response: SlackOkSchema.extend({ user_id: z.string().min(1).optional() }),
+  },
   "chat.appendStream": {
     request: z.object({ channel: SlackIdSchema, ts: SlackTimestampSchema, markdown_text: z.string().min(1).max(12_000) }).strict(),
     response: SlackStreamResponseSchema,
@@ -1372,6 +1382,52 @@ function parseSlackSuccess<T extends z.ZodType>(
   const result = schema.safeParse(payload);
   if (!result.success) throw new ConnectorError("provider_error", fallbackMessage, result.error.flatten());
   return result.data;
+}
+
+/**
+ * Attribute an OAuth callback failure to the phase that produced it.
+ *
+ * `classifyConnectorOAuthCallbackFailure` relays `oauthStage` and drops the
+ * provider's message, so without this every Slack callback failure logs the
+ * same `connector_code: "provider_error"` — the layer, not the fault. Three
+ * unrelated conditions share that fingerprint: an unreachable Slack, a body
+ * that is not JSON, and a `{ok: true}` body Avalon cannot read an identity out
+ * of. A personal connection failed on the last of those repeatedly, and the
+ * logs could not say which, because nothing here filled the field the
+ * classifier was built to read. Granola's `granolaOAuthCallbackStage` is the
+ * same mechanism; the stage vocabulary is deliberately shared with it.
+ */
+async function slackOAuthCallbackStage<T>(
+  oauthStage: "token_exchange" | "account_identity" | "workspace_eligibility",
+  operation: () => T | Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof ConnectorError) {
+      const details = isRecord(error.details) ? error.details : {};
+      throw new ConnectorError(error.code, error.message, { ...details, oauthStage });
+    }
+    if (error instanceof z.ZodError) {
+      throw new ConnectorError(
+        "provider_error",
+        "Slack returned an unexpected OAuth response",
+        { oauthStage, responseInvalid: true },
+      );
+    }
+    if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
+      throw new ConnectorError(
+        "provider_error",
+        "Slack did not complete the authorization request in time",
+        { oauthStage, timedOut: true },
+      );
+    }
+    throw new ConnectorError(
+      "provider_error",
+      "Slack could not complete the authorization request",
+      { oauthStage },
+    );
+  }
 }
 
 function isSlackDirectTool(name: string): name is SlackDirectTool {
@@ -2060,39 +2116,74 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       const endpoint = connectionScope === "personal" ? `${SLACK_API}/oauth.v2.user.access` : `${SLACK_API}/oauth.v2.access`;
       const form = new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, code: String(input.code ?? ""), redirect_uri: config.redirectUri });
       if (connectionScope === "personal" && input.codeVerifier) form.set("code_verifier", String(input.codeVerifier));
-      const response = parseSlackSuccess(await providerJson(fetcher, endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" }, body: form }, SLACK_MAX_RESPONSE_BYTES), SlackOAuthSuccessSchema, "Slack OAuth failed");
+      const response = await slackOAuthCallbackStage("token_exchange", async () => parseSlackSuccess(
+        await providerJson(fetcher, endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" }, body: form }, SLACK_MAX_RESPONSE_BYTES),
+        SlackOAuthSuccessSchema,
+        "Slack OAuth failed",
+      ));
       const team = response.team;
       const authedUser = response.authed_user ?? {};
       const teamId = team.id;
       if (connectionScope === "workspace") {
         const accessToken = response.access_token;
-        if (!accessToken) throw new ConnectorError("provider_error", "Slack OAuth did not return a bot token");
-        const oauthScopes = slackOAuthScopes(response.scope);
-        const missingScopes = SlackWorkspaceBotScopes.filter((scope) => !oauthScopes.includes(scope));
-        if (missingScopes.length > 0) {
-          for (const token of [...new Set([response.refresh_token, accessToken].filter((value): value is string => Boolean(value)))]) {
-            try { await slackApi(token, "auth.revoke", {}, AbortSignal.timeout(10_000), fetcher); } catch { /* best effort after an incomplete grant */ }
-          }
-          throw new ConnectorError(
-            "unauthorized",
-            `Slack authorization is missing required permissions: ${missingScopes.join(", ")}`,
-            { missingScopes },
-          );
+        if (!accessToken) {
+          throw new ConnectorError("provider_error", "Slack OAuth did not return a bot token", {
+            oauthStage: "account_identity",
+            responseInvalid: true,
+          });
         }
-        const billing = await slackApi(accessToken, "team.billing.info", {}, AbortSignal.timeout(10_000), fetcher);
-        const plan = billing.plan;
-        if (plan === "free") {
-          for (const token of [...new Set([response.refresh_token, accessToken].filter((value): value is string => Boolean(value)))]) {
-            try { await slackApi(token, "auth.revoke", {}, AbortSignal.timeout(10_000), fetcher); } catch { /* best effort after an ineligible install */ }
+        return slackOAuthCallbackStage("workspace_eligibility", async () => {
+          const oauthScopes = slackOAuthScopes(response.scope);
+          const missingScopes = SlackWorkspaceBotScopes.filter((scope) => !oauthScopes.includes(scope));
+          if (missingScopes.length > 0) {
+            for (const token of [...new Set([response.refresh_token, accessToken].filter((value): value is string => Boolean(value)))]) {
+              try { await slackApi(token, "auth.revoke", {}, AbortSignal.timeout(10_000), fetcher); } catch { /* best effort after an incomplete grant */ }
+            }
+            throw new ConnectorError(
+              "unauthorized",
+              `Slack authorization is missing required permissions: ${missingScopes.join(", ")}`,
+              { missingScopes },
+            );
           }
-          throw new ConnectorError("unauthorized", "Avalon Agent and automation features require a paid Slack workspace plan. Remove the app from Slack App Management to finish uninstalling it.");
-        }
-        return { providerAccountId: teamId, teamId, workspaceName: team.name ?? teamId, slackPlan: plan, botAccessToken: accessToken, botUserId: response.bot_user_id ?? null, appId: response.app_id ?? config.appId ?? null, oauthScopes, refreshToken: response.refresh_token ?? null, expiresAt: expiresAt(response.expires_in, now()) };
+          const billing = await slackApi(accessToken, "team.billing.info", {}, AbortSignal.timeout(10_000), fetcher);
+          const plan = billing.plan;
+          if (plan === "free") {
+            for (const token of [...new Set([response.refresh_token, accessToken].filter((value): value is string => Boolean(value)))]) {
+              try { await slackApi(token, "auth.revoke", {}, AbortSignal.timeout(10_000), fetcher); } catch { /* best effort after an ineligible install */ }
+            }
+            throw new ConnectorError("unauthorized", "Avalon Agent and automation features require a paid Slack workspace plan. Remove the app from Slack App Management to finish uninstalling it.");
+          }
+          return { providerAccountId: teamId, teamId, workspaceName: team.name ?? teamId, slackPlan: plan, botAccessToken: accessToken, botUserId: response.bot_user_id ?? null, appId: response.app_id ?? config.appId ?? null, oauthScopes, refreshToken: response.refresh_token ?? null, expiresAt: expiresAt(response.expires_in, now()) };
+        });
       }
-      const accessToken = response.access_token ?? authedUser.access_token;
-      const userId = authedUser.id ?? response.authed_user_id;
-      if (!accessToken || !userId) throw new ConnectorError("provider_error", "Slack OAuth did not return a user token and identity");
-      return { providerAccountId: `${teamId}:${userId}`, teamId, slackUserId: userId, workspaceName: team.name ?? teamId, userAccessToken: accessToken, oauthScopes: slackOAuthScopes(response.scope ?? authedUser.scope), refreshToken: response.refresh_token ?? authedUser.refresh_token ?? null, expiresAt: expiresAt(response.expires_in ?? authedUser.expires_in, now()) };
+      return slackOAuthCallbackStage("account_identity", async () => {
+        const accessToken = response.access_token ?? authedUser.access_token;
+        if (!accessToken) {
+          throw new ConnectorError("provider_error", "Slack OAuth did not return a user token", { responseInvalid: true });
+        }
+        // Slack publishes no response shape for `oauth.v2.user.access`, so
+        // `authed_user.id` is present or absent at its discretion — and where
+        // it is absent, reading it failed the whole personal connection here
+        // with the member's grant already spent. Slack answers the question
+        // directly instead: `auth.test` names the principal a token belongs
+        // to, needs no scope, and is already what this adapter's health check
+        // asks. A body that names the user does not pay for the call.
+        const named = authedUser.id ?? response.authed_user_id;
+        const identity = named === undefined
+          ? await slackApiResponse(accessToken, "auth.test", {}, AbortSignal.timeout(10_000), fetcher)
+          : null;
+        const userId = named ?? identity?.data.user_id;
+        if (!userId) {
+          throw new ConnectorError("provider_error", "Slack did not identify the user this authorization belongs to", { responseInvalid: true });
+        }
+        // A body that named no user often names no `scope` either, and
+        // `refreshCredentials` carries a stored empty set forward rather than
+        // rediscovering it on a personal connection. `auth.test` reports the
+        // grant in `x-oauth-scopes`, and the response is already in hand.
+        const bodyScopes = slackOAuthScopes(response.scope ?? authedUser.scope);
+        const oauthScopes = bodyScopes.length > 0 ? bodyScopes : identity?.oauthScopes ?? [];
+        return { providerAccountId: `${teamId}:${userId}`, teamId, slackUserId: userId, workspaceName: team.name ?? teamId, userAccessToken: accessToken, oauthScopes, refreshToken: response.refresh_token ?? authedUser.refresh_token ?? null, expiresAt: expiresAt(response.expires_in ?? authedUser.expires_in, now()) };
+      });
     },
     async refreshCredentials(connection, signal) {
       const refreshToken = stringValue(connection.credentials, "refreshToken");
