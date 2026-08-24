@@ -172,6 +172,18 @@ restored twelve hours later should not silently carry a retention decision made
 yesterday, for the same reason that cache already refuses to restore the model
 pinned beside it.
 
+**So an armed composer does not cache at all.** Resetting the toggle without also
+dropping the text opens the trap in the other direction, and it is the worse one:
+the salary band from motivation cost 3, typed under a dashed ring, restored a day
+later into a composer that has quietly disarmed itself, and Enter now files it into
+a permanent work stream. The person did everything right and got the opposite of
+what they asked for. Both halves of a composition therefore share one fate —
+arming clears any draft already cached for the launcher, and nothing typed while
+armed is written. The cost is real and accepted: navigating away from an armed Home
+composer loses the sentence. That is what "nothing is kept" means, applied to the
+composition as well as to the work stream, and it is the only version of this that
+does not have a silent failure in it.
+
 Only the Home composer offers it. The work-stream composer
 (`WorkstreamComposer`) does not, because retention is a property of a work stream
 and that composer is inside one already; the **New automation** composer does not,
@@ -254,10 +266,14 @@ second sentence is not padding: it is where non-goals 1 and 2 are told to the
 person, at the moment the promise is being made, rather than in a settings screen
 nobody reads.
 
-The dialog appears **once per work stream**, not once per navigation. Somebody who
-has chosen **Discard and leave** and then come back has understood the deal; asking
-again on every exit is what trains people to click through dialogs. An empty
-temporary work stream — armed, opened, nothing typed — never asks at all.
+The dialog asks on **every** attempt to leave until it is answered with **Keep** or
+**Discard and leave**. **Cancel** is not an answer — it is a decision to stay, and
+it is the one outcome after which the work stream still exists and can be left
+again, so suppressing the next dialog would disarm the safety net at exactly the
+moment somebody has just said they do not want to lose this. In practice that means
+it is shown once for any temporary work stream that is actually left, and more than
+once only for somebody who keeps changing their mind. An empty temporary work
+stream — armed, opened, nothing typed — never asks at all.
 
 Every route change is a leave: the sidebar, Home, a note, settings, a deep link, a
 menu-bar item. Quitting Avalon is a leave and is not intercepted, because a quit
@@ -272,6 +288,17 @@ cooperative client is not kept.
 - **A deliberate leave discards immediately.** The client issues the discard, the
   work stream and everything object-local to it are deleted, and its pending alarm
   is cancelled.
+
+  The deletion is not entirely object-local, and goal 6 needs an owner for the part
+  that is not: the directory row lives in `WorkspaceDO`, a different object from the
+  `SubstreamAgent` holding the alarm. `SubstreamAgent` deletes its own rows first and
+  then issues the directory removal over the same effect path its other regional
+  effects already use, so a failed hop is retried rather than dropped, and the
+  removal is idempotent. Until it lands the directory holds a row for a work stream
+  whose transcript is gone — invisible either way, because a temporary row is
+  excluded from every listing predicate — so the failure mode is a leaked row rather
+  than a leaked conversation. That is the right direction for this to fail in, and
+  it is why the transcript is deleted first.
 - **Anything else starts a recovery window.** When the last viewing socket
   detaches without a discard — a dropped connection, a sleeping machine, a renderer
   reload, a crash, a quit — the work stream is marked for deletion **five minutes**
@@ -344,11 +371,11 @@ Three consequences worth naming at the top of that conversation:
    routing, memory — was written against a world where a work stream that exists
    now exists later. This adds a kind that does not, and goal 4 is the list of
    places that have to learn it.
-2. **Viewing now decides existence, though it still does not create
+2. **Presence now decides existence, though viewing still does not create
    participation.** The contract's second clause ("Viewing does not create
-   participation") is unchanged and remains true. But viewing has only ever been a
-   *displayed* fact — `workspace_workstream_viewers` records who is attached so the
-   room can show them — and it has never decided any state. Now it holds a work
+   participation") is unchanged and remains true. But an attached socket has only
+   ever been a *displayed* fact — `SubstreamAgent` broadcasts presence so the room
+   can show who is here — and it has never decided any state. Now it holds a work
    stream open. That is a new relationship between presence and existence, and it is
    the part of this design most likely to surprise whoever touches the socket layer
    next.
@@ -392,15 +419,29 @@ None yet.
    different way for each column, which is exactly why they must not be one column.
    A caller that names no retention has decided to keep.
 
-4. **Deletion is server-owned and viewer-driven, reusing two things that already
-   exist.** `workspace_workstream_viewers` already records who is attached to a work
-   stream, and `ScheduledDurableObject` already gives an object a list of scheduled
-   alarms with one slot ([`durable-object-alarms.md`](../../durable-object-alarms.md)).
-   Detach arms an entry, attach cancels it, the alarm deletes. Rejected: a
-   `beforeunload` handler in the renderer, which is unreliable on a crash, absent on
-   a kill, and would have made the promise depend on the one process that cannot be
-   trusted to keep it. Also rejected: a workspace-wide sweep, which is a second
-   mechanism for something the object can decide locally.
+4. **Deletion is server-owned, and `SubstreamAgent` is the object that owns it.**
+   It is the only one of the three that learns about detachment: its
+   `webSocketClose` fires and calls `broadcastPresence`, while `WorkstreamDO`'s and
+   `WorkspaceDO`'s are explicit no-ops, and live attachment is read from
+   `state.getWebSockets()` rather than from any table. It is also already a
+   `ScheduledDurableObject` carrying `agent_timer` entries
+   ([`durable-object-alarms.md`](../../durable-object-alarms.md)), so it can arm the
+   discard without a new mechanism: `webSocketClose` schedules the entry when the
+   last subscribed socket goes, a new subscription cancels it, and the alarm
+   deletes.
+
+   **Not `workspace_workstream_viewers`.** An earlier draft of this decision named
+   that table, and it is the wrong one — it is a per-viewer projection of
+   participation, listability, unread counts, and read waterlines, and it holds rows
+   for people who have never opened the work stream. Nothing in it moves when a
+   socket opens or closes. Built against it, the arming would never fire and nothing
+   would ever be discarded: the one promise this feature makes, broken silently, on
+   the path nobody watches. Recorded here because the mistake is an easy one to make
+   again from the table's name.
+
+   Rejected: a `beforeunload` handler in the renderer, which is unreliable on a
+   crash, absent on a kill, and would have made the promise depend on the one
+   process that cannot be trusted to keep it.
 
 5. **The intercept is on leaving, not on arming.** Rejected: a confirmation when
    the toggle is armed. Arming is reversible and costs nothing; leaving is the
@@ -438,10 +479,15 @@ One column on the work-stream product root and one on the directory projection.
 | `discard_after` | The same rows | The instant the recovery window expires, or null while somebody is attached. |
 
 `retention` is `NOT NULL DEFAULT 'permanent'` with a `CHECK` constraint, on the
-bootstrap row as well as the authoritative one — the runtime compatibility insert
-writes `COALESCE(NEW.scope, scope)` for `scope`, and the same pattern applies here,
-so the bootstrap default has to be the safe one for an omission to be safe (key
-design decision 3).
+bootstrap row as well as the authoritative one, so the bootstrap default is the
+safe one when a caller names no retention (key design decision 3).
+
+The precedent for *why* the bootstrap row matters is the runtime compatibility
+insert's `COALESCE(NEW.scope, scope)`, but check which landed first before copying
+the mechanism: [`2026-08-22_retiring-the-runtime-compat-layer`](../2026-08-22_retiring-the-runtime-compat-layer/prd.md)
+is `in progress` and drops those views wholesale. Decision 3's *reasoning* — that
+the safe omission points the opposite way from `scope`'s — is what has to survive,
+and it holds whether or not the views still exist.
 
 On the wire, `WorkstreamSchema` gains `retention`, defaulting to `'permanent'` on
 read for the same fail-safe reason. `UpdateWorkstreamRequestSchema` gains
@@ -452,14 +498,16 @@ Listing paths exclude `retention = 'temporary'` in the same predicate that alrea
 excludes `system_kind IS NOT NULL`: the directory page reads, the pin reads, the
 sidebar batch, suggested work's candidate scan, and the activity/digest projections.
 
-Deletion removes the `SubstreamAgent`'s object-local rows, the `WorkstreamDO`
-metadata, the `WorkspaceDO` directory row and its viewer children (already
-`ON DELETE CASCADE`), any draft resources the composer uploaded, any Terminal
-sandbox, and — on the client — the device's cached draft for that work stream. It
-does **not** remove connector delivery receipts, external write audit rows, or
-telemetry (non-goal 2). Those rows keep the `workstream_id` they were
-written with; the id resolves to nothing, and that is the record being correct
-rather than a dangling reference.
+Deletion removes the `SubstreamAgent`'s object-local rows — including any
+`workstream_wakeups` row and its `agent_timer` entry, which is why the wake-up
+tools are withheld rather than merely swept — the `WorkstreamDO` metadata, the
+`WorkspaceDO` directory row and its viewer children (already `ON DELETE CASCADE`),
+any draft resources the composer uploaded, and any Terminal sandbox. There is no
+client-side draft to clear, because a temporary work stream's composer never wrote
+one. It does **not** remove connector delivery receipts, external write audit rows,
+or telemetry (non-goal 2). Those rows keep the `workstream_id` they were written
+with; the id resolves to nothing, and that is the record being correct rather than a
+dangling reference.
 
 Nothing is backfilled. Every existing row reads `permanent`.
 
@@ -498,14 +546,21 @@ residency story than the permanent case rather than a weaker one. See
   the workspace's own record of what an agent did survive the work stream by
   design. Anyone reasoning about this feature as a way to do unlogged work should
   find that answered in the first place they look.
-- **The device's draft cache is discarded with it, and that is not automatic.**
-  A composer caches its unsent text and staged files under `workstream:<id>` in the
-  renderer's IndexedDB for twelve hours
+- **A temporary work stream's composer does not cache a draft, and neither does an
+  armed launcher.** A composer ordinarily caches its unsent text and staged files
+  under `workstream:<id>` in the renderer's IndexedDB for twelve hours
   ([`composer-drafts.md`](../../composer-drafts.md)). Left alone, a half-typed
   sentence in a temporary work stream would outlive the work stream itself on the
-  one device the person is looking at — the promise broken in the most visible
-  place available. Discarding must release that draft key and its attachment rows,
-  and this is a requirement of the feature rather than a cleanup detail.
+  one device the person is looking at — the promise broken in the most visible place
+  available.
+
+  Releasing the key when the work stream is discarded is not sufficient, and this is
+  the reason the rule is the stronger one: the discard is the very path that does not
+  run when the renderer is killed, which is also the path the recovery window exists
+  for. A crash would take the work stream on the server and leave its draft on the
+  device. Not writing the row in the first place has no such gap, and it is the same
+  rule the launcher follows while armed, so both composers a temporary work stream
+  touches behave the same way.
 - **Discarding is still not sanitizing.** Deletion removes Avalon's rows. It does
   not overwrite storage and it does not reach a provider's copy of anything the
   agent sent. The promise is "Avalon does not keep this", which is precisely the
@@ -522,17 +577,34 @@ conditional section in the system prompt. The catalog in
 
 ### What a temporary run may load
 
+This table names only what changes. Every other plugin a run would load —
+`avalon_core`, `avalon_web`, `avalon_mentions`, `avalon_upload`,
+`avalon_block_dashboard`, `avalon_discovery`, Terminal, and the connectors — is
+unchanged, because **temporary is a retention decision and not a reduced product**:
+HyperSight, uploads, and the sandbox all work inside one.
+
 | Plugin | Permanent run | Temporary run |
 | --- | --- | --- |
 | `avalon_memory` | `search`, `add`, `update`, `invalidate` | `search` only |
-| `avalon_tables` | full | reads only |
-| `avalon_core`, `avalon_workstream`, `avalon_web`, `avalon_discovery`, Terminal, connectors | unchanged | unchanged |
+| `avalon_tables` | reads and writes | reads only |
+| `avalon_workstream` | full, including `workstream_schedule_wakeup` | full **except** the wake-up tools |
 
 Reads stay because recall is what makes the answer good and reading leaks nothing.
 Writes go because a durable memory or table row outlives the work stream that
 wrote it — which is the one thing the feature promises will not happen. A temporary
 work stream that quietly seeded workspace memory would be the exact leak the
 control exists to prevent, and it would be invisible to the person who armed it.
+
+**The wake-up tools go for the same reason, and they are the easiest of the three
+to miss.** `workstream_schedule_wakeup` writes a `workstream_wakeups` row and an
+`agent_timer` alarm entry in the `SubstreamAgent` — a pending alarm that would
+outlive the discard, which goal 6 forbids outright. It is also a promise of future
+work in a work stream that will not exist to receive it, which is precisely the
+class of promise the third prompt bullet below is written to prevent; and
+`avalon_workstream`'s own system message actively steers the model toward it
+(*"Use `workstream_schedule_wakeup` when work genuinely has to happen later… instead
+of promising it in text"*). Leaving it registered would have set that instruction
+directly against the retention policy on every temporary run.
 
 The harness already registers only the applicable bundles per run
 ([`agent-harness.md`](../../agent-harness.md)), so an unregistered tool is not
@@ -600,10 +672,16 @@ temporary and expire normally.
 Telemetry: `workstream_created` gains a `retention` property; a
 `workstream_retention_changed` event records a conversion; a
 `workstream_discarded` event records an expiry and whether it came from a
-deliberate leave or a recovery-window timeout. All three carry ids and enums under
-the existing `product` classification and **no title and no message text** — the
-question these answer is whether the feature is used and whether people convert,
-which needs counts and not content. See
+deliberate leave or a recovery-window timeout. None carries a title or any message
+text, under the existing `product` classification.
+
+**`workstream_discarded` carries no work-stream id**, and that is the one
+deliberate asymmetry: the other two describe work streams that still exist, while
+this one would otherwise be a durable server-side record that a specific temporary
+work stream existed and when it died — exactly what non-goal 6 says there is not.
+The questions this event answers are how often the feature is used and how often
+people convert instead of discarding, and both are counts. Dropping the id costs
+nothing and keeps the non-goal true as written rather than true with a footnote. See
 [`adding-new-instrumented-event.md`](../../adding-new-instrumented-event.md).
 
 ## Acceptance
@@ -616,10 +694,16 @@ Walk these in a real window, per [`AGENTS.md`](../../../AGENTS.md):
    **Private** badge. **Recent** in the sidebar gains no row. `GET /workstreams`
    does not return it. Its detail carries a null `emailAddress`.
 3. Ask the agent to remember something. It declines to promise it and answers
-   instead. `memory_add` is absent from the run's registry.
-4. Click the sidebar. The dialog appears. **Cancel** — nothing is lost. Leave
-   again and choose **Discard and leave**: the work stream is gone, and returning
-   to its URL shows the discarded not-found state.
+   instead. `memory_add` is absent from the run's registry. Ask it to check back
+   tomorrow: it says it cannot rather than scheduling, and
+   `workstream_schedule_wakeup` is absent too. Confirm no `agent_timer` entry and no
+   `workstream_wakeups` row exists for the work stream.
+4. Click the sidebar. The dialog appears. **Cancel** — nothing is lost. Click it
+   again: **the dialog appears a second time**, because Cancel is not an answer.
+   Now choose **Discard and leave**: the work stream is gone, its directory row and
+   alarm with it, and returning to its URL shows the discarded not-found state.
+   Check IndexedDB — there is no cached draft under its key, and none under the
+   launcher's from the armed composition either.
 5. Start another. Hover the pill — it reads **Keep this work stream**. Click it.
    The pill becomes **Private**, a sidebar row appears, and the transcript is
    unchanged. Navigating away now asks nothing.
