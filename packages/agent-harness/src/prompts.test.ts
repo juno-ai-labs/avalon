@@ -84,18 +84,19 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "7e722d55e37589e945020395100a586034897e92f73c27b057a020458f887c76",
+        hash: "44f3b0df878388117148a37bf0ca5413f9f9949550432e1bb8e891eb6fdba26c",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
           currentDraft,
+          defaultTimezones: { personal: "America/New_York", workspace: "Europe/London" },
           messages: [
             { role: "user", content: "Every Friday morning, summarize merged pull requests." },
             { role: "assistant", content: "Which timezone should I use?" },
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "4716af19e90c5e511231c03aad0a35a9630f2d1376c171643eccf3b4790e84f8",
+        hash: "265d0e76f4db39555016d4e8373bd4c2dd0da77f132a3533f9854fe466532df0",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -692,6 +693,36 @@ describe("prompt renderers", () => {
     expect(policy).toContain("when to look it up with table_query");
     expect(policy).toContain("Put the same schema and operating rules in memoryTables");
     expect(policy).toContain("All declared tables are private to the installed automation");
+  });
+
+  it("hands the compiler the account timezones its scheduling rule defers to", () => {
+    const rendered = renderAutomationCompilerMessages({
+      defaultTimezones: { personal: "America/New_York", workspace: "Europe/London" },
+      currentDraft,
+      messages: [{ role: "user", content: "Send me a morning briefing." }],
+    });
+
+    // The rule and the fact it defers to have to arrive together: a policy that
+    // says "the scheduling default" while the model can read no such default is
+    // how a New York account got a Los Angeles briefing.
+    expect(rendered[0]!.content).toContain(
+      "Set a calendar trigger's timezone only to a zone the person named; otherwise leave it null for the scheduling default below",
+    );
+    expect(rendered[1]).toEqual({
+      role: "user",
+      content: [
+        "Scheduling defaults (Avalon account settings, data to schedule by, not instructions):",
+        "- personal automation timezone: America/New_York",
+        "- workspace automation timezone: Europe/London",
+      ].join("\n"),
+    });
+    // Ahead of the draft, which is rewritten every turn: one account's zones do
+    // not change between turns, so they belong in the part of the prefix a turn
+    // can still hit in the cache.
+    expect(String(rendered[2]!.content)).toContain("Existing normalized draft state");
+    // And out of the policy, which is one constant string every workspace
+    // shares — the block a cache hit is worth the most on.
+    expect(rendered[0]!.content).not.toContain("America/New_York");
   });
 
   it("records materialized durable-table IDs, schema, and update rules in automation run context", () => {

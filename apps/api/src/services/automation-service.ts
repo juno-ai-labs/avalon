@@ -198,15 +198,8 @@ export class AutomationService {
     } = {},
   ) {
     const telemetryStartedAt = Date.now();
-    const defaults = await this.env.DB.prepare(
-      `SELECT u.timezone AS user_timezone, w.timezone AS workspace_timezone
-       FROM users u JOIN workspaces w ON w.id = ?
-       WHERE u.id = ?`,
-    ).bind(this.auth.workspaceId, this.auth.userId).first<{
-      user_timezone: string;
-      workspace_timezone: string;
-    }>();
-    if (!defaults) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
+    const defaults = await this.defaultTimezones(this.auth.userId);
+    if (!defaults.personal) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
     if (input.resolvedElicitation) {
       const elicitation = input.resolvedElicitation;
       await emitProductUsageTelemetry(this.env, {
@@ -238,8 +231,8 @@ export class AutomationService {
         ...(options.onStreamEvent ? { onStreamEvent: options.onStreamEvent } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
         defaultTimezones: {
-          personal: defaults.user_timezone,
-          workspace: defaults.workspace_timezone,
+          personal: defaults.personal,
+          workspace: defaults.workspace,
         },
       });
       const resolved = draft.ready ? await this.withUsableActivitySources(draft) : draft;
@@ -616,7 +609,9 @@ export class AutomationService {
     const principal: ExecutionPrincipal = input.scope === "personal"
       ? { type: "user", userId: this.auth.userId }
       : { type: "workspace", workspaceId: this.auth.workspaceId };
-    const schedules = input.draft.triggers.flatMap((trigger) => this.scheduleForTrigger(trigger, subscriptionId, at));
+    const scheduleTimezone = await this.scheduleTimezone(input.scope, this.auth.userId);
+    const schedules = input.draft.triggers.flatMap((trigger) =>
+      this.scheduleForTrigger(trigger, subscriptionId, at, scheduleTimezone));
     const nextRunAt = schedules.map((schedule) => schedule.nextRunAt).sort()[0] ?? null;
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     const routeInput = this.automationRouteInput(subscriptionId);
@@ -1400,7 +1395,9 @@ export class AutomationService {
     this.assertActivityTriggerBindings(draft.triggers, input.activitySourcePluginIds, connectorSelection);
     const subscriptionId = newId();
     const at = nowIso();
-    const schedules = draft.triggers.flatMap((trigger) => this.scheduleForTrigger(trigger, subscriptionId, at));
+    const scheduleTimezone = await this.scheduleTimezone("personal", this.auth.userId);
+    const schedules = draft.triggers.flatMap((trigger) =>
+      this.scheduleForTrigger(trigger, subscriptionId, at, scheduleTimezone));
     const nextRunAt = schedules.map((item) => item.nextRunAt).sort()[0] ?? null;
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     const routeInput = this.automationRouteInput(subscriptionId);
@@ -1486,7 +1483,12 @@ export class AutomationService {
     );
     const at = nowIso();
     this.assertActivityTriggerBindings(triggers, effectiveSourcePluginIds, connectorSelection);
-    const schedules = triggers.flatMap((trigger) => this.scheduleForTrigger(trigger, subscriptionId, at));
+    const scheduleTimezone = await this.scheduleTimezone(
+      String(subscription.scope) as Scope,
+      subscription.owner_user_id == null ? null : String(subscription.owner_user_id),
+    );
+    const schedules = triggers.flatMap((trigger) =>
+      this.scheduleForTrigger(trigger, subscriptionId, at, scheduleTimezone));
     const nextRunAt = schedules.map((schedule) => schedule.nextRunAt).sort()[0] ?? null;
     const enabled = subscription.status === "paused" ? 0 : 1;
     await ensureAutomationMemoryTables(this.env, {
@@ -1897,20 +1899,70 @@ export class AutomationService {
     };
   }
 
-  private scheduleForTrigger(trigger: TriggerDefinition, _subscriptionId: string, at: string): CompiledSchedule[] {
+  /**
+   * The two zones an automation can fall back to when its trigger names none.
+   *
+   * One statement for both: the compiler is handed both and picks by the scope
+   * it is drafting for, and a schedule picks by the scope it is written with.
+   * `personal` comes back null when this is asked without an owner — which a
+   * workspace automation has none of, and never reads.
+   */
+  private async defaultTimezones(ownerUserId: string | null): Promise<{
+    personal: string | null;
+    workspace: string;
+  }> {
+    const row = await this.env.DB.prepare(
+      `SELECT w.timezone AS workspace_timezone,
+              (SELECT u.timezone FROM users u WHERE u.id = ?) AS user_timezone
+       FROM workspaces w WHERE w.id = ?`,
+    ).bind(ownerUserId, this.auth.workspaceId).first<{
+      workspace_timezone: string;
+      user_timezone: string | null;
+    }>();
+    if (!row) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
+    return { personal: row.user_timezone, workspace: row.workspace_timezone };
+  }
+
+  /**
+   * The zone a schedule is derived in when its trigger does not name one.
+   *
+   * The resolution order the data model states — explicit trigger, then the
+   * owner's account, then the workspace — and this is where the second and
+   * third terms are read, at the moment a `schedules` row is written rather
+   * than when a draft was compiled. Every path that derives schedules goes
+   * through here: accepting a draft, subscribing to a shared template, and
+   * adopting a new version all pick the zone of the person the automation runs
+   * for, not of whoever wrote the definition or of a zone the compiler guessed.
+   */
+  private async scheduleTimezone(scope: Scope, ownerUserId: string | null): Promise<string> {
+    if (scope !== "personal") return (await this.defaultTimezones(null)).workspace;
+    const defaults = await this.defaultTimezones(ownerUserId);
+    return defaults.personal ?? defaults.workspace;
+  }
+
+  private scheduleForTrigger(
+    trigger: TriggerDefinition,
+    _subscriptionId: string,
+    at: string,
+    defaultTimezone: string,
+  ): CompiledSchedule[] {
     if (trigger.type === "interval") {
       return [{ type: "interval", rrule: null, intervalSeconds: trigger.intervalSeconds, timezone: "UTC", nextRunAt: new Date(Date.parse(at) + trigger.intervalSeconds * 1_000).toISOString() }];
     }
     if (trigger.type === "calendar") {
-      try { new Intl.DateTimeFormat("en-US", { timeZone: trigger.timezone }).format(); } catch { throw new ApiError(422, "invalid_timezone", `Invalid IANA time zone: ${trigger.timezone}`); }
+      // A trigger that names no zone takes the account's rather than failing:
+      // the compiler is asked to leave it unset when nobody named one, and a
+      // definition stored by an older deploy may have lost it the same way.
+      const timezone = trigger.timezone?.trim() || defaultTimezone;
+      try { new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(); } catch { throw new ApiError(422, "invalid_timezone", `Invalid IANA time zone: ${timezone}`); }
       let next: Date | null;
       try {
-        next = nextRRuleOccurrence(trigger.rrule, trigger.timezone, new Date(at), new Date(at));
+        next = nextRRuleOccurrence(trigger.rrule, timezone, new Date(at), new Date(at));
       } catch {
         throw new ApiError(422, "invalid_recurrence", "The automation recurrence rule is invalid");
       }
       if (!next) throw new ApiError(422, "recurrence_has_no_future", "The automation recurrence has no future occurrence");
-      return [{ type: "calendar", rrule: trigger.rrule, intervalSeconds: null, timezone: trigger.timezone, nextRunAt: next.toISOString() }];
+      return [{ type: "calendar", rrule: trigger.rrule, intervalSeconds: null, timezone, nextRunAt: next.toISOString() }];
     }
     return [];
   }

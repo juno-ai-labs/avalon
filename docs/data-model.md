@@ -55,7 +55,12 @@ knowing an object's ID is enough to read it — it never is.
 
 ### Identity and tenancy
 
-- `users` stores Google identity subjects and display information.
+- `users` stores Google identity subjects and display information, plus the
+  account's IANA `timezone` and the `timezone_source` that says who put it
+  there. `client` means a desktop sign-in seeded it from the machine and a
+  later sign-in may seed it again; `user` means somebody chose it in settings,
+  and sign-in leaves it alone from then on. It is one column for the whole
+  account, so it answers for every workspace the person belongs to.
 - `workspaces` pins an immutable `global` or `eu` region plus its immutable
   west/east Durable Object placement affinity. The Global
   `platform_workspace_bindings` row carries the same opaque route; `wnam` and
@@ -600,9 +605,13 @@ collection, opt-out, and destination behavior.
    delivery becomes at-least-twice side effects.
 7. D1/API timestamps are UTC ISO-8601 strings; Durable Object SQL stores Unix
    milliseconds and converts only at the boundary. Every user and workspace
-   retains a validated IANA timezone. Calendar intent separately retains its
-   explicit IANA timezone; omitted automation timezones resolve in the order
-   explicit trigger, personal user, then workspace.
+   retains a validated IANA timezone, and an account timezone somebody chose
+   is never overwritten by a client's. Calendar intent separately retains the
+   IANA timezone a person named for it; a trigger that names none resolves in
+   the order explicit trigger, personal owner, then workspace — read where a
+   `schedules` row is derived, so accepting a draft, subscribing to a shared
+   template, and adopting a version all schedule in the day of the person the
+   automation runs for.
 8. R2 objects are addressed through opaque references. Raw/large provider
    payloads never enter Queue or Workflow inputs; the regional Queue carries
    only the bounded normalized connector event needed to reach WorkspaceDO.
@@ -759,6 +768,43 @@ behind months of accepted rows.
 
 Shipped in the pull request for this change. See
 [`analytics-lakehouse.md`](analytics-lakehouse.md).
+
+### 2026-08-24 — The account timezone is a preference, and a schedule reads it when it is derived
+
+**What changed:** `users` gained `timezone_source` (migration 0095, `client` or
+`user`). Choosing a zone in settings records `user`; the desktop sign-in
+exchange, which wrote the machine's zone on every sign-in, now writes only where
+the source is still `client` and writes nothing at all when the client sends no
+zone. A calendar trigger's `timezone` became nullable, and the personal/workspace
+fallback moved out of the compiler's normalizer into `AutomationService`, where
+it is read at the moment a `schedules` row is derived.
+
+**Why:** somebody set America/New_York and had a briefing created on Pacific
+time. Two mechanisms could do that and both were live. The compiler was told to
+schedule "in the user's timezone" while never being told what it was, so it
+supplied a popular one; and every sign-in stamped the signing-in machine's zone
+over whatever the account had chosen, so even a correct choice did not survive
+the next login from a laptop somewhere else. A default that only a client can
+supply is not a preference, and a fallback resolved when a draft was *compiled*
+answers for the scope the compiler guessed rather than the scope the automation
+was created with — and freezes into a shared template the zone of whoever wrote
+it rather than of whoever adopts it.
+
+**Considered and rejected:** letting the compiler write the resolved zone into
+the field. It reads simpler and keeps the summary and the field in step by
+construction, but it leaves the one value the scheduler reads as something a
+model produced. Null means "nobody named one", the server answers it, and the
+model's only remaining job is prose. Also rejected: overwriting a template's
+explicit zone on adoption. A zone the author named may be the point of the
+automation — an American market open is not a British one — so an explicit zone
+survives adoption and only an unnamed one follows the adopter.
+
+**Consequences:** an account that has never opened settings still follows its
+machine, which is what a new account wants. One that has chosen no longer moves,
+including when its owner signs in while travelling; changing zones is a settings
+change from now on. Nothing on the wire carries a null timezone — the compiler's
+normalizer still fills the applicable default into the draft it returns — so the
+nullable field is a storage and submission shape, not a client-visible one.
 
 ### 2026-08-24 — Active participation is the sole private-reader authority
 

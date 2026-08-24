@@ -983,7 +983,10 @@ const automationDraftSubmissionJsonSchema = {
             enum: ["manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook"]
           },
           rrule: { type: ["string", "null"] },
-          timezone: { type: ["string", "null"] },
+          timezone: {
+            type: ["string", "null"],
+            description: "The IANA timezone a calendar recurrence's wall-clock time is read in, when the person named one. Use null for every other trigger, and for a calendar trigger whose zone nobody named — Avalon then reads it in the applicable scheduling default."
+          },
           summary: { type: ["string", "null"] },
           intervalSeconds: { type: ["integer", "null"], minimum: 60 },
           connectorType: { type: ["string", "null"] },
@@ -1438,6 +1441,7 @@ export async function compileAutomation(input: {
   const rendered = renderAutomationCompilerMessages({
     messages: input.messages,
     currentDraft: input.currentDraft ?? null,
+    ...(input.defaultTimezones ? { defaultTimezones: input.defaultTimezones } : {}),
   });
   const conversationMessages: ModelMessage[] = rendered.slice(1);
   if (input.latestUserAttachmentParts?.length) {

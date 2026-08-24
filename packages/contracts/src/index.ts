@@ -1037,7 +1037,19 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("calendar"),
     rrule: z.string().min(1),
-    timezone: IanaTimezoneSchema,
+    /**
+     * The zone the recurrence's wall-clock time is read in, or `null` when
+     * nobody named one.
+     *
+     * Nullable because the compiler is asked to leave it unset rather than
+     * guess: a zone nobody named is one the account already answers, and the
+     * server resolves it — explicit trigger, then the owner's `users.timezone`,
+     * then `workspaces.timezone` — at the moment it derives the `schedules`
+     * row. Nothing Avalon compiles reaches a client with this null: the
+     * compiler's normalizer fills the applicable default into the draft, so the
+     * value a person reviews is the value their automation will run in.
+     */
+    timezone: IanaTimezoneSchema.nullable(),
     summary: z.string().min(1)
   }),
   z.object({
@@ -1320,7 +1332,13 @@ export const DesktopExchangeRequestSchema = z.object({
   region: RegionSchema,
   attemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
   codeVerifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/u),
-  timezone: IanaTimezoneSchema.default("America/Los_Angeles")
+  /**
+   * The signing-in machine's zone, which seeds an account that has never chosen
+   * one. Optional rather than defaulted: a client that sends nothing knows
+   * nothing, and answering that with a zone wrote Pacific onto accounts whose
+   * own setting was the only real answer anyone had.
+   */
+  timezone: IanaTimezoneSchema.optional()
 });
 export const ConnectorOAuthProviderSchema = z.enum(ConnectorOAuthProviders);
 export const ConnectorOAuthAttemptStatusSchema = z.enum(["pending", "succeeded", "denied", "failed"]);
