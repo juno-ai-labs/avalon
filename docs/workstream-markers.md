@@ -2,8 +2,8 @@
 
 Every work stream shows each person one coloured dot, and this is what decides
 which colour it is. Eight states compete for that dot: five belong to the run
-(`scheduled`, `running`, `needs_input`, `completed`, `stopped`, `failed`) and
-three belong to the reader alone — **unread**, **mentioned**, and **unseen**, a
+(`running`, `needs_input`, `completed`, `stopped`, `failed`) and three belong
+to the reader alone — **unread**, **mentioned**, and **unseen**, a
 work stream somebody put them in that they have never opened. The ranking
 between them is a product decision, written down once, and every surface that
 draws a marker reads it from here.
@@ -85,6 +85,19 @@ that is working, while merely having unread messages does not. `scheduled` is
 not in the list — it has no personal state to lose to, and falls through as the
 run's own status.
 
+Only one run state is ever in the set at a time, so their order relative to each
+other decides nothing; what the list actually decides is each run state against
+`unread`. **`failed` sits below `unread`, and that is load-bearing:** a run that
+fails almost always leaves a message nobody has read, so a failed work stream
+usually shows **Unread** rather than **Needs intervention**. The reading is that
+a failure a person has not read about is first of all something to read — the
+transcript says what broke, and the marker's job is to get them there. A failure
+they *have* read shows as **Needs intervention**, because nothing outranks it
+any more. If the product wants a failure to shout over an unread message
+instead, that is one line: move `failed` above `unread` in `MARKER_PRECEDENCE`
+and update `workstreamNeedsAttention`, which today lists a failed run only when
+something unread, mentioned, or unseen puts it there.
+
 ### Needs attention
 
 The home screen's **Needs attention** section holds every work stream that is
@@ -152,6 +165,16 @@ own:
 - **A person added to hundreds of work streams at once** sees hundreds of
   markers. There is no cap and no digest: the sidebar is already a list, and the
   states below it behave the same way.
+- **Needs attention is unbounded, and the section is on the home screen.** Its
+  membership went from "a run stopped for an answer" — rare — to anything
+  unseen, mentioned, or unread, which for a person with a normal backlog can be
+  most of what they have, rendered in full above the composer. No cap is written
+  here on purpose: a limit is a decision with a number, and the number belongs
+  to the team rather than to whoever noticed the problem
+  ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
+  What a cap needs to decide: how many rows, what the overflow affordance is,
+  and which states survive the trim — dropping the oldest unread is not the same
+  call as dropping everything below a mention.
 - **Existing memberships at deploy.** Both backfills — `first_opened_at =
   added_at` in the object's schema migration, and `unseen` defaulting to 0 in the
   workspace projection — read every membership that already existed as seen. A
@@ -173,6 +196,15 @@ The workers suite starts with no schema and seeds the D1 tables it needs; the
 unseen tests reach the state through the real product endpoint rather than by
 writing `participants` directly, which is what makes them evidence that the add
 paths set it.
+
+## Open questions
+
+- **How long may Needs attention get?** See the entry under **Failure modes and
+  limits**. Unbounded today; the cap, its overflow affordance, and which states
+  survive the trim are the team's to set.
+- **Should a failed run outrank an unread message?** The ranking says no today,
+  and the reasoning is under [The ranking](#the-ranking). It is one line to
+  reverse if the product disagrees.
 
 ## Data model
 
