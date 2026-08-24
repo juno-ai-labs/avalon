@@ -28,6 +28,7 @@ import {
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
+import { createMessageObjectPort } from "../runtime/message-port";
 import { uuidV7 } from "../lib/uuid-v7";
 import {
   BASE_CONFIDENCE_FLOOR,
@@ -590,84 +591,51 @@ async function injectActivityMessage(
   activity: ActivityRow,
   workstreamId: string
 ): Promise<boolean> {
-  const executionEnv = await workstreamExecutionEnvironment(
-    env,
-    activity.workspace_id,
-    workstreamId,
-  );
   const clientMessageId = `activity:${activity.id}`;
-  const existing = await executionEnv.DB.prepare(
-    `SELECT 1 FROM messages WHERE workstream_id = ?1 AND client_message_id = ?2 LIMIT 1`
-  )
-    .bind(workstreamId, clientMessageId)
-    .first();
-  if (existing) return true;
-
-  const sequence = await executionEnv.DB.prepare(
-    `UPDATE workstreams
-        SET next_sequence_number = next_sequence_number + 1
-      WHERE id = ?1 AND workspace_id = ?2
-      RETURNING next_sequence_number - 1 AS sequence_number`
-  )
-    .bind(workstreamId, activity.workspace_id)
-    .first<{ sequence_number: number }>();
-  if (!sequence) return false;
-
-  const id = uuidV7();
-  const createdAt = new Date().toISOString();
+  const structuredContent = {
+    kind: "connected_activity",
+    activityId: activity.id,
+    provider: activity.provider,
+    eventType: activity.event_type
+  };
   const text = [activity.title, activity.summary].filter(Boolean).join(" — ");
-  const inserted = await executionEnv.DB.prepare(
-    `INSERT OR IGNORE INTO messages (
-       id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-       message_type, text_content, structured_content_json, sequence_number, created_at, edited_at
-     ) VALUES (?1, ?2, ?3, ?4, 'system', NULL, 'system', ?5, ?6, ?7, ?8, NULL)`
-  )
-    .bind(
-      id,
-      clientMessageId,
-      activity.workspace_id,
-      workstreamId,
-      text,
-      JSON.stringify({
-        kind: "connected_activity",
-        activityId: activity.id,
-        provider: activity.provider,
-        eventType: activity.event_type
-      }),
-      sequence.sequence_number,
-      createdAt
-    )
-    .run();
-  if ((inserted.meta.changes ?? 0) === 0) return true;
-
-  await executionEnv.DB.prepare(
-    `UPDATE workstreams
-        SET latest_attention_sequence_number = MAX(latest_attention_sequence_number, ?1),
-            last_activity_at = ?2,
-            updated_at = ?2
-      WHERE id = ?3 AND workspace_id = ?4`
-  )
-    .bind(sequence.sequence_number, createdAt, workstreamId, activity.workspace_id)
-    .run();
+  const now = Date.now();
+  const messages = createMessageObjectPort(env, activity.workspace_id, workstreamId);
+  // Four routed statements: a replay check, a sequence claim with `RETURNING`,
+  // an `INSERT OR IGNORE` whose changes count re-answered the replay question,
+  // and a second counter update. The insert's trigger moved one set of counters
+  // and those two statements moved the other, and only the router sending them
+  // together made that one fact. It is one operation now, and the replay is
+  // its answer rather than something to ask twice.
+  const appended = await messages.appendMessage({
+    messageId: uuidV7(),
+    clientMessageId,
+    authorType: "system",
+    authorUserId: null,
+    externalActorJson: null,
+    messageType: "system",
+    text,
+    structuredContentJson: JSON.stringify(structuredContent),
+    producedByRunId: null,
+    now,
+  });
+  // A redelivery is routed — the activity did reach this work stream — but it
+  // publishes nothing, because the row it names is already on every client.
+  if (appended.outcome === "replayed") return true;
 
   const canonicalMessage: AvalonMessage = {
-    id,
+    id: appended.messageId,
     clientMessageId,
     workspaceId: activity.workspace_id,
     workstreamId,
     author: { type: "system" },
     messageType: "system",
     textContent: text,
-    structuredContent: {
-      kind: "connected_activity",
-      activityId: activity.id,
-      provider: activity.provider,
-      eventType: activity.event_type
-    },
+    structuredContent,
     mentions: [],
     attachments: [],
-    sequenceNumber: sequence.sequence_number,
-    createdAt,
+    sequenceNumber: appended.sequenceNumber,
+    createdAt: new Date(now).toISOString(),
     editedAt: null
   };
   await publishSubstreamAgentEvent(env, activity.workspace_region, asWorkspaceId(activity.workspace_id), asWorkstreamId(workstreamId), {

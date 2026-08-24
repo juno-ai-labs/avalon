@@ -1305,6 +1305,117 @@ which no caller acts on: both throw, and the two error codes it added were
 caught nowhere. The distinction is real and the object can make it; it is worth
 making when something needs it.
 
+### 2026-08-23 — The transcript's remaining readers, and the boundary the self-registration had not actually removed
+
+**What changed:** seven more transcript callers left `_runtime_messages` —
+naming, the description refresh, Terminal's admission check, creation
+telemetry, the HyperSight context fence, the automation opening-message
+lookup, and the connected-activity writer. `WorkstreamMessageStorage` gains the
+operations they need: `saidMessages`/`saidMessageCount` behind a
+`MessageTypeFilter`, `saidWindow`, `messageAtSequence`,
+`messageFromParticipant` and `openingAttachmentCount`. `/internal/messages`
+answers its RPC entry point without building a `Request` or reading a
+`Response`.
+
+**Why:** the slice claimed every reader and writer that is not the product
+service, and it had converted six services. The rest were not among the
+cross-slice batches it named as deliberately untouched — they were simply not
+done, and both the changelog and the PRD were handing slice 5's author a map
+that said otherwise.
+
+**`MessageTypeFilter` exists because the two window readers disagree.** Naming
+wanted `message_type = 'text'`; the description refresh wanted
+`message_type <> 'tool'`. Those are different questions, and `parts.message_type`
+carries no CHECK constraint, so they cannot be reconciled into one list: an
+`include` list silently drops a type nobody has added yet and an `exclude` list
+silently admits one. Each caller states which it means.
+
+**The finding: a port call from inside the object was paying for a boundary the
+self-registration exists to remove.** Converting the description window
+regressed `message-to-output-pipeline.test.ts` — deterministically, 5 runs in
+5 — because the drain runs that refresh at the end of every harness run and the
+port made it slower. `durable-object-self.ts` hands an object a stand-in stub so
+a call to itself never leaves the isolate; the RPC entry point then serialized
+its already-parsed input into a `Request`, read that body back as a stream, and
+read a `Response` body back out, which is six serializations to move a value
+nowhere. `messageOperationOutcome` is the endpoint's decision without either
+wrapper, and both entry points share it.
+
+That was not the whole regression, and chasing it is what found the rest.
+
+**What a future change has to respect.** The remaining `_runtime_messages`
+callers are *all* cross-slice, and there are more of them than the three this
+slice first named: every `harness-run-runtime.ts` reader joins `messages` to
+`harness_runs` or `harness_run_lifecycle_events` inside one statement; Slack's
+elicitation answer guards its counter update on `EXISTS (SELECT 1 FROM
+messages)`; and inbound email's sequence claim is fenced on
+`workstreams.email_address`, which makes it identity's as much as messages'.
+`workstream-resource-visibility.ts` names `messages` beside
+`workstream_resources` and belongs to the resources slice. None of them is a
+plain reader left behind.
+
+The three new window operations take a `limit` and mean it. `saidWindow` asks
+for one past the ceiling on purpose: `requested > limit` is how the description
+reports that it capped, and a count clamped *at* the ceiling can never say so.
+
+### 2026-08-23 — The transcript gets a typed authority, and the compat layer's ordering turns out to be wrong
+
+**What changed:** `WorkstreamMessageStorage` owns `parts`, `part_mentions` and
+`part_attachments` for every reader and writer that is not the product service,
+reached through `/internal/messages` and a typed port.
+`message-projection.ts` assembles the `Message` shape the retired reader built
+inside its query. `packages/db`'s five message functions and their projector are
+deleted — nothing calls them. This is slice 4 of
+[the compat-layer retirement](PRDs/2026-08-22_retiring-the-runtime-compat-layer/prd.md).
+
+**Why:** the same case as the slices before it, plus one thing specific to the
+transcript. `_runtime_messages`'s insert trigger did not only translate; it
+advanced the work stream's `next_attention_ordinal` and
+`last_people_activity_at` as a side effect of the insert. That is why every
+routed transcript write was a *batch*: the trigger moved one set of counters and
+the caller's own second statement moved the other, and the two were one fact
+only because the router happened to send them together. An append is one
+operation now.
+
+The inline tool card is the same shape one step further on. Its write took the
+work stream's next sequence number in an upsert, then advanced the counter in a
+*second* statement guarded on the inserted row having actually taken it — which
+is how a refresh of a settled card avoided consuming a transcript position. That
+guard is a read of what the first statement did, expressed as a `WHERE` clause
+because a batch cannot ask. `upsertToolMessage` reads the row first and decides
+from it, inside one transaction; and it advances `next_sequence_number` without
+`next_attention_ordinal`, because a tool card is machinery a member did not do
+and the retired insert trigger, not any caller, drew that line.
+
+**The finding that matters more than the conversion: this slice cannot drop its
+views, and neither can slice 3.** Three transcript writes are batches that span
+three slices at once — an elicitation and its message and the work stream's
+counters; a harness run's final message, its lifecycle event and the work
+stream; a work stream's own creation, its opening message and its attachments.
+Each one's later statements are guarded on its earlier ones having landed, so
+splitting any of them across a port boundary puts a network hop inside a
+guarantee. `_runtime_messages`, `_runtime_message_attachments`,
+`_runtime_message_mentions` and `_runtime_elicitations` therefore all retire
+with the identity and harness-runs slices, not before. The PRD orders messages
+before identity; on the evidence of these four views that order is not
+available, and the PRD now says so.
+
+**What a future change has to respect:** two behaviours here are faithfully
+reproduced rather than fixed, and both are worth fixing on purpose later.
+
+Author identity is fabricated — empty email, the member's own id as their name,
+no avatar — because `_runtime_users` fabricated it and every converted reader
+has been getting that. The harness's description prompt has been reading UUIDs
+where it means names. The object can reach the real profile one layer away, and
+the identity slice is where all these readers should start seeing it, together.
+
+An attachment's resource is read from `workstream_resource_links`, the object's
+frozen copy, because the retired `JOIN resources` was rewritten onto a view that
+`json_extract`ed the same copy. The *product* service reads the live regional
+row instead, so a resource renamed after it was attached renders one way in the
+app and another in the harness's transcript. Reconciling them is the resources
+slice's.
+
 ### 2026-08-23 — Scheduling moves onto a typed authority, four views at a time
 
 **What changed:** `WorkstreamSchedulingStorage` owns `workstream_wakeups`,

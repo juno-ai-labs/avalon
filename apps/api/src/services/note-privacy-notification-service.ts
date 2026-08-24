@@ -1,10 +1,11 @@
 import { asWorkspaceId } from "@avalon/contracts";
-import { createDatabase, newId, nowIso } from "@avalon/db";
+import { newId, nowIso } from "@avalon/db";
 import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { createMessageObjectPort } from "../runtime/message-port";
+import { readMessage } from "../runtime/message-projection";
 import { publishWorkstreamEvent } from "./integrations";
-import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 
 interface PrivacyTransitionRow extends Record<string, unknown> {
   id: string;
@@ -81,45 +82,26 @@ async function processTransition(env: Env, transition: PrivacyTransitionRow): Pr
   const clientMessageId = `note-privacy:${transition.id}`;
   const text = `${transition.note_title} is now private and no longer accessible`;
   for (const workstream of affectedRows) {
-    const executionEnv = await workstreamExecutionEnvironment(
-      env,
-      transition.workspace_id,
-      workstream.id,
-    );
-    const database = createDatabase(executionEnv.DB);
-    const messageId = newId();
-    const at = nowIso();
-    const results = await executionEnv.DB.batch([
-      executionEnv.DB.prepare(
-        `INSERT INTO messages
-         (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-          message_type, text_content, structured_content_json, sequence_number, created_at)
-         SELECT ?, ?, ?, w.id, 'human', ?, 'text', ?, NULL, w.next_sequence_number, ?
-         FROM workstreams w WHERE w.id = ? AND w.workspace_id = ?
-         ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
-      ).bind(
-        messageId,
-        clientMessageId,
-        transition.workspace_id,
-        transition.actor_user_id,
-        text,
-        at,
-        workstream.id,
-        transition.workspace_id,
-      ),
-      executionEnv.DB.prepare(
-        `UPDATE workstreams
-         SET next_sequence_number = next_sequence_number + 1,
-             latest_attention_sequence_number = next_sequence_number,
-             last_activity_at = ?, updated_at = ?
-         WHERE id = ? AND workspace_id = ?
-           AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`,
-      ).bind(at, at, workstream.id, transition.workspace_id, messageId),
-    ]);
-    if (Number(results[0]?.meta.changes ?? 0) === 0) continue;
-    const message = await database.workstreams.getMessageByClientId(
-      transition.workspace_id,
-      workstream.id,
+    const messages = createMessageObjectPort(env, transition.workspace_id, workstream.id);
+    const appended = await messages.appendMessage({
+      messageId: newId(),
+      clientMessageId,
+      authorType: "human",
+      authorUserId: transition.actor_user_id,
+      externalActorJson: null,
+      messageType: "text",
+      text,
+      structuredContentJson: null,
+      producedByRunId: null,
+      now: Date.now(),
+    });
+    // One notice per work stream per transition. The client message id is the
+    // transition's, so a redelivered queue message finds the row it already
+    // wrote and must not publish a second `message_created` for it.
+    if (appended.outcome === "replayed") continue;
+    const message = await readMessage(
+      messages,
+      { workspaceId: transition.workspace_id, workstreamId: workstream.id },
       clientMessageId,
     );
     if (message) {

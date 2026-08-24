@@ -8,6 +8,7 @@ import {
 
 import type { Env, IdentityAuthContext } from "../env";
 import { logWarn } from "../observability/logger";
+import { createMessageObjectPort } from "../runtime/message-port";
 import { withWorkstreamRuntimeDatabase } from "../services/workstream-runtime-database";
 import {
   apiTelemetryEnvelope,
@@ -37,7 +38,6 @@ interface WorkstreamCreationRow {
   system_kind: string | null;
   model_override: string | null;
   participant_count: number;
-  attachment_count: number;
 }
 
 const connectorTypeSet = new Set<string>(TELEMETRY_CONNECTOR_TYPES);
@@ -110,16 +110,19 @@ export async function recordWorkstreamCreatedTelemetry(
     const row = await routed.DB.prepare(
       `SELECT w.scope, w.origin_type, w.system_kind, w.model_override,
               (SELECT COUNT(*) FROM workstream_participants participant
-               WHERE participant.workstream_id = w.id AND participant.removed_at IS NULL) AS participant_count,
-              (SELECT COUNT(*) FROM message_attachments attachment
-               JOIN messages message ON message.id = attachment.message_id
-               WHERE message.workstream_id = w.id AND message.sequence_number = 1) AS attachment_count
+               WHERE participant.workstream_id = w.id AND participant.removed_at IS NULL) AS participant_count
        FROM workstreams w
        WHERE w.id = ? AND w.workspace_id = ?
        LIMIT 1`,
     ).bind(input.workstreamId, input.workspaceId).first<WorkstreamCreationRow>();
     // Hidden execution machinery is not a product-created work stream.
     if (!row || row.system_kind !== null) return;
+    // Asked after that check rather than beside it, which the retired subquery
+    // could not do: a hidden work stream now costs one read instead of two, and
+    // the attachment half no longer rides in a statement whose other half
+    // belongs to the identity slice.
+    const attachmentCount = await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
+      .openingAttachmentCount();
 
     const connectorTypes = normalizedConnectorTypes(input.connectorTypes ?? []);
     const connectorType = connectorTypes.length === 0
@@ -139,7 +142,7 @@ export async function recordWorkstreamCreatedTelemetry(
         connectorTypes,
         connectorTypeCount: connectorTypes.length,
         participantCount: count(row.participant_count),
-        attachmentCount: count(row.attachment_count),
+        attachmentCount: count(attachmentCount),
         modelOverride: row.model_override !== null,
       },
       input.operationId ?? eventId,

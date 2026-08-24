@@ -8,7 +8,7 @@ import {
   resourceTelemetryEventId,
   telemetryCountBucket,
 } from "../telemetry/product-usage";
-import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import { createMessageObjectPort } from "../runtime/message-port";
 import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
@@ -224,39 +224,25 @@ async function noteDeliveryInTranscript(
   deliveryId: string,
   destinations: number,
 ): Promise<void> {
-  const at = nowIso();
   const delivery = await env.DB.prepare(
     `SELECT workspace_id, workstream_id FROM digest_deliveries WHERE id = ?`,
   ).bind(deliveryId).first<{ workspace_id: string; workstream_id: string | null }>();
   if (!delivery?.workstream_id) return;
-  const executionEnv = await workstreamExecutionEnvironment(
-    env,
-    delivery.workspace_id,
-    delivery.workstream_id,
-  );
-  const clientMessageId = `digest-delivered:${deliveryId}`;
-  const messageId = newId();
-  await executionEnv.DB.batch([
-    executionEnv.DB.prepare(
-      `INSERT INTO messages
-         (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-          message_type, text_content, structured_content_json, sequence_number, created_at)
-       SELECT ?, ?, w.workspace_id, w.id, 'system', NULL, 'system', ?, NULL,
-              w.next_sequence_number, ?
-         FROM workstreams w WHERE w.id = ? AND w.workspace_id = ?
-       ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
-    ).bind(
-      messageId,
-      clientMessageId,
-      `Delivered to ${destinations} destination${destinations === 1 ? "" : "s"}.`,
-      at,
-      delivery.workstream_id,
-      delivery.workspace_id,
-    ),
-    executionEnv.DB.prepare(
-      `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1, updated_at = ?
-        WHERE id = ? AND workspace_id = ?
-          AND EXISTS (SELECT 1 FROM messages WHERE client_message_id = ? AND workstream_id = workstreams.id)`,
-    ).bind(at, delivery.workstream_id, delivery.workspace_id, clientMessageId),
-  ]);
+  await createMessageObjectPort(env, delivery.workspace_id, delivery.workstream_id)
+    .appendMessage({
+      messageId: newId(),
+      clientMessageId: `digest-delivered:${deliveryId}`,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "system",
+      text: `Delivered to ${destinations} destination${destinations === 1 ? "" : "s"}.`,
+      structuredContentJson: null,
+      producedByRunId: null,
+      now: Date.now(),
+    });
+  // The outcome is not read, unlike the other four converted appends. This row
+  // is the delivery's own announcement rather than a member-visible write, and
+  // nothing downstream is conditioned on whether the redelivery was the first:
+  // there is no event to publish and no run to start.
 }
