@@ -114,11 +114,13 @@ export function workstreamMarkerStatus(
 }
 
 /**
- * Whether this work stream is asking something of this person.
+ * Whether somebody has put this work stream in front of this person.
  *
- * The **Needs attention** section's membership rule, beside the ranking it is
- * a subset of: everything a person is the only one who can clear. A run that
- * is merely working is not one of them, however recently it moved.
+ * The **Needs attention** section's membership rule: they were added to it,
+ * named in it, or asked a question by its agent. Not "everything only they can
+ * clear" — that was the rule until unread swamped the section, and unread is
+ * squarely something only they can clear. What separates the three is that a
+ * person is behind each one, which is what makes a short list worth reading.
  */
 export function workstreamNeedsAttention(
   // `hasUnread` is accepted and deliberately not read. Callers pass a whole
@@ -131,15 +133,11 @@ export function workstreamNeedsAttention(
   // shows something else can still be listed: a room somebody was added to
   // reads as `unseen` here whatever its run is doing.
   //
-  // `hasUnread` is deliberately not one of them. It was, and it drowned the
-  // section: unread is the ordinary condition of a work stream somebody is
-  // working in, so a person with a normal backlog saw most of what they had
-  // listed here, and the one mention among them was indistinguishable from the
-  // rest. The three that remain each name somebody by hand — you were put in
-  // this room, you were named in it, or the agent stopped and asked you
-  // something — which is what makes the section short enough to be read. The
-  // sidebar still marks unread, in its own colour; this section is for the
-  // subset that is addressed to this person.
+  // What dropping unread cost, for whoever considers putting it back: it is
+  // the ordinary condition of a work stream somebody is working in, so a person
+  // with a normal backlog saw most of what they had listed here and the one
+  // mention among them was indistinguishable from the rest. The sidebar still
+  // marks unread, in its own colour.
   return workstream.unseen === true
     || workstream.youAreMentioned === true
     || workstream.harnessStatus === 'needs_input';
