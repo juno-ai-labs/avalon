@@ -1376,6 +1376,52 @@ of the three. If the product ever settles on a single busy status, retire the
 other two from the CHECK constraint rather than from the fences, so the
 narrowing is enforced where it can be seen.
 
+### 2026-08-24 — The final message crosses two authorities in one transaction
+
+**What changed:** `persistHarnessFinalMessage` and
+`loadPersistedHarnessFinalOutcome` moved onto the ports, through a new
+`publishFinalMessage` operation. Migration 22 drops
+`_runtime_run_lifecycle_events`, the first of the three views slice 6 could not
+retire. `harness-run-runtime.ts` now holds one `D1Database` parameter, and it is
+the regional automation one.
+
+**Why it needed a new shape.** This was the last guarded batch and the only one
+spanning two authorities: a transcript insert, a lifecycle event whose `JOIN
+messages` checked that insert had landed, and a work-stream update whose `EXISTS
+(SELECT 1 FROM messages …)` checked the same thing again. Both checks exist only
+because a D1 batch cannot branch on its own progress.
+
+`WorkstreamHarnessRunStorage` now composes `WorkstreamMessageStorage` over the
+same `DurableObjectStorage`. The decision — whether this attempt may still speak
+— belongs to the run's authority; the transcript row belongs to the class that
+owns `parts`, so `parts` still has exactly one writer. Both wrap the same
+storage, so the nested `transactionSync` is the same transaction rather than a
+second one. That is the pattern to reach for when an operation genuinely spans
+authorities: compose, do not reimplement, and never let a second class write
+another's table.
+
+**The third statement turned out to do nothing.** It assigned
+`latest_attention_sequence_number`, which was never a column — the retired view
+derived it as `next_attention_ordinal - 1` and its update trigger ignored every
+caller that assigned to it. What remains of that statement is `last_activity_at`
+and `updated_at`, which `appendMessage` already moves.
+
+**The sequence number is now allocated where it is used.** `ensureSequence` in
+`integrations.ts` reserved one first through a bespoke `UPDATE workstreams SET
+next_sequence_number = next_sequence_number + 1 … RETURNING` rewrite, then
+passed it in — burning a number whenever the write was refused. It had exactly
+one caller and its memo variable was read nowhere else, so it deletes outright
+and that rewrite loses a consumer.
+
+**What a future change has to respect:** the `final_message` lifecycle event's
+`status` is the *published* spelling, unlike the `terminal` event's. That is
+load-bearing rather than an inconsistency — this event records the host outcome
+the caller reported, and recovery reads it back and compares it against the
+published terminal set, while `terminal` records the run's own state in the
+object's vocabulary. The two events answer different questions and are spelled
+accordingly.
+
+
 ### 2026-08-24 — Four regressions a review caught, and the edits that caused them
 
 **`admitRun` threw where the retired trigger had swallowed.**
