@@ -95,14 +95,16 @@ to route around it.
    recency, with exactly one row selected so that `⏎` is always meaningful.
 5. A query that matches nothing still ends in an action: starting a work stream
    with that text, without retyping it.
-6. Search never surfaces anything the person could not already open, and the
-   result counts it displays leak nothing about what it filtered out.
+6. Search never surfaces anything the person could not already open, and its
+   bounded remainder/`50+ results` states leak nothing about filtered-out work.
 7. Search remains a way *into* a work stream and never becomes a place to read
    from: no results route, no persistent view, no second home screen.
-8. A person who wants more of one kind — every matching document, not the best
-   five — can get it in one keystroke without leaving the palette, and can get
-   back to the mixed list in one more. (`→` in, `←` out; the interaction is
-   [Scoping to one group](#scoping-to-one-group).)
+8. A person who wants more of one kind can expand from the five-row preview to
+   the best 50 matching results in one keystroke without leaving the palette,
+   and can get back to the mixed list in one more. (`→` in, `←` out; the
+   interaction is [Scoping to one group](#scoping-to-one-group).) When more may
+   exist, search says **50+ results** and asks for a narrower query rather than
+   computing an exact total.
 
 ## Non-goals
 
@@ -145,7 +147,7 @@ to route around it.
    retrieval; exposing it in a person's search surface makes an internal
    representation into a product one.
 8. **No tool calls, tool results, terminal output, reasoning, or system parts in
-   message results.** Rejected for this change. The line is the existing
+   work-stream message evidence.** Rejected for this change. The line is the existing
    `parts.visibility` column: `people` and `both` are searchable, `model` and
    `system` are not. A person searching for their own words should not have to
    scroll past a tool's JSON.
@@ -262,7 +264,8 @@ which theme is running and no component reads a colour — a test fails if
 its leading edge and an `Esc` affordance trailing. Results fill the panel below
 the field. A footer row states the keys that do something: `↑↓ NAVIGATE`,
 `→ IN GROUP`, `⏎ OPEN`, `⌘⏎ START`, and on the right, the count of matching
-results that are not shown. Inside a group the second hint becomes `← ALL`.
+bounded candidates that are not shown or `50+ results` when the sentinel exists.
+Inside a group the second hint becomes `← ALL`.
 
 The panel does not resize as results arrive — it holds a stable height so that
 the row under the cursor does not move while the person is still reading it.
@@ -313,9 +316,8 @@ omitted entirely rather than shown empty:
 
 | Group | A row is | Right-hand metadata |
 | --- | --- | --- |
-| **Work streams** | title and description match | exact state and relative last activity — `Needs input · 4m` |
+| **Work streams** | a work stream whose title, description, preview, or visible message text matches | exact state and relative last activity — `Needs input · 4m` |
 | **Automations** | template or subscription name match | `Active · You`, `Draft`, `Active · Workspace` |
-| **Messages** | a message body match | the work stream it is in, and when |
 | **Meeting notes** | note title, briefing, or transcript match | `Recorded · Jul 28` |
 | **Documents** | resource title or extracted-content match | provider and relative time — `Google Docs · 4m ago` |
 | **People** | a workspace member | their role |
@@ -326,21 +328,28 @@ highlighted, and the metadata above. A row that matched on *body* rather than
 name additionally shows one line of surrounding text with the term highlighted,
 so that the reason it matched is visible without opening it.
 
-Three structural notes the table would otherwise hide. A **Messages** row has no
-title of its own — it renders the snippet as its primary line and names its work
-stream as metadata, and the indexed row's `title` is deliberately empty, because
-stamping the work stream's title onto every message would give all of them a
-title-weighted hit and bury the work stream itself. **Opening one lands on that
-message**, with the transcript anchored to it and the matched phrase in view —
-not at the bottom of the work stream, where a busy thread may have put hundreds
-of parts between the reader and the thing they searched for. The match holds the
-viewport until the reader scrolls, so a turn streaming in below does not take it
-away. See key design decision 8. **People** and **Actions**
-are not indexed rows and carry no relevance score; they are matched entirely on
-the client, sort within their own groups, and never compete for the top hit.
-And `⏎` on a person opens the workspace-member surface, not a work stream — the
-one result kind whose destination is not one of the four the overlay otherwise
-terminates in.
+**The result unit is the thing that opens, not a matching text fragment.** One
+work stream is one result whether the query matches its title, one message, or
+five messages. One meeting note is one result whether its title and twenty
+transcript segments match. A result carries up to three of its best highlighted
+snippets; V1 does not compute or display an exact per-result occurrence count.
+Thus five mentions of “alphabet” in one work stream produce one work-stream row,
+not five message rows. The indexed fragments remain separate internally so an
+update does not require rebuilding one giant body, but they collapse by
+destination identity before ranking, capping, remainder-state calculation, or
+rendering.
+
+When the best evidence for a work-stream result is a message, **opening the
+result lands on that message**, with the transcript anchored to it and the
+matched phrase in view — not at the bottom of the work stream, where a busy
+thread may have put hundreds of parts between the reader and the thing they
+searched for. The match holds the viewport until the reader scrolls, so a turn
+streaming in below does not take it away. See key design decision 10. **People**
+and **Actions** are not indexed rows and carry no relevance score; they are
+matched entirely on the client, sort within their own groups, and never compete
+for the top hit. And `⏎` on a person opens the workspace-member surface, not a
+work stream — the one result kind whose destination is not one of the four the
+overlay otherwise terminates in.
 
 **Top hit.** The single highest-ranked row across all groups is selected when
 results settle, so `⏎` is meaningful without the person pressing `↓` first.
@@ -350,12 +359,14 @@ sidebar already orders itself.
 
 **Truncation.** Each group shows at most **five** rows — per group, which a
 single overall cap cannot deliver: one prolific kind would take every slot and
-leave groups that genuinely matched rendering as though they had not. The count
-of everything matching but not shown appears in the footer as `N MORE RESULTS`.
-That count counts only results the person may see, it is produced by the same
-filtered statement that produced the rows rather than by a second query that
-could drift from it, and it is the total *minus what is on screen* — reporting
-the total says `3 MORE RESULTS` when all three matches are already visible.
+leave groups that genuinely matched rendering as though they had not. Search
+never computes an exact corpus-wide or group-wide total. It considers at most
+the best **50 authorized destination entities per group**, plus one sentinel
+needed to establish that more exist. A truncated group says `50+ results` when
+that sentinel exists; otherwise it says only how many of the bounded candidates
+are currently hidden. Authorization and destination-level de-duplication happen
+before this state is produced, so neither the label nor ranking displacement can
+leak inaccessible or duplicate fragments.
 
 **No matches.** Search never shows an empty panel. The action row **Start a work
 stream: "<query>"** is always present and always last, and becomes the selected
@@ -391,14 +402,16 @@ on home, notes, and automations, and it has to stand alone.
 ### Scoping to one group
 
 Five rows is a preview, and a preview a person cannot open past is a taunt:
-`12 MORE RESULTS` under **Documents** is worse than useless if the twelve are
-unreachable. So a group can be entered. `→` on any row
-scopes the palette to that row's group; so does clicking the group's heading, or
-its own `N more` affordance. Nothing navigates and nothing opens — the panel
-stays exactly where it is, the query text is untouched, and the group's heading
-becomes a scope chip beside the field reading **Documents**. The other groups
-drop away, and the surviving one pages rather than truncating: it fills the
-panel, and scrolling or `↓` past the last row asks for more.
+showing only five documents is worse than useless if the rest are unreachable.
+So a group can be entered. `→` on any row scopes the palette to that row's
+group; so does clicking the group's heading, or its own `more` affordance.
+Nothing navigates and nothing opens — the panel stays exactly where it is, the
+query text is untouched, and the group's heading becomes a scope chip beside
+the field reading **Documents**. The other groups drop away, and the surviving
+one exposes the bounded candidate set: it fills the panel and pages to the
+fiftieth result. If a sentinel established that more exist, the end reads
+`50+ results — refine your search` rather than walking the entire corpus to
+determine or display an exact total.
 
 `←` clears the scope and restores the mixed list. So does `Backspace` when the
 caret is at the start of an empty query, which is the gesture the mention
@@ -407,20 +420,36 @@ stepping back one level, because a person reaching for `Esc` wants out, not up.
 
 Scoping re-runs the query rather than filtering what is already on screen —
 otherwise **Documents** could only ever show the five it had. The scoped request
-is the same statement with the group bound and the per-group bound raised; the
-footer's count becomes that group's remainder.
+uses the same authorized, destination-deduplicated candidate scan with the group
+bound and returns pages from the same 50-result product window.
 
-One consequence worth stating, because it makes the scoped path *simpler* rather
-than harder: the client-side matcher holds work streams, notes, automations,
-people, and actions, and never documents or messages. **Documents** and
-**Messages** are therefore server-only in both modes, so a scope on either has no
-client/server merge to reconcile and no de-duplication to do. The scopes that do
-have a local half are the ones whose unscoped groups were least likely to need
-drilling into.
+One consequence worth stating: the client-side matcher holds work streams,
+notes, automations, people, and actions, and never document bodies or message
+bodies. A work stream matched locally by title and remotely by message text is
+still one row because both halves use the work-stream id as the result identity;
+the remote evidence enriches the existing row rather than appending another.
+Documents remain server-only in both modes. The same identity rule applies in a
+scope, so entering **Work streams** cannot reintroduce duplicate rows.
 
 While a scope is applied and the request has failed or the app is offline, the
 scoped list is not merely empty — it says so, in the same quiet line, because an
 empty **Documents** scope and an unreachable one look identical otherwise.
+
+**Freshness.** Canonical workspace state is authoritative; the search index is a
+derived, eventually consistent view. A successful message, note, document,
+automation, or work-stream write does not wait for indexing and is never rolled
+back because indexing is unavailable. Locally cached name changes can appear at
+once, while body-text matches may briefly reflect the previous canonical
+version. A response that knows its indexing backlog is non-empty shows the quiet
+line `Search is catching up on recent changes.` It does not block opening
+results, imply an exact delay, or turn search into a write-status surface.
+
+Authorization is never eventually consistent: every query joins the current
+canonical visibility state. A stale fragment may therefore fail to find newly
+written text, but it cannot keep a deleted, archived, or newly inaccessible
+destination visible. Opening a stale match always loads the canonical entity;
+if the phrase moved or was deleted, the entity opens normally without inventing
+historical content.
 
 ### Results are a read, not a subscription
 
@@ -556,39 +585,79 @@ None yet.
    [Rollout](#rollout). This is what lets the surface ship and be judged before
    the expensive projection is built.
 
-6. **Message text is projected over the regional-effect outbox that already
-   feeds the directory**, as a new effect kind beside `directory_common` and
-   `directory_user` — not over a new queue, a new RPC, or a scheduled crawl. The
-   ordering, waterline, retry, and idempotency machinery is already there and
-   already proven by the directory that search is joining against.
+6. **Canonical state is authoritative; every index write is asynchronous and
+   disposable.** The canonical write commits first. Only then is a durable
+   indexing event recorded for later work. The request returns success even if
+   recording or applying that event fails; repair compares the index with the
+   canonical source and closes any gap. Consumers re-read or carry a versioned
+   snapshot of the latest canonical value, apply updates and tombstones
+   idempotently, and may rebuild the entire derived index without changing the
+   source. **Rejected:** writing any search row or FTS trigger in the canonical
+   transaction. That makes an accelerator capable of rejecting a message,
+   rename, note edit, upload, or automation write.
 
-7. **The escape hatch is a first-class result, not an empty state.** "Start a
+7. **One result per destination entity, not one per matching fragment.** A work
+   stream is the destination for its metadata and all visible messages; a note
+   is the destination for its briefing and transcript segments. Physical index
+   fragments remain separate for incremental writes and useful snippets, then
+   collapse by `(result_type, result_id)` before ranking and the 50-result cap.
+   **Rejected:** one row per message or transcript segment in the palette. It
+   lets a verbose entity crowd out every other destination and makes five
+   occurrences of one word look like five things to open.
+
+8. **Live indexing and historical backfill share one coalesced, batched path.**
+   Pending work is keyed by canonical source entity — a work stream, message,
+   note, transcript segment, document, or automation subscription. Repeated
+   autosaves replace that entity's pending target version and move its
+   eligibility time rather than append an indexing operation; after the debounce
+   window, a drain reads only the latest canonical version. Drains batch many
+   entity projections into each queue delivery and each WorkspaceDO apply call.
+   The initial migration seeds historical identities into that path, with a
+   resumable checkpoint, while
+   writes created after deployment enter the live path immediately. **Rejected:**
+   one queue message or RPC per part, and a backfill gate that delays indexing
+   new data until history catches up.
+
+9. **The escape hatch is a first-class result, not an empty state.** "Start a
    work stream: `<query>`" is present in every result set, not only when nothing
    matched, and has its own key (`⌘⏎`). A search that fails should cost one
    keystroke to turn into work.
 
-8. **A message result opens the work stream *at that message*, not at the
-   bottom.** Landing at the tail and leaving the person to find the line they
-   searched for is the whole feature failing at the last step: the phrase they
-   typed is the one thing they cannot see. **Rejected:** shipping bottom-anchored
-   in phase 2 and improving it later — the improvement is the feature, and a
-   transcript that jumps to the newest message actively hides the match, since a
-   busy work stream may have hundreds of parts after it.
+10. **A work-stream result whose best evidence is a message opens *at that
+    message*, not at the bottom.** Landing at the tail and leaving the person to
+    find the line they searched for is the whole feature failing at the last
+    step: the phrase they typed is the one thing they cannot see. **Rejected:**
+    shipping bottom-anchored in phase 2 and improving it later — the improvement
+    is the feature, and a transcript that jumps to the newest message actively
+    hides the match, since a busy work stream may have hundreds of parts after
+    it.
 
-   It costs more than a `scrollTo`, and the cost is worth stating because it is
-   the reason this was nearly deferred. The transcript is **not virtualized**, so
-   a part that has not been paged in is not in the DOM to scroll to — a match
-   from three months ago is not in the loaded window at all. So the work is an
-   *anchored open*: read the page around the matched `sequence_number` instead of
-   the tail, and put the viewport there. Two pieces already exist and one does
-   not. `messageRows` already takes `before`/`after` cursors, so a centred read
-   is two existing reads rather than a new query shape; and
-   [`transcript-scrolling.md`](../../transcript-scrolling.md) already has the
-   concept of the screen asking the hook to move the viewport — on open, after an
-   older page is prepended, on **Jump to latest**, and on send. This adds a fifth
-   reason, which is exactly the shape that document is built for. What is new is
-   the anchored read itself, and the rule that the match keeps the viewport until
-   the reader scrolls, so a streaming turn below does not yank it away.
+    It costs more than a `scrollTo`, and the cost is worth stating because it is
+    the reason this was nearly deferred. The transcript is **not virtualized**,
+    so a part that has not been paged in is not in the DOM to scroll to — a match
+    from three months ago is not in the loaded window at all. So the work is an
+    *anchored open*: read the page around the matched `sequence_number` instead
+    of the tail, and put the viewport there. Two pieces already exist and one
+    does not. `messageRows` already takes `before`/`after` cursors, so a centred
+    read is two existing reads rather than a new query shape; and
+    [`transcript-scrolling.md`](../../transcript-scrolling.md) already has the
+    concept of the screen asking the hook to move the viewport — on open, after
+    an older page is prepended, on **Jump to latest**, and on send. This adds a
+    fifth reason, which is exactly the shape that document is built for. What is
+    new is the anchored read itself, and the rule that the match keeps the
+    viewport until the reader scrolls, so a streaming turn below does not yank
+    it away.
+
+11. **Search does not invent a title limit.** The derived schema accepts every
+    title the canonical product model accepts. If indexing needs a byte bound,
+    the indexer normalizes or truncates only its derived copy on a code-point
+    boundary; the canonical write and title are untouched. **Rejected:** the
+    search table's arbitrary 500-byte `CHECK`, which would make a projection
+    narrower than its authority. A future work-stream-title limit is a separate,
+    system-wide product decision: it must be a justified user-facing character
+    limit enforced at the canonical domain/API boundary across every write path,
+    reflected in database validation, and accompanied by a policy for existing
+    longer titles.
 
 ## Data model
 
@@ -596,42 +665,58 @@ Sketch only; [`design.md`](design.md) carries the DDL, the projection protocol,
 and the backfill, and [`data-model.md`](../../data-model.md) becomes
 authoritative when it ships.
 
-Two new tables in WorkspaceDO, beside the directory they are joined to:
+The derived store in WorkspaceDO has five responsibilities, split so none is
+mistaken for canonical product state:
 
-- **`workspace_search_documents`** — one row per searchable thing, keyed by
-  `(source_type, source_id)` where `source_type` is one of `workstream`,
-  `message`, `note`, `note_segment`, `document`, `automation`. Carries a single
-  `scope_id` naming the row the authorization join runs against, a `title`, the
-  indexed `body`, `updated_at` for recency ranking, and the
-  `authority_generation`, `waterline`, and `payload_hash` carried by the kinds
-  that arrive over the outbox. **Generation *and* waterline, not waterline
-  alone** — the directory compares generation *then* waterline because
-  `sourceVersion` restarts on an authority bump, and a waterline-only test
-  freezes that work stream's index silently and permanently. Those two are
-  paired by a `CHECK`; `payload_hash` is separate and unconstrained, since it
-  detects divergence rather than ordering it.
+- **`workspace_search_documents`** — one physical row per searchable fragment,
+  keyed by `(source_type, source_id)`. It also carries the destination identity
+  `(result_type, result_id)`: work-stream metadata and messages point at one work
+  stream; note metadata and transcript segments point at one note; a document
+  and automation subscription point at themselves. The query collapses on that
+  identity before returning results. Each row carries its authorization
+  `scope_id`, derived `title` and `body`, recency, source version, and payload
+  hash. The title has no search-specific length `CHECK`; any index-only bound is
+  applied by normalizing the derived copy, never by rejecting the authority.
 - **`workspace_search_fts`** — an external-content FTS5 table over `title` and
   `body`, and deliberately **without** a `prefix` index. Every request
   prefix-matches its trailing token, so one looks obviously right, but FTS5
   consults a prefix index only at exactly the configured lengths — it would buy
-  the first two keystrokes of a query's life and be paid for on every message
+  the first two keystrokes of a query's life and be paid for on every fragment
   ever indexed. [`design.md`](design.md#schema) carries the measurement and the
   conditions under which to revisit it.
+- **`workspace_search_versions`** — source- and destination-level version fences
+  that survive deletion after searchable text is removed. They make an old
+  source replay a no-op and prevent a late message/segment delivery from
+  resurrecting a deleted parent result.
+- **A coalescing indexing outbox at each canonical authority** — keyed by
+  `(source_type, source_id)`, and carrying its destination identity plus only the
+  newest requested source and destination versions, operation (`upsert` or
+  `delete`), eligibility time, and delivery state. It is recorded only after the
+  canonical transaction commits. Repeated writes update the existing row; they
+  do not append one row per autosave.
+- **`workspace_search_index_state`** — the current index generation, backlog
+  state, and resumable checkpoints for repair and historical backfill. It is
+  operational state for a disposable projection, not a second source of truth.
 
 Both land as a **new version** of `WORKSPACE_DO_SCHEMA_MIGRATIONS`. They cannot
 be appended to `WORKSPACE_DOMAIN_SCHEMA_STATEMENTS`, which is hashed into
 version 1 — editing it throws `workspace_do_schema_hash_mismatch:1` in the
 constructor of every already-deployed workspace.
 
-Rows for work streams, automations, notes, note transcript segments, and
-document titles are written from data WorkspaceDO already owns. Rows for messages
-arrive over the effect outbox. Rows for document *contents* are written when
-extraction completes — the point at which `resources.model_content_status`
-becomes `ready` — so indexing rides an existing state transition rather than
-polling R2.
+The indexing worker drains eligible source identities in batches, reads the
+latest canonical version, and replaces their derived fragments in one index
+transaction. Queue redelivery and replay are safe: an equal version and hash is
+a no-op, an older version is ignored, and a newer version replaces the old
+fragment. A delete is a versioned tombstone; deleting a parent destination also
+removes all child fragments through the result identity. Rows for document
+contents are derived only after extraction reaches `ready`; an extraction or
+index failure does not roll back the resource.
 
-Nothing is backfilled synchronously. An unindexed work stream is still findable
-by name from the directory, which is what makes a gradual backfill acceptable.
+Nothing is backfilled synchronously. The historical migration writes resumable
+checkpoints and feeds the same batched indexing path as live work, while new
+writes enter that path immediately rather than waiting behind history. An
+unindexed work stream is still findable by name from the directory, which is
+what makes incomplete search during backfill or repair acceptable.
 
 ## Regional impact
 
@@ -676,10 +761,11 @@ typing a word. The rules below are the change's real acceptance criteria.
    filter is written as an exhaustive `CASE` so that an unhandled kind is
    excluded rather than admitted; [`design.md`](design.md#the-visibility-join)
    carries the statement.
-2. **The filter is applied inside the query, before ranking and before
-   counting.** A `WHERE` that runs after the top-N is chosen leaks the existence
-   of private work through the `N MORE RESULTS` count and through ranking
-   displacement, which are both readable without ever seeing a title.
+2. **The filter is applied inside the query, before destination de-duplication,
+   ranking, and candidate-cap state.** A `WHERE` that runs after candidates are
+   chosen leaks the existence of private work through a `50+ results` state and
+   through ranking displacement, which are both readable without ever seeing a
+   title.
 3. **Access loss takes effect on the next keystroke**, because the visibility
    join is evaluated at read time (key design decision 3). No sweep, no
    invalidation, no window during which a revoked member's search still matches.
@@ -714,31 +800,34 @@ an unreachable Flagship, or an unresolved flag all mean the glyph is absent and
 
 **Phase 1 — everything WorkspaceDO already holds the text of.** Work streams,
 automations, meeting notes and their transcripts, document *titles*, people, and
-actions. No new projection and no cross-object transport: one FTS5 table fed from
-rows the object already owns, one `GET`, and the whole client surface. This ships
-the interaction and lets it be judged before the expensive half is built.
+actions. These sources still enter the asynchronous coalescing outbox after the
+canonical transaction; locality removes a transport hop, not the failure
+boundary. One FTS5 table, one `GET`, and the whole client surface ship together.
+This lets the interaction be judged before the expensive half is built.
 
-**Phase 2 — the text that lives somewhere else.** Message bodies, via a new
-effect kind on the existing regional-effect outbox; and document contents,
-indexed when extraction reaches `ready`. Both add rows to the phase 1 table and
-groups to the same panel; no client rework.
+**Phase 2 — the text that lives somewhere else.** Message bodies and extracted
+document contents enter the same index contract through batched, versioned
+projection payloads. Repeated edits to one message are coalesced by message id,
+then many message projections are batched by workspace before transport;
+document contents become eligible after extraction reaches
+`ready`. Both enrich the phase-1 result entities and panel; neither creates a
+new visible result kind or requires client rework.
+
+For both phases, the migration seeds **historical data only**. Writes made after
+the indexing contract deploy enter the live outbox immediately, even while the
+historical cursor is still on its first page. Live drains are selected ahead of
+backfill drains so an old workspace cannot make newly written text wait behind
+its entire history.
 
 Turning the flag off hides the surface immediately and leaves the index in place,
-inert. Rolling back further means dropping two tables and one effect kind, and
-the directory the surface joins against is untouched throughout — which is the
-property that makes this cheap to reverse.
+inert. Rolling back further means dropping only derived index, outbox, and
+checkpoint state; canonical rows and the directory the surface joins against are
+untouched throughout. That is the property that makes this cheap to reverse.
 
 ## Limits
 
 Split per
 [`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md).
-
-**One product question the team has to settle with the candidate cap**, because
-the two cannot both hold: an exact `N MORE RESULTS` counts every authorized
-match, but a candidate cap truncates the set being counted, so the footer would
-report the cap rather than the remainder. Either the count becomes `N+ more`
-above the cap, or the cap is high enough that the difference is theoretical and
-the per-keystroke cost is accepted. This PRD does not choose.
 
 **Product limits — set here, and cited to this PRD:**
 
@@ -746,32 +835,41 @@ the per-keystroke cost is accepted. This PRD does not choose.
 | --- | --- |
 | Rows shown per group before truncation | 5 |
 | Rows in a scoped group's first page | 25 |
-| Rows added per subsequent page | 25 |
+| Rows added by the scoped group's second and final page | up to 25 |
+| Authorized, destination-deduplicated candidates considered per group and query | 50, plus one sentinel used only to return the `50+ results` state; no exact total is computed |
 | Group order | as tabled under [Product behavior](#states) |
 | Minimum query length before a remote request | 2 characters (local matching starts at 1) |
+| Maximum accepted query length | 200 characters, matching the existing `GET /resources?q=` product boundary |
 | Rows in the empty-query **Recent** group | 9, matching the `⌘1`–`⌘9` run |
 
-**Defensive limits — and these mostly may not ship open.**
+**The debounce shape is decided; its duration is not.** Pending indexing work is
+keyed by canonical source identity and its eligibility moves forward on each
+update, so an autosave burst yields one read of the latest canonical version.
+The exact pause is a user-visible freshness/efficiency tradeoff and remains for
+product/engineering to choose before implementation; this PRD does not guess a
+number. Query requests use the same one-request-per-settled-query shape, with a
+separately chosen UI pause and stale responses abandoned rather than rendered.
+
+**Defensive limits — and these may not ship open.**
 [`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md)
 gates the open value on one test: *does this change introduce the unbounded
-path?* Here the answer is yes for all of them — `GET /search`, the FTS index,
-and the projection are new paths this change authors, so an open value would be
-a regression written by this change rather than the behaviour that already
-ships. The same section says to always ask rather than ship open when the path
-allocates memory proportional to untrusted input. So these are **asked for, not
-placeholdered**, and the implementing change does not start until they are set:
+path?* Here the answer is yes for the index body, batches, and drain. They are
+new paths this change authors, so an open value would be a regression rather
+than behavior that already ships. These are **asked for, not guessed**, and the
+implementing change does not start until they are set:
 
 | Limit | Why it cannot ship open | Starting point for the team |
 | --- | --- | --- |
-| Maximum indexed **bytes** per message and per document | Lands in a SQLite `CHECK` inside a hashed migration. Placeholders live in TypeScript source only, a `CHECK` has no inert value, and a versioned migration is not "one edit away" — so this one must be set *before the migration is written*, not handed back after | Under `durable_outbox.payload_json`'s ~1.9 MB `CHECK` with envelope overhead to spare; an over-large body aborts the *producing* transaction, so the message write itself fails |
-| Maximum accepted query length | Allocation sized by untrusted caller input | `GET /resources?q=` already caps a search string at 200 characters; matching it needs no new decision. Note the existing FTS sanitizer also truncates at 96 tokens, which silently pre-empts any larger value |
-| Maximum candidate rows before ranking | The statement materialises every authorized match before emitting one, on the single-threaded WorkspaceDO, per settled keystroke | The existing FTS precedent caps candidates at 20 per leg and reports no total. Setting this also decides the `N MORE RESULTS` question below |
-| Per-wake backfill batch size | The backfill queues ahead of live directory projections, and there is no natural bound on a drain | `processMemoryIndexOutbox` runs at 50 per wake against a hard cap of 200 — the same outbox shape |
+| Maximum indexed **bytes** per message/document fragment | A canonical part can be much larger than a useful search snippet, and duplicating it into SQLite and queue payloads otherwise consumes memory and object storage in proportion to user content | Derive from the queue's published 128 KB message ceiling, the number of fragments carried together, and the amount of text needed to produce the promised snippets. On trip, truncate only the derived copy on a code-point boundary; never reject the canonical write |
+| Maximum entities and bytes per live queue delivery/RPC apply | A batch with no bound can exceed the queue's 128 KB message ceiling or the Worker's 128 MB memory ceiling | Derive both dimensions from the published platform ceilings and the chosen fragment bound; one entity count without a byte bound is insufficient |
+| Per-wake live and backfill drain sizes | An alarm that drains an entire historical workspace can monopolize the single-threaded WorkspaceDO | Derive from the same batch dimensions; live work is selected first, and backfill remains checkpointed for the next wake |
 
-Note the unit: **bytes, not characters.** The `CHECK` is byte-counted per
-`data-model.md`, so a character-denominated bound cannot be substituted into it,
-and truncating by characters while checking bytes rejects every CJK or
-emoji-bearing body permanently. The producer truncates by the same unit.
+The indexed-fragment unit is **bytes, not characters**, because the platform and
+transport ceilings are byte-counted. Truncation stays on a code-point boundary.
+Titles are deliberately absent from this table: search accepts the canonical
+title and imposes no second product constraint. If a derived-copy bound is later
+proved necessary, it follows key design decision 11 rather than becoming a
+schema rejection.
 
 One number moves to the product column. The **retention horizon for indexed
 message text** is filed here as defensive in name only: this PRD's own open
@@ -783,9 +881,8 @@ row above.
 
 The as-you-type request cadence is a product limit doing double duty: it decides
 whether search feels instant *and* bounds how often a keystroke reaches
-WorkspaceDO. The *shape* is set here — **one request per settled query**, with
-any outstanding request for a stale query abandoned rather than rendered — but
-the pause duration is a number, it is not set here, and it is on the list above.
+WorkspaceDO. The shape is set above; its duration remains a named product and
+engineering decision rather than an implementer's guess.
 
 ## Acceptance
 
@@ -799,50 +896,76 @@ the pause duration is a number, it is not set here, and it is on the list above.
    not by a component test.
 3. Typing three characters of a work stream's title selects it as the top hit and
    `⏎` opens it.
-4. **A phrase that appears only in the body of one message finds that message,
-   shows the work stream it is in and a snippet with the phrase highlighted, and
-   opens the work stream scrolled to that message with the phrase in view** —
-   including when the match is old enough that the transcript's tail page does
-   not contain it, which is the case that distinguishes an anchored read from a
-   `scrollTo`. A turn streaming in below must not move the viewport off it.
+4. **A phrase that appears only in the body of one message finds its work stream,
+   shows a snippet with the phrase highlighted, and opens the work stream
+   scrolled to that message with the phrase in view** — including when the match
+   is old enough that the transcript's tail page does not contain it, which is
+   the case that distinguishes an anchored read from a `scrollTo`. A turn
+   streaming in below must not move the viewport off it.
 5. A phrase that appears only in a meeting transcript finds its note; a phrase
    that appears only inside an uploaded document finds that document.
-6. **A second member, signed in separately, searches a phrase that appears only
+6. Five occurrences of `alphabet` across messages in one work stream produce
+   one work-stream result with highlighted evidence, not five rows. The same
+   query across a note title and multiple transcript segments produces one note
+   result.
+7. **A second member, signed in separately, searches a phrase that appears only
    inside a `personal` work stream they are not a participant of, and gets no
-   row and no increase in the `N MORE RESULTS` count.** Repeated for a
-   `personal` note and for a document they cannot access.
-7. A member removed from a work stream stops matching its content on their next
+   row and no change to the group's bounded remainder/`50+ results` state.**
+   Repeated for a `personal` note and for a document they cannot access.
+8. A member removed from a work stream stops matching its content on their next
    query, with no intervening deploy or sweep.
-8. **A phrase that appears only inside another member's `personal` meeting note
+9. **A phrase that appears only inside another member's `personal` meeting note
    returns nothing — including through the Documents group.** Every note is
    backed by a `resources` row that is born `model_content_status = 'ready'`, so
    this is the test that catches the note's text reappearing under the document
    authorization rule rather than the note one.
-9. **A phrase from an email sent to another member's *personal* automation
-   address returns nothing, and does not raise the `N MORE RESULTS` count.**
+10. **A phrase from an email sent to another member's *personal* automation
+   address returns nothing, and does not change the bounded remainder state.**
    This is the inbound-email arm of the document rule, which is applied per row
    rather than as SQL and was argued away once already; the three remaining
    fragments all pass such a row vacuously, so nothing else in this list catches
    its loss.
-10. **A member with no viewer row for a `workspace`-scoped work stream still
+11. **A member with no viewer row for a `workspace`-scoped work stream still
     finds its messages.** Viewer rows are written only for authors, mentions, and
     participants, so a rule that keys solely on the viewer row makes every shared
     work stream unsearchable to everyone who has not yet spoken in it.
-11. **A query whose Documents group is truncated: `→` scopes to Documents, the
+12. **A query whose Documents group is truncated: `→` scopes to Documents, the
     other groups disappear, a **Documents** chip appears beside the field, and
     the sixth-ranked document — invisible before — is on screen. `←` restores
     the mixed list with the same query and the same five-row preview.** Repeated
     with the group heading clicked instead of `→`.
-12. Scrolling to the bottom of a scoped group loads more rather than stopping,
-    until the group is exhausted, and the footer's remainder count falls to zero
-    as it goes.
-13. A scope applied while the API is unreachable shows the quiet line rather than
+13. Fifty-one authorized matching documents return only the best 50 candidate
+    identities plus `hasMore: true`; the palette renders `50+ results` and never
+    executes or displays an exact total count. At 50 matches, `hasMore` is false.
+14. Scrolling a scoped group reaches at most the bounded 50-result window. When
+    `hasMore` is true, its end asks for a narrower query instead of continuing an
+    unbounded traversal.
+15. A scope applied while the API is unreachable shows the quiet line rather than
     an empty list.
-14. A query matching nothing shows the start-a-work-stream row selected; `⏎`
+16. A query matching nothing shows the start-a-work-stream row selected; `⏎`
     opens the new-work-stream surface with the query in the composer.
-15. With the API unreachable, the panel still opens and still matches names, and
+17. With the API unreachable, the panel still opens and still matches names, and
     shows the single quiet line about message and document text.
-16. With `global-search` off, the glyph is absent and `⌘K` does nothing.
+18. With `global-search` off, the glyph is absent and `⌘K` does nothing.
+19. A canonical write succeeds when the index outbox or index consumer is
+    unavailable. Search may report that it is catching up; the write response is
+    not changed or retried by the client.
+20. Ten autosaves to one note within the debounce window leave one pending
+    source identity and index only the latest canonical version after the
+    window. The same coalescing holds for repeated edits to one message.
+21. Applying a batch twice is a no-op the second time; an older version cannot
+    overwrite a newer one; a same-version/different-hash divergence is surfaced
+    for repair rather than silently accepted.
+22. Updating an indexed entity replaces its old fragments and deleting it
+    removes them through a versioned tombstone. Neither path can resurrect stale
+    fragments when events arrive out of order.
+23. A historical backfill checkpoints after each bounded batch, resumes from
+    that checkpoint after interruption, and does not duplicate results. A write
+    created during the backfill is indexed through the live path before the
+    historical scan completes.
+24. An operator repair can re-enqueue one source entity or destination, and a
+    full rebuild can discard and regenerate the derived index from canonical
+    sources while recording an incomplete/catching-up state.
 
 Where these become durable checks, they land in [`e2e.md`](../../e2e.md).
 
@@ -855,7 +978,8 @@ carrying shape only:
 - `search_opened` — how it was opened (`glyph` or `shortcut`) and the surface it
   was opened from.
 - `search_results_shown` — query length as a bucket, never the query; the number
-  of results per group; whether remote results arrived, failed, or were skipped.
+  of rendered results per group and each group's `hasMore` boolean, never an
+  exact match total; whether remote results arrived, failed, or were skipped.
 - `search_result_opened` — the result's `sourceKind`, its group, and its position
   within the group; or `start_workstream` when the escape hatch was taken.
 
@@ -951,3 +1075,9 @@ name and nothing else, phase 2's cost is not yet justified.
    a person looking for "the competitor digest from last Tuesday" is thinking
    about the automation, not the work stream it produced. Deferred until phase 1
    telemetry says whether automations are being searched for at all.
+4. **What is the indexing debounce duration?** Blocking implementation, not the
+   PRD architecture. The mechanism is fixed: repeated writes to one source
+   entity coalesce, eligibility moves forward, and only the latest canonical
+   version is indexed. Product/engineering chooses the pause by balancing how quickly a
+   just-written phrase should become searchable against autosave churn. The
+   implementer does not infer a duration from an unrelated debounce elsewhere.

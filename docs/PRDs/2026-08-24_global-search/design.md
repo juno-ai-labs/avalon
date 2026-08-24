@@ -27,11 +27,13 @@ phase 1, and it needs no new cross-object transport. Only document *contents*
 and message bodies live elsewhere.
 
 One correction to a natural assumption, because it changes the phase-1 write
-path: a work stream's title and description reach WorkspaceDO *over the outbox*
-already, through `applyDirectoryEnvelope` (`workspace-do.ts`). Phase 1 does not
-re-fetch them from the work stream — it writes the search row in the same
-transaction that applies the directory envelope, from the payload already in
-hand.
+path: a work stream's title and description reach WorkspaceDO *over the
+directory outbox* already, through `applyDirectoryEnvelope` (`workspace-do.ts`).
+That envelope updates canonical directory state; it does **not** update search
+in the same transaction. After the directory transaction commits, the handler
+marks the work-stream result dirty in the coalescing search outbox. The indexer
+later re-reads the directory row. Locality removes a transport hop, not the
+failure boundary between authority and derived index.
 
 ## Where the tables go
 
@@ -40,21 +42,21 @@ spread into **version 1** of `WORKSPACE_DO_SCHEMA_MIGRATIONS`
 (`workspace-do.ts`), and version 1's statements are hashed into every deployed
 object's `_sql_schema_migrations` receipt. `sqlite-migrations.ts` re-hashes on
 wake and throws `workspace_do_schema_hash_mismatch:1`; the file says so in its
-own words beside the array. Appending two `CREATE TABLE`s there takes every
-existing workspace's Durable Object down on its next wake, in both regions —
-a total outage, not a degraded search.
+own words beside the array. Appending the search table statements there takes
+every existing workspace's Durable Object down on its next wake, in both
+regions — a total outage, not a degraded search.
 
-The tables land as a **new version entry** in `WORKSPACE_DO_SCHEMA_MIGRATIONS`
-(the object is at version 9, so version 10), which is the same route
-`SLACK_REACTION_COLUMN_STATEMENTS` took. They must also be added to
-`WORKSPACE_LOCAL_TABLES` in `workspace-runtime-database.ts`, though **not** for
-the reason it is tempting to give: the routing port does not fail closed on an
-unregistered table. `if (localTables.length === 0) return false;` sends such a
-statement to regional D1, where it dies as `no such table`; only an unregistered
-*write target* throws. The join query names `notes` and `resources` and so routes
-locally either way, but a search-only statement — the cascade `DELETE`, the
-backfill `INSERT … SELECT` — would silently go to D1. That is the reason to
-register them.
+The derived tables land as a **new version entry** in
+`WORKSPACE_DO_SCHEMA_MIGRATIONS` (the object is at version 9, so version 10),
+which is the same route `SLACK_REACTION_COLUMN_STATEMENTS` took. They must also
+be added to `WORKSPACE_LOCAL_TABLES` in `workspace-runtime-database.ts`, though
+**not** for the reason it is tempting to give: the routing port does not fail
+closed on an unregistered table. `if (localTables.length === 0) return false;`
+sends such a statement to regional D1, where it dies as `no such table`; only an
+unregistered *write target* throws. The join query names `notes` and `resources`
+and so routes locally either way, but search-only statements — fragment
+replacement, outbox drain, checkpoint advance, repair, and deletion — would
+silently go to D1. That is the reason to register them.
 
 ## Schema
 
@@ -64,6 +66,11 @@ CREATE TABLE workspace_search_documents (
     'workstream', 'automation', 'note', 'note_segment', 'document', 'message'
   )),
   source_id TEXT NOT NULL,
+  -- The thing the palette opens. Many physical fragments may share it.
+  result_type TEXT NOT NULL CHECK (result_type IN (
+    'workstream', 'automation', 'note', 'document'
+  )),
+  result_id TEXT NOT NULL,
   -- The row the authorization join runs against, named by source_type:
   -- workstream/message -> workstream_id, note/note_segment -> note_id,
   -- document -> resource_id, automation -> automation_subscription_id.
@@ -75,32 +82,39 @@ CREATE TABLE workspace_search_documents (
   -- who may read it, or worse. NOT NULL because a row with no scope key has no
   -- authorization join, and there is no safe default to invent for it.
   scope_id TEXT NOT NULL,
-  title TEXT NOT NULL CHECK (length(CAST(title AS BLOB)) <= 500),
-  body TEXT NOT NULL CHECK (length(CAST(body AS BLOB)) <= /* see Byte bounds */),
+  -- Search accepts every title the canonical model accepts. There is no
+  -- search-specific title CHECK. If a derived-copy bound is later required,
+  -- normalize/truncate before this write and leave the authority untouched.
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
   -- Recency ranking, and the ordering the sidebar already sorts by.
   updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
-  -- Idempotent re-delivery, for the kinds that arrive over the outbox and can
-  -- therefore be re-delivered. NULLABLE, because the other kinds have no such
-  -- value: notes, note segments, resources and automation subscriptions carry
-  -- no generation, no version and no envelope hash anywhere in their schemas,
-  -- so a NOT NULL column here would make every phase-1 write except the work
-  -- stream's fail its CHECK, and an invented sentinel would defeat the compare
-  -- these columns exist for. A locally-written row is idempotent by being an
-  -- upsert of current state; there is nothing to order.
-  --
-  -- Compared as a compound where they are present, because sourceVersion
-  -- restarts when a work stream's authority generation is bumped: a
-  -- waterline-only test rejects every post-bump republish as "not higher" and
-  -- freezes that work stream's index forever, silently.
-  authority_generation INTEGER CHECK (authority_generation IS NULL OR authority_generation > 0),
-  waterline INTEGER CHECK (waterline IS NULL OR waterline > 0),
-  payload_hash TEXT,
-  CHECK ((authority_generation IS NULL) = (waterline IS NULL)),
+  -- Assigned by the source authority's coalescing outbox after the canonical
+  -- commit. All fragments in one replacement carry the same compound version.
+  source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+  source_version INTEGER NOT NULL CHECK (source_version > 0),
+  payload_hash TEXT NOT NULL,
   PRIMARY KEY (source_type, source_id)
 ) STRICT;
 
 CREATE INDEX workspace_search_documents_scope_idx
   ON workspace_search_documents(source_type, scope_id);
+
+CREATE INDEX workspace_search_documents_result_idx
+  ON workspace_search_documents(result_type, result_id);
+
+-- Version fences survive deletion even though searchable text does not.
+CREATE TABLE workspace_search_versions (
+  version_kind TEXT NOT NULL CHECK (version_kind IN ('source', 'result')),
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  version INTEGER NOT NULL CHECK (version > 0),
+  operation TEXT NOT NULL CHECK (operation IN ('upsert', 'delete')),
+  payload_hash TEXT NOT NULL,
+  updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+  PRIMARY KEY (version_kind, entity_type, entity_id)
+) STRICT;
 
 CREATE VIRTUAL TABLE workspace_search_fts USING fts5(
   title,
@@ -129,9 +143,50 @@ CREATE VIRTUAL TABLE workspace_search_fts USING fts5(
   -- If profiling later shows short queries dominate, the sizes to add are a
   -- decision with arithmetic behind it, not a default.
 );
+
+-- Logical shape; the source-object implementation uses the same columns and a
+-- source-appropriate table name. One row per canonical source entity is the
+-- coalescing contract: autosaves overwrite this row rather than append work.
+CREATE TABLE workspace_search_outbox (
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  result_type TEXT NOT NULL,
+  result_id TEXT NOT NULL,
+  operation TEXT NOT NULL CHECK (operation IN ('upsert', 'delete')),
+  target_generation INTEGER NOT NULL CHECK (target_generation > 0),
+  target_version INTEGER NOT NULL CHECK (target_version > 0),
+  result_generation INTEGER NOT NULL CHECK (result_generation > 0),
+  result_version INTEGER NOT NULL CHECK (result_version > 0),
+  not_before INTEGER NOT NULL CHECK (not_before >= 0),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'leased')),
+  lease_token TEXT,
+  lease_expires_at INTEGER,
+  last_error TEXT,
+  updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+  PRIMARY KEY (source_type, source_id)
+) STRICT;
+
+CREATE INDEX workspace_search_outbox_due_idx
+  ON workspace_search_outbox(status, not_before);
+
+CREATE TABLE workspace_search_index_state (
+  source_type TEXT PRIMARY KEY,
+  index_generation INTEGER NOT NULL CHECK (index_generation > 0),
+  status TEXT NOT NULL CHECK (status IN (
+    'ready', 'backfilling', 'repairing', 'failed'
+  )),
+  checkpoint TEXT,
+  updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+  last_error TEXT
+) STRICT;
 ```
 
-The index on `(source_type, scope_id)` is what the cascade deletes below use.
+The index on `(source_type, scope_id)` supports authorization-parent cleanup;
+the result index replaces or removes all fragments for one visible destination
+and is the key the query de-duplicates on. `workspace_search_versions` is not an
+index of product data: it is the small fence that lets an apply reject an older
+source replay after its text row was deleted, and lets a parent result tombstone
+reject a late child fragment.
 There is deliberately no `(scope_id, updated_at DESC)` index: the query enters
 `workspace_search_documents` by rowid from the FTS match and never looks a
 document up by scope, and `ORDER BY` runs over a computed `bm25()` that no index
@@ -194,48 +249,53 @@ and falls back to `INSERT` when no row was changed, or uses
 `INSERT … ON CONFLICT(source_type, source_id) DO UPDATE SET …`, both of which
 fire the update trigger.
 
-### Byte bounds
+### Derived-text bounds, not canonical title limits
 
-`body` and `title` carry a byte-counted bound —
-`CHECK (length(CAST(body AS BLOB)) <= …)`, never `length()` alone.
-`data-model.md`'s 2026-08-19 changelog entry records why: character-counted
-`CHECK`s against a byte-counted platform limit was one of the defects that audit
-found. **The producer's truncation is measured in the same unit.** Truncating to
-N characters and checking N bytes rejects every Japanese or emoji-bearing body
-at three or four bytes per character — the envelope is rejected, the retry
-replays the identical payload, and non-Latin content is silently never indexed.
-Truncation is by bytes, on a code-point boundary, so a surrogate pair is never
-split.
+The search schema has **no title-length `CHECK`**. Avalon currently accepts
+work-stream titles through several write paths with different character bounds,
+and this PRD is not authority to choose a new system-wide invariant. A search
+projection must accept whatever the canonical path accepted. If FTS storage
+later needs a bound, `normalizeSearchText` truncates only the derived index value
+and leaves the canonical title untouched; UI ellipsis is presentation, not
+validation.
 
-**This bound cannot ship open, and not for the usual reason.** A `CHECK` is SQL
-text inside a hashed migration, and the limits document is explicit that
-placeholders live in TypeScript source only — a limit that has to cross into a
-stored row is one you must have a value for before you write it. There is also
-no inert value: a `CHECK` has no `+Infinity`. And because the migration is
-content-hashed and versioned, "one edit away from being real" is false here —
-changing the number later is a new migration version, not an edit. So the number
-is settled before the migration is written, and it is the first row of the PRD's
-[Limits](prd.md#limits) table for that reason.
+Message/document bodies do need a finite derived-fragment byte bound before
+implementation, for the reasons and decision handoff in the PRD's
+[Limits](prd.md#limits). It is enforced in the indexer before batching and
+storage, not in the canonical transaction. Truncation is measured in UTF-8 bytes
+and lands on a code-point boundary. Truncating to N characters and then checking
+N bytes would reject Japanese or emoji-bearing text at three or four bytes per
+character. If normalization or indexing fails, the outbox remains repairable and
+the canonical write remains successful.
 
 ## Writing the index
 
 ### Phase 1 — text the object already owns
 
-Written inline, in the same transaction as the write it derives from. For work
-streams that is `applyDirectoryEnvelope`, which already carries an
-`authority_generation` and a `waterline` — the search row copies them, which is
-where phase 1's values for those columns come from. For notes, note segments,
-resources, and automations, the writes go through `note-service.ts`,
-`resource-service.ts`, and `automation-service.ts` over the
-`withWorkspaceRuntimeDatabase` facade, so "the same transaction" means an
-explicit `batch()`.
+Every source follows the same order, including sources already stored inside
+WorkspaceDO:
 
-Not triggers on the source tables: a trigger cannot apply the content filters
-below, and a filter that lives in a trigger is one nobody reviewing the write
-path will see.
+1. The canonical service commits its transaction and determines success without
+   touching a search table.
+2. After that commit, `markSearchDirty` upserts a durable outbox row keyed by
+   `(source_type, source_id)`. It records the newest source version, destination
+   identity, operation, and `not_before`. A repeated write updates that row and
+   moves `not_before`; it never appends one operation per autosave.
+3. Failure to record the outbox row is logged and leaves the canonical response
+   successful. The next repair scan compares canonical versions/hashes with the
+   derived rows and re-enqueues the gap. There is deliberately a small
+   post-commit crash window because making search atomic with the authority
+   would reverse their importance.
+4. Once eligible, the alarm leases a bounded batch, re-reads each entity's
+   latest canonical value, derives fragments, and applies the batch in a search
+   transaction. Only after that transaction commits is the leased work removed.
+
+This outbox is not a second authority. It may be discarded and regenerated from
+canonical rows. It exists to make debounce/coalescing durable and to survive an
+object sleeping between a successful write and indexing.
 
 - **Work stream** — one row. `title`, `description`, and `preview` concatenate
-  into `body`; `scope_id` is the work-stream id.
+  into `body`; `scope_id`, `result_id`, and the source id are the work-stream id.
 - **Automation** — one row per *subscription*, with the text joined out from
   `automation_templates.name` and `automation_template_versions.overview`.
   Subscriptions carry no name of their own, which is why the sidebar's own read
@@ -243,68 +303,53 @@ path will see.
   same text and different `scope_id`, because they have different audiences.
 - **Meeting note** — one `note` row for the title and briefing markdown, plus
   one `note_segment` row per transcript segment, so a match can carry its own
-  offset into the recording. A segment row's `title` is the empty string, not
-  the note's title: copying the note title onto 720 segments would index it 720
+  offset into the recording. Every row carries the note id as `result_id`. A
+  segment row's `title` is the empty string, not the note's title: copying the
+  note title onto 720 segments would index it 720
   times at the 10× title weight and flood the group with one meeting.
 - **Document** — one `document` row for the title, at upload or hydration.
   **`resource_type = 'note'` is excluded.** Every note is backed by a `resources`
   row (`note-service.ts` inserts one with `provider = 'avalon_note'` and
   `model_content_status = 'ready'` at INSERT), so without this exclusion a
   personal note's title and full markdown reappear as a `document` row under a
-  different authorization rule — the leak acceptance test 6 exists to catch.
+  different authorization rule — the leak acceptance test exists to catch.
 
-### Phase 2a — message text, over the existing outbox
+### Phase 2a — message text, coalesced before batched transport
 
-**First, which object.** There are two `durable_outbox` tables and they are not
-the same table. `WorkstreamDO`'s (in `workstream-do.ts`) has the CHECK-enumerated
-`effect_kind` column; `SubstreamAgent`'s (in `workstream-object-schema.ts`) has
-no `effect_kind` column at all — its kind is read with
-`json_extract(payload_json, '$.effect.kind')`. Message text originates in
-`SubstreamAgent`, whose effects reach WorkspaceDO through the activity queue
-rather than through `WorkstreamDO`, so **the choice of producer decides which of
-the costs below this change actually pays.** Routing message projections through
-`WorkstreamDO` buys the ordering and priority machinery and owes the rebuild;
-publishing from `SubstreamAgent` owes no rebuild and inherits neither. This
-design assumes the `WorkstreamDO` route; the bullets below are its price, and
-they are the reason the alternative deserves a look before implementation
-starts.
+Message text is authoritative in `SubstreamAgent`, so that object owns the
+message search outbox. The outbox is keyed by the canonical part/message id and
+uses one monotonic projection key per source entity. A create, edit, or delete
+first commits to the transcript tables; only afterward does it upsert
+`target_version` and `not_before`. Ten edits to one message during the
+debounce window therefore leave one pending row whose drain reads the tenth
+version. A delete overwrites an earlier pending upsert with a tombstone. The
+payload also carries the current compound work-stream result version so a
+destination deletion or archive can fence late child deliveries.
 
-On that route `search_document` joins the existing effect kinds — but **it is
-not an additive change**, and four specifics matter more than the general shape:
+The eligible drain reads multiple latest canonical entities at once, filters
+them, and constructs **batches** under both the chosen entity-count bound and
+the queue's published 128 KB message ceiling. It publishes a
+`search_index_batch` message through the existing regional `ACTIVITY_QUEUE`;
+search does not add a second regional-content queue. One queue message carries
+many fragment upserts/tombstones, and the regional consumer groups messages for
+the same workspace into one bounded WorkspaceDO apply call. Queue delivery is
+at-least-once and unordered, so every fragment carries
+`(source_generation, source_version, payload_hash)` plus
+`(result_generation, result_version)`. The receiver compares
+`workspace_search_versions` and applies these rules in one transaction per
+batch:
 
-- **It is the seventh kind, not the fourth.** `durable_outbox.effect_kind`'s live
-  `CHECK` in `workstream-do.ts` admits six: `directory_common`, `directory_user`,
-  `suggestion_feedback`, `activity_event`, `mention_notification`,
-  `participant_notification`. The three-kind list that is easy to reach for is
-  the *RPC allowlist* in `workspace-directory-protocol.ts`, which is a different
-  set for a different purpose. This matters because the change is a table
-  rebuild whose entire content is a re-declared `CHECK` list: written from the
-  three-kind list it silently drops three kinds that are in production, and the
-  next `activity_event` insert fails inside its producing transaction.
-- **The rebuild is over version 3's table, not version 1's.** Version 1's
-  five-kind table was already dropped and replaced by the version-3
-  new-table/copy/drop/rename that added `participant_notification`. The next one
-  is version 4.
-- **Two producers stamp `messageId` differently, and the obvious reading is
-  backwards.** `directory_common` and `directory_user` go through
-  `enqueueProjection` → `recordStateChange`, which returns `uuidV7(occurredAt)` —
-  that is *why* they satisfy the UUIDv7 refinement
-  `WorkspaceDirectoryApplyRequestSchema` imposes. The
-  `substream:<id>:<messageId>` form belongs to `enqueueImmutable`, which serves
-  exactly the three kinds that RPC rejects. So a `search_document` shaped as a
-  projection effect needs no branch at all; one shaped as an immutable effect
-  needs a fix in a different function than the surface reading suggests.
-- **There is no monotonic `sourceVersion` on the non-projection arm.** It is
-  caller-supplied and unvalidated, and the sole existing caller passes the
-  literal `1`. A per-message `search_document` therefore needs either a
-  `projection_keys` row per message — per-message bookkeeping at message-table
-  scale in the child object — or another monotonic source. With neither, every
-  republish carries `waterline = 1`, loses the compound compare, and edits never
-  reach the index.
-- Seven other sites enumerate the kinds and each needs the new one.
+- older compound version: ignore;
+- equal version and equal hash: acknowledge as an idempotent replay;
+- equal version and different hash: record divergence and enqueue repair;
+- newer version: replace the fragment through `UPDATE`/`INSERT`;
+- newer tombstone: delete the fragment; a parent work-stream tombstone deletes
+  every row sharing its result identity and leaves a result-level version fence;
+- child upsert at or below a result-level delete fence: ignore, even if the
+  child itself had not arrived when the parent tombstone was applied.
 
 The producer filters before it publishes, and that is a security boundary rather
-than an optimisation. The line is the one the transcript read itself applies:
+than an optimization. The line is the one the transcript read itself applies:
 `substream_id = '0' AND visibility IN ('people', 'both')`. **Both halves
 matter.** Omitting the substream clause publishes people-visible parts from an
 `audience = 'owner'` substream — a private side-conversation rendered to nobody
@@ -315,29 +360,27 @@ and `steer_request` parts with `people` visibility are shown to people, and
 projection matches the transcript's rule, then excludes the kinds the PRD's
 non-goal 8 names.
 
-**Two things not to write into this, both of which the obvious draft gets
-wrong.** A message whose `content` spilled to `content_ref_id` cannot be
-projected from R2 at publish time: the enqueue runs inside `transactionSync`,
-which cannot await object I/O, and the read would have to be hoisted before the
-transaction opens — before the producer knows which parts spilled. It is moot
-today in any case: `content_ref_id` and the `content_refs` table have no writer
-anywhere in the repo, `parts.content` is bounded at 256 KiB, and so nothing
-spills. Index what is in `content`, and treat a spilled part as a state to
-handle when something creates one.
+Part visibility is immutable in the current product. If a later change makes it
+narrowable, that change must give the search read a current canonical predicate;
+an asynchronous cleanup alone would make authorization eventually consistent
+and is therefore not acceptable.
 
-And **editing does not republish with a higher waterline** — not on this arm.
-The bullet above is the binding one: a non-projection effect's `sourceVersion`
-is caller-supplied and the only existing caller passes `1`. Until a per-message
-monotonic source exists, an edited message's republish ties the compound compare
-and is dropped. Either the projection-keyed arm is used, with its per-message
-`projection_keys` bookkeeping, or edits do not reach the index and the PRD
-should say so.
+A message whose `content` spilled to `content_ref_id` cannot be read from R2 in
+the canonical transaction, which is another reason indexing is downstream.
+Nothing writes that state today: `content_ref_id` and `content_refs` have no
+writer, and `parts.content` is bounded at 256 KiB. Index what is in `content`
+now; when a spill writer is introduced, its post-commit derivative step becomes
+the canonical reader for this same outbox contract.
 
 ### Phase 2b — document contents
 
 Extraction records completion by moving `resources.model_content_status` to
-`ready`. Indexing hooks that write and updates the existing `document` row's
-`body`.
+`ready`. After that canonical state commits, it upserts the resource's search
+outbox row. The later drain reads the latest derivative, normalizes/truncates
+only the derived index copy, and updates the existing `document` fragment.
+Extraction failure and index failure are independent: neither changes the
+successful resource write, and a later extraction or repair can enqueue the
+resource again.
 
 **The `resource_type = 'note'` exclusion is restated here, and it is
 load-bearing.** It is tempting to argue the hook cannot fire for a note-backed
@@ -345,17 +388,36 @@ resource because the row is born `ready` at INSERT — that is false.
 `note-service.ts`'s `materialize()` runs `UPDATE resources SET …
 model_content_status = 'ready'` and is called from seven sites: every note
 update, every transcript-segment append, every briefing generation. So the hook
-fires for notes routinely. Combined with the upsert rule above — update, and
-`INSERT` when no row changed — a phase-2b hook without the exclusion *creates*
+fires for notes routinely. Combined with the derived upsert rule — update, and
+`INSERT` when no row changed — a phase-2b drain without the exclusion *creates*
 the `document` row phase 1 declined to write, carrying the note's full briefing
 and transcript under the document rule instead of the note one. That is
-acceptance test 8's leak, reintroduced by the half of the pipeline that was not
-told about the exclusion.
+the note-backed-resource leak, reintroduced by the half of the pipeline that was
+not told about the exclusion.
 
 Extraction is also **lazy and caller-triggered** — `materializeAttachmentDerivative`
 runs when a person previews a resource or an agent tool reads it, and nothing
 schedules it — so an uploaded file nobody has opened stays `pending` and is
 findable by title only.
+
+### The async contract, stated as invariants
+
+1. Canonical workspace state commits first and is authoritative.
+2. A post-commit outbox event is durable once recorded, but failure to record it
+   cannot alter the canonical response; reconciliation repairs the crash window.
+3. Index workers run later, after the debounce window, and consume bounded
+   batches rather than one delivery per fragment.
+4. Retry and queue redelivery are idempotent by compound source version and
+   payload hash.
+5. Creates, updates, archives, and deletes all enter the same path; deletes
+   travel as versioned tombstones. A future source-level authorization mutation
+   must also add a current query-time predicate rather than rely on index delay.
+6. Search may be incomplete or briefly stale. The response exposes only
+   `indexState: ready | catching_up`, never a guessed completion time. Current
+   authorization is still evaluated at query time.
+7. A targeted repair can re-enqueue a source entity or destination, and a full
+   rebuild can discard every derived row and regenerate it from canonical
+   sources using resumable checkpoints.
 
 ## Reading the index
 
@@ -363,6 +425,9 @@ One `GET /search?q=…` under the ordinary session auth, answered by the Worker
 delegating to WorkspaceDO. REST rather than a socket topic, per
 [`choosing-sockets-or-rest.md`](../../choosing-sockets-or-rest.md): a person
 explicitly went looking for it, and nobody else's screen depends on the answer.
+The response is point-in-time and carries `indexState: ready | catching_up`.
+Each indexed group returns `items` and `hasMore`; there is no `totalMatches`
+field anywhere in the contract.
 
 ### Query construction
 
@@ -371,8 +436,9 @@ The caller's text goes through the token-and-quote sanitizer that
 private copy** of — NFKC normalise, extract `[\p{L}\p{N}_-]+` runs, lowercase,
 dedupe, quote with `"` doubled. Nothing is shared today, so extracting a module
 and re-pointing both existing call sites is part of this change, not a parameter
-addition. Note the existing copies also hard-cap at 96 tokens, which silently
-pre-empts the query-length limit the PRD lists as unset.
+addition. Note the existing copies also hard-cap at 96 tokens; the shared helper
+must make that interaction explicit against the PRD's 200-character request
+boundary rather than retaining a second silent cap.
 
 Three changes from the memory copies, each load-bearing:
 
@@ -400,19 +466,24 @@ with no arm returns `NULL` and is excluded, where an `OR` chain of
 `(scope_id IS NULL) OR (…)` guards admits it unconditionally.
 
 ```sql
-SELECT source_type, source_id, scope_id, title, body, updated_at, rank, total_matches
+SELECT source_type, source_id, result_type, result_id, scope_id,
+       result_title, updated_at, rank
   FROM (
     SELECT m.*,
-           COUNT(*) OVER () AS total_matches,
            ROW_NUMBER() OVER (
-             PARTITION BY m.group_key ORDER BY m.rank, m.updated_at DESC
-           ) AS rn
+             PARTITION BY m.result_type, m.result_id
+             ORDER BY m.rank, m.updated_at DESC, m.source_id
+           ) AS evidence_rank
       FROM (
-        SELECT d.source_type, d.source_id, d.scope_id, d.title, d.body, d.updated_at,
-               -- The panel's groups, not the storage kinds: note and
-               -- note_segment render as one Meeting notes group.
-               CASE WHEN d.source_type IN ('note', 'note_segment')
-                    THEN 'note' ELSE d.source_type END AS group_key,
+        SELECT d.source_type, d.source_id, d.result_type, d.result_id,
+               d.scope_id,
+               CASE d.result_type
+                 WHEN 'workstream' THEN wd.title
+                 WHEN 'note' THEN n.title
+                 WHEN 'document' THEN r.title
+                 WHEN 'automation' THEN t.name
+               END AS result_title,
+               d.updated_at,
                bm25(workspace_search_fts, 10.0, 1.0) AS rank
           FROM workspace_search_fts f
           JOIN workspace_search_documents d ON d.rowid = f.rowid
@@ -432,6 +503,7 @@ SELECT source_type, source_id, scope_id, title, body, updated_at, rank, total_ma
                  ON d.source_type = 'automation' AND s.id = d.scope_id
           LEFT JOIN automation_templates t ON t.id = s.template_id
          WHERE workspace_search_fts MATCH ?2
+           AND d.result_type = ?4
            AND CASE d.source_type
              WHEN 'workstream'   THEN <workstream_visible>
              WHEN 'message'      THEN <workstream_visible>
@@ -442,27 +514,31 @@ SELECT source_type, source_id, scope_id, title, body, updated_at, rank, total_ma
            END
       ) m
   )
- WHERE rn <= 5
- ORDER BY rank, updated_at DESC;
+ WHERE evidence_rank = 1
+ ORDER BY rank, updated_at DESC, result_id
+ LIMIT 51;
 ```
+
+The statement is executed once for each requested indexed group; mixed mode
+runs those statements in one database batch. Fifty rows are candidates and row
+51 is only a sentinel. The server drops the sentinel and returns
+`hasMore: true`; if it does not exist, `hasMore` is false. The statement never
+counts beyond that boundary.
 
 **Three levels, and the nesting is not stylistic.** SQLite refuses `bm25()` in
 the select list of any query level that also carries a window function —
 `unable to use function bm25 in the requested context`. A window query
 materialises its source rows into an ephemeral sorter before the select-list
-expressions are evaluated, by which point the FTS5 cursor is gone. Verified on
-3.51.2: `bm25()` alone is fine, `bm25()` beside `COUNT(*) OVER ()` fails, and
-`bm25()` beside `ROW_NUMBER()` fails. So `bm25()` is computed innermost, the two
-windows run one level out, and the outer level truncates and orders. A two-level
-version of this statement does not execute at all.
+expressions are evaluated, by which point the FTS5 cursor is gone. `bm25()` is
+therefore computed innermost, the window chooses the best evidence fragment per
+destination one level out, and the outer query applies the product cap. The
+full `body` is deliberately absent from this candidate pass, so matching a large
+document does not carry every authorized body through the sorter. A second
+bounded statement fetches up to three evidence fragments for only the returned
+destination ids, reapplying the same visibility predicate in the same read
+transaction.
 
-The consequence for [Counting and truncation](#counting-and-truncation) is worth
-stating plainly rather than glossing: this shape materialises every authorized
-matching row before it can emit one. That is what makes the candidate cap in the
-PRD's [Limits](prd.md#limits) a prerequisite rather than a nicety, and it is why
-that cap and an exact `N MORE RESULTS` are in tension — see that section.
-
-with, as the four predicates:
+The four predicates are:
 
 ```
 <workstream_visible> =
@@ -487,8 +563,14 @@ with, as the four predicates:
   AND (cc.id IS NULL OR cc.scope = 'workspace' OR cc.owner_user_id = ?1)
   AND (r.provider != 'avalon_upload' OR r.attachment_status = 'attached'
        OR r.uploaded_by_user_id = ?1)
-  -- The inbound-email rule, expressed as all four of the alternatives
-  -- canReadInboundEmailResource admits — not just the participant one.
+  AND (r.provider != 'avalon_note' OR EXISTS (
+        SELECT 1 FROM notes note_visibility
+         WHERE note_visibility.resource_id = r.id
+           AND note_visibility.archived_at IS NULL
+           AND (note_visibility.scope = 'workspace'
+                OR note_visibility.owner_user_id = ?1)))
+  -- The inbound-email rule below expresses all of the alternatives that
+  -- canReadInboundEmailResource admits, not just the participant one.
   AND (r.provider != 'resend' OR r.resource_type != 'email' OR EXISTS (
         SELECT 1 FROM workspace_workstream_resource_links l
           JOIN workspace_workstream_directory ed
@@ -550,7 +632,7 @@ the whole rule — exactly the mistake that lost this fragment once already.
 *without* that arm, so the picker hides a person's own unattached drafts from
 them. The arm above takes the read-one form, because search's job is to find
 what you can open and you can open your own draft. That is a divergence from the
-picker, which non-goal 15 has to resolve deliberately rather than by whichever
+picker, which non-goal 16 has to resolve deliberately rather than by whichever
 fragment a shared helper happens to lift.
 
 Four corrections this encodes, each of which was a defect in the first draft of
@@ -612,155 +694,103 @@ The work stream a message belongs to is rendered from `scope_id`, not from
 `ORDER BY rank` binds the SELECT alias, which carries the weights; `f.rank`
 would silently use unweighted bm25.
 
-### Counting and truncation
+### Destination de-duplication and candidate capping
 
-`ROW_NUMBER() OVER (PARTITION BY group_key …)` is what actually delivers five
-rows per group. A single global `LIMIT` cannot: with 400 short transcript
-segments matching, every slot goes to transcript rows and the Work streams,
-Documents, and Automations groups render as *no matches* even though each holds a
-title hit — indistinguishable, to the person, from the work stream not existing.
+`ROW_NUMBER() OVER (PARTITION BY result_type, result_id …)` selects the best
+matching physical fragment for each thing the palette can open. A note whose
+title and five transcript segments match is one result; a work stream with five
+matching messages is one result. That collapse occurs on the server before the
+candidate cap, so duplicate fragments cannot consume visible rows or make the
+client infer a false remainder.
 
-**It partitions on `group_key`, not `source_type`.** `note` and `note_segment`
-are two storage kinds and one rendered group, so partitioning on the storage kind
-gives Meeting notes up to ten rows against a stated cap of five. It also needs
-de-duplication the SQL alone does not provide: a note whose title *and* five of
-whose transcript segments match is six rows that all open the same note. The
-client collapses rows sharing a `scope_id` within a group, keeping the
-best-ranked, which is why `scope_id` is projected.
+The cap is applied **per rendered group**, because one global `LIMIT` lets a
+prolific kind hide groups that genuinely matched. Each group asks for 51
+destination identities: the best 50 are its product window and the 51st sets
+`hasMore`. There is no `COUNT(*) OVER ()`, no exact total query, and no exact
+count in the response. Authorization is inside the candidate statement, so an
+inaccessible 51st result cannot toggle the state.
 
-`COUNT(*) OVER ()` gives the total in the same pass, so the count is not a second
-execution of the whole ranked join per keystroke, and cannot drift from the rows
-it describes. **`N MORE RESULTS` is `total_matches` minus what is actually on
-screen.** Reporting `total_matches` directly says `3 MORE RESULTS` when all three
-matches are already visible.
+The client merges local name matches and remote body matches by the same
+`(result_type, result_id)` identity. A work stream already painted from its title
+is enriched with remote snippets and rank evidence; it is not appended as a
+second row. It then reapplies the 50-result window; `hasMore` is true when the
+server found its sentinel or the merged authorized set exceeds 50. `People`,
+`Actions`, and the start-work-stream action never enter the server's candidate
+arithmetic.
 
 ### Scoping to one group
 
-The PRD's group scope is the same statement with two bindings changed, not a
-second query to keep in step: bind the group and raise the per-group bound.
-
-```sql
-       -- inside the innermost SELECT. Bare `group_key`, NOT `d.group_key`:
-       -- group_key is a select-list alias computed in this same SELECT, and
-       -- `d` is workspace_search_documents, which has no such column. SQLite
-       -- permits the alias in WHERE; qualifying it fails with
-       -- `no such column: d.group_key`. Verified on 3.51.2.
-       AND (?4 IS NULL OR group_key = ?4)
-...
- -- Keyset, not a row bound. See below for why `rn <= ?5` cannot page.
- WHERE rn <= ?5 AND (?6 IS NULL OR (rank, -updated_at, source_id) > (?6, ?7, ?8))
-```
+The PRD's group scope is the same statement with `result_type` bound to the
+selected group, not a second matching or authorization rule to keep in step.
 
 Three things follow, and each is the reason not to implement scoping on the
 client by filtering what is already on screen:
 
-- **The unscoped five are a `ROW_NUMBER` slice, not a sample.** Rows 6 and
-  beyond were never returned, so a client-side filter of the current result set
-  can only ever show the same five. Scoping has to re-ask.
-- **`total_matches` re-narrows for free.** With `?4` bound, `COUNT(*) OVER ()`
-  counts that group's authorized matches, so the scoped footer's remainder is
-  the same expression against a narrower set — no second counting rule, and no
-  second place for the authorization filter to drift.
-- **Paging is keyset, and the sort key has to be made uniform first.** The
-  ordering is `(rank, updated_at DESC, source_id)`, but **SQLite rejects a
-  direction inside a row value** — `(a, b DESC) > (?, ?)` is a syntax error — so
-  the comparison cannot bind that tuple directly. Project `-updated_at` and
-  compare `(rank, -updated_at, source_id) > (?, ?, ?)`, which is free here since
-  the column is already `INTEGER`; the expanded disjunction is the alternative
-  and is worse to read. **`rn <= ?5` alone cannot page**: it is an offset-shaped
-  bound over a `ROW_NUMBER` recomputed per request, so it has exactly the
-  double-count-and-skip behaviour that rules `OFFSET` out — and the index moves
-  under a scrolling reader throughout the phase 2 backfill, which is the normal
-  case rather than the rare one. `rn` stays only as the per-page cap.
+- **The mixed five are a preview, not a sample.** Rows 6 through 50 were not
+  returned, so a client-side filter of the current result set can only ever show
+  the same five. Scoping has to re-ask.
+- **`hasMore` is group-local.** The same 51st-destination sentinel is used in
+  mixed and scoped modes, with no second count or authorization path.
+- **Paging is keyset, not `OFFSET`.** The sort key is `(rank, updated_at DESC,
+  result_id)`. Because SQLite does not permit a direction marker inside a row
+  value, the cursor compares `(rank, -updated_at, result_id)` after projecting
+  the negated integer timestamp. `OFFSET` over a re-ranked set double-counts and
+  skips when the index moves under a person mid-scroll, which during the phase 2
+  backfill is the normal case rather than the rare one.
 
-`group_key` — not `source_type` — is what is bound, so scoping **Meeting notes**
-correctly reaches both `note` and `note_segment` rows, and the client's
-`scope_id` collapse still applies within the page.
+`result_type = 'note'` reaches both `note` and `note_segment` physical rows;
+binding `source_type` would silently lose one half. The first scoped page returns
+25 of the bounded 50, and the second returns the remainder. If `hasMore` is true,
+the end says `50+ results — refine your search`; no cursor walks beyond the
+product window.
 
-The page size is a product limit and is set in the PRD. The candidate cap the
-PRD hands to the team applies per request in both modes; a scoped request is
-narrower, not unbounded, and it is worth saying in the handover that scoping is
-the mode where a person deliberately asks for depth.
-
-Two honest limits on that number, which the simpler phrasing hides:
-
-- **The subtraction happens on the client, because the client is what knows what
-  is on screen.** Local name matches, the People and Actions rows, and the
-  start-a-work-stream row were never in the statement, and a work stream matched
-  both locally and remotely renders once. So the server returns `total_matches`
-  and the client subtracts what it painted. The guarantee that survives — the one
-  the security rule actually needs — is that `total_matches` counts only rows
-  that passed the `CASE`. It is not a promise that the arithmetic happens in SQL,
-  and the PRD should not be read as making one.
-- **A candidate cap and an exact total are mutually exclusive.** An inner `LIMIT`
-  makes `COUNT(*) OVER ()` count the truncated set, so the footer would report
-  the cap rather than the remainder. That is a product call — either the count
-  becomes "N+ more" above the cap, or the cap is set high enough that the
-  difference is theoretical and the per-keystroke cost is accepted. It sits on
-  the PRD's [Limits](prd.md#limits) table for that reason, because the statement
-  above materialises every authorized match before emitting one, and nothing else
-  bounds it.
-
-### Cascade deletes ride a `BEFORE DELETE` trigger
+### Deletes are asynchronous tombstones
 
 WorkspaceDO does **not** set `PRAGMA foreign_keys = ON` — `workstream-do.ts`,
 `workstream-object-schema.ts`, and `block-dashboard-agent.ts` each do, and
 WorkspaceDO does not — so a declared `REFERENCES … ON DELETE CASCADE` cannot be
-assumed to enforce there, whatever the sibling tables declare. Something has to
-delete the rows explicitly, or a deleted parent's rows stay forever: invisible in
-results, since the predicate fails closed, and accumulating against the 10 GB
-ceiling the PRD flags as an outage condition.
-
-**A `BEFORE DELETE` trigger on each hard-deleting parent is that something**, not
-a delete at every call site. It is the idiom this object already uses for exactly
-this problem — `resources_enqueue_objects_before_delete` queues R2 objects that
-way, and its consumer relies on the trigger rather than deleting at the call
-site. The objection to triggers earlier in this document is about the projection
-*writes*, which need content filters a trigger cannot apply; it does not reach
-deletes, which need none. The trigger also covers the one path a call-site delete
-would most easily miss — see the scheduled sweep below — which is the argument
-that settles it.
+assumed to enforce there, whatever the sibling tables declare. Search therefore
+does not rely on a foreign-key cascade — and it does not put a derived delete in
+the canonical transaction either.
 
 Which parents actually hard-delete is worth being exact about, because the
 obvious list is wrong in both directions. Work streams and notes are
 *soft-archived* — there is no `DELETE FROM workspace_workstream_directory` or
-`DELETE FROM notes` in the tree — so for those the archive predicate is what
-hides the rows and the delete path is theoretical. `resources` is the one parent
-with real hard deletes, and there are three: `deleteDraft`, the
+`DELETE FROM notes` in the tree — so for those the archive predicate hides stale
+fragments immediately and the later tombstone reclaims them. `resources` is the
+one parent with real hard deletes, and there are three: `deleteDraft`, the
 `resource-object-cleanup` **scheduled sweep** over stale drafts, and the Terminal
-resource bridge. **The sweep is exactly why the mechanism is a trigger**: it runs
-on an alarm with no user request to hang a call-site delete off, and it is the
-path a reviewer of a call-site implementation is least likely to notice is
-missing. A `BEFORE DELETE ON resources` trigger covers all three uniformly and
-cannot be forgotten by a fourth delete path added later.
+resource bridge. Each service captures the deleted source/result identity and
+commits the canonical delete first, then upserts a versioned tombstone into the
+search outbox. The scheduled sweep follows the same order per committed batch.
+An archived automation similarly becomes invisible through the query predicate
+at once and is later reclaimed through a tombstone.
 
-Automations were missed entirely in the first draft of this design: an archived
-subscription's rows fail closed but accumulate, and a subscription that is hard
-deleted needs the same trigger treatment as `resources`.
-
-The only place an explicit delete is still owed is where no parent row is being
-deleted at all — a message withdrawn or moved to `model` visibility inside a work
-stream that itself survives. That is a projection concern rather than a cascade
-one, and it is unresolved: see the note under phase 2a.
+Applying a source tombstone deletes its fragment and commits a source-level
+version fence. Applying a parent destination tombstone deletes every row matching
+`(result_type, result_id)`, served by the result index, and commits a result-level
+fence. Those small `workspace_search_versions` rows survive deletion, so older
+source replays and late child deliveries cannot resurrect text. If tombstone
+recording fails in the post-commit window, targeted repair or the full
+reconciliation scan finds the derived orphan and removes it.
 
 ### Snippets
 
-The SELECT above returns no snippet. FTS5's `snippet()` and `highlight()` insert
-markers into text, which is markup — the thing the PRD's security rule 6
-forbids, and there is no FTS5 function that returns character offsets. So the
-snippet is produced by a second, non-FTS5 pass over the `body` the statement
-already returns — in JavaScript, over the rows it handed back, never by a
-follow-up query against the index. Projecting `body` is not free: it carries
-every matched row's indexed text through the materialisation, which is a second
-reason the candidate cap is a prerequisite.
+The candidate SELECT above returns no body or snippet. FTS5's `snippet()` and
+`highlight()` insert markers into text, which is markup — the thing the PRD's
+security rule 6 forbids, and there is no FTS5 function that returns character
+offsets. So the snippet is produced by a second bounded query for the at-most-50
+returned destination identities, with up to three best fragments per identity.
+JavaScript finds the passage and offsets over those bodies; the query repeats
+the visibility predicate inside the same read transaction. No unreturned match
+body crosses the SQLite/JavaScript boundary.
 
 Three pieces of this already exist and should be reused rather than rewritten:
 `passageRange` and `matchStart` in `workstream-attachment-tools.ts` (the same
 job, over extracted document text), `safeUtf16Start`/`safeUtf16End` beside them
 for clamping an offset off a surrogate pair, and `CharacterRangeSchema` in
-`packages/contracts`, which is already the wire shape for "text plus offsets"
-and already travels with `totalMatches`/`returnedMatches`/`truncated`. The
-renderer's `mention-highlight.ts` is the client half, and its choice of
+`packages/contracts`, which is already the wire shape for "text plus offsets".
+The renderer's `mention-highlight.ts` is the client half, and its choice of
 `toLowerCase()` over `toLocaleLowerCase()` is deliberate and documented — a
 Turkish locale must not make the highlight disagree with what was sent. The
 extracted sanitizer has to make the same choice, and the two server copies
@@ -772,64 +802,66 @@ Nothing blocks on it. An unindexed work stream is still findable by name from th
 client-side directory match, which makes a gradual backfill an acceptable
 intermediate state rather than a broken surface.
 
-**The resume shape is an outbox, and the object already has four of them to copy
-from.** Every maintenance target in `workspace-schedule-execution.ts` derives its
-due instant from pending rows in a queue table (`MIN(created_at)` with
-`HAVING COUNT(*) > 0`), so a backfill that merely walks existing rows never
-becomes due. The closest precedent is `note_privacy_change_outbox`, which marks
-rows `processed_at` rather than deleting them — the exact shape a backfill needs
-— and `memory_index_outbox` adds the rest: `status`, `attempt_count`,
-`available_at`, `lease_token`, `lease_expires_at`, `last_error`, drained at a
-hard-capped batch size on the workspace alarm. Phase 1's backfill is a migration
-that seeds one of those, not a new mechanism.
+Backfill is **only** historical-data migration. The moment the new outbox schema
+deploys, new and changed entities enter the live path; no `backfill_complete`
+gate sits in front of them. The scheduler always leases eligible live rows
+before historical scan work, so a million old parts cannot make a new message
+wait behind the migration.
 
-Phase 2a's backfill is the expensive one and has a second cost the first draft of
-this design did not name. The size cost is real: it decides the index's eventual
-size in one go, which is why the retention horizon in the PRD's
-[Open questions](prd.md#open-questions) needs an answer first. But so is
-**contention**: at the 25-envelope RPC cap, 500 work streams × 2,000 visible
-parts is 40,000 apply calls, each a transaction inside the workspace's *single*
-WorkspaceDO — the same object serving the sidebar, routing, notes, and resource
-access.
+`workspace_search_index_state` carries one checkpoint per canonical source. A
+source scanner reads a stable keyset page — for example `(updated_at, id)` for
+WorkspaceDO-local rows and `(sequence_number, id)` for transcript parts — and
+upserts those source identities into the same coalescing outbox. It advances the
+checkpoint only after that batch of identities is durable. On interruption, the
+next wake resumes after the stored key; replaying the last page is safe because
+the outbox key and index apply are idempotent. A live event for an identity wins
+over an older backfill seed through the compound source version.
+Pacing is still required even though every layer batches: WorkspaceDO is a
+single-threaded authority that also serves the sidebar, routing, notes, and
+resource access. Live outbox rows therefore sort ahead of migration-seeded
+history, and each backfill wake is bounded so historical indexing yields between
+batches instead of monopolizing the object.
 
-**The two outboxes order differently, and only one of them starves.** This is
-worth stating precisely because an earlier draft of this design got it backwards
-in both directions:
+The scanner, outbox drain, queue publisher, and WorkspaceDO apply all batch.
+Batching is bounded in two dimensions — entity count and encoded bytes — with
+the values handed back in the PRD's [Limits](prd.md#limits). For message history,
+one child-object scan returns many canonical parts, one queue message carries
+many projections, and one WorkspaceDO call applies many fragments. A workspace
+with one million parts therefore produces roughly `parts / batch_size`
+deliveries, never one million queue messages or RPC calls.
 
-- `WorkstreamDO`'s outbox — the route this design assumes — orders by
-  `CASE effect_kind WHEN 'directory_common' THEN 0 WHEN 'directory_user' THEN 1
-  ELSE 2 END, created_at, message_id`. The priority `CASE` is the **leading**
-  key. So `search_document` lands in `ELSE 2` and **does** sort behind every
-  pending directory effect regardless of `created_at`: a migration-seeded
-  backfill stamped at time T does *not* queue ahead of the sidebar's own
-  projections. That property is load-bearing and should stay.
-- `SubstreamAgent`'s child outbox orders by `created_at` first and uses the
-  `CASE` only to break ties within one instant. On *that* route the starvation
-  hazard is real.
+Message history still has the size consequence the PRD's retention question
+names: it can make the WorkspaceDO index the object's dominant consumer. That
+question blocks the phase-2 historical scan, not live indexing or phase 1.
 
-**Pacing is still required, on contention grounds alone.** The reason is not
-queue position but volume: at one envelope per RPC (below), a million apply
-calls into one single-threaded object is its own argument. So the per-wake bound
-on the drain stands — on the model of `processMemoryIndexOutbox`'s capped batch —
-and it belongs on the PRD's Limits table where a team member would find it. Only
-its justification changes.
+### Repair and rebuild
 
-The contention arithmetic also has a factor-of-25 error worth correcting. The
-25-envelope batch belongs to `WorkstreamDO.deliverWorkspaceDirectoryEffects`;
-`SubstreamAgent`'s effects go one envelope per RPC through
-`workstream-regional-effect-service.ts`, which sends `envelopes: [message]`. For
-the path this design actually uses, 500 work streams x 2,000 visible parts is
-1,000,000 apply calls and 1,000,000 queue messages, not 40,000.
+- **Targeted repair** takes a source identity or destination identity, reads the
+  current canonical rows, and upserts the same live outbox entries. It is the
+  answer to a failed post-commit outbox write, a hash divergence, or one stale
+  result reported by an operator.
+- **Reconciliation** walks canonical identities and derived identities with
+  checkpoints, enqueuing missing/stale sources and tombstoning derived orphans.
+  It uses the same batch path and is safe to resume.
+- **Full rebuild** increments `index_generation`, marks the state `repairing`,
+  discards the derived document/FTS rows, resets all source checkpoints, and
+  runs the historical scanners. Search remains available but incomplete and
+  returns `indexState: catching_up` until every source is complete. Live events
+  target the new generation immediately; an in-flight apply from the old
+  generation is ignored. No canonical row, visibility row, or source outbox is
+  rewritten.
 
 ## Testing
 
 Per [`testing.md`](../../testing.md), the default is the real pipeline:
 
-- **`apps/api/test-workers/`** — the projection on real workerd: an effect
-  envelope applied twice lands once; a lower waterline is ignored; a *higher
-  generation with a lower waterline* is accepted; the explicit cascade removes a
-  work stream's message rows; a `search_document` envelope carries a UUIDv7
-  `messageId`.
+- **`apps/api/test-workers/`** — the async projection on real workerd: a
+  canonical write still succeeds when `markSearchDirty`, queue publication, or
+  index apply is forced to fail; a later repair indexes it. Ten writes to one
+  source inside the debounce window leave one pending row and the drain reads
+  the latest canonical value. A batch applied twice lands once; older versions
+  are ignored; a higher generation with a lower version is accepted; and an
+  equal-version/different-hash payload is surfaced as divergence.
 - **Not the Node migration suite.** `test/helpers/migrated-schema.ts` replays
   only `packages/db/migrations/*.sql`, and `0090_drop_legacy_product_tables.sql`
   drops `notes` and `resources` from D1 while
@@ -845,8 +877,29 @@ Per [`testing.md`](../../testing.md), the default is the real pipeline:
 - **One test per authorization arm, each written to fail first**, and one per
   *fragment* within the document arm — the inbound-email fragment especially,
   since it is the one that has already been argued away once. Delete an arm and
-  its test must fail *for that reason*, asserting on `total_matches` as well as
-  the rows, since the count is where the first draft's leak actually surfaced.
+  its test must fail *for that reason*, asserting on `hasMore` as well as the
+  rows, since bounded remainder state can leak existence even without a title.
+- **Candidate-cap and result-unit tests against the real statement.** Fifty-one
+  authorized destination identities return 50 plus `hasMore: true`; 50 return
+  `hasMore: false`; no exact-total statement executes. Five matching messages in
+  one work stream and several matching segments in one note each return one
+  result identity with bounded highlighted evidence.
+- **Update/delete lifecycle tests.** An update removes the old terms and adds
+  the new ones; a source tombstone removes one fragment; a parent tombstone
+  removes every fragment for the destination; an out-of-order older upsert
+  cannot resurrect either.
+- **Batching tests.** Both live and historical publishers pack multiple entities
+  per queue message and per WorkspaceDO apply while respecting entity and byte
+  bounds. A million-part fixture is unnecessary; arithmetic plus a fixture that
+  crosses two batch boundaries proves the delivery count grows by batches rather
+  than by entities.
+- **Checkpoint/resumption tests.** Interrupt a backfill after one committed
+  batch, restart it from `workspace_search_index_state`, and prove no identity is
+  skipped or duplicated. Create and update entities during the pause and prove
+  the live path indexes their latest versions before historical completion.
+- **Repair/rebuild tests.** Targeted repair fixes a missing or divergent source;
+  a rebuild clears derived rows, reports `catching_up`, resumes each source from
+  its checkpoint, and returns to `ready` without changing canonical tables.
 - **A test that the statement executes at all.** Two earlier drafts of this
   design specified SQL that does not run — first a global `LIMIT` that cannot
   deliver per-group truncation, then `bm25()` beside a window function, which
@@ -858,7 +911,8 @@ Per [`testing.md`](../../testing.md), the default is the real pipeline:
 
 ## Documents this change updates
 
-- [`data-model.md`](../../data-model.md) — the two new WorkspaceDO tables, and a
+- [`data-model.md`](../../data-model.md) — the derived WorkspaceDO tables,
+  source-authority outbox state, and a
   correction: its `personal`-visibility passage says "`WorkstreamDO.canRead` and
   the `listable` flag it projects test participation alone". That is right about
   `canRead` and wrong about `listable`, which is computed through
@@ -869,10 +923,15 @@ Per [`testing.md`](../../testing.md), the default is the real pipeline:
   independently names global search as a completion blocker. See the PRD's
   [Impact on the product contract](prd.md#impact-on-the-product-contract).
 - [`transcript-scrolling.md`](../../transcript-scrolling.md) — the anchored open
-  a message result performs, as a fifth reason the screen moves the viewport, and
-  the rule that the match keeps it until the reader scrolls.
+  a work-stream result can perform from message evidence, as a fifth reason the
+  screen moves the viewport, and the rule that the match keeps it until the
+  reader scrolls.
 - [`workstream-durable-object.md`](../../workstream-durable-object.md) — the
-  fourth effect kind and the `durable_outbox` rebuild it requires.
+  post-commit coalescing outbox, batched message projection, compound-version
+  apply, tombstones, and repair/rebuild responsibilities.
+- [`choosing-queues-or-rpc.md`](../../choosing-queues-or-rpc.md) — the batched
+  regional search projection as a Queue: no caller waits for its result,
+  at-least-once delivery is idempotent, and workspace content stays regional.
 - [`choosing-sockets-or-rest.md`](../../choosing-sockets-or-rest.md) — `GET
   /search` as a worked example of a read that is deliberately not a push.
 - [`telemetry.md`](../../telemetry.md) and the event registry — the three events.
