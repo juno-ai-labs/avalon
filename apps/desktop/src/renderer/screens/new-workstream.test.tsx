@@ -325,6 +325,44 @@ describe('New work-stream home', () => {
     expect(within(dialog).getByRole('checkbox', { name: /Rae Okafor/u })).toBeVisible();
   });
 
+  it('takes no draft with it when the caret leaves the mention the list belongs to', async () => {
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' }) as HTMLTextAreaElement;
+
+    fireEvent.change(composer, { target: { value: 'hello @Sam', selectionStart: 10, selectionEnd: 10 } });
+    expect(await screen.findByRole('listbox', { name: 'Mentions' })).toBeVisible();
+
+    // ArrowLeft five times: no value changes, so nothing recomputed the query,
+    // and the row the list still highlights is measured from an `@` the caret
+    // has left. Enter here used to insert at `lastIndexOf('@') === -1`, eating
+    // the character before the caret and adding a participant nobody aimed at.
+    composer.setSelectionRange(5, 5);
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('hello @Sam'));
+    expect(screen.getByRole('button', { name: 'Manage participants: Adam Juhasz' })).toBeVisible();
+  });
+
+  it('names the highlighted row to assistive technology while the list is open', async () => {
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+
+    expect(composer).not.toHaveAttribute('aria-activedescendant');
+    fireEvent.change(composer, { target: { value: 'ask @' } });
+
+    const options = await screen.findAllByRole('option');
+    // Focus stays in the draft, so this is the only thing that tells a screen
+    // reader which row Enter would take.
+    expect(composer).toHaveAttribute('aria-activedescendant', options[0]!.id);
+    expect(composer).toHaveAttribute('aria-controls', 'launch-mention-listbox');
+
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+    expect(composer).toHaveAttribute('aria-activedescendant', screen.getAllByRole('option')[1]!.id);
+
+    fireEvent.keyDown(composer, { key: 'Escape' });
+    expect(composer).not.toHaveAttribute('aria-activedescendant');
+  });
+
   it('dismisses the mention list with Escape and leaves the draft alone', async () => {
     renderScreen();
     const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
