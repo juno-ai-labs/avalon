@@ -62,36 +62,36 @@ export const HARNESS_RUN_OPERATIONS:
   Exhaustive<HarnessRunOperation, typeof DISPATCHED_OPERATIONS> = DISPATCHED_OPERATIONS;
 
 /**
- * The operations that change what the sidebar shows about a run.
+ * The operations that write the work stream's own state row.
  *
- * The two ends of a run: a claim marks the work stream busy and a
- * terminalization hands it back. Both were guarded statements in a routed batch
- * — `workstreams.harness_status`, written only if the batch's earlier statement
- * had landed — and both are the directory's projection of exactly this row.
- * Running them inside `commitRuntimeMutation` is what replaces that guard: the
- * projection is committed with the write rather than after it.
+ * Exactly the operations whose body reaches `markWorkstreamRunning` or
+ * `settleWorkstreamState` — the two ends of a run. Both were guarded statements
+ * in a routed batch (`workstreams.harness_status`, written only if the batch's
+ * earlier statement had landed), and both are the directory's projection of
+ * exactly this row, so running them inside `commitRuntimeMutation` is what
+ * replaces that guard.
  *
- * A heartbeat is not on this list. It moves a deadline nobody renders. Nor is a
- * sub-agent's settlement: a delegated run is a tool call inside the parent's
- * turn, and the work stream stays busy until the parent itself finishes.
+ * **Membership is expensive to get wrong, and it is not obvious from the name
+ * of an operation.** `commitRuntimeMutation(…, true)` builds the directory
+ * projection, which reads every active participant and walks the work stream's
+ * resource links. Putting a read or a frequent progress write on this list —
+ * a usage flush, a reaper scan — makes every one of them pay for a projection
+ * that cannot have changed. `harness-run-protocol.test.ts` holds this set to
+ * the operations that actually touch the `workstream` table.
+ *
+ * Not on the list, and each for a reason: a heartbeat moves a deadline nobody
+ * renders; `bindWorkflowInstance` and `recordRunProgress` write the run's own
+ * bookkeeping; a sub-agent's admission and settlement are a tool call inside
+ * the parent's turn, and the work stream stays busy until the parent finishes.
  */
 const RUN_STATE_WRITES = new Set<HarnessRunOperation>([
   "claimAttempt",
+  "admitRun",
+  "launchRun",
   "terminalizeAttempt",
   "terminalizeQueuedRun",
-  "admitRun",
-  "bindWorkflowInstance",
-  "launchRun",
-  "recordRunProgress",
-  "latestRootRun",
-  "runIsActive",
-  "triggerPartId",
   "failUnlaunchedRun",
-  "residualRepairCandidates",
-  "staleLeaseRuns",
   "reapStaleRoot",
-  "reapableInlineChildren",
-  "reapStaleInlineChild",
 ]);
 
 export function mutatesRunState(operation: HarnessRunOperation): boolean {

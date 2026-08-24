@@ -363,7 +363,7 @@ export class WorkstreamHarnessRunStorage {
         if (claimed.cancellation_requested_at !== null) return { outcome: "cancelled" as const };
         return {
           outcome: "busy" as const,
-          activeLeaseExpiresAt: this.activeLeaseExpiresAt(input.runId, claimed.origin),
+          activeLeaseExpiresAt: this.activeLeaseExpiresAt(claimed.origin),
         };
       }
       this.recordLifecycleEvent({
@@ -423,17 +423,24 @@ export class WorkstreamHarnessRunStorage {
    *
    * A HyperSight block is never blocked by an interactive run and vice versa,
    * so the question is asked against the same origin rule the claim itself
-   * uses. Null means nothing live is holding it, which — after a refused claim
-   * — means the refusal was about this run rather than about the work stream.
+   * uses.
+   *
+   * **The contended run is deliberately not excluded.** A duplicate dispatch of
+   * a run that is already being worked on is refused by the same `busy` branch
+   * as a work stream held by someone else, and in that case the live lease this
+   * caller needs to wait for is *this run's own*. Excluding it returns null,
+   * and both agents read null as "retry in five seconds" — so a duplicate
+   * dispatch would wake and reattempt every five seconds for the whole
+   * five-minute lease. The `status = 'running' AND lease_expires_at` predicates
+   * already exclude a run that is not holding anything, which is why the
+   * routed version this replaces had no such exclusion either.
    */
-  private activeLeaseExpiresAt(runId: string, origin: string): number | null {
+  private activeLeaseExpiresAt(origin: string): number | null {
     const row = first(this.sql.exec<{ lease_expires_at: number | null } & Record<string, SqlStorageValue>>(
       `SELECT MAX(lease_expires_at) AS lease_expires_at FROM runs
-        WHERE run_id != ?
-          AND (? = 'block_dashboard_block' OR origin != 'block_dashboard_block')
+        WHERE (? = 'block_dashboard_block' OR origin != 'block_dashboard_block')
           AND parent_tool_call_id IS NULL
           AND status = 'running' AND terminalized_at IS NULL`,
-      runId,
       origin,
     ));
     return row?.lease_expires_at ?? null;

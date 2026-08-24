@@ -1305,6 +1305,46 @@ of the three. If the product ever settles on a single busy status, retire the
 other two from the CHECK constraint rather than from the fences, so the
 narrowing is enforced where it can be seen.
 
+### 2026-08-24 — Two regressions a review caught, and the edit that caused one
+
+**What changed:** `activeLeaseExpiresAt` no longer excludes the contended run
+itself, and `RUN_STATE_WRITES` is back to the seven operations that actually
+write the `workstream` row. `harness-run-protocol.test.ts` now holds that set to
+its behaviour.
+
+**Why the first was wrong.** A duplicate dispatch of a run that is already being
+worked on is refused by the same `busy` branch as a work stream held by someone
+else — but in that case the live lease the caller must wait for is *this run's
+own*. Excluding it returned null, and both SubstreamAgent and BlockDashboardAgent
+read null as "retry in five seconds", so an at-least-once redelivery would wake
+and reattempt every five seconds for the whole five-minute lease. The routed
+version had no such exclusion; the `status = 'running'` and `lease_expires_at`
+predicates already exclude a run that is not holding anything, which is why it
+never needed one.
+
+**Why the second happened, which matters more than the fix.** Nine reads and
+progress writes — `latestRootRun`, `runIsActive`, `triggerPartId`,
+`recordRunProgress`, `bindWorkflowInstance`, all three reaper scans and
+`reapStaleInlineChild` — were on `RUN_STATE_WRITES`, so each ran through
+`commitRuntimeMutation(…, true)`. That builds the directory projection: every
+active participant read, the resource links walked. A usage flush runs every few
+seconds of every run, and the reaper scans on every activation.
+
+They got there by a mechanical edit. `DISPATCHED_OPERATIONS` and
+`RUN_STATE_WRITES` sit in the same file and share entries at the same
+indentation, so a string replacement anchored on one list's entry silently
+inserted into both. Nothing caught it: the set had no test, and being on it
+changes only how much work an operation does, never its answer.
+
+**What a future change has to respect:** membership in `RUN_STATE_WRITES` is
+expensive to get wrong and invisible from an operation's name or its result.
+The test asserts the set as a literal rather than deriving it, so adding an
+operation is a decision made there rather than a side effect of editing the list
+above it, and it checks both directions against real storage — the classified
+operations move the `workstream` row, and the unclassified ones leave it byte
+for byte unchanged.
+
+
 ### 2026-08-23 — Three of the six harness-run views retire, and why the other three cannot
 
 **What changed:** migration 21 drops `_runtime_run_scopes`,
