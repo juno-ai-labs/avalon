@@ -495,6 +495,16 @@ export class WorkstreamSchedulingStorage {
    * statement achieved that by omitting the column so the trigger saw NULL and
    * preserved the standing value — a contract that was lost once and restored
    * by an object-schema migration. Here it is simply not written.
+   *
+   * The five decision columns go the other way and are cleared, which is not
+   * the same kind of omission. The retired trigger's conflict arm set them from
+   * `excluded.*`, and the routed claim left them out of its column list, so
+   * `excluded.*` was NULL and a claim wiped the previous evaluation's output.
+   * Carrying them instead would leave `decision = 'pending'` beside the
+   * description and reasoning of a *different*, already-closed evaluation — a
+   * row shape production has never produced, and one that reads as current.
+   * The insert arm a few lines up writes NULL for exactly these five, so
+   * clearing here is also what makes a claim leave the same row either way.
    */
   claimDescriptionEvaluation(input: {
     evaluatedAt: number;
@@ -529,6 +539,8 @@ export class WorkstreamSchedulingStorage {
         `UPDATE description_refresh_state
             SET evaluated_at = ?, rest_until = ?, evaluated_through_sequence = ?,
                 window_message_count = ?, decision = 'pending', rejection_code = NULL,
+                confidence = NULL, model = NULL, previous_description = NULL,
+                description = NULL, reasoning = NULL,
                 version = version + 1, updated_at = ?
           WHERE id = 1`,
         input.evaluatedAt,

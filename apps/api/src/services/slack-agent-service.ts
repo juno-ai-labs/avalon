@@ -1212,10 +1212,11 @@ export class SlackAgentService {
     if (session.last_delivery_key === deliveryKey) return;
     const connection = await this.connectionById(session.connection_id);
     const token = await this.botToken(connection);
-    const executionEnv = outcomeStatus === "needs_input"
-      ? await workstreamExecutionEnvironment(this.env, workspaceId, workstreamId)
-      : null;
-    const openElicitation = executionEnv
+    // Only a run waiting on a person can have an open elicitation to deliver.
+    // This used to build a routed execution environment and read through it;
+    // the port needs no such handle, so what is left is the condition that
+    // environment was standing in for.
+    const openElicitation = outcomeStatus === "needs_input"
       ? await createSchedulingObjectPort(this.env, workspaceId, workstreamId)
         .oldestOpenElicitation()
       : null;

@@ -321,6 +321,45 @@ describe("the description-refresh cadence", () => {
       .toEqual({ version: 2, consecutiveKeeps: 1 });
   });
 
+  it("clears the last evaluation's decision when the next claim lands", () => {
+    const { storage, sql } = open();
+    storage.claimDescriptionEvaluation(claim(NOW, NOW + 21_600_000));
+    storage.recordDescriptionOutcome({
+      expectedVersion: 1,
+      decision: "rewritten",
+      rejectionCode: null,
+      confidence: 0.95,
+      model: "a-model",
+      previousDescription: "before",
+      description: "Track the 3-D Secure migration",
+      reasoning: "the work moved",
+      windowMessageCount: 4,
+      consecutiveKeeps: 0,
+      restUntil: NOW + 43_200_000,
+      now: NOW,
+    });
+
+    storage.claimDescriptionEvaluation(claim(NOW + 43_200_001, NOW + 64_800_000));
+
+    // The retired trigger's conflict arm set these five from `excluded.*`, and
+    // the routed claim omitted them from its column list, so a claim wiped
+    // them. Carrying them instead would leave `decision = 'pending'` beside a
+    // closed evaluation's answer — a row that reads as current and never
+    // existed in production. An evaluation that dies between claiming and
+    // recording is the window where the difference shows.
+    expect(sql.exec(
+      `SELECT decision, confidence, model, previous_description, description, reasoning
+         FROM description_refresh_state WHERE id = 1`,
+    ).toArray()).toEqual([{
+      decision: "pending",
+      confidence: null,
+      model: null,
+      previous_description: null,
+      description: null,
+      reasoning: null,
+    }]);
+  });
+
   it("refuses an outcome from an evaluation the row has moved past", () => {
     const { storage, sql } = open();
     const first = storage.claimDescriptionEvaluation(claim(NOW, NOW + 21_600_000))!;
