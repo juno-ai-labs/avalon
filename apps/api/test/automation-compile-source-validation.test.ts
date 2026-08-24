@@ -51,7 +51,7 @@ describe("automation compile activity-source validation", () => {
     });
     const prepare = vi.fn((sql: string) => ({
       bind: vi.fn(() => ({
-        first: vi.fn(async () => sql.includes("FROM users u JOIN workspaces")
+        first: vi.fn(async () => sql.includes("AS user_timezone")
           ? { user_timezone: "America/Los_Angeles", workspace_timezone: "UTC" }
           : null),
       })),

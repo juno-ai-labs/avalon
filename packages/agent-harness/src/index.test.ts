@@ -334,6 +334,52 @@ describe("agent harness", () => {
       .resolves.toMatchObject({ triggers: [{ timezone: "Asia/Tokyo" }] });
   });
 
+  it("sends the account timezones and the timezone field's contract to the model", async () => {
+    let requestBody: Record<string, unknown> | null = null;
+    const submitted = {
+      name: "Morning briefing",
+      description: "Send a morning briefing.",
+      overview: "Sends a briefing every morning from the latest authorized information.",
+      instructions: "Summarize overnight changes.",
+      triggers: [{ type: "calendar", rrule: "FREQ=DAILY", timezone: null, summary: "Daily at 9:00 AM" }],
+      requiredCapabilities: [],
+      recommendedPlugins: [],
+      expectedOutputs: ["Briefing"],
+      defaultBehavior: "{}",
+      followUpQuestion: null,
+      elicitation: null,
+      suggestedScope: "personal",
+      ready: true,
+    };
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return automationSubmitResponse(submitted);
+    }) as typeof fetch;
+
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "test/model",
+      messages: [{ role: "user", content: "Send me a morning briefing." }],
+      defaultTimezones: { personal: "America/New_York", workspace: "Europe/London" },
+      fetch: fetcher,
+    })).resolves.toMatchObject({ triggers: [{ timezone: "America/New_York" }] });
+
+    // Both halves of the same rule: the zones the model schedules by, and the
+    // field contract that keeps it from writing one of its own.
+    const messages = requestBody!.messages as Array<{ role: string; content: unknown }>;
+    expect(messages.filter((message) => message.role === "user").some((message) =>
+      String(message.content).includes("personal automation timezone: America/New_York"))).toBe(true);
+    const submitTool = (requestBody!.tools as Array<{
+      function: { name: string; parameters: { properties: Record<string, unknown> } };
+    }>).find((tool) => tool.function.name === "automation_submit_draft");
+    const triggerFields = (submitTool!.function.parameters.properties.triggers as {
+      items: { properties: Record<string, { description?: string }> };
+    }).items.properties;
+    expect(triggerFields.timezone?.description).toContain(
+      "for a calendar trigger whose zone nobody named",
+    );
+  });
+
   it("uses the standard loop to research plugins before submitting a draft", async () => {
     const valid = {
       name: "Daily summary",

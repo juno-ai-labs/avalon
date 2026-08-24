@@ -327,7 +327,7 @@ export class AuthService {
     region: Region;
     attemptId: string;
     codeVerifier: string;
-    timezone?: string;
+    timezone?: string | undefined;
   }): Promise<Session> {
     if (input.region !== this.env.AVALON_REGION) {
       throw new ApiError(409, "region_mismatch", "The login ticket belongs to another region");
@@ -348,9 +348,18 @@ export class AuthService {
       // verifier, mirroring RFC 7636 authorization-code redemption semantics.
       throw new ApiError(401, "invalid_login_ticket", "The login ticket is invalid, expired, or already used");
     }
-    await this.env.DB.prepare("UPDATE users SET timezone = ?, updated_at = ? WHERE id = ?")
-      .bind(input.timezone ?? "America/Los_Angeles", nowIso(), claimed.user_id)
-      .run();
+    // Seeding, not overwriting. The machine's zone is the best guess Avalon has
+    // for an account that has never said, and it is worse than nothing for one
+    // that has: signing in from a laptop in another zone would silently move
+    // every automation and digest the person scheduled. A client that sends no
+    // zone leaves the account alone rather than being answered with a default.
+    if (input.timezone) {
+      await this.env.DB.prepare(
+        "UPDATE users SET timezone = ?, updated_at = ? WHERE id = ? AND timezone_source = 'client'",
+      )
+        .bind(input.timezone, nowIso(), claimed.user_id)
+        .run();
+    }
     const identity = await this.loadIdentity(claimed.user_id, claimed.workspace_id);
     return this.createSession(identity);
   }

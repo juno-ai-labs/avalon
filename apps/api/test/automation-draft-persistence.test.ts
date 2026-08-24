@@ -210,6 +210,62 @@ describe("automation drafts", () => {
     expect((await service.list()).items.map((item) => item.id)).toEqual([compiled.draftId]);
   });
 
+  it.each([
+    {
+      name: "reads an unnamed morning in the account's own day",
+      scope: "personal" as const,
+      triggerTimezone: null,
+      expected: "America/New_York",
+    },
+    {
+      name: "keeps the zone the person actually named",
+      scope: "personal" as const,
+      triggerTimezone: "Asia/Tokyo",
+      expected: "Asia/Tokyo",
+    },
+    {
+      name: "reads an unnamed morning for a workspace automation in the workspace's day",
+      scope: "workspace" as const,
+      triggerTimezone: null,
+      expected: "America/Los_Angeles",
+    },
+  ])("$name", async ({ scope, triggerTimezone, expected }) => {
+    const database = seededDatabase();
+    // The workspace stays on Pacific: the defect this covers was a New York
+    // account whose automation was created on Pacific time, so the two zones
+    // have to disagree for the assertion to mean anything.
+    database.exec(`UPDATE users SET timezone = 'America/New_York' WHERE id = '${userId}'`);
+    compileAutomationDraft.mockResolvedValue(draft({
+      followUpQuestion: null,
+      ready: true,
+      suggestedScope: scope,
+      triggers: [{
+        type: "calendar",
+        rrule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
+        timezone: triggerTimezone,
+        summary: "Every morning at 9:00 AM",
+      }],
+    }));
+    const service = serviceFor(database);
+    const compiled = await service.compile({
+      messages: [{ role: "user", content: "Brief me every morning." }],
+    }, "request-1");
+
+    const created = await service.create({
+      draftId: compiled.draftId,
+      draft: compiled.draft,
+      scope,
+      defaultPluginIds: [],
+      activitySourcePluginIds: {},
+      resourceIds: [],
+      deliveryTargets: [],
+    });
+
+    expect(database.prepare(
+      "SELECT timezone FROM schedules WHERE automation_subscription_id = ?",
+    ).get(created.id)).toEqual({ timezone: expected });
+  });
+
   it("refuses to reopen the conversation behind an automation that already runs", async () => {
     const database = seededDatabase();
     compileAutomationDraft.mockResolvedValue(draft({ followUpQuestion: null, ready: true }));
