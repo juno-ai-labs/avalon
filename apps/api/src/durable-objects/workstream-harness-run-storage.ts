@@ -205,13 +205,20 @@ export interface StaleRunRow extends Record<string, SqlStorageValue> {
   cancellation_requested_at: number | null;
 }
 
-/** Whether a new run was created, refused as stale, or already existed. */
+/** Whether a new run was created, or the reason it was not. */
 export type AdmitRunOutcome =
   | { outcome: "admitted" }
   /** A newer run has taken the work stream since the caller last looked. */
   | { outcome: "stale" }
   /** This exact run id is already here. Creation is idempotent by id. */
-  | { outcome: "exists" };
+  | { outcome: "exists" }
+  /**
+   * A mutating run still holds the work stream's main substream.
+   *
+   * Distinct from `stale`: the caller's view of "newest" was right, and the
+   * incumbent has been asked to stop — it simply has not stopped yet.
+   */
+  | { outcome: "busy" };
 
 /** One attempt's frozen memory recall. */
 export interface MemoryContextRow extends Record<string, SqlStorageValue> {
@@ -767,22 +774,30 @@ export class WorkstreamHarnessRunStorage {
   }
 
   /**
-   * This attempt's frozen memory recall, if it holds the run and froze one.
+   * The run's frozen memory recall, if this caller holds it and one exists.
    *
    * The routed version joined `harness_runs` to prove the lease was live, which
    * made "no context yet" and "you lost the run" the same empty result. They
    * still collapse here — the caller's next step is the same either way, and
    * `persistMemoryContext` is where a lost lease is actually refused — but the
    * fence is now read rather than joined.
+   *
+   * **Keyed by run, not by attempt, and so is the write.** The table is
+   * `PRIMARY KEY (run_id)`: there has never been a second row for a second
+   * attempt to find. The routed read filtered on `attempt_id` anyway, so a
+   * retrying attempt missed this fast path, paid a full vector search, and then
+   * threw the result away when the insert came back with the first attempt's
+   * row. Freezing recall exists so every attempt of a run sees the same
+   * memories — which makes that row this attempt's answer, and looking for it
+   * under this attempt's id a way of not finding what is already there.
    */
   memoryContext(input: AttemptFence): MemoryContextRow | undefined {
     if (this.attemptOwnership(input).outcome !== "owned") return undefined;
     return first(this.sql.exec<MemoryContextRow>(
       `SELECT run_id, attempt_id, memory_scope_ids_json, query_text, retrieval_mode,
               results_json, memory_context_hash, created_at
-         FROM run_memory_contexts WHERE run_id = ? AND attempt_id = ?`,
+         FROM run_memory_contexts WHERE run_id = ?`,
       input.runId,
-      input.attemptId,
     ));
   }
 
@@ -1582,6 +1597,23 @@ export class WorkstreamHarnessRunStorage {
           input.now,
         );
       }
+      // `runs_mutating_substream_uq` allows one mutating run per substream, and
+      // every root run shares substream '0'. Asking first is not defensive
+      // tidiness: the insert would throw, and a throw takes the whole
+      // transaction with it — including the supersede just above, so a
+      // superseding message would neither start its run nor stop the one it
+      // meant to replace.
+      //
+      // A supersede does not clear the way by itself. It stamps
+      // `cancellation_requested_at` and leaves the incumbent `running` until
+      // that run notices and terminalizes, so the collision is *most* likely in
+      // exactly the case supersede exists for. The retired
+      // `_runtime_harness_runs_insert` trigger hid this behind `INSERT OR
+      // IGNORE`, which turned it into a zero-change result the caller reported
+      // as a stale request; this says which of the two it was.
+      if (this.mutatingRunHoldsSubstream(input.status, input.origin)) {
+        return { outcome: "busy" as const };
+      }
       this.sql.exec(
         `INSERT INTO runs
            (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
@@ -1607,6 +1639,24 @@ export class WorkstreamHarnessRunStorage {
       }
       return { outcome: "admitted" as const };
     });
+  }
+
+  /**
+   * Whether inserting this run would collide with the one-mutating-run index.
+   *
+   * Mirrors `runs_mutating_substream_uq` exactly, including its
+   * block-dashboard exemption — a block run is outside the index on both
+   * sides, so it neither collides nor blocks.
+   */
+  private mutatingRunHoldsSubstream(status: string, origin: string): boolean {
+    if (origin === "block_dashboard_block") return false;
+    if (!["running", "waiting", "steering"].includes(status)) return false;
+    return (first(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count FROM runs
+        WHERE substream_id = '0'
+          AND origin != 'block_dashboard_block'
+          AND status IN ('running', 'waiting', 'steering')`,
+    ))?.count ?? 0) > 0;
   }
 
   /**

@@ -821,3 +821,156 @@ describe("ending a run that was never claimed", () => {
       .toEqual({ outcome: "already_terminal" });
   });
 });
+
+describe("a run's frozen memory recall", () => {
+  const recall = {
+    memoryScopeIdsJson: '["scope-1"]',
+    queryText: "the first attempt's query",
+    retrievalMode: "hybrid",
+    resultsJson: '[{"memoryItemId":"m1"}]',
+    memoryContextHash: "recall-hash-1",
+  };
+
+  function claimed() {
+    const opened = open();
+    seedRun(opened.sql, RUN);
+    opened.storage.claimAttempt({
+      ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-claim",
+    });
+    return opened;
+  }
+
+  it("hands a later attempt the recall the run already froze", () => {
+    const { storage, sql } = claimed();
+    storage.persistMemoryContext({ ...fence, runId: RUN, ...recall });
+    // A second attempt takes over the same run.
+    sql.exec(
+      `UPDATE runs SET legacy_attempt_id = ?, lease_owner = ? WHERE run_id = ?`,
+      "attempt-2", "owner-2", RUN,
+    );
+    const second = { ...fence, runId: RUN, attemptId: "attempt-2", owner: "owner-2" };
+
+    // The row is PRIMARY KEY (run_id), so there is no per-attempt row to find.
+    // Filtering this read by attempt id made a retry miss the fast path, pay a
+    // vector search, and then discard it for this very row.
+    expect(storage.memoryContext(second)).toMatchObject({
+      attempt_id: "attempt-1",
+      memory_context_hash: "recall-hash-1",
+    });
+    expect(storage.persistMemoryContext({ ...second, ...recall, memoryContextHash: "recall-hash-2" }))
+      .toMatchObject({ outcome: "reused", row: { memory_context_hash: "recall-hash-1" } });
+  });
+
+  it("tells a caller that no longer holds the run nothing at all", () => {
+    const { storage } = claimed();
+    storage.persistMemoryContext({ ...fence, runId: RUN, ...recall });
+
+    expect(storage.memoryContext({ ...fence, runId: RUN, owner: "someone-else" }))
+      .toBeUndefined();
+  });
+});
+
+describe("admitting a root run", () => {
+  const base = {
+    origin: "slack_workspace_message",
+    executionPrincipalJson: '{"type":"workspace"}',
+    status: "running",
+    startedAt: NOW,
+    model: null,
+    triggerPartId: null,
+    parentRunId: null,
+    expectedLatestRunId: null,
+  };
+
+  it("creates the run and marks the work stream busy", () => {
+    const { storage, sql } = open();
+
+    expect(storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW }))
+      .toEqual({ outcome: "admitted" });
+    expect(sql.exec(`SELECT substream_id, status, origin FROM runs WHERE run_id = ?`, RUN).one())
+      .toMatchObject({ substream_id: "0", status: "running", origin: "slack_workspace_message" });
+    expect(sql.exec(`SELECT exact_state FROM workstream WHERE id = 1`).one())
+      .toMatchObject({ exact_state: "running" });
+  });
+
+  it("refuses a second mutating run rather than throwing the transaction away", () => {
+    const { storage, sql } = open();
+    storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW });
+
+    // `runs_mutating_substream_uq` allows one mutating run per substream and
+    // every root run shares '0'. A bare INSERT throws here, and the throw takes
+    // the whole transaction with it — including the supersede below, so the
+    // follow-up would neither start its run nor stop the one it replaced.
+    expect(storage.admitRun({
+      ...base, runId: OTHER, supersedeActive: true, now: NOW + 1_000,
+    })).toEqual({ outcome: "busy" });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM runs`).one()).toEqual({ count: 1 });
+    // The supersede still landed: the incumbent has been asked to stop, which
+    // is what lets the next attempt through once it does.
+    expect(sql.exec(
+      `SELECT cancellation_requested_at, cancellation_reason FROM runs WHERE run_id = ?`,
+      RUN,
+    ).one()).toMatchObject({
+      cancellation_requested_at: NOW + 1_000,
+      cancellation_reason: "superseded_by_follow_up",
+    });
+  });
+
+  it("admits once the incumbent has actually terminalized", () => {
+    const { storage, sql } = open();
+    storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW });
+    sql.exec(
+      `UPDATE runs SET status = 'cancelled', terminalized_at = ? WHERE run_id = ?`,
+      NOW + 500,
+      RUN,
+    );
+
+    expect(storage.admitRun({
+      ...base, runId: OTHER, supersedeActive: true, now: NOW + 1_000,
+    })).toEqual({ outcome: "admitted" });
+  });
+
+  it("lets a scheduled run in beside a live one, because it is not yet mutating", () => {
+    const { storage } = open();
+    storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW });
+
+    // `admitted` is outside the index's status list. An automation queues its
+    // run long before anything claims it, and must not be turned away by
+    // whatever happens to be running now.
+    expect(storage.admitRun({
+      ...base, runId: OTHER, status: "admitted", origin: "automation",
+      supersedeActive: false, now: NOW + 1_000,
+    })).toEqual({ outcome: "admitted" });
+  });
+
+  it("lets a HyperSight block in beside a live interactive run", () => {
+    const { storage } = open();
+    storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW });
+
+    // The index exempts block runs on both sides, and so does this check.
+    expect(storage.admitRun({
+      ...base, runId: OTHER, origin: "block_dashboard_block",
+      supersedeActive: false, now: NOW + 1_000,
+    })).toEqual({ outcome: "admitted" });
+  });
+
+  it("refuses when the caller's view of the newest run is out of date", () => {
+    const { storage, sql } = open();
+    seedRun(sql, OTHER);
+
+    expect(storage.admitRun({
+      ...base, runId: RUN, supersedeActive: false,
+      expectedLatestRunId: "00000000-0000-7000-8000-00000000ffff", now: NOW,
+    })).toEqual({ outcome: "stale" });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM runs WHERE run_id = ?`, RUN).one())
+      .toEqual({ count: 0 });
+  });
+
+  it("reports a repeated id as an existing run rather than creating a second", () => {
+    const { storage } = open();
+    storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW });
+
+    expect(storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW + 1_000 }))
+      .toEqual({ outcome: "exists" });
+  });
+});
