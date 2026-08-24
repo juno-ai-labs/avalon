@@ -1,9 +1,11 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import { describe, expect, it, vi } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
 import { AutomationService } from "../src/services/automation-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 
 interface StoredRun {
   id: string;
@@ -354,13 +356,35 @@ function agentsBinding(database: ManualRunDatabase, failures: Error[] = []) {
       return { status: 200, bodyJson: JSON.stringify({ results }) };
     },
   };
+  // The opening-message lookup goes through the message port, which dispatches
+  // `executeMessageOperation`. That one operation runs against a real object
+  // store — the storage class, its schema and its statements — while the rest
+  // of this stub keeps answering from the fake regional database the other
+  // assertions here are written against.
+  const objectStore = testWorkstreamObjectStore();
+  openObjectStores.push(objectStore);
+  const transcript = testSubstreamAgentsBinding(objectStore);
+  const transcriptStub = transcript.get(transcript.idFromName("transcript"));
+  const stubWithTranscript = new Proxy(stub, {
+    get(target, property, receiver) {
+      return property === "executeMessageOperation"
+        ? Reflect.get(transcriptStub, property)
+        : Reflect.get(target, property, receiver);
+    },
+  });
   const namespace = {
     idFromName: (name: string) => createTestDurableObjectId(name),
-    get: () => stub,
+    get: () => stubWithTranscript,
     jurisdiction: () => namespace,
   };
   return { binding: namespace, dispatchRun };
 }
+
+const openObjectStores: DatabaseSync[] = [];
+
+afterEach(() => {
+  while (openObjectStores.length > 0) openObjectStores.pop()?.close();
+});
 
 describe("manual automation run recovery", () => {
   it("rechecks note visibility before copying resources into each automation run", async () => {

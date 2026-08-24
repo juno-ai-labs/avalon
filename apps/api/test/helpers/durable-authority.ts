@@ -13,6 +13,11 @@ import {
   type ToolReceiptObjectPort,
   type ToolReceiptOperation,
 } from "../../src/durable-objects/workstream-tool-receipt-protocol";
+import { WorkstreamMessageStorage } from "../../src/durable-objects/workstream-message-storage";
+import {
+  MESSAGE_OPERATIONS,
+  type MessageObjectPort,
+} from "../../src/durable-objects/workstream-message-protocol";
 import { WorkstreamSchedulingStorage } from "../../src/durable-objects/workstream-scheduling-storage";
 import {
   SCHEDULING_OPERATIONS,
@@ -532,6 +537,40 @@ export function testSubstreamAgentsBinding(
       }
     }),
     /**
+     * The transcript port's counterpart, on the same object database.
+     *
+     * Same shape and reasoning as its siblings. A replayed append comes back as
+     * a 200 carrying `replayed`, because a redelivery is the ordinary case for
+     * every transcript write in this product rather than a fault.
+     */
+    executeMessageOperation: vi.fn((input: {
+      workspaceId: string;
+      workstreamId: string;
+      operation: string;
+      args: unknown[];
+    }) => {
+      const store = storeFor(input.workstreamId, input.workspaceId);
+      const storage = new WorkstreamMessageStorage(
+        createCloudflareTestBinding<DurableObjectStorage>({
+          getAlarm: async () => null,
+          setAlarm: async () => undefined,
+          transactionSync: (body: () => unknown) => body(),
+          sql: objectSqlStorage(store),
+        }),
+      ) as unknown as Record<string, (...args: unknown[]) => unknown>;
+      try {
+        const value = storage[input.operation]!.apply(storage, input.args);
+        return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
+      } catch (error) {
+        return {
+          status: 409,
+          bodyJson: JSON.stringify({
+            error: error instanceof Error ? error.message : "message_operation_failed",
+          }),
+        };
+      }
+    }),
+    /**
      * The scheduling port's counterpart, on the same object database.
      *
      * Same shape and reasoning as the two above. A refused claim comes back as
@@ -761,6 +800,31 @@ function plainBinding(database: DatabaseSync): DurableObjectStorage {
     transactionSync: (body: () => unknown) => body(),
     sql: objectSqlStorage(database),
   });
+}
+
+/**
+ * A transcript port over a real storage instance in this isolate.
+ *
+ * The seam the other ports take. What the runtime decides for this one — that
+ * an append and the directory projection showing its preview are one commit —
+ * belongs in `test-workers/`.
+ */
+export function testMessagePort(database: DatabaseSync): MessageObjectPort {
+  const storage = new WorkstreamMessageStorage(
+    createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null,
+      setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => body(),
+      sql: objectSqlStorage(database),
+    }),
+  );
+  return Object.fromEntries(
+    MESSAGE_OPERATIONS.map((operation) => [
+      operation,
+      async (...args: unknown[]) =>
+        (storage[operation] as (...rest: unknown[]) => unknown).apply(storage, args),
+    ]),
+  ) as MessageObjectPort;
 }
 
 /**

@@ -77,6 +77,7 @@ import {
   type BlockDashboardBlockDispatch,
   type BlockDashboardSocketRetractionRequest,
 } from "./block-dashboard-protocol";
+import { createMessageObjectPort } from "../runtime/message-port";
 import { blockDashboardAgentName, workstreamDOName } from "./names";
 import {
   applyDurableObjectSqliteMigrations,
@@ -1278,11 +1279,8 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
 
   private async initializeRuntimeRun(env: Env, dispatch: BlockDashboardBlockDispatch): Promise<WorkstreamWorkflowInput> {
     const fence = dispatch.contextFence.throughSequence > 0
-      ? await env.DB.prepare(
-        `SELECT id FROM messages WHERE workspace_id = ? AND workstream_id = ?
-          AND sequence_number = ? LIMIT 1`,
-      ).bind(dispatch.workspaceId, dispatch.workstreamId, dispatch.contextFence.throughSequence)
-        .first<{ id: string }>()
+      ? await createMessageObjectPort(env, dispatch.workspaceId, dispatch.workstreamId)
+        .messageAtSequence({ sequenceNumber: dispatch.contextFence.throughSequence })
       : null;
     if (dispatch.contextFence.throughSequence > 0 && !fence) {
       throw Object.assign(new Error("The frozen HyperSight transcript boundary is unavailable"), {

@@ -223,25 +223,39 @@ describe("a member's message travels the whole pipeline", () => {
     expect(message).toMatch(/Retrying is unlikely to help|try again|support/iu);
 
     // The member sees the truth, not a spinner: the work stream reflects the
-    // failure and the object holds no outstanding dispatch or alarm debt. The
-    // state may land a beat after the run settles, so give it a bounded window.
+    // failure and the object holds no outstanding dispatch or alarm debt.
+    //
+    // Both land after the run settles, and the *dispatch* lands last: a run
+    // reaching a terminal status is not the end of the drain, which then names
+    // the work stream and refreshes its description before releasing the row.
+    // So both halves wait, and on the same window — waiting on the state alone
+    // and then asserting on the dispatch reads whatever the drain happens to
+    // have reached, which is a race the drain wins or loses by milliseconds.
     let observed = "";
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      observed = await runInDurableObject(stub, (_instance, state) =>
+    let outstanding = -1;
+    // Forty tenths, not sixty: the window has to end inside the 5s test timeout
+    // or a drain that never releases its row reports as "timed out" rather than
+    // as the thing that is wrong with it.
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      [observed, outstanding] = await runInDurableObject(stub, (_instance, state) => [
         state.storage.sql.exec<{ exact_state: string }>(
           `SELECT exact_state FROM workstream WHERE id = 1`,
-        ).toArray()[0]!.exact_state);
-      if (observed === "failed") break;
+        ).toArray()[0]!.exact_state,
+        state.storage.sql.exec<{ n: number }>(
+          `SELECT COUNT(*) AS n FROM agent_run_dispatches WHERE state IN ('queued','running')`,
+        ).toArray()[0]!.n,
+      ] as const);
+      if (observed === "failed" && outstanding === 0) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    await runInDurableObject(stub, async (_instance, state) => {
-      expect(observed, "run failed but the member still sees it running").toBe("failed");
-      const outstanding = state.storage.sql.exec<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM agent_run_dispatches WHERE state IN ('queued','running')`,
-      ).toArray()[0]!;
-      expect(outstanding.n).toBe(0);
-    });
-  });
+    expect(observed, "run failed but the member still sees it running").toBe("failed");
+    expect(outstanding, "the drain left a dispatch queued").toBe(0);
+    // Long enough that the bounded wait above ends first, so a drain that never
+    // releases its row reports as the assertion that names it rather than as a
+    // timeout. This test drives a whole run to the provider boundary; the
+    // default 5s left no room for the wait, which is why the dispatch half of
+    // the assertion could not have one before.
+  }, 20_000);
 
   it("a follow-up message starts a fresh run instead of wedging behind the failed one", async () => {
     const stub = agentStub();
