@@ -184,7 +184,7 @@ function AttentionWorkstreamRow({ workstream }: { workstream: WorkstreamSummary 
   const summary = workstream.preview ?? workstream.objective ?? workstream.automationName;
   return (
     <NavLink className="waiting-workstream-row" to={`/workstreams/${workstream.id}`}>
-      {/* Read from the work stream rather than hard-coded, now that four states
+      {/* Read from the work stream rather than hard-coded, now that three states
           land a row here and they do not mean the same thing — and through the
           same ranking the sidebar dot uses, so one work stream does not show
           two different markers on two screens. */}
@@ -294,10 +294,11 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     staleTime: Number.POSITIVE_INFINITY,
   });
   const selectedIds = useMemo(() => new Set(selectedMembers.map((member) => member.id)), [selectedMembers]);
-  // Everything that is asking something of this person: a run stopped for an
-  // answer, a mention, messages they have not read, and a work stream somebody
-  // put them in that they have not opened. All four are things only they can
-  // clear, which is what the section is for — and the newest activity is the
+  // Everything somebody put in front of this person: a run stopped for an
+  // answer, a mention, and a work stream somebody added them to that they have
+  // not opened. All three have a person behind them, which is what the section
+  // is for and what keeps it short enough to scan — being merely unread is not
+  // one of them, and listing it swamped the rest. The newest activity is the
   // one worth looking at first, so the list is ordered by that rather than by
   // which of the states a row happens to be in.
   const attentionWorkstreams = useMemo(
