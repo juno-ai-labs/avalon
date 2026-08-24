@@ -84,6 +84,7 @@ function workstream(
   harnessStatus: WorkstreamSummary['harnessStatus'],
   origin: WorkstreamSummary['origin'] = 'ad_hoc',
   lastActivityAt = '2026-07-31T20:00:00.000Z',
+  viewerState: Partial<Pick<WorkstreamSummary, 'hasUnread' | 'unseen' | 'youAreMentioned'>> = {},
 ): WorkstreamSummary {
   return {
     id,
@@ -101,6 +102,7 @@ function workstream(
     nextPendingWakeup: null,
     pinPosition: null,
     lastActivityAt,
+    ...viewerState,
   };
 }
 
@@ -314,6 +316,79 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('img', { name: /Automation-generated/u })).not.toBeInTheDocument();
     expect(document.querySelector('.brand-lockup')).toBeNull();
     expect(document.querySelector('.sidebar-titlebar')).not.toBeNull();
+  });
+
+  it('marks a work stream this person has never opened, whatever its run is doing', async () => {
+    render(
+      <MemoryRouter initialEntries={['/workstreams/unseen']}>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[
+              workstream('unseen', 'Warehouse migration', 'running', 'ad_hoc', '2026-07-31T20:00:00.000Z', {
+                unseen: true,
+                // Everything else is true as well, and none of it wins.
+                youAreMentioned: true,
+                hasUnread: true,
+              }),
+              workstream('running', 'Pricing restructure', 'running'),
+            ]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const row = screen.getByRole('link', { name: /Warehouse migration/u });
+    // The run is `running`, and the marker says the other thing: being new to
+    // this reader outranks it.
+    expect(row.querySelector('.status-unseen .status-dot')).not.toBeNull();
+    expect(row.querySelector('.status-running')).toBeNull();
+    expect(screen.getByRole('link', { name: /Pricing restructure/u }).querySelector('.status-running .status-dot')).not.toBeNull();
+
+    const dot = row.querySelector('.status-unseen');
+    if (!dot) throw new Error('the work-stream row rendered no unseen status dot');
+    fireEvent.pointerMove(dot, { pointerType: 'mouse' });
+
+    expect(await screen.findByText('New to you — you were added to this work stream and have not opened it yet.'))
+      .toBeVisible();
+  });
+
+  it('marks a mention above the run, and unread below it', () => {
+    render(
+      <MemoryRouter initialEntries={['/workstreams/mentioned']}>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[
+              workstream('mentioned', 'Launch blockers', 'running', 'ad_hoc', '2026-07-31T20:00:00.000Z', {
+                youAreMentioned: true,
+                hasUnread: true,
+              }),
+              workstream('unread', 'Vendor contract', 'running', 'ad_hoc', '2026-07-31T20:00:00.000Z', {
+                hasUnread: true,
+              }),
+              workstream('read', 'Release notes', 'completed', 'ad_hoc', '2026-07-31T20:00:00.000Z', {
+                hasUnread: true,
+              }),
+            ]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    // Being named outranks the run that is working; merely being unread does not.
+    expect(screen.getByRole('link', { name: /Launch blockers/u }).querySelector('.status-mentioned .status-dot'))
+      .not.toBeNull();
+    expect(screen.getByRole('link', { name: /Vendor contract/u }).querySelector('.status-running .status-dot'))
+      .not.toBeNull();
+    expect(screen.getByRole('link', { name: /Release notes/u }).querySelector('.status-unread .status-dot'))
+      .not.toBeNull();
   });
 
   it('shows the next active timer and its brief prompt in a tooltip', async () => {

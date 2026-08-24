@@ -259,7 +259,9 @@ The WorkstreamDO snapshot covers ID/workspace, title/title state, description,
 preview, email, origin, creator, automation IDs, planned time, exact/normalized
 state, attention baseline, activity/completion/archive/create/update times,
 scope/system kind, next wakeup and Terminal action. The viewer overlay covers
-participation/listability, unread count, mention state, read-through and manual
+participation/listability, unread count, mention state, whether this person has
+never opened the work stream (`unseen`, see
+[`workstream-markers.md`](workstream-markers.md)), read-through and manual
 unread waterlines, and latest mention sequence. It is always a full snapshot;
 nullable values clear cached fields rather than behaving like absent patches.
 
@@ -1061,6 +1063,48 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-24 — Opening a work stream writes, so being added to one can be seen
+
+**What changed:** `WorkstreamObjectProductService.get` — the single assembler
+behind `GET /workstreams/:id` and the socket snapshot — now commits before it
+reads, stamping `participants.first_opened_at` for a viewer who has never opened
+this work stream and enqueuing their `directory_user` effect. That effect, and
+the viewer overlay on the control socket's metadata frame, carry a new `unseen`
+field. Object schema v19 adds the column; WorkspaceDO v10 adds its projection.
+
+**Why:** somebody added to a work stream had no way to tell it apart from the
+ones they had already read — the dot showed the run, and unread could not be
+made to mean this. Being added does leave the transcript unread (the root's
+tracking start is 0 and no per-person attention row is written on the add, so
+their waterline is 0 and everything is above it), but unread is a state that
+comes back: the next message re-lights it, mark-as-unread sets it by hand, and
+neither of those means the room is new. A marker that says "you have never been
+here" has to be settled once and stay settled.
+The state also had to be cleared by *opening*, which is not the same event the
+client reports. `acknowledgeRead` is a statement about what has been read, and
+the client withholds it unless the window is focused, the document is visible,
+and the transcript has settled at its initial position — so an open can happen
+without one. Clearing on the object's own open path removes the dependency on
+those conditions entirely: the room was assembled for this person, which is the
+fact being recorded.
+
+**Considered and rejected:** clearing it on `acknowledgeRead` and accepting the
+gap, which is the same as not shipping the state — the common case for a work
+stream somebody was just added to is that nothing new has arrived since. Also
+rejected: a separate `POST /workstreams/:id/opened` from the client, which is a
+round trip on the open path for something the object already knows is happening,
+and which an old client would never send.
+
+**Consequences:** `get` is no longer free of durable writes. It is guarded — the
+commit is skipped unless the viewer is an active participant whose
+`first_opened_at` is null, so it happens once per person per work stream — but
+any future caller of `get` that is not a person looking at the work stream will
+record that principal as having seen it. A caller like that wants a read that
+does not settle viewer state, which does not exist yet and should be added
+rather than worked around.
+
+Shipped in TBD.
+
 ### 2026-08-24 — Lease fences keep the projection the compatibility view had
 
 **What changed:** the block dashboard's `#holdsLease` and the tool receipt
@@ -1238,7 +1282,6 @@ the *result* must prove it is still the attempt entitled to make one. And
 `abandonBlockRun`, like `abandonRunReceipts`, is tied to the exact
 `terminalized_at` the reaper stamped rather than to a live lease, because an
 expired lease is the reaper's whole premise.
-
 ### 2026-08-23 — The router learns `tool_effects`, the name migration 17 left it without
 
 **What changed:** `LOCAL_TABLES` in `workstream-runtime-database.ts` gains
