@@ -78,6 +78,10 @@ import {
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
 import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
+import {
+  createBlockDashboardObjectPort,
+  createBlockDashboardPortFactory,
+} from "../runtime/block-dashboard-port";
 import { runWorkstreamHarness, type WorkstreamHarnessResult } from "../services/integrations";
 import { deliverAutomationResultEmail } from "../services/automation-email-service";
 import { settleDigestRun } from "../services/digest-run-settlement";
@@ -115,9 +119,14 @@ import {
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
 import { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
 import {
-  ToolReceiptOperationRequestSchema,
   type ToolReceiptOperationRequest,
+  ToolReceiptOperationRequestSchema,
 } from "./workstream-tool-receipt-protocol";
+import { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-storage";
+import {
+  type BlockDashboardOperationRequest,
+  BlockDashboardOperationRequestSchema,
+} from "./workstream-block-dashboard-protocol";
 import {
   TerminalOperationRequestSchema,
   terminalOperationAffectsDirectory,
@@ -515,6 +524,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private product!: WorkstreamObjectProductService;
   private terminal!: WorkstreamTerminalStorage;
   private toolReceipts!: WorkstreamToolReceiptStorage;
+  private blockDashboard!: WorkstreamBlockDashboardStorage;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
@@ -569,6 +579,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.product = new WorkstreamObjectProductService(state.storage, this.objectStore, env);
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
+      this.blockDashboard = new WorkstreamBlockDashboardStorage(state.storage);
       await this.objectStore.waitUntilReady();
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
@@ -726,6 +737,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/internal/tool-receipt") {
       return this.acceptToolReceiptOperation(request);
     }
+    if (request.method === "POST" && url.pathname === "/internal/block-dashboard") {
+      return this.acceptBlockDashboardOperation(request);
+    }
     if (request.method === "POST" && url.pathname === "/internal/terminal") {
       return this.acceptTerminalOperation(request);
     }
@@ -832,6 +846,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   ): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptToolReceiptOperation(this.rpcRequest(input)));
+  }
+
+  async executeBlockDashboardOperation(
+    input: BlockDashboardOperationRequest,
+  ): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptBlockDashboardOperation(this.rpcRequest(input)));
   }
 
   async executeTerminalOperation(input: TerminalOperationRequest): Promise<DurableObjectRpcResult> {
@@ -993,15 +1014,71 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (!parsed.success) {
       return jsonResponse({ ok: false, error: "invalid_tool_receipt_operation" }, 400);
     }
-    const identity = this.objectStore.identity();
-    if (!identity
-      || identity.workspaceId !== parsed.data.workspaceId
-      || identity.workstreamId !== parsed.data.workstreamId
-      || this.externalSubstreamId() !== "0") {
-      return jsonResponse({ ok: false, error: "workstream_tool_receipt_identity_mismatch" }, 409);
-    }
+    const refusal = this.objectPortRefusal(
+      parsed.data,
+      "workstream_tool_receipt_identity_mismatch",
+    );
+    if (refusal) return refusal;
     const method = this.toolReceipts[parsed.data.operation] as (...args: unknown[]) => unknown;
     const value = method.apply(this.toolReceipts, parsed.data.args);
+    return jsonResponse({ ok: true, value: value ?? null });
+  }
+
+  /**
+   * Dispatch one block-dashboard operation against this object's own storage.
+   *
+   * Identity is re-checked against the object's own before anything executes,
+   * for the reason `acceptToolReceiptOperation` gives: a misrouted stub must
+   * fail rather than settle another work stream's blocks. The main child holds
+   * these rows, so a non-main substream is refused here rather than answering
+   * from an empty table.
+   */
+  /**
+   * Refuse an object-port request the routed path would have refused.
+   *
+   * `executeWorkstreamRuntimeSql` checked two things before running a
+   * statement: that this object is the one addressed, and that it is still the
+   * work stream's authority. The typed endpoints kept the first and dropped the
+   * second, so a write against a `preparing` or `quarantined` object now
+   * commits where the routed statement was refused — which is the window that
+   * fence exists for. The wake-up mutations kept an equivalent check by
+   * accident, through `commitWithRegionalEffects`; nothing else did.
+   *
+   * `"0"` because every one of these ports addresses the main child: the rows
+   * they own live there, and a non-main substream would answer from an empty
+   * table rather than fail.
+   */
+  private objectPortRefusal(
+    request: { workspaceId: string; workstreamId: string },
+    identityMismatchCode: string,
+  ): Response | null {
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.workstreamId !== request.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return jsonResponse({ ok: false, error: identityMismatchCode }, 409);
+    }
+    if (!this.objectStore.isAuthoritative()) {
+      return jsonResponse({ ok: false, error: "workstream_runtime_authority_fenced" }, 409);
+    }
+    return null;
+  }
+
+  private async acceptBlockDashboardOperation(request: Request): Promise<Response> {
+    const parsed = BlockDashboardOperationRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return jsonResponse({ ok: false, error: "invalid_block_dashboard_operation" }, 400);
+    }
+    const refusal = this.objectPortRefusal(
+      parsed.data,
+      "workstream_block_dashboard_identity_mismatch",
+    );
+    if (refusal) return refusal;
+    const method = this.blockDashboard[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const value = method.apply(this.blockDashboard, parsed.data.args);
     return jsonResponse({ ok: true, value: value ?? null });
   }
 
@@ -1871,6 +1948,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     await reapStaleHarnessRuns(executionEnv.DB, {
       receipts: createToolReceiptPortFactory(executionEnv),
+      blocks: createBlockDashboardPortFactory(executionEnv),
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
       limit: 25,
@@ -2006,7 +2084,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       ...(outcome.messageId ? { finalMessageId: outcome.messageId } : {}),
       ...(outcome.error ? { error: outcome.error } : {}),
       memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
-    }, createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId));
+    },
+    createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+    createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId));
     if (outcome.messageId) {
       const messages = await this.product.messagesForRuntime(250);
       const message = messages.items.find((candidate) => candidate.id === outcome.messageId);
