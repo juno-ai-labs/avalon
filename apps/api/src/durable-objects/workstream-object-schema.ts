@@ -16,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 21;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 22;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1339,6 +1339,11 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "retire the resource-attachment, resource-projection and revision views",
     statements: resourceAuthorityPromotion(),
   },
+  {
+    version: 22,
+    description: "prevent accepted restricted suggestions from outliving their reader audience",
+    statements: acceptedSuggestionAudienceTriggers(),
+  },
 ];
 
 /**
@@ -1418,6 +1423,89 @@ function schedulingAuthorityPromotion(): string[] {
     // Triggers first, for the reason the block-dashboard promotion gives.
     ...compatObjects.filter((statement) => statement.startsWith("DROP TRIGGER")),
     ...compatObjects.filter((statement) => statement.startsWith("DROP VIEW")),
+  ];
+}
+
+/**
+ * An accepted suggestion becomes durable work-stream content. Keep its source
+ * audience as a lifetime containment fence even when a compatibility writer
+ * bypasses WorkstreamObjectProductService (connector identity reconciliation
+ * is the important case). The product service performs the same check before
+ * mutation so HTTP callers receive a structured conflict; these triggers are
+ * the storage-authority backstop for every writer.
+ */
+function acceptedSuggestionAudienceTriggers(): string[] {
+  const userIsAllowed = `(
+    COALESCE(json_extract(accepted.share_intent_json, '$.sourceAudience.scope'), '') = 'workspace'
+    OR (
+      COALESCE(json_extract(accepted.share_intent_json, '$.sourceAudience.scope'), '') = 'users'
+      AND COALESCE(json_type(accepted.share_intent_json, '$.sourceAudience.userIds'), '') = 'array'
+      AND EXISTS (
+        SELECT 1
+          FROM json_each(json_extract(
+            accepted.share_intent_json,
+            '$.sourceAudience.userIds'
+          )) AS audience_user
+         WHERE audience_user.value = NEW.user_id
+      )
+    )
+  )`;
+  const wouldExposeAcceptedContent = `EXISTS (
+    SELECT 1
+      FROM suggested_actions AS accepted
+     WHERE accepted.status = 'accepted'
+       AND NOT ${userIsAllowed}
+  )`;
+
+  return [
+    `CREATE TRIGGER IF NOT EXISTS accepted_suggestion_source_audience_immutable
+       BEFORE UPDATE OF share_intent_json ON suggested_actions
+       WHEN OLD.status = 'accepted'
+        AND NEW.share_intent_json IS NOT OLD.share_intent_json
+       BEGIN
+         SELECT RAISE(ABORT, 'accepted_suggestion_source_audience_immutable');
+       END`,
+    `CREATE TRIGGER IF NOT EXISTS accepted_suggestion_source_audience_retained
+       BEFORE DELETE ON suggested_actions
+       WHEN OLD.status = 'accepted'
+       BEGIN
+         SELECT RAISE(ABORT, 'accepted_suggestion_source_audience_immutable');
+       END`,
+    `CREATE TRIGGER IF NOT EXISTS participants_restricted_content_insert
+       BEFORE INSERT ON participants
+       WHEN NEW.status = 'active'
+        AND NOT EXISTS (
+          SELECT 1 FROM participants AS current
+           WHERE current.user_id = NEW.user_id AND current.status = 'active'
+        )
+        AND ${wouldExposeAcceptedContent}
+       BEGIN
+         SELECT RAISE(ABORT, 'workstream_audience_restricted_content');
+       END`,
+    `CREATE TRIGGER IF NOT EXISTS participants_restricted_content_reactivate
+       BEFORE UPDATE OF status ON participants
+       WHEN OLD.status != 'active'
+        AND NEW.status = 'active'
+        AND ${wouldExposeAcceptedContent}
+       BEGIN
+         SELECT RAISE(ABORT, 'workstream_audience_restricted_content');
+       END`,
+    `CREATE TRIGGER IF NOT EXISTS workstream_restricted_content_scope
+       BEFORE UPDATE OF scope ON workstream
+       WHEN OLD.scope = 'personal'
+        AND NEW.scope = 'workspace'
+        AND EXISTS (
+          SELECT 1
+            FROM suggested_actions AS accepted
+           WHERE accepted.status = 'accepted'
+             AND COALESCE(
+               json_extract(accepted.share_intent_json, '$.sourceAudience.scope'),
+               ''
+             ) != 'workspace'
+        )
+       BEGIN
+         SELECT RAISE(ABORT, 'workstream_audience_restricted_content');
+       END`,
   ];
 }
 

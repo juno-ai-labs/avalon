@@ -225,10 +225,12 @@ describe("resource listing", () => {
 
     await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c03"))).list({ limit: 10 }))
       .resolves.toMatchObject({ items: [expect.objectContaining({ id: "email-resource" })] });
-    await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c01"))).get("email-resource"))
+    await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c03"))).get("email-resource"))
       .resolves.toMatchObject({ id: "email-resource", provider: "resend" });
+    await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c01"))).get("email-resource"))
+      .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
     await expect(new ResourceService(environment, authFor(asUserId("c0000000-0000-4000-8000-000000000c01"))).get("ad-hoc-email-resource"))
-      .resolves.toMatchObject({ id: "ad-hoc-email-resource", provider: "resend" });
+      .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
     database.close();
   });
 });

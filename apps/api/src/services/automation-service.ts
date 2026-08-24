@@ -18,6 +18,7 @@ import { AutomationCompilerError, OpenRouterError } from "@avalon/agent-harness"
 import type { AutomationCompilerStreamEvent } from "@avalon/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
+import { workstreamAudienceAllowsUser } from "../lib/audience-containment";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { automationModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
@@ -46,7 +47,10 @@ import {
 } from "../telemetry/product-usage";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { createMessageObjectPort } from "../runtime/message-port";
-import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
+import {
+  attachWorkstreamRuntimeResource,
+  readWorkstreamRuntimeAudience,
+} from "./workstream-object-client";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
@@ -1212,7 +1216,20 @@ export class AutomationService {
       `SELECT * FROM automation_runs WHERE workspace_id = ? AND automation_subscription_id = ?
        ORDER BY created_at DESC LIMIT ?`,
     ).bind(this.auth.workspaceId, id, Math.min(limit, 100)).all<Record<string, unknown>>();
-    return { items: (result.results ?? []).map(toAutomationRun) };
+    const items: ReturnType<typeof toAutomationRun>[] = [];
+    // Keep these reads serial: one history request must not turn a long run list
+    // into enough simultaneous Durable Object calls to exhaust the Worker's
+    // outbound connection allowance.
+    for (const row of result.results ?? []) {
+      const run = toAutomationRun(row);
+      const audience = await readWorkstreamRuntimeAudience(
+        this.env,
+        this.auth.workspaceId,
+        run.workstreamId,
+      );
+      if (workstreamAudienceAllowsUser(audience, this.auth.userId)) items.push(run);
+    }
+    return { items };
   }
 
   async nextRun(id: string) {

@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { describe, expect, it, vi } from "vitest";
 
 import { __testing } from "../src/queues/activity-consumer";
-import { createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createCloudflareTestBinding,
+  createTestDurableObjectId,
+  createTestEnv,
+} from "./helpers/cloudflare-test";
+import { sqliteD1 } from "./helpers/sqlite-d1";
 
 const activity = {
   connection_id: "connection-github-acme",
@@ -85,5 +91,62 @@ describe("activity automation trigger matching", () => {
       target_user_ids_json: "[]",
       visibility_json: "{}",
     } as never)).toEqual([]);
+  });
+
+  it("checks a watched target against authoritative work-stream readers", async () => {
+    const workspaceId = "00000000-0000-7000-8000-000000000101";
+    const workstreamId = "00000000-0000-7000-8000-000000000102";
+    const allowedUserId = "00000000-0000-7000-8000-000000000103";
+    const differentUserId = "00000000-0000-7000-8000-000000000104";
+    const database = new DatabaseSync(":memory:");
+    database.exec(`CREATE TABLE resources (
+      id TEXT PRIMARY KEY, workspace_id TEXT, connection_id TEXT, provider TEXT,
+      provider_resource_id TEXT
+    )`);
+    database.prepare(
+      `INSERT INTO resources (id, workspace_id, connection_id, provider, provider_resource_id)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run("resource-1", workspaceId, "connection-1", "github", "repo#1");
+    const staleProjectionRead = vi.fn(async () => ({
+      scope: "personal" as const,
+      userIds: [allowedUserId],
+    }));
+    const workspaceNamespace = {
+      idFromName: (name: string) => createTestDurableObjectId(name),
+      get: () => ({
+        workstreamsForResource: async () => ({ workstreamIds: [workstreamId] }),
+        workstreamAudience: staleProjectionRead,
+      }),
+      jurisdiction: () => workspaceNamespace,
+    };
+    const authoritativeAudienceRead = vi.fn(async () => ({
+      scope: "personal" as const,
+      userIds: [differentUserId],
+    }));
+    const workstreamNamespace = {
+      idFromName: (name: string) => createTestDurableObjectId(name),
+      get: () => ({ readerAudience: authoritativeAudienceRead }),
+      jurisdiction: () => workstreamNamespace,
+    };
+
+    await expect(__testing.routeDirectWatches(createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: createCloudflareTestBinding<DurableObjectNamespace>(workspaceNamespace),
+      SUBSTREAM_AGENTS: createCloudflareTestBinding<DurableObjectNamespace>(workstreamNamespace),
+    }), {
+      workspace_id: workspaceId,
+      connection_id: "connection-1",
+      connection_scope: "workspace",
+      connection_owner_user_id: null,
+      provider: "github",
+      provider_resource_id: "repo#1",
+      entity_keys_json: "[]",
+      target_user_ids_json: JSON.stringify([allowedUserId]),
+      visibility_json: "{}",
+    } as never)).resolves.toEqual(new Set());
+    expect(authoritativeAudienceRead).toHaveBeenCalledOnce();
+    expect(staleProjectionRead).not.toHaveBeenCalled();
+    database.close();
   });
 });

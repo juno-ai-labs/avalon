@@ -553,9 +553,7 @@ export class ResourceService {
       userId: this.auth.userId,
     });
     if (access.items.length === 0) return false;
-    return access.items.some((item) => item.scope === "workspace"
-      || item.createdByUserId === this.auth.userId
-      || item.isParticipant);
+    return access.items.some((item) => item.scope === "workspace" || item.isParticipant);
   }
 
   private workspaceDirectory() {
