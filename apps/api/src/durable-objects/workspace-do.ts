@@ -1,6 +1,8 @@
 import {
   asWorkspaceId,
   IdSchema,
+  MESSAGE_MAX_CHARACTERS,
+  MESSAGE_TOO_LONG_MESSAGE,
   UserIdSchema,
   WORKSPACE_SYNC_TOPICS,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
@@ -279,6 +281,29 @@ type CreateMessageCommand = Extract<
   z.infer<typeof WorkspaceSocketClientEventSchema>,
   { type: "create_message" }
 >;
+
+/**
+ * The `clientMessageId` of a `create_message` frame whose text is over the
+ * ceiling, or null when the frame is anything else.
+ *
+ * Reads the decoded JSON rather than a parsed command because the parse is what
+ * this runs ahead of. Deliberately narrow: it answers only for a frame that is
+ * recognisably a create_message carrying a correlatable id, so anything it is
+ * unsure about falls through to the schema and is refused there. The reply is
+ * correlated by `clientMessageId`, so a frame without a usable one has nothing
+ * to answer to and is left to the parse as well.
+ */
+function overLongCreateMessageCommand(decoded: unknown): { clientMessageId: string } | null {
+  if (decoded === null || typeof decoded !== "object") return null;
+  const frame = decoded as { type?: unknown; payload?: unknown };
+  if (frame.type !== "create_message") return null;
+  if (frame.payload === null || typeof frame.payload !== "object") return null;
+  const payload = frame.payload as { text?: unknown; clientMessageId?: unknown };
+  if (typeof payload.text !== "string" || payload.text.length <= MESSAGE_MAX_CHARACTERS) return null;
+  if (typeof payload.clientMessageId !== "string") return null;
+  if (payload.clientMessageId.length < 1 || payload.clientMessageId.length > 120) return null;
+  return { clientMessageId: payload.clientMessageId };
+}
 
 interface WorkspaceSocketAttachment extends SocketIdentity {
   connectionId: string;
@@ -1191,6 +1216,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       decoded = JSON.parse(raw);
     } catch {
       socket.close(1008, "Workspace commands must be JSON");
+      return;
+    }
+    // Ahead of the parse, and the only bound that is. Every other way this
+    // event can be malformed is a client defect, and closing the socket is the
+    // right answer to one. An over-long message is not a defect — it is a
+    // person who pasted more than Avalon takes — and closing their connection
+    // to say so would drop the transcript they are looking at, tell them
+    // nothing, and reconnect into the same refusal on the next attempt. The
+    // desktop already stops this at the composer; this is what a build that has
+    // not caught up, or a message grown past the ceiling between the two, is
+    // told instead.
+    const overLong = overLongCreateMessageCommand(decoded);
+    if (overLong) {
+      socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+        type: "client_command_failed",
+        command: "create_message",
+        clientMessageId: overLong.clientMessageId,
+        error: { status: 400, code: "message_too_long", message: MESSAGE_TOO_LONG_MESSAGE },
+      })));
       return;
     }
     const parsed = WorkspaceSocketClientEventSchema.safeParse(decoded);

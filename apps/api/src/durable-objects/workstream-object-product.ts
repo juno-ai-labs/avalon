@@ -2,11 +2,13 @@ import {
   AcknowledgeWorkstreamReadRequestSchema,
   ActivitySuggestionSchema,
   AnswerElicitationRequestSchema,
+  MESSAGE_MAX_CHARACTERS,
   MessageSchema,
   ParticipantSchema,
   ResourceSchema,
   ScopeSchema,
   UpdateWorkstreamRequestSchema,
+  WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
   WorkstreamDetailSchema,
   WorkstreamSchema,
   type Elicitation,
@@ -54,7 +56,7 @@ import type { WorkstreamObjectStore } from "./workstream-object-storage";
 type SqlRow = Record<string, SqlStorageValue>;
 
 export const WorkstreamObjectCreateMessageInputSchema = z.object({
-  text: z.string().max(50_000),
+  text: z.string().max(MESSAGE_MAX_CHARACTERS),
   clientMessageId: z.string().min(1).max(120),
   mentions: z.array(z.object({
     type: z.enum(["person", "connector"]),
@@ -99,12 +101,12 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
   workstreamId: WorkstreamIdSchema,
   generation: z.number().int().positive(),
   title: z.string().min(1).max(180),
-  objective: z.string().max(4_000),
+  objective: z.string().max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
   descriptionSource: z.enum(["authored", "derived"]),
   titleStatus: z.enum(["naming", "automatic", "settled"]),
   emailAddress: z.string().email().max(254).nullable(),
   creatorUserId: z.string().uuid(),
-  openingMessage: z.string().max(50_000),
+  openingMessage: z.string().max(MESSAGE_MAX_CHARACTERS),
   openingStructuredContent: z.unknown().nullable().default(null),
   clientMessageId: z.string().min(1).max(120),
   participantUserIds: z.array(z.string().uuid()),
