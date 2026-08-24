@@ -21,6 +21,7 @@ import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   executeWorkstreamObjectSql,
+  testSubstreamAgentsBinding,
   seedWorkstreamObjectRoot,
   testWorkstreamObjectStore,
   workstreamObjectGet,
@@ -128,6 +129,10 @@ function fixture(options: {
   const env = withWorkstreamRuntimeDatabase(
     createTestEnv({
       DB: sqliteD1(database),
+      // The refresh cadence's own rows reach the object through the scheduling
+      // port rather than the runtime router, so the fixture needs the binding
+      // that port dispatches through — over this same object store.
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
       AVALON_REGION: "global",
       APP_ENV: "test",
       LOG_LEVEL: "error",
@@ -234,12 +239,18 @@ function objective(objectStore: DatabaseSync): string {
   ) as { objective: string }).objective;
 }
 
+/**
+ * The object's own refresh row.
+ *
+ * Read directly rather than through `workstreamObjectGet`, which renames the
+ * table onto `_runtime_description_refreshes` — the view this slice deletes.
+ * Its columns are the object's: unix milliseconds, and no fabricated
+ * `workstream_id`.
+ */
 function refreshRow(objectStore: DatabaseSync): Record<string, unknown> | undefined {
-  return workstreamObjectGet(
-    objectStore,
-    "SELECT * FROM workstream_description_refreshes WHERE workstream_id = ?",
-    WORKSTREAM_ID,
-  ) ?? undefined;
+  return (objectStore.prepare(
+    "SELECT * FROM description_refresh_state WHERE id = 1",
+  ).get() as Record<string, unknown> | undefined) ?? undefined;
 }
 
 describe("description proposal guards", () => {
@@ -548,7 +559,7 @@ describe("what it takes to spend a model call", () => {
 
   it("rests longer after each consecutive confirmation, and returns to the floor on a rewrite", () => {
     const hours = (keeps: number) =>
-      (Date.parse(restUntil(NOW, keeps)) - NOW.getTime()) / (60 * 60 * 1_000);
+      (restUntil(NOW, keeps) - NOW.getTime()) / (60 * 60 * 1_000);
 
     expect(hours(0)).toBe(6);
     expect(hours(1)).toBe(12);

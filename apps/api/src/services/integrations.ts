@@ -184,6 +184,8 @@ import {
 import type { ToolReceiptRecord } from "../durable-objects/workstream-tool-receipt-storage";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { createBlockDashboardObjectPort } from "../runtime/block-dashboard-port";
+import { createSchedulingObjectPort } from "../runtime/scheduling-port";
+import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import {
   admitInlineChildAttempt,
@@ -773,6 +775,7 @@ type TranscriptMessageLister = (
 
 async function loadWorkstreamContextCompaction(
   database: D1Database,
+  scheduling: SchedulingObjectPort,
   workspaceId: string,
   workstreamId: string,
   principal: ExecutionPrincipal,
@@ -781,33 +784,18 @@ async function loadWorkstreamContextCompaction(
 ): Promise<WorkstreamContextCompaction | null> {
   if (fence === null) return null;
   const principalKey = executionPrincipalKey(principal);
-  const exactFence = fence === undefined ? "" : `
-        AND harness_run_id = ? AND compacted_through_sequence = ?`;
-  const ordering = fence === undefined
-    ? " ORDER BY compacted_through_sequence DESC, updated_at DESC LIMIT 1"
-    : " LIMIT 1";
-  const row = await database.prepare(
-    `SELECT harness_run_id, compacted_through_sequence, messages_json, summary,
-            checkpoint_template_version, execution_principal_key,
-            resource_visibility_fingerprint, model
-      FROM workstream_context_compactions
-      WHERE workspace_id = ? AND workstream_id = ? AND execution_principal_key = ?
-      ${exactFence}${ordering}`,
-  ).bind(
-    workspaceId,
-    workstreamId,
-    principalKey,
-    ...(fence === undefined ? [] : [fence.checkpointRunId, fence.compactedThroughSequence]),
-  ).first<{
-    harness_run_id: string;
-    compacted_through_sequence: number;
-    messages_json: string;
-    summary: string;
-    checkpoint_template_version: number;
-    execution_principal_key: string;
-    resource_visibility_fingerprint: string;
-    model: string;
-  }>();
+  // Two statements built by string concatenation, because a routed SELECT had
+  // no other way to be either "the newest checkpoint" or "this exact one". The
+  // operation takes the fence as an argument and picks the query itself.
+  const row = await scheduling.compactionCheckpoint({
+    executionPrincipalKey: principalKey,
+    ...(fence === undefined ? {} : {
+      fence: {
+        runId: fence.checkpointRunId,
+        compactedThroughSequence: fence.compactedThroughSequence,
+      },
+    }),
+  });
   if (!row || !Number.isSafeInteger(row.compacted_through_sequence) || row.compacted_through_sequence < 0) {
     if (fence !== undefined) {
       throw Object.assign(new Error("The frozen compaction checkpoint is no longer available"), {
@@ -835,7 +823,7 @@ async function loadWorkstreamContextCompaction(
       executionPrincipalKey: row.execution_principal_key,
       resourceVisibilityFingerprint: row.resource_visibility_fingerprint,
       checkpointTemplateVersion: row.checkpoint_template_version,
-      checkpointRunId: row.harness_run_id,
+      checkpointRunId: row.run_id,
       compactedThroughSequence: row.compacted_through_sequence,
       messagesJson: row.messages_json,
       summary: row.summary,
@@ -869,80 +857,39 @@ async function loadWorkstreamContextCompaction(
 }
 
 async function persistWorkstreamContextCompaction(
-  database: D1Database,
+  scheduling: SchedulingObjectPort,
   input: WorkstreamWorkflowInput,
   compactedThroughSequence: number,
   checkpoint: HarnessCompactionCheckpoint,
   expectedVisibilityFingerprint: string,
 ): Promise<void> {
-  const at = nowIso();
   const revision = Number.parseInt(expectedVisibilityFingerprint.replace(/^inventory:/u, ""), 10);
   if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("invalid_resource_inventory_revision");
-  const persisted = await database.prepare(
-    `INSERT INTO workstream_context_compactions
-       (workstream_id, workspace_id, harness_run_id, compacted_through_sequence,
-        messages_json, summary, checkpoint_template_version, execution_principal_key,
-        resource_visibility_fingerprint, model, context_tokens_before_compaction,
-        context_window_tokens, input_tokens, output_tokens, cost_microusd,
-        created_at, updated_at)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-      WHERE COALESCE((
-        SELECT revision FROM workstream_resource_inventory_revisions
-         WHERE workspace_id = ? AND workstream_id = ?
-      ), 0) = ?
-     ON CONFLICT(workstream_id, execution_principal_key) DO UPDATE SET
-       workspace_id = excluded.workspace_id,
-       harness_run_id = excluded.harness_run_id,
-       compacted_through_sequence = excluded.compacted_through_sequence,
-       messages_json = excluded.messages_json,
-       summary = excluded.summary,
-       checkpoint_template_version = excluded.checkpoint_template_version,
-       execution_principal_key = excluded.execution_principal_key,
-       resource_visibility_fingerprint = excluded.resource_visibility_fingerprint,
-       model = excluded.model,
-       context_tokens_before_compaction = excluded.context_tokens_before_compaction,
-       context_window_tokens = excluded.context_window_tokens,
-       input_tokens = excluded.input_tokens,
-       output_tokens = excluded.output_tokens,
-       cost_microusd = excluded.cost_microusd,
-       updated_at = excluded.updated_at
-     WHERE excluded.workspace_id = workstream_context_compactions.workspace_id
-       AND (
-         excluded.compacted_through_sequence > workstream_context_compactions.compacted_through_sequence
-         OR excluded.harness_run_id = workstream_context_compactions.harness_run_id
-         OR excluded.resource_visibility_fingerprint != workstream_context_compactions.resource_visibility_fingerprint
-       )`,
-  ).bind(
-    input.workstreamId,
-    input.workspaceId,
-    input.harnessRunId,
+  // The visibility fence, and the write, in one transaction on the object. The
+  // routed statement expressed the fence as a `WHERE COALESCE((SELECT revision
+  // FROM workstream_resource_inventory_revisions …), 0) = ?` on the insert
+  // itself, and then had to re-read the fingerprint to find out whether zero
+  // changes meant "the inventory moved" or something else. The operation says
+  // which.
+  const persisted = await scheduling.persistCompactionCheckpoint({
+    executionPrincipalKey: executionPrincipalKey(input.executionPrincipal),
+    resourceVisibilityFingerprint: expectedVisibilityFingerprint,
+    checkpointTemplateVersion: CHECKPOINT_TEMPLATE_VERSION,
+    runId: input.harnessRunId,
     compactedThroughSequence,
-    JSON.stringify(checkpoint.messages),
-    checkpoint.summary,
-    CHECKPOINT_TEMPLATE_VERSION,
-    executionPrincipalKey(input.executionPrincipal),
-    expectedVisibilityFingerprint,
-    checkpoint.model,
-    checkpoint.contextTokensBeforeCompaction,
-    checkpoint.contextWindowTokens,
-    checkpoint.inputTokens,
-    checkpoint.outputTokens,
-    Math.max(0, Math.round(checkpoint.costCents * 10_000)),
-    at,
-    at,
-    input.workspaceId,
-    input.workstreamId,
-    revision,
-  ).run();
-  if ((persisted.meta.changes ?? 0) === 0) {
-    const currentFingerprint = await loadWorkstreamResourceInventoryFingerprint(
-      database,
-      input.workspaceId,
-      input.workstreamId,
-    );
-    if (currentFingerprint !== expectedVisibilityFingerprint) {
-      throw new Error("compaction_resource_visibility_changed");
-    }
+    messagesJson: JSON.stringify(checkpoint.messages),
+    summary: checkpoint.summary,
+    model: checkpoint.model,
+    contextTokensBeforeCompaction: checkpoint.contextTokensBeforeCompaction,
+    contextWindowTokens: checkpoint.contextWindowTokens,
+    inputTokens: checkpoint.inputTokens,
+    outputTokens: checkpoint.outputTokens,
+    costMicros: Math.max(0, Math.round(checkpoint.costCents * 10_000)),
+    expectedInventoryRevision: revision,
+    now: Date.now(),
+  });
+  if (persisted === "inventory_revision_moved") {
+    throw new Error("compaction_resource_visibility_changed");
   }
 }
 
@@ -2075,6 +2022,7 @@ export async function runWorkstreamHarness(
   await liveness.pulse("run_start", true);
   const priorCompaction = await loadWorkstreamContextCompaction(
     env.DB,
+    createSchedulingObjectPort(env, input.workspaceId, input.workstreamId),
     input.workspaceId,
     input.workstreamId,
     input.executionPrincipal,
@@ -2204,8 +2152,7 @@ export async function runWorkstreamHarness(
     limits: runScopeLimits,
   });
   const priorHints = await loadAuthorizedActivationHints(
-    env,
-    input.workstreamId,
+    createSchedulingObjectPort(env, input.workspaceId, input.workstreamId),
     new Set(harnessTools.plugins.map((plugin) => plugin.canonicalId)),
   );
   const requestedActivations = [
@@ -2402,7 +2349,7 @@ export async function runWorkstreamHarness(
               throw new Error("compaction_resource_visibility_changed");
             }
             await persistWorkstreamContextCompaction(
-              env.DB,
+              createSchedulingObjectPort(env, input.workspaceId, input.workstreamId),
               input,
               compactedThroughSequence,
               checkpoint,
@@ -4437,7 +4384,12 @@ async function loadRunPromptContext(
     triggerMessage = renderTriggerActivityMessage(triggerContext);
   }
   if (input.scheduledWakeupId) {
-    const wakeup = await loadWorkstreamWakeup(env, input.workspaceId, input.scheduledWakeupId);
+    const wakeup = await loadWorkstreamWakeup(
+      createSchedulingObjectPort(env, input.workspaceId, input.workstreamId),
+      input.workspaceId,
+      input.workstreamId,
+      input.scheduledWakeupId,
+    );
     // Re-read against this work stream rather than trusting the workflow input:
     // the id travels through a durable parameter that outlives the row it names.
     if (!wakeup || wakeup.workstream_id !== input.workstreamId) {
@@ -5849,17 +5801,11 @@ async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Prom
 }
 
 async function loadAuthorizedActivationHints(
-  env: Env,
-  workstreamId: string,
+  scheduling: SchedulingObjectPort,
   eligiblePluginIds: ReadonlySet<string>,
 ): Promise<string[]> {
-  const rows = await env.DB.prepare(
-    `SELECT plugin_id FROM workstream_plugin_activation_hints
-      WHERE workstream_id = ? ORDER BY plugin_id`,
-  ).bind(workstreamId).all<{ plugin_id: string }>();
-  return (rows.results ?? [])
-    .map((row) => row.plugin_id)
-    .filter((pluginId) => eligiblePluginIds.has(pluginId));
+  const hints = await scheduling.activationHints();
+  return hints.filter((pluginId) => eligiblePluginIds.has(pluginId));
 }
 
 async function persistWorkstreamPluginActivation(
@@ -5883,14 +5829,8 @@ async function persistWorkstreamPluginActivation(
     pluginId,
     toolSurfaceHash: surfaceHash,
   });
-  const at = nowIso();
-  await env.DB.prepare(
-    `INSERT INTO workstream_plugin_activation_hints
-     (workstream_id, plugin_id, activated_at, last_authorized_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(workstream_id, plugin_id) DO UPDATE SET
-       last_authorized_at = excluded.last_authorized_at`,
-  ).bind(input.workstreamId, pluginId, at, at).run();
+  await createSchedulingObjectPort(env, input.workspaceId, input.workstreamId)
+    .recordPluginActivation({ pluginId, now: Date.now() });
 }
 
 async function reauthorizeFrozenPlugin(
@@ -6617,10 +6557,9 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         // A replay resolves to the wake-up the first attempt persisted. Check it
         // before the cap, so a retry cannot be refused by a limit its own first
         // attempt filled.
+        const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.workstreamId);
         const replayed = await findWorkstreamWakeupByIdempotencyKey(
-          env,
-          input.workspaceId,
-          input.workstreamId,
+          scheduling,
           providerIdempotencyKey,
         );
         if (replayed) {
@@ -6636,7 +6575,6 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
               env,
               input.workspaceId,
               input.workstreamId,
-              input.substreamId ?? "0",
             );
           }
           const persistedDueAt = new Date(replayed.dueAt);
@@ -6653,17 +6591,9 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           };
         }
 
-        const pending = await countPendingWorkstreamWakeups(
-          env,
-          input.workspaceId,
-          input.workstreamId,
-        );
+        const pending = await countPendingWorkstreamWakeups(scheduling);
         if (pending >= MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM) {
-          const pendingWakeups = await listPendingWorkstreamWakeups(
-            env,
-            input.workspaceId,
-            input.workstreamId,
-          );
+          const pendingWakeups = await listPendingWorkstreamWakeups(scheduling);
           throw new WakeupInputError(
             "wakeup_limit_reached",
             `This work stream already has ${pending} pending wake-ups, the maximum of ${MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM}. Cancel one before scheduling another.`,
@@ -6672,9 +6602,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           );
         }
 
-        const { wakeupId } = await createWorkstreamWakeup(env, {
-          workspaceId: input.workspaceId,
-          workstreamId: input.workstreamId,
+        const { wakeupId } = await createWorkstreamWakeup(scheduling, {
           harnessRunId: input.harnessRunId,
           executionPrincipal: input.executionPrincipal,
           prompt: args.prompt,
@@ -6686,7 +6614,6 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
             env,
             input.workspaceId,
             input.workstreamId,
-            input.substreamId ?? "0",
           );
         } catch (error) {
           // The row exists but nothing is armed to fire it, and a workspace with
@@ -6694,10 +6621,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           // so the model is told the wake-up was not scheduled, rather than
           // being told it was and having it never arrive. If this delete also
           // fails, the replay branch above re-arms on the retry.
-          await deleteUnarmedWorkstreamWakeup(env, {
-            workspaceId: input.workspaceId,
-            wakeupId,
-          }).catch(() => undefined);
+          await deleteUnarmedWorkstreamWakeup(scheduling, { wakeupId }).catch(() => undefined);
           throw error;
         }
         const dueAtLocal = formatWakeupLocalTime(resolved.dueAt, resolved.timezone);
@@ -6726,9 +6650,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       },
       execute: async () => {
         const pending = await listPendingWorkstreamWakeups(
-          env,
-          input.workspaceId,
-          input.workstreamId,
+          createSchedulingObjectPort(env, input.workspaceId, input.workstreamId),
         );
         const zones = await runLocalTimezones(env, input);
         return {
@@ -6767,17 +6689,10 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       },
       execute: async (raw) => {
         const args = z.object({ wakeupId: z.string().uuid() }).strict().parse(raw);
-        const outcome = await cancelWorkstreamWakeup(env, {
-          workspaceId: input.workspaceId,
-          workstreamId: input.workstreamId,
-          wakeupId: args.wakeupId,
-        });
+        const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.workstreamId);
+        const outcome = await cancelWorkstreamWakeup(scheduling, { wakeupId: args.wakeupId });
         if (outcome === "not_found") {
-          const pending = await listPendingWorkstreamWakeups(
-            env,
-            input.workspaceId,
-            input.workstreamId,
-          );
+          const pending = await listPendingWorkstreamWakeups(scheduling);
           throw new WakeupInputError(
             "wakeup_not_found",
             "No pending wake-up with that ID is available in this work stream. Call workstream_list_wakeups and retry with one of its IDs.",
@@ -6786,7 +6701,12 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           );
         }
         if (outcome === "not_pending") {
-          const row = await loadWorkstreamWakeup(env, input.workspaceId, args.wakeupId);
+          const row = await loadWorkstreamWakeup(
+            scheduling,
+            input.workspaceId,
+            input.workstreamId,
+            args.wakeupId,
+          );
           throw new WakeupInputError(
             "wakeup_not_pending",
             `That wake-up is already ${row?.status ?? "resolved"}. Only a pending wake-up can be cancelled.`,
@@ -6797,7 +6717,6 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           env,
           input.workspaceId,
           input.workstreamId,
-          input.substreamId ?? "0",
         );
         return {
           output: { wakeupId: args.wakeupId, status: "cancelled" },
@@ -6819,10 +6738,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           context.providerIdempotencyKey,
         );
         const id = await coreWriteEntityId("elicitation", input, providerIdempotencyKey);
-        const existing = await env.DB.prepare(
-          `SELECT id FROM elicitations
-           WHERE id = ? AND workspace_id = ? AND workstream_id = ? AND harness_run_id = ?`,
-        ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId).first<{ id: string }>();
+        const existing = await createSchedulingObjectPort(env, input.workspaceId, input.workstreamId)
+          .elicitationExistsForRun({ elicitationId: id, runId: input.harnessRunId });
         if (existing) {
           return {
             output: { elicitationId: id },

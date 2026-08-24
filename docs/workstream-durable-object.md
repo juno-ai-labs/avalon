@@ -1063,6 +1063,122 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-24 — The scheduling migration renumbers to 20, because 19 was taken
+
+**What changed:** `schedulingAuthorityPromotion` is object schema migration 20,
+and `WORKSTREAM_OBJECT_SCHEMA_VERSION` is 20.
+
+**Why:** it was written as 19 and 19 landed on `main` first — the participant
+`first_opened_at` migration — while this branch was open. This is the collision
+`docs/pull-requests.md` warns about, and it is worth writing down what it looks
+like: the two claims are at the same position in the same array, so a *rebase*
+conflicts and the renumber is forced. Had they been appended at different
+positions, Git would have merged them cleanly into one list with two entries
+numbered 19, the runner would have applied whichever came first and skipped the
+other as already-applied, and the object would have carried a version number
+whose meaning depended on merge order. Nothing would have failed at build time.
+
+**What a future change has to respect:** confirm the number against `main` at
+merge time, not only when the migration is written. The gap between the two is
+where somebody else's release lands.
+
+### 2026-08-24 — What a review found in the scheduling slice, and one test that was proving nothing
+
+**What changed:** five fixes, from a review of the rebased slice.
+
+- `workstream-scheduling-protocol.ts` folds onto `object-port-protocol.ts`, the
+  way the port folded onto `createObjectPort` in the entry below. It had its own
+  mapped type, its own `Exhaustive`, its own request envelope, and its own
+  `MAX_SCHEDULING_OPERATION_ARGS` — a second copy of a limit that has to change
+  in lockstep with the shared one, with nothing enforcing it. 129 lines to 88.
+- `isAuthoritative()` now requires `authority_generation > 0` as well as an
+  `authoritative` mode.
+- `claimDescriptionEvaluation` clears the five decision columns, as the retired
+  trigger's conflict arm did.
+- `refreshAgentTimerAlarm` no longer takes a substream id.
+- The three `test*Port` helpers become one, and it applies the `?? null` the
+  real seam applies.
+
+**Why:** the authority one is the substantive fix. The routed fence was written
+in two places, and reading only `authority_mode` restored one of them:
+`executeWorkstreamRuntimeSql` refused a non-authoritative object outright, and
+it then ran *every* batch through `commitRuntimeMutation` — whose
+`commitWithRegionalEffects` also refuses generation zero. The wake-up mutations
+still reach that function and so kept the generation check by their own route;
+the writes that do not — compaction checkpoints, plugin hints, both
+description-evaluation writes, and the receipt and block-dashboard writes beside
+them — had none. The endpoint docstring and the entry below both claimed the
+shared refusal restored what the routed path refused, and until now that was
+three-quarters true.
+
+The description-claim columns are the conversion defect this kind of slice
+exists to avoid. The retired trigger's `ON CONFLICT(id) DO UPDATE` arm set
+`confidence`, `model`, `previous_description`, `description` and `reasoning`
+from `excluded.*`, and the routed claim left all five out of its column list —
+so `excluded.*` was NULL and a claim wiped the previous evaluation's output. The
+converted `UPDATE` simply did not mention them, which reads like the same
+deliberate omission that carries `consecutive_keeps` and is the opposite: it
+would leave `decision = 'pending'` beside the description and reasoning of an
+already-closed evaluation, a row shape production has never produced and one
+that reads as current. Nothing selects those columns today, which is why it was
+invisible.
+
+`refreshAgentTimerAlarm` took a substream id because the routed insert followed
+the caller's substream binding, so the arm had to go where the row went. The
+port names the main child for every call, so the parameter had become a way for
+the two to disagree — arming an object whose `workstream_wakeups` is empty while
+the object holding the row went unarmed. Unreachable today, since every dispatch
+passes `"0"`; removed rather than documented, because a parameter that must
+always be one value is not a parameter.
+
+**On the test that was proving nothing:** the spec named "leaves the alarm index
+alone for an operation that reads" could not fail. Both of its assertions
+survive adding `activationHints` to `WAKEUP_MUTATIONS`, and its `toEqual([])`
+also passed against a table nobody had seeded. Chasing it turned up something
+worth writing down: a misclassified *read* is close to harmless, because
+`commitWithRegionalEffects` skips an effect whose payload hash matches the last
+one published, so a call that changed nothing publishes nothing. There is no
+assertion that catches it because there is nothing to catch. The spec now seeds
+a hint, asserts the row it wrote, and says in its own comment that the direction
+that does damage is the other one — a mutation missing from the set, which
+emptying the set proves.
+
+**What a future change has to respect:** `isAuthoritative()` is the whole fence
+those endpoints have, and both halves of it came from somewhere. If a typed
+authority ever needs to admit a generation-zero object, that is a decision about
+which writes count during import, not a detail to relax here.
+
+### 2026-08-24 — The scheduling port joins the factory, and its writes get the authority fence
+
+**What changed:** `runtime/scheduling-port.ts` is now a contract object handed
+to `createObjectPort` rather than its own copy of the dispatch machinery, and
+`SchedulingPortError` is gone in favour of `ObjectPortError`. The
+`/internal/scheduling` endpoint's docstring records what `objectPortRefusal`
+actually refuses, and `scheduling-authority.test.ts` proves the authority half
+against `persistCompactionCheckpoint`.
+
+**Why:** ordering. This slice was written against a tree where each typed port
+was its own file; the block-dashboard slice landed the one-factory rework
+first, so rebasing onto it left this port as a fifth copy of the thing that
+rework existed to delete — and a copy that had not picked up the `authority_mode`
+check the shared factory's endpoint helper restored. Review had already found
+that gap independently: `persistCompactionCheckpoint`, `recordPluginActivation`
+and the two description-evaluation writes were the first writes moved off the
+routed path whose only fence was `executeWorkstreamRuntimeSql` refusing every
+statement against a `preparing` or `quarantined` object. The wake-up mutations
+keep an equivalent fence through `commitRuntimeMutation`; those four had none.
+
+Review also asked whether the port should carry a substream id, on the reading
+that scheduling calls always resolve to the main child. They do, and that is the
+design rather than an omission — these rows live on the main object, and the
+shared refusal answers a child substream with a 409 instead of serving it from
+an empty table. The docstring now says so where the next reader will look.
+
+**What a future change has to respect:** a new typed authority is a contract
+plus an operation list, never a new dispatch function. Writing one by hand is
+how this port lost a fence that the shared endpoint helper already had, and the
+loss was invisible until someone read two files side by side.
+
 ### 2026-08-24 — Opening a work stream writes, so being added to one can be seen
 
 **What changed:** `WorkstreamObjectProductService.get` — the single assembler
@@ -1104,6 +1220,7 @@ does not settle viewer state, which does not exist yet and should be added
 rather than worked around.
 
 Shipped in TBD.
+
 
 ### 2026-08-24 — Lease fences keep the projection the compatibility view had
 
@@ -1187,6 +1304,70 @@ because the block was already settled rather than because the lease had moved �
 which no caller acts on: both throw, and the two error codes it added were
 caught nowhere. The distinction is real and the object can make it; it is worth
 making when something needs it.
+
+### 2026-08-23 — Scheduling moves onto a typed authority, four views at a time
+
+**What changed:** `WorkstreamSchedulingStorage` owns `workstream_wakeups`,
+`compaction_checkpoints`, `description_refresh_state`,
+`plugin_activation_hints` and the reads of `elicitation_requests`, reached
+through a typed port and an `/internal/scheduling` endpoint. Object schema
+migration 20 drops four `_runtime_*` views and their seven triggers, and those
+four tables leave the routing and rewrite lists. This is slice 3 of
+[the compat-layer retirement](PRDs/2026-08-22_retiring-the-runtime-compat-layer/prd.md).
+
+**Why:** the same reason slices 1 and 2 give. What is specific here is that
+almost every operation in this family is a *claim* — a wake-up, an evaluation,
+a compaction's visibility — and a claim written as routed SQL is a
+compare-and-swap spelled out in a `WHERE … version = ?` clause whose answer
+comes back as a `meta.changes` count. Each of them then needed a second
+statement to find out what had actually happened: which wake-up a replay
+resolved to, what version a claim had just written, whether zero changes meant
+a lost race or an archived work stream. The read and the write are one
+transaction now, so each of those questions is the operation's own answer.
+
+**`_runtime_elicitations` deliberately outlives this slice.** Every read of it
+is gone; its two writers are batches spanning three slices — an elicitation
+row, a transcript message, and the work stream's sequence and attention
+counters, written together because the second statement is guarded on the first
+having landed. Splitting one onto this port would put a network boundary inside
+that batch, and writing the message natively here would mean building the
+messages slice's machinery inside this one, beside the richer version
+`WorkstreamObjectProductService` already has. It goes with the messages slice.
+The PRD's slice table lists five views for slice 3; this is a deliberate
+departure from it, not an oversight.
+
+**The alarm path was the one wake-up writer that skipped all of it.** Review
+caught this after the slice was pushed. `runScheduledAlarm` built its port with
+the in-isolate storage seam, on the stated grounds that an object dispatching an
+RPC to itself is a round trip to its own SQLite — which is not true here:
+`this.env` is rebound through `withDurableObjectSelf` in the constructor, so the
+stub resolves to this instance and the endpoint runs in this isolate anyway.
+Taking the seam skipped `commitRuntimeMutation`, so an alarm-fired claim did not
+republish the sidebar's next-wake-up marker, and the marker went on advertising
+a wake-up that had already fired until some later write moved it. The launched
+path hid it — the transcript notice republishes a moment later — but the two
+paths that return without appending do not.
+
+The port is built without the seam now, and the endpoint's arming is wrapped in
+the same catch-and-log its two siblings use: the operation is already durable,
+so a failed `setAlarm` must not tell a caller its committed write failed.
+
+**What a future change has to respect:** the object maintains its own alarm
+index and publishes its own sidebar projection for wake-ups, and both used to
+be consequences of the routing. A wake-up write arrived as SQL, and the object
+matched `workstream_wakeups` in the statement text to decide that the
+next-wake-up marker had to be republished and that the timer index had to be
+re-derived. `mutatesWakeups` in the protocol names those operations instead,
+and the endpoint runs them inside `commitRuntimeMutation` so the projection is
+in the same commit as the row. An operation added to that storage class without
+a place in that set is a wake-up that silently stops arming — which is why the
+set is a named export next to the operation list rather than a condition inside
+the endpoint. `test-workers/scheduling-authority.test.ts` is what holds that
+down; it fails on all four counts when the set is emptied.
+
+The narrowing that is *not* here: `restUntil` returns an instant rather than an
+ISO string, because the object stores instants. The retired read compared
+ISO-8601 lexically, which is sound for that format and is why it worked.
 
 ### 2026-08-23 — Three block-dashboard answers the compatibility layer could not give
 

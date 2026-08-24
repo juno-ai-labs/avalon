@@ -557,16 +557,30 @@ export class WorkstreamObjectStore {
    * Whether this object may still be written through as the work stream's
    * authority.
    *
-   * The check `executeWorkstreamRuntimeSql` makes before it runs any routed
-   * statement. The typed object ports replaced that path and each re-checks
-   * identity, so this is the half they need to keep: a `preparing` or
-   * `quarantined` object is not the one whose writes count, and the routed
-   * statement would have been refused.
+   * The fence `executeWorkstreamRuntimeSql` put in front of every routed
+   * statement, which the typed object ports have to keep now that they are the
+   * path. It was written in two places rather than one, and both count: that
+   * function refuses a `preparing` or `quarantined` object outright, and it
+   * then ran every batch — directory-affecting or not — through
+   * `commitRuntimeMutation`, whose `commitWithRegionalEffects` additionally
+   * refuses `authority_generation <= 0`.
+   *
+   * Reading only `authority_mode` here would restore half of it, and the half
+   * left out is the one nothing else covers: the wake-up mutations still reach
+   * `commitRuntimeMutation` and so keep the generation check by their own
+   * route, while the writes that do not — compaction checkpoints, plugin
+   * activation hints, both description-evaluation writes, and the receipt and
+   * block-dashboard writes beside them — would have had no generation fence at
+   * all. `isRealtimeWritable` deliberately admits generation zero; that is
+   * room state, and this is not.
    */
   isAuthoritative(): boolean {
-    return first(this.storage.sql.exec<{ authority_mode: string }>(
-      `SELECT authority_mode FROM workstream WHERE id = 1`,
-    ))?.authority_mode === "authoritative";
+    const row = first(this.storage.sql.exec<{
+      authority_mode: string; authority_generation: number;
+    }>(
+      `SELECT authority_mode, authority_generation FROM workstream WHERE id = 1`,
+    ));
+    return row?.authority_mode === "authoritative" && row.authority_generation > 0;
   }
 
   /** Legacy generation zero and an activated imported generation may emit room state. */
