@@ -19,8 +19,9 @@ documents by name *and by content*, automations, the people in the workspace,
 and the handful of things Avalon can start. Results arrive grouped by kind with
 one top hit selected; `⏎` opens it, `⌘⏎` starts a work stream from the query
 text, `Esc` closes. Nothing is added to the app's navigation: the palette is a
-transient overlay that always terminates in a work stream, a note, a document,
-or an automation.
+transient overlay that always terminates in something that already exists — a
+work stream, a note, a document, an automation, a person — or in starting a new
+work stream.
 
 What becomes possible that was not before is retrieval of *content*. Today a
 person can reach a work stream only by recognising its title in the sidebar's
@@ -55,9 +56,17 @@ extracts and stores the text this change would search, for the agent's benefit:
 Every row of that table is loadable by the agent as context and by nobody as a
 person. The asymmetry is the problem: a member who remembers that *someone
 worked out the pricing tiers* can ask the agent to go and find it — spending a
-model run, and a wait, on a keyword lookup — or can scroll. `docs/assumptions.md`
-has described the work-stream metadata as "searchable" since the object schemas
-were written; nothing has ever searched it.
+model run, and a wait, on a keyword lookup — or can scroll.
+
+**One narrow search does exist, and this PRD subsumes it.** `GET /resources?q=`
+matches document titles and providers with `LIKE`, and backs the debounced
+filter box in the work-stream resource picker. It is scoped to one dialog, it
+searches titles rather than contents, and its match semantics are substring
+where this change's are tokenized — which is precisely why it cannot be left
+beside a second search over the same `resources` table returning different
+answers for the same string. Reconciling the two is in scope; see non-goal 15.
+The agent's `search_resource` tool searches extracted document contents on the
+same corpus, and is the model's path rather than a person's.
 
 **The evidence here is structural rather than measured, and this document does
 not pretend otherwise.** Avalon has no usage history, no metrics stack, and no
@@ -73,9 +82,11 @@ to route around it.
 
 1. Search opens in one keystroke from every surface, and closes in one, without
    navigating away from what the person was doing.
-2. Names match as the person types, with no perceptible wait: work streams,
-   automations, meeting notes, documents, people, and the actions Avalon can
-   start.
+2. Names match as the person types, with no perceptible wait, for everything the
+   client already holds: work streams, automations, meeting notes, people, and
+   the actions Avalon can start. Document names match too, on the same round
+   trip as body text — the client caches no document list, so they are the one
+   name-match that is not instant and not available offline.
 3. Body text is searchable — messages inside work streams, meeting notes and
    their transcripts, and the extracted contents of documents — so that a
    remembered phrase finds the work it was written in.
@@ -146,6 +157,14 @@ to route around it.
     called out because it is the first thing someone will ask for: archiving is
     currently how a person says "stop showing me this", and search re-showing it
     would undo that. Revisit behind an explicit filter, which is non-goal 12.
+15. **The existing `GET /resources?q=` picker filter is not left standing beside
+    this.** In scope, and named as a non-goal only to say which way it resolves:
+    two server-side searches over the same `resources` table with different match
+    semantics and different authorization paths would return different documents
+    for the same string in two places in one app. The picker's filter is
+    re-pointed at the shared index, or its rule and this one are lifted into one
+    shared SQL fragment. What is *not* in scope is changing the picker's
+    behaviour or its surface.
 
 ## Product behavior
 
@@ -179,7 +198,8 @@ A centered panel over a scrim, above all surfaces, at the app's dark-surface
 tokens. It holds a single unlabelled query field with the magnifying glass at
 its leading edge and an `Esc` affordance trailing. Results fill the panel below
 the field. A footer row states the three keys that do something: `↑↓ NAVIGATE`,
-`⏎ OPEN`, `⌘⏎ START`, with the count of results not shown on the right.
+`⏎ OPEN`, `⌘⏎ START`, and on the right, the count of matching results that are
+not shown.
 
 The panel does not resize as results arrive — it holds a stable height so that
 the row under the cursor does not move while the person is still reading it.
@@ -198,8 +218,14 @@ matches — message bodies, note transcripts, document contents, and names beyon
 the locally cached page — are requested as the query settles and merge into their
 groups when they arrive.
 
-The selected row is tracked by its identity, not its index. An arriving group
-never changes what `⏎` would open.
+The selected row is tracked by its identity, not its index, so a group arriving
+underneath the cursor never changes what `⏎` would open. **Arriving results may
+still move the selection, but only before the person has touched it**: until the
+first `↑`/`↓`, the selection follows the current top hit and re-resolves when
+remote results land; after it, the selection is the person's and nothing but a
+new keystroke moves it. Without that first clause a remote message match could
+never become the top hit, which is most of what phase 2's ranking is for; without
+the second, pressing `⏎` as a response lands opens whatever arrived.
 
 **Populated.** Groups appear in this order, and a group with no matches is
 omitted entirely rather than shown empty:
@@ -219,16 +245,31 @@ highlighted, and the metadata above. A row that matched on *body* rather than
 name additionally shows one line of surrounding text with the term highlighted,
 so that the reason it matched is visible without opening it.
 
+Three structural notes the table would otherwise hide. A **Messages** row has no
+title of its own — it renders the snippet as its primary line and names its work
+stream as metadata, and the indexed row's `title` is deliberately empty, because
+stamping the work stream's title onto every message would give all of them a
+title-weighted hit and bury the work stream itself. **People** and **Actions**
+are not indexed rows and carry no relevance score; they are matched entirely on
+the client, sort within their own groups, and never compete for the top hit.
+And `⏎` on a person opens the workspace-member surface, not a work stream — the
+one result kind whose destination is not one of the four the overlay otherwise
+terminates in.
+
 **Top hit.** The single highest-ranked row across all groups is selected when
 results settle, so `⏎` is meaningful without the person pressing `↓` first.
 Ranking is relevance first — a title match outranks a body match, a whole-word
 match outranks a prefix — and recency second, which breaks ties the way the
 sidebar already orders itself.
 
-**Truncation.** Each group shows at most **five** rows. The count of everything
-matching but not shown appears in the footer as `N MORE RESULTS`. That count
-counts only results the person may see; it is computed by the same filtered query
-that produced the rows, never by counting before authorization.
+**Truncation.** Each group shows at most **five** rows — per group, which a
+single overall cap cannot deliver: one prolific kind would take every slot and
+leave groups that genuinely matched rendering as though they had not. The count
+of everything matching but not shown appears in the footer as `N MORE RESULTS`.
+That count counts only results the person may see, it is produced by the same
+filtered statement that produced the rows rather than by a second query that
+could drift from it, and it is the total *minus what is on screen* — reporting
+the total says `3 MORE RESULTS` when all three matches are already visible.
 
 **No matches.** Search never shows an empty panel. The action row **Start a work
 stream: "<query>"** is always present and always last, and becomes the selected
@@ -288,13 +329,31 @@ A palette with no route, no history, no feed, and no activity rows cannot become
 the thing the clause was written against. What it does instead is make the
 organizing principle affordable at a hundred work streams rather than at ten.
 
-**The clause proposed for the brief**, replacing the words `search, or a global
-inbox` in that sentence:
+**The brief's opening sentence, as proposed in full** — not a substring
+substitution, because the edit both removes a word from the list and appends a
+sentence:
 
-> …organized around concrete work streams rather than channels, direct messages,
+> Avalon is an AI-native workplace communication and execution environment
+> organized around concrete work streams rather than channels, direct messages,
 > or a global inbox. Search exists as a way *into* a work stream — a transient
 > query over what a person can already read — and never as a place to read from:
-> there is no results route, no saved search, and no keyword feed.
+> there is no results route and no keyword feed.
+
+The contract sentence names only the two prohibitions this PRD rejects
+*outright* — non-goal 1 (no results route) and non-goal 9 (no keyword feed).
+Saved searches are non-goal 2, which is **deferred**, and writing a deferred
+"not yet" into the standing contract would mean re-opening the product contract
+to undo it later. A contract clause and a deferred non-goal are different
+commitments and this document does not conflate them.
+
+**A second statement of the same prohibition moves with it.**
+[`implementation-plan.md`](../../implementation-plan.md)'s release gate reads
+"The implementation is not considered complete if it … introduces channels,
+global search, a terminal, separate named agents, or a global inbox." That is
+phrased as a completion blocker, so leaving it while editing the brief would
+have the repository simultaneously describe search as shipped and fail the
+change for shipping it. It is edited in the same change, to name what is still
+prohibited — a results route and a keyword feed — rather than search as such.
 
 Two other clauses were checked and do **not** move:
 
@@ -344,11 +403,17 @@ None yet.
    loses access stops matching on their next keystroke with nothing to sweep.
 
 4. **Name matching happens on the client, before any request.** The sidebar
-   already holds the directory page and the member list, and the composer already
-   fuzzy-matches members for `@` mentions. Reusing that makes the common case —
-   "get me back to the thing I was in yesterday" — instant and offline-capable,
-   and it means a failed request degrades to a still-useful palette rather than
-   to nothing.
+   already holds the directory page and the member list, which is what makes the
+   common case — "get me back to the thing I was in yesterday" — instant and
+   offline-capable, and what lets a failed request degrade to a still-useful
+   palette rather than to nothing. **The matcher itself is new work.** The
+   composer's `@` mention picker is a case-insensitive `includes()` over a label
+   list, and `mention-highlight.ts` is an exact case-folded slice; neither is a
+   fuzzy or prefix matcher, so there is nothing to reuse but the data. Its
+   semantics also have to be reconciled with the server's, which tokenizes and
+   prefixes only the trailing term — the same query otherwise returns different
+   sets from the two halves of one list, and a work stream matched by both has
+   to deduplicate to one row with one identity.
 
 5. **Phased by where the text already lives, not by which source sounds most
    important.** Phase 1 covers every source whose text WorkspaceDO already
@@ -377,13 +442,22 @@ Two new tables in WorkspaceDO, beside the directory they are joined to:
 
 - **`workspace_search_documents`** — one row per searchable thing, keyed by
   `(source_kind, source_id)` where `source_kind` is one of `workstream`,
-  `message`, `note`, `note_segment`, `document`, `automation`. Carries the
-  `workstream_id` or `note_id` the visibility join needs, a `title`, the indexed
-  `body`, `updated_at` for recency ranking, and the `waterline` and
-  `payload_hash` that make a re-delivered projection idempotent — the same
-  columns `workspace_workstream_directory` already uses for the same reason.
+  `message`, `note`, `note_segment`, `document`, `automation`. Carries a single
+  `scope_id` naming the row the authorization join runs against, a `title`, the
+  indexed `body`, `updated_at` for recency ranking, and the
+  `authority_generation`, `waterline`, and `payload_hash` that make a
+  re-delivered projection idempotent. All three of those, not two: the directory
+  compares generation *then* waterline because `sourceVersion` restarts on an
+  authority bump, and a waterline-only test freezes that work stream's index
+  silently and permanently.
 - **`workspace_search_fts`** — an external-content FTS5 table over `title` and
-  `body`, mirroring the pattern `memory_items_fts` already establishes.
+  `body`, with a `prefix` index because every request prefix-matches its
+  trailing token.
+
+Both land as a **new version** of `WORKSPACE_DO_SCHEMA_MIGRATIONS`. They cannot
+be appended to `WORKSPACE_DOMAIN_SCHEMA_STATEMENTS`, which is hashed into
+version 1 — editing it throws `workspace_do_schema_hash_mismatch:1` in the
+constructor of every already-deployed workspace.
 
 Rows for work streams, automations, notes, note transcript segments, and
 document titles are written from data WorkspaceDO already owns. Rows for messages
@@ -410,13 +484,28 @@ than incidental.
 because a leak here is silent, is presented as a feature, and is discovered by
 typing a word. The rules below are the change's real acceptance criteria.
 
-1. **Every result passes the same check as opening the thing it points at.**
-   Work streams and the messages inside them are filtered by
-   `workspace_workstream_viewers.listable` for the calling user — the same flag
-   the sidebar list applies. Notes are filtered by `scope` and `owner_user_id`.
-   Documents go through the existing resource access check. Automations follow
-   their subscription's `You`/`Workspace` scope. Search adds no new authorization
-   rule and is permitted to relax none.
+1. **Every result passes the same check as opening the thing it points at, and
+   every source kind has a predicate.** Work streams and the messages inside
+   them use the rule the sidebar list actually applies —
+   `scope = 'workspace' OR is_participant = 1`, against a viewer row pinned to
+   the directory row's `authority_generation`. Notes are filtered by `scope` and
+   `owner_user_id`. Documents use the three fragments `resource-service.ts`
+   already applies — connector scope, the draft-upload rule, the note-backed
+   rule — lifted into shared SQL rather than restated. Automations follow their
+   subscription's `You`/`Workspace` scope, plus its template's archive state.
+   Search adds no new authorization rule and is permitted to relax none.
+
+   Two traps, both of which the first draft of this PRD fell into and which the
+   implementation must not: **`workspace_workstream_viewers.listable` is not the
+   sidebar's flag** — no list query reads it, and it is computed through
+   `participantVisible`, which also admits `created_by_user_id`, so it is
+   *broader* than the rule the socket enforces. And **a source kind with no
+   predicate is not a safe default**: a guard shaped `scope_id IS NULL OR (…)`
+   returns every row of any kind it forgot, which is how documents and
+   automations were briefly returned to every member of the workspace. The
+   filter is written as an exhaustive `CASE` so that an unhandled kind is
+   excluded rather than admitted; [`design.md`](design.md#the-visibility-join)
+   carries the statement.
 2. **The filter is applied inside the query, before ranking and before
    counting.** A `WHERE` that runs after the top-N is chosen leaks the existence
    of private work through the `N MORE RESULTS` count and through ranking
@@ -483,25 +572,41 @@ Split per
 | Minimum query length before a remote request | 2 characters (local matching starts at 1) |
 | Rows in the empty-query **Recent** group | 9, matching the `⌘1`–`⌘9` run |
 
-**Defensive limits — the mechanism is this change's to build; the numbers are
-not.** Each ships at its open value, marked `LIMIT UNSET`, and is handed back
-with its arithmetic in the implementing pull request:
+**Defensive limits — and these mostly may not ship open.**
+[`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md)
+gates the open value on one test: *does this change introduce the unbounded
+path?* Here the answer is yes for all of them — `GET /search`, the FTS index,
+and the projection are new paths this change authors, so an open value would be
+a regression written by this change rather than the behaviour that already
+ships. The same section says to always ask rather than ship open when the path
+allocates memory proportional to untrusted input. So these are **asked for, not
+placeholdered**, and the implementing change does not start until they are set:
 
-- Maximum accepted query length.
-- Maximum candidate rows an FTS query considers before ranking.
-- Per-request server time budget for the search read.
-- Maximum indexed characters per message and per document.
-- Retention horizon for indexed message text — the one that decides whether the
-  index grows without bound against the 10 GB object ceiling
-  ([`data-model.md`](../../data-model.md)). This one most needs a real answer
-  before phase 2 ships, and it is the first entry in
-  [Open questions](#open-questions).
+| Limit | Why it cannot ship open | Starting point for the team |
+| --- | --- | --- |
+| Maximum accepted query length | Allocation sized by untrusted caller input | `GET /resources?q=` already caps a search string at 200 characters; matching it needs no new decision |
+| Maximum candidate rows before ranking | Binds into `LIMIT ?`, where a non-finite value fails or coerces rather than meaning "no limit" | Groups × rows-per-group × a factor for filtered-out rows |
+| Per-request server time budget | Spends single-threaded WorkspaceDO time per keystroke | — |
+| Maximum indexed **bytes** per message and per document | Crosses the wire into `durable_outbox.payload_json`, which has a ~1.9 MB `CHECK`; an open bound aborts the *producing* transaction, so the message write itself fails | Must sit under that row bound with envelope overhead to spare |
+
+Note the unit: **bytes, not characters.** The `CHECK` is byte-counted per
+`data-model.md`, so a character-denominated bound cannot be substituted into it,
+and truncating by characters while checking bytes rejects every CJK or
+emoji-bearing body permanently. The producer truncates by the same unit.
+
+One number moves to the product column. The **retention horizon for indexed
+message text** is filed here as defensive in name only: this PRD's own open
+question 1 says a horizon makes search a recency tool and no horizon makes it an
+archive, and *that changes what the product promises*. Per the same document, a
+number that both shapes and defends is a product limit — the team sets it as
+scope, not as a cap, and it is [open question 1](#open-questions) rather than a
+row above.
 
 The as-you-type request cadence is a product limit doing double duty: it decides
-whether search feels instant *and* it bounds how often a keystroke reaches
-WorkspaceDO. It is set here at **one request per settled query**, meaning a
-request is issued when typing pauses and any outstanding request for a stale
-query is abandoned rather than rendered.
+whether search feels instant *and* bounds how often a keystroke reaches
+WorkspaceDO. The *shape* is set here — **one request per settled query**, with
+any outstanding request for a stale query abandoned rather than rendered — but
+the pause duration is a number, it is not set here, and it is on the list above.
 
 ## Acceptance
 
@@ -525,11 +630,20 @@ query is abandoned rather than rendered.
    `personal` note and for a document they cannot access.
 7. A member removed from a work stream stops matching its content on their next
    query, with no intervening deploy or sweep.
-8. A query matching nothing shows the start-a-work-stream row selected; `⏎`
-   opens the new-work-stream surface with the query in the composer.
-9. With the API unreachable, the panel still opens and still matches names, and
-   shows the single quiet line about message and document text.
-10. With `global-search` off, the glyph is absent and `⌘K` does nothing.
+8. **A phrase that appears only inside another member's `personal` meeting note
+   returns nothing — including through the Documents group.** Every note is
+   backed by a `resources` row that is born `model_content_status = 'ready'`, so
+   this is the test that catches the note's text reappearing under the document
+   authorization rule rather than the note one.
+9. **A member with no viewer row for a `workspace`-scoped work stream still
+   finds its messages.** Viewer rows are written only for authors, mentions, and
+   participants, so a rule that keys solely on the viewer row makes every shared
+   work stream unsearchable to everyone who has not yet spoken in it.
+10. A query matching nothing shows the start-a-work-stream row selected; `⏎`
+    opens the new-work-stream surface with the query in the composer.
+11. With the API unreachable, the panel still opens and still matches names, and
+    shows the single quiet line about message and document text.
+12. With `global-search` off, the glyph is absent and `⌘K` does nothing.
 
 Where these become durable checks, they land in [`e2e.md`](../../e2e.md).
 
@@ -564,15 +678,24 @@ name and nothing else, phase 2's cost is not yet justified.
 2. **Does a work stream a person created but then left appear in their
    results?** Blocking, and not a question this PRD may answer by itself.
    [`data-model.md`](../../data-model.md) records that `personal` visibility
-   means two different things in two places — the single-row read also admits
-   `created_by_user_id`, while `WorkstreamDO.canRead` and the `listable` flag
-   test participation alone — and states that closing the gap is "a product
-   decision nobody has made", and that neither half should be copied into a new
-   caller until somebody does. **Search is a new caller.** It cannot ship
-   silently choosing one: choosing `listable` hides a work stream its creator can
-   still open by URL, and choosing the other surfaces content in search that the
-   sidebar and the socket both refuse. The decision is needed before phase 1
-   ships and is worth making on its own terms, for every caller at once.
+   means two different things in two places, and states that closing the gap is
+   "a product decision nobody has made", and that neither half should be copied
+   into a new caller until somebody does. **Search is a new caller.**
+
+   That document is also wrong about which half is which, in a way that inverts
+   the risk and that this change should correct in the same breath as answering
+   the question. It says the `listable` flag "tests participation alone";
+   `listable` is computed through `participantVisible`, which is
+   `scope === 'workspace' || participant || created_by_user_id === userId`. So
+   `listable` is the **creator-inclusive** half. Choosing it would not hide a
+   creator's work stream — it would surface the full message text of a
+   `personal` work stream to someone the socket and the sidebar both refuse,
+   permanently, with no revocation path. This PRD therefore specifies the
+   sidebar's own rule (`scope = 'workspace' OR is_participant = 1`) as the
+   interim predicate, written in one fragment, and still needs the decision
+   before phase 1 ships: the answer is worth making for every caller at once,
+   and `removeParticipant` permits self-removal with no creator exemption, so
+   the gap is reachable rather than theoretical.
 3. **Should a message match open the work stream at that message, or at the
    bottom?** Opening at the match needs a scroll-to-sequence path the transcript
    does not currently expose, and
