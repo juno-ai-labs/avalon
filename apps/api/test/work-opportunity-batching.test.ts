@@ -424,16 +424,17 @@ describe("suggested-work aggregation", () => {
         },
       }),
     }));
+    let targetUserIds = [userOne as string];
     const rooms = createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
       idFromName: vi.fn().mockReturnValue({}),
-      get: vi.fn().mockReturnValue({ createRuntimeSuggestion }),
+      get: vi.fn().mockReturnValue({
+        createRuntimeSuggestion,
+        readerAudience: vi.fn(async () => ({ scope: "personal", userIds: targetUserIds })),
+      }),
     });
-    let targetUserIds = [userOne as string];
     const directories = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
       idFromName: vi.fn().mockReturnValue({}),
-      get: vi.fn().mockReturnValue({
-        workstreamAudience: vi.fn(async () => ({ scope: "personal", userIds: targetUserIds })),
-      }),
+      get: vi.fn().mockReturnValue({}),
     });
     const routeEnv = environment(database, {
       SUBSTREAM_AGENTS: rooms,

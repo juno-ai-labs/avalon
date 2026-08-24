@@ -2029,8 +2029,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     const row = this.metadataRow();
     if (!row || row.archived_at !== null) return false;
     if (row.scope === "workspace") return true;
-    return row.created_by_user_id === userId
-      || this.userProjection(userId)?.isParticipant === true;
+    return this.userProjection(userId)?.isParticipant === true;
   }
 
   private latestStateRow(stateKey: string): StoredStateRow | null {

@@ -52,15 +52,15 @@ the per-activity router judges one activity at a time, this branch judges the
 batched admission context and may create the same work-stream card. A personal
 batch may contain workspace-visible or restricted sources: a workspace-visible
 source can route into any target offered to that member, while a restricted
-source requires the target's complete creator-and-participant audience to fit
+source requires the target's complete active-participant audience to fit
 inside its source audience.
 The row is stamped `source = 'suggested_work'` so its feedback remains separate
 from the per-activity router.
 
 Admission context never performs an unrestricted directory read. Live connector
 activity is admitted through personal windows: each names one audience member
-and receives workspace rows plus private rows that member created or actively
-participates in. A workspace-visible connector event fans out to one such window
+and receives workspace rows plus private rows that member actively participates
+in; creation metadata is not a separate permission. A workspace-visible connector event fans out to one such window
 per active member; it never combines their private directory permissions in one
 inference. The explicit workspace directory form remains fail-closed to
 workspace-scoped rows for callers that genuinely hold a workspace audience. No
@@ -78,6 +78,14 @@ window per permitted user. Workspace-visible activity enters
 `workspace:<user-id>` for every active member. The window audience controls
 whose private context the model may inspect; the source keeps its independent
 workspace or restricted audience for the final routing check.
+
+For `N` active workspace members, one workspace-visible event performs `N`
+WorkspaceDO enqueue RPCs and enters `N` independent personal windows. Those
+windows may each run admission and may produce distinct opportunities or route
+decisions for their member; there is deliberately no cross-member deduplication,
+because deduplicating would require merging private candidate context. The
+fan-out has no guessed member cap: an overloaded object or Workflow failure is
+the visible failure mode until the team chooses a product limit.
 
 ### Ranking
 

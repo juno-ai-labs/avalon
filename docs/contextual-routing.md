@@ -81,8 +81,8 @@ learned rather than declared; everything else moves a number.
    next eligible one rather than costing the model a slot.
    Candidate visibility is explicit: a workspace-visible activity considers only
    workspace-scoped work streams. A restricted activity carries its permitted
-   user IDs and considers only private work streams whose complete creator and
-   active-participant audience is contained in that set. One overlapping reader
+   user IDs and considers only private work streams whose complete active-
+   participant audience is contained in that set. One overlapping reader
    does not admit a candidate, and a workspace target is never a restricted
    candidate. There is no null or missing-viewer form that means unrestricted.
 5. **The comparison.** One structured inference (role `activity_structured`)
@@ -158,8 +158,10 @@ routing feedback.
   nullable authorization sentinel.
 - **A card cannot broaden its source activity.** Every producer persists the
   source audience with the card. WorkstreamDO rechecks that audience against its
-  own creator and active participants before insertion and every time it reads or
-  resolves the card. Legacy rows without an auditable source audience remain
+  own active participants before insertion and every time it reads or resolves
+  the card. An accepted card keeps that source audience as long as its resource
+  remains attached, and blocks any later participant or scope change that would
+  widen beyond it. Legacy rows without an auditable source audience remain
   hidden rather than being revived by the feature switch.
 - **Dismissal hides a card; it does not delete feedback.** Every desktop message
   path applies the same dismissal rule, while the resolved database row remains

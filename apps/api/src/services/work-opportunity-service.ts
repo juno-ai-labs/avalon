@@ -21,6 +21,7 @@ import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { activityContentAudience } from "../lib/activity-visibility";
 import {
+  contentAudienceAllowsUser,
   contentAudienceContainsWorkstream,
   type ContentAudience,
 } from "../lib/audience-containment";
@@ -38,6 +39,7 @@ import { hydrateConnectorActivitySource } from "./integrations";
 import { logWarn } from "../observability/logger";
 import { runStructuredInference } from "./structured-inference";
 import { WorkstreamService } from "./workstream-service";
+import { readWorkstreamRuntimeAudience } from "./workstream-object-client";
 import { withWorkspaceRuntimeDatabase, workspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 const MAX_BATCH_EVENTS = 16;
@@ -402,8 +404,16 @@ async function mapConcurrent<T, R>(items: T[], limit: number, work: (item: T) =>
 
 function sourceVisibleToWindow(sourceAudience: ContentAudience, window: WindowRow): boolean {
   if (window.audience_scope === "workspace") return sourceAudience.scope === "workspace";
-  return sourceAudience.scope === "workspace"
-    || Boolean(window.audience_user_id && sourceAudience.userIds.includes(window.audience_user_id));
+  return Boolean(
+    window.audience_user_id && contentAudienceAllowsUser(sourceAudience, window.audience_user_id),
+  );
+}
+
+function directoryAudienceForWindow(window: WindowRow):
+  { scope: "workspace" } | { scope: "user"; userId: string } {
+  if (window.audience_scope === "workspace") return { scope: "workspace" };
+  if (!window.audience_user_id) throw new Error("personal_opportunity_window_missing_user");
+  return { scope: "user", userId: window.audience_user_id };
 }
 
 function persistedSource(source: ModelSource) {
@@ -508,10 +518,11 @@ async function loadSource(
     sourceId: event.source_id,
   });
   if (!activity?.audienceWorkstreamId) return null;
-  const readerAudience = await workspace.workstreamAudience({
+  const readerAudience = await readWorkstreamRuntimeAudience(
+    env,
     workspaceId,
-    workstreamId: activity.audienceWorkstreamId,
-  });
+    activity.audienceWorkstreamId,
+  );
   const sourceAudience: ContentAudience | null = readerAudience?.scope === "workspace"
     ? { scope: "workspace" }
     : readerAudience?.userIds.length
@@ -678,6 +689,7 @@ async function syncVerifiedIdentityDirectory(env: Env, workspaceId: WorkspaceId)
 
 async function loadAdmissionContext(env: Env, window: WindowRow) {
   await syncVerifiedIdentityDirectory(env, asWorkspaceId(window.workspace_id));
+  const directoryAudience = directoryAudienceForWindow(window);
   const workspacePromise = durableObjectStubForWorkspace(
     env,
     env.WORKSPACE_DOS,
@@ -687,9 +699,7 @@ async function loadAdmissionContext(env: Env, window: WindowRow) {
   const workRowsPromise = workspacePromise
     .then((workspace) => workspace.recentWorkstreamDirectory({
       workspaceId: window.workspace_id,
-      audience: window.audience_scope === "workspace"
-        ? { scope: "workspace" as const }
-        : { scope: "user" as const, userId: window.audience_user_id! },
+      audience: directoryAudience,
       includeSystem: false,
       participantsOnly: false,
       limit: 20,
@@ -943,12 +953,11 @@ async function routeExistingDecision(
   if (activities.length === 0) {
     return referenced.some((source) => source.kind === "message" && source.workstreamId === targetId);
   }
-  const targetAudience = await (await durableObjectStubForWorkspace(
+  const targetAudience = await readWorkstreamRuntimeAudience(
     env,
-    env.WORKSPACE_DOS,
-    asWorkspaceId(window.workspace_id),
-    workspaceDOName(env.AVALON_REGION, asWorkspaceId(window.workspace_id)),
-  )).workstreamAudience({ workspaceId: window.workspace_id, workstreamId: targetId });
+    window.workspace_id,
+    targetId,
+  );
   const routableActivities = activities.filter((source) => (
     source.sourceAudience
     && contentAudienceContainsWorkstream(source.sourceAudience, targetAudience)

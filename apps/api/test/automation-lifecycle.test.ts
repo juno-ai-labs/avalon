@@ -113,7 +113,7 @@ function scheduleRunnerFor(database: DatabaseSync) {
     workspaceId: "00000000-0000-7000-8000-000000000001",
     directory: {
       workstreamScheduleTargets: async () => ({ items: [] }),
-      plannedWorkstream: async () => null,
+      plannedAutomationWorkstream: async () => null,
     },
   };
   return {
@@ -139,6 +139,62 @@ function runCount(database: DatabaseSync): number {
 }
 
 describe("automation lifecycle", () => {
+  it("returns only run work streams the requesting member may read", async () => {
+    const database = seededDatabase();
+    const visibleWorkstreamId = "00000000-0000-7000-8000-000000000041";
+    const privateWorkstreamId = "00000000-0000-7000-8000-000000000042";
+    const otherUserId = "00000000-0000-7000-8000-000000000043";
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('${otherUserId}', 'google-other', 'other@example.com', 'Other', '2026-01-01', '2026-01-01');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+      VALUES ('${auth.workspaceId}', '${otherUserId}', 'member', 'active', '2026-01-01');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, automation_subscription_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at, scope)
+      VALUES
+        ('${visibleWorkstreamId}', '${auth.workspaceId}', 'Visible run', '', 'automation',
+         '00000000-0000-7000-8000-000000000007', 'completed', 1, '2026-01-02', '2026-01-02', '2026-01-02', 'personal'),
+        ('${privateWorkstreamId}', '${auth.workspaceId}', 'Other member run', '', 'automation',
+         '00000000-0000-7000-8000-000000000007', 'completed', 1, '2026-01-03', '2026-01-03', '2026-01-03', 'personal');
+      INSERT INTO automation_runs
+        (id, workspace_id, automation_subscription_id, workstream_id, trigger_type, status, created_at)
+      VALUES
+        ('00000000-0000-7000-8000-000000000044', '${auth.workspaceId}',
+         '00000000-0000-7000-8000-000000000007', '${visibleWorkstreamId}', 'schedule', 'completed', '2026-01-02'),
+        ('00000000-0000-7000-8000-000000000045', '${auth.workspaceId}',
+         '00000000-0000-7000-8000-000000000007', '${privateWorkstreamId}', 'schedule', 'completed', '2026-01-03');
+    `);
+
+    const readers: Array<[string, string]> = [
+      [visibleWorkstreamId, auth.userId],
+      [privateWorkstreamId, otherUserId],
+    ];
+    for (const [workstreamId, readerId] of readers) {
+      const objectStore = testWorkstreamObjectStore();
+      databases.push(objectStore);
+      seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId: auth.workspaceId });
+      workstreamObjectRun(
+        objectStore,
+        `UPDATE workstream SET scope = 'personal', created_by_user_id = ? WHERE id = 1`,
+        readerId,
+      );
+      workstreamObjectRun(
+        objectStore,
+        `INSERT INTO participants
+           (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+            added_at, removed_at, updated_at)
+         VALUES (?, 'creator', ?, 'active', 0, 1, NULL, 1)`,
+        readerId,
+        readerId,
+      );
+      storesFor(database).set(workstreamId, objectStore);
+    }
+
+    await expect(serviceFor(database).runs("00000000-0000-7000-8000-000000000007"))
+      .resolves.toMatchObject({ items: [{ workstreamId: visibleWorkstreamId }] });
+  });
+
   it("drops an archived draft from the automation list and from every read of it", async () => {
     const database = seededDatabase();
     const service = serviceFor(database);

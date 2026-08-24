@@ -60,7 +60,8 @@ import {
 } from "../services/workstream-origin-resource";
 import { logDebug, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
-import { restrictedActivityUserIds } from "../lib/activity-visibility";
+import { activityContentAudience, restrictedActivityUserIds } from "../lib/activity-visibility";
+import { readWorkstreamRuntimeAudience } from "../services/workstream-object-client";
 import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
 import {
   acknowledgeWorkstreamOutboxEffect,
@@ -569,18 +570,18 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
   const directWorkstreamIds = [...resolvedWorkstreamIds];
 
   const routed = new Set<string>();
-  const restrictedUserIds = restrictedActivityUserIds(activity);
+  const sourceAudience = activityContentAudience(activity);
+  if (!sourceAudience) return routed;
   for (const workstreamId of directWorkstreamIds) {
-    if (restrictedUserIds != null) {
-      const targetAudience = await workspace.workstreamAudience({
-        workspaceId: activity.workspace_id,
-        workstreamId,
-      });
-      if (!contentAudienceContainsWorkstream(
-        { scope: "users", userIds: restrictedUserIds },
-        targetAudience,
-      )) continue;
-    }
+    // The work stream is the authority for scope and participation. WorkspaceDO
+    // is only a regional projection and may still name a member whose removal
+    // has committed but whose directory effect has not arrived yet.
+    const targetAudience = await readWorkstreamRuntimeAudience(
+      env,
+      activity.workspace_id,
+      workstreamId,
+    );
+    if (!contentAudienceContainsWorkstream(sourceAudience, targetAudience)) continue;
     if (await injectActivityMessage(env, activity, workstreamId)) {
       routed.add(workstreamId);
     }
@@ -1155,6 +1156,7 @@ export const __testing = {
   matchesFilters,
   projectActivityEvent,
   restrictedActivityUserIds,
+  routeDirectWatches,
   routeContextually,
   runMatchingAutomations,
   contentAudienceContainsWorkstream,

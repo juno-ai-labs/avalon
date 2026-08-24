@@ -552,7 +552,7 @@ reached; only a contradictory resolution is refused with
 An explicit resource watch may move content only into an audience no broader
 than the activity's. Workspace-visible activity may enter any watched work
 stream. Restricted activity requires a private target whose complete
-creator-and-participant audience is contained in the activity's permitted user
+active-participant audience is contained in the activity's permitted user
 set; one overlapping reader is not enough, and a workspace target is refused.
 
 Native GitHub, Linear, and Notion deliveries use the same compact Queue envelope
@@ -786,15 +786,17 @@ same event.
 
 **What a future change has to respect:** Fan-out may duplicate public evidence;
 it must never merge users' private contexts. Source visibility and admission
-window visibility remain separate facts.
+window visibility remain separate facts. With `N` active members this path costs
+`N` enqueue RPCs and may yield `N` independent admissions; there is no
+cross-member dedupe because the private contexts are intentionally disjoint.
 
 ### 2026-08-24 — A resource watch cannot broaden a restricted activity
 
 **What changed:** Before injecting a restricted connector activity through an
-explicit resource watch, the consumer now asks WorkspaceDO for the watched work
-stream's exact audience. The target must be personal and every creator or active
-participant must already be in the activity audience. Workspace-visible
-activity is unchanged.
+explicit resource watch, the consumer now asks the authoritative main
+SubstreamAgent for the watched work stream's current audience. The target must
+be personal and every active participant must already be in the activity
+audience. Workspace-visible activity is unchanged.
 
 **Why:** The old check admitted a target when any one permitted activity reader
 could read it. That allowed one person's private connector activity to be copied
@@ -803,7 +805,8 @@ the activity audience.
 
 **Considered and rejected:** Checking only the connection owner, retaining the
 any-reader test, or reading legacy D1 participants. None proves the required
-subset relationship, and WorkspaceDO is the post-cutover audience authority.
+subset relationship, and WorkspaceDO's directory projection may lag the work
+stream that owns participant state.
 
 **What a future change has to respect:** Moving content is authorized from
 source audience to target audience, not by one actor's ability to see both. A

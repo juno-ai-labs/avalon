@@ -148,26 +148,26 @@ hash-checked RPCs rather than cross-object SQL joins.
   enforces the authoritative participant/scope rule and publishes its viewer
   projection to WorkspaceDO, whose directory applies it for lists and socket
   admission without consulting D1.
-- **`personal` means “the creator or an active participant” at every serving
+- **`personal` means “an active participant” at every serving
   boundary.** Detail authorization, sockets, workspace lists, pins, visibility
   checks, resource reads, Suggested Work, and contextual routing all use that
-  same rule. `removeParticipant` may remove the creator's participant row, but it
-  does not transfer or erase creator visibility; a caller must never equate a
-  missing participant projection with a missing read permission.
+  same rule. Creation seats the creator, but `created_by_user_id` is attribution,
+  not a permanent authorization grant: `removeParticipant` revokes a creator in
+  exactly the same way it revokes anybody else.
 - **Cross-work-stream content moves from a source audience to an equal or
   narrower target audience.** Workspace activity may enter a workspace work
   stream or a private work stream a particular member may read. Suggested Work
   evaluates that public activity in a separate personal window for every active
   member; the personal window is an inference boundary, not a narrowing of the
-  source. Restricted activity may enter only a personal work stream whose
-  creator and every active participant are in its permitted user set. Suggested
+  source. Restricted activity may enter a personal work stream only when every
+  active participant is in its permitted user set. Suggested
   context persists that source audience and WorkstreamDO rechecks it before
   storing, reading, or resolving a card; a legacy row with no auditable audience
   is not visible.
 - **A work stream is born `personal`, and every path that means otherwise says
   so.** `POST /workstreams` carries no scope — a request on the wire cannot claim
-  an audience — so the creator plus whoever they named in `participantUserIds` are
-  the room, and nobody else sees it until one of them opens it. The bootstrap row
+  an audience — so the creator is seated beside whoever they named in
+  `participantUserIds`, and those active participants are the room. The bootstrap row
   the object is created with is `personal` too, which matters because the runtime
   compatibility insert writes `COALESCE(NEW.scope, scope)`: a path that names no
   scope inherits that row's, so the default has to be the narrow one for the
@@ -730,12 +730,45 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-08-24 — Active participation is the sole private-reader authority
+
+**What changed:** Every private work-stream read now follows active participant
+state only. Creation still seats the creator, but removing that participant
+revokes detail, directory, socket, resource, Suggested Work, automation-history,
+and routing access. The main SubstreamAgent exposes its authoritative current
+reader audience for content-movement and run-history checks; callers no longer
+use WorkspaceDO's eventually delivered projection for those permanent writes.
+Accepted activity resources retain their source audience as a lifetime fence,
+so adding a participant or widening scope is refused if it would expose one.
+Schema migration 22 installs the same rule as a WorkstreamDO storage trigger,
+covering compatibility writers such as connector identity reconciliation that
+do not enter through the product service. It also makes an accepted source
+audience immutable and retained so the fence cannot disappear before the
+content it governs.
+
+**Why:** Treating creator attribution as an implicit reader made
+`removeParticipant` and participant-only queries lie. Separately, a directory
+projection can lag a committed removal; using it to inject content or disclose a
+run made that lag a permanent privacy defect rather than temporary list staleness.
+
+**Considered and rejected:** Preserving creator access as ownership, deleting an
+accepted activity's provenance after attachment, and trusting the workspace
+projection immediately before delivery. Those respectively create a second
+authorization model, forget the audience of still-attached content, or authorize
+from stale state.
+
+**What a future change has to respect:** `created_by_user_id` explains origin; it
+does not grant access. Every audience widening must preserve all attached
+restricted-content fences, and permanent content moves read current authority
+from the work stream that owns scope and participants. New direct participant or
+scope writers must preserve migration 22's storage-level containment backstop.
+
 ### 2026-08-24 — Generated runs default private and viewer permission is one rule
 
 **What changed:** Manual, inbound-email, scheduled, and activity-triggered
 automation runs now create personal work streams with a concrete creator and
 creator participant. WorkspaceDO and WorkstreamDO visibility reads consistently
-admit a private stream's creator as well as active participants; directory
+admit active participants; directory
 inference APIs require explicit workspace or user audiences instead of nullable
 authorization predicates. Restricted contextual routing and watched-resource
 delivery additionally require the source audience to contain the target work
@@ -755,7 +788,7 @@ privilege.
 
 **What a future change has to respect:** New work-stream creation paths default
 personal unless they state and justify a broader audience. Every private read
-uses creator-or-active-participant permission, every cross-work-stream inference
+uses active-participant permission, every cross-work-stream inference
 names its audience before it queries the directory, and permission to read one
 target cannot be mistaken for permission to widen the source content to all of
 that target's readers.
