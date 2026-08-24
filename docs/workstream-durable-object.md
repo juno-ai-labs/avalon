@@ -1305,6 +1305,41 @@ of the three. If the product ever settles on a single busy status, retire the
 other two from the CHECK constraint rather than from the fences, so the
 narrowing is enforced where it can be seen.
 
+### 2026-08-23 — The sub-agent concurrency cap is removed, not renamed
+
+**What changed:** `HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS` is gone — the env
+var, its schema entry, both Worker configs, the `maxActiveWorkspaceChildren`
+option and the `workspace_child_capacity` refusal. `maxChainRuns` is now the
+only bound on sub-agent fan-out.
+
+**Why:** the entry below records that the cap had not meant what its name says
+since the per-workspace-database cutover, and left the choice open between
+restoring a genuinely workspace-wide limit and accepting the narrowed one. The
+team chose neither: remove it. That is the right call, because what it actually
+enforced was already implied. A chain may create `maxChainRuns` runs in total
+(4 by default), so it can never have more than that many children alive at once
+— a separate cap of 8 live children could not bind before the chain budget of 4
+did. Keeping it would have meant carrying a second limit, a second refusal
+reason and a second count for a rule the first one already made.
+
+**What a future change has to respect:** the two limits are not
+interchangeable, and a test now says so by name. The retired cap counted *live*
+children, so settling one freed a slot; the chain budget counts every run the
+chain has created, so it does not. A run that has answered has still been spent.
+Reintroducing slot-freeing behaviour — filtering the chain count by
+`terminalized_at IS NULL`, say — turns a lifetime budget into a concurrency
+budget and lets a sub-agent tree grow without limit as long as it settles as it
+goes.
+
+**Where the remaining exposure is.** One work stream runs one mutating run at a
+time, so an interactive conversation tops out at `maxChainRuns - 1` concurrent
+sub-agents. HyperSight block runs are the exception the claim rule already
+makes: each block owns its own run and therefore its own chain budget, so a work
+stream with *N* blocks can reach *N* × (`maxChainRuns` - 1). If that ever needs
+bounding, bound it where blocks are dispatched rather than by reviving a
+per-child cap here.
+
+
 ### 2026-08-23 — The sub-agent family finishes, and two fences nothing was holding
 
 **What changed:** `terminalizeInlineChildAttempt`, `loadInlineChildResult`,

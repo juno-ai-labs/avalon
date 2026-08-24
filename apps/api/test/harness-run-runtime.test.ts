@@ -4123,94 +4123,46 @@ describe("inline child-run durability", () => {
     )).toMatchObject({ reused: true });
   });
 
-  it("does not reclaim an expired child through an occupied workspace child slot", async () => {
+  it("admits parallel children, and the chain budget does not free as they settle", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
     const parentLease = await claimScopedParent(sqlite);
-    const firstOptions = {
-      parentToolCallId: "tool-expired-at-capacity",
-      objective: "Resume only when a child slot is available",
-      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000104"),
-      attemptId: "attempt-expired-at-capacity",
-      owner: "owner-expired-at-capacity",
-      maxActiveWorkspaceChildren: 1,
-      maxChainRuns: 64,
-    };
-    const first = await admitInlineChildAttempt(sqlite.runs,
-      input(RUN_ONE),
-      parentLease,
-      firstOptions,
-    );
-    if (first.state !== "claimed") throw new Error("expected first child claim");
-    sqlite.object.prepare(
-      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
-    ).run(first.childInput.harnessRunId);
-
-    expect(await admitInlineChildAttempt(sqlite.runs, input(RUN_ONE), parentLease, {
-      parentToolCallId: "tool-live-capacity-holder",
-      objective: "Occupy the only workspace child slot",
-      childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000105"),
-      attemptId: "attempt-live-capacity-holder",
-      owner: "owner-live-capacity-holder",
-      maxActiveWorkspaceChildren: 1,
-      maxChainRuns: 64,
-    })).toMatchObject({ state: "claimed" });
-
-    expect(await admitInlineChildAttempt(sqlite.runs, input(RUN_ONE), parentLease, {
-      ...firstOptions,
-      owner: "owner-reclaim-blocked-by-capacity",
-    })).toEqual({ state: "refused", reason: "workspace_child_capacity" });
-    expect(sqlite.object.prepare(
-      "SELECT lease_owner, attempt_number, lease_expires_at FROM harness_runs WHERE id = ?",
-    ).get(first.childInput.harnessRunId)).toEqual({
-      lease_owner: first.lease.owner,
-      attempt_number: 1,
-      lease_expires_at: "2020-01-01T00:00:00.000Z",
-    });
-  });
-
-  it("atomically reserves parallel child capacity and frees it after terminalization", async () => {
-    const sqlite = fixture();
-    openDatabases.push(sqlite.database);
-    const parentLease = await claimScopedParent(sqlite);
+    // Three: the root plus two children. The chain budget is the only bound on
+    // fan-out now that the active-children cap is gone.
+    const chainOptions = { maxChainRuns: 3 };
     const [first, second] = await Promise.all([
       admitInlineChildAttempt(sqlite.runs, input(RUN_ONE), parentLease, {
+        ...chainOptions,
         parentToolCallId: "tool-parallel-one",
         objective: "Investigate source one",
         childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000106"),
         attemptId: "attempt-parallel-one",
         owner: "owner-parallel-one",
-        maxChainRuns: 64,
-        maxActiveWorkspaceChildren: 2,
       }),
       admitInlineChildAttempt(sqlite.runs, input(RUN_ONE), parentLease, {
+        ...chainOptions,
         parentToolCallId: "tool-parallel-two",
         objective: "Investigate source two",
         childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000107"),
         attemptId: "attempt-parallel-two",
         owner: "owner-parallel-two",
-        maxChainRuns: 64,
-        maxActiveWorkspaceChildren: 2,
       }),
     ]);
     expect([first.state, second.state]).toEqual(["claimed", "claimed"]);
-    if (first.state !== "claimed" || second.state !== "claimed") {
-      throw new Error("expected both parallel children to claim capacity");
-    }
+    if (first.state !== "claimed") throw new Error("expected the first child to claim");
     expect(sqlite.object.prepare(
       `SELECT COUNT(*) AS count FROM harness_runs
         WHERE parent_harness_run_id = ? AND status = 'running'`,
     ).get(RUN_ONE)).toEqual({ count: 2 });
 
     expect(await admitInlineChildAttempt(sqlite.runs, input(RUN_ONE), parentLease, {
+      ...chainOptions,
       parentToolCallId: "tool-parallel-overflow",
       objective: "Investigate source three",
       childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000108"),
       attemptId: "attempt-parallel-overflow",
       owner: "owner-parallel-overflow",
-      maxChainRuns: 64,
-      maxActiveWorkspaceChildren: 2,
-    })).toEqual({ state: "refused", reason: "workspace_child_capacity" });
+    })).toEqual({ state: "refused", reason: "chain_budget_exhausted" });
 
     expect(await terminalizeInlineChildAttempt(sqlite.runs,
       input(RUN_ONE),
@@ -4219,18 +4171,22 @@ describe("inline child-run durability", () => {
       first.lease,
       { status: "completed", result: { finding: "one" } },
     )).toBe("terminalized");
+
+    // The retired cap counted *live* children, so settling one freed a slot.
+    // The chain budget counts every run the chain has created, so it does not:
+    // a run that has answered has still been spent, and the budget is what
+    // stops a sub-agent tree growing without limit.
     expect(await admitInlineChildAttempt(sqlite.runs, input(RUN_ONE), parentLease, {
-      parentToolCallId: "tool-parallel-after-slot",
+      ...chainOptions,
+      parentToolCallId: "tool-parallel-after-settled",
       objective: "Investigate source three",
       childHarnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000109"),
-      attemptId: "attempt-parallel-after-slot",
-      owner: "owner-parallel-after-slot",
-      maxChainRuns: 64,
-      maxActiveWorkspaceChildren: 2,
-    })).toMatchObject({ state: "claimed" });
+      attemptId: "attempt-parallel-after-settled",
+      owner: "owner-parallel-after-settled",
+    })).toEqual({ state: "refused", reason: "chain_budget_exhausted" });
   });
 
-  it("enforces chain and depth budgets independently of workspace capacity", async () => {
+  it("enforces the chain and depth budgets", async () => {
     const chainSqlite = fixture();
     openDatabases.push(chainSqlite.database);
     const chainParentLease = await claimScopedParent(chainSqlite);
@@ -4241,7 +4197,6 @@ describe("inline child-run durability", () => {
       attemptId: "attempt-chain-one",
       owner: "owner-chain-one",
       maxChainRuns: 2,
-      maxActiveWorkspaceChildren: 64,
     })).toMatchObject({ state: "claimed" });
     expect(await admitInlineChildAttempt(chainSqlite.runs, input(RUN_ONE), chainParentLease, {
       parentToolCallId: "tool-chain-overflow",
@@ -4250,7 +4205,6 @@ describe("inline child-run durability", () => {
       attemptId: "attempt-chain-overflow",
       owner: "owner-chain-overflow",
       maxChainRuns: 2,
-      maxActiveWorkspaceChildren: 64,
     })).toEqual({ state: "refused", reason: "chain_budget_exhausted" });
 
     const depthSqlite = fixture();
