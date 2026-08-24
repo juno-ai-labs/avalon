@@ -3122,7 +3122,7 @@ describe("durable harness attempt runtime", () => {
       status: "failed",
       error: { code: "tool_receipt_persistence_failed", message: "A required host persistence port failed" },
       memberSafePayload: { code: "tool_receipt_persistence_failed" },
-    }, sqlite.receipts)).toBe("terminalized");
+    }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
 
     expect(sqlite.object.prepare(
       "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
@@ -3175,7 +3175,7 @@ describe("durable harness attempt runtime", () => {
     expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
       status: "completed",
       finalMessageId: "message-completed-residual",
-    }, sqlite.receipts)).toBe("terminalized");
+    }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
 
     expect(sqlite.object.prepare(
       "SELECT status FROM tool_effects WHERE effect_intent_id = ?",
@@ -3228,7 +3228,7 @@ describe("durable harness attempt runtime", () => {
       status: "failed",
       error: { code: "harness_execution_failed", message: "The Avalon harness could not complete this run" },
       memberSafePayload: { code: "harness_execution_failed" },
-    }, flakyReceipts)).rejects.toThrow("lost_receipt_rpc_response");
+    }, flakyReceipts, sqlite.blocks)).rejects.toThrow("lost_receipt_rpc_response");
     expect(sqlite.object.prepare(
       "SELECT status FROM harness_runs WHERE id = ?",
     ).get(RUN_ONE)).toEqual({ status: "failed" });
@@ -3241,6 +3241,7 @@ describe("durable harness attempt runtime", () => {
     // close this card.
     expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => flakyReceipts,
+      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([]);
@@ -3297,7 +3298,7 @@ describe("durable harness attempt runtime", () => {
     expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
       status: "needs_input",
       memberSafePayload: {},
-    }, sqlite.receipts)).toBe("terminalized");
+    }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
 
     expect(sqlite.object.prepare(
       "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
@@ -3369,6 +3370,7 @@ describe("durable harness attempt runtime", () => {
     // budget would return here having reaped nothing.
     expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => sqlite.receipts,
+      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       limit: 1,
@@ -3415,6 +3417,7 @@ describe("durable harness attempt runtime", () => {
     } satisfies typeof sqlite.receipts;
     expect(await reapStaleHarnessRuns(sqlite.binding, {
       receipts: () => losingReceipts,
+      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
     })).toEqual([RUN_ONE]);
@@ -3429,7 +3432,7 @@ describe("durable harness attempt runtime", () => {
       status: "failed",
       error: { code: "harness_execution_failed", message: "The Avalon harness could not complete this run" },
       memberSafePayload: { code: "harness_execution_failed" },
-    }, sqlite.receipts)).toBe("already_terminal");
+    }, sqlite.receipts, sqlite.blocks)).toBe("already_terminal");
     expect(sqlite.object.prepare(
       "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
     ).get("invocation-reaped-then-returned")).toEqual({
