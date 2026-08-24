@@ -763,7 +763,7 @@ export class WorkstreamObjectProductService {
       workspaceId: root.parent_workspace_key,
       title: truncateUtf16Safe(root.title, 180),
       titleStatus,
-      objective: truncateUtf16Safe(root.description, 4_000),
+      objective: truncateUtf16Safe(root.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
       emailAddress: root.email_address,
       originType: root.origin_type,
       originLabel: subscription?.name ? truncateUtf16Safe(subscription.name, 120) : null,
@@ -2046,7 +2046,7 @@ export class WorkstreamObjectProductService {
     return {
       kind: "directory_common" as const,
       title: truncateUtf16Safe(root.title, 500),
-      description: truncateUtf16Safe(root.description, 4_000),
+      description: truncateUtf16Safe(root.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
       preview: truncateUtf16Safe(root.preview, 1_000),
       scope: root.scope,
       state: root.exact_state,
