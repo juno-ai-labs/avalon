@@ -142,7 +142,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   footerHint,
   maxHeight = 180,
   mentionDisabled = false,
-  mentionLabel = 'Mention a participant or connection',
+  mentionLabel = 'Mention a participant',
   mentionLabels = NO_MENTION_LABELS,
   model,
   onAttach,

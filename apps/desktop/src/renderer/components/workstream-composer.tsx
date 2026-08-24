@@ -1,4 +1,4 @@
-import { AtSign, LoaderCircle, Square, UserPlus } from 'lucide-react';
+import { LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { AvalonApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
@@ -10,13 +10,18 @@ import type { AttachmentPreview } from './attachments';
 import { ComposerInput } from './composer-input';
 import { Avatar, Badge, Button, Modal } from './primitives';
 
+/**
+ * Someone an `@` can name here. Only people for now: the work stream's
+ * connections were offered alongside them and have been taken back out, so a
+ * connection is neither pickable nor highlighted in a draft written here. What
+ * the transcript renders is unaffected — a connector mention that reaches it
+ * from anywhere else still draws its chip.
+ */
 interface MentionCandidate {
   id: string;
-  kind: 'person' | 'connector';
   label: string;
   description: string;
-  member?: WorkspaceMember;
-  connectorType?: string;
+  member: WorkspaceMember;
 }
 
 interface WorkstreamComposerProps {
@@ -49,7 +54,7 @@ interface ComposerCommand {
 }
 
 const BASE_COMMANDS: ComposerCommand[] = [
-  { id: 'participants', label: 'participants', description: 'Mention a participant or connection' },
+  { id: 'participants', label: 'participants', description: 'Mention a participant' },
   { id: 'attach', label: 'attach', description: 'Choose a file to attach' },
   { id: 'clear', label: 'clear', description: 'Clear this draft' },
 ];
@@ -84,29 +89,19 @@ export function WorkstreamComposer({
   const [confirming, setConfirming] = useState(false);
   const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;
   const participantIds = useMemo(() => new Set(workstream.participants.map((person) => person.id)), [workstream.participants]);
-  const candidates = useMemo<MentionCandidate[]>(() => [
-    ...members.map((member) => ({
-      id: member.id,
-      kind: 'person' as const,
-      label: member.name,
-      description: participantIds.has(member.id) ? member.email : `${member.email} · not participating`,
-      member,
-    })),
-    ...workstream.connections.map((connection) => ({
-      id: connection.id,
-      kind: 'connector' as const,
-      label: connection.displayName,
-      description: `${connection.scope === 'you' ? 'Your' : 'Workspace'} connection`,
-      connectorType: connection.connectorType,
-    })),
-  ], [members, participantIds, workstream.connections]);
+  const candidates = useMemo<MentionCandidate[]>(() => members.map((member) => ({
+    id: member.id,
+    label: member.name,
+    description: participantIds.has(member.id) ? member.email : `${member.email} · not participating`,
+    member,
+  })), [members, participantIds]);
 
   const mentionLabels = useMemo(() => candidates.map((candidate) => candidate.label), [candidates]);
   const visibleCandidates = mentionQuery === null
     ? []
     : candidates.filter((candidate) => candidate.label.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 8);
   const mentionNavigation = useMentionNavigation(
-    visibleCandidates.map((candidate) => `${candidate.kind}-${candidate.id}`),
+    visibleCandidates.map((candidate) => candidate.id),
     (index) => {
       const candidate = visibleCandidates[index];
       if (candidate) insertMention(candidate);
@@ -189,9 +184,7 @@ export function WorkstreamComposer({
     const atIndex = before.lastIndexOf('@');
     const nextText = `${before.slice(0, atIndex)}@${candidate.label} ${after}`;
     setText(nextText);
-    const identity: MentionIdentity = candidate.kind === 'person'
-      ? { type: 'person', label: candidate.label, userId: candidate.member?.id ?? candidate.id, connectorType: null }
-      : { type: 'connector', label: candidate.label, userId: null, connectorType: candidate.connectorType ?? null };
+    const identity: MentionIdentity = { type: 'person', label: candidate.label, userId: candidate.member.id, connectorType: null };
     setSelectedMentions((current) => [
       ...current.filter((mention) => !(mention.type === identity.type && mention.userId === identity.userId && mention.connectorType === identity.connectorType)),
       identity,
@@ -274,7 +267,7 @@ export function WorkstreamComposer({
             <button
               aria-selected={index === mentionNavigation.activeIndex}
               className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
-              key={`${candidate.kind}-${candidate.id}`}
+              key={candidate.id}
               onClick={() => insertMention(candidate)}
               /* Move rather than enter: the list scrolls under a still pointer
                  when the arrows walk past its edge, and that must not steal the
@@ -284,11 +277,9 @@ export function WorkstreamComposer({
               role="option"
               type="button"
             >
-              <span className="mention-icon">
-                {candidate.member ? <Avatar member={candidate.member} size="small" /> : <AtSign size={14} />}
-              </span>
+              <span className="mention-icon"><Avatar member={candidate.member} size="small" /></span>
               <span><strong>{candidate.label}</strong><small>{candidate.description}</small></span>
-              <Badge>{candidate.kind === 'person' ? 'Person' : 'Connection'}</Badge>
+              <Badge>Person</Badge>
             </button>
           ))}
         </div>
