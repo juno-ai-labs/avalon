@@ -148,6 +148,33 @@ const automationDeliveryTargetType = z.enum(["email", "slack_agent_dm"]);
 const connectorScope = z.enum(["personal", "workspace"]);
 const connectorSetupMethod = z.enum(["oauth", "api_key", "direct", "webhook"]);
 const connectorHealth = z.enum(["healthy", "needs_reconnect", "error", "disabled", "unknown"]);
+export const TELEMETRY_REALTIME_SOCKETS = ["workspace", "workstream_control", "substream_feed"] as const;
+export type TelemetryRealtimeSocket = typeof TELEMETRY_REALTIME_SOCKETS[number];
+export const TELEMETRY_REALTIME_SOCKET_CAUSES = [
+  "opened",
+  "transport_error",
+  "heartbeat_timeout",
+  "server_closed",
+  "ticket_failed",
+  "resync_required",
+  "offline",
+  "access_revoked",
+] as const;
+export type TelemetryRealtimeSocketCause = typeof TELEMETRY_REALTIME_SOCKET_CAUSES[number];
+
+const realtimeSocketProperties = z.object({
+  socket: z.enum(TELEMETRY_REALTIME_SOCKETS),
+  state: z.enum(["connected", "retrying", "stopped"]),
+  cause: z.enum(TELEMETRY_REALTIME_SOCKET_CAUSES),
+  attempts: countBucket,
+}).strict().superRefine((value, context) => {
+  // The one combination that is not a measurement but a mistake: a socket that
+  // opened has no failure cause, and a failure cause did not open a socket.
+  if ((value.state === "connected") !== (value.cause === "opened")) {
+    context.addIssue({ code: "custom", message: "realtime_socket_state_cause_invalid" });
+  }
+});
+
 const generatedJavascriptFrame = z.string().min(1).max(192)
   .regex(/^[a-zA-Z0-9_-][a-zA-Z0-9._/-]{0,159}\.(?:c?js):\d{1,7}:\d{1,5}$/u)
   .refine((value) => !value.startsWith("/") && !value.includes(".."));
@@ -285,6 +312,22 @@ export const TELEMETRY_EVENTS = {
       duration: durationBucket,
     }).strict(),
     propertyClassifications: { operation: "operational", result: "operational", duration: "operational" },
+    priority: "normal",
+    regionalRetention: "90-days",
+  }),
+  realtime_socket_state: event({
+    ...common,
+    name: "realtime_socket_state",
+    definition: "A bounded connection transition on one of the desktop client's three realtime sockets.",
+    productQuestion: "Which realtime sockets drop, why, and how many attempts does a client spend getting back?",
+    sources: ["desktop-renderer"],
+    authoritativeSource: "desktop-renderer",
+    category: "product",
+    identityScopes: ["workspace-user"],
+    properties: realtimeSocketProperties,
+    propertyClassifications: {
+      socket: "operational", state: "operational", cause: "operational", attempts: "operational",
+    },
     priority: "normal",
     regionalRetention: "90-days",
   }),

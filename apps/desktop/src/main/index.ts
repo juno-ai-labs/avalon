@@ -366,6 +366,7 @@ function parseTelemetryProductIntent(value: unknown): DesktopTelemetryProductInt
     || semanticKind === 'recording_start_completed'
     || semanticKind === 'recording_terminal'
     || semanticKind === 'note_opened_v2'
+    || semanticKind === 'realtime_socket_state'
   )) {
     const properties = { ...candidate };
     delete properties['kind'];
