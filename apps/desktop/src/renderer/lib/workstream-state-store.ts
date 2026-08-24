@@ -60,6 +60,7 @@ export function workstreamSummaryState(workstream: WorkstreamSummary): {
       manualUnreadFromSequenceNumber: workstream.manualUnreadFromSequenceNumber,
       manualUnreadGeneration: workstream.manualUnreadGeneration,
       youAreMentioned: workstream.youAreMentioned,
+      unseen: workstream.unseen,
     },
     seed: workstream,
   };

@@ -151,10 +151,22 @@
   --av-sys-color-danger-edge: #5b302d;
   --av-sys-color-danger-on: #17100f;
 
-  /* A run a person deliberately halted. It is not a failure and not a warning
-   * — nothing went wrong — so it takes neither of those hues; a dimmed ember
-   * reads as "stood down" beside the live states. */
-  --av-sys-color-stopped-base: #a78668;
+  /* One colour per state a work stream can show a person in the sidebar and on
+   * the home screen. Every marker in the product draws from this group and
+   * nowhere else, so a state has one colour wherever it appears; which state
+   * wins when several are true at once is the client’s ordering, not the
+   * palette’s. Three of them are the run’s (`running`, `needs-input`,
+   * `completed`, `failed`, `stopped`) and three are the reader’s own
+   * (`unread`, `mentioned`, `unseen`), which is why they are one vocabulary:
+   * they compete for one dot. */
+  --av-sys-color-workstream-running: #47c7fc;
+  --av-sys-color-workstream-needs-input: #e6bd45;
+  --av-sys-color-workstream-completed: var(--av-ref-color-neutral-9);
+  --av-sys-color-workstream-failed: #d8756f;
+  --av-sys-color-workstream-stopped: #a78668;
+  --av-sys-color-workstream-unread: #6ecb87;
+  --av-sys-color-workstream-mentioned: #f07ab0;
+  --av-sys-color-workstream-unseen: #b48cff;
 
   /* Failure and destructive action. */
   --av-sys-color-danger-tint: rgba(216, 117, 111, 0.13);
@@ -522,7 +534,14 @@
   --av-sys-color-danger-edge: #f2c9c6;
   --av-sys-color-danger-on: #ffffff;
 
-  --av-sys-color-stopped-base: #8a6a4d;
+  --av-sys-color-workstream-running: #1f74b8;
+  --av-sys-color-workstream-needs-input: #b07d0a;
+  --av-sys-color-workstream-completed: var(--av-ref-color-neutral-9);
+  --av-sys-color-workstream-failed: #c3453f;
+  --av-sys-color-workstream-stopped: #8a6a4d;
+  --av-sys-color-workstream-unread: #2f7d55;
+  --av-sys-color-workstream-mentioned: #b83d7e;
+  --av-sys-color-workstream-unseen: #6f45c0;
 
   --av-sys-color-danger-tint: rgba(195, 69, 63, 0.1);
   --av-sys-color-danger-tint-strong: rgba(195, 69, 63, 0.24);
@@ -808,7 +827,14 @@
   --av-sys-color-danger-edge: #3a201a;
   --av-sys-color-danger-on: #150b08;
 
-  --av-sys-color-stopped-base: #ab8a6d;
+  --av-sys-color-workstream-running: #5cb3e0;
+  --av-sys-color-workstream-needs-input: #dcb45f;
+  --av-sys-color-workstream-completed: var(--av-ref-color-neutral-9);
+  --av-sys-color-workstream-failed: #cc7a6a;
+  --av-sys-color-workstream-stopped: #ab8a6d;
+  --av-sys-color-workstream-unread: #74c48c;
+  --av-sys-color-workstream-mentioned: #e585ad;
+  --av-sys-color-workstream-unseen: #a992e0;
 
   --av-sys-color-danger-tint: rgba(204, 122, 106, 0.14);
   --av-sys-color-danger-tint-strong: rgba(204, 122, 106, 0.3);
@@ -1094,7 +1120,14 @@
   --av-sys-color-danger-edge: #f2c9c6;
   --av-sys-color-danger-on: #ffffff;
 
-  --av-sys-color-stopped-base: #8a6a4d;
+  --av-sys-color-workstream-running: #1a7fc4;
+  --av-sys-color-workstream-needs-input: #b8860b;
+  --av-sys-color-workstream-completed: var(--av-ref-color-neutral-9);
+  --av-sys-color-workstream-failed: #c3453f;
+  --av-sys-color-workstream-stopped: #8a6a4d;
+  --av-sys-color-workstream-unread: #2e8a54;
+  --av-sys-color-workstream-mentioned: #bf3a80;
+  --av-sys-color-workstream-unseen: #7047c9;
 
   --av-sys-color-danger-tint: rgba(195, 69, 63, 0.1);
   --av-sys-color-danger-tint-strong: rgba(195, 69, 63, 0.24);
