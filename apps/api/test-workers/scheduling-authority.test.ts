@@ -212,7 +212,7 @@ describe("scheduling authority on real workerd", () => {
     });
   });
 
-  it("leaves the alarm index alone for an operation that reads", async () => {
+  it("answers a read from its own table without moving the index or the projection", async () => {
     const stub = agent();
     await boot(stub);
     await runInDurableObject(stub, (_instance, state) => {
@@ -220,13 +220,39 @@ describe("scheduling authority on real workerd", () => {
       seedRun(state);
     });
     await scheduling(stub, "scheduleWakeup", wakeup());
+    await scheduling(stub, "recordPluginActivation", { pluginId: "a-plugin", now: 1 });
+    const before = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ next_version: number }>(
+        `SELECT next_version FROM projection_keys WHERE projection_key = 'common'`,
+      ).one().next_version);
 
     const hints = await scheduling(stub, "activationHints");
 
-    // Reads do not reconcile, do not arm, and do not republish. The set of
-    // mutating operations is named in the protocol rather than inferred, so a
-    // read cannot accidentally join it.
-    expect(hints.value).toEqual([]);
+    // What this proves is that the read answers from its own table and moves
+    // nothing — not that a read cannot be misclassified. Adding
+    // `activationHints` to `WAKEUP_MUTATIONS` leaves every assertion here
+    // green, and that is a fact about the system rather than a hole in the
+    // test: `commitWithRegionalEffects` compares the effect's payload hash
+    // against `projection_keys.last_payload_hash` and skips an identical one,
+    // so a read that changes nothing publishes nothing, and reconciling the
+    // alarm index against an unchanged table lands on the number it started
+    // from. Misclassifying a read costs a transaction and a reconcile, and the
+    // suite has no way to see it because there is nothing to see.
+    //
+    // The direction that does damage is the other one — a mutation *missing*
+    // from the set stops arming — and it is covered: emptying `WAKEUP_MUTATIONS`
+    // fails the four specs above.
+    //
+    // The hint is seeded rather than left absent so the returned array is the
+    // row this work stream wrote. An assertion of `[]` against a table nobody
+    // populated passes for a query that reads the wrong table entirely, which
+    // is what this assertion was before.
+    expect(hints.value).toEqual(["a-plugin"]);
+    const after = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ next_version: number }>(
+        `SELECT next_version FROM projection_keys WHERE projection_key = 'common'`,
+      ).one().next_version);
+    expect(after).toBe(before);
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(
         `SELECT COUNT(*) AS count FROM _internal_durable_alarms WHERE kind = 'agent_timer'`,
@@ -290,6 +316,35 @@ describe("scheduling authority on real workerd", () => {
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(
         `SELECT COUNT(*) AS count FROM compaction_checkpoints`,
+      ).one().count).toBe(0);
+    });
+  });
+
+  it("refuses a write against an authoritative object that was never promoted", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      state.storage.sql.exec(`UPDATE workstream SET authority_generation = 0 WHERE id = 1`);
+    });
+
+    // The routed fence was two checks in two places: `executeWorkstreamRuntimeSql`
+    // refused a non-authoritative mode, and it then ran *every* batch through
+    // `commitRuntimeMutation`, whose `commitWithRegionalEffects` refuses
+    // generation zero. A port that kept only the mode check would let this
+    // write land where the statement it replaced was refused.
+    const { status, body } = await post(stub, "/internal/scheduling", {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      operation: "recordPluginActivation",
+      args: [{ pluginId: "a-plugin", now: 1 }],
+    });
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ error: "workstream_runtime_authority_fenced" });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM plugin_activation_hints`,
       ).one().count).toBe(0);
     });
   });

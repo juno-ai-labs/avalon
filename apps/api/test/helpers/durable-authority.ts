@@ -5,16 +5,19 @@ import { applyWorkstreamObjectSchema } from "../../src/durable-objects/workstrea
 import {
   BLOCK_DASHBOARD_OPERATIONS,
   type BlockDashboardObjectPort,
+  type BlockDashboardOperation,
 } from "../../src/durable-objects/workstream-block-dashboard-protocol";
 import { WorkstreamBlockDashboardStorage } from "../../src/durable-objects/workstream-block-dashboard-storage";
 import {
   TOOL_RECEIPT_OPERATIONS,
   type ToolReceiptObjectPort,
+  type ToolReceiptOperation,
 } from "../../src/durable-objects/workstream-tool-receipt-protocol";
 import { WorkstreamSchedulingStorage } from "../../src/durable-objects/workstream-scheduling-storage";
 import {
   SCHEDULING_OPERATIONS,
   type SchedulingObjectPort,
+  type SchedulingOperation,
 } from "../../src/durable-objects/workstream-scheduling-protocol";
 import { WorkstreamToolReceiptStorage } from "../../src/durable-objects/workstream-tool-receipt-storage";
 import { WorkstreamTerminalStorage } from "../../src/durable-objects/workstream-terminal-storage";
@@ -666,12 +669,42 @@ export function testSubstreamAgentsBinding(
 }
 
 /**
+ * One in-isolate port over a real storage instance, for any of the authorities.
+ *
+ * The Node suite's stand-in for an `/internal/*` round trip: the real storage
+ * class over the real object schema, so every statement and every fence is
+ * exercised. What the *runtime* decides — that the operation is atomic against
+ * a concurrent caller, that a lease cannot lapse mid-operation — is proved in
+ * `test-workers/` instead.
+ *
+ * One helper rather than three, matching `createObjectPort`, which the three
+ * production ports collapsed onto for the same reason. The three copies this
+ * replaces had all drifted from production in the same way: none applied the
+ * `?? null` coalesce the real seam applies, so a method returning `undefined` —
+ * `wakeup`, `oldestOpenElicitation`, `descriptionRefreshState`,
+ * `compactionCheckpoint`, and their receipt and block-dashboard counterparts —
+ * answered the Node suite differently from the wire, where JSON has no
+ * `undefined` and an absent `value` arrives as `null`.
+ */
+function testObjectPort<TStorage, TOperation extends keyof TStorage & string, TPort>(
+  storage: TStorage,
+  operations: readonly TOperation[],
+): TPort {
+  return Object.fromEntries(
+    operations.map((operation) => [
+      operation,
+      async (...args: unknown[]) =>
+        (storage[operation] as (...rest: unknown[]) => unknown).apply(storage, args) ?? null,
+    ]),
+  ) as TPort;
+}
+
+/**
  * A tool-receipt port backed by the same in-memory object database.
  *
- * The Node suite's stand-in for the `/internal/tool-receipt` round trip: the
- * real storage class over the real object schema, so every statement and every
- * fence is exercised. What the *runtime* decides — that the operation is atomic
- * against a concurrent caller — is proved in `test-workers/` instead.
+ * Takes the two staging hooks the others do not need: receipt operations read
+ * their fences and write their rows in one transaction, so a race that used to
+ * fit between two D1 batches has to be staged from inside it.
  */
 export function testToolReceiptPort(
   database: DatabaseSync,
@@ -679,9 +712,7 @@ export function testToolReceiptPort(
    * Run inside `transactionSync`, immediately before the operation's body.
    *
    * The only way for a test to land competing state at the last instant an
-   * operation could still observe it. Every receipt operation reads its fences
-   * and writes its rows in one transaction, so this is where a race that used
-   * to fit between two D1 batches now has to be staged from.
+   * operation could still observe it.
    */
   beforeTransaction?: () => void,
   /**
@@ -706,73 +737,52 @@ export function testToolReceiptPort(
       },
     })
     : objectSql;
-  const storage = new WorkstreamToolReceiptStorage(
-    createCloudflareTestBinding<DurableObjectStorage>({
-      getAlarm: async () => null,
-      setAlarm: async () => undefined,
-      transactionSync: (body: () => unknown) => {
-        beforeTransaction?.();
-        return body();
-      },
-      sql,
-    }),
+  return testObjectPort<WorkstreamToolReceiptStorage, ToolReceiptOperation, ToolReceiptObjectPort>(
+    new WorkstreamToolReceiptStorage(
+      createCloudflareTestBinding<DurableObjectStorage>({
+        getAlarm: async () => null,
+        setAlarm: async () => undefined,
+        transactionSync: (body: () => unknown) => {
+          beforeTransaction?.();
+          return body();
+        },
+        sql,
+      }),
+    ),
+    TOOL_RECEIPT_OPERATIONS,
   );
-  return Object.fromEntries(
-    TOOL_RECEIPT_OPERATIONS.map((operation) => [
-      operation,
-      async (...args: unknown[]) =>
-        (storage[operation] as (...rest: unknown[]) => unknown).apply(storage, args),
-    ]),
-  ) as ToolReceiptObjectPort;
+}
+
+/** A storage binding over one in-memory object database, with no staging hooks. */
+function plainBinding(database: DatabaseSync): DurableObjectStorage {
+  return createCloudflareTestBinding<DurableObjectStorage>({
+    getAlarm: async () => null,
+    setAlarm: async () => undefined,
+    transactionSync: (body: () => unknown) => body(),
+    sql: objectSqlStorage(database),
+  });
 }
 
 /**
  * A scheduling port over a real storage instance in this isolate.
  *
- * The seam the other two ports take, for the same reason — and one more here:
- * the owning object fires its own wake-up alarms, so this is also what a test
- * uses to stand where the object stands, with its storage in hand rather than
- * a stub addressed to itself.
+ * One more use than the others have: the owning object fires its own wake-up
+ * alarms, so this is also what a test uses to stand where the object stands,
+ * with its storage in hand rather than a stub addressed to itself.
  */
 export function testSchedulingPort(database: DatabaseSync): SchedulingObjectPort {
-  const storage = new WorkstreamSchedulingStorage(
-    createCloudflareTestBinding<DurableObjectStorage>({
-      getAlarm: async () => null,
-      setAlarm: async () => undefined,
-      transactionSync: (body: () => unknown) => body(),
-      sql: objectSqlStorage(database),
-    }),
+  return testObjectPort<WorkstreamSchedulingStorage, SchedulingOperation, SchedulingObjectPort>(
+    new WorkstreamSchedulingStorage(plainBinding(database)),
+    SCHEDULING_OPERATIONS,
   );
-  return Object.fromEntries(
-    SCHEDULING_OPERATIONS.map((operation) => [
-      operation,
-      async (...args: unknown[]) =>
-        (storage[operation] as (...rest: unknown[]) => unknown).apply(storage, args),
-    ]),
-  ) as SchedulingObjectPort;
 }
 
-/**
- * A block-dashboard port over a real storage instance in this isolate.
- *
- * The receipt port's seam, for the same reason: the Node suite runs the real
- * schema and the real statements over `node:sqlite`, and what the runtime
- * decides belongs in `test-workers/`.
- */
+/** A block-dashboard port over a real storage instance in this isolate. */
 export function testBlockDashboardPort(database: DatabaseSync): BlockDashboardObjectPort {
-  const storage = new WorkstreamBlockDashboardStorage(
-    createCloudflareTestBinding<DurableObjectStorage>({
-      getAlarm: async () => null,
-      setAlarm: async () => undefined,
-      transactionSync: (body: () => unknown) => body(),
-      sql: objectSqlStorage(database),
-    }),
+  return testObjectPort<
+    WorkstreamBlockDashboardStorage, BlockDashboardOperation, BlockDashboardObjectPort
+  >(
+    new WorkstreamBlockDashboardStorage(plainBinding(database)),
+    BLOCK_DASHBOARD_OPERATIONS,
   );
-  return Object.fromEntries(
-    BLOCK_DASHBOARD_OPERATIONS.map((operation) => [
-      operation,
-      async (...args: unknown[]) =>
-        (storage[operation] as (...rest: unknown[]) => unknown).apply(storage, args),
-    ]),
-  ) as BlockDashboardObjectPort;
 }

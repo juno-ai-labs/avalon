@@ -1063,6 +1063,72 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-24 — What a review found in the scheduling slice, and one test that was proving nothing
+
+**What changed:** five fixes, from a review of the rebased slice.
+
+- `workstream-scheduling-protocol.ts` folds onto `object-port-protocol.ts`, the
+  way the port folded onto `createObjectPort` in the entry below. It had its own
+  mapped type, its own `Exhaustive`, its own request envelope, and its own
+  `MAX_SCHEDULING_OPERATION_ARGS` — a second copy of a limit that has to change
+  in lockstep with the shared one, with nothing enforcing it. 129 lines to 88.
+- `isAuthoritative()` now requires `authority_generation > 0` as well as an
+  `authoritative` mode.
+- `claimDescriptionEvaluation` clears the five decision columns, as the retired
+  trigger's conflict arm did.
+- `refreshAgentTimerAlarm` no longer takes a substream id.
+- The three `test*Port` helpers become one, and it applies the `?? null` the
+  real seam applies.
+
+**Why:** the authority one is the substantive fix. The routed fence was written
+in two places, and reading only `authority_mode` restored one of them:
+`executeWorkstreamRuntimeSql` refused a non-authoritative object outright, and
+it then ran *every* batch through `commitRuntimeMutation` — whose
+`commitWithRegionalEffects` also refuses generation zero. The wake-up mutations
+still reach that function and so kept the generation check by their own route;
+the writes that do not — compaction checkpoints, plugin hints, both
+description-evaluation writes, and the receipt and block-dashboard writes beside
+them — had none. The endpoint docstring and the entry below both claimed the
+shared refusal restored what the routed path refused, and until now that was
+three-quarters true.
+
+The description-claim columns are the conversion defect this kind of slice
+exists to avoid. The retired trigger's `ON CONFLICT(id) DO UPDATE` arm set
+`confidence`, `model`, `previous_description`, `description` and `reasoning`
+from `excluded.*`, and the routed claim left all five out of its column list —
+so `excluded.*` was NULL and a claim wiped the previous evaluation's output. The
+converted `UPDATE` simply did not mention them, which reads like the same
+deliberate omission that carries `consecutive_keeps` and is the opposite: it
+would leave `decision = 'pending'` beside the description and reasoning of an
+already-closed evaluation, a row shape production has never produced and one
+that reads as current. Nothing selects those columns today, which is why it was
+invisible.
+
+`refreshAgentTimerAlarm` took a substream id because the routed insert followed
+the caller's substream binding, so the arm had to go where the row went. The
+port names the main child for every call, so the parameter had become a way for
+the two to disagree — arming an object whose `workstream_wakeups` is empty while
+the object holding the row went unarmed. Unreachable today, since every dispatch
+passes `"0"`; removed rather than documented, because a parameter that must
+always be one value is not a parameter.
+
+**On the test that was proving nothing:** the spec named "leaves the alarm index
+alone for an operation that reads" could not fail. Both of its assertions
+survive adding `activationHints` to `WAKEUP_MUTATIONS`, and its `toEqual([])`
+also passed against a table nobody had seeded. Chasing it turned up something
+worth writing down: a misclassified *read* is close to harmless, because
+`commitWithRegionalEffects` skips an effect whose payload hash matches the last
+one published, so a call that changed nothing publishes nothing. There is no
+assertion that catches it because there is nothing to catch. The spec now seeds
+a hint, asserts the row it wrote, and says in its own comment that the direction
+that does damage is the other one — a mutation missing from the set, which
+emptying the set proves.
+
+**What a future change has to respect:** `isAuthoritative()` is the whole fence
+those endpoints have, and both halves of it came from somewhere. If a typed
+authority ever needs to admit a generation-zero object, that is a decision about
+which writes count during import, not a detail to relax here.
+
 ### 2026-08-24 — The scheduling port joins the factory, and its writes get the authority fence
 
 **What changed:** `runtime/scheduling-port.ts` is now a contract object handed
@@ -1219,6 +1285,7 @@ because the block was already settled rather than because the lease had moved �
 which no caller acts on: both throw, and the two error codes it added were
 caught nowhere. The distinction is real and the object can make it; it is worth
 making when something needs it.
+
 ### 2026-08-23 — Scheduling moves onto a typed authority, four views at a time
 
 **What changed:** `WorkstreamSchedulingStorage` owns `workstream_wakeups`,
