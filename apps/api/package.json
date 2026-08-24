@@ -24,8 +24,8 @@
     "db:migrate:remote:list:eu": "node ../../scripts/migrate-d1.mjs --remote --list --region eu",
     "db:seed": "node ../../scripts/seed-local-region.mjs global",
     "db:seed:eu": "node ../../scripts/seed-local-region.mjs eu",
-    "deploy:global": "wrangler deploy --config wrangler.global.jsonc",
-    "deploy:eu": "wrangler deploy --config wrangler.eu.jsonc"
+    "deploy:global": "node ../../scripts/ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings && wrangler deploy --config .wrangler.inference.global.json",
+    "deploy:eu": "node ../../scripts/ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings && wrangler deploy --config .wrangler.inference.eu.json"
   },
   "dependencies": {
     "@avalon/agent-harness": "workspace:*",

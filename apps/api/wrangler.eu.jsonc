@@ -170,6 +170,9 @@
   "queues": {
     "producers": [
       { "binding": "ACTIVITY_QUEUE", "queue": "avalon-eu-activities" },
+      // Same regional staging and pointer-only transport as Global. The EU
+      // consumer reaches only the EU stream and EU-jurisdiction catalog.
+      { "binding": "INFERENCE_LAKEHOUSE_QUEUE", "queue": "avalon-eu-inference-lakehouse" },
       // Access retractions on their way to open sockets. A queue rather
       // than RPC from the route that wrote the fact: the fan-out walks the
       // whole object hierarchy, nothing waits on its outcome, and a
@@ -199,6 +202,12 @@
         "max_batch_timeout": 1,
         "max_retries": 5,
         "dead_letter_queue": "avalon-eu-activities-dead-letter"
+      },
+      {
+        "queue": "avalon-eu-inference-lakehouse",
+        // Matches Global; both use Cloudflare's platform defaults and retain a
+        // region-specific dead-letter signal.
+        "dead_letter_queue": "avalon-eu-inference-lakehouse-dead-letter"
       },
       {
         "queue": "avalon-eu-access-revocations",

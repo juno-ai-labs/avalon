@@ -101,6 +101,16 @@ healthRoutes.get("/", async (c) => {
     ok: typeof c.env.ACTIVITY_QUEUE?.send === "function",
     message: typeof c.env.ACTIVITY_QUEUE?.send === "function" ? "binding available" : "binding unavailable",
   };
+  checks.inferenceLakehouse = {
+    ok: typeof c.env.INFERENCE_LAKEHOUSE_QUEUE?.send === "function"
+      && typeof c.env.INFERENCE_LAKEHOUSE?.send === "function",
+    message: typeof c.env.INFERENCE_LAKEHOUSE_QUEUE?.send === "function"
+      && typeof c.env.INFERENCE_LAKEHOUSE?.send === "function"
+      ? "regional Queue and Pipeline bindings available"
+      : c.env.APP_ENV === "production"
+        ? "regional Queue or Pipeline binding unavailable"
+        : "Pipeline binding is materialized only for hosted deployments",
+  };
   checks.workflows = {
     ok: typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function"
       && typeof c.env.CONNECTOR_EVENT_WORKFLOW?.create === "function"
@@ -228,7 +238,9 @@ healthRoutes.get("/", async (c) => {
     checks.workflows,
     checks.workstreamEmailRegistry,
   ];
-  if (c.env.APP_ENV === "production") required.push(checks.inboundEmail, checks.featureFlags);
+  if (c.env.APP_ENV === "production") {
+    required.push(checks.inboundEmail, checks.featureFlags, checks.inferenceLakehouse);
+  }
   if (anyLinearConfigured) required.push(checks.linear);
   const ok = required.every((check) => check?.ok);
   return c.json(

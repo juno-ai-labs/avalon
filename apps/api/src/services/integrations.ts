@@ -124,6 +124,7 @@ import {
 } from "../observability/harness-run-observability";
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
+import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
 import { resolveAgentModelRouting, resolveWorkstreamModelRouting } from "./agent-model-flags";
 import {
   emitAgentToolStartedTelemetry,
@@ -1372,7 +1373,7 @@ export async function classifyWorkstreamMessage(
     recentMessages: input.recentMessages,
     // Without this the classifier is the one model caller that leaves no trace:
     // a provider rejection here is silently absorbed into the heuristic result.
-    onDiagnostic: (diagnostic) => {
+    onDiagnostic: async (diagnostic) => {
       logStructuredEvent(
         env,
         diagnostic.validationIssues || diagnostic.failureKind ? "warn" : "info",
@@ -1396,6 +1397,11 @@ export async function classifyWorkstreamMessage(
           validation_issues: diagnostic.validationIssues,
         },
       );
+      await captureStructuredInferenceDiagnostic(env, {
+        source: "addressing_classifier",
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+      }, diagnostic);
     },
   });
 }
@@ -1492,6 +1498,7 @@ export async function compileAutomationDraft(
   });
   const inferenceLogger = createAgentInferenceLogger(env, {
     workspaceId: input.workspaceId,
+    userId: input.userId,
     requestId: input.requestId,
     ...(input.draftId ? { draftId: input.draftId } : {}),
     source: "automation_compiler",
@@ -1517,7 +1524,7 @@ export async function compileAutomationDraft(
       ...(input.signal ? { signal: input.signal } : {}),
       onInferenceRequest: inferenceLogger.onRequest,
       onInferenceAttempt: inferenceLogger.onAttempt,
-      onDiagnostic: (diagnostic: StructuredModelDiagnostic) => {
+      onDiagnostic: async (diagnostic: StructuredModelDiagnostic) => {
         logStructuredEvent(env, diagnostic.validationIssues ? "warn" : "info", "automation_compiler", {
           request_id: input.requestId,
           draft_id: input.draftId,
@@ -2113,7 +2120,7 @@ export async function runWorkstreamHarness(
   });
   let lastStopCheck = 0;
   let ambiguousToolOutcome = false;
-  let suppressInferencePayloadLogging = false;
+  let suppressInferenceRequestCapture = false;
   const toolEffectIntents = createToolEffectIntents();
   const attachmentGrounding = new AttachmentGroundingGuard();
   const runLimits = workstreamRunLimits();
@@ -2263,9 +2270,13 @@ export async function runWorkstreamHarness(
   const livenessMonitor = liveness.startMonitor(5_000);
   const inferenceLogger = createAgentInferenceLogger(env, {
     workspaceId: input.workspaceId,
+    ...(input.executionPrincipal.type === "user"
+      ? { userId: input.executionPrincipal.userId }
+      : {}),
     requestId: input.harnessRunId,
     source: blockDashboardRun ? "block_dashboard" : "workstream",
     workstreamId: input.workstreamId,
+    substreamId: input.substreamId ?? "0",
   });
   let preparedCompactionVisibilityFingerprint: string | null = null;
   let outcome: Awaited<ReturnType<typeof runHarness>>;
@@ -2490,7 +2501,7 @@ export async function runWorkstreamHarness(
         completedAt,
       });
     },
-    onInferenceRequest: (request) => suppressInferencePayloadLogging
+    onInferenceRequest: (request) => suppressInferenceRequestCapture
       ? undefined
       : inferenceLogger.onRequest(request),
     onTranscriptIssues: (issues) => {
@@ -2866,7 +2877,7 @@ export async function runWorkstreamHarness(
             ...event.policy,
           }, harnessTools);
           const transientSlackSearch = receiptPolicy.definition.capability === "slack.search";
-          if (transientSlackSearch) suppressInferencePayloadLogging = true;
+          if (transientSlackSearch) suppressInferenceRequestCapture = true;
           const plannedInvocation = await loadToolInvocation(env, input, event.toolCallId);
           if (!plannedInvocation) throw new Error("tool_execution_plan_missing");
           await settleRootHarnessToolCompletion(env, input, liveness.lease, {
@@ -3579,7 +3590,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
       } = childHarnessTools;
 
       let childOutcome: InlineChildResult;
-      let suppressChildInferencePayloadLogging = false;
+      let suppressChildInferenceRequestCapture = false;
       // Do not start a renewable child lease until the fallible surface setup
       // has completed. Otherwise an adapter/setup exception can escape the
       // try/finally below and leave a timer renewing a run that will never end.
@@ -3656,10 +3667,14 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         });
         const childInferenceLogger = createAgentInferenceLogger(options.env, {
           workspaceId: childInput.workspaceId,
+          ...(childInput.executionPrincipal.type === "user"
+            ? { userId: childInput.executionPrincipal.userId }
+            : {}),
           requestId: childInput.harnessRunId,
           parentRequestId: parentInput.harnessRunId,
           source: "inline_child",
           workstreamId: childInput.workstreamId,
+          substreamId: childInput.substreamId ?? "0",
         });
         const outcome = await runHarness({
           config: {
@@ -3784,7 +3799,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
               ...(contentParts.length > 0 ? { contentParts } : {}),
             };
           },
-          onInferenceRequest: (request) => suppressChildInferencePayloadLogging
+          onInferenceRequest: (request) => suppressChildInferenceRequestCapture
             ? undefined
             : childInferenceLogger.onRequest(request),
           onInferenceAttempt: async (attempt) => {
@@ -3923,7 +3938,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   throw new ConnectorError("unauthorized", "Child write tool rejected");
                 }
                 const transientSlackSearch = receiptPolicy.definition.capability === "slack.search";
-                if (transientSlackSearch) suppressChildInferencePayloadLogging = true;
+                if (transientSlackSearch) suppressChildInferenceRequestCapture = true;
                 const invocation = await loadToolInvocation(
                   options.env,
                   childInput,

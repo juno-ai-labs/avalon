@@ -301,7 +301,26 @@ audio admits only the `wav` and `mp3` formats the SDK contract supports. This
 keeps an SDK union or return-shape change visible to the compiler instead of
 letting it emerge later in a provider request.
 
-Every classified provider attempt appends an immutable inference-ledger row with its turn/route cursor, provider and model, routing decision, outcome, latency, available token/cache/cost counters, and hashed credential/workspace identities. Harness-run usage also stores turn/tool timings and counts. Provider error bodies and credentials are not retained in the ledger. The opt-in payload index uses the same closed source vocabulary as the runtime: `workstream`, `automation_compiler`, `inline_child`, `block_dashboard`, and `meeting_notes`. Migration `0093_expand_agent_inference_log_sources.sql` admits the last two while preserving existing rows and rejecting unknown callers.
+Every classified provider attempt appends an immutable operational
+`inference_attempts` row in the owning `SubstreamAgent` or
+`BlockDashboardAgent`, with its turn/route cursor, provider and model, routing
+decision, outcome, latency, available token/cache/cost counters, and hashed
+credential/workspace identities. Harness-run usage also stores turn/tool
+timings and counts. Provider error bodies and credentials are not retained in
+that recovery ledger. The regional lakehouse separately uses the closed source
+vocabulary `workstream`, `automation_compiler`, `inline_child`,
+`block_dashboard`, and `meeting_notes` for analytical capture.
+
+The harness also emits the lossless events consumed by the regional
+[`inference lakehouse`](inference-lakehouse.md). A streaming call exposes the
+exact outbound body before inference and its complete normalized response or
+provider error at the terminal attempt. A structured call assigns one request
+ID before each provider fetch and carries its exact outbound body, complete
+successful JSON provider envelope, bounded failure classification, usage,
+latency, response size, repair position, and validation outcome through
+completion. These are explicit host hooks: the portable harness
+does not know about R2, Queue, Pipeline, or residency, and a host's capture
+failure never changes provider routing or run outcome.
 
 ### Streaming stability
 
@@ -567,7 +586,8 @@ It does not own:
 | The create path a run is launched from | [`workstream-creation.md`](workstream-creation.md) |
 | The digest that rides this loop | [`digests.md`](digests.md) |
 | The description pass that runs after a terminal run | [`workstream-descriptions.md`](workstream-descriptions.md) |
-| Reading a captured inference payload back | [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference) |
+| Reading a captured inference record back | [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference) |
+| Regional analytical inference capture and retention | [`inference-lakehouse.md`](inference-lakehouse.md) |
 
 A run is one server-side, tool-using loop inherent to a work stream. It is
 not a participant, a separate persona, a terminal, or a general code-execution
@@ -580,7 +600,7 @@ Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and h
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The Bind loop runs inside a long-lived `SubstreamAgent` operation, so an `AbortSignal.timeout()` left armed after a fast tool call retains dead timer work and can keep the isolate active after useful work ended. The rule and its incident are [`runbook.md`](runbook.md).
 
-When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is available in memory for the immediate control decision and is never logged: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose.
+When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is never written to structured Workers Logs or the object-local operational inference ledger: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose. It is retained only inside the deliberately sensitive regional inference-lakehouse record, alongside the prompt it may quote, so lossless provider diagnosis does not turn the ordinary log surface into a content store.
 
 Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and dimensions and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, WebP, HEIF/HEIC, and the primary TIFF path are normalized through Cloudflare Images; the TIFF fallback preflights dimensions before pixel decode, while HEIF has no whole-buffer local fallback. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript. Non-image message attachments contribute a compact manifest only; authorized attachment tools own every byte of text, Office, and PDF hydration.
 
@@ -596,7 +616,7 @@ Bounded callers use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceede
 
 When every route candidate answers with a transport fault the provider owns — no response, a 408, a 429, or a 5xx — the run fails as `provider_unavailable`, kind `provider`, and not as `harness_execution_failed`. When the circuit breaker had already opened and no request went out at all, the run fails as `provider_circuit_open`, also kind `provider`: Bind's executor reports that as `no_viable_endpoints` carrying no error, and letting that emptiness fall through to the generic bucket reinstated the misattribution during exactly the minute an outage was worst — the first run in a workspace named accurately, every run behind it blamed on Avalon. The two codes stay separate because the breaker opens on 401/402/403 as readily as on a 5xx, so a refusal cannot be attributed to the provider without knowing why it opened, which the breaker does not record. The distinction is the whole point of the code: `harness_execution_failed` means Avalon's own defect and gives a member no reason to try again, so filing an upstream outage under it sends whoever reads the failure to the wrong system. A 400 stays generic, because the request shape is ours; 401, 402, and 403 stay generic too, because the credential or the credit is ours. Bind's `isRetriableAttemptError` is the authority for the split, minus completion defects, which are the model answering badly rather than the provider failing to answer.
 
-Before that failure is reached, the harness re-executes the **whole route plan** up to `transportRetries` times, which the work-stream host and the inline child set from `HARNESS_TRANSPORT_RETRIES` (declared as `1` in both regional Wrangler configs; `0` disables it, which is why it is read through `countEnv` rather than `numericEnv` — the latter rejects zero). The wait is a clamped backoff honouring `Retry-After` up to `TRANSPORT_RETRY_MAX_DELAY_MS`, and it is skipped entirely when the run's remaining wall clock cannot hold the wait plus a **worst-case replay of the whole plan** — every candidate, each able to spend its establishment timeout and then its time-to-first-token timeout, because the stream watchdog only opens once the response head lands. Reserving less lets a bounded caller's retry manufacture the deadline it defers to, and the outage is then reported as `run_wall_time_limit_exceeded`. Root work-stream runs set no wall clock and are unaffected; a 90s inline child effectively declines the retry, which is the honest answer for a budget that cannot hold a second pass. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a work stream pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt writes its own `agent_inference_payload_logs` row, so a retried turn is visible as more than one row sharing a `turn_id`.
+Before that failure is reached, the harness re-executes the **whole route plan** up to `transportRetries` times, which the work-stream host and the inline child set from `HARNESS_TRANSPORT_RETRIES` (declared as `1` in both regional Wrangler configs; `0` disables it, which is why it is read through `countEnv` rather than `numericEnv` — the latter rejects zero). The wait is a clamped backoff honouring `Retry-After` up to `TRANSPORT_RETRY_MAX_DELAY_MS`, and it is skipped entirely when the run's remaining wall clock cannot hold the wait plus a **worst-case replay of the whole plan** — every candidate, each able to spend its establishment timeout and then its time-to-first-token timeout, because the stream watchdog only opens once the response head lands. Reserving less lets a bounded caller's retry manufacture the deadline it defers to, and the outage is then reported as `run_wall_time_limit_exceeded`. Root work-stream runs set no wall clock and are unaffected; a 90s inline child effectively declines the retry, which is the honest answer for a budget that cannot hold a second pass. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a work stream pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt appends to the owning execution object's `inference_attempts` ledger and emits its own lakehouse terminal record, so a retried turn is visible as more than one attempt sharing a `turn_id`.
 
 A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
 
@@ -614,9 +634,9 @@ A `record_before_execute` write instead becomes `ambiguous_external_write` and
 terminates the run without retry guidance, because the provider may have applied
 the mutation before its response failed validation.
 
-The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `resourceId`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`, `attachmentKind`, and `suggestedCall` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into the inference payload logs on every failed call. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
+The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `resourceId`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`, `attachmentKind`, and `suggestedCall` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into every later lossless inference request record. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
 
-Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run. Reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
+Hosted inference capture has one path: the always-on regional lakehouse. It records exact request and terminal-attempt events through regional R2, Queue, Pipeline, and Data Catalog; the workspace preference, request-only `agent-inference/` writer, and regional D1 index no longer exist. Capture remains best-effort and cannot fail an agent run. Reading a captured record back is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
 
 Separately, Product analytics records a content-free `agent_tool_started` only
 after the execution plan is durable and replay/ambiguity checks permit a new
@@ -656,8 +676,9 @@ outputs, summaries, token content, and provider responses remain excluded.
 | `apps/api/test/bind-host-durability.test.ts` | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction and post-start validation receipt reuse. |
 | `apps/api/test/attachment-tool-receipts.test.ts` | Exact derivative and completed-output-reference dependency fencing, replay reauthorization, all-or-nothing multi-image registration, and successor-safe mismatch cleanup. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The pending-wake-up clock appears only on marked work streams, with the next due time and bounded prompt in its tooltip. |
-| `apps/api/test/agent-inference-logging.test.ts` | That the diagnostic path is best-effort and cannot fail a run. |
-| `packages/db/test/agent-inference-source-migration.test.ts` | Preservation of all three prior payload-log sources, the complete runtime source vocabulary, closed unknown-source rejection, and foreign-key integrity through migration 0093. |
+| `apps/api/test/agent-inference-logging.test.ts` | That no legacy D1/R2 path remains and provider refusals stay content-free in Workers Logs. |
+| `apps/api/test/inference-lakehouse.test.ts` | Exact request/attempt archival, pointer integrity, Pipeline delivery, and oversized-record preservation. |
+| `packages/db/test/agent-inference-retirement-migration.test.ts` | Migration 0094 removes the regional payload-log table and workspace preference while preserving workspace rows and foreign-key integrity. |
 | `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, `toolActivityName`, and the transport retry — that a fallback-less plan re-executes and re-sends **identical bytes**, that an exhausted budget and a refused endpoint each get their own provider code, that a 400 gets neither a retry nor the provider's name, and the backoff curve, `Retry-After` preference, and clamp as a pure function. |
 
 Run one with
@@ -752,6 +773,75 @@ message into that work stream. Giving the object a wake reason for its own
 expired lease is a
 [`durable-object-alarms.md`](durable-object-alarms.md) decision and is not this
 change's to make.
+
+### 2026-08-24 — Inference evidence preserves product substream identity
+
+**What changed:** Lakehouse request and attempt records now carry the canonical
+product `substream_id`. The main feed defaults to `"0"`, and root and inline
+child inference both inherit the workflow input's substream; inline child
+lineage remains represented by `request_id` and `parent_request_id`.
+
+**Why:** A work-stream-only analytical key cannot distinguish model calls once
+multiple product substreams exist inside one work stream, while using inline
+children as synthetic substreams would confuse execution lineage with product
+conversation identity.
+
+**Considered and rejected:** Leaving `substream_id` implicit until the product
+creates a second substream. The Pipeline stream schema is immutable, so waiting
+would force a resource replacement precisely when the identifier first became
+necessary.
+
+**Consequences:** Current main-feed evidence is explicitly identified as
+substream `"0"`; future workflow substreams flow into the lakehouse without
+changing child-run semantics or adding a D1 lookup path.
+
+### 2026-08-24 — The opt-in D1/R2 inference ledger is retired
+
+**What changed:** Migration 0094 drops `agent_inference_payload_logs` and the
+`workspaces.log_agent_inference` preference. The API contract, stored desktop
+session field, Workspace Settings toggle, and request-only `agent-inference/`
+writer were removed. Hosted capture now has one path: the regional inference
+lakehouse. Historical R2 objects are retained rather than deleted implicitly.
+
+**Why:** Keeping a second request-only index duplicated sensitive inference
+content, made absence ambiguous because the workspace flag defaulted off, and
+left operators choosing between two incomplete diagnostic surfaces after the
+lossless lakehouse became authoritative for inference analysis.
+
+**Considered and rejected:** Keeping the D1 row as a fast work-stream lookup.
+That preserves a second schema and lifecycle solely for convenience; the
+lakehouse already indexes `workstream_id`, `substream_id`, `request_id`, and
+`inference_request_id` without putting analytical state back into D1.
+
+**Consequences:** D1 no longer stores analytical inference metadata and the
+general payload bucket receives no new `agent-inference/` objects. The owning
+`SubstreamAgent` or `BlockDashboardAgent` still stores its operational
+`inference_attempts` rows because those belong to execution recovery, not
+analytics.
+
+### 2026-08-24 — Provider calls expose lossless request and terminal envelopes
+
+**What changed:** Every streaming attempt now identifies the provider invocation
+model and carries its complete normalized response. Every structured provider
+fetch gets a stable inference request ID and exposes its exact request,
+successful JSON response envelope, bounded failure classification, typed usage,
+latency, response bytes, repair position, and terminal validation result to the
+host capture hook.
+
+**Why:** The existing inference ledger described routing and cost, while its
+opt-in payload object stopped at the request body. A regional lakehouse cannot
+answer why a model behaved differently across providers or repairs without the
+matching output/error envelope and one ID joining the request to the attempt.
+
+**Considered and rejected:** Reconstructing responses from transcript messages.
+That loses provider IDs, raw usage and finish metadata, structured validation
+failures, rejected provider envelopes, and calls whose output never committed to
+the transcript.
+
+**Consequences:** The host hook now handles highly sensitive data and must keep
+it on the regional path described in `inference-lakehouse.md`. Ordinary Workers
+Logs and object-local operational ledgers remain redacted; only the explicit
+lossless store receives the full envelopes.
 
 ### 2026-08-23 — The work-stream prompt states what a written answer is made of
 

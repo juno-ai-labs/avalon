@@ -18,8 +18,8 @@ update it in the same change.
   was violated, and often names the exception you are looking at.
 - **Investigating what an agent actually did in production?**
   [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference) turns a work-stream
-  URL into the exact request the model received, using credentials the
-  environment already holds.
+  URL into a region-scoped R2 SQL query and, when necessary, the exact archived
+  request/response record without consulting the retired D1 inference ledger.
 - **Onboarding?** [the Avalon implementation
   brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md) for what Avalon is,
   then [`architecture.md`](architecture.md) for how it is put together, then
@@ -47,6 +47,7 @@ update it in the same change.
 | [`data-model.md`](data-model.md) | Identity, tenancy, the regional D1 control plane, and the WorkspaceDO/WorkstreamDO/agent SQLite schemas. Read before adding a table, column, or migration to any authority. |
 | [`branded-ids.md`](branded-ids.md) | The branded identifier types in contracts, the flow-don't-cast rules, and where casting provenance is legitimate. Read before adding an id-carrying signature or schema on the execution spine. |
 | [`regionalization.md`](regionalization.md) | The Global/EU boundary: single identity endpoint, the Global control plane's membership and invitation discovery, immutable workspace region. Read before touching anything cross-region. |
+| [`inference-lakehouse.md`](inference-lakehouse.md) | Lossless regional LLM request/attempt capture through R2, Queue, Pipeline, and R2 Data Catalog; its Iceberg schema, automatic provisioning, privacy boundary, delivery failures, and query operations. Read before changing inference diagnostics, regional analytical storage, or Pipeline resources. |
 | [`security.md`](security.md) | Trust boundaries — renderer isolation, contextIsolation and sandboxing, CSP, validated IPC, what is treated as untrusted. Read before changing any of those. |
 | [`telemetry.md`](telemetry.md) | The main-owned regional product-signal and crash-diagnostic boundary: typed collection, route and preference enforcement, local Crashpad generations, regional delivery, destination adapters, restricted operator access, and retention. Read before adding an event, diagnostic, provider mapping, or telemetry control. |
 | [`public-site-telemetry.md`](public-site-telemetry.md) | Anonymous public-page, acquisition, and browser-to-desktop handoff measurement: route-before-identity behavior, Global PostHog web events, page-scoped EU identity, prohibited handoff data, and site disclosure. Read before instrumenting the public site. |
