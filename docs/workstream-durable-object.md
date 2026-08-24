@@ -1063,6 +1063,29 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-24 — The resource migration renumbers to 21, and this time Git said nothing
+
+**What changed:** `resourceAuthorityPromotion` is object schema migration 21,
+and `WORKSTREAM_OBJECT_SCHEMA_VERSION` is 21. It was written as 20.
+
+**Why:** the scheduling slice took 20 on the way in. The entry above records the
+same thing happening to scheduling itself, where the two claims sat at the same
+position in the array and the rebase conflicted — the loud case. This is the
+quiet one it warned about: the two entries were appended at *different*
+positions, so Git merged them without a word into a list holding two entries
+numbered 20, and nothing failed. Not the build, not `pnpm test`, not lint. The
+runner would have applied whichever came first and skipped the other as already
+applied, and which one that was would have depended on merge order.
+
+It was caught by diffing the branch's version list against `main`'s before
+merging, which is now the thing to do rather than the thing to remember.
+
+**What a future change has to respect:** a migration number is not checked by
+anything in the repository. Two branches can claim the same one, merge cleanly,
+and produce an object whose schema version means different things depending on
+which landed first. Until something enforces it, the check is manual and belongs
+immediately before the merge, not when the migration is written.
+
 ### 2026-08-24 — The scheduling migration renumbers to 20, because 19 was taken
 
 **What changed:** `schedulingAuthorityPromotion` is object schema migration 20,
@@ -1309,7 +1332,7 @@ making when something needs it.
 
 **What changed:** `WorkstreamResourceStorage` owns `workstream_resource_links`
 and `resource_inventory_revision`, reached through `/internal/resources` and a
-typed port. Object schema migration 20 drops
+typed port. Object schema migration 21 drops
 `_runtime_workstream_resources`, `_runtime_resources` and
 `_runtime_resource_revisions` with the first one's two triggers, and both
 routing tables lose all three entries. This is slice 5 of
