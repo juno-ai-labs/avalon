@@ -702,7 +702,6 @@ export function useWorkstreamSocket(
       });
       try {
         const mentions = await trace.step('resolve_mentions', () => api.messageMentionPayload(
-          workstreamId,
           input.text,
           input.mentions,
         ));

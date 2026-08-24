@@ -862,6 +862,12 @@ describe('Workspace settings', () => {
     expect(screen.queryByText('Slack actions')).not.toBeInTheDocument();
     expect(screen.queryByText('Avalon Agent for Slack')).not.toBeInTheDocument();
 
+    // The card's name renders from the provider catalog, which settles before
+    // the connections query the button's `disabled` also waits on — so the wait
+    // the workspace button below already does is needed here too. Without it
+    // this click can land on a still-disabled button and go nowhere, which is
+    // what it did once under a loaded `pnpm test`.
+    await waitFor(() => expect(within(slackCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
     fireEvent.click(within(slackCard!).getByRole('button', { name: 'Connect for me' }));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'slack',

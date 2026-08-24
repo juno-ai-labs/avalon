@@ -259,12 +259,122 @@ describe('New work-stream home', () => {
   it('uses the shared mention, attachment, and dictation controls', async () => {
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Mention a participant or connection' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Mention a participant' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Attach a file' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Click or hold to dictate' })).toBeVisible();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Mention a participant or connection' }));
-    expect(await screen.findByRole('dialog', { name: 'Add people' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Mention a participant' }));
+
+    // The same inline list the other two composers open, rather than the
+    // participant dialog this control used to raise. That dialog is still one
+    // click away on the row above.
+    expect(await screen.findByRole('listbox', { name: 'Mentions' })).toBeVisible();
+    expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toHaveValue('@');
+    expect(screen.queryByRole('dialog', { name: 'Add people' })).not.toBeInTheDocument();
+  });
+
+  it('walks the mention list with the arrow keys and adds the person Enter picks', async () => {
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+
+    fireEvent.change(composer, { target: { value: 'ask @' } });
+
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual([
+      'Morgan Ellisadam@example.comPerson',
+      'Samantha Leesamantha@example.comPerson',
+    ]);
+    expect(options.map((option) => option.getAttribute('aria-selected'))).toEqual(['true', 'false']);
+
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+    expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected'))).toEqual(['false', 'true']);
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('ask @Samantha Lee '));
+    expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
+    // Nothing exists yet to mention her into, so the pick has to add her.
+    expect(screen.getByRole('button', { name: 'Manage participants: Morgan Ellis, Samantha Lee' })).toBeVisible();
+    expect(api.createWorkstream).not.toHaveBeenCalled();
+  });
+
+  it('keeps a non-active membership out of both the mention list and the dialog', async () => {
+    api.getWorkspaceMembers.mockResolvedValue([
+      currentUser,
+      { ...teammate, status: 'invited' },
+      { id: 'user-3', name: 'Rae Okafor', email: 'rae@example.com', timezone: 'America/Los_Angeles', status: 'active' },
+    ]);
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+
+    fireEvent.change(composer, { target: { value: 'ask @' } });
+
+    // Picking someone here puts them in the create request, and the work-stream
+    // endpoints refuse a membership that is not active.
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual([
+      'Morgan Ellisadam@example.comPerson',
+      'Rae Okaforrae@example.comPerson',
+    ]);
+
+    fireEvent.keyDown(composer, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'Manage participants: Morgan Ellis' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Add people' });
+    expect(within(dialog).queryByRole('checkbox', { name: /Samantha Lee/u })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('checkbox', { name: /Rae Okafor/u })).toBeVisible();
+  });
+
+  it('takes no draft with it when the caret leaves the mention the list belongs to', async () => {
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' }) as HTMLTextAreaElement;
+
+    fireEvent.change(composer, { target: { value: 'hello @Sam', selectionStart: 10, selectionEnd: 10 } });
+    expect(await screen.findByRole('listbox', { name: 'Mentions' })).toBeVisible();
+
+    // ArrowLeft five times: no value changes, so nothing recomputed the query,
+    // and the row the list still highlights is measured from an `@` the caret
+    // has left. Enter here used to insert at `lastIndexOf('@') === -1`, eating
+    // the character before the caret and adding a participant nobody aimed at.
+    composer.setSelectionRange(5, 5);
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('hello @Sam'));
+    expect(screen.getByRole('button', { name: 'Manage participants: Morgan Ellis' })).toBeVisible();
+  });
+
+  it('names the highlighted row to assistive technology while the list is open', async () => {
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+
+    expect(composer).not.toHaveAttribute('aria-activedescendant');
+    fireEvent.change(composer, { target: { value: 'ask @' } });
+
+    const options = await screen.findAllByRole('option');
+    // Focus stays in the draft, so this is the only thing that tells a screen
+    // reader which row Enter would take.
+    expect(composer).toHaveAttribute('aria-activedescendant', options[0]!.id);
+    expect(composer).toHaveAttribute('aria-controls', 'launch-mention-listbox');
+
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+    expect(composer).toHaveAttribute('aria-activedescendant', screen.getAllByRole('option')[1]!.id);
+
+    fireEvent.keyDown(composer, { key: 'Escape' });
+    expect(composer).not.toHaveAttribute('aria-activedescendant');
+  });
+
+  it('dismisses the mention list with Escape and leaves the draft alone', async () => {
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+
+    fireEvent.change(composer, { target: { value: 'ask @Sam' } });
+    expect(await screen.findByRole('listbox', { name: 'Mentions' })).toBeVisible();
+
+    fireEvent.keyDown(composer, { key: 'Escape' });
+
+    expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
+    expect(composer).toHaveValue('ask @Sam');
+    expect(screen.getByRole('button', { name: 'Manage participants: Morgan Ellis' })).toBeVisible();
   });
 
   it('keeps participant selection above the composer and sends selected people', async () => {

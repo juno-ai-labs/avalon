@@ -61,6 +61,7 @@ function renderComposer(
   sending = false,
   onAttach: (files: FileList | File[]) => void = vi.fn(),
   detail: WorkstreamDetail = workstream,
+  members: WorkspaceMember[] = [creator, bob, cara],
 ): ReturnType<typeof render> {
   vi.stubGlobal('ResizeObserver', class {
     observe(): void {}
@@ -72,7 +73,7 @@ function renderComposer(
       <WorkstreamComposer
         attachments={[]}
         fileInputRef={createRef<HTMLInputElement>()}
-        members={[creator, bob, cara]}
+        members={members}
         onAttach={onAttach}
         onOpenAttachment={() => undefined}
         onRemoveAttachment={() => undefined}
@@ -286,6 +287,177 @@ describe('WorkstreamComposer mention confirmation', () => {
       ['user-2', 'user-3'],
     ));
     expect(screen.getByLabelText('Message the work stream')).toHaveValue('');
+  });
+
+  it('starts a mention where the caret is rather than at the end of the draft', async () => {
+    renderComposer();
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, {
+      target: { value: 'ask about the release', selectionStart: 3, selectionEnd: 3 },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Mention a participant' }));
+
+    // Someone who came back to finish a sentence keeps it: the `@` lands under
+    // the caret, not at the end of what they had already written.
+    await waitFor(() => expect(composer).toHaveValue('ask @ about the release'));
+    expect(screen.getByRole('listbox', { name: 'Mentions' })).toBeVisible();
+  });
+
+  it('keeps Escape from travelling on when it dismissed something here', async () => {
+    renderComposer();
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+    await screen.findAllByRole('option');
+
+    // `fireEvent` returns false when the handler cancelled the event, which is
+    // what the other two composers already did with a dismissing Escape.
+    expect(fireEvent.keyDown(composer, { key: 'Escape' })).toBe(false);
+    expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
+    // Nothing left to dismiss: this one belongs to whatever else is listening.
+    expect(fireEvent.keyDown(composer, { key: 'Escape' })).toBe(true);
+  });
+
+  it('inserts one space when the line already continues after the caret', async () => {
+    renderComposer();
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, {
+      target: { value: 'ask @Bo about the release', selectionStart: 7, selectionEnd: 7 },
+    });
+    await screen.findAllByRole('option');
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('ask @Bob Builder about the release'));
+  });
+
+  it('leaves a non-active membership out of the list it can be mentioned from', async () => {
+    renderComposer(undefined, false, undefined, workstream, [
+      creator,
+      { ...bob, status: 'invited' },
+      { ...cara, status: 'suspended' },
+    ]);
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+
+    // Mentioning one adds them to the work stream, and the endpoint refuses a
+    // membership that is not active — the participants rail already filters for
+    // exactly this reason.
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(['Adamadam@example.comPerson']);
+  });
+
+  it('offers people only, leaving the work stream\'s connections out of the list and out of the highlight', async () => {
+    const connected: WorkstreamDetail = {
+      ...workstream,
+      connections: [{
+        id: 'connection-slack',
+        modelPluginId: 'plugin_slack',
+        connectorType: 'slack',
+        displayName: 'Slack',
+        scope: 'workspace',
+        status: 'healthy',
+      }],
+    };
+    renderComposer(undefined, false, undefined, connected);
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual([
+      'Adamadam@example.comPerson',
+      'Bob Builderbob@example.com · not participatingPerson',
+      'Cara Chencara@example.com · not participatingPerson',
+    ]);
+    expect(screen.queryByText('Workspace connection')).not.toBeInTheDocument();
+
+    // The draft's highlight names what the composer can mention, so a
+    // connection typed into it by hand stays plain text too.
+    fireEvent.change(composer, { target: { value: 'ask @Slack and @Adam' } });
+
+    expect([...document.querySelectorAll('.composer-mention')].map((mark) => mark.textContent)).toEqual(['@Adam']);
+  });
+
+  it('walks the mention list with the arrow keys and inserts the highlighted candidate on Enter', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend);
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false']);
+
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+
+    expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
+      .toEqual(['false', 'true', 'false']);
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('@Bob Builder '));
+    expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
+    // Enter chose a name rather than sending the half-written mention.
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('wraps to the last candidate when the highlight is walked up off the top', async () => {
+    renderComposer();
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+    await screen.findAllByRole('option');
+    fireEvent.keyDown(composer, { key: 'ArrowUp' });
+
+    expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
+      .toEqual(['false', 'false', 'true']);
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('@Cara Chen '));
+  });
+
+  it('returns the highlight to the top when the typed query drops the highlighted candidate', async () => {
+    renderComposer();
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+    await screen.findAllByRole('option');
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+
+    // Bob was highlighted and the narrowed list has no Bob in it, so Enter must
+    // fall back to the first row rather than to whoever inherited his place.
+    fireEvent.change(composer, { target: { value: '@a' } });
+
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2));
+    expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
+      .toEqual(['true', 'false']);
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('@Adam '));
+  });
+
+  it('opens the mention list at the top again after it has been dismissed', async () => {
+    renderComposer();
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+    await screen.findAllByRole('option');
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+    fireEvent.change(composer, { target: { value: 'Ship it' } });
+
+    expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
+
+    fireEvent.change(composer, { target: { value: 'Ship it @' } });
+
+    // A highlight left over from the last time it was open would send Enter to
+    // whoever was under it, which is not the row this list is showing first.
+    await waitFor(() => expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
+      .toEqual(['true', 'false', 'false']));
   });
 
   it('sends participant mentions without asking for confirmation', async () => {
