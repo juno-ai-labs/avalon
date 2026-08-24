@@ -3,6 +3,7 @@ import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { AvalonApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { NO_MENTIONS, useDraftText } from '../lib/use-draft-text';
+import { useMentionNavigation } from '../lib/use-mention-navigation';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { AttachmentPreview } from './attachments';
@@ -104,6 +105,13 @@ export function WorkstreamComposer({
   const visibleCandidates = mentionQuery === null
     ? []
     : candidates.filter((candidate) => candidate.label.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 8);
+  const mentionNavigation = useMentionNavigation(
+    visibleCandidates.map((candidate) => `${candidate.kind}-${candidate.id}`),
+    (index) => {
+      const candidate = visibleCandidates[index];
+      if (candidate) insertMention(candidate);
+    },
+  );
   const slashMatch = text.match(/^\/([^\s/]*)$/u);
   const commandQuery = slashMatch?.[1]?.toLowerCase() ?? null;
   const commands = useMemo(
@@ -262,8 +270,20 @@ export function WorkstreamComposer({
       )}
       {visibleCandidates.length > 0 && (
         <div className="mention-popover" role="listbox" aria-label="Mentions">
-          {visibleCandidates.map((candidate) => (
-            <button key={`${candidate.kind}-${candidate.id}`} onClick={() => insertMention(candidate)} role="option" type="button">
+          {visibleCandidates.map((candidate, index) => (
+            <button
+              aria-selected={index === mentionNavigation.activeIndex}
+              className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
+              key={`${candidate.kind}-${candidate.id}`}
+              onClick={() => insertMention(candidate)}
+              /* Move rather than enter: the list scrolls under a still pointer
+                 when the arrows walk past its edge, and that must not steal the
+                 highlight back. */
+              onMouseMove={() => mentionNavigation.setActiveIndex(index)}
+              ref={index === mentionNavigation.activeIndex ? mentionNavigation.activeOptionRef : undefined}
+              role="option"
+              type="button"
+            >
               <span className="mention-icon">
                 {candidate.member ? <Avatar member={candidate.member} size="small" /> : <AtSign size={14} />}
               </span>
@@ -285,6 +305,7 @@ export function WorkstreamComposer({
             if (mentionQuery !== null) setMentionQuery(null);
             if (visibleCommands.length > 0) setSlashDismissed(true);
           }
+          if (mentionNavigation.handleKeyDown(event)) return;
           if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && visibleCommands[0]) {
             event.preventDefault();
             void runCommand(visibleCommands[0]);

@@ -41,6 +41,7 @@ import {
   reportTelemetryProductIntent,
 } from '../lib/telemetry';
 import { useDraftText } from '../lib/use-draft-text';
+import { useMentionNavigation } from '../lib/use-mention-navigation';
 import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
@@ -750,6 +751,13 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     : (connections.data ?? [])
       .filter((connection) => connection.displayName.toLowerCase().includes(mentionQuery.toLowerCase()))
       .slice(0, 8);
+  const mentionNavigation = useMentionNavigation(
+    visibleMentionConnections.map((connection) => connection.id),
+    (index) => {
+      const connection = visibleMentionConnections[index];
+      if (connection) insertConnectionMention(connection);
+    },
+  );
   const mentionLabels = useMemo(
     () => (connections.data ?? []).map((connection) => connection.displayName),
     [connections.data],
@@ -1287,8 +1295,17 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
               <div className="automation-composer-wrap">
                 {visibleMentionConnections.length > 0 && (
                   <div className="mention-popover" role="listbox" aria-label="Connections">
-                    {visibleMentionConnections.map((connection) => (
-                      <button key={connection.id} onClick={() => insertConnectionMention(connection)} role="option" type="button">
+                    {visibleMentionConnections.map((connection, index) => (
+                      <button
+                        aria-selected={index === mentionNavigation.activeIndex}
+                        className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
+                        key={connection.id}
+                        onClick={() => insertConnectionMention(connection)}
+                        onMouseMove={() => mentionNavigation.setActiveIndex(index)}
+                        ref={index === mentionNavigation.activeIndex ? mentionNavigation.activeOptionRef : undefined}
+                        role="option"
+                        type="button"
+                      >
                         <span className="mention-icon"><AtSign size={14} /></span>
                         <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Your connection' : 'Workspace connection'}</small></span>
                         <Badge>Connection</Badge>
@@ -1308,6 +1325,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                   onAttach={attachmentDraft.addFiles}
                   onMention={beginConnectionMention}
                   onKeyDown={(event) => {
+                    if (mentionNavigation.handleKeyDown(event)) return;
                     if (event.key !== 'Escape' || mentionQuery === null) return;
                     event.preventDefault();
                     setMentionQuery(null);
