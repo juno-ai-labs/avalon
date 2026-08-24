@@ -74,6 +74,16 @@ Three things animate, and they are the whole transition:
 Nothing here is bespoke motion: `prefers-reduced-motion` is cut globally at the
 end of `app.css`, which flattens all of it to a single 0.001ms iteration.
 
+The composer's `@` control opens the same inline mention list the work-stream
+and automation composers use — the workspace's members, walked with the arrow
+keys and taken with `Enter` — rather than the participant dialog it used to
+raise. Picking someone both writes their name into the opening message and adds
+them to the work stream about to be created, because `POST /workstreams` carries
+participant ids and no mention spans: a name that only reached the text would
+arrive with nobody attached to it. The dialog is still one click away on the
+participant row above the composer, and remains the place a participant is
+removed.
+
 The participant picker sends initial focus to its first available member, or to
 Done when there are no available members. This keeps keyboard entry on the
 dialog's task instead of focusing the header's Close control and opening its
@@ -342,6 +352,30 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-08-24 — The launcher's `@` names a person inline instead of opening a dialog
+
+**What changed:** The composer's `@` control on this screen opened the **Add
+people** dialog and typing `@` did nothing. It now opens the shared mention
+list over the workspace's members — first row selected, arrow keys walking it,
+`Enter` taking it, `Escape` dismissing it — and picking someone writes their
+name into the opening message *and* adds them to the pending participant list.
+Names the list knows are highlighted in the draft the way they are in a work
+stream. The dialog is unchanged and still reached from the participant row.
+
+**Why:** The same `@` did three different things across the three composers a
+person moves between — a dialog here, an inline list of connections in an
+automation, an inline list of people in a work stream — and only two of them
+answered the keyboard. The pick has to add the participant because this screen
+has nothing to mention someone *into* yet: the create request carries
+participant ids and no mention spans, so a name left in the text alone would
+reach the server attached to nobody. Adding on pick is the same silent toggle
+the dialog performs, and lands in the same avatar row a few pixels above.
+
+**Consequences:** Deleting the name from the draft does not remove the
+participant — the row above the composer owns that, as it owns every other way
+someone is added here. A future create that carries mention spans should revisit
+the add-on-pick, not the list.
 
 ### 2026-08-24 — One ceiling on a composed message, and a refusal a person can act on
 

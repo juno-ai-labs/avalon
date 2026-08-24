@@ -124,7 +124,7 @@ export function WorkstreamComposer({
     setSlashDismissed(false);
     setSelectedMentions((current) => current.filter((mention) => value.toLocaleLowerCase().includes(`@${mention.label.toLocaleLowerCase()}`)));
     const beforeCaret = value.slice(0, textareaRef.current?.selectionStart ?? value.length);
-    const match = beforeCaret.match(/(?:^|\s)@([^\s@]*)$/);
+    const match = beforeCaret.match(/(?:^|\s)@([^\s@]*)$/u);
     setMentionQuery(match?.[1] ?? null);
   };
 
