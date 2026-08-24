@@ -2627,6 +2627,88 @@ describe('useWorkstreamSocket', () => {
     ]);
   });
 
+  it('counts one drop when a resync frame lands in the same batch as an abrupt close', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const getSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.avalon.test/workstreams/workstream-one',
+      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+    }));
+    const api = socketApiWith({
+      getSocketTicket,
+      getWorkstream: vi.fn(async () => workstreamBoot({ id: 'workstream-one' })),
+      getMessages: vi.fn(async () => []),
+    });
+    renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    reportTelemetryProductIntent.mockClear();
+
+    // `readyState` reaches CLOSED before the `close` event is dispatched, so a
+    // frame already queued behind it is delivered to a socket that is gone but
+    // has not said so yet. That is one transition, and the close listener is
+    // what reports it.
+    socket.readyState = FakeWebSocket.CLOSED;
+    act(() => socket.message({
+      type: 'resync_required',
+      sequence: 14,
+      latestSequence: 14,
+      occurredAt: '2026-07-31T20:00:00.000Z',
+      reason: 'history_unavailable',
+      activeStreams: [],
+      activeCompaction: null,
+    }));
+    act(() => socket.dispatchEvent(Object.assign(new Event('close'), { code: 1006 })));
+
+    // One event, not two — and the surviving one says what actually happened to
+    // the socket rather than what the room asked for afterwards. The depth is
+    // `one` rather than `zero` because the resync frame scheduled the reconnect
+    // before the close event was delivered, which is the honest reading: this
+    // drop was reported with a retry already in flight.
+    expect(socketTelemetry()).toEqual([{
+      kind: 'realtime_socket_state',
+      socket: 'substream_feed',
+      state: 'retrying',
+      cause: 'server_closed',
+      attempts: 'one',
+    }]);
+  });
+
+  it('reports the feed as stopped when the desktop goes offline', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const getSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.avalon.test/workstreams/workstream-one',
+      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+    }));
+    const api = socketApiWith({ getSocketTicket });
+    renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    reportTelemetryProductIntent.mockClear();
+
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    act(() => window.dispatchEvent(new Event('offline')));
+
+    // `stopped`, not `retrying`: this loop's `scheduleReconnect` refuses to arm
+    // a timer while the desktop is offline, so nothing is coming until the
+    // `online` event. That is the distinction the flag exists to carry — every
+    // loop decides it for itself, and the cause alone cannot say.
+    expect(socketTelemetry()).toEqual([{
+      kind: 'realtime_socket_state',
+      socket: 'substream_feed',
+      state: 'stopped',
+      cause: 'offline',
+      attempts: 'zero',
+    }]);
+  });
+
   it('uses raw ping/pong keepalives without treating pong as an application event', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);

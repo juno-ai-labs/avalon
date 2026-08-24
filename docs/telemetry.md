@@ -607,6 +607,27 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-24 — One drop is one event, whichever listener sees it first
+
+**What changed:** The substream feed's `resync_required` branch arms its cause
+only when a close is still coming, and reports nothing itself. Every `error`
+listener in the four loops now checks socket identity before arming a cause.
+
+**Why:** Review on #271. `readyState` reaches CLOSED before the `close` event is
+dispatched, so a resync frame delivered in the same task batch as an abrupt close
+reached a branch that reported the drop *and* left the close listener to report
+it again — one transition, two events, the second labelled `server_closed`
+because the cause had already been consumed. The `error` listeners were the
+mirror image: the pending cause belongs to the loop rather than to one socket, so
+an error for a superseded socket armed `transport_error` on the live one and
+mislabelled its next drop. Neither could be demonstrated from outside, and both
+corrupt a measurement rather than costing a reconnect, which is the failure mode
+worth paying a line to close.
+
+**Consequences:** The rule for the producer is now uniform: a cause is armed only
+by the site that is about to close a socket that will still report, and every
+listener that writes one first proves the socket is the live one.
+
 ### 2026-08-24 — The intent allowlist is tested by running it, and offline is not a transport error
 
 **What changed:** `parseTelemetryProductIntent` and the UUID pattern beside it
