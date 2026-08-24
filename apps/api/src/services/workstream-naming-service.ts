@@ -7,7 +7,7 @@ import { WorkstreamNameResultSchema } from "@avalon/contracts";
 import { nowIso } from "@avalon/db";
 
 import type { Env } from "../env";
-import { truncateUtf16Safe } from "../lib/text";
+import { firstNonEmptyLine, truncateUtf16Safe } from "../lib/text";
 import { logStructuredEvent } from "../observability/logger";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { publishWorkstreamEvent } from "./integrations";
@@ -58,9 +58,7 @@ const nameJsonSchema = {
  * `OPENROUTER_API_KEY` is unset.
  */
 export function provisionalWorkstreamTitle(objective: string, fallback: string): string {
-  const firstLine = objective.split(/\r?\n/u)
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
+  const firstLine = firstNonEmptyLine(objective);
   return firstLine ? truncateUtf16Safe(firstLine, PROVISIONAL_TITLE_MAX_LENGTH) : fallback;
 }
 
