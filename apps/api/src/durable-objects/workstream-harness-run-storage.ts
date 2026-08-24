@@ -147,7 +147,7 @@ export type InlineChildAdmissionOutcome =
   | { outcome: "cancelled" }
   | {
       outcome: "refused";
-      reason: "depth_limit" | "chain_budget_exhausted" | "child_capacity";
+      reason: "depth_limit" | "chain_budget_exhausted";
     }
   /** The parent has no frozen scope, so there is nothing to narrow from. */
   | { outcome: "parent_scope_missing" }
@@ -654,13 +654,17 @@ export class WorkstreamHarnessRunStorage {
    * retrying the same `run_subagent` call must reach the same child, which is
    * why a replay and a busy child are outcomes rather than errors.
    *
-   * **`activeChildren` counts this work stream's children, not the workspace's.**
-   * The routed predicate read `active_child.workspace_id = parent.workspace_id`,
-   * but it ran against `_runtime_harness_runs`, a view of this object's rows
-   * alone — so the comparison was true for every row it could see and the cap
-   * has been per-work-stream since the per-workspace-database cutover. This
-   * counts what that predicate actually counted; the name it is configured
-   * under, `HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS`, still says otherwise.
+   * **There is no concurrency cap on delegated children, deliberately.** The
+   * routed version had one, spelled `active_child.workspace_id =
+   * parent.workspace_id` and configured as
+   * `HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS` — but it ran against a view of
+   * this object's rows alone, where that comparison is true for everything it
+   * can see, so it had silently been per-work-stream since the
+   * per-workspace-database cutover and enforced nothing the chain budget did
+   * not already imply. It was removed rather than renamed. `maxChainRuns` is
+   * now the only bound on fan-out, and it is a *lifetime* budget: a chain may
+   * create that many runs in total, which caps concurrency at the same number
+   * without needing a second limit that frees slots as children settle.
    */
   admitInlineChild(input: {
     parentRunId: string;
@@ -674,7 +678,6 @@ export class WorkstreamHarnessRunStorage {
     leaseSeconds: number;
     maxDepth: number;
     maxChainRuns: number;
-    maxActiveChildren: number;
     lifecycleEventId: string;
     now: number;
   }): InlineChildAdmissionOutcome {
@@ -722,9 +725,6 @@ export class WorkstreamHarnessRunStorage {
           || existing.lease_owner === null) {
           return { outcome: "ownership_lost" as const };
         }
-        if (this.activeInlineChildren(existing.run_id, input.now) >= input.maxActiveChildren) {
-          return { outcome: "refused" as const, reason: "child_capacity" as const };
-        }
         // Resume the same durable attempt after its lease expires. Keeping the
         // attempt id keeps its frozen scope and its tool receipts valid; the
         // fresh owner is what fences the executor that lost the lease.
@@ -764,9 +764,6 @@ export class WorkstreamHarnessRunStorage {
       ))?.count ?? 0);
       if (chainRuns >= input.maxChainRuns) {
         return { outcome: "refused" as const, reason: "chain_budget_exhausted" as const };
-      }
-      if (this.activeInlineChildren(null, input.now) >= input.maxActiveChildren) {
-        return { outcome: "refused" as const, reason: "child_capacity" as const };
       }
 
       // A delegated child owns its own substream. Sharing the parent's would
@@ -836,26 +833,6 @@ export class WorkstreamHarnessRunStorage {
         reused: false,
       };
     });
-  }
-
-  /**
-   * How many delegated children are running right now, excluding one.
-   *
-   * See `admitInlineChild`: this is the work stream's count, which is what the
-   * routed `active_child.workspace_id = parent.workspace_id` predicate actually
-   * counted once `harness_runs` became object-local.
-   */
-  private activeInlineChildren(exceptRunId: string | null, now: number): number {
-    return Number(first(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
-      `SELECT COUNT(*) AS count FROM runs
-        WHERE parent_tool_call_id IS NOT NULL
-          AND (?1 IS NULL OR run_id != ?1)
-          AND status = 'running'
-          AND terminalized_at IS NULL
-          AND lease_expires_at > ?2`,
-      exceptRunId,
-      now,
-    ))?.count ?? 0);
   }
 
   /**
