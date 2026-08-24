@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useState } from 'react';
+import { type KeyboardEvent, useCallback, useEffect, useState } from 'react';
 
 export interface MentionNavigation {
   /** The option Enter would choose, or `-1` while the popover holds nothing. */
@@ -52,16 +52,28 @@ export function useMentionNavigation(
     // A key the filter has dropped reads as -1, which is the top of the list.
     : Math.max(activeKey === null ? 0 : optionKeys.indexOf(activeKey), 0);
 
+  // Memoized because React reads a changed ref callback as a detach and a fresh
+  // attach: an inline one is a new function on every render, so it would scroll
+  // the active row on every keystroke rather than only when the row changes,
+  // fighting anyone scrolling the list by hand.
+  const activeOptionRef = useCallback((element: HTMLElement | null) => {
+    // Optional call because jsdom leaves `scrollIntoView` undefined, and the
+    // component tests render this popover.
+    element?.scrollIntoView?.({ block: 'nearest' });
+  }, []);
+
   return {
     activeIndex,
     setActiveIndex: (index) => setActiveKey(optionKeys[index] ?? null),
-    activeOptionRef: (element) => {
-      // Optional call because jsdom leaves `scrollIntoView` undefined, and the
-      // component tests render this popover.
-      element?.scrollIntoView?.({ block: 'nearest' });
-    },
+    activeOptionRef,
     handleKeyDown: (event) => {
       if (optionKeys.length === 0) return false;
+      // An IME is mid-word: this same Enter commits the composition and these
+      // same arrows move through its candidate window. Taking them would
+      // replace what is being composed with an Avalon name and swallow the
+      // keystroke that was going to finish it, which is how a mention query
+      // typed in Japanese, Chinese, or Korean would be lost.
+      if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return false;
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         // Wraps, so holding one arrow reaches every option without knowing
         // which end the list is at.
