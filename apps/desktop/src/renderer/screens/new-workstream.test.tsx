@@ -1,3 +1,4 @@
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@avalon/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -546,6 +547,52 @@ describe('New work-stream home', () => {
 
     await screen.findByRole('status', { name: 'Avalon is working' });
     expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toBe(composer);
+  });
+
+  // A message over the ceiling is refused here rather than by the server, and
+  // the difference is not latency. The create path reserves an email address
+  // and writes its D1 rows before anything reads the message's length, so a
+  // request that was always going to be refused leaves those behind for a work
+  // stream that never exists — and the launch surface would have opened on it.
+  it('refuses a message over the ceiling without sending it or opening a work stream', async () => {
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'x'.repeat(MESSAGE_MAX_CHARACTERS + 1) } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    expect(await screen.findByText(MESSAGE_TOO_LONG_MESSAGE)).toBeVisible();
+    expect(api.createWorkstream).not.toHaveBeenCalled();
+    expect(screen.queryByRole('status', { name: 'Avalon is working' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
+    // Still in the composer. The person has to shorten it, which they cannot do
+    // to text the screen has taken away from them.
+    expect(composer).toHaveValue('x'.repeat(MESSAGE_MAX_CHARACTERS + 1));
+  });
+
+  it('sends a message at exactly the ceiling', async () => {
+    api.createWorkstream.mockReturnValue(new Promise(() => undefined));
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'x'.repeat(MESSAGE_MAX_CHARACTERS) } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(MESSAGE_TOO_LONG_MESSAGE)).not.toBeInTheDocument();
+  });
+
+  it('clears the refusal on the next keystroke', async () => {
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'x'.repeat(MESSAGE_MAX_CHARACTERS + 1) } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await screen.findByText(MESSAGE_TOO_LONG_MESSAGE);
+
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+
+    expect(screen.queryByText(MESSAGE_TOO_LONG_MESSAGE)).not.toBeInTheDocument();
   });
 
   // A create carrying only files is one `submit` accepts, and its turn is a

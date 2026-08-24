@@ -1,3 +1,4 @@
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@avalon/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ChevronRight, Plus } from 'lucide-react';
@@ -269,6 +270,12 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const [modelOverride, setModelOverride] = useState<AgentModelOverride | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [launching, setLaunching] = useState<LaunchingWorkstream | null>(null);
+  // Set by `submit` when the composer holds more than the server takes, and
+  // cleared by the next keystroke. Held separately from `create.error` because
+  // nothing was sent: the request this would have been is the one thing that
+  // must not happen, since the create path reserves an address and writes rows
+  // before anything looks at the message's length.
+  const [tooLong, setTooLong] = useState(false);
   const homeLeaving = useHomeHandOff(launching !== null);
   const attachmentDraft = useFileAttachments(api, draftKey);
   const loadAttachmentContent = useCallback(
@@ -458,6 +465,14 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     const openingMessage = message.trim();
     const readyAttachments = attachmentDraft.ready;
     if ((!openingMessage && readyAttachments.length === 0) || attachmentDraft.uploading || submittingRef.current) return;
+    // Before the launch state, not after it. The screen below opens optimistically
+    // on this keystroke, and a work stream that cannot be created must never be
+    // one of the ones that appears to open.
+    if (openingMessage.length > MESSAGE_MAX_CHARACTERS) {
+      setTooLong(true);
+      return;
+    }
+    setTooLong(false);
     submittingRef.current = true;
     const participantIds = selectedMembers.map((member) => member.id);
     setMessage('');
@@ -620,7 +635,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             attachments={draftHidden ? [] : attachmentDraft.attachments}
             autoFocus
             className="launch-composer"
-            error={create.error?.message ?? attachmentDraft.error}
+            error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
             fileInputRef={fileInputRef}
             footerHint="Enter to create · Shift+Enter for a new line"
             maxHeight={220}
@@ -635,7 +650,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             // so a keystroke during a suggested-work launch would otherwise
             // write the empty value it is being shown back over the draft it is
             // hiding, and lose it.
-            onValueChange={(value) => { if (!draftHidden) setMessage(value); }}
+            onValueChange={(value) => { if (draftHidden) return; setMessage(value); setTooLong(false); }}
             placeholder="Describe a task or ask a question…"
             rows={2}
             submitDisabled={attachmentDraft.uploading || (!message.trim() && attachmentDraft.ready.length === 0) || launching !== null}

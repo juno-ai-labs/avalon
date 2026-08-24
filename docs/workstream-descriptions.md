@@ -32,6 +32,14 @@ suggestion's display prompt; one opened from Slack gets the message that mention
 Avalon. Each is a reasonable guess at what the work is *about to be*, made before
 any of it happened.
 
+Derived means derived, not copied: `provisionalWorkstreamDescription` takes the
+opening *line* and bounds it at `WORKSTREAM_DESCRIPTION_MAX_CHARACTERS`. A
+message may run to `MESSAGE_MAX_CHARACTERS`, and a description is not a place to
+put one — it is stored in every workspace directory row, pushed to every client
+on connect, read by the routing classifier, and held in a column that CHECKs
+4,000. The message itself is not shortened anywhere; it is the work stream's
+first message, stored whole.
+
 Then the work stream is used, and two things drift apart:
 
 - **The description was never good.** It restates a first message — "EU cards are
@@ -320,6 +328,40 @@ Four log events are emitted:
 | `workstream_description_outcome_superseded` | An evaluation finished after a person had edited the description, so its decision was discarded. Carries the decision it would have written. |
 
 ## Changelog
+
+### 2026-08-24 — The provisional description is the opening line
+
+**What changed:** `provisionalWorkstreamDescription` lives here and is what the
+composer create and both Slack create paths derive a description with: the first
+non-empty line of the opening message, bounded at
+`WORKSTREAM_DESCRIPTION_MAX_CHARACTERS`. The composer path previously used the
+whole trimmed message; the Slack paths used `prompt.slice(0, 4_000)`, which was
+right in size and wrong at a surrogate pair.
+
+**Why:** Raising the message ceiling to `MESSAGE_MAX_CHARACTERS` (100,000) forced
+the question this module had never had to answer, because at 4,000 the message
+*was* a plausible description. It is not one at 100,000. Three choices existed
+and only one of them keeps both fields honest:
+
+- Let the description inherit the message's ceiling. Rejected: it widens the
+  `workspace_workstream_directory` column CHECK, the producer bound in
+  `workstream-regional-effect.ts`, and every directory push and classifier input
+  along with it — a cost paid on reads that have nothing to do with the work
+  stream being described.
+- Truncate the whole message to 4,000. Rejected: it is the same copy, cut
+  mid-sentence, and it makes the description longer and less useful than the loop
+  below will ever write.
+- Take the opening line. Chosen: it is what the person is asking for, the
+  paragraphs under it are how, and this value is replaced by the loop below after
+  the first run anyway.
+
+**Consequences:** A multi-line create now opens with a shorter description than
+it used to — its first line rather than its whole message. That is a visible
+change to every work stream started from a multi-paragraph message, and it is
+the intended one. The bound stays the storage ceiling rather than
+`MAXIMUM_DESCRIPTION_CHARACTERS`: this value is the fallback that stands when
+naming and this loop both fail, and cutting a person's own first line to 280
+would be inventing a summary rather than deriving one.
 
 ### 2026-08-23 — A proposed description is repaired before it is judged
 

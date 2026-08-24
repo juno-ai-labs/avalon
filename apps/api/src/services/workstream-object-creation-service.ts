@@ -16,6 +16,7 @@ import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
 import { noFlowSpan, type FlowSpan } from "../observability/tracing";
+import { provisionalWorkstreamDescription } from "./workstream-description-service";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 import {
   withWorkstreamRuntimeDatabase,
@@ -168,7 +169,8 @@ export class WorkstreamObjectCreationService {
     }
     span.setAttributes({ "avalon.create.path": "fresh" });
 
-    const objective = body.objective ?? (body.openingMessage.trim() || "Review the attached files");
+    const objective = body.objective
+      ?? provisionalWorkstreamDescription(body.openingMessage, "Review the attached files");
     const title = body.title ?? provisionalWorkstreamTitle(objective, "New work stream");
     const routeInput = {
       region: this.env.AVALON_REGION,
