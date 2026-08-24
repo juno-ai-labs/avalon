@@ -470,15 +470,20 @@ export class WorkstreamObjectProductService {
         input.descriptionSource, input.systemKind, input.titleStatus, input.modelOverride, now,
       );
       for (const userId of memberIds) {
+        const creator = userId === input.creatorUserId;
         this.storage.sql.exec(
           `INSERT INTO participants
              (user_id, participation_reason, added_by_user_id, status, participant_epoch,
-              added_at, removed_at, updated_at)
-           VALUES (?, ?, ?, 'active', 0, ?, NULL, ?)`,
+              added_at, removed_at, first_opened_at, updated_at)
+           VALUES (?, ?, ?, 'active', 0, ?, NULL, ?, ?)`,
           userId,
-          userId === input.creatorUserId ? "creator" : "explicit",
+          creator ? "creator" : "explicit",
           input.creatorUserId,
           now,
+          // The person who typed the opening message is looking at the work
+          // stream they just started; everybody they named on the way in is
+          // not, and stays unseen until they open it themselves.
+          creator ? now : null,
           now,
         );
       }
@@ -614,6 +619,49 @@ export class WorkstreamObjectProductService {
     )) !== null;
   }
 
+  /**
+   * Whether this person has been put in the work stream and never opened it.
+   *
+   * Asked of the membership row rather than of `member_attention`, because the
+   * attention row is written by being read to and by being mentioned — it does
+   * not exist for somebody who has only been added, and its absence cannot be
+   * told apart from the absence of any relationship at all. Somebody reading a
+   * workspace-scoped work stream they are not in is not unseen: nobody put
+   * them there, so there is nothing for them to have missed.
+   */
+  private isUnseen(userId: string): boolean {
+    return first(this.storage.sql.exec<{ one: number }>(
+      `SELECT 1 AS one FROM participants
+        WHERE user_id = ? AND status = 'active' AND first_opened_at IS NULL LIMIT 1`,
+      userId,
+    )) !== null;
+  }
+
+  /**
+   * Settles the unseen state the first time somebody opens the work stream.
+   *
+   * On the open path rather than on `acknowledgeRead`, which the client sends
+   * only when a message it has not accounted for is on screen: a work stream
+   * somebody is added to and opens while nothing new has arrived would never
+   * produce one, and its dot would stay lit for a room they are looking at.
+   *
+   * Writes at most once per participant, and only through the effect commit,
+   * so the sidebar the dot is on hears about it the same way it heard about
+   * every other viewer change.
+   */
+  private async markOpened(userId: string): Promise<void> {
+    if (!this.isUnseen(userId)) return;
+    const now = Date.now();
+    await this.objectStore.commitWithRegionalEffects(
+      (sql) => sql.exec(
+        `UPDATE participants SET first_opened_at = ?, updated_at = ?
+          WHERE user_id = ? AND status = 'active' AND first_opened_at IS NULL`,
+        now, now, userId,
+      ),
+      () => [{ partitionKey: `user:${userId}`, effect: this.userEffect(this.root(), userId) }],
+    );
+  }
+
   canRead(userId: string): boolean {
     const root = this.root();
     return participantVisible(root, userId, this.isParticipant(userId));
@@ -705,6 +753,7 @@ export class WorkstreamObjectProductService {
       manualUnreadGeneration: attention.version,
       hasUnread: firstUnread !== null,
       youAreMentioned: attention.latest_mention_attention_ordinal > attention.seen_attention_ordinal,
+      unseen: this.isUnseen(userId),
       firstUnreadSequenceNumber: firstUnread,
       lastActivityAt: iso(root.last_people_activity_at),
       createdAt: iso(root.created_at),
@@ -752,14 +801,17 @@ export class WorkstreamObjectProductService {
           sql.exec(
             `INSERT INTO participants
                (user_id, participation_reason, added_by_user_id, status, participant_epoch,
-                added_at, removed_at, updated_at)
-             VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, ?)
+                added_at, removed_at, first_opened_at, updated_at)
+             VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, ?, ?)
              ON CONFLICT(user_id) DO UPDATE SET
                status = 'active', removed_at = NULL,
                participant_epoch = CASE WHEN participants.status = 'removed'
                  THEN participants.participant_epoch + 1 ELSE participants.participant_epoch END,
+               first_opened_at = COALESCE(participants.first_opened_at, excluded.first_opened_at),
                updated_at = excluded.updated_at`,
-            auth.userId, auth.userId, now, now,
+            // Joining by narrowing the work stream to yourself is done from
+            // inside it, so this is not a room anybody has yet to look at.
+            auth.userId, auth.userId, now, now, now,
           );
         }
         sql.exec(
@@ -931,6 +983,12 @@ export class WorkstreamObjectProductService {
 
   async get(auth: AuthContext, viewers: WorkstreamDetail["viewers"] = []): Promise<WorkstreamDetail> {
     const root = await this.authorize(auth);
+    // Both ways of opening a work stream — the socket's snapshot and
+    // `GET /workstreams/:id` — assemble their answer here, so this is where
+    // "they have now seen it" is true. Ordered before the read below so the
+    // detail this call returns already says so, rather than telling the
+    // client it is unseen and correcting itself over the socket a beat later.
+    await this.markOpened(auth.userId);
     const [workstream, participants, resources, connections] = await Promise.all([
       this.summary(root, auth.userId),
       this.participants(),
@@ -1331,8 +1389,8 @@ export class WorkstreamObjectProductService {
         sql.exec(
         `INSERT INTO participants
            (user_id, participation_reason, added_by_user_id, status, participant_epoch,
-            added_at, removed_at, updated_at)
-         VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, ?)
+            added_at, removed_at, first_opened_at, updated_at)
+         VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, ?, ?)
          ON CONFLICT(user_id) DO UPDATE SET
            status = 'active', removed_at = NULL,
            participant_epoch = CASE WHEN participants.status = 'removed'
@@ -1343,8 +1401,15 @@ export class WorkstreamObjectProductService {
              THEN excluded.added_by_user_id ELSE participants.added_by_user_id END,
            added_at = CASE WHEN participants.status = 'removed'
              THEN excluded.added_at ELSE participants.added_at END,
+           -- Being put back in a room you were taken out of is being added
+           -- again: the work stream has moved on without you, and the epoch
+           -- bump beside this says the same thing about the notification.
+           first_opened_at = CASE WHEN participants.status = 'removed'
+             THEN excluded.first_opened_at ELSE participants.first_opened_at END,
            updated_at = excluded.updated_at`,
-          userId, auth.userId, now, now,
+          // Null unless you added yourself, which is the one add made by
+          // somebody who is already looking at the work stream.
+          userId, auth.userId, now, userId === auth.userId ? now : null, now,
         );
         return { alreadyActive };
       },
@@ -1996,6 +2061,7 @@ export class WorkstreamObjectProductService {
       isParticipant: participant,
       unreadCount: unreadFrom === null ? 0 : Math.max(1, latest - unreadFrom + 1),
       youAreMentioned: attention.latest_mention_attention_ordinal > attention.seen_attention_ordinal,
+      unseen: this.isUnseen(userId),
       listable: root.archived_at === null && participantVisible(root, userId, participant),
       seenAttentionOrdinal: attention.seen_attention_ordinal,
       manualUnreadFromOrdinal: attention.manual_unread_from_ordinal,
@@ -2165,8 +2231,8 @@ export class WorkstreamObjectProductService {
         sql.exec(
           `INSERT INTO participants
              (user_id, participation_reason, added_by_user_id, status, participant_epoch,
-              added_at, removed_at, updated_at)
-           VALUES (?, 'message', ?, 'active', 0, ?, NULL, ?)
+              added_at, removed_at, first_opened_at, updated_at)
+           VALUES (?, 'message', ?, 'active', 0, ?, NULL, ?, ?)
            ON CONFLICT(user_id) DO UPDATE SET
              status = 'active', removed_at = NULL,
              participant_epoch = CASE WHEN participants.status = 'removed'
@@ -2177,20 +2243,26 @@ export class WorkstreamObjectProductService {
                THEN excluded.added_by_user_id ELSE participants.added_by_user_id END,
              added_at = CASE WHEN participants.status = 'removed'
                THEN excluded.added_at ELSE participants.added_at END,
+             first_opened_at = COALESCE(participants.first_opened_at, excluded.first_opened_at),
              updated_at = excluded.updated_at`,
-          auth.userId, auth.userId, now, now,
+          // Writing into a work stream is a stronger statement than opening it.
+          auth.userId, auth.userId, now, now, now,
         );
         for (const userId of input.confirmedParticipantUserIds) {
           sql.exec(
             `INSERT INTO participants
                (user_id, participation_reason, added_by_user_id, status, participant_epoch,
-                added_at, removed_at, updated_at)
-             VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, ?)
+                added_at, removed_at, first_opened_at, updated_at)
+             VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, NULL, ?)
              ON CONFLICT(user_id) DO UPDATE SET
                status = 'active', removed_at = NULL,
                participant_epoch = CASE WHEN participants.status = 'removed'
                  THEN participants.participant_epoch + 1 ELSE participants.participant_epoch END,
+               first_opened_at = CASE WHEN participants.status = 'removed'
+                 THEN NULL ELSE participants.first_opened_at END,
                updated_at = excluded.updated_at`,
+            // Somebody the author named on the way past. They have not been
+            // here, which is exactly what the dot is for.
             userId, auth.userId, now, now,
           );
         }
@@ -2505,13 +2577,15 @@ export class WorkstreamObjectProductService {
         sql.exec(
           `INSERT INTO participants
              (user_id, participation_reason, added_by_user_id, status, participant_epoch,
-              added_at, removed_at, updated_at)
-           VALUES (?, 'elicitation', ?, 'active', 0, ?, NULL, ?)
+              added_at, removed_at, first_opened_at, updated_at)
+           VALUES (?, 'elicitation', ?, 'active', 0, ?, NULL, ?, ?)
            ON CONFLICT(user_id) DO UPDATE SET status = 'active', removed_at = NULL,
              participant_epoch = CASE WHEN participants.status = 'removed'
                THEN participants.participant_epoch + 1 ELSE participants.participant_epoch END,
+             first_opened_at = COALESCE(participants.first_opened_at, excluded.first_opened_at),
              updated_at = excluded.updated_at`,
-          auth.userId, auth.userId, now, now,
+          // Answering the agent is done from inside the work stream.
+          auth.userId, auth.userId, now, now, now,
         );
         sql.exec(
           `INSERT INTO member_attention

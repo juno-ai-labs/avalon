@@ -37,25 +37,100 @@ export function formatDuration(milliseconds?: number): string | undefined {
   return `${minutes}m ${remainder.toString().padStart(2, '0')}s`;
 }
 
-export const statusLabel: Record<HarnessStatus, string> = {
+/**
+ * What a work-stream marker can say, which is more than the run can.
+ *
+ * Five of these are the harness's own status. Three — `unread`, `mentioned`,
+ * `unseen` — are the reader's, and they are in the same vocabulary because
+ * they compete for the same dot: a work stream is never showing a person two
+ * markers, so the states have to be ranked against each other rather than
+ * drawn side by side.
+ */
+export type WorkstreamMarkerStatus = HarnessStatus | 'unread' | 'mentioned' | 'unseen';
+
+export const statusLabel: Record<WorkstreamMarkerStatus, string> = {
   scheduled: 'Scheduled',
   running: 'Running',
   needs_input: 'Needs input',
   completed: 'Latest run completed',
   failed: 'Needs intervention',
   stopped: 'Latest run stopped',
+  unread: 'Unread',
+  mentioned: 'You were mentioned',
+  unseen: 'New to you',
 };
 
 /** What each dot color means, for the surfaces that show the dot on its own.
  * Each sentence opens with the label itself, so rewording one carries here. */
-export const statusDescription: Record<HarnessStatus, string> = {
+export const statusDescription: Record<WorkstreamMarkerStatus, string> = {
   scheduled: `${statusLabel.scheduled} — the next run has not started yet.`,
   running: `${statusLabel.running} — the agent is working on it now.`,
   needs_input: `${statusLabel.needs_input} — the agent is waiting on an answer.`,
   completed: `${statusLabel.completed} — nothing is running now.`,
   failed: `${statusLabel.failed} — the last run failed and stopped.`,
   stopped: `${statusLabel.stopped} — the run was stopped by request.`,
+  unread: `${statusLabel.unread} — there are messages here you have not read.`,
+  mentioned: `${statusLabel.mentioned} — somebody named you in a message you have not read.`,
+  unseen: `${statusLabel.unseen} — you were added to this work stream and have not opened it yet.`,
 };
+
+/**
+ * The one ranking, most urgent first.
+ *
+ * Written as an order rather than as a chain of conditionals because the
+ * question it answers — which of several true things does a person see — is a
+ * product decision that gets revisited, and a list can be reordered without
+ * anyone having to re-derive what the old nesting meant. The three personal
+ * states are deliberately not grouped together: being mentioned outranks a run
+ * that is working, while merely being unread does not.
+ */
+const MARKER_PRECEDENCE: readonly WorkstreamMarkerStatus[] = [
+  'unseen',
+  'mentioned',
+  'running',
+  'needs_input',
+  'unread',
+  'completed',
+  'stopped',
+  'failed',
+];
+
+/**
+ * The marker a work stream shows this viewer.
+ *
+ * The single answer every surface asks for, so the sidebar and the home screen
+ * cannot disagree about which of a work stream's states is the one worth
+ * showing. `scheduled` has no personal state to lose to and is not in the
+ * ranking; it falls through as the run's own status.
+ */
+export function workstreamMarkerStatus(
+  workstream: { harnessStatus: HarnessStatus; hasUnread?: boolean; unseen?: boolean; youAreMentioned?: boolean },
+): WorkstreamMarkerStatus {
+  const active = new Set<WorkstreamMarkerStatus>([workstream.harnessStatus]);
+  if (workstream.unseen === true) active.add('unseen');
+  if (workstream.youAreMentioned === true) active.add('mentioned');
+  if (workstream.hasUnread === true) active.add('unread');
+  return MARKER_PRECEDENCE.find((status) => active.has(status)) ?? workstream.harnessStatus;
+}
+
+/**
+ * Whether this work stream is asking something of this person.
+ *
+ * The **Needs attention** section's membership rule, beside the ranking it is
+ * a subset of: everything a person is the only one who can clear. A run that
+ * is merely working is not one of them, however recently it moved.
+ */
+export function workstreamNeedsAttention(
+  workstream: { harnessStatus: HarnessStatus; hasUnread?: boolean; unseen?: boolean; youAreMentioned?: boolean },
+): boolean {
+  // Asked of the states rather than of the marker above: a running work stream
+  // with unread messages shows the run on its dot, and is still something this
+  // person has to read.
+  return workstream.unseen === true
+    || workstream.youAreMentioned === true
+    || workstream.hasUnread === true
+    || workstream.harnessStatus === 'needs_input';
+}
 
 export type RecencyGroup = 'Last hour' | 'Today' | 'Yesterday' | 'This week' | 'This month' | 'Before this month';
 

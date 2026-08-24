@@ -319,6 +319,7 @@ interface WorkspaceDirectoryRow extends Record<string, SqlStorageValue> {
   manual_unread_generation: number | null;
   latest_mention_attention_ordinal: number | null;
   is_participant: number | null;
+  unseen: number | null;
   viewer_waterline: number | null;
   viewer_event_id: string | null;
   pin_position: number | null;
@@ -808,6 +809,18 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
       BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
   ],
+}, {
+  version: 10,
+  description: "carry the per-person unseen flag into the sidebar's viewer projection",
+  statements: [
+    // The sidebar reads this table, not the work-stream object, so a state the
+    // object knows about and this projection does not is a dot that never
+    // lights. Defaulted to 0 because every row already here belongs to
+    // somebody who has had the work stream for a while — the same reading the
+    // object's own backfill takes.
+    `ALTER TABLE workspace_workstream_viewers
+       ADD COLUMN unseen INTEGER NOT NULL DEFAULT 0 CHECK (unseen IN (0, 1))`,
+  ],
 }];
 
 function json(body: unknown, status = 200): Response {
@@ -962,6 +975,7 @@ function directoryWorkstream(row: WorkspaceDirectoryRow, workspaceId: string): W
     manualUnreadGeneration: Number(row.manual_unread_generation ?? 0),
     hasUnread: firstUnread !== null,
     youAreMentioned: Number(row.latest_mention_attention_ordinal ?? 0) > seen,
+    unseen: row.unseen === 1,
     firstUnreadSequenceNumber: firstUnread,
     lastActivityAt: iso(row.last_activity_at),
     createdAt: iso(row.source_created_at),
@@ -1024,7 +1038,7 @@ const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
     directory.source_created_at, directory.source_updated_at,
     viewer.seen_attention_ordinal, viewer.manual_unread_from_ordinal,
     viewer.manual_unread_generation, viewer.latest_mention_attention_ordinal,
-    viewer.is_participant, viewer.waterline AS viewer_waterline,
+    viewer.is_participant, viewer.unseen, viewer.waterline AS viewer_waterline,
     viewer.source_event_id AS viewer_event_id, pin.position AS pin_position
   FROM workspace_workstream_directory directory
   LEFT JOIN workspace_workstream_viewers viewer
@@ -3162,10 +3176,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               `INSERT INTO workspace_workstream_viewers
                  (workstream_id, user_id, authority_generation, waterline,
                   source_event_id, payload_hash, is_participant, unread_count, you_are_mentioned,
-                  listable, seen_attention_ordinal, manual_unread_from_ordinal,
+                  unseen, listable, seen_attention_ordinal, manual_unread_from_ordinal,
                   manual_unread_generation, latest_mention_attention_ordinal,
                   projected_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(workstream_id, user_id) DO UPDATE SET
                  authority_generation = excluded.authority_generation,
                  waterline = excluded.waterline,
@@ -3174,6 +3188,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                  is_participant = excluded.is_participant,
                  unread_count = excluded.unread_count,
                  you_are_mentioned = excluded.you_are_mentioned,
+                 unseen = excluded.unseen,
                  listable = excluded.listable,
                  seen_attention_ordinal = excluded.seen_attention_ordinal,
                  manual_unread_from_ordinal = excluded.manual_unread_from_ordinal,
@@ -3189,6 +3204,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               effect.isParticipant ? 1 : 0,
               effect.unreadCount,
               effect.youAreMentioned ? 1 : 0,
+              effect.unseen === true ? 1 : 0,
               effect.listable ? 1 : 0,
               effect.seenAttentionOrdinal ?? 0,
               effect.manualUnreadFromOrdinal ?? null,

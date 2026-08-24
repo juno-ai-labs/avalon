@@ -32,7 +32,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
-import { formatDateTime, formatRelative, groupActivityItems } from '../lib/format';
+import { formatDateTime, formatRelative, groupActivityItems, workstreamMarkerStatus } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import {
   markSurfaceEntrypoint,
@@ -521,7 +521,7 @@ function WorkstreamRow({
             to={`/workstreams/${workstream.id}`}
           >
             <span className="sidebar-row-icon">
-              <StatusDot compact status={workstream.harnessStatus} tooltip />
+              <StatusDot compact status={workstreamMarkerStatus(workstream)} tooltip />
             </span>
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">

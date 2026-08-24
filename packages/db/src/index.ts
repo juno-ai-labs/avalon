@@ -430,6 +430,8 @@ export function createDatabase(db: D1DatabaseLike) {
         manualUnreadGeneration: 0,
         hasUnread: false,
         youAreMentioned: false,
+        // The creator is looking at what they just created.
+        unseen: false,
         firstUnreadSequenceNumber: null,
         lastActivityAt: at,
         createdAt: at,

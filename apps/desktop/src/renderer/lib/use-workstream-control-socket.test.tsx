@@ -111,6 +111,7 @@ function metadata(revision: number, overrides: Partial<WorkstreamControlMetadata
       listable: true,
       unreadCount: 3,
       youAreMentioned: true,
+      unseen: false,
       readThroughSequenceNumber: 4,
       manualUnreadFromSequenceNumber: null,
       manualUnreadGeneration: 2,
