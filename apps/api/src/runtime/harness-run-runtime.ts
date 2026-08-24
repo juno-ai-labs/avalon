@@ -1814,6 +1814,11 @@ export async function reapStaleHarnessRuns(
     }
   }
 
+  // No early return on a full repair page: the reaps below are the
+  // time-sensitive half and must run on every activation.
+  //
+  // Reaping work, which the root and child passes share. The repair pass above
+  // is bounded by its own LIMIT and deliberately does not count against this.
   for (const row of await runs.staleLeaseRuns({
     blockOnly,
     now: Date.now(),

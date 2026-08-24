@@ -353,6 +353,78 @@ describe("lifecycle events", () => {
   });
 });
 
+describe("marking residual receipts reconciled", () => {
+  const marker = "residual_receipts_settled";
+
+  it("refuses to call a marker from another attempt this attempt's own", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN, { status: "failed" });
+    sql.exec(
+      `UPDATE runs SET legacy_attempt_id = 'attempt-2', terminalized_at = ? WHERE run_id = ?`,
+      NOW,
+      RUN,
+    );
+    // A superseded attempt's marker, under the same key: the key names the
+    // thing that happened once per run, so nothing stops one attempt finding
+    // another's.
+    storage.recordLifecycleEvent({
+      eventId: "event-other",
+      runId: RUN,
+      attemptId: "attempt-1",
+      eventKey: marker,
+      eventType: "receipt_reconciliation",
+      status: "failed",
+      memberSafePayloadJson: "{}",
+      now: NOW,
+    });
+
+    // `attempt-2` holds the run, so the terminalized fence above rejects this
+    // caller and the fallback decides the answer. Reporting `replayed` would
+    // tell a caller its own marker exists when it does not — and that row is
+    // then re-selected by every sweep while each sweep calls it settled, which
+    // is a wedged repair page that never warns.
+    expect(storage.recordReceiptReconciliation({
+      runId: RUN,
+      attemptId: "attempt-3",
+      terminalizedAt: NOW - 1,
+      eventKey: marker,
+      eventId: "event-mine",
+      now: NOW,
+    })).toEqual({ outcome: "not_terminal" });
+  });
+
+  it("reports a replay to the attempt whose marker it is", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN, { status: "failed" });
+    sql.exec(
+      `UPDATE runs SET legacy_attempt_id = 'attempt-1', terminalized_at = ? WHERE run_id = ?`,
+      NOW,
+      RUN,
+    );
+    storage.recordLifecycleEvent({
+      eventId: "event-mine",
+      runId: RUN,
+      attemptId: "attempt-1",
+      eventKey: marker,
+      eventType: "receipt_reconciliation",
+      status: "failed",
+      memberSafePayloadJson: "{}",
+      now: NOW,
+    });
+
+    // The same attempt asking again, with a stale terminal stamp: its own
+    // marker is there, so this is an honest replay rather than a lost write.
+    expect(storage.recordReceiptReconciliation({
+      runId: RUN,
+      attemptId: "attempt-1",
+      terminalizedAt: NOW - 1,
+      eventKey: marker,
+      eventId: "event-second",
+      now: NOW,
+    })).toEqual({ outcome: "replayed" });
+  });
+});
+
 describe("freezing a run's scope", () => {
   const scope = {
     scopeHash: "scope-hash-1",

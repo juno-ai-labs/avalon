@@ -7421,7 +7421,11 @@ async function isHarnessStopped(
   harnessRunId: string,
 ): Promise<boolean> {
   const row = await runs.run({ runId: harnessRunId });
-  return row?.status === "cancelled" || row?.cancellation_requested_at !== null;
+  // `!= null`, not `!== null`: the port answers `null` for a missing run, so
+  // `row?.cancellation_requested_at` is `undefined` there — and `undefined !==
+  // null` is true, which would report a run that does not exist as stopped.
+  // The routed version was loose for exactly this reason.
+  return row?.status === "cancelled" || row?.cancellation_requested_at != null;
 }
 
 async function recordToolAudit(
