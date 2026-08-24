@@ -340,6 +340,18 @@ export const WorkstreamSchema = z.object({
   hasUnread: z.boolean(),
   /** True while a person mention sits above this viewer's seen waterline. */
   youAreMentioned: z.boolean().default(false),
+  /**
+   * True while this person has been put in the work stream and has not opened
+   * it once. A different question from `hasUnread`, which is about messages
+   * arriving in a room somebody already knows: this says the room itself is
+   * new to them, which is the state somebody added by a colleague wakes up in
+   * and the one that survives a work stream whose transcript they have no
+   * reason to have read. Cleared by the first open, and never set again.
+   *
+   * Defaulted because a payload written before this field existed describes a
+   * work stream whose readers have all had it for a while.
+   */
+  unseen: z.boolean().default(false),
   firstUnreadSequenceNumber: z.number().int().nonnegative().nullable(),
   lastActivityAt: TimestampSchema,
   createdAt: TimestampSchema,
@@ -1855,6 +1867,8 @@ export const WorkstreamControlMetadataSchema = z.object({
     listable: z.boolean(),
     unreadCount: z.number().int().nonnegative(),
     youAreMentioned: z.boolean(),
+    /** See `WorkstreamSchema.unseen`. False for anyone not in the room. */
+    unseen: z.boolean().default(false),
     readThroughSequenceNumber: z.number().int().nonnegative(),
     manualUnreadFromSequenceNumber: z.number().int().nonnegative().nullable(),
     manualUnreadGeneration: z.number().int().nonnegative(),

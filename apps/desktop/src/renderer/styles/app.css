@@ -332,11 +332,18 @@ pre {
   width: 7px;
 }
 
-.status-needs_input .status-dot { background: var(--av-sys-color-warning-base); }
-.status-failed .status-dot { background: var(--av-sys-color-danger-base); }
-.status-stopped .status-dot { background: var(--av-sys-color-stopped-base); }
-.status-running .status-dot { animation: active-pulse 1.4s ease-in-out infinite; background: var(--av-sys-color-accent-base); }
-.status-completed .status-dot { background: var(--av-ref-color-neutral-9); }
+/* One token per state, all from the same group, because these are eight
+   answers to one question — `sys.color.workstream` in the token registry, and
+   `docs/workstream-markers.md` for which of them wins when several are true.
+   `app.css` names tokens and never a colour: `docs/theming.md`. */
+.status-needs_input .status-dot { background: var(--av-sys-color-workstream-needs-input); }
+.status-failed .status-dot { background: var(--av-sys-color-workstream-failed); }
+.status-stopped .status-dot { background: var(--av-sys-color-workstream-stopped); }
+.status-running .status-dot { animation: active-pulse 1.4s ease-in-out infinite; background: var(--av-sys-color-workstream-running); }
+.status-completed .status-dot { background: var(--av-sys-color-workstream-completed); }
+.status-unread .status-dot { background: var(--av-sys-color-workstream-unread); }
+.status-mentioned .status-dot { background: var(--av-sys-color-workstream-mentioned); }
+.status-unseen .status-dot { background: var(--av-sys-color-workstream-unseen); }
 .status-scheduled .status-dot { background: transparent; border: 1px solid var(--av-ref-color-line-6); }
 .status-compact { height: 14px; justify-content: center; width: 14px; }
 .status-compact .status-dot { height: 6px; width: 6px; }
@@ -755,7 +762,9 @@ pre {
 }
 
 .workstream-row.is-unread .sidebar-row-title { color: var(--av-sys-color-text-default); font-weight: var(--av-sys-font-weight-emphasis); }
-.workstream-row.is-unread .sidebar-row-icon { color: var(--av-sys-color-accent-base); }
+/* The marker beside the row carries a colour of its own for unread now, so
+   tinting the slot as well would state it twice — in a hue that no longer
+   means unread. The weight above is what the row itself says. */
 
 .sidebar-row-hint { align-items: center; color: var(--av-ref-color-neutral-9); display: flex; font-size: var(--av-sys-font-size-hint); gap: 3px; margin-top: var(--av-cmp-row-hint-gap); }
 /* The hint is a flex row so a scope badge can sit beside its text, which is
@@ -2101,7 +2110,14 @@ pre {
 .waiting-workstream-row { align-items: center; background: var(--av-sys-color-surface-subtle); border: 1px solid transparent; border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); display: grid; gap: 10px; grid-template-columns: auto minmax(0, 1fr) auto auto 15px; min-height: 44px; padding: 7px 10px; text-decoration: none; transition: background 130ms ease, border-color 130ms ease; }
 .waiting-workstream-row:hover { background: var(--av-sys-color-surface-raised); border-color: var(--av-ref-color-line-2); }
 .waiting-workstream-row:focus-visible { border-color: var(--av-sys-color-accent-strong); outline: 0; }
-.waiting-workstream-row .status-needs_input { color: var(--av-sys-color-warning-base); font-size: 10.5px; }
+/* The row carries whichever marker the work stream is in, so the label beside
+   the dot takes its colour from the same state rather than from the one state
+   this section used to hold. */
+.waiting-workstream-row .status-indicator { font-size: 10.5px; }
+.waiting-workstream-row .status-needs_input { color: var(--av-sys-color-workstream-needs-input); }
+.waiting-workstream-row .status-unread { color: var(--av-sys-color-workstream-unread); }
+.waiting-workstream-row .status-mentioned { color: var(--av-sys-color-workstream-mentioned); }
+.waiting-workstream-row .status-unseen { color: var(--av-sys-color-workstream-unseen); }
 .waiting-workstream-copy { align-items: baseline; display: flex; gap: 8px; min-width: 0; }
 .waiting-workstream-copy strong { color: var(--av-sys-color-text-subtle); flex: 0 1 auto; font-size: 12px; font-weight: 530; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .waiting-workstream-copy > span { color: var(--av-ref-color-neutral-9); flex: 1; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

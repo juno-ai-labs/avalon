@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { formatDuration, groupWorkstreams, statusLabel } from './format';
+import {
+  formatDuration,
+  groupWorkstreams,
+  statusLabel,
+  workstreamMarkerStatus,
+  workstreamNeedsAttention,
+} from './format';
 import type { WorkstreamSummary } from './types';
 
 function stream(
@@ -103,6 +109,36 @@ describe('work-stream presentation rules', () => {
     expect(statusLabel.completed).toBe('Latest run completed');
     expect(statusLabel.scheduled).toBe('Scheduled');
     expect(statusLabel.stopped).toBe('Latest run stopped');
+  });
+
+  it('ranks the states a work stream can show one person, most urgent first', () => {
+    const running = { harnessStatus: 'running' as const };
+
+    // Every pair the ranking actually decides, walked down the order: each
+    // state beats the one below it while both are true.
+    expect(workstreamMarkerStatus({ ...running, unseen: true, youAreMentioned: true, hasUnread: true }))
+      .toBe('unseen');
+    expect(workstreamMarkerStatus({ ...running, youAreMentioned: true, hasUnread: true })).toBe('mentioned');
+    expect(workstreamMarkerStatus({ ...running, hasUnread: true })).toBe('running');
+    expect(workstreamMarkerStatus({ harnessStatus: 'needs_input', hasUnread: true })).toBe('needs_input');
+    expect(workstreamMarkerStatus({ harnessStatus: 'completed', hasUnread: true })).toBe('unread');
+    expect(workstreamMarkerStatus({ harnessStatus: 'stopped', hasUnread: true })).toBe('unread');
+    expect(workstreamMarkerStatus({ harnessStatus: 'failed', hasUnread: true })).toBe('unread');
+    // Nothing personal is true, so the run answers for itself — including the
+    // one state the ranking does not mention.
+    expect(workstreamMarkerStatus({ harnessStatus: 'scheduled' })).toBe('scheduled');
+    expect(workstreamMarkerStatus({ harnessStatus: 'failed' })).toBe('failed');
+  });
+
+  it('asks for attention on anything only this person can clear', () => {
+    expect(workstreamNeedsAttention({ harnessStatus: 'needs_input' })).toBe(true);
+    expect(workstreamNeedsAttention({ harnessStatus: 'completed', unseen: true })).toBe(true);
+    expect(workstreamNeedsAttention({ harnessStatus: 'completed', youAreMentioned: true })).toBe(true);
+    // Unread while the agent is working: the dot shows the run, and the work
+    // stream is still one this person has to read.
+    expect(workstreamNeedsAttention({ harnessStatus: 'running', hasUnread: true })).toBe(true);
+    expect(workstreamNeedsAttention({ harnessStatus: 'running' })).toBe(false);
+    expect(workstreamNeedsAttention({ harnessStatus: 'failed' })).toBe(false);
   });
 
   it('formats concise task durations', () => {

@@ -16,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 18;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 19;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1309,6 +1309,23 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     version: 18,
     description: "retire the block-dashboard compatibility views and their triggers",
     statements: blockDashboardAuthorityPromotion(),
+  },
+  {
+    version: 19,
+    description: "record when a participant first opened the work stream, so being added is visible",
+    statements: [
+      // Being put in a room and never having looked at it was expressible
+      // nowhere: `member_attention` only exists once somebody has been read to
+      // or mentioned, and its absence cannot be told apart from a row this
+      // migration would have to invent. The membership row is the one thing
+      // every participant has, from the instant they are added.
+      `ALTER TABLE participants ADD COLUMN first_opened_at INTEGER`,
+      // Everybody already in a room has had the chance to open it, and a
+      // release that turned every existing membership into an unread-looking
+      // dot would be indistinguishable from a bug. `added_at` is the honest
+      // stand-in: it is when they could first have opened it.
+      `UPDATE participants SET first_opened_at = added_at WHERE first_opened_at IS NULL`,
+    ],
   },
 ];
 

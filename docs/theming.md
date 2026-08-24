@@ -663,6 +663,41 @@ Air, and Avalon's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
+### 2026-08-24 — Work-stream markers get a token group of their own
+
+**What changed:** `sys.color.stopped.base` is gone, and the six colours the
+sidebar's dot drew from — three of which it borrowed from `accent`, `warning`,
+`danger` and the neutral ramp — are replaced by `sys.color.workstream`, one
+token per state the marker can show: `running`, `needs-input`, `completed`,
+`failed`, `stopped`, `unread`, `mentioned`, `unseen`.
+
+**Why:** the marker grew from five states to eight, and the borrowed palette
+could not seat them. `running` and unread both resolved to `accent`, so the two
+were the same colour on the same list; `needs-input` and a warning banner shared
+`warning`, which meant a marker could not be retinted without moving an unrelated
+surface. A group whose members are the states of one control is also the only
+shape in which "these eight must remain distinguishable from each other" is a
+checkable claim rather than a note in a review.
+
+**Considered and rejected:** giving each theme its own hue per state, as the
+borrowed tokens did — Terra's accent is a cyan and Air's a muted blue, so
+`running` would have been a different colour in each. The states are read as a
+legend across the whole product, so the group carries one hue per state with a
+per-appearance shade: darker on the light themes, lifted on the dark ones,
+`completed` aliased to each theme's `ref.color.neutral.9` because a neutral has
+to sit in its own ramp.
+
+**What a future change has to respect:** a ninth state means a token here in all
+four themes and a rule in `app.css`, and the two are checked by different tests —
+the registry coverage test fails on a token missing from a theme, and the
+stylesheet test fails on a `var()` that is not declared. Neither catches a state
+that has both and is indistinguishable from its neighbour, which is what the
+group's description is for. `sys.color.stopped.base` was removed rather than
+aliased: its only consumer moved, and a token nothing names is a colour the next
+person has to check before they can change it.
+
+Shipped in TBD.
+
 ### 2026-08-21 — The documents catch up with the two-axis picker
 
 **What changed:** `docs/e2e.md`'s appearance acceptance step, the worked theme

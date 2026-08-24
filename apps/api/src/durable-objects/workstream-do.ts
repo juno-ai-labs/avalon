@@ -1880,6 +1880,9 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       isParticipant: effects.some((effect) => effect.isParticipant),
       unreadCount: effects.reduce((count, effect) => count + effect.unreadCount, 0),
       youAreMentioned: effects.some((effect) => effect.youAreMentioned),
+      // Only the top-level product writes this; a substream's projection is
+      // silent about it, which `some` reads as the top level's answer.
+      unseen: effects.some((effect) => effect.unseen === true),
       listable: effects.some((effect) => effect.listable),
       seenAttentionOrdinal: Math.max(...effects.map((effect) => effect.seenAttentionOrdinal ?? 0)),
       manualUnreadFromOrdinal: effects.reduce<number | null>((earliest, effect) => {
@@ -2004,6 +2007,9 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       isParticipant: effects.some((effect) => effect.isParticipant),
       unreadCount: effects.reduce((count, effect) => count + effect.unreadCount, 0),
       youAreMentioned: effects.some((effect) => effect.youAreMentioned),
+      // Only the top-level product writes this; a substream's projection is
+      // silent about it, which `some` reads as the top level's answer.
+      unseen: effects.some((effect) => effect.unseen === true),
       listable: effects.some((effect) => effect.listable),
       seenAttentionOrdinal: Math.max(...effects.map((effect) => effect.seenAttentionOrdinal ?? 0)),
       manualUnreadFromOrdinal: effects.reduce<number | null>((earliest, effect) => {
@@ -2086,6 +2092,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
           && (viewer?.listable ?? true),
         unreadCount: viewer?.unreadCount ?? 0,
         youAreMentioned: viewer?.youAreMentioned ?? false,
+        unseen: viewer?.unseen ?? false,
         readThroughSequenceNumber: readThrough,
         manualUnreadFromSequenceNumber: viewer?.manualUnreadFromOrdinal ?? null,
         manualUnreadGeneration: viewer?.manualUnreadGeneration ?? 0,

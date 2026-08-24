@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
-import { formatRelative } from '../lib/format';
+import { formatRelative, workstreamMarkerStatus, workstreamNeedsAttention } from '../lib/format';
 import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { useDraftText } from '../lib/use-draft-text';
 import { useFileAttachments } from '../lib/use-file-attachments';
@@ -180,11 +180,15 @@ const WorkSuggestedPrompts = withSuggestedPrompts<{
   },
 }));
 
-function WaitingWorkstreamRow({ workstream }: { workstream: WorkstreamSummary }): React.JSX.Element {
+function AttentionWorkstreamRow({ workstream }: { workstream: WorkstreamSummary }): React.JSX.Element {
   const summary = workstream.preview ?? workstream.objective ?? workstream.automationName;
   return (
     <NavLink className="waiting-workstream-row" to={`/workstreams/${workstream.id}`}>
-      <StatusDot status="needs_input" />
+      {/* Read from the work stream rather than hard-coded, now that four states
+          land a row here and they do not mean the same thing — and through the
+          same ranking the sidebar dot uses, so one work stream does not show
+          two different markers on two screens. */}
+      <StatusDot status={workstreamMarkerStatus(workstream)} />
       <span className="waiting-workstream-copy">
         <strong>{workstream.title}</strong>
         {summary && <span>{summary}</span>}
@@ -290,9 +294,15 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     staleTime: Number.POSITIVE_INFINITY,
   });
   const selectedIds = useMemo(() => new Set(selectedMembers.map((member) => member.id)), [selectedMembers]);
-  const waitingWorkstreams = useMemo(
+  // Everything that is asking something of this person: a run stopped for an
+  // answer, a mention, messages they have not read, and a work stream somebody
+  // put them in that they have not opened. All four are things only they can
+  // clear, which is what the section is for — and the newest activity is the
+  // one worth looking at first, so the list is ordered by that rather than by
+  // which of the states a row happens to be in.
+  const attentionWorkstreams = useMemo(
     () => (workstreams.data ?? [])
-      .filter((workstream) => workstream.harnessStatus === 'needs_input')
+      .filter((workstream) => workstreamNeedsAttention(workstream))
       .sort((left, right) => new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime()),
     [workstreams.data],
   );
@@ -535,11 +545,11 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
                 <h1>Welcome back, {workspace.currentUser.name.split(/\s+/u)[0]}</h1>
               </header>
 
-              {waitingWorkstreams.length > 0 && (
-                <section className="waiting-workstreams" aria-labelledby="waiting-workstreams-heading">
-                  <h2 id="waiting-workstreams-heading">Waiting for input</h2>
+              {attentionWorkstreams.length > 0 && (
+                <section className="waiting-workstreams" aria-labelledby="attention-workstreams-heading">
+                  <h2 id="attention-workstreams-heading">Needs attention</h2>
                   <div className="waiting-workstream-list">
-                    {waitingWorkstreams.map((workstream) => <WaitingWorkstreamRow key={workstream.id} workstream={workstream} />)}
+                    {attentionWorkstreams.map((workstream) => <AttentionWorkstreamRow key={workstream.id} workstream={workstream} />)}
                   </div>
                 </section>
               )}

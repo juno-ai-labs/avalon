@@ -239,8 +239,13 @@ hash-checked RPCs rather than cross-object SQL joins.
   applies the visibility rule above, so a pin left behind by a work stream that was
   archived or narrowed contributes no row while remaining removable by its owner.
   See [`workstream-pinning.md`](workstream-pinning.md).
-- Object-local `participants` records explicit participation reasons. Viewer
-  presence is intentionally absent from durable storage.
+- Object-local `participants` records explicit participation reasons, and
+  `first_opened_at` — null until that person opens the work stream, which is
+  what makes "you were added to this and have never been here" a state the
+  sidebar can show. It is on the membership row rather than on `member_attention`
+  because the attention row does not exist for somebody who has only been added.
+  See [`workstream-markers.md`](workstream-markers.md). Viewer presence is
+  intentionally absent from durable storage.
 - Object-local `parts` has a per-work-stream `sequence_number`; the root
   `workstream.next_sequence_number` allocates ordered events. Conversation rows
   belong to a `substreams` row, with the main chat fixed at substream `0`.
@@ -405,7 +410,9 @@ no projection fallback when that object is unavailable.
   conflict; generation and per-key waterlines reject stale mutable state.
 - `WorkspaceDO.workspace_workstream_directory` and
   `workspace_workstream_viewers` are authoritative common and viewer-specific
-  query rows. Equal generation/waterline with a different hash is rejected.
+  query rows; `viewers.unseen` is the projection of the membership row's
+  `first_opened_at`, so the sidebar reads it without a cross-object call. Equal
+  generation/waterline with a different hash is rejected.
   WorkspaceDO `workstream_notification_intents` temporarily retains a bounded
   person-notification payload — a mention, or somebody added to the work stream
   — plus its required viewer waterline. Delivery resolves current
@@ -717,6 +724,36 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-24 — Membership records when somebody first opened the work stream
+
+**What changed:** work-stream object schema v18 adds `participants.first_opened_at`
+and WorkspaceDO schema v10 adds `workspace_workstream_viewers.unseen`, the
+projection of it the sidebar reads. Both migrations backfill every existing row
+as already opened.
+
+**Why:** being added to a work stream was not a state anything could store. The
+sidebar's dot showed the run's status, and `hasUnread` could not stand in for
+it: a newly added person's unread tracking starts at the ordinal they were added
+at, so a work stream with months of transcript and nothing newer is read by
+construction. The question is not whether messages have arrived since they
+looked but whether they have ever looked, and only the membership row spans that
+— it exists from the instant somebody is put in the room, while `member_attention`
+is written by being read to and by being mentioned and is simply absent for
+somebody who has done neither.
+
+**Considered and rejected:** deriving it from `member_attention.last_seen_at`.
+The row's absence would have to mean "never opened", and it also means "never
+mentioned, never acknowledged" — including for people who have been in the work
+stream since it started, which is the population a deploy would have lit up.
+
+**Consequences:** the backfills are what keep the deploy quiet, and any future
+migration touching either column has to keep that property — a column that
+defaults to unseen turns every existing membership into a notification. The flag
+is per-person state on a table whose other columns are the room's; a bulk update
+of `participants` that forgets it can un-open a work stream for everybody in it.
+
+Shipped in TBD.
 
 ### 2026-08-22 — Two object schemas admit a second notification kind, and the router refuses a cross-authority read
 
