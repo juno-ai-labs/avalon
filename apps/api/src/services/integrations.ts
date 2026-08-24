@@ -1837,22 +1837,13 @@ async function recordWorkflowLaunch(
     input.workspaceId,
     input.workstreamId,
   );
-  await executionEnv.DB.batch([
-    executionEnv.DB.prepare(
-      `UPDATE harness_runs
-       SET workflow_instance_id = ?,
-           status = CASE WHEN status = 'scheduled' THEN 'running' ELSE status END,
-           started_at = COALESCE(started_at, ?)
-       WHERE id = ? AND workspace_id = ?`,
-    ).bind(instanceId, launchedAt, input.harnessRunId, input.workspaceId),
-    executionEnv.DB.prepare(
-      `UPDATE workstreams
-       SET harness_status = CASE WHEN harness_status = 'scheduled' THEN 'running' ELSE harness_status END,
-           updated_at = ?
-       WHERE id = ? AND workspace_id = ?
-         AND ? != 'block_dashboard_block'`,
-    ).bind(launchedAt, input.workstreamId, input.workspaceId, input.reason),
-  ]);
+  await createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId)
+    .launchRun({
+      runId: input.harnessRunId,
+      workflowInstanceId: instanceId,
+      startedAt: Date.parse(launchedAt),
+      now: Date.parse(launchedAt),
+    });
   await withWorkspaceRuntimeDatabase(executionEnv, input.workspaceId).DB.prepare(
     `UPDATE automation_runs
      SET workflow_instance_id = ?,
@@ -1985,11 +1976,10 @@ export async function runWorkstreamHarness(
     `SELECT title, objective FROM workstreams WHERE id = ? AND workspace_id = ? AND archived_at IS NULL`,
   ).bind(input.workstreamId, input.workspaceId).first<{ title: string; objective: string }>();
   if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
-  const initialRun = await env.DB.prepare(
-    "SELECT status, origin FROM harness_runs WHERE id = ? AND workspace_id = ? AND workstream_id = ?",
-  ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{ status: string; origin: string }>();
+  const initialRun = await createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId)
+    .run({ runId: input.harnessRunId });
   if (!initialRun) return { status: "failed", error: { code: "harness_run_not_found", message: "Harness run not found" } };
-  if (initialRun.status === "stopped") return { status: "stopped" };
+  if (initialRun.status === "cancelled") return { status: "stopped" };
   const blockDashboardRun = initialRun.origin === "block_dashboard_block"
     ? await createBlockDashboardObjectPort(env, input.workspaceId, input.workstreamId)
       .blockRunForHarnessRun({ harnessRunId: input.harnessRunId })
@@ -2263,7 +2253,7 @@ export async function runWorkstreamHarness(
       workstreamId: input.workstreamId,
     });
 
-  if (await isHarnessStopped(env, input.harnessRunId)) stopController.abort("stopped_by_user");
+  if (await isHarnessStopped(runs, input.harnessRunId)) stopController.abort("stopped_by_user");
 
   // Setup above runs under the freshly claimed five-minute lease. Start the
   // recurring monitor only once every setup step that can throw has finished,
@@ -2517,16 +2507,14 @@ export async function runWorkstreamHarness(
     },
     flushProgress: async (progress) => {
       await liveness.pulse("usage_flush", true);
-      await env.DB.prepare(
-        `UPDATE harness_runs SET usage_json = ?
-          WHERE id = ? AND attempt_id = ? AND lease_owner = ?
-            AND status = 'running' AND terminalized_at IS NULL`,
-      ).bind(
-        JSON.stringify(progress),
-        input.harnessRunId,
-        liveness.lease.attemptId,
-        liveness.lease.owner,
-      ).run();
+      await runs.recordRunProgress({
+        runId: input.harnessRunId,
+        attemptId: liveness.lease.attemptId,
+        owner: liveness.lease.owner,
+        now: Date.now(),
+        model: null,
+        usageJson: JSON.stringify(progress),
+      });
     },
     onLiveness: async (stage) => {
       await liveness.pulse(stage, stage === "before_model" || stage === "after_tool");
@@ -2716,13 +2704,8 @@ export async function runWorkstreamHarness(
     onEvent: async (event: HarnessEvent) => {
       if (Date.now() - lastStopCheck > 750) {
         lastStopCheck = Date.now();
-        const state = await env.DB.prepare(
-          "SELECT status, cancellation_requested_at FROM harness_runs WHERE id = ?",
-        ).bind(input.harnessRunId).first<{
-          status: string;
-          cancellation_requested_at: string | null;
-        }>();
-        if (state?.status === "stopped" || state?.cancellation_requested_at) {
+        const state = await runs.run({ runId: input.harnessRunId });
+        if (state?.status === "cancelled" || state?.cancellation_requested_at) {
           stopController.abort("stopped_by_user");
         }
       }
@@ -3031,7 +3014,7 @@ export async function runWorkstreamHarness(
     streamedText = attachmentBoundary;
   }
 
-  const stoppedByUser = await isHarnessStopped(env, input.harnessRunId);
+  const stoppedByUser = await isHarnessStopped(runs, input.harnessRunId);
   if (outcome.status !== "completed" && !stoppedByUser) {
     // The member-safe terminal result deliberately strips this detail, so it
     // must be recorded here or nowhere: a Bind run that fails before its first
@@ -3123,17 +3106,14 @@ export async function runWorkstreamHarness(
   // terminal realtime state only after the final message + lifecycle event are
   // durable. This host may persist model/usage metadata while its lease is live,
   // but it must never mark the run completed directly.
-  await env.DB.prepare(
-    `UPDATE harness_runs SET model = ?, usage_json = ?
-      WHERE id = ? AND attempt_id = ? AND lease_owner = ?
-        AND status = 'running' AND terminalized_at IS NULL`,
-  ).bind(
-    outcome.model ?? modelName,
-    JSON.stringify({ ...outcome.usage, run_stats: outcome.stats }),
-    input.harnessRunId,
-    liveness.lease.attemptId,
-    liveness.lease.owner,
-  ).run();
+  await runs.recordRunProgress({
+    runId: input.harnessRunId,
+    attemptId: liveness.lease.attemptId,
+    owner: liveness.lease.owner,
+    now: Date.now(),
+    model: outcome.model ?? modelName,
+    usageJson: JSON.stringify({ ...outcome.usage, run_stats: outcome.stats }),
+  });
   return {
     ...finalTerminalResult,
     metrics: summarizeHarnessRun(outcome, Date.now() - runStartedAtMs),
@@ -3823,16 +3803,14 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           flushProgress: async (progress) => {
             await childLiveness.pulse("usage_flush", true);
             await assertChildOwned();
-            await options.env.DB.prepare(
-              `UPDATE harness_runs SET usage_json = ?
-                WHERE id = ? AND attempt_id = ? AND lease_owner = ?
-                  AND status = 'running' AND terminalized_at IS NULL`,
-            ).bind(
-              JSON.stringify(progress),
-              childInput.harnessRunId,
-              childLiveness.lease.attemptId,
-              childLiveness.lease.owner,
-            ).run();
+            await runs.recordRunProgress({
+              runId: childInput.harnessRunId,
+              attemptId: childLiveness.lease.attemptId,
+              owner: childLiveness.lease.owner,
+              now: Date.now(),
+              model: null,
+              usageJson: JSON.stringify(progress),
+            });
             await assertChildOwned();
           },
           onLiveness: async (stage) => {
@@ -7438,13 +7416,12 @@ async function loadToolInvocation(
   };
 }
 
-async function isHarnessStopped(env: Env, harnessRunId: string): Promise<boolean> {
-  const row = await env.DB.prepare(
-    "SELECT status, cancellation_requested_at FROM harness_runs WHERE id = ?",
-  )
-    .bind(harnessRunId)
-    .first<{ status: string; cancellation_requested_at: string | null }>();
-  return row?.status === "stopped" || row?.cancellation_requested_at != null;
+async function isHarnessStopped(
+  runs: HarnessRunObjectPort,
+  harnessRunId: string,
+): Promise<boolean> {
+  const row = await runs.run({ runId: harnessRunId });
+  return row?.status === "cancelled" || row?.cancellation_requested_at !== null;
 }
 
 async function recordToolAudit(

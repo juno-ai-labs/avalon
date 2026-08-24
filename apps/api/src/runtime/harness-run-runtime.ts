@@ -261,7 +261,7 @@ async function parseVerifiedInlineChildResult(
  * disappear with the view; it moves here, to the one boundary that serves
  * callers written against the published enum.
  */
-function publishedRunStatus(stored: string): string {
+export function publishedRunStatus(stored: string): string {
   switch (stored) {
     case "admitted": return "scheduled";
     case "cancelled": return "stopped";

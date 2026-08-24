@@ -40,6 +40,7 @@ import {
 import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 import { activityIsWorkspaceVisible } from "../lib/activity-visibility";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
+import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { readMessage } from "../runtime/message-projection";
 import {
@@ -184,57 +185,27 @@ export async function launchWorkstreamHarness(
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
   });
-  const statements = [
-    ...(input.supersedeActiveRun ? [executionEnv.DB.prepare(
-      `UPDATE harness_runs
-          SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
-              cancellation_reason = COALESCE(cancellation_reason, 'superseded_by_follow_up')
-        WHERE workspace_id = ? AND workstream_id = ?
-          AND origin != 'block_dashboard_block'
-          AND parent_tool_call_id IS NULL
-          AND status IN ('scheduled', 'running') AND terminalized_at IS NULL`,
-    ).bind(at, input.workspaceId, input.workstreamId)] : []),
-    executionEnv.DB.prepare(
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, parent_harness_run_id,
-        status, started_at, model, created_at, trigger_message_id)
-       SELECT ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?
-        WHERE ? IS NULL OR ? = (
-          SELECT latest.id FROM harness_runs latest
-           WHERE latest.workspace_id = ? AND latest.workstream_id = ?
-             AND latest.parent_tool_call_id IS NULL
-             AND latest.origin != 'block_dashboard_block'
-           ORDER BY latest.created_at DESC, latest.id DESC
-           LIMIT 1
-        )`,
-    ).bind(
-      id,
-      input.workspaceId,
-      input.workstreamId,
-      input.origin,
-      JSON.stringify(input.executionPrincipal),
-      input.parentHarnessRunId ?? null,
-      at,
-      model,
-      at,
-      // Stored, not merely passed to the Workflow: it is what `retry` replays
-      // against, and reconstructing it later is a guess that gets the answer
-      // wrong for every run whose trigger was not the newest human message.
-      input.triggerMessageId,
-      input.expectedLatestHarnessRunId ?? null,
-      input.expectedLatestHarnessRunId ?? null,
-      input.workspaceId,
-      input.workstreamId,
-    ),
-    executionEnv.DB.prepare(
-      `UPDATE workstreams SET harness_status = 'running', last_activity_at = ?, updated_at = ?
-       WHERE id = ? AND workspace_id = ?
-         AND EXISTS (SELECT 1 FROM harness_runs WHERE id = ?)`,
-    ).bind(at, at, input.workstreamId, input.workspaceId, id),
-  ];
-  const insertIndex = input.supersedeActiveRun ? 1 : 0;
-  const admission = await executionEnv.DB.batch(statements);
-  if (Number(admission[insertIndex]?.meta.changes ?? 0) !== 1) {
+  const admission = await createHarnessRunObjectPort(
+    executionEnv,
+    input.workspaceId,
+    input.workstreamId,
+  ).admitRun({
+    runId: id,
+    origin: input.origin,
+    executionPrincipalJson: JSON.stringify(input.executionPrincipal),
+    status: "running",
+    startedAt: Date.parse(at),
+    model,
+    // Stored, not merely passed to the Workflow: it is what `retry` replays
+    // against, and reconstructing it later is a guess that gets the answer
+    // wrong for every run whose trigger was not the newest human message.
+    triggerPartId: input.triggerMessageId,
+    parentRunId: input.parentHarnessRunId ?? null,
+    supersedeActive: input.supersedeActiveRun === true,
+    expectedLatestRunId: input.expectedLatestHarnessRunId ?? null,
+    now: Date.parse(at),
+  });
+  if (admission.outcome === "stale") {
     throw new ApiError(409, "terminal_repository_request_stale", "A newer run replaced this Terminal repository request. Reload the work stream before continuing.");
   }
   const workflowInput: WorkstreamWorkflowInput = {
@@ -300,18 +271,16 @@ export async function launchWorkstreamHarness(
     });
     const memberSafeError = memberSafeHarnessError({ code: "workflow_unavailable" })
       ?? GENERIC_MEMBER_SAFE_HARNESS_ERROR;
-    // Through the routed environment like the admission above: the run row
-    // lives in the object, and after the legacy tables drop there is no D1
-    // `harness_runs` for a plain write to land in — it would throw inside
-    // this very catch handler.
-    await executionEnv.DB.batch([
-      executionEnv.DB.prepare(
-        "UPDATE harness_runs SET status = 'failed', completed_at = ?, error_json = ? WHERE id = ?",
-      ).bind(nowIso(), JSON.stringify(memberSafeError), id),
-      executionEnv.DB.prepare(
-        "UPDATE workstreams SET harness_status = 'failed', updated_at = ? WHERE id = ?",
-      ).bind(nowIso(), input.workstreamId),
-    ]);
+    // Through the object's own authority like the admission above: the run row
+    // lives there, and the operation commits the sidebar's projection with the
+    // failure rather than as a second statement that could be lost inside this
+    // very catch handler.
+    await createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId)
+      .failUnlaunchedRun({
+        runId: id,
+        errorJson: JSON.stringify(memberSafeError),
+        now: Date.now(),
+      });
     await emitCorrelatedRunOutcome(executionEnv, {
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
