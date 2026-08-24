@@ -22,6 +22,7 @@ terminates in Avalon's EU-isolated Cloudflare resources.
 | `apps/desktop/src/main/native-crash-*.ts` | Route-final Crashpad generations and the bounded, authenticated next-launch uploader. |
 | `apps/desktop/src/main/product-analytics-settings.ts` | Local-first disable, fail-closed enable/refresh, preference synchronization, crash invalidation, and spool purge. |
 | `apps/desktop/src/main/index.ts` | Startup ordering, Crashpad start, process observers, IPC sender validation, upload scheduling, and product integration points. |
+| `apps/desktop/src/main/telemetry-intent.ts` | The renderer-intent allowlist and validator every `telemetry:product-intent` call passes through, kept out of the entry point so it can be tested by running it. |
 | `apps/desktop/src/renderer/lib/telemetry.ts` | Narrow renderer facade for registered screen, product-intent, and error-candidate calls. |
 | `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, WorkstreamDO-control, SubstreamAgent-feed, and per-block HyperSight hooks. |
 | `apps/api/src/routes/telemetry.ts` | Bounded bootstrap, anonymous/authenticated event, identity-link, preference, and crash-ingest routes. |
@@ -106,7 +107,11 @@ The cause is stated where it is known rather than derived from a close code,
 which carries none of it — a heartbeat that went unanswered, a transport error, a
 ticket that could not be issued, a room that could not replay, going offline, and
 losing access are each their own value, and a close nobody asked for is the
-server's. A close from the effect's own teardown is not a transition at all and
+server's. Offline is checked once more after the socket ticket resolves, because
+a client that drops off the network while that request is in flight has no socket
+for its offline handler to close: dialling anyway fails a moment later and would
+be counted as a transport error, which is the one reading this event exists to
+keep apart from losing the network. A close from the effect's own teardown is not a transition at all and
 is not reported; counting it would put every ordinary navigation in the drop
 rate. The event carries no work-stream ID, URL, close code, or ticket.
 
@@ -601,6 +606,34 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-24 — The intent allowlist is tested by running it, and offline is not a transport error
+
+**What changed:** `parseTelemetryProductIntent` and the UUID pattern beside it
+moved out of `main/index.ts` into `main/telemetry-intent.ts`, with a suite that
+runs the parser. Every socket loop now re-checks `navigator.onLine` after its
+ticket resolves and reports `offline` there.
+
+**Why:** Both came out of review on #271. The allowlist decides whether any
+renderer event reaches the reporter at all, and it was covered by a test that
+matched the source text of `index.ts` — which passes on a build whose dispatch is
+broken and fails on one that was merely reformatted. The entry point cannot be
+imported by a test because importing it starts Electron, so the function moved to
+where it can be called. Separately, a client that goes offline while its socket
+ticket is in flight leaves the offline handler nothing to close; three of the four
+loops then dialled anyway and recorded the failure as `transport_error`, which is
+precisely the distinction this event was added to make.
+
+**Considered and rejected:** Keeping the source assertion and noting the
+limitation in the pull request, which is what the first version did. The
+repository's own testing rule is that an assertion which survives breaking the
+code is not coverage, and this one would have.
+
+**Consequences:** `main/index.ts` no longer holds the validator, so a new
+renderer event is admitted in `telemetry-intent.ts` and gets a case in its suite
+rather than a string match. The offline re-check also changes product behaviour
+very slightly: those three loops no longer dial a socket they know will fail, and
+wait for the `online` event exactly as they already did when they started offline.
 
 ### 2026-08-24 — HyperSight's per-block sockets join the same contract
 

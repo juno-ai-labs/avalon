@@ -191,6 +191,13 @@ export function useWorkstreamControlSocket(
       try {
         const ticket = await api.getWorkstreamControlSocketTicket(workstreamId);
         if (stopped) return;
+        // See `workspace-socket.tsx`: an offline transition during the ticket
+        // request is invisible to the offline handler, because there was no
+        // socket to close.
+        if (isOffline()) {
+          socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
+          return;
+        }
         const next = new WebSocket(ticket.url, ticket.protocols);
         socket = next;
         next.addEventListener('open', () => {
