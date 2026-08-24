@@ -535,13 +535,15 @@ not own:
   payload still on the row — and a `link_shared` Slack reports exactly once is never
   redelivered, so the message keeps its bare URL permanently.
 - **A personal connection's Slack identity comes from `auth.test`, not from the
-  OAuth body.** Slack publishes no response shape for `oauth.v2.user.access` and
-  describes it only as RFC 6749 compliant — an RFC token response carries a
-  token and no identity — so `authed_user.id` is present or absent at Slack's
-  discretion. Reading it and failing when it is missing is what made every
-  personal connection fail after the member had already approved the grant.
-  `auth.test` names the principal a token belongs to, needs no scope, and is
-  consulted only when the body named nobody.
+  OAuth body.** Slack publishes no response shape for `oauth.v2.user.access`, so
+  `authed_user.id` is present or absent at its discretion. Reading it and
+  failing when it is missing is what made every personal connection fail after
+  the member had already approved the grant. `auth.test` names the principal a
+  token belongs to, needs no scope, and is consulted only when the body named
+  nobody — where it also supplies the granted scopes, since a body that names no
+  user often names no `scope` either and `refreshCredentials` carries a stored
+  empty set forward on a personal connection rather than rediscovering it. What
+  the authorization itself granted always wins; the recovery only fills a gap.
 - **Every OAuth callback failure carries the phase that produced it.**
   `classifyConnectorOAuthCallbackFailure` relays `oauthStage` and drops provider
   messages, so an unreachable Slack, a non-JSON body, and a `{ok: true}` body
@@ -771,10 +773,17 @@ schema mismatch would have set `response_invalid`, and a non-2xx would have set
 `provider_status`. None appeared, which leaves the throw sites that attach no
 details at all — and of those, only `!accessToken || !userId` is deterministic
 enough to fail five times across three weeks while the workspace flow, on the
-same host through the same fetcher, kept succeeding. Slack's own documentation
-does not publish what `oauth.v2.user.access` returns; it says the method is RFC
-6749 compliant, and an RFC 6749 token response has no identity in it. Avalon
-was reading `authed_user.id` off a body Slack never promised would have one,
+same host through the same fetcher, kept succeeding.
+
+The same absence says what the body *was*, and the narrower claim is the better
+supported one. No `response_invalid` means the body satisfied
+`SlackOAuthSuccessSchema`, which requires `team` — so Slack sent its own
+envelope, `ok: true` with a team, and simply no user identity in it. Slack's
+documentation does not publish what `oauth.v2.user.access` returns, describing
+the method only as RFC 6749 compliant, which is a fair reason to expect an
+identity to be optional; it is not evidence that what arrived was an RFC 6749
+token response, and an earlier draft of this entry overreached by saying so.
+Either way Avalon was reading `authed_user.id` off a field Slack never promised,
 and spending the member's grant to find out.
 
 **Considered and rejected:** Guessing more keys — `user_id`, `user.id`, a
@@ -782,17 +791,34 @@ flattened `authed_user_id` — which is the same mistake at a wider aperture, an
 whose failure mode is identical and equally silent. Relaxing
 `SlackOAuthSuccessSchema` so a body without `team` still parses: the logs rule
 that case out (it would have set `response_invalid`), so it would have been
-untested code written against an imagined failure. Widening
+untested code written against an imagined failure. Typing `team_id` on
+`auth.test` alongside `user_id` falls to the same argument and was dropped in
+review — the team is never the missing field, so a second source for it is one
+more shape nothing reads, and it would have left `providerAccountId` assembled
+from two authorities for no reason. Widening
 `classifyConnectorOAuthCallbackFailure` to relay the provider's *message*: that
 module's comment derives its safety from relaying only short identifier-shaped
 codes from fields that hold codes by construction, and a message is where
 providers quote the request back.
 
+Left undone, and named here because it is the shared pattern rather than this
+change: the stage wrapper's terminal branch relabels an Avalon bug — a
+`TypeError` inside a wrapped block — as `provider_error` with
+`error_name: "ConnectorError"`, losing the one field that used to identify it as
+ours. `granolaOAuthCallbackStage` has the same hole, and closing it means either
+diverging from the shared pattern or adding a field to the classifier's relay
+set, which this change deliberately avoided. It belongs in a change that fixes
+both adapters.
+
 **Consequences:** The identity lookup costs one extra Slack call, and only on
 the path that was previously a dead end — a body carrying `authed_user.id`
 short-circuits before it, which is asserted rather than left to inspection. Its
 10-second timeout is the one the two sibling calls in the same function already
-use, not a new number. If a personal connection still fails after this, the
+use, not a new number. The same response supplies the granted scopes when the
+body carries none, so the connection is not stored with an empty grant that
+`refreshCredentials` would then carry forward; a body that does carry `scope`
+keeps it, and a test with a deliberately divergent `x-oauth-scopes` header pins
+that precedence. If a personal connection still fails after this, the
 failure now names its phase: `stage: "account_identity"` with
 `response_invalid` means Slack returned a token and would not say whose,
 `stage: "token_exchange"` with `provider_error` is Slack refusing the code, and

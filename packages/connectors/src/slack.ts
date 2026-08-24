@@ -788,16 +788,16 @@ const SlackWebApiSchemas = {
     response: SlackOkSchema,
   },
   "auth.revoke": { request: z.object({}).strict(), response: SlackOkSchema.extend({ revoked: z.boolean().optional() }) },
-  // `user_id` and `team_id` are optional here only because `auth.test` is
-  // also called for its `x-oauth-scopes` header alone. Slack itself always
-  // names the principal a token belongs to, which is what makes this the
-  // authority for a personal identity the OAuth body did not carry.
+  // `user_id` is optional only because `auth.test` is also called for its
+  // `x-oauth-scopes` header alone. Slack itself always names the principal a
+  // token belongs to, which is what makes this the authority for a personal
+  // identity the OAuth body did not carry. `team_id` is deliberately not
+  // typed here: `SlackOAuthSuccessSchema` requires `team`, so the team is
+  // never the missing field, and a second source for it would be one more
+  // shape nothing reads.
   "auth.test": {
     request: z.object({}).strict(),
-    response: SlackOkSchema.extend({
-      user_id: z.string().min(1).optional(),
-      team_id: z.string().min(1).optional(),
-    }),
+    response: SlackOkSchema.extend({ user_id: z.string().min(1).optional() }),
   },
   "chat.appendStream": {
     request: z.object({ channel: SlackIdSchema, ts: SlackTimestampSchema, markdown_text: z.string().min(1).max(12_000) }).strict(),
@@ -2161,20 +2161,28 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
         if (!accessToken) {
           throw new ConnectorError("provider_error", "Slack OAuth did not return a user token", { responseInvalid: true });
         }
-        // Slack publishes no response shape for `oauth.v2.user.access`, and
-        // describes it only as RFC 6749 compliant — which is a token response
-        // and carries no identity at all. Reading `authed_user.id` off it was a
-        // guess, and where it does not hold the whole personal connection fails
-        // at this line with the grant already spent. Slack answers the question
-        // directly instead: `auth.test` names the principal a token belongs to,
-        // needs no scope, and is already what this adapter's health check asks.
-        const userId = authedUser.id
-          ?? response.authed_user_id
-          ?? (await slackApiResponse(accessToken, "auth.test", {}, AbortSignal.timeout(10_000), fetcher)).data.user_id;
+        // Slack publishes no response shape for `oauth.v2.user.access`, so
+        // `authed_user.id` is present or absent at its discretion — and where
+        // it is absent, reading it failed the whole personal connection here
+        // with the member's grant already spent. Slack answers the question
+        // directly instead: `auth.test` names the principal a token belongs
+        // to, needs no scope, and is already what this adapter's health check
+        // asks. A body that names the user does not pay for the call.
+        const named = authedUser.id ?? response.authed_user_id;
+        const identity = named === undefined
+          ? await slackApiResponse(accessToken, "auth.test", {}, AbortSignal.timeout(10_000), fetcher)
+          : null;
+        const userId = named ?? identity?.data.user_id;
         if (!userId) {
           throw new ConnectorError("provider_error", "Slack did not identify the user this authorization belongs to", { responseInvalid: true });
         }
-        return { providerAccountId: `${teamId}:${userId}`, teamId, slackUserId: userId, workspaceName: team.name ?? teamId, userAccessToken: accessToken, oauthScopes: slackOAuthScopes(response.scope ?? authedUser.scope), refreshToken: response.refresh_token ?? authedUser.refresh_token ?? null, expiresAt: expiresAt(response.expires_in ?? authedUser.expires_in, now()) };
+        // A body that named no user often names no `scope` either, and
+        // `refreshCredentials` carries a stored empty set forward rather than
+        // rediscovering it on a personal connection. `auth.test` reports the
+        // grant in `x-oauth-scopes`, and the response is already in hand.
+        const bodyScopes = slackOAuthScopes(response.scope ?? authedUser.scope);
+        const oauthScopes = bodyScopes.length > 0 ? bodyScopes : identity?.oauthScopes ?? [];
+        return { providerAccountId: `${teamId}:${userId}`, teamId, slackUserId: userId, workspaceName: team.name ?? teamId, userAccessToken: accessToken, oauthScopes, refreshToken: response.refresh_token ?? authedUser.refresh_token ?? null, expiresAt: expiresAt(response.expires_in ?? authedUser.expires_in, now()) };
       });
     },
     async refreshCredentials(connection, signal) {
