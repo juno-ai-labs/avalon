@@ -9,6 +9,21 @@ import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from './workspace-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
+import type * as TelemetryModule from './telemetry';
+
+const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
+vi.mock('./telemetry', async (importOriginal) => ({
+  ...await importOriginal<typeof TelemetryModule>(),
+  reportTelemetryProductIntent,
+}));
+
+/** Every `realtime_socket_state` this test reported, in order. */
+function socketTelemetry(): unknown[] {
+  return reportTelemetryProductIntent.mock.calls
+    .map(([intent]) => intent as { kind: string })
+    .filter((intent) => intent.kind === 'realtime_socket_state');
+}
+
 function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary {
   return {
     id: '00000000-0000-7000-8000-000000000002',
@@ -70,6 +85,7 @@ async function flushPromises(): Promise<void> {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  reportTelemetryProductIntent.mockClear();
   FakeWebSocket.instances = [];
 });
 
@@ -245,6 +261,88 @@ describe('WorkspaceSocketProvider', () => {
       clientMessageId: 'client-message-1',
       text: command.payload.text,
     });
+  });
+
+  it('reports how deep a workspace reconnect had to go, and stops reporting at teardown', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    const { unmount } = render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div>connected surface</div>
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+
+    act(() => FakeWebSocket.instances[0]!.open());
+    // A close nobody here asked for reads as the server's, and the count is the
+    // retry depth it dropped from rather than the one it is about to start.
+    act(() => FakeWebSocket.instances[0]!.close(1012));
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    await flushPromises();
+    act(() => FakeWebSocket.instances[1]!.open());
+
+    expect(socketTelemetry()).toEqual([
+      { kind: 'realtime_socket_state', socket: 'workspace', state: 'connected', cause: 'opened', attempts: 'zero' },
+      { kind: 'realtime_socket_state', socket: 'workspace', state: 'retrying', cause: 'server_closed', attempts: 'zero' },
+      { kind: 'realtime_socket_state', socket: 'workspace', state: 'connected', cause: 'opened', attempts: 'one' },
+    ]);
+
+    // Teardown closes the socket too. Nothing failed and nothing is coming
+    // back, so counting it would put an ordinary navigation in the drop rate.
+    reportTelemetryProductIntent.mockClear();
+    unmount();
+    await flushPromises();
+    expect(socketTelemetry()).toEqual([]);
+  });
+
+  it('names the cause a workspace close event cannot carry', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div>connected surface</div>
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    reportTelemetryProductIntent.mockClear();
+
+    // The heartbeat closes the socket itself when no pong answers, and the
+    // close event that follows carries a code that says nothing about it. Past
+    // both timers: the ping at 50s and the unanswered pong 15s after it.
+    await act(async () => { await vi.advanceTimersByTimeAsync(66_000); });
+    expect(socket.readyState).toBe(FakeWebSocket.CLOSED);
+
+    expect(socketTelemetry()).toEqual([{
+      kind: 'realtime_socket_state',
+      socket: 'workspace',
+      state: 'retrying',
+      cause: 'heartbeat_timeout',
+      attempts: 'zero',
+    }]);
   });
 
   it('pages the authoritative work-stream directory over the workspace socket', async () => {

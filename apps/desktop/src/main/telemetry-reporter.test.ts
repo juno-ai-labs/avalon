@@ -389,6 +389,49 @@ describe('TelemetryReporter', () => {
     });
   });
 
+  it('carries a realtime socket transition as a workspace-scoped renderer signal', async () => {
+    const { reporter, spool } = await harness({
+      auth: {
+        apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global',
+      },
+    });
+
+    await reporter.semanticProductIntent({
+      kind: 'realtime_socket_state',
+      socket: 'substream_feed',
+      state: 'retrying',
+      cause: 'heartbeat_timeout',
+      attempts: 'one',
+    });
+
+    const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(rows).toHaveLength(1);
+    // The renderer is the only party that knows a socket had to be retried, so
+    // it is the authoritative source; the row still carries no work stream, no
+    // URL, and no close code.
+    expect(rows[0]?.event).toMatchObject({
+      name: 'realtime_socket_state',
+      source: 'desktop-renderer',
+      identityScope: 'workspace-user',
+      properties: { socket: 'substream_feed', state: 'retrying', cause: 'heartbeat_timeout', attempts: 'one' },
+    });
+  });
+
+  it('suppresses realtime socket transitions for someone who opted out', async () => {
+    const { reporter, spool } = await harness({
+      enabled: false,
+      auth: {
+        apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global',
+      },
+    });
+
+    await reporter.semanticProductIntent({
+      kind: 'realtime_socket_state', socket: 'workspace', state: 'connected', cause: 'opened', attempts: 'zero',
+    });
+
+    expect(await spool.ready(new Date('2026-08-12T20:00:01.000Z'))).toEqual([]);
+  });
+
   it('uploads authenticated rows to only their regional API and acknowledges durable results', async () => {
     const { reporter, spool, fetch } = await harness({
       auth: { apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global' },

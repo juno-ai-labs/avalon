@@ -109,7 +109,8 @@ export type DesktopTelemetrySemanticEventName =
   | 'workstream_resource_action_completed'
   | 'recording_start_completed'
   | 'recording_terminal'
-  | 'note_opened_v2';
+  | 'note_opened_v2'
+  | 'realtime_socket_state';
 
 export type DesktopTelemetrySemanticIntent = {
   [Name in DesktopTelemetrySemanticEventName]: { kind: Name } & TelemetryEventProperties<Name>;
