@@ -1337,6 +1337,16 @@ attempt's answer rather than something to look for under its own id.
 returned only for a run whose stored status already equals the one asked for, so
 comparing them again described a case that cannot happen.
 
+**`launchRun` gates the sidebar promotion on the run's origin, where the routed
+statement gated it on `input.reason`.** That is a silent tightening rather than
+a fix: `reason` is a free-form string on `WorkstreamWorkflowInput`, and the
+statement compared it to `'block_dashboard_block'` — a value it could never
+hold, because `startWorkstreamWorkflow` is not on the block-dashboard path at
+all. Block runs reach `claimAttempt` through `BlockDashboardAgent` and never
+pass here. So the old guard excluded nothing, the new one excludes nothing
+today, and the difference is only that the new one is asking the run what it is
+instead of asking a string what it says. It starts mattering the day a block run
+does reach this path.
 
 ### 2026-08-24 — Two regressions a review caught, and the edit that caused one
 
