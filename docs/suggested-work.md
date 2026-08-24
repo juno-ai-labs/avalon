@@ -19,7 +19,7 @@ ranks**, and **ranking follows attention**.
 | `apps/api/src/services/work-opportunity-service.ts` | Admission/ranking model work and the HTTP product service; post-cutover storage calls are typed WorkspaceDO RPCs. |
 | `apps/api/src/durable-objects/workspace-product-schema.ts`, `workspace-product-storage.ts` | The authoritative workspace-local tables, atomic repository operations, leases, and alarm due times. |
 | `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute against fenced WorkspaceDO inputs. |
-| `apps/api/src/routes/work-opportunities.ts` | `GET /work-opportunities` and `POST /work-opportunities/:id/start`. |
+| `apps/api/src/routes/work-opportunities.ts` | Suggestion reads, impressions, dismissal, start, and product-usage emission. |
 | `packages/agent-harness/src/prompts/work-opportunity.ts` | The admission and ranking prompts. |
 | `packages/db/migrations/0083_workspace_product_do_authority.sql` | The maintenance import ledger and permanent D1 writer fences; it is not the product schema. |
 
@@ -183,11 +183,18 @@ A suggestion is measurable only after the API durably records the observation.
 The home and menu-bar surfaces submit the opportunity ID, current version,
 bounded position, and surface; the server adds audience, connector provenance,
 freshness, and prior-impression count from stored state. Dismiss and start use the
-same versioned context. A start emits only after work-stream creation succeeds and
-includes the created work-stream UUID for the conversion join. Replays use stable
-event IDs, and a current detailed start does not also emit the legacy success
-event. Prompts, titles, activity bodies, provider account IDs, and ranking-model
-output never enter telemetry.
+same versioned context. That context is returned by the same WorkspaceDO operation
+that records the impression, dismissal, or start claim; the HTTP route never
+reconstructs it from regional D1. Connector types come only from the object's
+bounded provenance after its per-member visibility filter. If this optional
+context cannot be read or validated, the product mutation still succeeds, the
+object logs `workspace_opportunity_telemetry_context_failed`, and detailed
+measurement is skipped (or a successful start uses the legacy event). A start
+emits only after work-stream creation succeeds and includes the created
+work-stream UUID for the conversion join. Replays use stable event IDs, and a
+current detailed start does not also emit the legacy success event. Prompts,
+titles, activity bodies, provider account IDs, and ranking-model output never
+enter telemetry.
 
 ## Invariants
 
@@ -220,6 +227,10 @@ output never enter telemetry.
   a suggestion but can only ever target the audience member.
 - **Admission is exclusive with every other claim on an activity.** Work that
   already has a home is not also offered as new work.
+- **Measurement enrichment cannot fail a product action.** WorkspaceDO owns the
+  suggestion and its visible provenance, returns optional telemetry context with
+  each member mutation, and degrades a context-read failure to `null`. Regional D1
+  is never a fallback product-state reader.
 - **Every feedback read of `activity_suggestions` filters on `source`**, or
   contextual routing's confidence learning absorbs cards this module published.
 
@@ -280,6 +291,10 @@ What the scheduler will not do:
   window is `completed`, repeating either its final event mutation or settlement
   is a successful no-op. A different lease against a nonterminal window still
   fails, so Workflow redelivery cannot duplicate attempts or requeue evidence.
+- **Fail a suggestion action because optional measurement context is unavailable.**
+  The object logs the failed context read and returns the completed action with no
+  context. The route omits the detailed event; a successful start keeps the
+  compatibility event so the conversion is not lost entirely.
 
 One known defect remains:
 
@@ -300,9 +315,10 @@ work-stream identity anchor with no product provenance.
 | Suite | Covers |
 | --- | --- |
 | `apps/api/test/work-opportunity-batching.test.ts` | Admission batching, provenance scoping, the start ledger's claim/replay/roll-forward contract, and that the renderer contract strips what the object holds. |
+| `apps/api/test/work-opportunity-routes.test.ts` | Impression, dismissal, and start routes succeed when regional D1 permits only workspace-placement reads, proving optional telemetry does not reach retired D1 product tables. |
 | `apps/api/test/suggested-work-opening-turn.test.ts` | That the opening message is the member's own turn carrying `suggested_work_expansion`. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Strict WorkspaceDO schema, atomic activity/provenance/resolution writes, dedupe, visibility, dismissal, serving, and every read-path request rule below. |
-| `apps/api/test-workers/opportunity-ranking.test.ts` | The ranking pipeline the object owns: who is a candidate, the cached state, the stored result, the recorded round, the lease settlement's `request_seq` guard, and the claim ledger's completion fence. |
+| `apps/api/test-workers/opportunity-ranking.test.ts` | The ranking pipeline the object owns: who is a candidate, the cached state, the stored result, the recorded round, the lease settlement's `request_seq` guard, the claim ledger's completion fence, and visibility-filtered telemetry context returned by member actions. |
 | `apps/api/test-workers/opportunity-batching-window.test.ts` | The aggregation window: the ten-minute debounce, the one-hour cap from the first event, one window per partition, and a replayed source counted once. |
 
 Run one with
@@ -397,6 +413,31 @@ must name its audience before SQL executes. Workspace and personal are distinct
 authorization cases, not null and non-null variants of one optional predicate.
 Permission to inspect a target does not by itself authorize moving source content
 there; the source audience must contain every target reader.
+
+### 2026-08-24 — Suggested-work telemetry follows WorkspaceDO authority
+
+**What changed:** Impression, dismissal, and start-claim RPCs now return a
+bounded telemetry context from WorkspaceDO-owned opportunity, member-state, and
+visibility-filtered provenance data. HTTP routes consume that context and no
+longer query regional D1 opportunity tables. A context read or validation failure
+is logged and reduced to no detailed context without undoing or failing the
+product action.
+
+**Why:** After migration 0090 removed the legacy regional product tables, the
+optional route-side enrichment continued selecting from them. Production
+impressions and suggestion actions therefore returned an error even though the
+authoritative WorkspaceDO operation was valid.
+
+**Considered and rejected:** Recreating the D1 tables or maintaining a D1 read
+projection would restore dual authority; dropping all detailed measurement would
+discard useful exposure and conversion context. Reading the bounded fields from
+the same object that owns the action preserves the funnel without another source
+of truth.
+
+**Consequences:** Future suggestion telemetry fields must be derived object-side
+from data visible to the acting member. Missing optional context skips the
+detailed event (with the legacy successful-start fallback) and can never turn a
+successful suggestion action into an HTTP 500.
 
 ### 2026-08-23 — The batching window and the ranking pipeline get workerd suites
 

@@ -1,7 +1,16 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 import { env } from "cloudflare:workers";
-import { asBlockId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type BlockDashboardBlockRun } from "@avalon/contracts";
+import {
+  asBlockId,
+  asSubstreamId,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+  WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
+  WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
+  type BlockDashboardBlockRun,
+} from "@avalon/contracts";
 import {
   evictDurableObject,
   listDurableObjectIds,
@@ -42,7 +51,10 @@ import {
   type BlockDashboardBlockDispatch,
 } from "../src/durable-objects/block-dashboard-protocol";
 import { WorkspaceActivityEventListResultSchema } from "../src/durable-objects/workspace-activity-event-protocol";
-import type { WorkspaceOpportunityPersistRequest } from "../src/durable-objects/workspace-opportunity-protocol";
+import {
+  WorkspaceOpportunityClaimStartResultSchema,
+  type WorkspaceOpportunityPersistRequest,
+} from "../src/durable-objects/workspace-opportunity-protocol";
 import { WORKSPACE_LOCAL_TABLES } from "../src/services/workspace-runtime-database";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000101");
@@ -59,6 +71,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   clearFlagTargetingAttributeCache();
+  vi.restoreAllMocks();
 });
 
 async function seedOpenAuthority(): Promise<void> {
@@ -1945,6 +1958,71 @@ describe("Durable Objects in the Workers runtime", () => {
     return socket;
   }
 
+  it("distinguishes an invalid workspace frame from access revocation and logs only its shape", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060a");
+    const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as { env: Env };
+      target.env = new Proxy(target.env, {
+        get: (current, property, receiver) => property === "LOG_LEVEL"
+          ? "info"
+          : Reflect.get(current, property, receiver),
+      });
+    });
+    try {
+      const closed = nextClose(socket);
+      socket.send(JSON.stringify({ type: "create_message", text: "must not reach logs" }));
+      const event = await closed;
+      expect(event.code).toBe(WORKSPACE_SOCKET_INVALID_MESSAGE_CODE);
+      expect(event.code).not.toBe(1008);
+      expect(event.reason).toBe("Invalid workspace socket event");
+      expect(logged).toHaveBeenCalledTimes(1);
+      const entry = logged.mock.calls[0]![0] as Record<string, unknown>;
+      expect(entry).toMatchObject({
+        event: "workspace_socket_closed",
+        code: "invalid_event",
+        close_code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
+        operation: "validate",
+        workspace_id: WORKSPACE_ID,
+        user_id: USER_ID,
+        validation_issues: expect.any(Array),
+      });
+      expect(JSON.stringify(entry)).not.toContain("must not reach logs");
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
+  it("distinguishes an inactive session from access revocation", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060b");
+    await env.DB.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`)
+      .bind("2026-08-24T20:00:00.000Z", SESSION_ID)
+      .run();
+    try {
+      const closed = nextClose(socket);
+      socket.send(JSON.stringify({
+        type: "list_workstreams",
+        requestId: "00000000-0000-7000-8000-00000000060c",
+        limit: 1,
+        includeSystem: false,
+      }));
+      const event = await closed;
+      expect(event.code).toBe(WORKSPACE_SOCKET_SESSION_INACTIVE_CODE);
+      expect(event.code).not.toBe(1008);
+      expect(event.reason).toBe("Session no longer active");
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
 
   it("closes a workspace socket when told the person lost access, and names their work streams", async () => {
     await seedOpenAuthority();
@@ -3337,10 +3415,10 @@ describe("Durable Objects in the Workers runtime", () => {
       version: 1,
       idempotencyKey: "same-live-start",
     } as const;
-    const claims = await Promise.all([
+    const claims = (await Promise.all([
       stub.claimOpportunityStart(claimRequest),
       stub.claimOpportunityStart(claimRequest),
-    ]);
+    ])).map((claim) => WorkspaceOpportunityClaimStartResultSchema.parse(claim));
     expect(claims.map((claim) => claim.outcome).sort()).toEqual(["claimed", "replay"]);
     await stub.releaseOpportunityStart(claimRequest);
     await env.DB.prepare(
@@ -3352,7 +3430,7 @@ describe("Durable Objects in the Workers runtime", () => {
       userId: USER_ID,
       opportunityId,
       now: "2026-08-18T20:01:00.000Z",
-    })).resolves.toBe(true);
+    })).resolves.toMatchObject({ dismissed: true });
     await expect(stub.listOpportunities({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
@@ -3595,7 +3673,7 @@ describe("Durable Objects in the Workers runtime", () => {
       userId: USER_ID,
       opportunityId: dismissed,
       now: READ.now,
-    })).resolves.toBe(true);
+    })).resolves.toMatchObject({ dismissed: true });
 
     // Read before the list: dismissing leaves a hole the member can see, so the
     // request is filed by the dismissal itself rather than waiting for the next

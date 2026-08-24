@@ -65,34 +65,6 @@ export function workstreamCreationEventId(workstreamId: string): string {
 }
 
 /**
- * Resolves only activity roots actually retained for this opportunity. Provider
- * labels are display data; the joined connection row is the canonical
- * connector taxonomy used by product analytics.
- */
-export async function connectorTypesForOpportunity(
-  env: Env,
-  workspaceId: string,
-  opportunityId: string,
-): Promise<TelemetryConnectorType[]> {
-  const rows = await env.DB.prepare(
-    `SELECT DISTINCT c.connector_type, nodes.provider
-     FROM work_opportunity_provenance_roots roots
-     JOIN opportunity_provenance_nodes nodes ON nodes.id = roots.node_id
-     LEFT JOIN activities activity
-       ON nodes.node_kind = 'activity' AND activity.id = nodes.source_id
-     LEFT JOIN connector_connections c ON c.id = activity.connection_id
-     WHERE roots.opportunity_id = ? AND nodes.workspace_id = ?
-       AND (activity.workspace_id IS NULL OR activity.workspace_id = ?)
-     ORDER BY c.connector_type, nodes.provider`,
-  ).bind(opportunityId, workspaceId, workspaceId).all<{
-    connector_type: string | null;
-    provider: string | null;
-  }>();
-  return normalizedConnectorTypes(rows.results.flatMap((row) =>
-    row.connector_type ? [row.connector_type] : row.provider ? [row.provider] : []));
-}
-
-/**
  * Records the creation after its work-stream transaction commits. A stable id
  * derived from the work-stream UUID prevents retries and idempotent provider
  * deliveries from double-counting creation. This function deliberately absorbs

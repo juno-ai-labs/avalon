@@ -5,7 +5,22 @@ import type { Env } from "../env";
 const REDACTED = "[REDACTED]";
 const sensitiveKey = /token|secret|authorization|cookie|credential|code_verifier|prompt|email_?body|connector_?content|file_?content|model_?context/i;
 
+function isFullyMaskedShape(value: unknown): boolean {
+  if (value === "***" || value === -1) return true;
+  if (Array.isArray(value)) return value.every(isFullyMaskedShape);
+  if (value !== null && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).every(isFullyMaskedShape);
+  }
+  return false;
+}
+
 export function redact(value: unknown, depth = 0): unknown {
+  // Request validation records a parsed body's complete shape after replacing
+  // every leaf with one of these two sentinels. It is already content-free, so
+  // preserve it verbatim: applying the generic sensitive-key and depth rules a
+  // second time would turn fields such as `token` into a different marker or
+  // erase the very nesting this diagnostic exists to expose.
+  if (isFullyMaskedShape(value)) return value;
   if (depth > 6) return "[TRUNCATED]";
   if (Array.isArray(value)) return value.slice(0, 50).map((item) => redact(item, depth + 1));
   if (value && typeof value === "object") {

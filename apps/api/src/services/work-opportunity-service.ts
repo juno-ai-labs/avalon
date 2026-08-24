@@ -28,7 +28,10 @@ import {
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
 import {
+  WorkspaceOpportunityClaimStartResultSchema,
   WorkspaceOpportunityRankingCandidatesResultSchema,
+  WorkspaceOpportunityTelemetryContextSchema,
+  WorkspaceOpportunityTelemetryContextsSchema,
   type WorkspaceOpportunityWorkflowInput,
 } from "../durable-objects/workspace-opportunity-protocol";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
@@ -1596,30 +1599,34 @@ export class WorkOpportunityService {
     return WorkOpportunityPageSchema.parse(result);
   }
 
-  async recordImpressions(opportunityIds: string[]): Promise<void> {
+  async recordImpressions(opportunityIds: string[]) {
     const ids = [...new Set(opportunityIds)].slice(0, 4);
-    if (ids.length === 0) return;
+    if (ids.length === 0) return [];
     const at = nowIso();
     const rerankBefore = new Date(Date.now() - IMPRESSION_RERANK_INTERVAL_MS).toISOString();
     const workspace = await this.workspaceProduct();
-    await workspace.recordOpportunityImpressions({
+    const result = await workspace.recordOpportunityImpressions({
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       opportunityIds: ids,
       now: at,
       rerankBefore,
     });
+    const parsed = WorkspaceOpportunityTelemetryContextsSchema.safeParse(result);
+    return parsed.success ? parsed.data : [];
   }
 
-  async dismiss(id: string): Promise<void> {
+  async dismiss(id: string) {
     const workspace = await this.workspaceProduct();
-    const dismissed = await workspace.dismissOpportunity({
+    const result = await workspace.dismissOpportunity({
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       opportunityId: id,
       now: nowIso(),
     });
-    if (!dismissed) throw new ApiError(404, "work_opportunity_not_found", "Suggested work was not found");
+    if (!result.dismissed) throw new ApiError(404, "work_opportunity_not_found", "Suggested work was not found");
+    const context = WorkspaceOpportunityTelemetryContextSchema.nullable().safeParse(result.telemetryContext);
+    return context.success ? context.data : null;
   }
 
   async start(id: string, version: number, idempotencyKey: string) {
@@ -1665,7 +1672,12 @@ export class WorkOpportunityService {
       version,
       idempotencyKey,
     };
-    const claim = await workspace.claimOpportunityStart(request);
+    const claim = WorkspaceOpportunityClaimStartResultSchema.parse(
+      await workspace.claimOpportunityStart(request),
+    );
+    const parsedTelemetryContext = WorkspaceOpportunityTelemetryContextSchema.nullable()
+      .safeParse(claim.telemetryContext);
+    const telemetryContext = parsedTelemetryContext.success ? parsedTelemetryContext.data : null;
     if (claim.outcome === "not_found") {
       throw new ApiError(404, "work_opportunity_not_found", "Suggested work was not found");
     }
@@ -1691,7 +1703,7 @@ export class WorkOpportunityService {
           messageId: durable.messageId,
           snapshotId: newId(),
         });
-        return this.startedResponse(durable);
+        return { ...await this.startedResponse(durable), telemetryContext };
       }
       throw new ApiError(409, "work_opportunity_start_in_progress", "This suggestion is still being started");
     }
@@ -1731,7 +1743,7 @@ export class WorkOpportunityService {
       messageId: durable.messageId,
       snapshotId: newId(),
     });
-    return createdResult;
+    return { ...createdResult, telemetryContext };
   }
 }
 
