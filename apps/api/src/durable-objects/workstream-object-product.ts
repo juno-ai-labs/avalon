@@ -20,6 +20,7 @@ import {
   type WorkstreamWorkflowInput,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
+  WORKSTREAM_NAMING_GRACE_MS,
   asHarnessRunId,
   asUserId,
   asWorkspaceId,
@@ -762,7 +763,7 @@ export class WorkstreamObjectProductService {
         WHERE status = 'pending' ORDER BY due_at, wakeup_id LIMIT 1`,
     ));
     const titleStatus = root.title_status === "naming"
-      && Date.now() - root.created_at > 60_000
+      && Date.now() - root.created_at > WORKSTREAM_NAMING_GRACE_MS
       ? "automatic"
       : root.title_status;
     return WorkstreamSchema.parse({

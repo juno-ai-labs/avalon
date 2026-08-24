@@ -254,9 +254,10 @@ to have in hand.
 ## Boundary
 
 This module owns one question — is `workstreams.objective` still true — and the
-loop that asks it. It does not own the title (`title_status` and the naming agent
-are a separate pass), it does not own automation-generated descriptions, and it
-does not own the run it rides behind.
+loop that asks it. It does not own the title — `title_status` and the naming agent
+are a separate pass, and [`workstream-naming.md`](workstream-naming.md) owns
+them — it does not own automation-generated descriptions, and it does not own the
+run it rides behind.
 
 | For | Read |
 | --- | --- |
