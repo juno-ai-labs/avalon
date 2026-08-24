@@ -1181,6 +1181,48 @@ describe('Avalon API wire adapter', () => {
 
 });
 
+describe('message mention resolution', () => {
+  function stubRoster(): void {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/workspace/members')) {
+        return json({ items: [{ user, role: 'owner', status: 'active', joinedAt: timestamp }] });
+      }
+      // Deliberately unstubbed beyond the roster: resolution reads workspace
+      // members and nothing else, so a request for the work stream — which is
+      // what used to carry the connections — fails this test loudly.
+      throw new Error(`unexpected request: ${url}`);
+    }));
+  }
+
+  it('resolves a typed member name and leaves a typed connection name alone', async () => {
+    stubRoster();
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    const mentions = await api.messageMentionPayload('ask @Adam about @Google Drive');
+
+    // The composer offers people and highlights people; a connection typed by
+    // hand has to reach the transcript as the plain text it looks like.
+    expect(mentions).toEqual([
+      { type: 'person', userId, connectorType: null, startOffset: 4, endOffset: 9 },
+    ]);
+  });
+
+  it('still carries a connector mention a caller selected deliberately', async () => {
+    stubRoster();
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    const mentions = await api.messageMentionPayload(
+      'ask @Google Drive for the brief',
+      [{ type: 'connector', label: 'Google Drive', userId: null, connectorType: 'google' }],
+    );
+
+    expect(mentions).toEqual([
+      { type: 'connector', userId: null, connectorType: 'google', startOffset: 4, endOffset: 17 },
+    ]);
+  });
+});
+
 describe('socket ticket transport', () => {
   it('drops the query ticket the endpoint still returns and offers it as a subprotocol', async () => {
     // The server keeps `?ticket=` in the URL for desktop builds released before
