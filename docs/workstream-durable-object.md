@@ -1073,8 +1073,13 @@ the viewer overlay on the control socket's metadata frame, carry a new `unseen`
 field. Object schema v19 adds the column; WorkspaceDO v10 adds its projection.
 
 **Why:** somebody added to a work stream had no way to tell it apart from the
-ones they had already read — the dot showed the run, and their unread waterline
-starts at the ordinal they were added at, so there was nothing unread to show.
+ones they had already read — the dot showed the run, and unread could not be
+made to mean this. Being added does leave the transcript unread (the root's
+tracking start is 0 and no per-person attention row is written on the add, so
+their waterline is 0 and everything is above it), but unread is a state that
+comes back: the next message re-lights it, mark-as-unread sets it by hand, and
+neither of those means the room is new. A marker that says "you have never been
+here" has to be settled once and stay settled.
 The state had to be cleared by *looking*, and looking is a read: the client's
 `acknowledgeRead` fires only when a message it has not accounted for is on
 screen, so a work stream opened with nothing new would never have cleared it and

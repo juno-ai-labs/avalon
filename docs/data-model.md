@@ -733,14 +733,18 @@ projection of it the sidebar reads. Both migrations backfill every existing row
 as already opened.
 
 **Why:** being added to a work stream was not a state anything could store. The
-sidebar's dot showed the run's status, and `hasUnread` could not stand in for
-it: a newly added person's unread tracking starts at the ordinal they were added
-at, so a work stream with months of transcript and nothing newer is read by
-construction. The question is not whether messages have arrived since they
-looked but whether they have ever looked, and only the membership row spans that
-— it exists from the instant somebody is put in the room, while `member_attention`
-is written by being read to and by being mentioned and is simply absent for
-somebody who has done neither.
+question is not whether messages have arrived since somebody looked but whether
+they have ever looked, and only the membership row spans that — it exists from
+the instant somebody is put in the room, while `member_attention` is written by
+being read to and by being mentioned and is simply absent for somebody who has
+done neither.
+
+`hasUnread` could not stand in for it, though not for the reason it first
+appears: a newly added person's waterline is 0, so the whole transcript *is*
+unread for them and the row does light up. What unread cannot do is stay put.
+It returns on the next message and on a manual mark-unread, so a work stream
+somebody has been in for months would keep announcing itself as new. The
+membership column is settled once and never set again except by a re-add.
 
 **Considered and rejected:** deriving it from `member_attention.last_seen_at`.
 The row's absence would have to mean "never opened", and it also means "never
