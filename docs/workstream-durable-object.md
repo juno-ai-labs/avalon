@@ -1063,6 +1063,76 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-24 — Two reviews on the converted harness runs, and the rule this slice had broken
+
+**What changed:** a code review and a rebase audit, run separately over the same
+branch. Between them:
+
+- Eight lease and liveness fences move from `status = 'running'` to
+  `BUSY_RUN_STATUSES` / `OPEN_RUN_STATUSES`, and two row-level fences in
+  `admitInlineChild` to `BUSY_RUN_STATUS_SET`.
+- `recordReceiptReconciliation`'s replay fallback compares `attempt_id` again.
+- `cancelDescendants` counts the rows its predicate matches instead of reading
+  `cursor.rowsWritten`.
+- A cancelled parent answers `cancelled` rather than `ownership_lost`, and a
+  live child answers `busy` before `cancelled`.
+- `isHarnessStopped` is back to `!= null`.
+- Two comments and a changelog number that the rebase had silently dropped.
+
+**Why:** the fences are the one that matters, because the rule was already
+written down. An earlier slice in this stack narrowed the receipt and
+block-dashboard fences the same way, review caught it, and the entry below
+records the conclusion: *a busy run is any of the three, and `running` alone is
+the wrong default*. This slice was the first written after that and broke it in
+eight places — which is the argument for the named constant rather than eight
+correct literals. A rule that lives only in a changelog is a rule the next
+conversion breaks.
+
+None of it is reachable today. Nothing writes `waiting` or `steering`, a
+terminalized run cannot take a new attempt, `cancelDescendantHarnessRuns` has no
+production caller, and `isHarnessStopped` is only reached for a run that exists.
+That is exactly why they were worth fixing now: each one is a trap set for
+whoever adds the first writer, and the eight would have fired together.
+
+**On the rebase audit, which is the finding worth keeping:** this branch
+converts routed SQL by deleting and rewriting whole functions. When `main`
+changes those same functions, git reports **no conflict** — the branch's side
+wins and the fix vanishes. That happened here: the branch forked before the
+residual-receipt work landed and reverted five commits, and every gate stayed
+green. `pnpm test`, `pnpm lint`, `pnpm typecheck` and CI cannot see it, because
+the reverted code is not the code being tested.
+
+**What a future change has to respect:** a conversion slice that rewrites a
+function `main` has touched needs a diff against `main`'s version of that
+function, not a clean rebase. The audit's method is the cheap version: list
+`main`'s commits since the merge base, intersect their files with the branch's,
+and read both sides of every overlap. A comment on `main` saying "do not narrow
+this back" marks a fix somebody already paid for, and its absence from the
+branch is the tell.
+
+### 2026-08-24 — The harness-run migration renumbers to 23, after two collisions
+
+**What changed:** `harnessRunAuthorityPromotion` is object schema migration 23,
+and `WORKSTREAM_OBJECT_SCHEMA_VERSION` is 23. It was written as 21, which the
+resource slice took on the way in; 22 then went the same way to the
+accepted-suggestion audience triggers while this branch was in review, which is
+the fourth time in this stack and the reason the number is 23 rather than 22.
+
+**Why:** the two entries above record the same thing happening to scheduling and
+to resources. This one is the silent shape again — the rebase was clean, every
+gate passed, and the only symptom was two entries numbered 21 in one array.
+Three times in one afternoon is no longer a run of bad luck; it is what a stack
+of branches does when the number each one claims is decided when it is written
+and nothing rechecks it.
+
+**What a future change has to respect:** the check that catches this is
+`grep -oP 'version: \d+' … | sort | uniq -d` against the branch, run
+immediately before merging. Nothing in the repository does it, so a duplicate
+merges clean and leaves the runner applying whichever entry came first and
+skipping the other as already applied. If this keeps happening, the fix is a
+CI gate rather than more diligence — but that is a new gate on every pull
+request, and the team's call rather than one to add quietly.
+
 ### 2026-08-24 — The main child answers current reader-audience questions
 
 **What changed:** `SubstreamAgent.readerAudience` exposes the main child's
@@ -1092,6 +1162,7 @@ WorkspaceDO, but a permanent content move or direct disclosure rechecks the
 selected work stream's current authority. Private reader identity comes only
 from active participant rows. Direct SQL audience writes remain subject to the
 accepted-content triggers; do not replace them with a service-only check.
+
 
 ### 2026-08-24 — The resource migration renumbers to 21, and this time Git said nothing
 
@@ -1304,6 +1375,424 @@ the same question, and `running` alone is the wrong default — a busy run is an
 of the three. If the product ever settles on a single busy status, retire the
 other two from the CHECK constraint rather than from the fences, so the
 narrowing is enforced where it can be seen.
+
+### 2026-08-24 — Four regressions a review caught, and the edits that caused them
+
+**`admitRun` threw where the retired trigger had swallowed.**
+`runs_mutating_substream_uq` allows one mutating run per substream and every
+root run shares `'0'`, so admitting a second `running` run collides. The retired
+`_runtime_harness_runs_insert` trigger used `INSERT OR IGNORE`, which turned
+that into a zero-change result the caller reported as a stale request; the bare
+`INSERT` that replaced it throws, and a throw takes the whole `transactionSync`
+with it — including the supersede immediately above. A superseding Slack message
+would have neither started its run nor stopped the one it meant to replace, and
+the caller would have seen `harness_run_operation_failed` instead of a 409.
+
+A supersede does not clear the way by itself: it stamps
+`cancellation_requested_at` and leaves the incumbent `running` until that run
+notices, so the collision is *most* likely in exactly the case supersede exists
+for. `mutatingRunHoldsSubstream` now asks before writing and answers `busy`,
+mirroring the index including its block-dashboard exemption. `busy` and `stale`
+carry the same member-visible 409 for now, because the routed version could not
+tell them apart either — splitting what a member is told is a product decision
+rather than part of this conversion.
+
+**`memoryContext` read by attempt where the write reads by run.** The table is
+`PRIMARY KEY (run_id)`, so a second attempt missed the fast path, paid a full
+vector search, and threw the result away when the insert returned the first
+attempt's row. Both are keyed by run now: freezing recall exists so every
+attempt of a run sees the same memories, which makes that row the later
+attempt's answer rather than something to look for under its own id.
+
+**A dead comparison in `terminalizeHarnessAttempt`.** `already_terminal` is
+returned only for a run whose stored status already equals the one asked for, so
+comparing them again described a case that cannot happen.
+
+**`launchRun` gates the sidebar promotion on the run's origin, where the routed
+statement gated it on `input.reason`.** That is a silent tightening rather than
+a fix: `reason` is a free-form string on `WorkstreamWorkflowInput`, and the
+statement compared it to `'block_dashboard_block'` — a value it could never
+hold, because `startWorkstreamWorkflow` is not on the block-dashboard path at
+all. Block runs reach `claimAttempt` through `BlockDashboardAgent` and never
+pass here. So the old guard excluded nothing, the new one excludes nothing
+today, and the difference is only that the new one is asking the run what it is
+instead of asking a string what it says. It starts mattering the day a block run
+does reach this path.
+
+### 2026-08-24 — Two regressions a review caught, and the edit that caused one
+
+**What changed:** `activeLeaseExpiresAt` no longer excludes the contended run
+itself, and `RUN_STATE_WRITES` is back to the seven operations that actually
+write the `workstream` row. `harness-run-protocol.test.ts` now holds that set to
+its behaviour.
+
+**Why the first was wrong.** A duplicate dispatch of a run that is already being
+worked on is refused by the same `busy` branch as a work stream held by someone
+else — but in that case the live lease the caller must wait for is *this run's
+own*. Excluding it returned null, and both SubstreamAgent and BlockDashboardAgent
+read null as "retry in five seconds", so an at-least-once redelivery would wake
+and reattempt every five seconds for the whole five-minute lease. The routed
+version had no such exclusion; the `status = 'running'` and `lease_expires_at`
+predicates already exclude a run that is not holding anything, which is why it
+never needed one.
+
+**Why the second happened, which matters more than the fix.** Nine reads and
+progress writes — `latestRootRun`, `runIsActive`, `triggerPartId`,
+`recordRunProgress`, `bindWorkflowInstance`, all three reaper scans and
+`reapStaleInlineChild` — were on `RUN_STATE_WRITES`, so each ran through
+`commitRuntimeMutation(…, true)`. That builds the directory projection: every
+active participant read, the resource links walked. A usage flush runs every few
+seconds of every run, and the reaper scans on every activation.
+
+They got there by a mechanical edit. `DISPATCHED_OPERATIONS` and
+`RUN_STATE_WRITES` sit in the same file and share entries at the same
+indentation, so a string replacement anchored on one list's entry silently
+inserted into both. Nothing caught it: the set had no test, and being on it
+changes only how much work an operation does, never its answer.
+
+**What a future change has to respect:** membership in `RUN_STATE_WRITES` is
+expensive to get wrong and invisible from an operation's name or its result.
+The test asserts the set as a literal rather than deriving it, so adding an
+operation is a decision made there rather than a side effect of editing the list
+above it, and it checks both directions against real storage — the classified
+operations move the `workstream` row, and the unclassified ones leave it byte
+for byte unchanged.
+
+
+### 2026-08-23 — Three of the six harness-run views retire, and why the other three cannot
+
+**What changed:** migration 22 drops `_runtime_run_scopes`,
+`_runtime_run_plugin_activations` and `_runtime_run_memory_contexts` with their
+insert triggers, and removes all three from `LOCAL_TABLES` and `TABLE_REWRITES`.
+`freezeRunMemoryContext` moved onto the port to make the third of them possible.
+
+**Why only three.** The other three are held by *other* slices rather than by
+anything this authority still does, and each for a reason worth stating so the
+next person does not try again:
+
+- `_runtime_harness_runs` is written by the work-stream bootstrap batch, which
+  creates the work stream, its opening transcript row and its first run in one
+  atomic routed statement set. Pulling the run out introduces a partial failure
+  that does not exist today — a work stream with no run — so it goes when the
+  transcript does.
+- `_runtime_run_lifecycle_events` is joined to `messages` by the two functions
+  that verify a run published its final message. Same slice, same reason.
+- `_runtime_inference_attempts` is joined to `_runtime_harness_runs` by run
+  telemetry, so it cannot outlive the view it joins.
+
+All three dropped here carried an insert trigger and nothing else: a scope, a
+plugin activation and a memory context are written once and never updated, which
+is why none of them ever needed more.
+
+**One test's subject had to be restated rather than deleted.** `scoped-memory`
+proved a frozen memory context is immutable by showing a routed `UPDATE` was
+refused — which worked only because the compat view carried an insert trigger
+and no update one. That is a guarantee stated as a *missing* trigger, and it
+disappears with the view. The same guarantee is now stated positively:
+`persistMemoryContext` answers `reused` and returns the stored row, so the test
+asserts the second write neither lands nor is reported as having landed.
+
+**What a future change has to respect:** `persistMemoryContext` returns the
+winner's row rather than an outcome to interpret, and that is not convenience.
+The value costs a vector search to compute, so the read and the write cannot be
+one operation; freezing recall exists so every replay of an attempt sees the
+same memories, which makes the row the run will actually use the only useful
+answer to give a loser.
+
+
+### 2026-08-23 — The callers outside the runtime, and what a half-converted path costs
+
+**What changed:** the harness-run callers in `workstream-service`,
+`automation-service`, `workspace-schedule-execution`, `activity-consumer`,
+`integrations` and both Terminal services moved onto the port, through eight new
+operations: `admitRun`, `launchRun`, `bindWorkflowInstance`,
+`failUnlaunchedRun`, `recordRunProgress`, `latestRootRun`, `runIsActive` and
+`triggerPartId`. `reconcileDueTerminalSandbox` no longer takes a database at
+all — it took one solely to ask whether a run was still active, so its first
+parameter is now a `HarnessRunPortFactory`.
+
+**Why:** the same guarded-batch shape as everything before it. Admission was a
+supersede, an `INSERT … SELECT … WHERE ? = (SELECT latest.id …)` whose subquery
+*was* the staleness check, and a sidebar update guarded on `EXISTS (SELECT 1
+FROM harness_runs WHERE id = ?)` asking whether the insert had landed. The
+staleness check is the one worth naming: expressed as a subquery inside the
+insert, it could only answer by writing nothing — which is also what a duplicate
+id does — so the caller could not tell "someone else got here first" from "this
+is a retry of my own request". `admitRun` answers `stale` and `exists`
+separately.
+
+**Two run insertions stay routed, and that decides slice 7's order.** The
+automation and inbound-activity paths create their run inside the *work-stream
+bootstrap* batch — `workstreams`, `messages` and `harness_runs` in one atomic
+routed batch. Pulling the run out would introduce a partial failure that does
+not exist today: a work stream with no run. So `_runtime_harness_runs` cannot be
+dropped until the transcript and work-stream rows move too, which means slice 6
+cannot retire its own view without slice 7. That is a scheduling fact, not a
+preference.
+
+**What a half-converted path costs, in one test.** `automation-run-recovery`
+hand-builds a model of the regional database and answers the runtime SQL port
+from it. With the run still created by a routed statement but now *read* through
+the port, the two halves stopped talking about the same run — the write went to
+the hand-built model and the read to a real object store. The fixture now
+answers `executeHarnessRunOperation` from the same model, and throws on any
+operation it has not modelled rather than returning nothing, because a fixture
+that answers "no such run" to a question it does not understand makes a passing
+test that proves the opposite of what it claims.
+
+**What a future change has to respect:** `failUnlaunchedRun` routes its sidebar
+write through `settleWorkstreamState` like every other ending, which adds a
+guard the routed version lacked — it will not report `failed` over a work stream
+some other live run still holds. That case is unreachable from where it is
+called today, because the admission immediately before it superseded everything
+else. The guard is there for when that stops being true.
+
+
+### 2026-08-23 — Terminalization and the reaper, and the end of the changes count
+
+**What changed:** `terminalizeHarnessAttempt`, `terminalizeQueuedHarnessRun`,
+`reapStaleHarnessRuns` and the residual-receipt marker moved onto the port, as
+`terminalizeAttempt`, `terminalizeQueuedRun`, `reapStaleRoot`,
+`reapStaleInlineChild`, two bounded scans and `recordReceiptReconciliation`.
+`d1Changes` is deleted: nothing in the runtime interprets a changed-row count
+any more.
+
+**Why:** these were the last and worst of the guarded batches. Terminalization
+was four statements in which the third and fourth each carried `EXISTS (SELECT 1
+FROM harness_runs … AND terminalized_at = ?)` — a correlated subquery whose only
+job was to ask whether the batch's own *second* statement had landed, because D1
+gives a batch no way to branch on its own progress. The reaper did the same
+thing twice more, and spelled its parent-supervision test three times: once in
+the scan and twice inside the batch that acted on it, the second copy produced
+by rewriting `child.` to `harness_runs.` with a string replacement. That test is
+now one private method, read once.
+
+**Two of the three sidebar writes now live together.** `markWorkstreamRunning`
+(the claim) and `settleWorkstreamState` (every ending) are the two halves of
+what the member sees, and `settleWorkstreamState`'s `NOT EXISTS` is the part
+that matters: a superseding turn admitted while this one was finishing must keep
+the work stream busy, or the member watches it go idle and immediately start
+again. `terminalizeAttempt`, `terminalizeQueuedRun` and `reapStaleRoot` all join
+`claimAttempt` in `RUN_STATE_WRITES`, so each commits its projection with its
+write.
+
+**What a future change has to respect.** Receipt settlement stays *outside* the
+terminalization transaction, and that is not an oversight: the receipts are a
+different authority, and of the two possible orderings only "terminalize, then
+settle" fails safe. The price is a window where a run is terminal and its tool
+card still spins, which is why `already_terminal` reports whether the marker was
+ever written and why `residualRepairCandidates` exists at all. Moving the
+settlement inside, or dropping the marker, reintroduces a permanently spinning
+tool card with nothing to find it.
+
+The lifecycle event's `status` column now holds the object's vocabulary, where
+`stopped` is `cancelled`. No production code outside this authority reads it;
+the compat view passes it through untranslated, and both are retired together.
+
+**Three functions in `harness-run-runtime.ts` still take a database, and each
+for a stated reason.** `persistHarnessFinalMessage` and
+`loadPersistedHarnessFinalOutcome` join `messages`, which waits for slice 7.
+`settleStaleAutomationRun` writes `automation_runs` — a regional D1 table, not
+an object-local one — and is the one place a terminalization instant crosses
+back into ISO-8601 text.
+
+
+### 2026-08-23 — The sub-agent concurrency cap is removed, not renamed
+
+**What changed:** `HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS` is gone — the env
+var, its schema entry, both Worker configs, the `maxActiveWorkspaceChildren`
+option and the `workspace_child_capacity` refusal. `maxChainRuns` is now the
+only bound on sub-agent fan-out.
+
+**Why:** the entry below records that the cap had not meant what its name says
+since the per-workspace-database cutover, and left the choice open between
+restoring a genuinely workspace-wide limit and accepting the narrowed one. The
+team chose neither: remove it. That is the right call, because what it actually
+enforced was already implied. A chain may create `maxChainRuns` runs in total
+(4 by default), so it can never have more than that many children alive at once
+— a separate cap of 8 live children could not bind before the chain budget of 4
+did. Keeping it would have meant carrying a second limit, a second refusal
+reason and a second count for a rule the first one already made.
+
+**What a future change has to respect:** the two limits are not
+interchangeable, and a test now says so by name. The retired cap counted *live*
+children, so settling one freed a slot; the chain budget counts every run the
+chain has created, so it does not. A run that has answered has still been spent.
+Reintroducing slot-freeing behaviour — filtering the chain count by
+`terminalized_at IS NULL`, say — turns a lifetime budget into a concurrency
+budget and lets a sub-agent tree grow without limit as long as it settles as it
+goes.
+
+**Where the remaining exposure is.** One work stream runs one mutating run at a
+time, so an interactive conversation tops out at `maxChainRuns - 1` concurrent
+sub-agents. HyperSight block runs are the exception the claim rule already
+makes: each block owns its own run and therefore its own chain budget, so a work
+stream with *N* blocks can reach *N* × (`maxChainRuns` - 1). If that ever needs
+bounding, bound it where blocks are dispatched rather than by reviving a
+per-child cap here.
+
+
+### 2026-08-23 — The sub-agent family finishes, and two fences nothing was holding
+
+**What changed:** `terminalizeInlineChildAttempt`, `loadInlineChildResult`,
+`cancelDescendantHarnessRuns` and `persistInlineChildScope` moved onto the port.
+No function in the inline-child family takes a `D1Database` any more.
+
+**Why:** the settlement was two statements where the second was guarded on the
+first — its `UPDATE`'s `WHERE` carried `EXISTS (SELECT 1 FROM
+harness_run_lifecycle_events WHERE lifecycle.id = ?1 …)` for no reason except
+to ask whether the batch's *own* first statement had landed. That is a
+transaction spelled as a correlated subquery, so it became a transaction.
+
+**Two behaviours had no test, and the mutation pass is what found them.**
+Deleting the parent's attempt/owner fence from the settlement broke nothing —
+so a parent that had already lost its own attempt could still collect its
+sub-agent's result. And `cancelDescendants` survived both removing its
+`chain_root_run_id` reach (which is the only thing connecting a *grandchild* to
+the run being stopped, since its `parent_run_id` is the child) and removing the
+`COALESCE` that keeps the first cancellation's reason. All three now have specs
+that fail when the behaviour is removed. A fourth — `persistInlineChildScope`
+comparing the child's `inherited_scope_hash` against the parent's frozen scope —
+was uncovered for the same reason the others were: as a join, its failure was
+indistinguishable from the parent having no scope, so nothing had ever asserted
+on it separately.
+
+**What a future change has to respect:** `status === "cancelled"` relaxes the
+cancellation fence on *both* sides of the settlement, and only for the stop
+itself. A stop is exactly when a live owner must still be allowed to write —
+refusing it leaves the parent waiting forever on a child that will never answer
+— but an ordinary `completed` settlement after a requested cancellation is still
+refused, because a child asked to stop must not report success as though nothing
+had happened. The two are one line apart and a mutation test separates them.
+
+Two vocabularies now meet in this file. `TERMINAL_RUN_STATUSES` is exported from
+the storage class in the object's words, where `stopped` is `cancelled`;
+`TERMINAL_STATUSES` in the runtime is the published spelling. Which applies
+depends on whether the value came off a `RunRow` or out of a published payload,
+and `storedRunStatus`/`publishedRunStatus` are the only sanctioned crossings.
+
+
+### 2026-08-23 — Sub-agent admission, and a cap that stopped meaning what it says
+
+**What changed:** `admitInlineChildAttempt` became `admitInlineChild` on the
+storage class — one transaction returning one of eight named outcomes, replacing
+six statements and two diagnostic reads. `heartbeatInlineChildAttempt` and
+`InlineChildRunLiveness` came with it, so no part of a sub-agent's lifecycle
+still takes a database handle.
+
+**Why:** it was the largest statement the compat layer routed and the clearest
+argument for the pattern. Three capacity subqueries lived inside an
+`INSERT … SELECT`'s `WHERE`, so a refusal arrived as zero rows and a *second*
+read — repeating all three subqueries — had to work out which policy had
+refused. The reclaim path then did the same thing again with a fourth subquery.
+Reading the policies first and writing after, inside one transaction, is both
+shorter and the only way a refusal can name itself.
+
+**A cap that has not meant what it says since the per-workspace-database
+cutover.** The routed admission counted active children with
+`active_child.workspace_id = parent.workspace_id`, which reads as a
+workspace-wide limit and is still configured as
+`HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS`. But `harness_runs` is object-local,
+so that predicate ran against `_runtime_harness_runs` — a view of *this work
+stream's* rows alone — where the comparison is true for every row it can see.
+The cap has been per-work-stream ever since, and nothing recorded that.
+`activeInlineChildren` counts what the predicate actually counted, so this
+change preserves today's behaviour rather than restoring the original intent.
+
+**What a future change has to respect:** restoring a genuinely workspace-wide
+cap is not a refactor. Nothing inside one WorkstreamDO can count another work
+stream's runs, so it would need WorkspaceDO to hold the count — a product
+decision about whether the limit is per-conversation or per-workspace, and a
+number that is the team's to set either way. Until that decision is made, the
+env var's name is the lie and the behaviour is the truth; do not "fix" the
+count to match the name without adding the cross-object query that would make
+it real.
+
+The heartbeat is `heartbeatAttempt`'s three-round-trip problem with the double
+fence on top — a guarded `UPDATE` carrying an `EXISTS` over the parent, a
+`LEFT JOIN` read to tell cancelled from lost, and a third read for the deadline
+it had just written. It now composes `inlineChildOwnership` with the write in
+one transaction, which is also why the two share a precedence rather than
+restating it.
+
+
+### 2026-08-23 — The sub-agent's double fence, and a substream the fixture forgot
+
+**What changed:** `assertInlineChildAttemptOwned` and `recordInferenceAttempt`
+moved onto the port. The first became `inlineChildOwnership` on the storage
+class; the second is a plain `INSERT OR IGNORE`.
+
+**Why:** the inline-child assert was a self-join on `harness_runs` with eight
+bound parameters and two `lease_expires_at > now` predicates — the fence that
+stops a sub-agent outliving the run that delegated to it. Both rows belong to
+this object, so the join is two reads and the answer is one of three named
+outcomes.
+
+Its **precedence** is the part worth preserving deliberately. A lost lease
+answers `ownership_lost` even when the other side was also stopped, because a
+caller that no longer owns the run has not *observed* a cancellation — it is
+reading a row someone else now controls, and must be told it lost the run rather
+than told to settle. Checking cancellation first would invert that, and a
+mutation test now holds the order in place.
+
+`recordInferenceAttempt` is the one write in this family with no lease fence,
+and deliberately: an attempt row is telemetry about a provider call that already
+happened, so dropping it because the lease lapsed mid-call would delete the
+record of exactly the failure worth having.
+
+**What a future change has to respect:** a delegated sub-agent runs in **its own
+substream**, `run:<id>`, created by the same write that creates the run. That is
+not incidental — `runs_mutating_substream_uq` allows one mutating run per
+substream, so a child sharing its parent's substream is a `UNIQUE` violation
+rather than a queued run. The first version of this change's fixture put the
+child in substream `0` and the constraint caught it; `admitInlineChildAttempt`
+must create the substream row when it converts.
+
+
+### 2026-08-23 — The lease stops being a join, and the sidebar write it had lost
+
+**What changed:** the harness-run lease family moved onto the typed port.
+`claimHarnessAttempt`, `heartbeatHarnessAttempt`, the two ownership asserts and
+`CoalescedRunLiveness` no longer take a `D1Database` — they take a
+`HarnessRunObjectPort` and nothing else. `persistImmutableRunScope` and
+`persistRunPluginActivation` became `persistScope` and
+`persistPluginActivation` on the storage class, and dropped their database
+handle with it.
+
+**Why:** these were the clearest instance of the thing this whole conversion is
+about — a write whose fence *is* a join. Both scope and activation were
+`INSERT INTO … SELECT … FROM harness_runs WHERE lease_owner = ?`, so a row was
+written only if the caller still held the run; but the insert's own
+`meta.changes` could not say whether zero meant "I already wrote this" or "I no
+longer hold it", so each needed a second, diagnostic statement to find out. One
+transaction reads the fence, reads the existing row, and returns which of four
+states it is. `FencedWriteOutcome` names them once, because they mean the same
+thing for every write fenced this way.
+
+**A regression this found, and the reasoning that produced it.** The routed
+claim was a three-statement batch, and the third statement set
+`workstreams.harness_status = 'running'` — the sidebar's whole answer to
+whether a work stream is busy. `claimAttempt` did not reproduce it, and the
+comments here and in the protocol asserted that it did not need to, because the
+endpoint runs the claim inside `commitRuntimeMutation`. That was wrong:
+`commitRuntimeMutation` publishes the directory's *projection* of the work
+stream row, it does not set the row's state. Nine tests failed on it.
+`markWorkstreamRunning` makes the write, from the claimed row the transaction is
+already holding rather than from the `WHERE EXISTS` that re-derived the claim.
+
+**What a future change has to respect:** that write is a *guard*, not an
+assignment. `exact_state` distinguishes `interrupting`, `preparing_context` and
+`waiting_capacity`, all of which the retired view flattened to one `running` —
+which is why its trigger compared the projection on both sides before writing.
+Assigning `'running'` unconditionally would silently demote a work stream that
+is being stopped. A HyperSight block run never makes this write at all: those
+runs sit beside the conversation rather than holding it.
+
+**Still routed, and why.** Thirteen functions in `harness-run-runtime.ts` keep a
+`D1Database` — the inline-child family, terminalization, the reaper, and
+`persistHarnessFinalMessage`. The last one is not deferred for size: it writes a
+message, a lifecycle event and the work stream's attention counters in one
+batch, so it straddles the message authority and cannot land before slice 7.
 
 ### 2026-08-23 — One object-port factory, and the fence the typed endpoints dropped
 

@@ -15,6 +15,7 @@ import {
 import { regionalDatabase } from "../workstream-runtime-database";
 import { isTerminalProviderNotFound, type TerminalSandboxProvider } from "./daytona-provider";
 import { TerminalToolError } from "./tools";
+import type { HarnessRunPortFactory } from "../../runtime/harness-run-port";
 
 const MAX_WORKSPACE_BACKUP_BYTES = 50 * 1_048_576;
 
@@ -125,7 +126,7 @@ async function quiesceUnsettledTasks(
 }
 
 export async function reconcileDueTerminalSandbox(
-  database: D1Database,
+  runsPort: HarnessRunPortFactory,
   terminalPort: TerminalPortFactory,
   provider: TerminalSandboxProvider,
   workspaceId: string,
@@ -146,12 +147,9 @@ export async function reconcileDueTerminalSandbox(
     && row.operationLeaseExpiresAt
     && row.operationLeaseExpiresAt > now.getTime()
   ) {
-    const activeRun = await database.prepare(
-      `SELECT 1 AS active FROM harness_runs
-        WHERE id = ? AND workspace_id = ? AND workstream_id = ?
-          AND status IN ('scheduled', 'running')`,
-    ).bind(row.operationRunId, workspaceId, workstreamId).first<{ active: number }>();
-    if (activeRun) return { transition: "deferred" };
+    if (await runsPort(workspaceId, workstreamId).runIsActive({ runId: row.operationRunId })) {
+      return { transition: "deferred" };
+    }
   }
 
   if (await terminal.hasLiveTask(row.generation, now.getTime())) return { transition: "deferred" };
