@@ -417,8 +417,26 @@ at all.** Here, five of seven did not.
 
 **Slices 1 and 2 have landed. Slice 3 converted its callers and dropped four of
 its five views; slice 4 converted its callers and dropped none; slice 5
-converted its callers and dropped all three.** The other ten are plans. Fifteen
-in all, covering all 81 routed tables.
+converted its callers and dropped all three. Slice 6 is landing in parts.** The
+other ten are plans. Fifteen in all, covering all 81 routed tables.
+
+**Slice 6 does not fit in one change, and the reason is the count in the table
+below.** Its 102 statements are not spread over 13 files evenly: 116 of the
+table references are in `harness-run-runtime.ts` alone, and every one of them
+is fenced on a lease that the routed spelling expressed as a join. Converting
+the lease family — claim, heartbeat, both ownership asserts — moved ~140 call
+sites on its own. So the slice lands as the lease family, then the scope and
+activation writers, then the inline-child family, then terminalization and the
+reaper; the views come down once nothing routes to them. A function keeps its
+`D1Database` parameter exactly as long as it still has a statement that needs
+one, which makes the remaining work visible in the signatures rather than in a
+list.
+
+**One of slice 6's statements cannot land in slice 6 at all.**
+`persistHarnessFinalMessage` writes a message, its lifecycle event and the work
+stream's attention counters in one batch — it is the second of the three
+cross-slice batches named below, and it waits for slice 7 for the same reason
+those do.
 
 **Slice 5 came in at a tenth of its statement count, and the reason generalizes.**
 Of the 73 statements counted for the resources slice, almost all name

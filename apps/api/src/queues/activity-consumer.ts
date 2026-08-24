@@ -72,6 +72,7 @@ import {
   processWorkstreamNotificationIntent,
 } from "../services/workstream-regional-effect-service";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
+import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 
 interface ActivityRow {
   id: string;
@@ -916,16 +917,13 @@ async function startActivityAutomation(
       activity.workspace_id,
       run.workstream_id,
     );
-    const harness = await executionEnv.DB.prepare(
-      `SELECT id FROM harness_runs
-        WHERE workstream_id = ?1 AND parent_tool_call_id IS NULL
-          AND origin != 'block_dashboard_block'
-        ORDER BY created_at DESC LIMIT 1`
-    )
-      .bind(run.workstream_id)
-      .first<{ id: string }>();
+    const harness = await createHarnessRunObjectPort(
+      executionEnv,
+      activity.workspace_id,
+      run.workstream_id,
+    ).latestRootRun();
     if (!harness) throw new Error("activity_harness_run_missing");
-    harnessRunId = harness.id;
+    harnessRunId = harness.run_id;
   }
 
   await emailRouting.ensureWorkstreamAddress({
@@ -984,9 +982,12 @@ async function startActivityAutomation(
     env.DB.prepare(
       `UPDATE automation_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
     ).bind(workflowId, run.id, activity.workspace_id).run(),
-    executionEnv.DB.prepare(
-      `UPDATE harness_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
-    ).bind(workflowId, harnessRunId, activity.workspace_id).run(),
+    createHarnessRunObjectPort(executionEnv, activity.workspace_id, run.workstream_id)
+      .bindWorkflowInstance({
+        runId: harnessRunId,
+        workflowInstanceId: workflowId,
+        now: Date.now(),
+      }),
   ]);
   try {
     await reconcileWorkflowId();

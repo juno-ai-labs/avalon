@@ -347,6 +347,56 @@ function agentsBinding(database: ManualRunDatabase, failures: Error[] = []) {
       database.attachedResourceId = input.resourceId;
       return { status: 200, bodyJson: "{}" };
     }),
+    /**
+     * The harness-run port, answered from this file's hand-built model.
+     *
+     * The run itself is still created by a routed statement — it is one member
+     * of the work-stream bootstrap batch, which stays atomic until the
+     * transcript moves too — so its record lives in `ManualRunDatabase` beside
+     * the automation row these assertions are written against. Answering the
+     * port from the same model is what keeps the two halves of a half-converted
+     * path talking about the same run. Unknown operations throw rather than
+     * returning nothing, so a new one cannot quietly read as "no such run".
+     */
+    executeHarnessRunOperation: vi.fn((input: { operation: string; args: unknown[] }) => {
+      const stored = database.harnessRun;
+      const value = (() => {
+        switch (input.operation) {
+          case "latestRootRun":
+            return stored === null ? null : {
+              run_id: stored.id,
+              // The port speaks the object's vocabulary, where `scheduled` is
+              // `admitted`; the caller maps it back.
+              status: stored.status === "scheduled" ? "admitted" : stored.status,
+              workflow_instance_id: stored.workflowInstanceId,
+              parent_tool_call_id: null,
+            };
+          case "launchRun": {
+            const { workflowInstanceId, startedAt } = input.args[0] as {
+              workflowInstanceId: string;
+              startedAt: number;
+            };
+            if (!stored) return { outcome: "not_found" };
+            stored.workflowInstanceId = workflowInstanceId;
+            if (stored.status === "scheduled") {
+              stored.status = "running";
+              stored.startedAt = new Date(startedAt).toISOString();
+            }
+            if (database.workstreamStatus === "scheduled") database.workstreamStatus = "running";
+            return { outcome: "launched" };
+          }
+          case "bindWorkflowInstance": {
+            const { workflowInstanceId } = input.args[0] as { workflowInstanceId: string };
+            if (!stored) return { outcome: "not_found" };
+            stored.workflowInstanceId = workflowInstanceId;
+            return { outcome: "bound" };
+          }
+          default:
+            throw new Error(`Unmodelled harness-run operation: ${input.operation}`);
+        }
+      })();
+      return { status: 200, bodyJson: JSON.stringify({ ok: true, value }) };
+    }),
     executeRuntimeSql: async (input: { statements: Array<{ sql: string; params: unknown[] }> }) => {
       const results = [];
       for (const { sql, params } of input.statements) {

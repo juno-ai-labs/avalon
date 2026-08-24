@@ -22,6 +22,8 @@ import { createCloudflareTestBinding, createTestD1Database, createTestD1Prepared
 import {
   executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
+  testHarnessRunPort,
+  testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectRun,
 } from "./helpers/durable-authority";
@@ -276,6 +278,10 @@ function fixture(): {
       DB: sqliteD1(database),
       AI: createCloudflareTestBinding<Ai>(ai),
       MEMORY_INDEX: createCloudflareTestBinding<VectorizeIndex>(vector),
+      // Freezing a run's recall now goes through the harness-run authority, so
+      // this fixture needs the object namespace as well as the SQL callback
+      // below. Both reach the same per-work-stream store.
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
       AVALON_REGION: "global",
       APP_ENV: "test",
     }),
@@ -588,15 +594,25 @@ describe("scoped agent memory", () => {
       "a different retry query",
     );
     expect(replay).toEqual(first);
-    // The frozen context is immutable through its only write surface: the
-    // compat view carries an insert trigger and nothing else, so a routed
-    // mutation is refused outright — the object-side successor to the dropped
-    // D1 `harness_run_memory_context_immutable` trigger.
-    expect(() => workstreamObjectRun(
-      objectStores.get(runInput.workstreamId)!,
-      "UPDATE harness_run_memory_contexts SET query_text = 'mutated' WHERE harness_run_id = ?",
-      RUN_ONE,
-    )).toThrow(/cannot modify _runtime_run_memory_contexts/u);
+    // The frozen context is immutable through its only write surface. That used
+    // to be enforced by the compat view carrying an insert trigger and nothing
+    // else, so a routed UPDATE was refused outright; the authority now enforces
+    // it by answering `reused` and never writing, which is the same guarantee
+    // stated as an outcome rather than as a missing trigger.
+    const reFrozen = await testHarnessRunPort(objectStores.get(runInput.workstreamId)!)
+      .persistMemoryContext({
+        runId: RUN_ONE,
+        attemptId: "attempt-owner",
+        owner: "lease-owner",
+        now: Date.now(),
+        memoryScopeIdsJson: "[]",
+        queryText: "mutated",
+        retrievalMode: "fts_only",
+        resultsJson: "[]",
+        memoryContextHash: "mutated-hash",
+      });
+    expect(reFrozen).toMatchObject({ outcome: "reused" });
+    expect(reFrozen.outcome === "reused" && reFrozen.row.query_text).not.toBe("mutated");
   });
 
   it("shares automation tables across runs and queries only matching projected rows", async () => {

@@ -66,6 +66,7 @@ import {
 import type { ScheduledAlarmOutcome } from "../durable-objects/scheduled-alarms";
 import { SLACK_LINK_CHALLENGE_GRACE_MS } from "./slack-agent-service";
 import type { TerminalLifecycleTransition } from "./terminal/lifecycle";
+import { createHarnessRunObjectPort, createHarnessRunPortFactory } from "../runtime/harness-run-port";
 
 /**
  * The directory reads a schedule needs, satisfied without an RPC hop.
@@ -505,7 +506,7 @@ async function reconcileTerminalSandbox(
   );
   const port = createTerminalPortFactory(executionEnv);
   const result = await reconcileDueTerminalSandbox(
-    executionEnv.DB,
+    createHarnessRunPortFactory(executionEnv),
     port,
     provider,
     ctx.workspaceId,
@@ -792,9 +793,12 @@ async function startAutomation(
     schedule.workspace_id,
     run.workstream_id,
   );
-  await executionEnv.DB.prepare(
-    `UPDATE harness_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
-  ).bind(workflowId, harnessRunId, schedule.workspace_id).run();
+  await createHarnessRunObjectPort(executionEnv, schedule.workspace_id, run.workstream_id)
+    .bindWorkflowInstance({
+      runId: harnessRunId,
+      workflowInstanceId: workflowId,
+      now: now.getTime(),
+    });
 }
 
 async function ensureHarnessRun(
@@ -826,23 +830,19 @@ async function ensureHarnessRun(
 
   const id = uuidV7(now.getTime());
   const model = await scheduledWorkstreamModelForExisting(executionEnv, { workspaceId, workstreamId });
-  await executionEnv.DB.prepare(
-    `INSERT INTO harness_runs (
-     id, workspace_id, workstream_id, origin, execution_principal_json,
-       workflow_instance_id, parent_harness_run_id, status, started_at, completed_at,
-       model, usage_json, error_json, created_at
-     ) VALUES (?1, ?2, ?3, 'automation', ?4, NULL, NULL, 'scheduled', ?5, NULL,
-               ?6, '{}', NULL, ?5)`
-  )
-    .bind(
-      id,
-      workspaceId,
-      workstreamId,
-      JSON.stringify(executionPrincipal),
-      now.toISOString(),
-      model
-    )
-    .run();
+  await createHarnessRunObjectPort(executionEnv, workspaceId, workstreamId).admitRun({
+    runId: id,
+    origin: "automation",
+    executionPrincipalJson: JSON.stringify(executionPrincipal),
+    status: "admitted",
+    startedAt: now.getTime(),
+    model,
+    triggerPartId: null,
+    parentRunId: null,
+    supersedeActive: false,
+    expectedLatestRunId: null,
+    now: now.getTime(),
+  });
   return id;
 }
 

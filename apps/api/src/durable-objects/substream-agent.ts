@@ -81,6 +81,8 @@ import {
   terminalizeHarnessAttempt,
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
+import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
+import { createMessageObjectPort } from "../runtime/message-port";
 import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
 import {
   createBlockDashboardObjectPort,
@@ -134,6 +136,12 @@ import {
   MessageOperationRequestSchema,
   mutatesTranscript,
 } from "./workstream-message-protocol";
+import { WorkstreamHarnessRunStorage } from "./workstream-harness-run-storage";
+import {
+  type HarnessRunOperationRequest,
+  HarnessRunOperationRequestSchema,
+  mutatesRunState,
+} from "./workstream-harness-run-protocol";
 import { WorkstreamResourceStorage } from "./workstream-resource-storage";
 import {
   type ResourceOperationRequest,
@@ -557,6 +565,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   private messages!: WorkstreamMessageStorage;
   private resources!: WorkstreamResourceStorage;
+  private harnessRuns!: WorkstreamHarnessRunStorage;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
@@ -615,6 +624,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.scheduling = new WorkstreamSchedulingStorage(state.storage);
       this.messages = new WorkstreamMessageStorage(state.storage);
       this.resources = new WorkstreamResourceStorage(state.storage);
+      this.harnessRuns = new WorkstreamHarnessRunStorage(state.storage);
       await this.objectStore.waitUntilReady();
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
@@ -781,6 +791,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/internal/resources") {
       return this.acceptResourceOperation(request);
     }
+    if (request.method === "POST" && url.pathname === "/internal/harness-runs") {
+      return this.acceptHarnessRunOperation(request);
+    }
     if (request.method === "POST" && url.pathname === "/internal/block-dashboard") {
       return this.acceptBlockDashboardOperation(request);
     }
@@ -912,6 +925,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async executeResourceOperation(input: ResourceOperationRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return objectPortRpcResult(await this.resourceOperationOutcome(input));
+  }
+
+  async executeHarnessRunOperation(
+    input: HarnessRunOperationRequest,
+  ): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return objectPortRpcResult(await this.harnessRunOperationOutcome(input));
   }
 
   async executeSchedulingOperation(
@@ -1243,6 +1263,36 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         true,
       )
       : method.apply(this.messages, parsed.data.args);
+    return { status: 200, payload: { ok: true, value: value ?? null } };
+  }
+
+  private async acceptHarnessRunOperation(request: Request): Promise<Response> {
+    const outcome = await this.harnessRunOperationOutcome(await request.json().catch(() => null));
+    return jsonResponse(outcome.payload, outcome.status);
+  }
+
+  /**
+   * Dispatch one harness-run operation against this object's own rows.
+   *
+   * A claim runs inside `commitRuntimeMutation` because the sidebar renders a
+   * work stream's harness status, and the routed claim batch wrote that as a
+   * third statement guarded on the first having landed. Committing the
+   * projection with the claim is what replaces the guard.
+   */
+  private async harnessRunOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
+    const parsed = HarnessRunOperationRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return { status: 400, payload: { ok: false, error: "invalid_harness_run_operation" } };
+    }
+    const refusal = this.objectPortRefusal(parsed.data, "workstream_harness_run_identity_mismatch");
+    if (refusal) return refusal;
+    const method = this.harnessRuns[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const value = mutatesRunState(parsed.data.operation)
+      ? await this.product.commitRuntimeMutation(
+        () => method.apply(this.harnessRuns, parsed.data.args),
+        true,
+      )
+      : method.apply(this.harnessRuns, parsed.data.args);
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
@@ -2173,7 +2223,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
       return this.settleAgentRunWithRetry(executionEnv, input, terminalOutcome);
     }
-    await reapStaleHarnessRuns(executionEnv.DB, {
+    const runs = createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId);
+    await reapStaleHarnessRuns(runs, {
       receipts: createToolReceiptPortFactory(executionEnv),
       blocks: createBlockDashboardPortFactory(executionEnv),
       workspaceId: input.workspaceId,
@@ -2190,11 +2241,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }),
     });
     const attemptId = uuidV7();
-    const claim = await claimHarnessAttempt(executionEnv.DB, input, {
-      attemptId,
-      owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}`,
-      leaseSeconds: 300,
-    });
+    const claim = await claimHarnessAttempt(
+      runs,
+      input,
+      {
+        attemptId,
+        owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}`,
+        leaseSeconds: 300,
+      },
+    );
     if (claim.state === "busy") {
       const leaseAt = claim.leaseExpiresAt ? Date.parse(claim.leaseExpiresAt) : Number.NaN;
       // A lease nobody will release leaves the run "running" forever, and this
@@ -2239,7 +2294,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     if (claim.state === "cancelled") {
       await terminalizeQueuedHarnessRun(
-        executionEnv.DB,
+        runs,
         input,
         { attemptId, owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}` },
         { code: "run_cancelled", message: "The run was stopped before it started" },
@@ -2306,14 +2361,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const effectiveStatus = stopState?.status === "stopped" || stopState?.cancellation_requested_at
       ? "stopped"
       : outcome.status;
-    await terminalizeHarnessAttempt(executionEnv.DB, input, claim.lease, {
-      status: effectiveStatus,
-      ...(outcome.messageId ? { finalMessageId: outcome.messageId } : {}),
-      ...(outcome.error ? { error: outcome.error } : {}),
-      memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
-    },
-    createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
-    createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId));
+    await terminalizeHarnessAttempt(
+      runs,
+      createMessageObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+      input,
+      claim.lease,
+      {
+        status: effectiveStatus,
+        ...(outcome.messageId ? { finalMessageId: outcome.messageId } : {}),
+        ...(outcome.error ? { error: outcome.error } : {}),
+        memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
+      },
+      createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+      createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+    );
     if (outcome.messageId) {
       const messages = await this.product.messagesForRuntime(250);
       const message = messages.items.find((candidate) => candidate.id === outcome.messageId);

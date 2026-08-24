@@ -25,6 +25,7 @@ import type {
   TerminalResolvedRepository,
 } from "./workstream-state";
 import { TerminalToolError } from "./tools";
+import { createHarnessRunObjectPort } from "../../runtime/harness-run-port";
 
 interface ConnectionRow {
   id: string;
@@ -300,15 +301,16 @@ export function createTerminalRepositorySelector(
           { reason: "Retry repository checkout against the current Terminal workspace generation." },
         );
       }
-      const run = await env.DB.prepare(
-        "SELECT trigger_message_id FROM harness_runs WHERE workspace_id = ? AND workstream_id = ? AND id = ?",
-      ).bind(context.workspaceId, context.workstreamId, context.harnessRunId)
-        .first<{ trigger_message_id: string | null }>();
+      const triggerMessageId = await createHarnessRunObjectPort(
+        env,
+        context.workspaceId,
+        context.workstreamId,
+      ).triggerPartId({ runId: context.harnessRunId });
       await admitTerminalPublicationGrant(env, {
         workspaceId: context.workspaceId,
         workstreamId: context.workstreamId,
         harnessRunId: context.harnessRunId,
-        triggerMessageId: run?.trigger_message_id ?? null,
+        triggerMessageId,
         executionPrincipal: context.executionPrincipal,
       }, new Date(), terminalPortFactory);
       await emitProductUsageTelemetry(env, {
