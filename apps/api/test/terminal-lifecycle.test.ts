@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { reconcileDueTerminalSandbox } from "../src/services/terminal/lifecycle";
-import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase } from "./helpers/sqlite-d1";
 import {
   seedWorkstreamObjectRoot,
+  testHarnessRunPortFactory,
   testWorkstreamObjectStore,
-  testWorkstreamRuntimeD1,
   workstreamObjectGet,
   workstreamObjectRun,
   testTerminalPortFactory,
@@ -66,25 +66,24 @@ function fixture(state: "running" | "stopped" | "archived", deadlines: { warm: s
   return {
     database,
     objectStore,
-    db: testWorkstreamRuntimeD1(sqliteD1(database), objectStore, { workspaceId: W, workstreamId: S }),
     provider,
   };
 }
 
 describe("Terminal scheduled lifecycle", () => {
   it("stops one idle running sandbox exactly once after the warm deadline", async () => {
-    const { objectStore, db, provider } = fixture("running", {
+    const { objectStore, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
     });
-    await expect(reconcileDueTerminalSandbox(db, testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "stopped" });
-    await expect(reconcileDueTerminalSandbox(db, testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "none" });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "stopped" });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "none" });
     expect(provider.stopSandbox).toHaveBeenCalledOnce();
     expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, idle_expires_at FROM terminal_workspace WHERE id = 1"))
       .toEqual({ lifecycle_state: "stopped", idle_expires_at: null });
   });
 
   it("reconciles an active holder after its operation lease expires", async () => {
-    const { objectStore, db, provider } = fixture("running", {
+    const { objectStore, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z",
       archive: "2026-08-13T13:00:00.000Z",
       expire: "2026-09-12T12:00:00.000Z",
@@ -105,7 +104,7 @@ describe("Terminal scheduled lifecycle", () => {
     );
 
     await expect(reconcileDueTerminalSandbox(
-      db,
+      testHarnessRunPortFactory(objectStore),
       testTerminalPortFactory(objectStore),
       provider,
       W,
@@ -116,7 +115,7 @@ describe("Terminal scheduled lifecycle", () => {
   });
 
   it("does not let an expired lifecycle continuation stop after a replacement scheduler settles", async () => {
-    const { objectStore, db, provider } = fixture("running", {
+    const { objectStore, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
     });
     const baseFactory = testTerminalPortFactory(objectStore);
@@ -141,7 +140,7 @@ describe("Terminal scheduled lifecycle", () => {
     }) satisfies typeof baseFactory;
 
     const staleReconcile = reconcileDueTerminalSandbox(
-      db,
+      testHarnessRunPortFactory(objectStore),
       staleFactory,
       provider,
       W,
@@ -152,7 +151,7 @@ describe("Terminal scheduled lifecycle", () => {
 
     const replacementNow = new Date(NOW.getTime() + 17 * 60_000);
     await expect(reconcileDueTerminalSandbox(
-      db,
+      testHarnessRunPortFactory(objectStore),
       baseFactory,
       provider,
       W,
@@ -179,14 +178,14 @@ describe("Terminal scheduled lifecycle", () => {
     const stopped = fixture("stopped", {
       warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:59:00.000Z", expire: "2026-09-12T12:00:00.000Z",
     });
-    await expect(reconcileDueTerminalSandbox(stopped.db, testTerminalPortFactory(stopped.objectStore), stopped.provider, W, S, NOW)).resolves.toEqual({ transition: "archived" });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(stopped.objectStore), testTerminalPortFactory(stopped.objectStore), stopped.provider, W, S, NOW)).resolves.toEqual({ transition: "archived" });
     expect(stopped.provider.archiveSandbox).toHaveBeenCalledWith("provider-1");
 
     const archived = fixture("archived", {
       warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
     });
     const preserveFinalDiff = vi.fn(async () => undefined);
-    await expect(reconcileDueTerminalSandbox(archived.db, testTerminalPortFactory(archived.objectStore), archived.provider, W, S, NOW, preserveFinalDiff)).resolves.toEqual({ transition: "expired" });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(archived.objectStore), testTerminalPortFactory(archived.objectStore), archived.provider, W, S, NOW, preserveFinalDiff)).resolves.toEqual({ transition: "expired" });
     expect(preserveFinalDiff).not.toHaveBeenCalled();
     expect(archived.provider.clearGitHubReadAccess).toHaveBeenCalledWith("provider-1");
     expect(archived.provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
@@ -195,7 +194,7 @@ describe("Terminal scheduled lifecycle", () => {
   });
 
   it("defers a yielded run's lifecycle until its retained command deadline", async () => {
-    const { objectStore, db, provider } = fixture("running", {
+    const { objectStore, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
     });
     workstreamObjectRun(
@@ -233,11 +232,11 @@ describe("Terminal scheduled lifecycle", () => {
       Date.parse("2026-08-13T00:00:00.000Z"),
       Date.parse("2026-08-13T00:00:00.000Z"),
     );
-    await expect(reconcileDueTerminalSandbox(db, testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "deferred" });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "deferred" });
     expect(provider.stopSandbox).not.toHaveBeenCalled();
 
     await expect(reconcileDueTerminalSandbox(
-      db,
+      testHarnessRunPortFactory(objectStore),
       testTerminalPortFactory(objectStore),
       provider,
       W,
@@ -255,7 +254,7 @@ describe("Terminal scheduled lifecycle", () => {
   it.each(["planned", "submitting"] as const)(
     "retires an unconfirmed %s sandbox without waiting for a linked run",
     async (taskState) => {
-      const { objectStore, db, provider } = fixture("running", {
+      const { objectStore, provider } = fixture("running", {
         warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
       });
       workstreamObjectRun(
@@ -294,7 +293,7 @@ describe("Terminal scheduled lifecycle", () => {
         Date.parse("2026-08-13T11:00:00.000Z"),
       );
       await expect(reconcileDueTerminalSandbox(
-        db,
+        testHarnessRunPortFactory(objectStore),
         testTerminalPortFactory(objectStore),
         provider,
         W,
@@ -319,7 +318,7 @@ describe("Terminal scheduled lifecycle", () => {
         failure_code: null,
       });
       await expect(reconcileDueTerminalSandbox(
-        db,
+        testHarnessRunPortFactory(objectStore),
         testTerminalPortFactory(objectStore),
         provider,
         W,
@@ -331,7 +330,7 @@ describe("Terminal scheduled lifecycle", () => {
   );
 
   it("cancels retained tasks before expiry after a lost delete response", async () => {
-    const { objectStore, db, provider } = fixture("archived", {
+    const { objectStore, provider } = fixture("archived", {
       warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
     });
     workstreamObjectRun(
@@ -377,7 +376,7 @@ describe("Terminal scheduled lifecycle", () => {
     );
 
     await expect(reconcileDueTerminalSandbox(
-      db,
+      testHarnessRunPortFactory(objectStore),
       testTerminalPortFactory(objectStore),
       provider,
       W,
@@ -401,7 +400,7 @@ describe("Terminal scheduled lifecycle", () => {
   });
 
   it("does not settle expiry when cancellation fails after provider absence", async () => {
-    const { objectStore, db, provider } = fixture("archived", {
+    const { objectStore, provider } = fixture("archived", {
       warm: "2026-08-13T11:00:00.000Z",
       archive: "2026-08-13T11:30:00.000Z",
       expire: "2026-08-13T11:59:00.000Z",
@@ -462,7 +461,7 @@ describe("Terminal scheduled lifecycle", () => {
       .mockRejectedValueOnce(missing());
 
     await expect(reconcileDueTerminalSandbox(
-      db,
+      testHarnessRunPortFactory(objectStore),
       flakyFactory,
       provider,
       W,
@@ -483,7 +482,7 @@ describe("Terminal scheduled lifecycle", () => {
     )).toEqual({ state: "submitting" });
 
     await expect(reconcileDueTerminalSandbox(
-      db,
+      testHarnessRunPortFactory(objectStore),
       baseFactory,
       provider,
       W,
@@ -501,7 +500,7 @@ describe("Terminal scheduled lifecycle", () => {
   });
 
   it("keeps operation claims fenced while lifecycle cleanup owns the provider", async () => {
-    const { objectStore, db, provider } = fixture("running", {
+    const { objectStore, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
     });
     workstreamObjectRun(
@@ -544,7 +543,7 @@ describe("Terminal scheduled lifecycle", () => {
     ));
 
     const lifecycle = reconcileDueTerminalSandbox(
-      db,
+      testHarnessRunPortFactory(objectStore),
       testTerminalPortFactory(objectStore),
       provider,
       W,
@@ -579,7 +578,7 @@ describe("Terminal scheduled lifecycle", () => {
   });
 
   it("settles every retained task after the required stop before lifecycle transition", async () => {
-    const { objectStore, db, provider } = fixture("running", {
+    const { objectStore, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
     });
     workstreamObjectRun(
@@ -621,7 +620,7 @@ describe("Terminal scheduled lifecycle", () => {
       );
     }
     await expect(reconcileDueTerminalSandbox(
-      db,
+      testHarnessRunPortFactory(objectStore),
       testTerminalPortFactory(objectStore),
       provider,
       W,
@@ -636,7 +635,7 @@ describe("Terminal scheduled lifecycle", () => {
   });
 
   it("restores a stable due state after a transient provider failure so the scheduler can retry", async () => {
-    const { objectStore, db, provider } = fixture("running", {
+    const { objectStore, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
     });
     vi.mocked(provider.stopSandbox).mockRejectedValueOnce(new Error("transient stop failure"));
@@ -644,18 +643,18 @@ describe("Terminal scheduled lifecycle", () => {
       id: "provider-1", name: "sandbox-lifecycle", state: "running", domainAllowList: [],
     });
 
-    await expect(reconcileDueTerminalSandbox(db, testTerminalPortFactory(objectStore), provider, W, S, NOW)).rejects.toThrow("transient stop failure");
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW)).rejects.toThrow("transient stop failure");
     expect(workstreamObjectGet(
       objectStore,
       "SELECT lifecycle_state, failure_code FROM terminal_workspace WHERE id = 1",
     )).toEqual({ lifecycle_state: "running", failure_code: "stopped_provider_failed" });
 
-    await expect(reconcileDueTerminalSandbox(db, testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "stopped" });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "stopped" });
     expect(provider.stopSandbox).toHaveBeenCalledTimes(2);
   });
 
   it("settles expiry when its retry observes Daytona already deleted the sandbox", async () => {
-    const { objectStore, db, provider } = fixture("archived", {
+    const { objectStore, provider } = fixture("archived", {
       warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
     });
     const notFound = Object.assign(new Error("sandbox not found"), { response: { status: 404 } });
@@ -666,7 +665,7 @@ describe("Terminal scheduled lifecycle", () => {
     vi.mocked(provider.deleteSandbox).mockRejectedValueOnce(new Error("delete response lost"));
     vi.mocked(provider.getSandbox).mockRejectedValueOnce(notFound);
 
-    await expect(reconcileDueTerminalSandbox(db, testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "expired" });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW)).resolves.toEqual({ transition: "expired" });
     expect(workstreamObjectGet(
       objectStore,
       `SELECT generation, lifecycle_state, sandbox_id, expire_due_at, final_diff_resource_id

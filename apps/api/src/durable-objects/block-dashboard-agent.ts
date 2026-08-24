@@ -77,6 +77,7 @@ import {
   type BlockDashboardBlockDispatch,
   type BlockDashboardSocketRetractionRequest,
 } from "./block-dashboard-protocol";
+import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { blockDashboardAgentName, workstreamDOName } from "./names";
 import {
@@ -1188,7 +1189,8 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       dispatch.workstreamId,
     );
     const input = await this.initializeRuntimeRun(executionEnv, dispatch);
-    await reapStaleHarnessRuns(executionEnv.DB, {
+    const runs = createHarnessRunObjectPort(executionEnv, dispatch.workspaceId, dispatch.workstreamId);
+    await reapStaleHarnessRuns(runs, {
       receipts: createToolReceiptPortFactory(executionEnv),
       blocks: createBlockDashboardPortFactory(executionEnv),
       workspaceId: dispatch.workspaceId,
@@ -1206,11 +1208,15 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
     });
     const attemptId = uuidV7();
     const owner = `block-dashboard-agent:${dispatch.blockId}:${dispatch.blockRunId}:${attemptId}`;
-    const claim = await claimHarnessAttempt(executionEnv.DB, input, {
-      attemptId,
-      owner,
-      leaseSeconds: 300,
-    });
+    const claim = await claimHarnessAttempt(
+      runs,
+      input,
+      {
+        attemptId,
+        owner,
+        leaseSeconds: 300,
+      },
+    );
     if (claim.state === "busy") {
       const leaseAt = claim.leaseExpiresAt ? Date.parse(claim.leaseExpiresAt) : Number.NaN;
       return {
@@ -1225,7 +1231,7 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
     }
     if (claim.state === "cancelled") {
       await terminalizeQueuedHarnessRun(
-        executionEnv.DB,
+        runs,
         input,
         { attemptId, owner },
         { code: "run_cancelled", message: "The HyperSight block was stopped before it started" },
@@ -1266,13 +1272,19 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
     const error = outcome.error ?? (outcome.status === "needs_input"
       ? { code: "block_dashboard_input_unavailable", message: "HyperSight cannot pause for input" }
       : undefined);
-    await terminalizeHarnessAttempt(executionEnv.DB, input, claim.lease, {
-      status,
-      ...(error ? { error } : {}),
-      memberSafePayload: error ? { code: error.code } : {},
-    },
-    createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
-    createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId));
+    await terminalizeHarnessAttempt(
+      runs,
+      createMessageObjectPort(executionEnv, dispatch.workspaceId, dispatch.workstreamId),
+      input,
+      claim.lease,
+      {
+        status,
+        ...(error ? { error } : {}),
+        memberSafePayload: error ? { code: error.code } : {},
+      },
+      createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+      createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+    );
     const terminal = await this.updateRuntimeBlockRun(executionEnv, dispatch, status, error);
     return this.persistAndSettle(dispatch, { run: terminal }, leaseToken);
   }

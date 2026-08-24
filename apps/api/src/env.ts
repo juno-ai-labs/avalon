@@ -170,7 +170,6 @@ export interface Env {
   HARNESS_CHILD_MAX_WALL_CLOCK_MS?: string;
   HARNESS_CHILD_MAX_COST_CENTS?: string;
   HARNESS_CHILD_MAX_CHAIN_RUNS?: string;
-  HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS?: string;
   HARNESS_CHILD_MAX_DEPTH?: string;
   TOOL_DEFAULT_TIMEOUT_MS: string;
   CONNECTOR_POLL_TIMEOUT_MS?: string;
@@ -340,7 +339,6 @@ const EnvContractSchema = z.object({
   HARNESS_CHILD_MAX_WALL_CLOCK_MS: numericString.optional(),
   HARNESS_CHILD_MAX_COST_CENTS: numericString.optional(),
   HARNESS_CHILD_MAX_CHAIN_RUNS: numericString.optional(),
-  HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS: numericString.optional(),
   HARNESS_CHILD_MAX_DEPTH: numericString.optional(),
   CONNECTOR_POLL_TIMEOUT_MS: numericString.optional(),
   PROVIDER_WEBHOOK_MAX_BYTES: numericString.optional(),
@@ -497,7 +495,6 @@ export function numericEnv(
     | "HARNESS_CHILD_MAX_WALL_CLOCK_MS"
     | "HARNESS_CHILD_MAX_COST_CENTS"
     | "HARNESS_CHILD_MAX_CHAIN_RUNS"
-    | "HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS"
     | "HARNESS_CHILD_MAX_DEPTH"
     | "TOOL_DEFAULT_TIMEOUT_MS"
     | "CONNECTOR_POLL_TIMEOUT_MS"

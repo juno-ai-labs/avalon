@@ -52,6 +52,8 @@ import {
   readWorkstreamRuntimeAudience,
 } from "./workstream-object-client";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
+import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
+import { publishedRunStatus } from "../runtime/harness-run-runtime";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   workstreamExecutionEnvironment,
@@ -1765,16 +1767,8 @@ export class AutomationService {
       run.workstream_id,
     );
     const [harness, message] = await Promise.all([
-      executionEnv.DB.prepare(
-        `SELECT id, status, workflow_instance_id FROM harness_runs
-          WHERE workspace_id = ? AND workstream_id = ?
-            AND parent_tool_call_id IS NULL AND origin != 'block_dashboard_block'
-          ORDER BY created_at DESC LIMIT 1`,
-      ).bind(this.auth.workspaceId, run.workstream_id).first<{
-        id: string;
-        status: string;
-        workflow_instance_id: string | null;
-      }>(),
+      createHarnessRunObjectPort(executionEnv, this.auth.workspaceId, run.workstream_id)
+        .latestRootRun(),
       openingClientMessageId
         ? createMessageObjectPort(this.env, this.auth.workspaceId, run.workstream_id)
           .messageByClientId({ clientMessageId: openingClientMessageId })
@@ -1783,10 +1777,12 @@ export class AutomationService {
     return {
       runId: run.run_id,
       workstreamId: asWorkstreamId(run.workstream_id),
-      harnessRunId: harness?.id ? asHarnessRunId(harness.id) : null,
+      harnessRunId: harness?.run_id ? asHarnessRunId(harness.run_id) : null,
       workflowInstanceId: harness?.workflow_instance_id ?? run.run_workflow_instance_id,
       runStatus: run.run_status,
-      harnessStatus: harness?.status ?? null,
+      // The row speaks the object's vocabulary; the terminal set this is
+      // compared against below is the published one.
+      harnessStatus: harness ? publishedRunStatus(harness.status) : null,
       triggerMessageId: message?.id ?? null,
     };
   }
@@ -1810,10 +1806,14 @@ export class AutomationService {
         this.auth.workspaceId,
         run.workstreamId,
       );
+      const { harnessRunId, workflowInstanceId } = run;
       const reconcile = () => Promise.all([
-        executionEnv.DB.prepare(
-          "UPDATE harness_runs SET workflow_instance_id = ? WHERE id = ? AND workspace_id = ?",
-        ).bind(run.workflowInstanceId, run.harnessRunId, this.auth.workspaceId).run(),
+        createHarnessRunObjectPort(executionEnv, this.auth.workspaceId, run.workstreamId)
+          .bindWorkflowInstance({
+            runId: harnessRunId,
+            workflowInstanceId,
+            now: Date.now(),
+          }),
         this.env.DB.prepare(
           "UPDATE automation_runs SET workflow_instance_id = ? WHERE id = ? AND workspace_id = ?",
         ).bind(run.workflowInstanceId, run.runId, this.auth.workspaceId).run(),

@@ -18,6 +18,11 @@ import {
   MESSAGE_OPERATIONS,
   type MessageObjectPort,
 } from "../../src/durable-objects/workstream-message-protocol";
+import { WorkstreamHarnessRunStorage } from "../../src/durable-objects/workstream-harness-run-storage";
+import {
+  HARNESS_RUN_OPERATIONS,
+  type HarnessRunObjectPort,
+} from "../../src/durable-objects/workstream-harness-run-protocol";
 import { WorkstreamResourceStorage } from "../../src/durable-objects/workstream-resource-storage";
 import {
   RESOURCE_OPERATIONS,
@@ -543,6 +548,41 @@ export function testSubstreamAgentsBinding(
       }
     }),
     /**
+     * The harness-run port's counterpart, on the same object database.
+     *
+     * Same shape and reasoning as its siblings. Refusals — a lost lease, a
+     * stale admission, a run that is already terminal — come back as a 200
+     * carrying the named outcome, because every one of them is an ordinary
+     * answer this authority is designed to give rather than a fault.
+     */
+    executeHarnessRunOperation: vi.fn((input: {
+      workspaceId: string;
+      workstreamId: string;
+      operation: string;
+      args: unknown[];
+    }) => {
+      const store = storeFor(input.workstreamId, input.workspaceId);
+      const storage = new WorkstreamHarnessRunStorage(
+        createCloudflareTestBinding<DurableObjectStorage>({
+          getAlarm: async () => null,
+          setAlarm: async () => undefined,
+          transactionSync: (body: () => unknown) => body(),
+          sql: objectSqlStorage(store),
+        }),
+      ) as unknown as Record<string, (...args: unknown[]) => unknown>;
+      try {
+        const value = storage[input.operation]!.apply(storage, input.args);
+        return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
+      } catch (error) {
+        return {
+          status: 409,
+          bodyJson: JSON.stringify({
+            error: error instanceof Error ? error.message : "harness_run_operation_failed",
+          }),
+        };
+      }
+    }),
+    /**
      * The transcript port's counterpart, on the same object database.
      *
      * Same shape and reasoning as its siblings. A replayed append comes back as
@@ -906,6 +946,48 @@ export function testResourcePort(database: DatabaseSync): ResourceObjectPort {
     new WorkstreamResourceStorage(plainBinding(database)),
     RESOURCE_OPERATIONS,
   );
+}
+
+/** A harness-run port over a real storage instance in this isolate. */
+export function testHarnessRunPort(
+  database: DatabaseSync,
+  /**
+   * Run inside `transactionSync`, immediately before the operation's body.
+   *
+   * `testToolReceiptPort`'s seam, for the reason it exists there: a claim, a
+   * terminalization and a reap each read their fence and write their rows in
+   * one transaction, so a race that used to be staged between two statements of
+   * a D1 batch has to be staged from here instead.
+   */
+  beforeTransaction?: () => void,
+): HarnessRunObjectPort {
+  const storage = new WorkstreamHarnessRunStorage(
+    createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null,
+      setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => {
+        beforeTransaction?.();
+        return body();
+      },
+      sql: objectSqlStorage(database),
+    }),
+  );
+  return Object.fromEntries(
+    HARNESS_RUN_OPERATIONS.map((operation) => [
+      operation,
+      async (...args: unknown[]) =>
+        (storage[operation] as (...rest: unknown[]) => unknown).apply(storage, args),
+    ]),
+  ) as HarnessRunObjectPort;
+}
+
+/** The same port as a factory, for a caller that takes one. */
+export function testHarnessRunPortFactory(database: DatabaseSync): (
+  workspaceId: string,
+  workstreamId: string,
+) => HarnessRunObjectPort {
+  const port = testHarnessRunPort(database);
+  return () => port;
 }
 
 /** The same port as a factory, for a caller that takes one. */

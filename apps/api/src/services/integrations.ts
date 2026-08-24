@@ -185,6 +185,8 @@ import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { createBlockDashboardObjectPort } from "../runtime/block-dashboard-port";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
+import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
+import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createResourceObjectPort } from "../runtime/resource-port";
 import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { transcriptLister } from "../runtime/message-projection";
@@ -1835,22 +1837,13 @@ async function recordWorkflowLaunch(
     input.workspaceId,
     input.workstreamId,
   );
-  await executionEnv.DB.batch([
-    executionEnv.DB.prepare(
-      `UPDATE harness_runs
-       SET workflow_instance_id = ?,
-           status = CASE WHEN status = 'scheduled' THEN 'running' ELSE status END,
-           started_at = COALESCE(started_at, ?)
-       WHERE id = ? AND workspace_id = ?`,
-    ).bind(instanceId, launchedAt, input.harnessRunId, input.workspaceId),
-    executionEnv.DB.prepare(
-      `UPDATE workstreams
-       SET harness_status = CASE WHEN harness_status = 'scheduled' THEN 'running' ELSE harness_status END,
-           updated_at = ?
-       WHERE id = ? AND workspace_id = ?
-         AND ? != 'block_dashboard_block'`,
-    ).bind(launchedAt, input.workstreamId, input.workspaceId, input.reason),
-  ]);
+  await createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId)
+    .launchRun({
+      runId: input.harnessRunId,
+      workflowInstanceId: instanceId,
+      startedAt: Date.parse(launchedAt),
+      now: Date.parse(launchedAt),
+    });
   await withWorkspaceRuntimeDatabase(executionEnv, input.workspaceId).DB.prepare(
     `UPDATE automation_runs
      SET workflow_instance_id = ?,
@@ -1983,11 +1976,10 @@ export async function runWorkstreamHarness(
     `SELECT title, objective FROM workstreams WHERE id = ? AND workspace_id = ? AND archived_at IS NULL`,
   ).bind(input.workstreamId, input.workspaceId).first<{ title: string; objective: string }>();
   if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
-  const initialRun = await env.DB.prepare(
-    "SELECT status, origin FROM harness_runs WHERE id = ? AND workspace_id = ? AND workstream_id = ?",
-  ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{ status: string; origin: string }>();
+  const initialRun = await createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId)
+    .run({ runId: input.harnessRunId });
   if (!initialRun) return { status: "failed", error: { code: "harness_run_not_found", message: "Harness run not found" } };
-  if (initialRun.status === "stopped") return { status: "stopped" };
+  if (initialRun.status === "cancelled") return { status: "stopped" };
   const blockDashboardRun = initialRun.origin === "block_dashboard_block"
     ? await createBlockDashboardObjectPort(env, input.workspaceId, input.workstreamId)
       .blockRunForHarnessRun({ harnessRunId: input.harnessRunId })
@@ -2014,7 +2006,8 @@ export async function runWorkstreamHarness(
     code: "run_ownership_lost",
   });
   const attemptLease = runtime.lease;
-  const liveness = new CoalescedRunLiveness(env.DB, input.harnessRunId, attemptLease, {
+  const runs = createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId);
+  const liveness = new CoalescedRunLiveness(runs, input.harnessRunId, attemptLease, {
     leaseSeconds: 300,
     minimumIntervalMs: 5_000,
   });
@@ -2128,7 +2121,7 @@ export async function runWorkstreamHarness(
     ...runLimits,
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
   };
-  await persistImmutableRunScope(env.DB, input, liveness.lease, {
+  await persistImmutableRunScope(runs, input, liveness.lease, {
     executionPrincipal: input.executionPrincipal,
     eligibleConnectionIds: [...harnessTools.frozenConnections.values()].map((plugin) => plugin.connectionId),
     eligibleCapabilities: [
@@ -2260,7 +2253,7 @@ export async function runWorkstreamHarness(
       workstreamId: input.workstreamId,
     });
 
-  if (await isHarnessStopped(env, input.harnessRunId)) stopController.abort("stopped_by_user");
+  if (await isHarnessStopped(runs, input.harnessRunId)) stopController.abort("stopped_by_user");
 
   // Setup above runs under the freshly claimed five-minute lease. Start the
   // recurring monitor only once every setup step that can throw has finished,
@@ -2463,7 +2456,7 @@ export async function runWorkstreamHarness(
           : failure?.includes("defect") || failure?.includes("empty") || failure?.includes("trunc")
             ? "defect" as const
             : "failed" as const);
-      await recordInferenceAttempt(env.DB, {
+      await recordInferenceAttempt(runs, {
         harnessRunId: input.harnessRunId,
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,
@@ -2514,16 +2507,14 @@ export async function runWorkstreamHarness(
     },
     flushProgress: async (progress) => {
       await liveness.pulse("usage_flush", true);
-      await env.DB.prepare(
-        `UPDATE harness_runs SET usage_json = ?
-          WHERE id = ? AND attempt_id = ? AND lease_owner = ?
-            AND status = 'running' AND terminalized_at IS NULL`,
-      ).bind(
-        JSON.stringify(progress),
-        input.harnessRunId,
-        liveness.lease.attemptId,
-        liveness.lease.owner,
-      ).run();
+      await runs.recordRunProgress({
+        runId: input.harnessRunId,
+        attemptId: liveness.lease.attemptId,
+        owner: liveness.lease.owner,
+        now: Date.now(),
+        model: null,
+        usageJson: JSON.stringify(progress),
+      });
     },
     onLiveness: async (stage) => {
       await liveness.pulse(stage, stage === "before_model" || stage === "after_tool");
@@ -2713,13 +2704,8 @@ export async function runWorkstreamHarness(
     onEvent: async (event: HarnessEvent) => {
       if (Date.now() - lastStopCheck > 750) {
         lastStopCheck = Date.now();
-        const state = await env.DB.prepare(
-          "SELECT status, cancellation_requested_at FROM harness_runs WHERE id = ?",
-        ).bind(input.harnessRunId).first<{
-          status: string;
-          cancellation_requested_at: string | null;
-        }>();
-        if (state?.status === "stopped" || state?.cancellation_requested_at) {
+        const state = await runs.run({ runId: input.harnessRunId });
+        if (state?.status === "cancelled" || state?.cancellation_requested_at) {
           stopController.abort("stopped_by_user");
         }
       }
@@ -3028,7 +3014,7 @@ export async function runWorkstreamHarness(
     streamedText = attachmentBoundary;
   }
 
-  const stoppedByUser = await isHarnessStopped(env, input.harnessRunId);
+  const stoppedByUser = await isHarnessStopped(runs, input.harnessRunId);
   if (outcome.status !== "completed" && !stoppedByUser) {
     // The member-safe terminal result deliberately strips this detail, so it
     // must be recorded here or nowhere: a Bind run that fails before its first
@@ -3106,7 +3092,7 @@ export async function runWorkstreamHarness(
     }).catch(() => undefined);
   } else if (streamedText) {
     const at = nowIso();
-    await persistHarnessFinalMessage(env.DB, input, liveness.lease, {
+    await persistHarnessFinalMessage(env.DB, runs, input, liveness.lease, {
       id: messageId,
       sequenceNumber: await ensureSequence(),
       text: streamedText,
@@ -3120,17 +3106,14 @@ export async function runWorkstreamHarness(
   // terminal realtime state only after the final message + lifecycle event are
   // durable. This host may persist model/usage metadata while its lease is live,
   // but it must never mark the run completed directly.
-  await env.DB.prepare(
-    `UPDATE harness_runs SET model = ?, usage_json = ?
-      WHERE id = ? AND attempt_id = ? AND lease_owner = ?
-        AND status = 'running' AND terminalized_at IS NULL`,
-  ).bind(
-    outcome.model ?? modelName,
-    JSON.stringify({ ...outcome.usage, run_stats: outcome.stats }),
-    input.harnessRunId,
-    liveness.lease.attemptId,
-    liveness.lease.owner,
-  ).run();
+  await runs.recordRunProgress({
+    runId: input.harnessRunId,
+    attemptId: liveness.lease.attemptId,
+    owner: liveness.lease.owner,
+    now: Date.now(),
+    model: outcome.model ?? modelName,
+    usageJson: JSON.stringify({ ...outcome.usage, run_stats: outcome.stats }),
+  });
   return {
     ...finalTerminalResult,
     metrics: summarizeHarnessRun(outcome, Date.now() - runStartedAtMs),
@@ -3252,13 +3235,10 @@ async function waitForInlineChildResult(
   parentToolCallId: string,
   signal: AbortSignal,
 ): Promise<InlineChildResult | null> {
+  const runs = createHarnessRunObjectPort(env, parentInput.workspaceId, parentInput.workstreamId);
   while (!signal.aborted) {
-    await assertHarnessAttemptOwned(env.DB, parentInput.harnessRunId, parentLease);
-    const lookup = await loadInlineChildResult(
-      env.DB,
-      parentInput.harnessRunId,
-      parentToolCallId,
-    );
+    await assertHarnessAttemptOwned(runs, parentInput.harnessRunId, parentLease);
+    const lookup = await loadInlineChildResult(runs, parentInput, parentToolCallId);
     if (lookup.state === "replay") return lookup.outcome;
     if (lookup.state === "missing") return null;
     const expiresAt = lookup.leaseExpiresAt ? Date.parse(lookup.leaseExpiresAt) : Number.NaN;
@@ -3483,6 +3463,11 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         workstreamId: options.input.workstreamId,
         harnessRunId: options.input.harnessRunId,
       };
+      const runs = createHarnessRunObjectPort(
+        options.env,
+        parentInput.workspaceId,
+        parentInput.workstreamId,
+      );
       const canonicalByModelId = new Map(
         options.harnessTools.plugins.map((plugin) => [plugin.modelId, plugin.canonicalId]),
       );
@@ -3509,17 +3494,12 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         parentToolCallId: context.toolCallId,
         objective: args.objective,
         maxChainRuns: numericEnv(options.env, "HARNESS_CHILD_MAX_CHAIN_RUNS", 4),
-        maxActiveWorkspaceChildren: numericEnv(
-          options.env,
-          "HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS",
-          8,
-        ),
         maxDepth: numericEnv(options.env, "HARNESS_CHILD_MAX_DEPTH", 1),
         leaseSeconds: 120,
       };
 
       let admission = await admitInlineChildAttempt(
-        options.env.DB,
+        runs,
         parentInput,
         options.parentLease(),
         admissionOptions,
@@ -3534,7 +3514,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         );
         if (replay) return inlineChildOutcomeAsToolResult(admission.childInput.harnessRunId, replay);
         admission = await admitInlineChildAttempt(
-          options.env.DB,
+          runs,
           parentInput,
           options.parentLease(),
           admissionOptions,
@@ -3562,7 +3542,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         reason: "sub_agent",
       };
       const childLiveness = new InlineChildRunLiveness(
-        options.env.DB,
+        runs,
         parentInput,
         options.parentLease(),
         admission.childInput,
@@ -3576,7 +3556,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
       );
       const assertChildOwned = async () => {
         await assertInlineChildAttemptOwned(
-          options.env.DB,
+          runs,
           parentInput,
           options.parentLease(),
           admission.childInput,
@@ -3607,7 +3587,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
       const childMonitor = childLiveness.startMonitor(5_000);
       try {
         await persistInlineChildScope(
-          options.env.DB,
+          runs,
           parentInput,
           options.parentLease(),
           admission.childInput,
@@ -3660,7 +3640,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           },
           async (pluginId) => {
             await assertChildOwned();
-            await persistRunPluginActivation(options.env.DB, admission.childInput, childLiveness.lease, {
+            await persistRunPluginActivation(runs, admission.childInput, childLiveness.lease, {
               pluginId,
               toolSurfaceHash: childPluginSurfaceHashes.get(pluginId)!,
             });
@@ -3735,7 +3715,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             await assertChildOwned();
             const surfaceHash = childPluginSurfaceHashes.get(pluginId);
             if (!surfaceHash) throw new ConnectorError("unauthorized", "Plugin is outside the child scope");
-            await persistRunPluginActivation(options.env.DB, admission.childInput, childLiveness.lease, {
+            await persistRunPluginActivation(runs, admission.childInput, childLiveness.lease, {
               pluginId,
               toolSurfaceHash: surfaceHash,
             });
@@ -3823,16 +3803,14 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           flushProgress: async (progress) => {
             await childLiveness.pulse("usage_flush", true);
             await assertChildOwned();
-            await options.env.DB.prepare(
-              `UPDATE harness_runs SET usage_json = ?
-                WHERE id = ? AND attempt_id = ? AND lease_owner = ?
-                  AND status = 'running' AND terminalized_at IS NULL`,
-            ).bind(
-              JSON.stringify(progress),
-              childInput.harnessRunId,
-              childLiveness.lease.attemptId,
-              childLiveness.lease.owner,
-            ).run();
+            await runs.recordRunProgress({
+              runId: childInput.harnessRunId,
+              attemptId: childLiveness.lease.attemptId,
+              owner: childLiveness.lease.owner,
+              now: Date.now(),
+              model: null,
+              usageJson: JSON.stringify(progress),
+            });
             await assertChildOwned();
           },
           onLiveness: async (stage) => {
@@ -4126,7 +4104,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
       }
 
       await terminalizeInlineChildAttempt(
-        options.env.DB,
+        runs,
         parentInput,
         options.parentLease(),
         admission.childInput,
@@ -4155,39 +4133,42 @@ async function recordOpenRouterInferenceAttempt(
       : failure?.includes("defect") || failure?.includes("empty") || failure?.includes("trunc")
         ? "defect" as const
         : "failed" as const);
-  await recordInferenceAttempt(env.DB, {
-    harnessRunId: input.harnessRunId,
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    attemptId: lease.attemptId,
-    turnId: attempt.turnId,
-    endpointAttempt: attempt.cursor.endpointAttempt + 1,
-    fallbackAttempt: attempt.cursor.candidateIndex,
-    provider: attempt.provider,
-    model: attempt.model,
-    credentialSourceHash: await sha256(`openrouter:${env.AVALON_REGION}`),
-    workspaceIdentityHash: await sha256(`${env.AVALON_REGION}:${input.workspaceId}`),
-    routingDecision: {
-      routingPolicyVersion,
-      stageIndex: attempt.cursor.stageIndex,
-      candidateIndex: attempt.cursor.candidateIndex,
-      structuredOutputAttempt: attempt.cursor.structuredOutputAttempt,
-      disposition: ledgerOutcome,
-      success: attempt.success,
+  await recordInferenceAttempt(
+    createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
+    {
+      harnessRunId: input.harnessRunId,
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      attemptId: lease.attemptId,
+      turnId: attempt.turnId,
+      endpointAttempt: attempt.cursor.endpointAttempt + 1,
+      fallbackAttempt: attempt.cursor.candidateIndex,
+      provider: attempt.provider,
+      model: attempt.model,
+      credentialSourceHash: await sha256(`openrouter:${env.AVALON_REGION}`),
+      workspaceIdentityHash: await sha256(`${env.AVALON_REGION}:${input.workspaceId}`),
+      routingDecision: {
+        routingPolicyVersion,
+        stageIndex: attempt.cursor.stageIndex,
+        candidateIndex: attempt.cursor.candidateIndex,
+        structuredOutputAttempt: attempt.cursor.structuredOutputAttempt,
+        disposition: ledgerOutcome,
+        success: attempt.success,
+      },
+      outcome: ledgerOutcome,
+      ...(attempt.failureKind ? { failureClassification: attempt.failureKind } : {}),
+      latencyMs: attempt.latencyMs,
+      ...(attempt.ttftMs != null ? { ttftMs: attempt.ttftMs } : {}),
+      ...(attempt.inputTokens != null ? { inputTokens: attempt.inputTokens } : {}),
+      ...(attempt.outputTokens != null ? { outputTokens: attempt.outputTokens } : {}),
+      ...(attempt.reasoningTokens != null ? { reasoningTokens: attempt.reasoningTokens } : {}),
+      ...(attempt.cachedInputTokens != null ? { cachedTokens: attempt.cachedInputTokens } : {}),
+      ...(attempt.costCents != null ? { costMicrousd: Math.max(0, Math.round(attempt.costCents * 10_000)) } : {}),
+      ...(attempt.responseBytes != null ? { responseBytes: attempt.responseBytes } : {}),
+      startedAt: new Date(Math.max(0, completedAtMs - attempt.latencyMs)).toISOString(),
+      completedAt,
     },
-    outcome: ledgerOutcome,
-    ...(attempt.failureKind ? { failureClassification: attempt.failureKind } : {}),
-    latencyMs: attempt.latencyMs,
-    ...(attempt.ttftMs != null ? { ttftMs: attempt.ttftMs } : {}),
-    ...(attempt.inputTokens != null ? { inputTokens: attempt.inputTokens } : {}),
-    ...(attempt.outputTokens != null ? { outputTokens: attempt.outputTokens } : {}),
-    ...(attempt.reasoningTokens != null ? { reasoningTokens: attempt.reasoningTokens } : {}),
-    ...(attempt.cachedInputTokens != null ? { cachedTokens: attempt.cachedInputTokens } : {}),
-    ...(attempt.costCents != null ? { costMicrousd: Math.max(0, Math.round(attempt.costCents * 10_000)) } : {}),
-    ...(attempt.responseBytes != null ? { responseBytes: attempt.responseBytes } : {}),
-    startedAt: new Date(Math.max(0, completedAtMs - attempt.latencyMs)).toISOString(),
-    completedAt,
-  });
+  );
 }
 
 interface ConnectorTriggerContext {
@@ -4597,6 +4578,9 @@ async function persistSuccessfulToolResult(
    */
   receipts: ToolReceiptObjectPort
     = createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+  /** The harness-run authority, injectable through the same seam and for the same reason. */
+  runs: HarnessRunObjectPort
+    = createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
 ): Promise<string> {
   const replayPayload = serializeToolReplayOutput(result.output);
   const contentHash = await sha256(replayPayload);
@@ -4624,9 +4608,9 @@ async function persistSuccessfulToolResult(
   await ownershipGuard?.();
   const assertSettlementOwned = async (): Promise<void> => {
     if (result.allowCancellationRequested) {
-      await assertHarnessToolSettlementOwned(env.DB, input.harnessRunId, lease);
+      await assertHarnessToolSettlementOwned(runs, input.harnessRunId, lease);
     } else {
-      await assertHarnessAttemptOwned(env.DB, input.harnessRunId, lease);
+      await assertHarnessAttemptOwned(runs, input.harnessRunId, lease);
     }
   };
   await assertSettlementOwned();
@@ -4672,6 +4656,8 @@ async function settleRootHarnessToolCompletion(
   /** Injectable for the same reason `persistSuccessfulToolResult`'s is. */
   receipts: ToolReceiptObjectPort
     = createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+  runs: HarnessRunObjectPort
+    = createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
 ): Promise<string> {
   const outputRef = await persistSuccessfulToolResult(env, input, lease, {
     invocationId: result.invocationId,
@@ -4688,7 +4674,7 @@ async function settleRootHarnessToolCompletion(
     // requires this exact live attempt and rejects parent terminalization while
     // any receipt from any attempt remains pending or started.
     allowCancellationRequested: true,
-  }, undefined, receipts);
+  }, undefined, receipts, runs);
   // The invocation completion is the authority for this dependency. If the
   // Worker disappears between these writes, replay finds no dependency,
   // invalidates the receipt, and executes again instead of trusting the JSON.
@@ -5819,10 +5805,12 @@ async function persistWorkstreamPluginActivation(
   ) {
     throw new ConnectorError("unauthorized", "Plugin is outside this immutable run scope");
   }
-  await persistRunPluginActivation(env.DB, input, lease, {
-    pluginId,
-    toolSurfaceHash: surfaceHash,
-  });
+  await persistRunPluginActivation(
+    createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
+    input,
+    lease,
+    { pluginId, toolSurfaceHash: surfaceHash },
+  );
   await createSchedulingObjectPort(env, input.workspaceId, input.workstreamId)
     .recordPluginActivation({ pluginId, now: Date.now() });
 }
@@ -7428,13 +7416,16 @@ async function loadToolInvocation(
   };
 }
 
-async function isHarnessStopped(env: Env, harnessRunId: string): Promise<boolean> {
-  const row = await env.DB.prepare(
-    "SELECT status, cancellation_requested_at FROM harness_runs WHERE id = ?",
-  )
-    .bind(harnessRunId)
-    .first<{ status: string; cancellation_requested_at: string | null }>();
-  return row?.status === "stopped" || row?.cancellation_requested_at != null;
+async function isHarnessStopped(
+  runs: HarnessRunObjectPort,
+  harnessRunId: string,
+): Promise<boolean> {
+  const row = await runs.run({ runId: harnessRunId });
+  // `!= null`, not `!== null`: the port answers `null` for a missing run, so
+  // `row?.cancellation_requested_at` is `undefined` there — and `undefined !==
+  // null` is true, which would report a run that does not exist as stopped.
+  // The routed version was loose for exactly this reason.
+  return row?.status === "cancelled" || row?.cancellation_requested_at != null;
 }
 
 async function recordToolAudit(
