@@ -147,16 +147,19 @@ function seededDatabase(options: { targets?: string } = {}): DatabaseSync {
     ATTEMPT,
     LEASE_OWNER,
   );
+  // The object's own table rather than the retired `harness_run_memory_contexts`
+  // view: slice 6 dropped it, so this is the real column set — no `workspace_id`
+  // or `workstream_id` the object already knows, and `created_at` in unix
+  // milliseconds rather than the view's ISO-8601.
   workstreamObjectRun(
     objectStore,
-    `INSERT INTO harness_run_memory_contexts
-       (harness_run_id, workspace_id, workstream_id, attempt_id, memory_scope_ids_json,
-        query_text, retrieval_mode, results_json, memory_context_hash, created_at)
-     VALUES (?, ?, ?, ?, '[]', 'automation', 'fts_only', '[]', 'hash', '2026-08-22')`,
+    `INSERT INTO run_memory_contexts
+       (run_id, attempt_id, memory_scope_ids_json, query_text, retrieval_mode,
+        results_json, memory_context_hash, created_at)
+     VALUES (?, ?, '[]', 'automation', 'fts_only', '[]', 'hash', ?)`,
     RUN,
-    WORKSPACE,
-    WORKSTREAM,
     ATTEMPT,
+    Date.parse("2026-08-22T00:00:00.000Z"),
   );
   return database;
 }
