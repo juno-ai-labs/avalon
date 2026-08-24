@@ -109,16 +109,25 @@ CREATE VIRTUAL TABLE workspace_search_fts USING fts5(
   content_rowid = 'rowid',
   tokenize = 'unicode61',
   -- NO prefix index. Every request prefix-matches its trailing token, so one
-  -- looks obviously right — but FTS5 consults a prefix index only for prefixes
-  -- of exactly a configured length. Measured over a 20,000-document index:
-  -- `prefix='2 3'` takes a 2-character prefix from 2.75ms to 0.79ms and does
-  -- nothing at all for 4+ characters (2.83ms vs 2.65ms unindexed), while
-  -- costing 2.6x the FTS index on disk and ~87% more write time on every
-  -- projection. Since the product floor for a remote request is 2 characters,
-  -- that buys two keystrokes of the query's life and is paid for on every
-  -- message ever indexed, against the 10 GB ceiling this design already worries
-  -- about. If profiling later shows short queries dominate, the sizes to add
-  -- are a decision with an arithmetic behind it, not a default.
+  -- looks obviously right. The decisive reason is structural rather than
+  -- measured, and anyone can check it: FTS5 consults a prefix index only for
+  -- prefixes of *exactly* a configured length. `prefix='2 3'` therefore serves
+  -- a 2- or 3-character trailing token and does nothing whatever from the
+  -- fourth character on — while its cost is paid on every projection write, for
+  -- every message ever indexed, against the 10 GB ceiling this design already
+  -- worries about. Since the product floor for a remote request is 2
+  -- characters, it buys the first two keystrokes of a query's life.
+  --
+  -- Timings that agree with that, offered as corroboration rather than as the
+  -- argument, and reproducible in ~30 lines of `node:sqlite`: build two
+  -- in-memory indexes of 20,000 documents (~40 words each) over this DDL, one
+  -- with `prefix='2 3'` and one without, then time `MATCH '"xx"*'` and
+  -- `MATCH '"xxxx"*'` over 40 iterations and read shadow-table sizes from
+  -- `dbstat`. Observed: 2.75ms -> 0.79ms at two characters, 2.65ms -> 2.83ms at
+  -- four (i.e. no help), 2.6x the FTS index on disk, ~87% more write time.
+  --
+  -- If profiling later shows short queries dominate, the sizes to add are a
+  -- decision with arithmetic behind it, not a default.
 );
 ```
 
@@ -478,11 +487,23 @@ with, as the four predicates:
   AND (cc.id IS NULL OR cc.scope = 'workspace' OR cc.owner_user_id = ?1)
   AND (r.provider != 'avalon_upload' OR r.attachment_status = 'attached'
        OR r.uploaded_by_user_id = ?1)
+  -- The inbound-email rule, expressed as all four of the alternatives
+  -- canReadInboundEmailResource admits — not just the participant one.
   AND (r.provider != 'resend' OR r.resource_type != 'email' OR EXISTS (
         SELECT 1 FROM workspace_workstream_resource_links l
-          JOIN workspace_workstream_viewers ev
+          JOIN workspace_workstream_directory ed
+            ON ed.workstream_id = l.workstream_id
+          LEFT JOIN workspace_workstream_viewers ev
             ON ev.workstream_id = l.workstream_id AND ev.user_id = ?1
-         WHERE l.resource_id = r.id AND ev.is_participant = 1))
+           AND ev.authority_generation = ed.authority_generation
+          LEFT JOIN automation_subscriptions es
+            ON es.id = ed.automation_subscription_id
+         WHERE l.resource_id = r.id
+           AND ed.archived_at IS NULL
+           AND (ed.automation_subscription_id IS NULL
+                OR es.scope = 'workspace'
+                OR es.owner_user_id = ?1
+                OR ev.is_participant = 1)))
 ```
 
 `<document_visible>` is **four** fragments, not three, and the fourth is the one
@@ -499,9 +520,29 @@ body, for every member of the workspace.
 
 Its SQL form in `resource-service.ts` cannot be lifted: it joins
 `workstream_resources` and `workstreams`, which are WorkstreamDO tables that
-WorkspaceDO does not have. The arm above expresses the same rule over the
-WorkspaceDO-local link and viewer tables that `resourceAccess` already uses, so
-it is a join after all — just one that has to be written rather than reused.
+WorkspaceDO does not have. The arm above is written over the WorkspaceDO-local
+link and viewer tables that `resourceAccess` already uses, so it is a join after
+all — just one that has to be written rather than reused.
+
+**It is deliberately narrower than the rule it stands in for, and that is a
+decision rather than an oversight.** `canReadInboundEmailResource` admits a row
+if *any* link satisfies one of four alternatives: the link has no automation
+subscription at all; the subscription is `workspace`-scoped; the caller owns it;
+or the caller is a participant. The arm above keeps only the last. So an email
+linked to a work stream with no subscription, or to a `workspace`-scoped one, is
+readable through `GET /resources/:id` and **not** findable through search. It
+also omits the `archived_at IS NULL` test `resourceAccess` applies.
+
+Narrow fails closed, so this is false negatives rather than a leak — but PRD
+security rule 1 says every result passes *the same* check as opening the thing,
+and this quietly breaks it in the other direction. Two honest options, and the
+PRD should carry whichever is taken the way non-goal 15 carries the draft-upload
+divergence: express the full four-way rule over the same local tables, which is
+more join but no new authority; or state plainly that search takes a narrower
+form here and why. **This design takes the first**, because "same check" is
+easier to keep true than "narrower in a documented way", and because the
+participant-only reading is the one a future reader would most likely mistake for
+the whole rule — exactly the mistake that lost this fragment once already.
 
 **The draft-upload rule exists in two non-equivalent forms and this picks one.**
 `UPLOAD_RESOURCE_VISIBILITY_SQL`, used by the single-resource read, ends
@@ -599,9 +640,15 @@ The PRD's group scope is the same statement with two bindings changed, not a
 second query to keep in step: bind the group and raise the per-group bound.
 
 ```sql
-       AND (?4 IS NULL OR d.group_key = ?4)   -- inside the innermost SELECT
+       -- inside the innermost SELECT. Bare `group_key`, NOT `d.group_key`:
+       -- group_key is a select-list alias computed in this same SELECT, and
+       -- `d` is workspace_search_documents, which has no such column. SQLite
+       -- permits the alias in WHERE; qualifying it fails with
+       -- `no such column: d.group_key`. Verified on 3.51.2.
+       AND (?4 IS NULL OR group_key = ?4)
 ...
- WHERE rn <= ?5                                -- 5 unscoped, the page size scoped
+ -- Keyset, not a row bound. See below for why `rn <= ?5` cannot page.
+ WHERE rn <= ?5 AND (?6 IS NULL OR (rank, -updated_at, source_id) > (?6, ?7, ?8))
 ```
 
 Three things follow, and each is the reason not to implement scoping on the
@@ -614,11 +661,17 @@ client by filtering what is already on screen:
   counts that group's authorized matches, so the scoped footer's remainder is
   the same expression against a narrower set — no second counting rule, and no
   second place for the authorization filter to drift.
-- **Paging is keyset, not `OFFSET`.** The sort key is `(rank, updated_at DESC,
-  source_id)` and all three are projected, so the next page binds the last row's
-  tuple as a `>` comparison. `OFFSET` over a re-ranked set double-counts and
-  skips when the index moves under a person mid-scroll, which during the phase 2
-  backfill is the normal case rather than the rare one.
+- **Paging is keyset, and the sort key has to be made uniform first.** The
+  ordering is `(rank, updated_at DESC, source_id)`, but **SQLite rejects a
+  direction inside a row value** — `(a, b DESC) > (?, ?)` is a syntax error — so
+  the comparison cannot bind that tuple directly. Project `-updated_at` and
+  compare `(rank, -updated_at, source_id) > (?, ?, ?)`, which is free here since
+  the column is already `INTEGER`; the expanded disjunction is the alternative
+  and is worse to read. **`rn <= ?5` alone cannot page**: it is an offset-shaped
+  bound over a `ROW_NUMBER` recomputed per request, so it has exactly the
+  double-count-and-skip behaviour that rules `OFFSET` out — and the index moves
+  under a scrolling reader throughout the phase 2 backfill, which is the normal
+  case rather than the rare one. `rn` stays only as the per-page cap.
 
 `group_key` — not `source_type` — is what is bound, so scoping **Meeting notes**
 correctly reaches both `note` and `note_segment` rows, and the client's
@@ -648,17 +701,25 @@ Two honest limits on that number, which the simpler phrasing hides:
   above materialises every authorized match before emitting one, and nothing else
   bounds it.
 
-### Cascade deletes are explicit
+### Cascade deletes ride a `BEFORE DELETE` trigger
 
 WorkspaceDO does **not** set `PRAGMA foreign_keys = ON` — `workstream-do.ts`,
 `workstream-object-schema.ts`, and `block-dashboard-agent.ts` each do, and
 WorkspaceDO does not — so a declared `REFERENCES … ON DELETE CASCADE` cannot be
-assumed to enforce there, whatever the sibling tables declare. Every parent deletion therefore issues an explicit
-`DELETE FROM workspace_search_documents WHERE source_type IN (…) AND scope_id = ?`,
-served by the `(source_type, scope_id)` index. Without it a deleted work stream's
-20,000 message rows stay forever: invisible in results, since the predicate fails
-closed, and accumulating against the 10 GB ceiling the PRD flags as an outage
-condition.
+assumed to enforce there, whatever the sibling tables declare. Something has to
+delete the rows explicitly, or a deleted parent's rows stay forever: invisible in
+results, since the predicate fails closed, and accumulating against the 10 GB
+ceiling the PRD flags as an outage condition.
+
+**A `BEFORE DELETE` trigger on each hard-deleting parent is that something**, not
+a delete at every call site. It is the idiom this object already uses for exactly
+this problem — `resources_enqueue_objects_before_delete` queues R2 objects that
+way, and its consumer relies on the trigger rather than deleting at the call
+site. The objection to triggers earlier in this document is about the projection
+*writes*, which need content filters a trigger cannot apply; it does not reach
+deletes, which need none. The trigger also covers the one path a call-site delete
+would most easily miss — see the scheduled sweep below — which is the argument
+that settles it.
 
 Which parents actually hard-delete is worth being exact about, because the
 obvious list is wrong in both directions. Work streams and notes are
@@ -667,18 +728,20 @@ obvious list is wrong in both directions. Work streams and notes are
 hides the rows and the delete path is theoretical. `resources` is the one parent
 with real hard deletes, and there are three: `deleteDraft`, the
 `resource-object-cleanup` **scheduled sweep** over stale drafts, and the Terminal
-resource bridge. The sweep is the awkward one: it runs on an alarm with no user
-transaction to ride, so the search delete has to be part of that pass rather than
-of a request. Automations were missed entirely in the first draft of this design:
-an archived subscription's rows fail closed but accumulate.
+resource bridge. **The sweep is exactly why the mechanism is a trigger**: it runs
+on an alarm with no user request to hang a call-site delete off, and it is the
+path a reviewer of a call-site implementation is least likely to notice is
+missing. A `BEFORE DELETE ON resources` trigger covers all three uniformly and
+cannot be forgotten by a fourth delete path added later.
 
-A `BEFORE DELETE` trigger is the idiom this object already uses for exactly this
-problem — `resources_enqueue_objects_before_delete` queues R2 objects that way,
-and its consumer relies on the trigger rather than deleting at the call site. The
-objection to triggers earlier in this document is about the projection *writes*,
-which need content filters; it does not reach the deletes, which need none. The
-trigger is the better mechanism here and the reason it was not chosen first was
-an over-broad reading of that objection.
+Automations were missed entirely in the first draft of this design: an archived
+subscription's rows fail closed but accumulate, and a subscription that is hard
+deleted needs the same trigger treatment as `resources`.
+
+The only place an explicit delete is still owed is where no parent row is being
+deleted at all — a message withdrawn or moved to `model` visibility inside a work
+stream that itself survives. That is a projection concern rather than a cascade
+one, and it is unresolved: see the note under phase 2a.
 
 ### Snippets
 
@@ -727,15 +790,29 @@ size in one go, which is why the retention horizon in the PRD's
 **contention**: at the 25-envelope RPC cap, 500 work streams × 2,000 visible
 parts is 40,000 apply calls, each a transaction inside the workspace's *single*
 WorkspaceDO — the same object serving the sidebar, routing, notes, and resource
-access. A claim to strike rather than rely on: backfill envelopes do **not** sort last.
-The outbox orders by `created_at` first and uses the priority `CASE` only to
-break ties within one instant, and on the child outbox `created_at` is the
-leading key outright. So a migration-seeded backfill stamped at time T queues
-*ahead of* every live directory projection created afterwards — the sidebar's own
-projection waits behind the entire backfill. Pacing therefore has to be explicit:
-a per-wake bound on the drain, on the model of `processMemoryIndexOutbox`'s
-capped batch, and it belongs on the PRD's Limits table where a team member would
-find it.
+access.
+
+**The two outboxes order differently, and only one of them starves.** This is
+worth stating precisely because an earlier draft of this design got it backwards
+in both directions:
+
+- `WorkstreamDO`'s outbox — the route this design assumes — orders by
+  `CASE effect_kind WHEN 'directory_common' THEN 0 WHEN 'directory_user' THEN 1
+  ELSE 2 END, created_at, message_id`. The priority `CASE` is the **leading**
+  key. So `search_document` lands in `ELSE 2` and **does** sort behind every
+  pending directory effect regardless of `created_at`: a migration-seeded
+  backfill stamped at time T does *not* queue ahead of the sidebar's own
+  projections. That property is load-bearing and should stay.
+- `SubstreamAgent`'s child outbox orders by `created_at` first and uses the
+  `CASE` only to break ties within one instant. On *that* route the starvation
+  hazard is real.
+
+**Pacing is still required, on contention grounds alone.** The reason is not
+queue position but volume: at one envelope per RPC (below), a million apply
+calls into one single-threaded object is its own argument. So the per-wake bound
+on the drain stands — on the model of `processMemoryIndexOutbox`'s capped batch —
+and it belongs on the PRD's Limits table where a team member would find it. Only
+its justification changes.
 
 The contention arithmetic also has a factor-of-25 error worth correcting. The
 25-envelope batch belongs to `WorkstreamDO.deliverWorkspaceDirectoryEffects`;
