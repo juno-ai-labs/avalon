@@ -426,6 +426,91 @@ describe("the Workstream Durable Object relational schema", () => {
     }
   });
 
+  it("makes a re-add through either compatibility view unseen again", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyWorkstreamObjectSchema(storage, "worker-one", 1_000);
+      database.prepare(
+        `INSERT INTO workstream
+           (id, workstream_key, parent_workspace_key, region, authority_mode,
+            authority_generation, title, description, scope, exact_state,
+            state_reason_code, next_sequence_number, next_attention_ordinal,
+            authority_epoch, scope_epoch, source_authorization_floor, listing_epoch,
+            deletion_epoch, run_revision, created_at, last_people_activity_at,
+            state_changed_at, updated_at)
+         VALUES (1, ?, ?, 'global', 'authoritative', 1, 'Local', 'Object owned',
+                 'workspace', 'scheduled', 'test', 1, 1, 1, 0, 0, 1, 0, 1,
+                 1000, 1000, 1000, 1000)`,
+      ).run(WORKSTREAM_ID, WORKSPACE_ID);
+      // Somebody who is in the work stream and has opened it.
+      database.prepare(
+        `INSERT INTO participants
+           (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+            added_at, removed_at, first_opened_at, updated_at)
+         VALUES (?, 'explicit', ?, 'active', 0, 1000, NULL, 2000, 2000)`,
+      ).run(AUTHOR_ID, AUTHOR_ID);
+
+      const readBack = () => database.prepare(
+        `SELECT status, participant_epoch, first_opened_at FROM participants WHERE user_id = ?`,
+      ).get(AUTHOR_ID) as { status: string; participant_epoch: number; first_opened_at: number | null };
+
+      // Removed, then re-admitted the way `admitConnectorAudience` does it: an
+      // upsert the router strips the conflict clause off, so the view's own
+      // INSTEAD OF trigger is what reactivates the row.
+      database.prepare(
+        `UPDATE participants SET status = 'removed', removed_at = 3000 WHERE user_id = ?`,
+      ).run(AUTHOR_ID);
+      database.prepare(rewriteWorkstreamRuntimeSql(
+        `INSERT INTO workstream_participants
+           (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
+         VALUES (?, ?, ?, 'explicit', ?, NULL)
+         ON CONFLICT(workstream_id, user_id) DO UPDATE SET removed_at = NULL`,
+      )).run(WORKSTREAM_ID, AUTHOR_ID, AUTHOR_ID, "2026-08-17T12:00:04.000Z");
+
+      const afterInsert = readBack();
+      expect(afterInsert.status).toBe("active");
+      // The epoch says a new participation began; the marker has to agree.
+      expect(afterInsert.participant_epoch).toBe(1);
+      expect(afterInsert.first_opened_at).toBeNull();
+
+      // The other reactivation path: an update through the same view clearing
+      // `removed_at`.
+      database.prepare(
+        `UPDATE participants SET first_opened_at = 4000 WHERE user_id = ?`,
+      ).run(AUTHOR_ID);
+      database.prepare(
+        `UPDATE participants SET status = 'removed', removed_at = 5000 WHERE user_id = ?`,
+      ).run(AUTHOR_ID);
+      database.prepare(rewriteWorkstreamRuntimeSql(
+        `UPDATE workstream_participants
+            SET participation_reason = 'explicit', added_by_user_id = ?,
+                joined_at = ?, removed_at = NULL
+          WHERE workstream_id = ? AND user_id = ?`,
+      )).run(AUTHOR_ID, "2026-08-17T12:00:06.000Z", WORKSTREAM_ID, AUTHOR_ID);
+
+      const afterUpdate = readBack();
+      expect(afterUpdate.status).toBe("active");
+      expect(afterUpdate.participant_epoch).toBe(2);
+      expect(afterUpdate.first_opened_at).toBeNull();
+
+      // Being removed is not being shown it again: the reset belongs to one
+      // direction of the transition, not to both.
+      database.prepare(
+        `UPDATE participants SET first_opened_at = 6000 WHERE user_id = ?`,
+      ).run(AUTHOR_ID);
+      database.prepare(rewriteWorkstreamRuntimeSql(
+        `UPDATE workstream_participants
+            SET participation_reason = 'explicit', added_by_user_id = ?,
+                joined_at = ?, removed_at = ?
+          WHERE workstream_id = ? AND user_id = ?`,
+      )).run(AUTHOR_ID, "2026-08-17T12:00:06.000Z", "2026-08-17T12:00:07.000Z", WORKSTREAM_ID, AUTHOR_ID);
+      expect(readBack().first_opened_at).toBe(6000);
+    } finally {
+      database.close();
+    }
+  });
+
   it("serves legacy runtime SQL from normalized object-local tables", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);
