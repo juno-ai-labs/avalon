@@ -28,6 +28,7 @@ import {
 } from './api';
 import { elicitationMessageId } from './elicitation';
 import { startPerfTrace, type PerfTrace } from './perf-trace';
+import { realtimeSocketTelemetry } from './socket-telemetry';
 import { advanceStreamReveal, applyRevealedText, flushStreamReveal } from './streaming-reveal';
 import { reportTelemetryProductIntent, uuidV7 } from './telemetry';
 import {
@@ -604,6 +605,7 @@ export function useWorkstreamSocket(
       return;
     }
     let closedByEffect = false;
+    const socketTelemetry = realtimeSocketTelemetry('substream_feed');
     // Separate from `closedByEffect`, which means this hook is tearing down. The
     // work stream is still on screen here; it is the reader who is no longer in
     // it, and nothing should dial back until the effect re-runs on a work stream
@@ -838,8 +840,12 @@ export function useWorkstreamSocket(
         canonicalResyncTarget = Math.max(canonicalResyncTarget ?? 0, event.latestSequence);
         clearHeartbeat();
         clearStabilityTimer();
+        socketTelemetry.willClose('resync_required');
         if (socket && socket.readyState !== WebSocket.CLOSED) socket.close();
-        else scheduleReconnect();
+        else {
+          socketTelemetry.disconnected({ attempts: attempts.current, retrying: !isOffline() });
+          scheduleReconnect();
+        }
         return;
       }
       // Once replay history is unavailable, subsequent frames cannot safely be
@@ -1152,6 +1158,7 @@ export function useWorkstreamSocket(
         pongTimer = window.setTimeout(() => {
           pongTimer = null;
           if (closedByEffect || socket !== target || target.readyState !== WebSocket.OPEN) return;
+          socketTelemetry.willClose('heartbeat_timeout');
           target.close();
         }, PONG_TIMEOUT_MS);
       }, socketHeartbeatDelay());
@@ -1321,6 +1328,9 @@ export function useWorkstreamSocket(
         socket = nextSocket;
         nextSocket.addEventListener('open', () => {
           if (closedByEffect || socket !== nextSocket) return;
+          // Before the stability timer resets the counter: the depth this
+          // handshake arrived at is what the event is measuring.
+          socketTelemetry.connected(attempts.current);
           setState('connected');
           trace.mark('handshake');
           // A reconnect needs no separate reconciliation. The cursor makes the
@@ -1407,24 +1417,43 @@ export function useWorkstreamSocket(
           ));
           socket = null;
           if (closeEvent.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
+            socketTelemetry.disconnected({
+              attempts: attempts.current,
+              retrying: false,
+              cause: 'access_revoked',
+            });
             handleAccessRevoked();
             return;
+          }
+          if (!closedByEffect) {
+            socketTelemetry.disconnected({ attempts: attempts.current, retrying: !isOffline() });
           }
           scheduleReconnect();
         });
         nextSocket.addEventListener('error', () => {
           clearHeartbeat();
           clearStabilityTimer();
+          socketTelemetry.willClose('transport_error');
           try {
             nextSocket.close();
           } catch {
             if (socket === nextSocket) socket = null;
+            if (!closedByEffect) {
+              socketTelemetry.disconnected({ attempts: attempts.current, retrying: !isOffline() });
+            }
             scheduleReconnect();
           }
         });
       } catch {
         trace.end({ outcome: 'failed' });
         if (openTrace === trace) openTrace = null;
+        if (!closedByEffect) {
+          socketTelemetry.disconnected({
+            attempts: attempts.current,
+            retrying: !isOffline(),
+            cause: 'ticket_failed',
+          });
+        }
         scheduleReconnect();
       } finally {
         ticketRequestInFlight = false;
@@ -1443,6 +1472,7 @@ export function useWorkstreamSocket(
       clearHeartbeat();
       clearStabilityTimer();
       setState('unavailable');
+      if (socket) socketTelemetry.willClose('offline');
       socket?.close();
     };
 
