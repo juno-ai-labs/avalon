@@ -16,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 23;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 24;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1350,7 +1350,7 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     statements: harnessRunAuthorityPromotion(),
   },
   {
-    version: 22,
+    version: 24,
     description: "retire the run lifecycle-event view now the final message is an object write",
     statements: runLifecycleAuthorityPromotion(),
   },
