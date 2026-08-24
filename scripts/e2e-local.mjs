@@ -22,6 +22,20 @@ import { isEntryPoint } from "./entry-point.mjs";
 const BASE_URL = process.env.AVALON_E2E_BASE_URL ?? "http://127.0.0.1:8787";
 const REPORT_PATH = process.env.AVALON_E2E_REPORT ?? null;
 
+/**
+ * The opening message the oversize scenario sends: one character past
+ * `MESSAGE_MAX_CHARACTERS` in `@avalon/contracts`.
+ *
+ * Carried here rather than imported because this lane is plain Node and the
+ * contracts package is TypeScript. That copy is the hazard: this number sat at
+ * 50,001 when the ceiling moved to 100,000, which turned the sad path into a
+ * *valid* create — the assertion would fail, and the lane would open a real
+ * work stream and launch a model-backed run on every pass. `e2e-local-oracles.test.mjs`
+ * reads both numbers out of their sources and fails `pnpm test:scripts` when
+ * they disagree, so the next move of the ceiling breaks a gate instead of this.
+ */
+export const OVERSIZE_MESSAGE_CHARACTERS = 100_001;
+
 /** Member-visible states that mean the work stream is no longer working. */
 export const TERMINAL_STATES = ["completed", "failed", "needs_input", "stopped", "idle"];
 
@@ -227,9 +241,16 @@ async function main() {
     },
     async sad_oversize_message() {
       const response = await api("POST", "/workstreams", {
-        openingMessage: "x".repeat(50_001), clientMessageId: uid(),
+        openingMessage: "x".repeat(OVERSIZE_MESSAGE_CHARACTERS), clientMessageId: uid(),
       });
       if (response.status !== 400) throw new Error(`expected 400, got ${response.status}`);
+      // The code, not just the status: a message one character over the ceiling
+      // and a body the schema cannot read are both 400, and only one of them is
+      // what this scenario exists to exercise. Asserting the status alone is how
+      // this case could pass while testing nothing.
+      if (response.body?.error?.code !== "message_too_long") {
+        throw new Error(`expected message_too_long, got ${response.body?.error?.code}`);
+      }
     },
     async sad_missing_workstream() {
       const response = await api("GET", `/workstreams/${uid()}`);
