@@ -1434,18 +1434,21 @@ export class AvalonApi {
     return (await this.getMessagePage(id, { signal })).items;
   }
 
-  async messageMentionPayload(workstreamId: string, text: string, selected: MentionIdentity[] = []): Promise<Array<{
+  async messageMentionPayload(text: string, selected: MentionIdentity[] = []): Promise<Array<{
     type: 'person' | 'connector';
     userId: string | null;
     connectorType: string | null;
     startOffset: number;
     endOffset: number;
   }>> {
-    const [members, detail] = await Promise.all([this.getWorkspaceMembers(), this.getWorkstream(workstreamId)]);
-    const discovered = [
-      ...members.map((member) => ({ type: 'person' as const, label: member.name, userId: member.id, connectorType: null })),
-      ...detail.connections.map((connection) => ({ type: 'connector' as const, label: connection.displayName, userId: null, connectorType: connection.connectorType })),
-    ];
+    const members = await this.getWorkspaceMembers();
+    // People only, and only here: what a name in the text resolves to has to
+    // agree with what the composer that wrote it offered and highlighted.
+    // The work stream's connections were discovered here too, so a hand-typed
+    // `@<connection>` still left as a connector span — a chip in the transcript
+    // for something the composer had already stopped naming. A connector
+    // mention a caller states outright still travels, through `selected` below.
+    const discovered = members.map((member) => ({ type: 'person' as const, label: member.name, userId: member.id, connectorType: null }));
     const explicitlySelectedLabels = new Set(selected.map((candidate) => candidate.label.toLocaleLowerCase()));
     const candidates = [
       ...selected,
@@ -1479,7 +1482,7 @@ export class AvalonApi {
     confirmedParticipantUserIds?: string[];
     attachmentIds?: string[];
   }): Promise<Message> {
-    const mentions = await this.messageMentionPayload(id, input.text, input.mentions);
+    const mentions = await this.messageMentionPayload(input.text, input.mentions);
     const operationId = uuidV7();
     reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
     const response = await this.request(`/workstreams/${encodeURIComponent(id)}/messages`, {
