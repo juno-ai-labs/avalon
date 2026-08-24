@@ -1,5 +1,6 @@
 import { classifyAttachmentKind, type AttachmentKind, type ExecutionPrincipal } from "@avalon/contracts";
-import { sha256 } from "../lib/crypto";
+import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
+import { BOUND_PARAMETER_ID_CHUNK } from "../durable-objects/bound-parameters";
 
 export interface VisibleWorkstreamResourceRow extends Record<string, unknown> {
   id: string;
@@ -56,13 +57,25 @@ export class WorkstreamResourceInventoryChangedError extends Error {
   }
 }
 
-interface LocalResourceLink extends Record<string, unknown> {
-  resource_id: string;
-  relationship_type: string;
-  attached_at: string;
-  attached_watch_enabled: number;
-  message_attachment: number;
-}
+/**
+ * Resource ids resolved against the workspace in one statement.
+ *
+ * Bounds: entries in the `IN (…)` list of the resource lookup below, and so the
+ *   bound parameters of that statement — this many ids plus two.
+ * Without it: a work stream with more attachments than this builds a statement
+ *   past the engine's 100-parameter ceiling, which is refused outright: the
+ *   member's rail fails to load rather than loading slowly.
+ * Direction: upper bound, imposed by the engine rather than chosen.
+ * Trips: nothing. The loop runs more times, the batches are concatenated, and
+ *   no caller sees a partial answer.
+ * Derive from: the engine's 100-parameter limit, less the two scalars this
+ *   statement binds beside its ids. **This was 100 and had been since before
+ *   the authority split, which is 102 parameters — one statement over the
+ *   ceiling at a full batch.** It is 90 now, matching
+ *   `BOUND_PARAMETER_ID_CHUNK`, so the margin is the same one the object side
+ *   uses rather than a second guess about the same limit.
+ */
+const RESOURCE_LOOKUP_BATCH = BOUND_PARAMETER_ID_CHUNK;
 
 /**
  * Resolve the cross-authority resource projection without a cross-database
@@ -71,6 +84,7 @@ interface LocalResourceLink extends Record<string, unknown> {
  */
 async function loadVisibleRows(
   database: D1Database,
+  attachments: ResourceObjectPort,
   input: {
     workspaceId: string;
     workstreamId: string;
@@ -78,27 +92,21 @@ async function loadVisibleRows(
     resourceIds?: readonly string[];
   },
 ): Promise<VisibleWorkstreamResourceRow[]> {
-  const requested = input.resourceIds ? [...new Set(input.resourceIds)] : null;
-  const localIds = requested && requested.length > 0
-    ? `AND wr.resource_id IN (${requested.map(() => "?").join(", ")})`
-    : "";
-  const links = await database.prepare(
-    `SELECT wr.resource_id, wr.relationship_type, wr.attached_at,
-            wr.watch_enabled AS attached_watch_enabled,
-            CASE WHEN EXISTS (
-              SELECT 1 FROM message_attachments attachment
-              JOIN messages message ON message.id = attachment.message_id
-               WHERE attachment.resource_id = wr.resource_id
-                 AND message.workstream_id = ?
-            ) THEN 1 ELSE 0 END AS message_attachment
-       FROM workstream_resources wr
-      WHERE wr.workstream_id = ? ${localIds}`,
-  ).bind(input.workstreamId, input.workstreamId, ...(requested ?? [])).all<LocalResourceLink>();
-  const local = links.results ?? [];
+  // The link half, from the object that owns it. The retired statement asked
+  // whether each resource also rides on a transcript message as a correlated
+  // `EXISTS` per row, across two compatibility views over two tables in this
+  // *same* object — so it is one more read of the object's own rows rather than
+  // a subquery repeated per attachment.
+  const local = await attachments.attachedLinks(
+    input.resourceIds ? { resourceIds: input.resourceIds } : {},
+  );
   if (local.length === 0) return [];
+  const onMessages = new Set(await attachments.resourceIdsOnMessages({
+    resourceIds: local.map((link) => link.resource_id),
+  }));
   const resources: Array<Record<string, unknown>> = [];
-  for (let offset = 0; offset < local.length; offset += 100) {
-    const ids = local.slice(offset, offset + 100).map((link) => link.resource_id);
+  for (let offset = 0; offset < local.length; offset += RESOURCE_LOOKUP_BATCH) {
+    const ids = local.slice(offset, offset + RESOURCE_LOOKUP_BATCH).map((link) => link.resource_id);
     const placeholders = ids.map(() => "?").join(", ");
     const result = await database.prepare(
       `SELECT resource.*,
@@ -122,9 +130,12 @@ async function loadVisibleRows(
     return resource ? [{
       ...resource,
       relationship_type: link.relationship_type,
-      attached_at: link.attached_at,
-      message_attachment: Number(link.message_attachment),
-      attached_watch_enabled: Number(link.attached_watch_enabled),
+      // ISO-8601 because that is what this row publishes and what the sort
+      // below compares. The retired view converted it in SQL; the object stores
+      // the instant, so the conversion moves here.
+      attached_at: new Date(link.attached_at).toISOString(),
+      message_attachment: onMessages.has(link.resource_id) ? 1 : 0,
+      attached_watch_enabled: Number(link.watch_enabled),
       visibility_version: String(resource.visibility_version ?? resource.updated_at),
     } as VisibleWorkstreamResourceRow] : [];
   }).sort((left, right) => (
@@ -163,46 +174,19 @@ function principalUserId(principal: ExecutionPrincipal): string | null {
 }
 
 export async function loadWorkstreamResourceInventoryFingerprint(
-  database: D1Database,
-  workspaceId: string,
-  workstreamId: string,
+  attachments: ResourceObjectPort,
 ): Promise<string> {
-  const row = await database.prepare(
-    `SELECT COALESCE(revision.revision, 0) AS revision
-       FROM workstreams workstream
-       LEFT JOIN workstream_resource_inventory_revisions revision
-         ON revision.workstream_id = workstream.id
-        AND revision.workspace_id = workstream.workspace_id
-      WHERE workstream.workspace_id = ? AND workstream.id = ?`,
-  ).bind(workspaceId, workstreamId).first<{ revision: number }>();
-  return `inventory:${row?.revision ?? 0}`;
-}
-
-/** Sidebar compatibility path. Model tools and compaction use bounded queries below. */
-export async function loadVisibleWorkstreamResources(
-  database: D1Database,
-  input: {
-    workspaceId: string;
-    workstreamId: string;
-    principal: ExecutionPrincipal;
-    order?: "ascending" | "descending";
-  },
-): Promise<VisibleWorkstreamResourceSet> {
-  const rows = await loadVisibleRows(database, input);
-  if (input.order === "ascending") rows.reverse();
-  const fingerprint = await sha256(JSON.stringify(rows.map((row) => [
-    row.id,
-    row.attached_at,
-    row.updated_at,
-    row.visibility_version,
-    row.relationship_type,
-    row.message_attachment,
-  ])));
-  return { rows, fingerprint };
+  // The retired statement's `LEFT JOIN … COALESCE(revision.revision, 0)` did
+  // one thing the object does not need: it answered 0 for a work stream whose
+  // revision row had never been written. `inventoryRevision` answers 0 for the
+  // same case, and the join it replaces existed only because a routed reader
+  // had to reach the row through the work stream it belongs to.
+  return `inventory:${await attachments.inventoryRevision()}`;
 }
 
 export async function loadVisibleWorkstreamResourcesByIds(
   database: D1Database,
+  attachments: ResourceObjectPort,
   input: {
     workspaceId: string;
     workstreamId: string;
@@ -213,11 +197,12 @@ export async function loadVisibleWorkstreamResourcesByIds(
   if (input.resourceIds.length === 0) return [];
   const ids = [...new Set(input.resourceIds)];
   if (ids.length > 8) throw new Error("At most eight resource IDs may be resolved together");
-  return loadVisibleRows(database, { ...input, resourceIds: ids });
+  return loadVisibleRows(database, attachments, { ...input, resourceIds: ids });
 }
 
 export async function loadVisibleWorkstreamResourcePage(
   database: D1Database,
+  attachments: ResourceObjectPort,
   input: {
     workspaceId: string;
     workstreamId: string;
@@ -228,11 +213,11 @@ export async function loadVisibleWorkstreamResourcePage(
     after?: { attachedAt: string; resourceId: string } | null;
   },
 ): Promise<VisibleWorkstreamResourcePage> {
-  const before = await loadWorkstreamResourceInventoryFingerprint(database, input.workspaceId, input.workstreamId);
+  const before = await loadWorkstreamResourceInventoryFingerprint(attachments);
   if (input.expectedFingerprint && input.expectedFingerprint !== before) {
     throw new WorkstreamResourceInventoryChangedError();
   }
-  const visible = await loadVisibleRows(database, input);
+  const visible = await loadVisibleRows(database, attachments, input);
   const matching = visible.filter((row) => !input.attachmentKind || classifyAttachmentKind({
     mimeType: row.mime_type,
     fileName: row.title,
@@ -241,7 +226,7 @@ export async function loadVisibleWorkstreamResourcePage(
     || row.attached_at < input.after.attachedAt
     || (row.attached_at === input.after.attachedAt && row.id > input.after.resourceId));
   const fetched = afterFiltered.slice(0, input.limit + 1);
-  const after = await loadWorkstreamResourceInventoryFingerprint(database, input.workspaceId, input.workstreamId);
+  const after = await loadWorkstreamResourceInventoryFingerprint(attachments);
   if (after !== before) throw new WorkstreamResourceInventoryChangedError();
   return {
     fingerprint: before,
@@ -254,6 +239,7 @@ export async function loadVisibleWorkstreamResourcePage(
 
 export async function loadVisibleWorkstreamResourceInventory(
   database: D1Database,
+  attachments: ResourceObjectPort,
   input: {
     workspaceId: string;
     workstreamId: string;
@@ -261,11 +247,11 @@ export async function loadVisibleWorkstreamResourceInventory(
     expectedFingerprint?: string;
   },
 ): Promise<VisibleWorkstreamResourceInventory> {
-  const before = await loadWorkstreamResourceInventoryFingerprint(database, input.workspaceId, input.workstreamId);
+  const before = await loadWorkstreamResourceInventoryFingerprint(attachments);
   if (input.expectedFingerprint && input.expectedFingerprint !== before) {
     throw new WorkstreamResourceInventoryChangedError();
   }
-  const visible = await loadVisibleRows(database, input);
+  const visible = await loadVisibleRows(database, attachments, input);
   const counts = new Map<AttachmentKind, { count: number; messageAttachments: number }>();
   for (const row of visible) {
     const kind = classifyAttachmentKind({ mimeType: row.mime_type, fileName: row.title });
@@ -274,7 +260,7 @@ export async function loadVisibleWorkstreamResourceInventory(
     entry.messageAttachments += Number(row.message_attachment);
     counts.set(kind, entry);
   }
-  const after = await loadWorkstreamResourceInventoryFingerprint(database, input.workspaceId, input.workstreamId);
+  const after = await loadWorkstreamResourceInventoryFingerprint(attachments);
   if (after !== before) throw new WorkstreamResourceInventoryChangedError();
   return {
     fingerprint: before,

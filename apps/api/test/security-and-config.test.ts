@@ -137,9 +137,12 @@ describe("API security utilities", () => {
     const enableSql = __resourceServiceTesting.enableResourceWatchSql.replace(/\s+/gu, " ");
     expect(enableSql).toContain("watch_type = excluded.watch_type");
     expect(enableSql).toContain("next_poll_at = excluded.next_poll_at");
+    // The reader production runs. A second, pre-cutover copy of this query used
+    // to carry the same rule and this assertion was pointed at *that* one —
+    // which is how a source-text assertion outlives the code it describes.
     const resourceSql = __resourceServiceTesting.resourceWithWatchStateSql.replace(/\s+/gu, " ");
-    expect(resourceSql).toContain("CASE WHEN rw.enabled = 1 THEN 1 ELSE 0 END");
-    expect(resourceSql).not.toContain("rw.next_poll_at IS NOT NULL");
+    expect(resourceSql).toContain("rw.enabled = 1");
+    expect(resourceSql).not.toContain("next_poll_at");
 
     const at = "2026-08-01T12:00:00.000Z";
     expect(__resourceServiceTesting.resourceWatchMode({ supportsWatches: true, supportsPolling: true }, at)).toEqual({

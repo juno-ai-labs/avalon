@@ -4,6 +4,7 @@ import { newId, nowIso } from "@avalon/db";
 import type { AuthContext, Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
+import { createResourceObjectPort } from "../runtime/resource-port";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { truncateUtf16Safe } from "../lib/text";
 import { withAuthorizedConnection } from "./connector-connection-access";
@@ -25,7 +26,6 @@ function resourceTelemetryConnector(value: unknown):
     || value === 'linear' || value === 'notion' || value === 'slack' || value === 'x') return value;
   return 'avalon';
 }
-import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 
@@ -59,37 +59,6 @@ const ENABLE_RESOURCE_WATCH_SQL = `INSERT INTO resource_watches
     next_poll_at = excluded.next_poll_at,
     updated_at = excluded.updated_at`;
 
-/**
- * Email received through a work-stream address is scoped to the work stream,
- * even though it has no connector connection to provide a narrower scope.
- * Keep this predicate aligned with WorkstreamService.requireWorkstream: an
- * ad-hoc or workspace-automation work stream is workspace-visible, while a
- * personal-automation work stream is visible only to its owner/participants.
- *
- * Checking the resource identity as well as the attachment relationship keeps
- * the resource private during the short interval between resource creation and
- * attachment persistence.
- */
-const INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL = `(r.provider != 'resend' OR r.resource_type != 'email' OR EXISTS (
-  SELECT 1
-  FROM workstream_resources email_wr
-  JOIN workstreams email_w ON email_w.id = email_wr.workstream_id
-  LEFT JOIN automation_subscriptions email_s ON email_s.id = email_w.automation_subscription_id
-  WHERE email_wr.resource_id = r.id
-    AND email_w.workspace_id = r.workspace_id
-    AND (
-      email_w.automation_subscription_id IS NULL
-      OR email_s.scope = 'workspace'
-      OR email_s.owner_user_id = ?
-      OR EXISTS (
-        SELECT 1 FROM workstream_participants email_p
-        WHERE email_p.workstream_id = email_w.id
-          AND email_p.user_id = ?
-          AND email_p.removed_at IS NULL
-      )
-    )
-))`;
-
 const UPLOAD_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_upload'
   OR r.attachment_status = 'attached'
   OR r.uploaded_by_user_id = ?)`;
@@ -103,21 +72,6 @@ const NOTE_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_note' OR EXISTS (
 ))`;
 
 const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
-    COALESCE(MAX(CASE WHEN rw.enabled = 1 THEN 1 ELSE 0 END), 0) AS watch_enabled
-  FROM resources r
-  LEFT JOIN workstream_resources wr ON wr.resource_id = r.id
-  LEFT JOIN resource_watches rw
-    ON rw.workstream_id = wr.workstream_id
-   AND rw.resource_id = wr.resource_id
-  LEFT JOIN connector_connections c ON c.id = r.connection_id
-  WHERE r.id = ? AND r.workspace_id = ?
-    AND (c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)
-    AND ${INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL}
-    AND ${UPLOAD_RESOURCE_VISIBILITY_SQL}
-    AND ${NOTE_RESOURCE_VISIBILITY_SQL}
-  GROUP BY r.id`;
-
-const DO_RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
     CASE WHEN EXISTS (
       SELECT 1 FROM resource_watches rw
        WHERE rw.resource_id = r.id AND rw.workspace_id = r.workspace_id AND rw.enabled = 1
@@ -457,16 +411,7 @@ export class ResourceService {
     const adapter = this.registry().get(String(connection.connector_type));
     const at = nowIso();
     const mode = resourceWatchMode(adapter.manifest, at);
-    const executionEnv = await workstreamExecutionEnvironment(
-      this.env,
-      this.auth.workspaceId,
-      workstreamId,
-    );
-    const attached = await executionEnv.DB.prepare(
-      `SELECT watch_enabled FROM workstream_resources
-        WHERE resource_id = ? AND workstream_id = ?`,
-    ).bind(id, workstreamId).first<{ watch_enabled: number }>();
-    if (!attached) throw new ApiError(404, "resource_attachment_not_found", "Attach the resource before enabling a watch");
+    const attachments = createResourceObjectPort(this.env, this.auth.workspaceId, workstreamId);
     const watchStatement = this.env.DB.prepare(ENABLE_RESOURCE_WATCH_SQL).bind(
       newId(),
       this.auth.workspaceId,
@@ -478,21 +423,28 @@ export class ResourceService {
       at,
       at,
     );
-    const attachmentStatement = executionEnv.DB.prepare(
-      "UPDATE workstream_resources SET watch_enabled = 1 WHERE workstream_id = ? AND resource_id = ?",
-    ).bind(workstreamId, id);
     // Two authorities, so no single batch spans them: the attachment is the
     // work stream object's and the watch row is regional. The attachment is
     // written first and compensated back if the regional write fails, because
     // an attachment claiming a watch nothing polls is the recoverable half.
-    await attachmentStatement.run();
+    //
+    // The read and the write are one operation now. The routed version asked
+    // whether the resource was attached, wrote the new flag, and — on failure —
+    // wrote back the value it had read three statements earlier, which a
+    // concurrent toggle could have replaced in between. `setWatchEnabled`
+    // answers with what it replaced, so the compensation restores that.
+    const claimed = await attachments.setWatchEnabled({ resourceId: id, watchEnabled: 1 });
+    if (claimed.outcome === "not_attached") {
+      throw new ApiError(404, "resource_attachment_not_found", "Attach the resource before enabling a watch");
+    }
     try {
       await watchStatement.run();
     } catch (error) {
       try {
-        await executionEnv.DB.prepare(
-          "UPDATE workstream_resources SET watch_enabled = ? WHERE workstream_id = ? AND resource_id = ?",
-        ).bind(attached.watch_enabled, workstreamId, id).run();
+        await attachments.setWatchEnabled({
+          resourceId: id,
+          watchEnabled: claimed.previousWatchEnabled,
+        });
       } catch (compensationError) {
         throw new AggregateError(
           [error, compensationError],
@@ -528,34 +480,24 @@ export class ResourceService {
     const connection = resource.connection_id == null
       ? null
       : await this.loadConnection(String(resource.connection_id));
-    const executionEnv = await workstreamExecutionEnvironment(
-      this.env,
-      this.auth.workspaceId,
-      workstreamId,
-    );
-    const attached = await executionEnv.DB.prepare(
-      `SELECT watch_enabled FROM workstream_resources
-        WHERE resource_id = ? AND workstream_id = ?`,
-    ).bind(id, workstreamId).first<{ watch_enabled: number }>();
-    if (!attached) throw new ApiError(404, "resource_attachment_not_found", "The resource is no longer attached");
+    const attachments = createResourceObjectPort(this.env, this.auth.workspaceId, workstreamId);
     const watchStatement = this.env.DB.prepare(
       "UPDATE resource_watches SET enabled = 0, updated_at = ? WHERE workstream_id = ? AND resource_id = ?",
     ).bind(nowIso(), workstreamId, id);
-    const attachmentStatement = executionEnv.DB.prepare(
-      "UPDATE workstream_resources SET watch_enabled = 0 WHERE workstream_id = ? AND resource_id = ?",
-    ).bind(workstreamId, id);
-    // Two authorities, so no single batch spans them: the attachment is the
-    // work stream object's and the watch row is regional. The attachment is
-    // written first and compensated back if the regional write fails, because
-    // an attachment claiming a watch nothing polls is the recoverable half.
-    await attachmentStatement.run();
+    // The mirror of `watch` above, and the same two authorities in the same
+    // order for the same reason.
+    const claimed = await attachments.setWatchEnabled({ resourceId: id, watchEnabled: 0 });
+    if (claimed.outcome === "not_attached") {
+      throw new ApiError(404, "resource_attachment_not_found", "The resource is no longer attached");
+    }
     try {
       await watchStatement.run();
     } catch (error) {
       try {
-        await executionEnv.DB.prepare(
-          "UPDATE workstream_resources SET watch_enabled = ? WHERE workstream_id = ? AND resource_id = ?",
-        ).bind(attached.watch_enabled, workstreamId, id).run();
+        await attachments.setWatchEnabled({
+          resourceId: id,
+          watchEnabled: claimed.previousWatchEnabled,
+        });
       } catch (compensationError) {
         throw new AggregateError(
           [error, compensationError],
@@ -587,7 +529,7 @@ export class ResourceService {
 
   private async loadResource(id: string): Promise<Record<string, unknown>> {
     const row = await this.env.DB.prepare(
-      DO_RESOURCE_WITH_WATCH_STATE_SQL,
+      RESOURCE_WITH_WATCH_STATE_SQL,
     ).bind(
       id,
       this.auth.workspaceId,
@@ -818,7 +760,6 @@ function contentDisposition(disposition: "attachment" | "inline", fileName: stri
 
 export const __resourceServiceTesting = {
   enableResourceWatchSql: ENABLE_RESOURCE_WATCH_SQL,
-  inboundEmailResourceVisibilitySql: INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL,
   resourceWithWatchStateSql: RESOURCE_WITH_WATCH_STATE_SQL,
   encodeResourceCursor,
   decodeResourceCursor,

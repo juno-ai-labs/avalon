@@ -13,6 +13,7 @@ import {
   type TerminalToolExecutors,
 } from "./contract";
 import { TerminalSandboxCoordinator } from "./coordinator";
+import { createResourcePortFactory } from "../../runtime/resource-port";
 import { createDaytonaTerminalProvider } from "./daytona-provider";
 import {
   admitTerminalPublicationGrant,
@@ -68,6 +69,7 @@ export async function createAvalonTerminalPlugin(
   const coordinator = new TerminalSandboxCoordinator(
     env.DB,
     terminalPort,
+    createResourcePortFactory(env),
     provider,
     undefined,
     (workspaceId) => refreshWorkspaceSchedule(env, workspaceId),
