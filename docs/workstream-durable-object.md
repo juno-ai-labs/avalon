@@ -1080,10 +1080,13 @@ their waterline is 0 and everything is above it), but unread is a state that
 comes back: the next message re-lights it, mark-as-unread sets it by hand, and
 neither of those means the room is new. A marker that says "you have never been
 here" has to be settled once and stay settled.
-The state had to be cleared by *looking*, and looking is a read: the client's
-`acknowledgeRead` fires only when a message it has not accounted for is on
-screen, so a work stream opened with nothing new would never have cleared it and
-the marker would have stayed lit on the room the person was reading.
+The state also had to be cleared by *opening*, which is not the same event the
+client reports. `acknowledgeRead` is a statement about what has been read, and
+the client withholds it unless the window is focused, the document is visible,
+and the transcript has settled at its initial position — so an open can happen
+without one. Clearing on the object's own open path removes the dependency on
+those conditions entirely: the room was assembled for this person, which is the
+fact being recorded.
 
 **Considered and rejected:** clearing it on `acknowledgeRead` and accepting the
 gap, which is the same as not shipping the state — the common case for a work
