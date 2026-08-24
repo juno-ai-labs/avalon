@@ -1063,6 +1063,32 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-24 — The lifecycle-event migration is 24, and the fifth collision
+
+**What changed:** `runLifecycleAuthorityPromotion` is object schema migration
+24, and `WORKSTREAM_OBJECT_SCHEMA_VERSION` is 24. It was written as 22. Also
+corrected: the harness-run entry below said its migration was 22 after that
+slice renumbered to 23, which is a stale reference that reached `main`.
+
+**Why:** 22 went to the accepted-suggestion audience triggers and 23 to the
+harness-run promotion while this branch sat unopened. That is five collisions in
+one afternoon, and this one is the clearest case for a gate: the branch adds a
+migration, the rebase reported no conflict on the array, and the only symptom
+was two entries numbered 22 in a list nothing checks.
+
+It was caught by `grep -oP 'version: \d+' … | sort | uniq -d`, run before the
+merge. Twice now that check has been the only thing between a duplicate and
+`main` — and the stale doc reference above shows the other half of the cost: a
+renumber touches the array, the constant, and every prose mention, and the
+prose is the part no gate reads.
+
+**What a future change has to respect:** the check belongs in CI. Comparing a
+branch's version list against `main`'s for duplicates is a few lines and would
+have caught all five; every one of them was found by hand, and the one time the
+list was not checked, a wrong number shipped. That is a decision for the team
+rather than something to add inside a conversion slice, but the evidence for it
+is now five incidents deep.
+
 ### 2026-08-24 — Two reviews on the converted harness runs, and the rule this slice had broken
 
 **What changed:** a code review and a rebase audit, run separately over the same
@@ -1507,7 +1533,7 @@ for byte unchanged.
 
 ### 2026-08-23 — Three of the six harness-run views retire, and why the other three cannot
 
-**What changed:** migration 22 drops `_runtime_run_scopes`,
+**What changed:** migration 23 drops `_runtime_run_scopes`,
 `_runtime_run_plugin_activations` and `_runtime_run_memory_contexts` with their
 insert triggers, and removes all three from `LOCAL_TABLES` and `TABLE_REWRITES`.
 `freezeRunMemoryContext` moved onto the port to make the third of them possible.
