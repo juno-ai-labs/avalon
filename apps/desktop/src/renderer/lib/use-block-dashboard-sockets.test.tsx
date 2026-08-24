@@ -276,6 +276,48 @@ describe('useBlockDashboardSockets', () => {
     rendered.unmount();
   });
 
+  it('reports a block connection as stopped when the desktop goes offline', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], {
+      versionId,
+      versionNumber: 1,
+      updatedAt: '2026-08-18T20:00:00.000Z',
+      blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
+    });
+    const getBlockDashboardBlockSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
+      ticket: 'block-ticket',
+      protocols: socketTicketProtocols('block-ticket'),
+    }));
+    const api = { getBlockDashboardBlockSocketTicket };
+    const rendered = renderHook(
+      () => useBlockDashboardSockets(api, workstreamId, [blockId], true),
+      { wrapper: wrapper(queryClient) },
+    );
+    await act(async () => Promise.resolve());
+    act(() => FakeWebSocket.instances[0]!.open());
+    await act(async () => Promise.resolve());
+    reportTelemetryProductIntent.mockClear();
+
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    act(() => window.dispatchEvent(new Event('offline')));
+
+    // The same answer the feed gives, reached by a different route: this loop's
+    // `scheduleReconnect` returns before arming anything while offline. Both
+    // are `stopped`, and neither is derivable from the cause alone.
+    expect(socketTelemetry()).toEqual([{
+      kind: 'realtime_socket_state',
+      socket: 'block_dashboard',
+      state: 'stopped',
+      cause: 'offline',
+      attempts: 'zero',
+    }]);
+    rendered.unmount();
+  });
+
   it('does not reconnect after an in-flight ticket request fails during unmount', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('WebSocket', FakeWebSocket);

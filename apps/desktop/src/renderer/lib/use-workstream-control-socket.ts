@@ -261,6 +261,9 @@ export function useWorkstreamControlSocket(
           scheduleReconnect();
         });
         next.addEventListener('error', () => {
+          // See `use-workstream-socket.ts`: the pending cause is the loop's, so
+          // a superseded socket's error must not arm the live one's.
+          if (stopped || socket !== next) return;
           socketTelemetry.willClose('transport_error');
           next.close();
         });

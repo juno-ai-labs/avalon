@@ -840,12 +840,20 @@ export function useWorkstreamSocket(
         canonicalResyncTarget = Math.max(canonicalResyncTarget ?? 0, event.latestSequence);
         clearHeartbeat();
         clearStabilityTimer();
-        socketTelemetry.willClose('resync_required');
-        if (socket && socket.readyState !== WebSocket.CLOSED) socket.close();
-        else {
-          socketTelemetry.disconnected({ attempts: attempts.current, retrying: !isOffline() });
-          scheduleReconnect();
-        }
+        // Armed only when a close is still coming, and never reported from
+        // here. `readyState` flips to CLOSED before the `close` event is
+        // dispatched, so a resync frame delivered in the same task batch as an
+        // abrupt close reaches this line with a socket that will still notify:
+        // reporting here as well would count one drop twice, the second time
+        // with the cause already consumed and so labelled as the server's. The
+        // other side is the same — a frame arriving after the close listener
+        // has run finds `socket` null, and that drop has been reported too. So
+        // the close listener makes the single report, and a cause armed with no
+        // close to consume it would be left to mislabel the next one.
+        if (socket && socket.readyState !== WebSocket.CLOSED) {
+          socketTelemetry.willClose('resync_required');
+          socket.close();
+        } else scheduleReconnect();
         return;
       }
       // Once replay history is unavailable, subsequent frames cannot safely be
@@ -1432,6 +1440,11 @@ export function useWorkstreamSocket(
           scheduleReconnect();
         });
         nextSocket.addEventListener('error', () => {
+          // The producer's pending cause belongs to the loop, not to one
+          // socket, so an error delivered for a socket this loop has already
+          // replaced would arm `transport_error` on the live one and mislabel
+          // its next drop. Every other listener here opens with this check.
+          if (closedByEffect || socket !== nextSocket) return;
           clearHeartbeat();
           clearStabilityTimer();
           socketTelemetry.willClose('transport_error');
@@ -1440,7 +1453,14 @@ export function useWorkstreamSocket(
           } catch {
             if (socket === nextSocket) socket = null;
             if (!closedByEffect) {
-              socketTelemetry.disconnected({ attempts: attempts.current, retrying: !isOffline() });
+              // Named rather than inherited from the `willClose` two lines up:
+              // no close event is coming to consume it, and a later reader
+              // moving either line would silently turn this into the server's.
+              socketTelemetry.disconnected({
+                attempts: attempts.current,
+                retrying: !isOffline(),
+                cause: 'transport_error',
+              });
             }
             scheduleReconnect();
           }
