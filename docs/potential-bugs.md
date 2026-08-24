@@ -93,10 +93,19 @@ screen with the most behaviour in the renderer is the least covered.
 **Observed.** `workspace-service.ts:363` re-derives every digest's `schedules`
 rows when somebody changes their account timezone
 (`rebuildDigestSchedulesForTimezone`), and the cron reconciler repairs any it
-misses by comparing each derived row's zone against the account. Nothing does
-either for automations: `automation-service.ts:1898` resolves an unnamed
-calendar zone from the account when the row is written and the resolved value is
-frozen there.
+misses by comparing each derived row's zone against the account —
+`digest-service.ts:284` scopes that comparison `WHERE digest_schedule_id = ?`,
+so it never reaches an automation's rows. Nothing does either for automations:
+`scheduleTimezone` resolves an unnamed calendar zone from the account when the
+row is written and the resolved value is frozen there.
+
+Four readers answer "what zone is this automation in", and they do not agree
+once the account moves. The `schedules` row is frozen at derivation; the digest's
+is re-derived; `runLocalTimezones` (`integrations.ts:6539`) resolves the same
+order *live* on every run, so `core_current_time` reports a local day the run's
+own schedule contradicts; and `automation-email-service.ts` dates the result
+email in the owner's current zone. Whoever settles the question below should
+settle all four, not the first one they find.
 
 **Why it is suspicious.** Both rows are derived from the same column for the
 same reason, and one follows it while the other does not. Somebody who moves
@@ -109,8 +118,11 @@ in one place.
 automation displays its zone — the trigger summary is prose naming it, written
 when the automation was created — so moving the occurrence silently contradicts
 the sentence on the screen. The case for following: an unnamed zone was never
-part of the definition, which is exactly what `timezone: null` now records, and
-the summary is regenerated whenever the automation is edited anyway. If it
+part of the definition, which is exactly what `timezone: null` now records. Note
+that nothing regenerates a trigger summary after creation — the edit dialog takes
+instructions and activity sources, and `update()` re-binds the stored trigger
+definition unchanged — so the displayed sentence cannot be relied on to catch up
+either way. If it
 should follow, the mechanism is the digest's: re-derive the `schedules` rows of
 every personal automation whose pinned version has a null-zoned calendar
 trigger, in every workspace the person belongs to, and let the same comparison

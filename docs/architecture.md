@@ -137,11 +137,13 @@ HyperSight configuration/published results, and its outboxes. Large activity
 payloads, uploads, and snapshots live in R2.
 
 Users and workspaces each own a validated IANA timezone. The desktop detects the
-local system timezone during native authentication, while browser or unavailable
-detection falls back to `America/Los_Angeles`. Workspace defaults are
-`America/Los_Angeles` in Global and `Europe/London` in EU. Automation compilation
-preserves explicit trigger timezones and otherwise resolves personal or workspace
-defaults according to scope before final schema validation.
+local system timezone during native authentication and sends it to seed an account
+that has never chosen one; a client that detects nothing sends nothing, and the
+server has no default of its own. Workspace defaults are `America/Los_Angeles` in
+Global and `Europe/London` in EU. Automation compilation preserves an explicit
+trigger timezone and leaves an unnamed one null: the zone is resolved where the
+`schedules` row is derived, against the scope the automation was created with and
+the account it runs for, and a response fills it back in so no client has to.
 
 ### Region boundary
 
