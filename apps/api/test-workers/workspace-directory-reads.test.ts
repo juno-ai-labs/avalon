@@ -265,32 +265,6 @@ async function seedFeedback(input: {
 }
 
 describe("what the workspace object answers about its work streams", () => {
-  describe("workstreamAudience — exact content-movement boundary", () => {
-    it("returns every private reader and distinguishes workspace scope", async () => {
-      const personal = await seedWorkstream({
-        title: "Private watched target",
-        lastActivityAt: "2026-01-01T09:00:00.000Z",
-        scope: "personal",
-        participants: [OUTSIDER],
-        createdByUserId: OWNER,
-      });
-      const shared = await seedWorkstream({
-        title: "Workspace watched target",
-        lastActivityAt: "2026-01-01T10:00:00.000Z",
-        scope: "workspace",
-      });
-
-      await expect(workspace().workstreamAudience({
-        workspaceId: WORKSPACE_ID,
-        workstreamId: personal,
-      })).resolves.toEqual({ scope: "personal", userIds: [OWNER, OUTSIDER] });
-      await expect(workspace().workstreamAudience({
-        workspaceId: WORKSPACE_ID,
-        workstreamId: shared,
-      })).resolves.toEqual({ scope: "workspace" });
-    });
-  });
-
   describe("lookupWorkstreamDirectory — Slack's unfurl summaries", () => {
     it("returns exactly the ids asked for, and no others", async () => {
       const wanted = await seedWorkstream({
@@ -531,6 +505,32 @@ describe("what the workspace object answers about its work streams", () => {
         plannedFor: PLANNED_FOR,
       })).resolves.toBeNull();
     });
+
+    it("gives the scheduler its exact planned row without borrowing a member audience", async () => {
+      const transferredSubscription = "00000000-0000-7000-8000-0000000008b3";
+      const planned = await seedWorkstream({
+        title: "Transferred private automation run",
+        lastActivityAt: "2026-08-16T11:00:00.000Z",
+        scope: "personal",
+        participants: [OUTSIDER],
+        createdByUserId: OWNER,
+        originType: "automation",
+        automationSubscriptionId: transferredSubscription,
+        plannedFor: PLANNED_FOR,
+      });
+
+      await expect(workspace().plannedWorkstream({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        automationSubscriptionId: transferredSubscription,
+        plannedFor: PLANNED_FOR,
+      })).resolves.toBeNull();
+      await expect(workspace().plannedAutomationWorkstream({
+        workspaceId: WORKSPACE_ID,
+        automationSubscriptionId: transferredSubscription,
+        plannedFor: PLANNED_FOR,
+      })).resolves.toMatchObject({ id: planned });
+    });
   });
 
   describe("canReadWorkstream — what the activity router is allowed to route into", () => {
@@ -570,7 +570,7 @@ describe("what the workspace object answers about its work streams", () => {
       })).resolves.toBe(false);
     });
 
-    it("keeps a private work stream visible to its creator even after participation is absent", async () => {
+    it("revokes a private work stream from its creator after participation ends", async () => {
       const created = await seedWorkstream({
         title: "Creator-owned private work",
         lastActivityAt: "2026-08-18T10:00:00.000Z",
@@ -583,7 +583,7 @@ describe("what the workspace object answers about its work streams", () => {
         workspaceId: WORKSPACE_ID,
         userId: OWNER,
         workstreamId: created,
-      })).resolves.toBe(true);
+      })).resolves.toBe(false);
       await expect(workspace().recentWorkstreamDirectory({
         workspaceId: WORKSPACE_ID,
         audience: { scope: "user", userId: OWNER },
@@ -591,7 +591,7 @@ describe("what the workspace object answers about its work streams", () => {
         participantsOnly: true,
         limit: 50,
       }).then((page) => page.items.map((item) => item.workstreamId)))
-        .resolves.toContain(created);
+        .resolves.not.toContain(created);
     });
 
     it("refuses a work stream it has never heard of", async () => {

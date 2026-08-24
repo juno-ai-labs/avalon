@@ -36,6 +36,10 @@ import {
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import {
+  WorkstreamReaderAudienceSchema,
+  type WorkstreamReaderAudience,
+} from "../lib/audience-containment";
+import {
   contextCompactionCheckpointHash,
   type ContextCompactionCheckpointIdentity,
 } from "../lib/context-compaction-fence";
@@ -213,6 +217,10 @@ const RuntimeSuggestionRequestSchema = z.object({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   input: WorkstreamObjectCreateSuggestionInputSchema,
+}).strict();
+const RuntimeReaderAudienceRequestSchema = z.object({
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
 }).strict();
 const RuntimeBootstrapRequestSchema = z.object({
   workspaceId: WorkspaceIdSchema,
@@ -875,6 +883,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async attachRuntimeResource(input: SubstreamRuntimeResourceRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptRuntimeResource(this.rpcRequest(input)));
+  }
+
+  /** Authoritative current readers for privacy decisions made outside this object. */
+  async readerAudience(input: z.input<typeof RuntimeReaderAudienceRequestSchema>): Promise<WorkstreamReaderAudience | null> {
+    await this.initialized;
+    const request = RuntimeReaderAudienceRequestSchema.parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.workstreamId !== request.workstreamId
+      || this.externalSubstreamId() !== "0") return null;
+    return WorkstreamReaderAudienceSchema.parse(this.product.readerAudience());
   }
 
   async executeToolReceiptOperation(

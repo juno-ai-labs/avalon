@@ -74,6 +74,13 @@ export const WorkspaceDirectoryPlannedRequestSchema = z.object({
   plannedFor: TimestampSchema,
 }).strict();
 
+/** Internal scheduler lookup; unlike the member-facing lookup it is not visibility-filtered. */
+export const WorkspaceDirectoryPlannedAutomationRequestSchema = z.object({
+  workspaceId: IdSchema,
+  automationSubscriptionId: IdSchema,
+  plannedFor: TimestampSchema,
+}).strict();
+
 export const WorkspaceDirectoryPinRequestSchema = WorkspaceDirectoryVisibilityRequestSchema;
 
 export const WorkspaceDirectoryReorderPinsRequestSchema = z.object({
@@ -105,14 +112,6 @@ export const WorkspaceDirectoryResourceRequestSchema = z.object({
 export const WorkspaceDirectoryResourceResultSchema = z.object({
   workstreamIds: z.array(IdSchema).max(10_000),
 }).strict();
-
-export const WorkspaceDirectoryWorkstreamAudienceResultSchema = z.discriminatedUnion("scope", [
-  z.object({ scope: z.literal("workspace") }).strict(),
-  z.object({
-    scope: z.literal("personal"),
-    userIds: z.array(IdSchema),
-  }).strict(),
-]).nullable();
 
 export const WorkspaceDirectoryInternalItemSchema = z.object({
   workstreamId: IdSchema,
@@ -299,13 +298,15 @@ export type WorkspaceDirectoryVisibleIdsRequest = z.infer<typeof WorkspaceDirect
 export type WorkspaceDirectoryVisibleIdsPage = z.infer<typeof WorkspaceDirectoryVisibleIdsPageSchema>;
 export type WorkspaceDirectoryExistsRequest = z.infer<typeof WorkspaceDirectoryExistsRequestSchema>;
 export type WorkspaceDirectoryPlannedRequest = z.infer<typeof WorkspaceDirectoryPlannedRequestSchema>;
+export type WorkspaceDirectoryPlannedAutomationRequest = z.infer<
+  typeof WorkspaceDirectoryPlannedAutomationRequestSchema
+>;
 export type WorkspaceDirectoryPinRequest = z.infer<typeof WorkspaceDirectoryPinRequestSchema>;
 export type WorkspaceDirectoryReorderPinsRequest = z.infer<typeof WorkspaceDirectoryReorderPinsRequestSchema>;
 export type WorkspaceDirectoryNotificationRequest = z.infer<typeof WorkspaceDirectoryNotificationRequestSchema>;
 export type WorkspaceDirectoryNotificationState = z.infer<typeof WorkspaceDirectoryNotificationStateSchema>;
 export type WorkspaceDirectoryResourceRequest = z.infer<typeof WorkspaceDirectoryResourceRequestSchema>;
 export type WorkspaceDirectoryResourceResult = z.infer<typeof WorkspaceDirectoryResourceResultSchema>;
-export type WorkspaceDirectoryWorkstreamAudienceResult = z.infer<typeof WorkspaceDirectoryWorkstreamAudienceResultSchema>;
 export type WorkspaceDirectoryLookupRequest = z.infer<typeof WorkspaceDirectoryLookupRequestSchema>;
 export type WorkspaceDirectoryLookupResult = z.infer<typeof WorkspaceDirectoryLookupResultSchema>;
 export type WorkspaceDirectoryRecentRequest = z.infer<typeof WorkspaceDirectoryRecentRequestSchema>;

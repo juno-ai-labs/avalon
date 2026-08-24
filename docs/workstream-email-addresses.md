@@ -105,7 +105,7 @@ the identity anchor and dropped that column.
 Mail sent to a **work-stream** address is attached to that existing work stream as
 an untrusted resource and transcript entry. It does not start an agent run.
 Listing, detail, preview, and content reads authorize that resource through the
-attached work stream's own scope, creator, and active participants. A private
+attached work stream's own scope and active participants. A private
 ad-hoc work stream does not become workspace-readable merely because its email
 resource has no automation subscription.
 
@@ -424,7 +424,7 @@ hashes remain; changing the words after them is not.
 
 **What changed:** Every automation-email run creates a personal work stream and
 seats its owner. Email-resource authorization now uses the attached work stream's
-scope, creator, and participants for both automation and ad-hoc mail resources.
+scope and active participants for both automation and ad-hoc mail resources.
 
 **Why:** The resource layer treated every non-automation attachment as
 workspace-readable, and automation runs were workspace-scoped. A private

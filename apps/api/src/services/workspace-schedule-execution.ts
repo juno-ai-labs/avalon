@@ -32,7 +32,7 @@ import { newId } from "@avalon/db";
 
 import type { Env } from "../env";
 import type {
-  WorkspaceDirectoryPlannedRequest,
+  WorkspaceDirectoryPlannedAutomationRequest,
   WorkspaceDirectoryScheduleTargetsRequest,
   WorkspaceDirectoryScheduleTargetsResult,
 } from "../durable-objects/workspace-directory-protocol";
@@ -74,7 +74,7 @@ import type { TerminalLifecycleTransition } from "./terminal/lifecycle";
  * passes its stub. Typed structurally so neither side has to import the other.
  */
 export interface WorkspaceScheduleDirectory {
-  plannedWorkstream(input: WorkspaceDirectoryPlannedRequest): Promise<Workstream | null>;
+  plannedAutomationWorkstream(input: WorkspaceDirectoryPlannedAutomationRequest): Promise<Workstream | null>;
   workstreamScheduleTargets(
     input: WorkspaceDirectoryScheduleTargetsRequest,
   ): Promise<WorkspaceDirectoryScheduleTargetsResult>;
@@ -648,9 +648,8 @@ async function startAutomation(
     .first<AutomationRunRow>();
 
   if (!run) {
-    const planned = await ctx.directory.plannedWorkstream({
+    const planned = await ctx.directory.plannedAutomationWorkstream({
       workspaceId: schedule.workspace_id,
-      userId: source.audience_user_id,
       automationSubscriptionId: subscriptionId,
       plannedFor: schedule.next_run_at,
     }).then((workstream) => workstream ? ({

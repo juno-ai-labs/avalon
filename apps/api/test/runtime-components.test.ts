@@ -1,4 +1,4 @@
-import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerSocketEventSchema } from "@avalon/contracts";
 import { DatabaseSync } from "node:sqlite";
@@ -35,6 +35,7 @@ import {
   createTestJurisdictionalDurableObjectId,
 } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
+import { sqliteD1 } from "./helpers/sqlite-d1";
 
 function timing(overrides: Partial<ScheduleTiming> = {}): ScheduleTiming {
   return {
@@ -63,8 +64,9 @@ describe("runtime component invariants", () => {
     const store = new WorkstreamObjectStore(storage, "test", "global");
     const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000000a1");
     const workstreamId = asWorkstreamId("00000000-0000-4000-8000-0000000000a2");
-    const creatorId = "00000000-0000-4000-8000-0000000000a3";
-    const participantId = "00000000-0000-4000-8000-0000000000a4";
+    const creatorId = asUserId("00000000-0000-4000-8000-0000000000a3");
+    const participantId = asUserId("00000000-0000-4000-8000-0000000000a4");
+    const outsiderId = asUserId("00000000-0000-4000-8000-0000000000a7");
     store.ensureIdentity({ workspaceId, workstreamId }, "global");
     sql.exec(
       `UPDATE workstream
@@ -86,7 +88,26 @@ describe("runtime component invariants", () => {
         now,
       );
     }
-    const product = new WorkstreamObjectProductService(storage, store, createTestEnv({}));
+    const regional = new DatabaseSync(":memory:");
+    regional.exec(`CREATE TABLE workspace_members (
+      workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL, role TEXT NOT NULL
+    )`);
+    const memberships: Array<[string, string]> = [
+      [creatorId, "owner"],
+      [participantId, "member"],
+      [outsiderId, "member"],
+    ];
+    for (const [userId, role] of memberships) {
+      regional.prepare(
+        `INSERT INTO workspace_members (workspace_id, user_id, status, role)
+         VALUES (?, ?, 'active', ?)`,
+      ).run(workspaceId, userId, role);
+    }
+    const product = new WorkstreamObjectProductService(
+      storage,
+      store,
+      createTestEnv({ DB: sqliteD1(regional) }),
+    );
     const suggestion = {
       id: "00000000-0000-4000-8000-0000000000a5",
       activityId: "00000000-0000-4000-8000-0000000000a6",
@@ -112,14 +133,41 @@ describe("runtime component invariants", () => {
     ).suggestions();
     expect(visibleSuggestions()).toEqual([expect.objectContaining({ id: suggestion.id })]);
 
+    sql.exec(
+      `UPDATE suggested_actions SET status = 'accepted', resolved_at = ?,
+              resolved_by_user_id = ?, resolution_client_id = ?
+        WHERE action_id = ?`,
+      now,
+      creatorId,
+      `${creatorId}:accepted`,
+      suggestion.id,
+    );
+    await expect(product.addParticipant({
+      sessionId: "test-session",
+      userId: creatorId,
+      workspaceId,
+      region: "global",
+      role: "owner",
+    }, outsiderId)).rejects.toMatchObject({
+      status: 409,
+      code: "workstream_audience_restricted_content",
+    });
+
     // Pre-contract rows carry no auditable source audience. Keeping one hidden
     // is safer than reviving a card whose title may already be a disclosure.
+    const legacySuggestionId = "00000000-0000-4000-8000-0000000000a8";
+    await product.createSuggestion(workspaceId, {
+      ...suggestion,
+      id: legacySuggestionId,
+      sourceAudience: { scope: "users", userIds: [creatorId, participantId] },
+    });
     sql.exec(
       `UPDATE suggested_actions SET share_intent_json = ? WHERE action_id = ?`,
       JSON.stringify({ confidence: 0.9, reason: suggestion.reason }),
-      suggestion.id,
+      legacySuggestionId,
     );
     expect(visibleSuggestions()).toEqual([]);
+    regional.close();
     database.close();
   });
 

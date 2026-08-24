@@ -291,8 +291,8 @@ function harnessStatus(exactState: string): Workstream["harnessStatus"] {
   return "idle";
 }
 
-function participantVisible(root: RootRow, userId: string, participant: boolean): boolean {
-  return root.scope === "workspace" || participant || root.created_by_user_id === userId;
+function participantVisible(root: RootRow, participant: boolean): boolean {
+  return root.scope === "workspace" || participant;
 }
 
 function userFromRow(row: UserRow) {
@@ -694,7 +694,7 @@ export class WorkstreamObjectProductService {
 
   canRead(userId: string): boolean {
     const root = this.root();
-    return participantVisible(root, userId, this.isParticipant(userId));
+    return participantVisible(root, this.isParticipant(userId));
   }
 
   activeParticipantIds(): string[] {
@@ -712,7 +712,7 @@ export class WorkstreamObjectProductService {
       `SELECT 1 AS one FROM workspace_members
         WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
     ).bind(auth.workspaceId, auth.userId).first<{ one: number }>();
-    if (!membership || !participantVisible(root, auth.userId, this.isParticipant(auth.userId))) {
+    if (!membership || !participantVisible(root, this.isParticipant(auth.userId))) {
       throw new ApiError(404, "workstream_not_found", "Work stream not found");
     }
     if (!includeArchived && root.archived_at !== null) {
@@ -824,6 +824,9 @@ export class WorkstreamObjectProductService {
     }
     const now = Date.now();
     const scopeChanged = input.scope !== undefined && input.scope !== before.scope;
+    if (scopeChanged && input.scope === "workspace") {
+      this.assertAcceptedContentContains({ scope: "workspace" });
+    }
     const joined = scopeChanged && input.scope === "personal" && !this.isParticipant(auth.userId);
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
@@ -1400,6 +1403,13 @@ export class WorkstreamObjectProductService {
     if (!member) {
       throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
     }
+    const audience = this.readerAudience();
+    if (audience.scope === "personal" && !audience.userIds.includes(userId)) {
+      this.assertAcceptedContentContains({
+        scope: "personal",
+        userIds: [...audience.userIds, userId],
+      });
+    }
     // Both names are read before the commit because the effects that carry
     // them are built inside it: an effect callback runs against object SQL and
     // cannot await a regional round trip.
@@ -1715,20 +1725,34 @@ export class WorkstreamObjectProductService {
     }));
   }
 
-  private readerAudience(root: RootRow = this.root()): WorkstreamReaderAudience {
+  readerAudience(root: RootRow = this.root()): WorkstreamReaderAudience {
     if (root.scope === "workspace") return { scope: "workspace" };
-    const userIds = new Set<string>();
-    if (root.created_by_user_id) userIds.add(root.created_by_user_id);
-    for (const participant of this.storage.sql.exec<{ user_id: string }>(
+    const userIds = this.storage.sql.exec<{ user_id: string }>(
       `SELECT user_id FROM participants WHERE status = 'active'`,
-    ).toArray()) userIds.add(participant.user_id);
-    return { scope: "personal", userIds: [...userIds] };
+    ).toArray().map((participant) => participant.user_id);
+    return { scope: "personal", userIds };
   }
 
   private sourceAudience(value: string | null): ContentAudience | null {
     const intent = parseJson<{ sourceAudience?: unknown }>(value, {});
     const parsed = ContentAudienceSchema.safeParse(intent.sourceAudience);
     return parsed.success ? parsed.data : null;
+  }
+
+  /** Accepted activity resources remain attached, so their audience remains a lifetime fence. */
+  private assertAcceptedContentContains(targetAudience: WorkstreamReaderAudience): void {
+    const rows = this.storage.sql.exec<{ share_intent_json: string | null }>(
+      `SELECT share_intent_json FROM suggested_actions WHERE status = 'accepted'`,
+    ).toArray();
+    for (const row of rows) {
+      const sourceAudience = this.sourceAudience(row.share_intent_json);
+      if (sourceAudience && contentAudienceContainsWorkstream(sourceAudience, targetAudience)) continue;
+      throw new ApiError(
+        409,
+        "workstream_audience_restricted_content",
+        "This work stream contains accepted content that the wider audience cannot view",
+      );
+    }
   }
 
   private suggestions(): WorkstreamDetail["suggestions"] {
@@ -2125,7 +2149,7 @@ export class WorkstreamObjectProductService {
       unreadCount: unreadFrom === null ? 0 : Math.max(1, latest - unreadFrom + 1),
       youAreMentioned: attention.latest_mention_attention_ordinal > attention.seen_attention_ordinal,
       unseen: this.isUnseen(userId),
-      listable: root.archived_at === null && participantVisible(root, userId, participant),
+      listable: root.archived_at === null && participantVisible(root, participant),
       seenAttentionOrdinal: attention.seen_attention_ordinal,
       manualUnreadFromOrdinal: attention.manual_unread_from_ordinal,
       manualUnreadGeneration: attention.version,
@@ -2197,6 +2221,15 @@ export class WorkstreamObjectProductService {
         workflowInput: null,
         inserted: false,
       };
+    }
+
+    if (root.scope === "personal" && input.confirmedParticipantUserIds.length > 0) {
+      const currentAudience = this.readerAudience(root);
+      if (currentAudience.scope !== "personal") throw new Error("personal_reader_audience_expected");
+      this.assertAcceptedContentContains({
+        scope: "personal",
+        userIds: [...new Set([...currentAudience.userIds, ...input.confirmedParticipantUserIds])],
+      });
     }
 
     const personIds = [...new Set(input.mentions.flatMap((mention) =>

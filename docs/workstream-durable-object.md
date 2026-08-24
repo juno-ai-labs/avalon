@@ -1063,6 +1063,36 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-24 — The main child answers current reader-audience questions
+
+**What changed:** `SubstreamAgent.readerAudience` exposes the main child's
+authoritative scope and active participant IDs to internal Worker callers.
+Direct resource-watch routing, Suggested Work source and target checks, and
+automation run history use it immediately before they move or disclose content.
+Creator attribution no longer grants private access, and accepted restricted
+suggestions block later participant or scope widening. Schema migration 22
+enforces that last invariant at the object-storage boundary too, including for
+runtime-compatibility writers that bypass the product service. Accepted source
+audiences are immutable and cannot be deleted, so the storage fence lasts as
+long as the content accepted into the work stream.
+
+**Why:** WorkspaceDO owns cross-work-stream directory serving, but its viewer
+rows arrive through durable regional effects after the child commits. That lag
+is acceptable for a converging sidebar; it is not acceptable when a stale reader
+set permanently injects activity into a transcript or returns a private run ID.
+
+**Considered and rejected:** Synchronous child-to-parent permission updates,
+using the directory projection because it is cheaper, and granting creators
+permanent access outside participation. Those respectively invert the outbox
+boundary, preserve the stale authorization window, or make participant removal
+ineffective.
+
+**What a future change has to respect:** Cross-work-stream discovery remains in
+WorkspaceDO, but a permanent content move or direct disclosure rechecks the
+selected work stream's current authority. Private reader identity comes only
+from active participant rows. Direct SQL audience writes remain subject to the
+accepted-content triggers; do not replace them with a service-only check.
+
 ### 2026-08-24 — The resource migration renumbers to 21, and this time Git said nothing
 
 **What changed:** `resourceAuthorityPromotion` is object schema migration 21,
@@ -1243,7 +1273,6 @@ does not settle viewer state, which does not exist yet and should be added
 rather than worked around.
 
 Shipped in TBD.
-
 
 ### 2026-08-24 — Lease fences keep the projection the compatibility view had
 

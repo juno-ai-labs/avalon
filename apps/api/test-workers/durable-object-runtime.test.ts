@@ -680,6 +680,10 @@ describe("Durable Objects in the Workers runtime", () => {
     const mine = await child.handleProductRequest({ operation: "get", auth });
     expect(mine.status).toBe(200);
     expect(JSON.parse(mine.bodyJson)).toMatchObject({ id: WORKSTREAM_ID, scope: "personal" });
+    await expect(child.readerAudience({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).resolves.toEqual({ scope: "personal", userIds: [USER_ID] });
     const theirs = await child.handleProductRequest({
       operation: "get",
       auth: { ...auth, sessionId: otherSessionId, userId: otherUserId },
@@ -3782,15 +3786,14 @@ describe("Durable Objects in the Workers runtime", () => {
       createdAt: at,
       updatedAt: at,
     }, eventId);
-    // Readable because the work stream is open to the workspace — this reader
-    // is neither its creator nor a participant, which is what narrowing costs
-    // them.
+    // Readable because the work stream is open to the workspace. Seat this
+    // reader before narrowing so the private scope keeps admitting them.
     await stub.receiveSubstreamEffects({
       substreamId: "0",
       envelopes: [directory("workspace", "00000000-0000-7000-8000-000000000701"), effectEnvelope({
         kind: "directory_user" as const,
         userId: USER_ID,
-        isParticipant: false,
+        isParticipant: true,
         unreadCount: 0,
         youAreMentioned: false,
         listable: true,
@@ -3835,12 +3838,22 @@ describe("Durable Objects in the Workers runtime", () => {
       });
 
       const closed = nextClose(socket);
-      // Object-local: whether this work stream still admits this reader lives in
-      // this object's own SQL, and no revocation message carries it. Without the
-      // check they keep receiving title, description, preview and state.
+      // Creator metadata is not authority. Once the participant projection is
+      // removed, the private work stream must close this creator's socket too.
       await stub.receiveSubstreamEffects({
         substreamId: "0",
-        envelopes: [directory("personal", "00000000-0000-7000-8000-000000000707")],
+        envelopes: [effectEnvelope({
+          kind: "directory_user" as const,
+          userId: USER_ID,
+          isParticipant: false,
+          unreadCount: 0,
+          youAreMentioned: false,
+          listable: false,
+          seenAttentionOrdinal: 0,
+          manualUnreadFromOrdinal: null,
+          manualUnreadGeneration: 0,
+          latestMentionAttentionOrdinal: 0,
+        }, "00000000-0000-7000-8000-000000000707")],
       });
       expect((await closed).code).toBe(1008);
     } finally {
