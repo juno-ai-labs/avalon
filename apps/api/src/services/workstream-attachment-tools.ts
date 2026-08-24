@@ -39,6 +39,7 @@ import {
   type AttachmentSummaryDraft,
   type AttachmentSummaryRunner,
 } from "./attachment-summary-service";
+import { createResourceObjectPort } from "../runtime/resource-port";
 import {
   executionPrincipalKey,
   loadVisibleWorkstreamResourcePage,
@@ -168,15 +169,21 @@ export function createWorkstreamAttachmentTools(
         }
         let result;
         try {
-          result = await loadVisibleWorkstreamResourcePage(env.DB, {
-            workspaceId: input.workspaceId,
-            workstreamId: input.workstreamId,
-            principal: input.executionPrincipal,
-            attachmentKind,
-            limit,
-            ...(state ? { expectedFingerprint: state.fingerprint } : {}),
-            after: state ? { attachedAt: state.afterAttachedAt, resourceId: state.afterResourceId } : null,
-          });
+          result = await loadVisibleWorkstreamResourcePage(
+            env.DB,
+            createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+            {
+              workspaceId: input.workspaceId,
+              workstreamId: input.workstreamId,
+              principal: input.executionPrincipal,
+              attachmentKind,
+              limit,
+              ...(state ? { expectedFingerprint: state.fingerprint } : {}),
+              after: state
+                ? { attachedAt: state.afterAttachedAt, resourceId: state.afterResourceId }
+                : null,
+            },
+          );
         } catch (error) {
           if (error instanceof WorkstreamResourceInventoryChangedError) {
             throw attachmentError("invalid_cursor", "The resource inventory changed; restart the list from its first page");
@@ -572,12 +579,16 @@ export async function rehydrateWorkstreamViewReceipt(
   const parsedInput = AttachmentViewResourceArgumentsSchema.safeParse(rawInput);
   const parsedOutput = WorkstreamViewResourceOutputSchema.safeParse(rawOutput);
   if (!parsedInput.success || !parsedOutput.success || parsedOutput.data.returned === 0) return [];
-  const visible = await loadVisibleWorkstreamResourcesByIds(env.DB, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    principal: input.executionPrincipal,
-    resourceIds: parsedInput.data.resourceIds,
-  });
+  const visible = await loadVisibleWorkstreamResourcesByIds(
+    env.DB,
+    createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+    {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      principal: input.executionPrincipal,
+      resourceIds: parsedInput.data.resourceIds,
+    },
+  );
   const included = parsedOutput.data.items
     .filter((item) => item.status === "included")
     .sort((left, right) => (left.visualPartIndex ?? 0) - (right.visualPartIndex ?? 0));
@@ -858,12 +869,16 @@ async function loadScopedResourceRows(
     const requested = new Set(resourceIds);
     return visible.rows.filter((row) => requested.has(row.id));
   }
-  return loadVisibleWorkstreamResourcesByIds(env.DB, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    principal: input.executionPrincipal,
-    resourceIds,
-  });
+  return loadVisibleWorkstreamResourcesByIds(
+    env.DB,
+    createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+    {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      principal: input.executionPrincipal,
+      resourceIds,
+    },
+  );
 }
 
 function scopedCursorPurpose(options: WorkstreamAttachmentToolOptions, purpose: string): string {

@@ -416,8 +416,21 @@ at all.** Here, five of seven did not.
 ### Slices
 
 **Slices 1 and 2 have landed. Slice 3 converted its callers and dropped four of
-its five views; slice 4 converted its callers and dropped none.** The other
-eleven are plans. Fifteen in all, covering all 81 routed tables.
+its five views; slice 4 converted its callers and dropped none; slice 5
+converted its callers and dropped all three.** The other ten are plans. Fifteen
+in all, covering all 81 routed tables.
+
+**Slice 5 came in at a tenth of its statement count, and the reason generalizes.**
+Of the 73 statements counted for the resources slice, almost all name
+`resources` alone — which routes to WorkspaceDO and belongs to slice 14. The
+work-stream half was the *link* table plus a handful of statements that joined
+the two, and `_runtime_resources` existed only to make that join expressible: it
+projected the object's frozen `resource_json` copy as though it were the
+workspace's live row. **A table that appears on both sides of the table split
+inflates its slice's count by every statement that touches only the other
+side.** `resources` is the one table the PRD already knew was double-counted;
+what it did not predict is that the double-counting is where nearly all the
+statements were.
 
 **The work-stream side's slice order does not survive contact with its own
 batches.** Slice 3 kept `_runtime_elicitations` and handed it to slice 4; slice

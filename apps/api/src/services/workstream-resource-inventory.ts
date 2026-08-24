@@ -3,6 +3,7 @@ import {
   classifyAttachmentKind,
   type ExecutionPrincipal,
 } from "@avalon/contracts";
+import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
 import {
   loadVisibleWorkstreamResourceInventory,
   type VisibleWorkstreamResourceInventory,
@@ -61,6 +62,7 @@ export function renderWorkstreamResourceInventoryAggregate(input: {
 
 export async function renderAuthorizedWorkstreamResourceInventory(
   database: D1Database,
+  attachments: ResourceObjectPort,
   input: {
     workspaceId: string;
     workstreamId: string;
@@ -68,7 +70,7 @@ export async function renderAuthorizedWorkstreamResourceInventory(
     asOf?: string;
   },
 ): Promise<string> {
-  const visible = await loadVisibleWorkstreamResourceInventory(database, {
+  const visible = await loadVisibleWorkstreamResourceInventory(database, attachments, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
     principal: input.principal,
