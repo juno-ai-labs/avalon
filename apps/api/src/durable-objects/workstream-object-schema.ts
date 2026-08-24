@@ -16,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 20;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 21;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1335,7 +1335,7 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     statements: schedulingAuthorityPromotion(),
   },
   {
-    version: 20,
+    version: 21,
     description: "retire the resource-attachment, resource-projection and revision views",
     statements: resourceAuthorityPromotion(),
   },
