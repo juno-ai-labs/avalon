@@ -205,6 +205,14 @@ export interface StaleRunRow extends Record<string, SqlStorageValue> {
   cancellation_requested_at: number | null;
 }
 
+/** Whether a new run was created, refused as stale, or already existed. */
+export type AdmitRunOutcome =
+  | { outcome: "admitted" }
+  /** A newer run has taken the work stream since the caller last looked. */
+  | { outcome: "stale" }
+  /** This exact run id is already here. Creation is idempotent by id. */
+  | { outcome: "exists" };
+
 export type HeartbeatOutcome =
   | { outcome: "renewed"; leaseExpiresAt: number }
   | { outcome: "cancelled" }
@@ -594,6 +602,148 @@ export class WorkstreamHarnessRunStorage {
         input.now,
       );
       return { outcome: "persisted" as const };
+    });
+  }
+
+  /**
+   * Mark a run started, and bind the Workflow that is driving it.
+   *
+   * `bindWorkflowInstance` plus the transition an admitted run makes when its
+   * Workflow actually begins. The sidebar promotion is narrower than
+   * `markWorkstreamRunning`: it only lifts a work stream that is still showing
+   * `scheduled`, because a work stream already in a more exact busy state is
+   * further along than this launch knows about.
+   */
+  launchRun(input: {
+    runId: string;
+    workflowInstanceId: string;
+    startedAt: number;
+    now: number;
+  }): { outcome: "launched" | "not_found" } {
+    return this.storage.transactionSync(() => {
+      const run = this.run({ runId: input.runId });
+      if (!run) return { outcome: "not_found" as const };
+      this.sql.exec(
+        `UPDATE runs
+            SET workflow_instance_id = ?2,
+                status = CASE WHEN status = 'admitted' THEN 'running' ELSE status END,
+                started_at = CASE WHEN started_at = 0 THEN ?3 ELSE started_at END,
+                updated_at = ?4
+          WHERE run_id = ?1`,
+        input.runId,
+        input.workflowInstanceId,
+        input.startedAt,
+        input.now,
+      );
+      if (run.origin !== "block_dashboard_block") {
+        this.sql.exec(
+          `UPDATE workstream
+              SET exact_state = 'running',
+                  state_reason_code = 'runtime_running',
+                  state_changed_at = ?1,
+                  updated_at = ?1
+            WHERE id = 1 AND exact_state = 'scheduled'`,
+          input.now,
+        );
+      }
+      return { outcome: "launched" as const };
+    });
+  }
+
+  /**
+   * Record what the model cost so far, fenced by the live attempt.
+   *
+   * Progress metadata, not a state transition: the host may write it while its
+   * lease is live and must never write it after. The fence is the whole point,
+   * and it is why this is not a plain update — a flush that arrives after the
+   * attempt was taken over would overwrite its successor's numbers.
+   */
+  recordRunProgress(input: AttemptFence & {
+    model: string | null;
+    usageJson: string;
+  }): { outcome: "recorded" | "ownership_lost" } {
+    return this.storage.transactionSync(() => {
+      const run = this.run({ runId: input.runId });
+      if (!run
+        || run.legacy_attempt_id !== input.attemptId
+        || run.lease_owner !== input.owner
+        || run.status !== "running"
+        || run.terminalized_at !== null) {
+        return { outcome: "ownership_lost" as const };
+      }
+      this.sql.exec(
+        `UPDATE runs SET usage_json = ?2, model = COALESCE(?3, model), updated_at = ?4
+          WHERE run_id = ?1`,
+        input.runId,
+        input.usageJson,
+        input.model,
+        input.now,
+      );
+      return { outcome: "recorded" as const };
+    });
+  }
+
+  /**
+   * The newest root run a member would recognise as "this conversation's".
+   *
+   * HyperSight blocks are excluded for the reason the claim excludes them: they
+   * run beside the conversation rather than being it. Three callers ask this —
+   * two to find the run they should be reconciling, and `admitRun` to decide
+   * whether the caller's view of "newest" is still true.
+   */
+  latestRootRun(): RunRow | undefined {
+    return first(this.sql.exec<RunRow>(
+      `SELECT ${RUN_COLUMNS} FROM runs
+        WHERE parent_tool_call_id IS NULL AND origin != 'block_dashboard_block'
+        ORDER BY created_at DESC, run_id DESC LIMIT 1`,
+    ));
+  }
+
+  /** Whether a run is still on its way to a terminal state. */
+  runIsActive(input: { runId: string }): boolean {
+    const run = this.run({ runId: input.runId });
+    return run !== undefined && ["admitted", "running", "waiting", "steering"].includes(run.status);
+  }
+
+  /** The transcript part that triggered a run, if it recorded one. */
+  triggerPartId(input: { runId: string }): string | null {
+    return first(this.sql.exec<{ trigger_part_id: string | null } & Record<string, SqlStorageValue>>(
+      `SELECT trigger_part_id FROM runs WHERE run_id = ?`,
+      input.runId,
+    ))?.trigger_part_id ?? null;
+  }
+
+  /**
+   * Mark a run failed because its Workflow never started.
+   *
+   * No lease fence, because there is no attempt yet — this is the launch itself
+   * failing, and the row it is closing is the one the same caller created a
+   * moment ago. `terminalizeQueuedRun` is the fenced path for a run that was
+   * admitted and then abandoned; this is narrower and deliberately unguarded.
+   *
+   * The sidebar goes through `settleWorkstreamState` like every other ending,
+   * which adds a guard the routed version did not have: it will not report
+   * `failed` over a work stream some *other* live run still holds. That case is
+   * unreachable from here today — this path runs immediately after an admission
+   * that superseded everything else — so the guard changes nothing now and is
+   * correct if that ever stops being true.
+   */
+  failUnlaunchedRun(input: {
+    runId: string;
+    errorJson: string;
+    now: number;
+  }): { outcome: "failed" | "not_found" } {
+    return this.storage.transactionSync(() => {
+      if (!this.run({ runId: input.runId })) return { outcome: "not_found" as const };
+      this.sql.exec(
+        `UPDATE runs SET status = 'failed', completed_at = ?2, error_json = ?3, updated_at = ?2
+          WHERE run_id = ?1`,
+        input.runId,
+        input.now,
+        input.errorJson,
+      );
+      this.settleWorkstreamState(input.runId, "failed", input.now);
+      return { outcome: "failed" as const };
     });
   }
 
@@ -1285,6 +1435,105 @@ export class WorkstreamHarnessRunStorage {
       || parent.lease_owner === null
       || parent.lease_expires_at === null
       || parent.lease_expires_at <= now;
+  }
+
+  /**
+   * Create a root run, optionally superseding whatever is running now.
+   *
+   * Four callers built this out of the same routed batch — a conditional
+   * supersede, an `INSERT … SELECT … WHERE ? = (SELECT latest.id …)` whose
+   * subquery *was* the staleness check, and a sidebar update guarded on
+   * `EXISTS (SELECT 1 FROM harness_runs WHERE id = ?)` to ask whether the
+   * insert had landed. The staleness check is the interesting one: expressed as
+   * a subquery inside the insert it could only answer by writing nothing, which
+   * is also what a duplicate id does, so the caller could not tell "someone
+   * else got here first" from "this is a retry of my own request".
+   *
+   * `expectedLatestRunId` is how a caller says which run it believed was
+   * newest. Null means it does not care — a scheduled or automation run is not
+   * racing a member.
+   */
+  admitRun(input: {
+    runId: string;
+    origin: string;
+    executionPrincipalJson: string;
+    status: string;
+    startedAt: number | null;
+    model: string | null;
+    triggerPartId: string | null;
+    parentRunId: string | null;
+    supersedeActive: boolean;
+    expectedLatestRunId: string | null;
+    now: number;
+  }): AdmitRunOutcome {
+    return this.storage.transactionSync(() => {
+      if (this.run({ runId: input.runId })) return { outcome: "exists" as const };
+      if (input.expectedLatestRunId !== null
+        && this.latestRootRun()?.run_id !== input.expectedLatestRunId) {
+        return { outcome: "stale" as const };
+      }
+      if (input.supersedeActive) {
+        this.sql.exec(
+          `UPDATE runs
+              SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?1),
+                  cancellation_reason = COALESCE(cancellation_reason, 'superseded_by_follow_up'),
+                  updated_at = ?1
+            WHERE origin != 'block_dashboard_block'
+              AND parent_tool_call_id IS NULL
+              AND status IN ('admitted', 'running')
+              AND terminalized_at IS NULL`,
+          input.now,
+        );
+      }
+      this.sql.exec(
+        `INSERT INTO runs
+           (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+            next_action_cursor, input_fence_seq, revision, started_at,
+            active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+            tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+            origin, execution_principal_json, parent_run_id, chain_depth, model,
+            usage_json, trigger_part_id, created_at, updated_at)
+         VALUES (?1, '0', ?2, '{}', 0, 0, '', 0, 0, ?3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                 ?4, ?5, ?6, 0, ?7, '{}', ?8, ?9, ?9)`,
+        input.runId,
+        input.status,
+        input.startedAt ?? input.now,
+        input.origin,
+        input.executionPrincipalJson,
+        input.parentRunId,
+        input.model,
+        input.triggerPartId,
+        input.now,
+      );
+      if (input.status === "running" && input.origin !== "block_dashboard_block") {
+        this.markWorkstreamRunning(input.now);
+      }
+      return { outcome: "admitted" as const };
+    });
+  }
+
+  /**
+   * Record which Workflow instance is driving a run.
+   *
+   * Three callers launch a Workflow and then write its id back. It is a plain
+   * write with no fence, because the launch has already happened: refusing here
+   * would leave a running Workflow nobody can find.
+   */
+  bindWorkflowInstance(input: {
+    runId: string;
+    workflowInstanceId: string;
+    now: number;
+  }): { outcome: "bound" | "not_found" } {
+    return this.storage.transactionSync(() => {
+      if (!this.run({ runId: input.runId })) return { outcome: "not_found" as const };
+      this.sql.exec(
+        `UPDATE runs SET workflow_instance_id = ?2, updated_at = ?3 WHERE run_id = ?1`,
+        input.runId,
+        input.workflowInstanceId,
+        input.now,
+      );
+      return { outcome: "bound" as const };
+    });
   }
 
   /**
