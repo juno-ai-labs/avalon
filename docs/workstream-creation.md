@@ -237,9 +237,9 @@ for.
 
 It does not own what happens afterwards. The transcript, the socket, and the
 work-stream screen's own loading states belong to that screen. Naming belongs to
-[`workstream-descriptions.md`](workstream-descriptions.md) — the provisional
-title and the `naming` grace this surface renders a skeleton for are its
-contract, not this one's. Draft text and attachments belong to
+[`workstream-naming.md`](workstream-naming.md) — the provisional title and the
+`naming` grace this surface renders a skeleton for are its contract, not this
+one's. Draft text and attachments belong to
 [`composer-drafts.md`](composer-drafts.md); this module clears the draft on
 submit and restores it on failure, and changes nothing else about it. Address
 allocation and delivery belong to
