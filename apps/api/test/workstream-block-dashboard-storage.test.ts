@@ -156,6 +156,34 @@ describe("the lease a block result is written under", () => {
     ]);
   });
 
+  /**
+   * The statuses the retired `_runtime_harness_runs` view projected as
+   * `running`. Nothing writes either one today, so these two cases stand on the
+   * `runs` CHECK constraint's vocabulary rather than on a path the product can
+   * reach. They are here because the fence is what would silently start
+   * dropping block results if a writer ever appeared: a status it does not
+   * recognise reads as a lost lease, which is a refusal nobody would look for.
+   */
+  for (const status of ["waiting", "steering"] as const) {
+    it(`settles the block while the run is ${status}`, () => {
+      const { storage, sql } = open();
+      storage.admitDispatch(dispatch());
+      holdLease(sql);
+      sql.exec(`UPDATE runs SET status = '${status}' WHERE run_id = ?`, RUN);
+
+      expect(storage.settleBlockRun({
+        blockRunId: "block-run-1",
+        status: "completed",
+        markdown: "still ours",
+        errorJson: null,
+        fence,
+        now: NOW,
+      })).toBe("written");
+      expect(sql.exec(`SELECT status, markdown FROM block_dashboard_block_runs`).toArray())
+        .toEqual([{ status: "completed", markdown: "still ours" }]);
+    });
+  }
+
   it("refuses a result from an attempt the run has replaced", () => {
     const { storage, sql } = open();
     storage.admitDispatch(dispatch());

@@ -258,6 +258,29 @@ describe("the run lease every receipt write is fenced against", () => {
     ["the run left running", `UPDATE runs SET status = 'completed'`, "ownership_lost"],
   ] as const;
 
+  /**
+   * The statuses the retired `_runtime_harness_runs` view projected as
+   * `running`. Nothing writes either one today, so these two cases pass on the
+   * `runs` CHECK constraint's vocabulary rather than on a path the product can
+   * reach — which is the point: the fence is what would silently start
+   * refusing settled receipts if a writer ever appeared.
+   */
+  for (const status of ["waiting", "steering"] as const) {
+    it(`still holds the lease while the run is ${status}`, () => {
+      const { storage, sql } = open();
+      storage.admit(plan());
+      sql.exec(`UPDATE runs SET status = '${status}'`);
+
+      expect(storage.complete({
+        effectIntentId: "effect-1", checkpointIndex: 1, outputRef: "ref",
+        outputSummary: "done", providerOperationId: null, payloadJson: "{}",
+        allowAmbiguousReconciliation: false, fence, now: NOW,
+      })).toBe("persisted");
+      expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
+        .toEqual([{ status: "completed" }]);
+    });
+  }
+
   for (const [because, breakFence, outcome] of lost) {
     it(`refuses to admit when ${because}`, () => {
       const { storage, sql } = open();
