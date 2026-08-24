@@ -101,7 +101,8 @@ to route around it.
    from: no results route, no persistent view, no second home screen.
 8. A person who wants more of one kind — every matching document, not the best
    five — can get it in one keystroke without leaving the palette, and can get
-   back to the mixed list in one more.
+   back to the mixed list in one more. (`→` in, `←` out; the interaction is
+   [Scoping to one group](#scoping-to-one-group).)
 
 ## Non-goals
 
@@ -320,38 +321,6 @@ filtered statement that produced the rows rather than by a second query that
 could drift from it, and it is the total *minus what is on screen* — reporting
 the total says `3 MORE RESULTS` when all three matches are already visible.
 
-**Scoping to one group.** Five rows is a preview, and a preview a person cannot
-open past is a taunt: `12 MORE RESULTS` under **Documents** is worse than
-useless if the twelve are unreachable. So a group can be entered. `→` on any row
-scopes the palette to that row's group; so does clicking the group's heading, or
-its own `N more` affordance. Nothing navigates and nothing opens — the panel
-stays exactly where it is, the query text is untouched, and the group's heading
-becomes a scope chip beside the field reading **Documents**. The other groups
-drop away, and the surviving one pages rather than truncating: it fills the
-panel, and scrolling or `↓` past the last row asks for more.
-
-`←` clears the scope and restores the mixed list. So does `Backspace` when the
-caret is at the start of an empty query, which is the gesture the mention
-composer already trains. `Esc` still closes the whole palette rather than
-stepping back one level, because a person reaching for `Esc` wants out, not up.
-
-Scoping re-runs the query rather than filtering what is already on screen —
-otherwise **Documents** could only ever show the five it had. The scoped request
-is the same statement with the group bound and the per-group bound raised; the
-footer's count becomes that group's remainder.
-
-One consequence worth stating, because it makes the scoped path *simpler* rather
-than harder: the client-side matcher holds work streams, notes, automations,
-people, and actions, and never documents or messages. **Documents** and
-**Messages** are therefore server-only in both modes, so a scope on either has no
-client/server merge to reconcile and no de-duplication to do. The scopes that do
-have a local half are the ones whose unscoped groups were least likely to need
-drilling into.
-
-While a scope is applied and the request has failed or the app is offline, the
-scoped list is not merely empty — it says so, in the same quiet line, because an
-empty **Documents** scope and an unreachable one look identical otherwise.
-
 **No matches.** Search never shows an empty panel. The action row **Start a work
 stream: "<query>"** is always present and always last, and becomes the selected
 row when nothing else matched. `⏎` on it opens the new-work-stream surface with
@@ -382,6 +351,40 @@ mount is the work-stream header. The one surface-wide notice is
 `app-shell.tsx`'s connection banner, which renders only after a navigation query
 has already errored. So the palette's own line is the whole signal a person gets
 on home, notes, and automations, and it has to stand alone.
+
+### Scoping to one group
+
+Five rows is a preview, and a preview a person cannot open past is a taunt:
+`12 MORE RESULTS` under **Documents** is worse than useless if the twelve are
+unreachable. So a group can be entered. `→` on any row
+scopes the palette to that row's group; so does clicking the group's heading, or
+its own `N more` affordance. Nothing navigates and nothing opens — the panel
+stays exactly where it is, the query text is untouched, and the group's heading
+becomes a scope chip beside the field reading **Documents**. The other groups
+drop away, and the surviving one pages rather than truncating: it fills the
+panel, and scrolling or `↓` past the last row asks for more.
+
+`←` clears the scope and restores the mixed list. So does `Backspace` when the
+caret is at the start of an empty query, which is the gesture the mention
+composer already trains. `Esc` still closes the whole palette rather than
+stepping back one level, because a person reaching for `Esc` wants out, not up.
+
+Scoping re-runs the query rather than filtering what is already on screen —
+otherwise **Documents** could only ever show the five it had. The scoped request
+is the same statement with the group bound and the per-group bound raised; the
+footer's count becomes that group's remainder.
+
+One consequence worth stating, because it makes the scoped path *simpler* rather
+than harder: the client-side matcher holds work streams, notes, automations,
+people, and actions, and never documents or messages. **Documents** and
+**Messages** are therefore server-only in both modes, so a scope on either has no
+client/server merge to reconcile and no de-duplication to do. The scopes that do
+have a local half are the ones whose unscoped groups were least likely to need
+drilling into.
+
+While a scope is applied and the request has failed or the app is offline, the
+scoped list is not merely empty — it says so, in the same quiet line, because an
+empty **Documents** scope and an unreachable one look identical otherwise.
 
 ### Results are a read, not a subscription
 
