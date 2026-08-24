@@ -3514,11 +3514,6 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         parentToolCallId: context.toolCallId,
         objective: args.objective,
         maxChainRuns: numericEnv(options.env, "HARNESS_CHILD_MAX_CHAIN_RUNS", 4),
-        maxActiveWorkspaceChildren: numericEnv(
-          options.env,
-          "HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS",
-          8,
-        ),
         maxDepth: numericEnv(options.env, "HARNESS_CHILD_MAX_DEPTH", 1),
         leaseSeconds: 120,
       };

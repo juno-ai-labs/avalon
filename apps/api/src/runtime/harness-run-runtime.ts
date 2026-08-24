@@ -71,7 +71,7 @@ export type InlineChildAdmission =
   | { state: "busy"; childInput: HarnessRunCoordinates; leaseExpiresAt: string | null }
   | {
       state: "refused";
-      reason: "chain_budget_exhausted" | "workspace_child_capacity" | "depth_limit";
+      reason: "chain_budget_exhausted" | "depth_limit";
     };
 
 export interface AdmitInlineChildOptions extends Partial<AttemptIdentity> {
@@ -79,7 +79,6 @@ export interface AdmitInlineChildOptions extends Partial<AttemptIdentity> {
   objective: string;
   childHarnessRunId?: HarnessRunId;
   maxChainRuns?: number;
-  maxActiveWorkspaceChildren?: number;
   maxDepth?: number;
   leaseSeconds?: number;
 }
@@ -359,10 +358,6 @@ export async function admitInlineChildAttempt(
     leaseSeconds: Math.max(10, Math.min(300, Math.trunc(options.leaseSeconds ?? 60))),
     maxDepth: Math.max(1, Math.min(16, Math.trunc(options.maxDepth ?? 2))),
     maxChainRuns: Math.max(2, Math.min(64, Math.trunc(options.maxChainRuns ?? 4))),
-    maxActiveChildren: Math.max(
-      1,
-      Math.min(64, Math.trunc(options.maxActiveWorkspaceChildren ?? 8)),
-    ),
     lifecycleEventId: uuidV7(),
     now: Date.now(),
   });
@@ -373,14 +368,7 @@ export async function admitInlineChildAttempt(
   if (admitted.outcome === "parent_scope_missing") {
     throw new Error("inline_child_parent_scope_missing");
   }
-  if (admitted.outcome === "refused") {
-    return {
-      state: "refused",
-      reason: admitted.reason === "child_capacity"
-        ? "workspace_child_capacity"
-        : admitted.reason,
-    };
-  }
+  if (admitted.outcome === "refused") return { state: "refused", reason: admitted.reason };
 
   const childInput = {
     workspaceId: parentInput.workspaceId,
