@@ -174,7 +174,9 @@ const realtimeSocketProperties = z.object({
   attempts: countBucket,
 }).strict().superRefine((value, context) => {
   // The one combination that is not a measurement but a mistake: a socket that
-  // opened has no failure cause, and a failure cause did not open a socket.
+  // opened has no failure cause, and a failure cause did not open a socket. The
+  // message is a validation code for whoever reads a rejection, never a value
+  // any destination sees: a refused event is not sent at all.
   if ((value.state === "connected") !== (value.cause === "opened")) {
     context.addIssue({ code: "custom", message: "realtime_socket_state_cause_invalid" });
   }

@@ -24,9 +24,10 @@ export interface NameableWorkstream {
  * closes that: past the grace the provisional title is the title, whatever the
  * row still says.
  *
- * A creation time that cannot be read is treated as past the grace for the same
+ * A creation time that is missing or unparsable — the two ways `Date.parse`
+ * here returns something non-finite — is treated as past the grace for the same
  * reason. The skeleton is a promise that a name is seconds away, and a row that
- * cannot say when it was created cannot say the promise is still live — so it
+ * cannot say when it was created cannot say the promise is still live, so it
  * shows the title it has rather than shimmering for good.
  */
 export function useNamingSkeleton(workstream: NameableWorkstream): boolean {
