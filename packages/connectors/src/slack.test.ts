@@ -292,6 +292,124 @@ describe("Slack connector", () => {
     expect(SlackWorkspaceBotScopes).not.toContain("search:read.private");
   });
 
+  it("asks Slack who a personal token belongs to when the OAuth body names nobody", async () => {
+    const calls: string[] = [];
+    const fetcher: FetchLike = vi.fn(async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      calls.push(url.pathname);
+      // Slack documents `oauth.v2.user.access` only as RFC 6749 compliant, and
+      // an RFC token response carries no identity. This is that response.
+      if (url.pathname.endsWith("oauth.v2.user.access")) return json({
+        ok: true,
+        access_token: "xoxp-user",
+        token_type: "user",
+        scope: "search:read.public,chat:write",
+        team: { id: "TACME", name: "Acme" },
+      });
+      if (url.pathname.endsWith("auth.test")) {
+        expect(init?.headers).toBeDefined();
+        return json({ ok: true, user_id: "UADA", team_id: "TACME" });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: fetcher,
+    });
+
+    await expect(adapter.handleAuthorizationCallback!({ code: "user-code", codeVerifier: "verifier", connectionScope: "personal" }))
+      .resolves.toMatchObject({
+        providerAccountId: "TACME:UADA",
+        slackUserId: "UADA",
+        userAccessToken: "xoxp-user",
+        teamId: "TACME",
+      });
+    expect(calls).toEqual(["/api/oauth.v2.user.access", "/api/auth.test"]);
+  });
+
+  it("does not spend an auth.test call when the OAuth body already names the user", async () => {
+    const calls: string[] = [];
+    const fetcher: FetchLike = vi.fn(async (input) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      calls.push(url.pathname);
+      if (url.pathname.endsWith("oauth.v2.user.access")) return json({
+        ok: true,
+        access_token: "xoxp-user",
+        authed_user: { id: "UADA", scope: "chat:write" },
+        team: { id: "TACME", name: "Acme" },
+      });
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: fetcher,
+    });
+
+    await expect(adapter.handleAuthorizationCallback!({ code: "user-code", codeVerifier: "verifier", connectionScope: "personal" }))
+      .resolves.toMatchObject({ providerAccountId: "TACME:UADA", slackUserId: "UADA" });
+    expect(calls).toEqual(["/api/oauth.v2.user.access"]);
+  });
+
+  it("attributes every OAuth callback failure to the phase that produced it", async () => {
+    const respond = new Map<string, () => Response>();
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: async (input) => {
+        const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+        const handler = respond.get(url.pathname);
+        if (!handler) throw new Error(`Unexpected URL ${url}`);
+        return handler();
+      },
+    });
+    const failure = async (): Promise<ConnectorError> => {
+      try {
+        await adapter.handleAuthorizationCallback!({ code: "user-code", codeVerifier: "verifier", connectionScope: "personal" });
+      } catch (error) {
+        return error as ConnectorError;
+      }
+      throw new Error("The callback resolved where it was expected to fail");
+    };
+
+    // Slack refused the code. Its own vocabulary is what an operator needs, and
+    // it must survive the stage being attached.
+    respond.set("/api/oauth.v2.user.access", () => json({ ok: false, error: "invalid_code" }));
+    expect(await failure()).toMatchObject({
+      code: "provider_error",
+      details: { oauthStage: "token_exchange", error: "invalid_code" },
+    });
+
+    // Slack answered, but with nothing this connection can be built from.
+    respond.set("/api/oauth.v2.user.access", () => json({ ok: true, team: { id: "TACME" } }));
+    expect(await failure()).toMatchObject({
+      code: "provider_error",
+      details: { oauthStage: "account_identity", responseInvalid: true },
+    });
+
+    // A token arrived, and Slack still would not name its owner.
+    respond.set("/api/oauth.v2.user.access", () => json({ ok: true, access_token: "xoxp-user", team: { id: "TACME" } }));
+    respond.set("/api/auth.test", () => json({ ok: true }));
+    expect(await failure()).toMatchObject({
+      code: "provider_error",
+      details: { oauthStage: "account_identity", responseInvalid: true },
+    });
+
+    // The identity lookup itself was refused. That is Slack's answer, not ours.
+    respond.set("/api/auth.test", () => json({ ok: false, error: "token_revoked" }));
+    expect(await failure()).toMatchObject({
+      code: "unauthorized",
+      details: { oauthStage: "account_identity", error: "token_revoked" },
+    });
+  });
+
   it("keeps legacy personal grants on their reviewed static surface", async () => {
     const fetcher: FetchLike = vi.fn(async (input) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);

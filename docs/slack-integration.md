@@ -534,6 +534,21 @@ not own:
   Without it, events that arrived during an outage stayed failed forever with their
   payload still on the row — and a `link_shared` Slack reports exactly once is never
   redelivered, so the message keeps its bare URL permanently.
+- **A personal connection's Slack identity comes from `auth.test`, not from the
+  OAuth body.** Slack publishes no response shape for `oauth.v2.user.access` and
+  describes it only as RFC 6749 compliant — an RFC token response carries a
+  token and no identity — so `authed_user.id` is present or absent at Slack's
+  discretion. Reading it and failing when it is missing is what made every
+  personal connection fail after the member had already approved the grant.
+  `auth.test` names the principal a token belongs to, needs no scope, and is
+  consulted only when the body named nobody.
+- **Every OAuth callback failure carries the phase that produced it.**
+  `classifyConnectorOAuthCallbackFailure` relays `oauthStage` and drops provider
+  messages, so an unreachable Slack, a non-JSON body, and a `{ok: true}` body
+  with no usable identity used to log one indistinguishable
+  `connector_code: "provider_error"`. `slackOAuthCallbackStage` fills that
+  field; read `stage` with `provider_error`, `provider_status`,
+  `response_invalid`, and `timed_out` on `connector_oauth_callback_failed`.
 - **Retries with the same `event_id` and body are acknowledged once; reuse of an
   event ID with different content is a conflict.**
 - **A denied prompt is retained regionally for at most 24 hours** so the same
@@ -627,6 +642,7 @@ not own:
 | Suite | Covers |
 | --- | --- |
 | `apps/api/test/slack-agent-ingress.test.ts` | Signature verification, the replay window, dedupe, the ingress job written before acknowledgement, and the manifest read from `config/provider-apps/slack.json`. |
+| `packages/connectors/src/slack.test.ts` | The two authorization flows kept apart, the personal identity resolved from `auth.test` when the OAuth body names nobody, that a body which does name one spends no extra call, and the stage each callback failure is attributed to. |
 | `packages/connectors/src/slack-reactions.test.ts` | Override resolution, partial inheritance, the malformed-override fallback, and the rotation's wrap. |
 | `packages/connectors/src/slack-markdown.test.ts` | Block rendering, the notification fallback, and every split rule including the reopened fence. |
 | `apps/api/test/slack-account-link.test.ts` | Both routes to a link, mint-on-click, retirement ordering and its mint-time bound, and each refusal reason. |
@@ -732,6 +748,56 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 This document predates the [module document](module-documents.md) convention and
 had no changelog until the entries below; the reasoning behind everything above them
 was not recorded and is not reconstructed here.
+
+### 2026-08-24 — A personal connection stopped depending on a response shape Slack does not publish
+
+**What changed:** The personal OAuth callback resolves the member's Slack user
+id from `auth.test` when `oauth.v2.user.access` does not carry one, instead of
+failing. `auth.test`'s response schema now types the `user_id` and `team_id` it
+has always returned. Alongside it, `slackOAuthCallbackStage` attaches
+`oauthStage` to every failure out of `handleAuthorizationCallback`
+(`token_exchange`, `account_identity`, `workspace_eligibility`), and the two
+throws that fire on an unusable-but-successful response carry
+`responseInvalid`. The workspace flow is unchanged in behaviour; it only gained
+the same attribution.
+
+**Why:** Personal Slack could not be connected at all. Both
+`connector_oauth_callback_failed` rows in the Workers Logs retention window —
+2026-08-21T19:46:54Z and 2026-08-24T17:42:09Z, and three more before it, named
+in `connector-oauth-error.ts` — are Slack, and every one of them logged
+`connector_code: "provider_error"` and nothing else. That absence is what
+located the fault: a Slack `{ok: false}` would have carried its error code, a
+schema mismatch would have set `response_invalid`, and a non-2xx would have set
+`provider_status`. None appeared, which leaves the throw sites that attach no
+details at all — and of those, only `!accessToken || !userId` is deterministic
+enough to fail five times across three weeks while the workspace flow, on the
+same host through the same fetcher, kept succeeding. Slack's own documentation
+does not publish what `oauth.v2.user.access` returns; it says the method is RFC
+6749 compliant, and an RFC 6749 token response has no identity in it. Avalon
+was reading `authed_user.id` off a body Slack never promised would have one,
+and spending the member's grant to find out.
+
+**Considered and rejected:** Guessing more keys — `user_id`, `user.id`, a
+flattened `authed_user_id` — which is the same mistake at a wider aperture, and
+whose failure mode is identical and equally silent. Relaxing
+`SlackOAuthSuccessSchema` so a body without `team` still parses: the logs rule
+that case out (it would have set `response_invalid`), so it would have been
+untested code written against an imagined failure. Widening
+`classifyConnectorOAuthCallbackFailure` to relay the provider's *message*: that
+module's comment derives its safety from relaying only short identifier-shaped
+codes from fields that hold codes by construction, and a message is where
+providers quote the request back.
+
+**Consequences:** The identity lookup costs one extra Slack call, and only on
+the path that was previously a dead end — a body carrying `authed_user.id`
+short-circuits before it, which is asserted rather than left to inspection. Its
+10-second timeout is the one the two sibling calls in the same function already
+use, not a new number. If a personal connection still fails after this, the
+failure now names its phase: `stage: "account_identity"` with
+`response_invalid` means Slack returned a token and would not say whose,
+`stage: "token_exchange"` with `provider_error` is Slack refusing the code, and
+a bare `stage` with neither is the network. That is the diagnosis this incident
+cost three weeks to reach by elimination.
 
 ### 2026-08-23 — A linked member's message stopped impersonating a login
 
