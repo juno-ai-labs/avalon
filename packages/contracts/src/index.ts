@@ -2121,6 +2121,17 @@ export type BlockDashboardBlockSocketEvent = z.infer<typeof BlockDashboardBlockS
  */
 export const WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE = 1008;
 
+/**
+ * Application close codes for failures on an admitted workspace command
+ * socket. They deliberately do not reuse `1008`: released desktops reserve
+ * that code on the workspace command channel for a real access revocation and
+ * stop reconnecting when they see it, so using it there for a malformed frame
+ * or expired session tells the member a permission was withdrawn when no such
+ * decision occurred.
+ */
+export const WORKSPACE_SOCKET_INVALID_MESSAGE_CODE = 4400;
+export const WORKSPACE_SOCKET_SESSION_INACTIVE_CODE = 4401;
+
 export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("snapshot"),

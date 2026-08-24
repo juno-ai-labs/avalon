@@ -23,6 +23,7 @@ import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import {
+  WorkspaceOpportunityClaimStartResultSchema,
   WorkspaceOpportunityRankingCandidatesResultSchema,
 } from "../src/durable-objects/workspace-opportunity-protocol";
 
@@ -136,7 +137,7 @@ async function dismiss(opportunityId: string, userId: string): Promise<void> {
     userId,
     opportunityId,
     now: NOW,
-  })).resolves.toBe(true);
+  })).resolves.toMatchObject({ dismissed: true });
 }
 
 /**
@@ -439,14 +440,16 @@ describe("the ranking pipeline the workspace object owns", () => {
   describe("completeOpportunityStart — the third leg of the claim ledger", () => {
     it("records the work stream the claim created and takes the suggestion off screen", async () => {
       const opportunityId = await seedOpportunity();
-      const claim = await workspace().claimOpportunityStart({
-        workspaceId: WORKSPACE_ID,
-        userId: MEMBER,
-        opportunityId,
-        now: NOW,
-        version: 1,
-        idempotencyKey: "start-once",
-      });
+      const claim = WorkspaceOpportunityClaimStartResultSchema.parse(
+        await workspace().claimOpportunityStart({
+          workspaceId: WORKSPACE_ID,
+          userId: MEMBER,
+          opportunityId,
+          now: NOW,
+          version: 1,
+          idempotencyKey: "start-once",
+        }),
+      );
       expect(claim.outcome).toBe("claimed");
 
       await workspace().completeOpportunityStart({
@@ -525,5 +528,98 @@ describe("the ranking pipeline the workspace object owns", () => {
       ));
       expect(stored.created_workstream_id).toBeNull();
     });
+  });
+
+  it("returns visibility-filtered telemetry context with each member action", async () => {
+    const opportunityId = await seedOpportunity();
+    const firstImpressedAt = Date.parse("2026-08-19T11:55:00.000Z");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO work_opportunity_user_states (
+           opportunity_id, user_id, status, impression_count, first_impressed_at,
+           last_impressed_at, resolved_at, created_workstream_id, updated_at
+         ) VALUES (?, ?, 'impressed', 2, ?, ?, NULL, NULL, ?)`,
+        opportunityId,
+        MEMBER,
+        firstImpressedAt,
+        firstImpressedAt,
+        firstImpressedAt,
+      );
+      const nodes = [
+        ["00000000-0000-7000-8000-0000000008b1", "slack", "workspace", null],
+        ["00000000-0000-7000-8000-0000000008b2", "linear", "personal", MEMBER],
+        ["00000000-0000-7000-8000-0000000008b3", "github", "personal", OTHER],
+      ] as const;
+      for (const [nodeId, provider, visibilityScope, visibilityUserId] of nodes) {
+        state.storage.sql.exec(
+          `INSERT INTO opportunity_provenance_nodes (
+             node_id, node_kind, source_id, provider, provider_tenant_id, canonical_url,
+             label, occurred_at, visibility_scope, visibility_user_id, locator_json, created_at
+           ) VALUES (?, 'activity', ?, ?, NULL, NULL, ?, ?, ?, ?, '{}', ?)`,
+          nodeId,
+          nodeId,
+          provider,
+          `${provider} source`,
+          firstImpressedAt,
+          visibilityScope,
+          visibilityUserId,
+          firstImpressedAt,
+        );
+      }
+      nodes.forEach(([nodeId], position) => {
+        state.storage.sql.exec(
+          `INSERT INTO work_opportunity_provenance_roots (opportunity_id, node_id, position)
+           VALUES (?, ?, ?)`,
+          opportunityId,
+          nodeId,
+          position,
+        );
+      });
+    });
+
+    const impressions = await workspace().recordOpportunityImpressions({
+      workspaceId: WORKSPACE_ID,
+      userId: MEMBER,
+      opportunityIds: [opportunityId],
+      now: NOW,
+      rerankBefore: "2026-08-19T11:00:00.000Z",
+    });
+    const expectedContext = {
+      opportunityId,
+      version: 1,
+      audienceScope: "workspace",
+      createdAt: "2026-08-01T00:00:00.000Z",
+      impressionCount: 3,
+      firstImpressedAt: "2026-08-19T11:55:00.000Z",
+      connectorTypes: ["linear", "slack"],
+    };
+    expect(impressions).toEqual([expectedContext]);
+
+    const claim = WorkspaceOpportunityClaimStartResultSchema.parse(
+      await workspace().claimOpportunityStart({
+        workspaceId: WORKSPACE_ID,
+        userId: MEMBER,
+        opportunityId,
+        now: NOW,
+        version: 1,
+        idempotencyKey: "telemetry-context",
+      }),
+    );
+    expect(claim.telemetryContext).toEqual(expectedContext);
+    await workspace().releaseOpportunityStart({
+      workspaceId: WORKSPACE_ID,
+      userId: MEMBER,
+      opportunityId,
+      now: NOW,
+      version: 1,
+      idempotencyKey: "telemetry-context",
+    });
+
+    await expect(workspace().dismissOpportunity({
+      workspaceId: WORKSPACE_ID,
+      userId: MEMBER,
+      opportunityId,
+      now: NOW,
+    })).resolves.toEqual({ dismissed: true, telemetryContext: expectedContext });
   });
 });

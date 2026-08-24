@@ -4,6 +4,58 @@ import type { MiddlewareHandler } from "hono";
 
 import { ApiError } from "../lib/api-error";
 
+interface RequestValidationIssue {
+  path: string;
+  code: string;
+}
+
+/**
+ * Preserve a parsed JSON body's structure without retaining any terminal
+ * member value. Numbers keep a numeric sentinel so an operator can distinguish
+ * a numeric field from every other JSON leaf; object keys, array positions,
+ * and empty containers remain visible as the rejected request's shape.
+ */
+function redactJsonBodyShape(value: unknown): unknown {
+  if (typeof value === "number") return -1;
+  if (Array.isArray(value)) return value.map(redactJsonBodyShape);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .map(([key, item]) => [key, redactJsonBodyShape(item)]),
+    );
+  }
+  return "***";
+}
+
+/**
+ * An input rejection with an operator-only, value-free diagnostic.
+ *
+ * `ApiError.details` is public response data, so validation paths cannot ride
+ * there. This subtype keeps the public envelope generic while allowing the
+ * error middleware to record only schema paths and Zod issue codes — never the
+ * rejected values, messages, regexes, or schema internals.
+ */
+export class RequestValidationError extends ApiError {
+  readonly validationIssues: RequestValidationIssue[];
+  readonly requestBody: unknown | undefined;
+
+  constructor(
+    readonly validationTarget: string,
+    issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; code: string }>,
+    input: unknown,
+  ) {
+    super(400, "invalid_request", "The request is invalid");
+    this.name = "RequestValidationError";
+    this.validationIssues = issues.slice(0, 25).map((issue) => ({
+      path: issue.path.map(String).join(".") || "(root)",
+      code: issue.code,
+    }));
+    this.requestBody = validationTarget === "json"
+      ? redactJsonBodyShape(input)
+      : undefined;
+  }
+}
+
 /**
  * Avalon-safe Zod validator.
  *
@@ -24,7 +76,7 @@ export const zValidator: typeof honoZValidator = ((
     schema,
     async (result, c) => {
       if (!result.success) {
-        throw new ApiError(400, "invalid_request", "The request is invalid");
+        throw new RequestValidationError(target, result.error.issues, result.data);
       }
       return hook?.(result, c);
     },

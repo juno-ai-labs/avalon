@@ -25,6 +25,7 @@ import {
   asWorkspaceId,
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
+  WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
 } from "@avalon/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
@@ -112,7 +113,7 @@ describe("an over-long message on the workspace command socket", () => {
   it("still closes on a frame that is malformed rather than long", async () => {
     // The guard runs ahead of the schema and must not have become the schema.
     // A frame this object cannot parse is a client defect, and the answer to one
-    // is still the close it always was.
+    // is the invalid-command close rather than the recoverable message error.
     const { socket, sent, closed } = connectedSocket();
 
     await runInDurableObject(workspace(), async (instance) => {
@@ -120,6 +121,9 @@ describe("an over-long message on the workspace command socket", () => {
     });
 
     expect(sent).toEqual([]);
-    expect(closed).toEqual([{ code: 1008, reason: "Invalid workspace socket event" }]);
+    expect(closed).toEqual([{
+      code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
+      reason: "Invalid workspace socket event",
+    }]);
   });
 });

@@ -6,6 +6,7 @@ import { ConnectorError } from "@avalon/connectors";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { logEvent } from "../observability/logger";
+import { RequestValidationError } from "./validation";
 
 export const notFoundHandler: NotFoundHandler<HonoAppEnv> = (c) =>
   c.json(
@@ -24,6 +25,7 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
   let code = "internal_error";
   let message = "An unexpected error occurred";
   let details: Record<string, unknown> | undefined;
+  let malformedJson = false;
 
   if (error instanceof ApiError) {
     ({ status, code, message, details } = error);
@@ -33,6 +35,7 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
     status = 400;
     code = "invalid_request";
     message = "The request is invalid";
+    malformedJson = true;
   } else if (error instanceof RepositoryError) {
     status = error.code === "not_found" ? 404 : error.code === "conflict" ? 409 : 500;
     code = error.code;
@@ -57,7 +60,24 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
     // Without the issue paths the log says only "internal_error", which names
     // neither the field nor the route; the paths and codes are schema shape, not
     // member data, so they are safe to record where the values would not be.
-    ...(error instanceof z.ZodError
+    ...(error instanceof RequestValidationError
+      ? {
+        path: c.req.path,
+        route: c.req.routePath,
+        method: c.req.method,
+        validation_target: error.validationTarget,
+        validation_issues: error.validationIssues,
+        ...(error.requestBody === undefined ? {} : { request_body: error.requestBody }),
+      }
+      : malformedJson
+        ? {
+          path: c.req.path,
+          route: c.req.routePath,
+          method: c.req.method,
+          validation_target: "json",
+          validation_issues: [{ path: "(root)", code: "invalid_json" }],
+        }
+        : error instanceof z.ZodError
       ? {
         path: c.req.path,
         // The template, not the resolved path: `/workstreams/:id` is what makes
