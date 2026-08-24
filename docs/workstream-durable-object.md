@@ -1063,6 +1063,25 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-24 — The scheduling migration renumbers to 20, because 19 was taken
+
+**What changed:** `schedulingAuthorityPromotion` is object schema migration 20,
+and `WORKSTREAM_OBJECT_SCHEMA_VERSION` is 20.
+
+**Why:** it was written as 19 and 19 landed on `main` first — the participant
+`first_opened_at` migration — while this branch was open. This is the collision
+`docs/pull-requests.md` warns about, and it is worth writing down what it looks
+like: the two claims are at the same position in the same array, so a *rebase*
+conflicts and the renumber is forced. Had they been appended at different
+positions, Git would have merged them cleanly into one list with two entries
+numbered 19, the runner would have applied whichever came first and skipped the
+other as already-applied, and the object would have carried a version number
+whose meaning depended on merge order. Nothing would have failed at build time.
+
+**What a future change has to respect:** confirm the number against `main` at
+merge time, not only when the migration is written. The gap between the two is
+where somebody else's release lands.
+
 ### 2026-08-24 — What a review found in the scheduling slice, and one test that was proving nothing
 
 **What changed:** five fixes, from a review of the rebased slice.
@@ -1292,7 +1311,7 @@ making when something needs it.
 `compaction_checkpoints`, `description_refresh_state`,
 `plugin_activation_hints` and the reads of `elicitation_requests`, reached
 through a typed port and an `/internal/scheduling` endpoint. Object schema
-migration 19 drops four `_runtime_*` views and their seven triggers, and those
+migration 20 drops four `_runtime_*` views and their seven triggers, and those
 four tables leave the routing and rewrite lists. This is slice 3 of
 [the compat-layer retirement](PRDs/2026-08-22_retiring-the-runtime-compat-layer/prd.md).
 
