@@ -1325,6 +1325,8 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       // dot would be indistinguishable from a bug. `added_at` is the honest
       // stand-in: it is when they could first have opened it.
       `UPDATE participants SET first_opened_at = added_at WHERE first_opened_at IS NULL`,
+      // The column has to survive the two paths this object does not own.
+      ...participantCompatTriggersResettingFirstOpened(),
     ],
   },
 ];
@@ -1777,6 +1779,61 @@ function rebuiltToolInvocationsUpdateTriggerForTranscriptSettlement(): string[] 
         WHERE parts.id = OLD.id AND parts.message_type = 'tool'
           AND NEW.status IN ('completed', 'failed', 'ambiguous');`);
   return ["DROP TRIGGER IF EXISTS _runtime_tool_invocations_update", patched];
+}
+
+/**
+ * Makes a re-add through the runtime compatibility views leave the work stream
+ * unseen again, the way a re-add through the product path does.
+ *
+ * Two writers can bring a removed participant back, and neither is this
+ * object's own code: `admitConnectorAudience` re-admits somebody the moment
+ * they speak in the Slack thread a work stream came from, and an agent tool can
+ * clear `removed_at` through the update view. Both reach `participants` through
+ * an INSTEAD OF trigger written before `first_opened_at` existed, so the old
+ * timestamp survived the reactivation — the person was notified again, their
+ * participant epoch bumped again, and the marker stayed on whatever the run was
+ * doing. Being put back into a room you were taken out of is being added to it;
+ * the marker now says so on every path that can do it.
+ *
+ * The reset is keyed to exactly the transition each trigger already bumps the
+ * epoch for, so the three facts a re-add produces — a new epoch, a fresh
+ * notification, an unseen marker — cannot disagree about whether one happened.
+ *
+ * Derived from `roundedCompatTriggerRebuilds` rather than from the v1 array,
+ * because v1's text is not what is installed: migration 3 replaced both of
+ * these with rounding variants, and rebuilding from v1 would silently reinstate
+ * the truncation that cost half of all runs their terminal state.
+ */
+function participantCompatTriggersResettingFirstOpened(): string[] {
+  const rebuilt = new Map(roundedCompatTriggerRebuilds()
+    .filter((statement) => statement.startsWith("CREATE TRIGGER"))
+    .map((statement) => [/CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1] ?? "", statement]));
+
+  const insert = rebuilt.get("_runtime_workstream_participants_insert");
+  if (!insert) throw new Error("participant insert compat trigger not found");
+  const insertAnchor = `          participant_epoch = CASE WHEN participants.status = 'removed' AND excluded.status = 'active'
+            THEN participants.participant_epoch + 1 ELSE participants.participant_epoch END,`;
+  if (!insert.includes(insertAnchor)) throw new Error("participant insert conflict branch changed");
+
+  const update = rebuilt.get("_runtime_workstream_participants_update");
+  if (!update) throw new Error("participant update compat trigger not found");
+  const updateAnchor = `          participant_epoch = participant_epoch + CASE
+            WHEN (OLD.removed_at IS NULL) != (NEW.removed_at IS NULL) THEN 1 ELSE 0 END,`;
+  if (!update.includes(updateAnchor)) throw new Error("participant update epoch clause changed");
+
+  return [
+    "DROP TRIGGER IF EXISTS _runtime_workstream_participants_insert",
+    insert.replace(insertAnchor, `${insertAnchor}
+          first_opened_at = CASE WHEN participants.status = 'removed' AND excluded.status = 'active'
+            THEN NULL ELSE participants.first_opened_at END,`),
+    "DROP TRIGGER IF EXISTS _runtime_workstream_participants_update",
+    // Only one direction of the epoch's condition: being removed is not being
+    // shown the work stream again.
+    update.replace(updateAnchor, `${updateAnchor}
+          first_opened_at = CASE
+            WHEN OLD.removed_at IS NOT NULL AND NEW.removed_at IS NULL THEN NULL
+            ELSE first_opened_at END,`),
+  ];
 }
 
 /**

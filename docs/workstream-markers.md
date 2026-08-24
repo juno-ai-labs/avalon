@@ -25,6 +25,7 @@ which state wins.
 | `config/design-tokens/registry.json` | The `sys.color.workstream` group: one token per state. |
 | `apps/desktop/src/renderer/styles/app.css` | `.status-<state> .status-dot` — one rule per state, each naming its token. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | The authority for the three personal states: `member_attention` for unread and mentions, `participants.first_opened_at` for unseen. |
+| `apps/api/src/durable-objects/workstream-object-schema.ts` | Migration v18: the column, its backfill, and the rebuilt `_runtime_workstream_participants` triggers that keep a re-add through the compatibility views unseen. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `workspace_workstream_viewers`, the per-person projection the sidebar list is read from. |
 
 ## How it works
@@ -52,9 +53,14 @@ the work stream:
   assembler behind `GET /workstreams/:id` and the socket snapshot — calls
   `markOpened` before it reads, so the detail that open returns already says
   seen.
-- **Being removed and re-added sets it again.** The work stream moved on without
-  them, and the add is announced to them again; the participant epoch beside it
-  says the same thing.
+- **Being removed and re-added sets it again**, on every path that can do it.
+  The work stream moved on without them, and the add is announced to them again;
+  the participant epoch beside it says the same thing. Two of those paths are
+  not this object's own code — `admitConnectorAudience` re-admits somebody the
+  moment they speak in the Slack thread a work stream came from, and an agent
+  tool can clear `removed_at` through the update view — so the compatibility
+  views' INSTEAD OF triggers reset the column too, keyed to exactly the
+  transition each already bumps the epoch for.
 
 Both halves ride the same `directory_user` regional effect into
 `workspace_workstream_viewers`, so the sidebar's list, the work-stream socket's
@@ -104,6 +110,13 @@ regardless of which state put it there.
 - **`unseen` is settled once.** Nothing sets `first_opened_at` back to null
   except a removal followed by a re-add. A later message makes a work stream
   unread, never new again.
+- **A new writer of `participants` owes the column an answer.** The membership
+  row is reachable through the runtime compatibility views as well as through
+  this object's own methods, and a writer that reactivates a removed row without
+  resetting `first_opened_at` produces a person who is notified about a work
+  stream, has their epoch bumped, and is shown no marker. The rule that keeps
+  the three honest: **wherever the participant epoch bumps for removed → active,
+  `first_opened_at` resets.**
 - **Only a participant can be unseen.** Somebody reading a workspace-scoped work
   stream they are not in was never put there, so there is nothing for them to
   have missed.
@@ -154,6 +167,7 @@ own:
 | `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | **Needs attention** holds the four states, ordered by recency. | `pnpm --filter @avalon/desktop exec vitest run src/renderer/screens/new-workstream.test.tsx` |
 | `apps/api/test-workers/unseen-workstream-state.test.ts` | On real workerd: added at creation, added later, cleared by the first open, unchanged by a duplicate add, set again by a re-add. | `pnpm --filter @avalon/api test:workers` |
 | `apps/api/test-workers/workspace-directory-reads.test.ts` | The flag survives the workspace projection as the viewer's rather than the row's. | as above |
+| `apps/api/test/workstream-object-schema.test.ts` | Both compatibility views reset the column on a re-add, and leave it alone on a removal. | `pnpm --filter @avalon/api exec vitest run test/workstream-object-schema.test.ts` |
 
 The workers suite starts with no schema and seeds the D1 tables it needs; the
 unseen tests reach the state through the real product endpoint rather than by
@@ -207,6 +221,12 @@ instead, which is a durable write inside what reads like a read. Keeping the
 old per-state colours (`sys.color.warning` for needs-input, the accent for both
 running and unread) — with eight states competing, two of them shared the accent
 and neither could be told from the other.
+
+**Also:** the two runtime compatibility triggers that write `participants`
+were rebuilt in the same migration, because both reactivate a removed
+participant and neither knew about the new column — a member re-admitted by
+`admitConnectorAudience` when they next spoke in a Slack thread was notified
+again, had their epoch bumped again, and saw no marker.
 
 **Consequences:** `get` now writes on first open, which is a durable commit on
 the work-stream open path — guarded so it happens once per participant, but any
