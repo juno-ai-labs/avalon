@@ -52,7 +52,10 @@ the work stream:
 - **Opening clears it.** `WorkstreamObjectProductService.get` — the single
   assembler behind `GET /workstreams/:id` and the socket snapshot — calls
   `markOpened` before it reads, so the detail that open returns already says
-  seen.
+  seen. Deliberately the *open*, not the read acknowledgement the client sends
+  afterwards: that one is withheld unless the window is focused, the document
+  visible, and the transcript settled at its initial position, none of which is
+  what "have you been here" is asking.
 - **Being removed and re-added sets it again**, on every path that can do it.
   The work stream moved on without them, and the add is announced to them again;
   the participant epoch beside it says the same thing. Two of those paths are
@@ -255,11 +258,12 @@ two places in one order. Deriving unseen from the *existence* of a
 `member_attention` row — the closest cheap approximation — rejected because a
 mention writes that row, so being named in a work stream you have never opened
 would clear the very marker that should be shouting; and because no existing
-membership has one, so the deploy would light every dot in the product. Clearing it on `acknowledgeRead` — the
-client only sends that when a message it has not accounted for is on screen, so
-a work stream somebody opens with nothing new would never clear, and the dot
-would stay lit on the room they were looking at; the clear is on the open path
-instead, which is a durable write inside what reads like a read. Keeping the
+membership has one, so the deploy would light every dot in the product. Clearing it on `acknowledgeRead` — that is
+the client reporting what it has *read*, and it is withheld unless the window is
+focused, the document visible, and the transcript settled at its initial
+position, so an open can produce no acknowledgement at all; the clear is on the
+object's own open path instead, which is a durable write inside what reads like
+a read and depends on none of those conditions. Keeping the
 old per-state colours (`sys.color.warning` for needs-input, the accent for both
 running and unread) — with eight states competing, two of them shared the accent
 and neither could be told from the other.
