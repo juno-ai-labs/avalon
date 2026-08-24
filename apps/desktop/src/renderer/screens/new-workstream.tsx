@@ -9,7 +9,7 @@ import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import { formatRelative, workstreamMarkerStatus, workstreamNeedsAttention } from '../lib/format';
 import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { useDraftText } from '../lib/use-draft-text';
-import { mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
+import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
@@ -554,12 +554,16 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   };
 
   const beginMention = (): void => {
-    setMessage((current) => current.length === 0 || /\s$/u.test(current) ? `${current}@` : `${current} @`);
+    const started = draftWithMentionStarted(message, textareaRef.current?.selectionStart);
+    setMessage(started.value);
     setMentionQuery('');
     requestAnimationFrame(() => {
       const textarea = textareaRef.current;
       textarea?.focus();
-      textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
+      // Only while the draft is still the one this opened. A frame is enough
+      // room for a keystroke, and putting the caret back where the `@` went
+      // would drag it out of whatever was typed in the meantime.
+      if (textarea?.value === started.value) textarea.setSelectionRange(started.caret, started.caret);
     });
   };
 

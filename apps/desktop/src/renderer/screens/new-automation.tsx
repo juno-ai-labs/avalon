@@ -41,7 +41,7 @@ import {
   reportTelemetryProductIntent,
 } from '../lib/telemetry';
 import { useDraftText } from '../lib/use-draft-text';
-import { mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
+import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
@@ -792,12 +792,16 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   };
 
   const beginConnectionMention = (): void => {
-    setInput((current) => current.length === 0 || /\s$/u.test(current) ? `${current}@` : `${current} @`);
+    const started = draftWithMentionStarted(input, textareaRef.current?.selectionStart);
+    setInput(started.value);
     setMentionQuery('');
     requestAnimationFrame(() => {
       const textarea = textareaRef.current;
       textarea?.focus();
-      textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
+      // Only while the draft is still the one this opened. A frame is enough
+      // room for a keystroke, and putting the caret back where the `@` went
+      // would drag it out of whatever was typed in the meantime.
+      if (textarea?.value === started.value) textarea.setSelectionRange(started.caret, started.caret);
     });
   };
 

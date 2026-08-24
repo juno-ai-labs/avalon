@@ -3,7 +3,7 @@ import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { AvalonApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { NO_MENTIONS, useDraftText } from '../lib/use-draft-text';
-import { mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
+import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { AttachmentPreview } from './attachments';
@@ -174,22 +174,33 @@ export function WorkstreamComposer({
     });
   };
 
-  const beginMention = (): void => {
+  /**
+   * Opens a mention where the caret is. `from` replaces the draft it starts in,
+   * for the one caller that clears the composer first: `/participants` empties
+   * the draft and the textarea has not seen that yet when this runs, so reading
+   * the caret out of it would measure against the command that is being
+   * replaced.
+   */
+  const beginMention = (from?: string): void => {
     draftRevisionRef.current += 1;
-    setText((current) => current.length === 0 || /\s$/u.test(current) ? `${current}@` : `${current} @`);
+    const started = draftWithMentionStarted(from ?? text, from === undefined ? textareaRef.current?.selectionStart : from.length);
+    setText(started.value);
     setMentionQuery('');
     setSlashDismissed(true);
     requestAnimationFrame(() => {
       const textarea = textareaRef.current;
       textarea?.focus();
-      textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
+      // Only while the draft is still the one this opened. A frame is enough
+      // room for a keystroke, and putting the caret back where the `@` went
+      // would drag it out of whatever was typed in the meantime.
+      if (textarea?.value === started.value) textarea.setSelectionRange(started.caret, started.caret);
     });
   };
 
   const runCommand = async (command: ComposerCommand): Promise<void> => {
     if (command.id === 'participants') {
       setText('');
-      beginMention();
+      beginMention('');
       return;
     }
     resetDraft();
@@ -329,7 +340,11 @@ export function WorkstreamComposer({
         onAttach={onAttach}
         onKeyDown={(event) => {
           if (mentionNavigation.handleKeyDown(event)) return;
-          if (event.key === 'Escape') {
+          if (event.key === 'Escape' && (mentionQuery !== null || visibleCommands.length > 0)) {
+            // Prevented like the other two composers do, and only when there is
+            // something here to dismiss: an Escape this composer ignores should
+            // keep travelling to whatever else is listening for it.
+            event.preventDefault();
             if (mentionQuery !== null) setMentionQuery(null);
             if (visibleCommands.length > 0) setSlashDismissed(true);
           }

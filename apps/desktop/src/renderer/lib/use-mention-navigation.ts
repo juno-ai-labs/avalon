@@ -12,6 +12,30 @@ export function mentionQueryAtCaret(value: string, caret: number | null | undefi
 }
 
 /**
+ * The draft with an `@` opened where the caret is, and where the caret goes
+ * afterwards.
+ *
+ * At the caret rather than at the end of the draft: everything else about a
+ * mention is read from the caret now, and a control that jumps it to the end of
+ * the message to start one would undo a sentence someone came back to finish.
+ * The `@` needs whitespace before it or the query will not recognise what
+ * follows as a mention, so it brings its own unless it already sits at a
+ * boundary.
+ */
+export function draftWithMentionStarted(
+  value: string,
+  caret: number | null | undefined,
+): { value: string; caret: number } {
+  const at = caret ?? value.length;
+  const before = value.slice(0, at);
+  const prefix = before.length === 0 || /\s$/u.test(before) ? '' : ' ';
+  return {
+    value: `${before}${prefix}@${value.slice(at)}`,
+    caret: before.length + prefix.length + 1,
+  };
+}
+
+/**
  * The DOM id of one option, so the textarea can name the active one through
  * `aria-activedescendant`. Focus never moves onto these rows, so without it a
  * screen reader is told nothing when the highlight moves.
