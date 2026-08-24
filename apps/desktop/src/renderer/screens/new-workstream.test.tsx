@@ -160,7 +160,11 @@ describe('New work-stream home', () => {
     });
   });
 
-  it('shows only work streams waiting for input', async () => {
+  it('leaves out the work streams that ask this person for nothing', async () => {
+    // The fixture is four run states and no personal state, so `needs_input` is
+    // the only one of the three that can qualify — the name used to say the
+    // section was for waiting-for-input alone, which stopped being true when
+    // unseen and mentioned joined it.
     renderScreen();
 
     expect(await screen.findByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
