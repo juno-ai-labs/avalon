@@ -99,17 +99,30 @@ they *have* read shows as **Needs intervention**, because nothing outranks it
 any more. If the product wants a failure to shout over an unread message
 instead, that is one line: move `failed` above `unread` in `MARKER_PRECEDENCE`
 and update `workstreamNeedsAttention`, which today lists a failed run only when
-something unread, mentioned, or unseen puts it there.
+a mention or an unseen membership puts it there.
 
 ### Needs attention
 
-The home screen's **Needs attention** section holds every work stream that is
-asking something only this person can clear: unseen, mentioned, unread, or a run
-stopped for an answer. That is `workstreamNeedsAttention`, which asks the states
-rather than the marker — a running work stream with unread messages shows the
-run on its dot and is still something to read. The list is ordered by
+The home screen's **Needs attention** section holds the work streams that name
+this person: **unseen**, **mentioned**, or a run **stopped for an answer**. That
+is `workstreamNeedsAttention`, which asks the states rather than the marker, so
+a work stream showing a different dot can still be listed — a room somebody was
+added to is `unseen` here whatever its run is doing. The list is ordered by
 `lastActivityAt`, newest first, so what moved most recently is at the top
 regardless of which state put it there.
+
+**Unread is deliberately not one of them.** It was, and it swamped the section:
+unread is the ordinary condition of a work stream somebody is working in, so a
+person with a normal backlog saw most of what they had listed here and the one
+mention among them read exactly like the rest. The three that remain each have
+somebody's hand behind them — you were put in this room, you were named in it,
+or the agent stopped and asked you a question — and that is what keeps the list
+short enough to be worth reading. Unread has not gone anywhere: it is still a
+marker in the sidebar, in its own colour.
+
+That also bounds what a row can show. Only three markers can reach one: `unseen`
+and `mentioned` outrank everything in the ranking, and `needs_input` is the run's
+own state — so `app.css` carries a colour for those three and nothing else.
 
 ## Invariants
 
@@ -170,16 +183,16 @@ own:
 - **A person added to hundreds of work streams at once** sees hundreds of
   markers. There is no cap and no digest: the sidebar is already a list, and the
   states below it behave the same way.
-- **Needs attention is unbounded, and the section is on the home screen.** Its
-  membership went from "a run stopped for an answer" — rare — to anything
-  unseen, mentioned, or unread, which for a person with a normal backlog can be
-  most of what they have, rendered in full above the composer. No cap is written
-  here on purpose: a limit is a decision with a number, and the number belongs
-  to the team rather than to whoever noticed the problem
+- **Needs attention has no cap.** Its membership is bounded in practice by the
+  fact that all three states need somebody to have named this person, so the
+  section is short for the same reason it is worth reading. It is not bounded in
+  principle: somebody added to fifty work streams at once sees fifty rows above
+  the composer. No cap is written here on purpose — a limit is a decision with a
+  number, and the number belongs to the team rather than to whoever noticed
   ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
-  What a cap needs to decide: how many rows, what the overflow affordance is,
-  and which states survive the trim — dropping the oldest unread is not the same
-  call as dropping everything below a mention.
+  What a cap would need to decide: how many rows, what the overflow affordance
+  is, and which states survive the trim, since dropping the oldest unseen is not
+  the same call as dropping everything below a mention.
 - **Existing memberships at deploy.** Both backfills — `first_opened_at =
   added_at` in the object's schema migration, and `unseen` defaulting to 0 in the
   workspace projection — read every membership that already existed as seen. A
@@ -192,7 +205,7 @@ own:
 | --- | --- | --- |
 | `apps/desktop/src/renderer/lib/format.test.ts` | The ranking, pair by pair, and the **Needs attention** membership rule. | `pnpm --filter @avalon/desktop exec vitest run src/renderer/lib/format.test.ts` |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The sidebar row draws the ranked marker, and its tooltip explains it. | `pnpm --filter @avalon/desktop exec vitest run src/renderer/components/sidebar.test.tsx` |
-| `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | **Needs attention** holds the four states, ordered by recency. | `pnpm --filter @avalon/desktop exec vitest run src/renderer/screens/new-workstream.test.tsx` |
+| `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | **Needs attention** holds the three addressed states, omits a merely unread work stream, and orders rows by recency. | `pnpm --filter @avalon/desktop exec vitest run src/renderer/screens/new-workstream.test.tsx` |
 | `apps/api/test-workers/unseen-workstream-state.test.ts` | On real workerd: added at creation, added later, cleared by the first open, unchanged by a duplicate add, set again by a re-add. | `pnpm --filter @avalon/api test:workers` |
 | `apps/api/test-workers/workspace-directory-reads.test.ts` | The flag survives the workspace projection as the viewer's rather than the row's. | as above |
 | `apps/api/test/workstream-object-schema.test.ts` | Both compatibility views reset the column on a re-add, and leave it alone on a removal. | `pnpm --filter @avalon/api exec vitest run test/workstream-object-schema.test.ts` |
@@ -205,8 +218,9 @@ paths set it.
 ## Open questions
 
 - **How long may Needs attention get?** See the entry under **Failure modes and
-  limits**. Unbounded today; the cap, its overflow affordance, and which states
-  survive the trim are the team's to set.
+  limits**. Dropping unread took the everyday pressure off it, but it is still
+  uncapped; the cap, its overflow affordance, and which states survive the trim
+  are the team's to set if it ever needs one.
 - **Should a failed run outrank an unread message?** The ranking says no today,
   and the reasoning is under [The ranking](#the-ranking). It is one line to
   reverse if the product disagrees.
@@ -222,6 +236,51 @@ Schema migrations: work-stream object v18, WorkspaceDO v10. Both backfill
 existing rows as seen.
 
 ## Changelog
+
+### 2026-08-24 — Needs attention drops plain unread
+
+**What changed:** `workstreamNeedsAttention` no longer lists a work stream for
+being unread. The section holds unseen, mentioned, and a run stopped for an
+answer. A work stream that is unread *and* one of those three is still listed,
+on their account. The row colour map in `app.css` shrank to the three markers
+that can now reach a row.
+
+**Why:** it was unreadable in practice. On a real account nine rows were listed
+and seven of them were plain unread, so the single **You were mentioned** row —
+the one thing in the list somebody had actually addressed to this person — sat
+in the middle of a wall of identical green labels and read as more of the same.
+Unread is the ordinary condition of a work stream somebody is working in; it is
+not a request. The three remaining states each have a person behind them, which
+is what makes a section worth scanning rather than scrolling.
+
+**Considered and rejected:** capping the list instead, which was already the
+open question here. A cap makes the section shorter without making it more
+relevant — the mention is as likely to be trimmed as kept, because recency is
+what orders it and unread rows are the freshest thing in the workspace. Also
+rejected: ranking unread below the others inside the section, which keeps every
+row on the screen and only moves the noise down the page.
+
+**Consequences:** the sidebar is now the only place plain unread is surfaced,
+which is what its own marker colour is for; anything that wants an
+"everything I have not read" view is building a new surface, not widening this
+one. The cap question stays open but is no longer urgent — the states that
+remain are bounded by somebody having named this person. Two colour rules were
+deleted rather than left dead, so widening the membership rule again means
+adding the rule back for whatever state is admitted.
+
+**It also takes a failed run off this screen**, which is worth stating plainly
+because nothing here ever tested for one. `workstreamNeedsAttention` has never
+checked `harnessStatus === 'failed'`; a broken run reached the section because a
+run that fails almost always leaves a message nobody has read, so it arrived
+through `hasUnread` — by accident rather than by design. It now appears here
+only if the person was mentioned in it or newly added to it, and otherwise its
+only surface is the sidebar dot. That follows the line this change draws — a
+failure is the run's own state, not somebody addressing you — but if the product
+wants failures on the home screen, the honest fix is to name `failed` in the
+membership rule rather than to let unread smuggle it back in, and that decision
+belongs with the ranking question below.
+
+Shipped in #272.
 
 ### 2026-08-24 — One ranked marker per work stream, with unseen as its own state
 
@@ -285,4 +344,4 @@ label is what the screen reader hears, so it is not optional. The two backfills
 mean nobody sees a wave of markers at the deploy; a future migration that
 touches either column must keep that property.
 
-Shipped in TBD.
+Shipped in #267.
