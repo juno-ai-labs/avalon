@@ -152,17 +152,27 @@ to route around it.
 9. **No first-party activity events (`workspace_activity_events`) in results.**
    Rejected. Ranking recent activity by keyword *is* the global activity feed,
    and it would arrive without anyone deciding to build one.
-11. **No find-in-page within an open work stream's transcript.** Deferred, and
+10. **No find-in-page within an open work stream's transcript.** Deferred, and
     genuinely wanted — but it is a different surface with a different
     interaction (in-place highlight, next/previous, scroll-to-match) that would
     distort this one if bolted on.
-12. **Not a general command palette.** Actions are limited to what the sidebar
+11. **Not a general command palette.** Actions are limited to what the sidebar
     already offers — **New work stream**, **New automation**, **New
     meeting/notes**, **Settings** — plus starting work from the query text.
     Deferred: exposing arbitrary app commands here is a separate argument about
     discoverability, and every command added is a row competing with a real
     result.
-13. **No search operators or filter syntax.** Deferred, and unaffected by group
+
+    The distinction is a **closed set versus a registry**, and it is worth
+    stating because "we have five actions, so it *is* a command palette" is a
+    fair reading of the list alone. The five are the sidebar's existing primary
+    actions, mirrored — nothing here is reachable *only* from search, so the
+    palette adds no surface a person has to learn separately, and the set changes
+    only when the sidebar's does. A command palette in the usual sense is an
+    open registry that commands opt into, which is what makes it grow without
+    anyone deciding it should. If that registry ever exists, this non-goal is
+    what has to be revisited first.
+12. **No search operators or filter syntax.** Deferred, and unaffected by group
     scoping. `from:`, `in:`, `is:` and friends are the natural second version;
     shipping them in the first makes the query field a language to learn before
     it is a box to type in. Scoping is deliberately the other shape: a key
@@ -172,14 +182,17 @@ to route around it.
     no vocabulary. `is:unread`, `from:alex`, and date ranges remain the deferred
     conversation, and a typed `doc:` prefix is part of that one rather than a
     shorthand for this.
-14. **Not available signed out or on the public site.** Out of scope: search
+13. **Not available signed out or on the public site.** Out of scope: search
     runs against one workspace under an authenticated session.
-15. **Archived work streams and archived notes do not appear.** Deferred, and
+14. **Archived work streams and archived notes do not appear.** Deferred, and
     called out because it is the first thing someone will ask for: archiving is
     currently how a person says "stop showing me this", and search re-showing it
     would undo that. Revisit behind an explicit filter, which is non-goal 12.
-16. **Changing the resource picker's own match behaviour is out of scope; making
-    the two searches agree on *authorization* is not.** The picker matches four
+15. **Changing the resource picker's own match behaviour is out of scope; making
+    the two searches agree on *authorization* is not.** The picker is the
+    **Attach resource** dialog on the work-stream screen — `resourceDialogOpen`
+    in `workstream.tsx`, whose `.resource-picker-list` is fed by a 250 ms
+    debounce on its search field into `GET /resources?q=`. It matches four
     columns by substring, including `resource_type` and `provider_resource_id`,
     which an FTS index over title and body does not carry — so re-pointing it at
     the shared index would silently narrow it, and "one shared match rule" is not
@@ -197,7 +210,12 @@ to route around it.
 
 **The glyph.** A magnifying-glass `IconButton` sits in `.sidebar-titlebar` — the
 48px strip above the sidebar list that today holds nothing on desktop and exists
-only as a window-drag region. The glyph is placed at the strip's leading edge,
+only as a window-drag region. **Why there:** it is the only chrome above the
+sidebar, it is directly over the list search is a faster path into, and the strip
+is otherwise dead space, so the glyph costs no existing affordance its place. It
+is also where the originating mock put it. The alternative worth naming is the
+composer end of the work-stream screen, which was not taken because search is not
+scoped to the open work stream and should not appear to be. The glyph is placed at the strip's leading edge,
 inset clear of the macOS traffic lights at `x: 18, y: 17`, and carries
 `window-no-drag` so that it is clickable rather than draggable. Its accessible
 label is `Search`, and its tooltip names the `⌘K` shortcut. That tooltip is new:
@@ -255,6 +273,24 @@ the row under the cursor does not move while the person is still reading it.
 run `⌘1`–`⌘9` is bound to, so the two affordances agree about what "recent"
 means. Beneath it, the actions group. Nothing is fetched; this is the cached
 sidebar directory.
+
+Two things follow from it being the *same run*, and both are easy to get wrong.
+**The order matches the sidebar's, position for position** — the third row here
+is the work stream the sidebar hints as `⌘3` — because both read the same cached
+directory in the same order. That is the point of reusing the run rather than
+computing a second notion of "recent". **But the numbers are not shown here and
+`⌘`-digit does not fire while the palette is open**: digits are query text, and
+the sidebar's handler defers to any open dialog. So the alignment is about which
+rows, not about a live shortcut, and rendering the badges here would advertise a
+chord that does nothing. (Making `⌘`-digit live *inside* the palette is a
+coherent alternative — it would let a person open the palette and jump in one
+chord — but it is a different decision and this PRD does not take it.)
+
+**Pinned rows keep their pin.** A pinned work stream is marked as pinned here the
+way it is in the sidebar, because the run is pinned-then-recent and a reader who
+cannot see where the pins end cannot tell why the order is what it is. It is a
+marker only: the palette does not offer pinning, reordering, or any of the
+sidebar's right-click actions. Search opens things; it does not manage them.
 
 **Typing.** Local name matches paint on the first keystroke, from the directory
 the sidebar already holds — work streams, notes, automations, people, actions.
