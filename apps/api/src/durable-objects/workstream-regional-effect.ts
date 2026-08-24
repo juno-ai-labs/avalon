@@ -47,6 +47,12 @@ export const WorkstreamDirectoryUserEffectSchema = z.object({
   isParticipant: z.boolean(),
   unreadCount: z.number().int().nonnegative(),
   youAreMentioned: z.boolean(),
+  /**
+   * Added to the work stream and never opened it. Optional because effects
+   * written before this field existed are still in flight and still parse;
+   * absent reads as false, which is what every one of them meant.
+   */
+  unseen: z.boolean().optional(),
   listable: z.boolean(),
   seenAttentionOrdinal: z.number().int().nonnegative().optional(),
   manualUnreadFromOrdinal: z.number().int().nonnegative().nullable().optional(),
