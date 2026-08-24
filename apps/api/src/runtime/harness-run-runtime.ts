@@ -1981,6 +1981,7 @@ function terminalizationOf(
   return readErrorCode(errorJson) === "stale_run_reaped" ? "reaped" : "direct";
 }
 
+/** The `code` of a stored `{"code","message"}` run error, when it has one. */
 function readErrorCode(errorJson: string | null): string | null {
   if (!errorJson) return null;
   try {
@@ -2598,6 +2599,15 @@ export async function reapStaleHarnessRuns(
   // terminal condition. An inline child is deliberately reclaimable while its
   // parent still owns a live attempt, so including children in this query
   // races the child's idempotent takeover path.
+  //
+  // This pass is the only recovery for an executor that died without
+  // terminalizing at all, and nothing schedules it: `reapStaleHarnessRuns` is
+  // called from one place, immediately before a new attempt is claimed
+  // (`substream-agent.ts`, and its BlockDashboard twin). A work stream nobody
+  // sends another message to therefore keeps such a run `running` and its tool
+  // card spinning indefinitely. Closing that needs the object to wake on its
+  // own expired lease, which is a wake reason and belongs to
+  // `docs/durable-object-alarms.md` rather than to this function.
   const rows = await db.prepare(
     `SELECT id, workspace_id, workstream_id, attempt_id, lease_expires_at, origin
        FROM harness_runs
