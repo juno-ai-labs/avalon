@@ -89,12 +89,17 @@ export function WorkstreamComposer({
   const [confirming, setConfirming] = useState(false);
   const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;
   const participantIds = useMemo(() => new Set(workstream.participants.map((person) => person.id)), [workstream.participants]);
-  const candidates = useMemo<MentionCandidate[]>(() => members.map((member) => ({
-    id: member.id,
-    label: member.name,
-    description: participantIds.has(member.id) ? member.email : `${member.email} · not participating`,
-    member,
-  })), [members, participantIds]);
+  const candidates = useMemo<MentionCandidate[]>(() => members
+    // The same rule the participants rail applies: a membership that is not
+    // active is one the work-stream endpoint refuses, so naming it here would
+    // only produce a failure nobody can act on.
+    .filter((member) => (member.status ?? 'active') === 'active')
+    .map((member) => ({
+      id: member.id,
+      label: member.name,
+      description: participantIds.has(member.id) ? member.email : `${member.email} · not participating`,
+      member,
+    })), [members, participantIds]);
 
   const mentionLabels = useMemo(() => candidates.map((candidate) => candidate.label), [candidates]);
   const visibleCandidates = mentionQuery === null
@@ -122,7 +127,10 @@ export function WorkstreamComposer({
     draftRevisionRef.current += 1;
     setText(value);
     setSlashDismissed(false);
-    setSelectedMentions((current) => current.filter((mention) => value.toLocaleLowerCase().includes(`@${mention.label.toLocaleLowerCase()}`)));
+    // `toLowerCase`, not `toLocaleLowerCase`: this has to agree with
+    // `mention-highlight.ts`, which uses the locale-independent one so a Turkish
+    // dotted I does not make a name highlighted here unmatched there.
+    setSelectedMentions((current) => current.filter((mention) => value.toLowerCase().includes(`@${mention.label.toLowerCase()}`)));
     const beforeCaret = value.slice(0, textareaRef.current?.selectionStart ?? value.length);
     const match = beforeCaret.match(/(?:^|\s)@([^\s@]*)$/u);
     setMentionQuery(match?.[1] ?? null);
@@ -182,7 +190,10 @@ export function WorkstreamComposer({
     const before = text.slice(0, caret);
     const after = text.slice(caret);
     const atIndex = before.lastIndexOf('@');
-    const nextText = `${before.slice(0, atIndex)}@${candidate.label} ${after}`;
+    // The separator is the name's own, unless what follows already begins with
+    // one: picking mid-sentence otherwise leaves two spaces where the caret was.
+    const separator = /^\s/u.test(after) ? '' : ' ';
+    const nextText = `${before.slice(0, atIndex)}@${candidate.label}${separator}${after}`;
     setText(nextText);
     const identity: MentionIdentity = { type: 'person', label: candidate.label, userId: candidate.member.id, connectorType: null };
     setSelectedMentions((current) => [
@@ -192,7 +203,7 @@ export function WorkstreamComposer({
     setMentionQuery(null);
     requestAnimationFrame(() => {
       textarea?.focus();
-      const nextCaret = atIndex + candidate.label.length + 2;
+      const nextCaret = atIndex + candidate.label.length + 1 + separator.length;
       textarea?.setSelectionRange(nextCaret, nextCaret);
     });
   };
@@ -292,11 +303,11 @@ export function WorkstreamComposer({
         fileInputRef={fileInputRef}
         onAttach={onAttach}
         onKeyDown={(event) => {
+          if (mentionNavigation.handleKeyDown(event)) return;
           if (event.key === 'Escape') {
             if (mentionQuery !== null) setMentionQuery(null);
             if (visibleCommands.length > 0) setSlashDismissed(true);
           }
-          if (mentionNavigation.handleKeyDown(event)) return;
           if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && visibleCommands[0]) {
             event.preventDefault();
             void runCommand(visibleCommands[0]);

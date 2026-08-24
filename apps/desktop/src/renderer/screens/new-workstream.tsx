@@ -509,7 +509,14 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   // it comes back the moment the launch ends either way.
   const draftHidden = launching?.origin === 'suggested-work';
   const participants = [workspace.currentUser, ...selectedMembers];
-  const mentionCandidates = members.data ?? [];
+  // A membership that is not active is one the work-stream endpoints refuse, so
+  // neither the inline list nor the dialog may offer it: picking one here also
+  // adds them to the create request, which would then fail as a whole.
+  const activeMembers = useMemo(
+    () => (members.data ?? []).filter((member) => (member.status ?? 'active') === 'active'),
+    [members.data],
+  );
+  const mentionCandidates = activeMembers;
   const mentionLabels = useMemo(() => mentionCandidates.map((member) => member.name), [mentionCandidates]);
   const visibleCandidates = mentionQuery === null
     ? []
@@ -552,14 +559,18 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     const caret = textarea?.selectionStart ?? message.length;
     const before = message.slice(0, caret);
     const atIndex = before.lastIndexOf('@');
-    setMessage(`${before.slice(0, atIndex)}@${member.name} ${message.slice(caret)}`);
+    const after = message.slice(caret);
+    // One separator, not two: the name brings its own unless the rest of the
+    // line already starts with one.
+    const separator = /^\s/u.test(after) ? '' : ' ';
+    setMessage(`${before.slice(0, atIndex)}@${member.name}${separator}${after}`);
     if (member.id !== workspace.currentUser.id) {
       setSelectedMembers((current) => current.some((candidate) => candidate.id === member.id) ? current : [...current, member]);
     }
     setMentionQuery(null);
     requestAnimationFrame(() => {
       textarea?.focus();
-      const nextCaret = atIndex + member.name.length + 2;
+      const nextCaret = atIndex + member.name.length + 1 + separator.length;
       textarea?.setSelectionRange(nextCaret, nextCaret);
     });
   };
@@ -720,8 +731,10 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             mentionLabels={mentionLabels}
             onAttach={attachmentDraft.addFiles}
             onKeyDown={(event) => {
-              if (event.key === 'Escape' && mentionQuery !== null) setMentionQuery(null);
               if (mentionNavigation.handleKeyDown(event)) return;
+              if (event.key !== 'Escape' || mentionQuery === null) return;
+              event.preventDefault();
+              setMentionQuery(null);
             }}
             onMention={beginMention}
             onOpenAttachment={setAttachmentPreview}
@@ -752,7 +765,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
 
       <ParticipantPicker
         currentUser={workspace.currentUser}
-        members={members.data ?? []}
+        members={activeMembers}
         onOpenChange={setPickerOpen}
         onToggle={(member) => {
           setSelectedMembers((current) =>
