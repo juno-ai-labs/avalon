@@ -1074,8 +1074,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   /**
    * Dispatch one scheduling operation against this object's own storage.
    *
-   * Identity is re-checked against the object's own before anything executes:
-   * a misrouted stub must fail rather than claim another work stream's wake-up.
+   * `objectPortRefusal` runs first, so this endpoint refuses three things the
+   * routed path refused: another work stream's identity, a non-main substream,
+   * and an object whose `authority_mode` is not `authoritative`. The last one
+   * matters most here. `persistCompactionCheckpoint`, `recordPluginActivation`
+   * and the two description-evaluation writes are the first writes moved off
+   * the routed path whose *only* fence was `executeWorkstreamRuntimeSql`
+   * refusing every statement against a `preparing` or `quarantined` object —
+   * the wake-up mutations keep an equivalent one through
+   * `commitRuntimeMutation`, and these four would have had none.
+   *
+   * The non-main refusal is why the port names the main child and nothing
+   * carries a substream id: these rows live on the main object, so a child
+   * substream must be told so rather than served from an empty table.
    *
    * An operation that can change which wake-ups are pending runs through
    * `commitRuntimeMutation`, re-derives the timer index, and arms the next

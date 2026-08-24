@@ -250,6 +250,50 @@ describe("scheduling authority on real workerd", () => {
     expect(body).toMatchObject({ error: "workstream_scheduling_identity_mismatch" });
   });
 
+  it("refuses a write against an object that is no longer the authority", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      state.storage.sql.exec(`UPDATE workstream SET authority_mode = 'quarantined' WHERE id = 1`);
+    });
+
+    // `persistCompactionCheckpoint` is the review's example, and the one this
+    // slice moved: it is a write whose only fence was the routed path's
+    // `authority_mode` check, and unlike the wake-up mutations it does not
+    // reach `commitRuntimeMutation` to pick an equivalent one up by accident.
+    const { status, body } = await post(stub, "/internal/scheduling", {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      operation: "persistCompactionCheckpoint",
+      args: [{
+        executionPrincipalKey: "user:someone",
+        resourceVisibilityFingerprint: "fingerprint",
+        checkpointTemplateVersion: 1,
+        runId: RUN,
+        compactedThroughSequence: 4,
+        messagesJson: "[]",
+        summary: "A summary nobody should be able to persist here.",
+        model: "a-model",
+        contextTokensBeforeCompaction: 100,
+        contextWindowTokens: 1000,
+        inputTokens: 10,
+        outputTokens: 20,
+        costMicros: 30,
+        expectedInventoryRevision: 0,
+        now: 1,
+      }],
+    });
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ error: "workstream_runtime_authority_fenced" });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM compaction_checkpoints`,
+      ).one().count).toBe(0);
+    });
+  });
+
   it("refuses an operation that is not on the contract", async () => {
     const stub = agent();
     await boot(stub);

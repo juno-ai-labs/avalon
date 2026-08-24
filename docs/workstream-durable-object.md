@@ -1063,6 +1063,37 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-24 — The scheduling port joins the factory, and its writes get the authority fence
+
+**What changed:** `runtime/scheduling-port.ts` is now a contract object handed
+to `createObjectPort` rather than its own copy of the dispatch machinery, and
+`SchedulingPortError` is gone in favour of `ObjectPortError`. The
+`/internal/scheduling` endpoint's docstring records what `objectPortRefusal`
+actually refuses, and `scheduling-authority.test.ts` proves the authority half
+against `persistCompactionCheckpoint`.
+
+**Why:** ordering. This slice was written against a tree where each typed port
+was its own file; the block-dashboard slice landed the one-factory rework
+first, so rebasing onto it left this port as a fifth copy of the thing that
+rework existed to delete — and a copy that had not picked up the `authority_mode`
+check the shared factory's endpoint helper restored. Review had already found
+that gap independently: `persistCompactionCheckpoint`, `recordPluginActivation`
+and the two description-evaluation writes were the first writes moved off the
+routed path whose only fence was `executeWorkstreamRuntimeSql` refusing every
+statement against a `preparing` or `quarantined` object. The wake-up mutations
+keep an equivalent fence through `commitRuntimeMutation`; those four had none.
+
+Review also asked whether the port should carry a substream id, on the reading
+that scheduling calls always resolve to the main child. They do, and that is the
+design rather than an omission — these rows live on the main object, and the
+shared refusal answers a child substream with a 409 instead of serving it from
+an empty table. The docstring now says so where the next reader will look.
+
+**What a future change has to respect:** a new typed authority is a contract
+plus an operation list, never a new dispatch function. Writing one by hand is
+how this port lost a fence that the shared endpoint helper already had, and the
+loss was invisible until someone read two files side by side.
+
 ### 2026-08-24 — Opening a work stream writes, so being added to one can be seen
 
 **What changed:** `WorkstreamObjectProductService.get` — the single assembler
@@ -1104,6 +1135,7 @@ does not settle viewer state, which does not exist yet and should be added
 rather than worked around.
 
 Shipped in TBD.
+
 
 ### 2026-08-24 — Lease fences keep the projection the compatibility view had
 
