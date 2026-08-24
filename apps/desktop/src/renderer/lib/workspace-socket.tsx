@@ -318,6 +318,16 @@ export function WorkspaceSocketProvider({
       try {
         const ticket = await api.getWorkspaceSocketTicket();
         if (stopped) return;
+        // Going offline while the ticket was in flight left the offline handler
+        // nothing to close, so this is where that transition is noticed at all.
+        // Dialling anyway would fail and be recorded as a transport error,
+        // which is the one reading this event exists to keep apart from
+        // "the desktop lost its network".
+        if (isOffline()) {
+          socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
+          setState('unavailable');
+          return;
+        }
         const next = new WebSocket(ticket.url, ticket.protocols);
         socket = next;
         next.addEventListener('open', () => {

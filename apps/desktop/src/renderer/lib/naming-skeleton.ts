@@ -36,24 +36,24 @@ export function useNamingSkeleton(workstream: NameableWorkstream): boolean {
   const expiresAt = naming && Number.isFinite(createdAt)
     ? createdAt + WORKSTREAM_NAMING_GRACE_MS
     : null;
-  const [expired, setExpired] = useState(() => expiresAt === null || Date.now() >= expiresAt);
+  // The answer is derived from this row's own deadline on every render, and
+  // never held in state. The work-stream header stays mounted across work
+  // streams by design, so state carried over from the last one would answer for
+  // this one until an effect ran after paint — showing a fresh work stream's
+  // request text for a frame before the skeleton replaced it, and the reverse
+  // for a settled one. The timer below exists only to schedule the re-render at
+  // the instant the grace lapses; it decides nothing.
+  const [, scheduleExpiryRender] = useState(0);
 
   useEffect(() => {
-    if (expiresAt === null) {
-      setExpired(true);
-      return undefined;
-    }
+    if (expiresAt === null) return undefined;
     const remaining = expiresAt - Date.now();
-    if (remaining <= 0) {
-      setExpired(true);
-      return undefined;
-    }
+    if (remaining <= 0) return undefined;
     // The name almost always arrives long before this fires; the timer exists
     // for the case where nothing arrives at all.
-    setExpired(false);
-    const timer = setTimeout(() => setExpired(true), remaining);
+    const timer = setTimeout(() => scheduleExpiryRender((render) => render + 1), remaining);
     return () => clearTimeout(timer);
   }, [expiresAt]);
 
-  return naming && !expired;
+  return expiresAt !== null && Date.now() < expiresAt;
 }

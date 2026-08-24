@@ -306,6 +306,49 @@ describe('WorkspaceSocketProvider', () => {
     expect(socketTelemetry()).toEqual([]);
   });
 
+  it('calls an offline transition during the ticket request what it is', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    let releaseTicket: (() => void) | null = null;
+    const getWorkspaceSocketTicket = vi.fn(async () => {
+      await new Promise<void>((resolve) => { releaseTicket = resolve; });
+      return {
+        url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+        ticket: 'workspace-ticket',
+        protocols: socketTicketProtocols('workspace-ticket'),
+      };
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div>connected surface</div>
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+
+    // The desktop drops off the network while the ticket is still in flight, so
+    // the offline handler finds no socket to close and records nothing.
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    window.dispatchEvent(new Event('offline'));
+    releaseTicket!();
+    await flushPromises();
+
+    // Dialling anyway would have produced a transport error a moment later, and
+    // counted an ordinary walk out of Wi-Fi range as a broken connection.
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(socketTelemetry()).toEqual([{
+      kind: 'realtime_socket_state',
+      socket: 'workspace',
+      state: 'stopped',
+      cause: 'offline',
+      attempts: 'zero',
+    }]);
+  });
+
   it('names the cause a workspace close event cannot carry', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('WebSocket', FakeWebSocket);

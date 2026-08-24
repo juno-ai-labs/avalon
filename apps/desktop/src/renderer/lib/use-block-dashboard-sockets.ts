@@ -146,6 +146,18 @@ export function useBlockDashboardSockets(
       try {
         const ticket = await api.getBlockDashboardBlockSocketTicket(workstreamId, blockId);
         if (stopped || !connections.has(blockId)) return;
+        // See `workspace-socket.tsx`: an offline transition during the ticket
+        // request is invisible to the offline handler, because there was no
+        // socket to close.
+        if (browserIsOffline()) {
+          connection.telemetry.disconnected({
+            attempts: connection.attempt,
+            retrying: false,
+            cause: 'offline',
+          });
+          updateConnectionState(blockId, 'offline');
+          return;
+        }
         const socket = new WebSocket(ticket.url, ticket.protocols);
         connection.socket = socket;
         const scheduleHeartbeat = (): void => {

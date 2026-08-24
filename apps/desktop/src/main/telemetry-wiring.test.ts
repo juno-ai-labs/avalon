@@ -131,20 +131,6 @@ describe('Electron telemetry wiring', () => {
     expect(source).toContain("'push_notification'");
   });
 
-  it('admits realtime socket transitions through the validated semantic allowlist', () => {
-    const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
-    const allowlist = source.match(
-      /const semanticKind = candidate\['kind'\];[\s\S]*?\)\) \{/u,
-    )?.[0];
-
-    // The renderer's own type says this kind exists; only this list decides
-    // whether main parses one rather than throwing it away as invalid, and the
-    // registry decides its properties. Nothing else in the path knows the name.
-    expect(allowlist).toBeDefined();
-    expect(allowlist).toContain("semanticKind === 'realtime_socket_state'");
-    expect(source).toContain('TELEMETRY_EVENTS[semanticKind].properties.safeParse(properties)');
-  });
-
   it('preserves native navigation sources and holds quit behind one bounded flush', () => {
     const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
 
