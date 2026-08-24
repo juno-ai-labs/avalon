@@ -3848,14 +3848,14 @@ describe("durable harness attempt runtime", () => {
     })).rejects.toThrow("plugin_activation_mismatch");
 
     expect(sqlite.object.prepare(
-      "SELECT eligible_connection_ids_json, eligible_capabilities_json, memory_context_hash FROM harness_run_scopes WHERE harness_run_id = ?",
+      "SELECT eligible_connection_ids_json, eligible_capabilities_json, memory_context_hash FROM run_scopes WHERE run_id = ?",
     ).get(RUN_ONE)).toEqual({
       eligible_connection_ids_json: '["connection-a","connection-b"]',
       eligible_capabilities_json: '["issues.read","issues.write"]',
       memory_context_hash: "memory-context-v1",
     });
     expect(sqlite.object.prepare(
-      "SELECT COUNT(*) AS count FROM harness_run_plugin_activations WHERE harness_run_id = ? AND plugin_id = ?",
+      "SELECT COUNT(*) AS count FROM run_plugin_activations WHERE run_id = ? AND plugin_id = ?",
     ).get(RUN_ONE, plugin.pluginId)).toEqual({ count: 1 });
   });
 });
@@ -3982,7 +3982,7 @@ describe("inline child-run durability", () => {
     expect(sqlite.object.prepare(
       `SELECT eligible_connection_ids_json, eligible_capabilities_json,
               eligible_connection_capabilities_json, trigger_policy_json
-         FROM harness_run_scopes WHERE harness_run_id = ?`,
+         FROM run_scopes WHERE run_id = ?`,
     ).get(admitted.childInput.harnessRunId)).toEqual({
       eligible_connection_ids_json: '["connection-read"]',
       eligible_capabilities_json: '["documents.read"]',
@@ -3990,7 +3990,7 @@ describe("inline child-run durability", () => {
       trigger_policy_json: '{"kind":"sub_agent","readOnly":true}',
     });
     expect(sqlite.object.prepare(
-      `SELECT plugin_id FROM harness_run_plugin_activations WHERE harness_run_id = ?`,
+      `SELECT plugin_id FROM run_plugin_activations WHERE run_id = ?`,
     ).all(admitted.childInput.harnessRunId)).toEqual([
       { plugin_id: "connection:connection-read" },
     ]);

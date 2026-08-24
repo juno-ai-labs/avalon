@@ -213,6 +213,18 @@ export type AdmitRunOutcome =
   /** This exact run id is already here. Creation is idempotent by id. */
   | { outcome: "exists" };
 
+/** One attempt's frozen memory recall. */
+export interface MemoryContextRow extends Record<string, SqlStorageValue> {
+  run_id: string;
+  attempt_id: string;
+  memory_scope_ids_json: string;
+  query_text: string;
+  retrieval_mode: string;
+  results_json: string;
+  memory_context_hash: string;
+  created_at: number;
+}
+
 export type HeartbeatOutcome =
   | { outcome: "renewed"; leaseExpiresAt: number }
   | { outcome: "cancelled" }
@@ -744,6 +756,84 @@ export class WorkstreamHarnessRunStorage {
       );
       this.settleWorkstreamState(input.runId, "failed", input.now);
       return { outcome: "failed" as const };
+    });
+  }
+
+  /**
+   * This attempt's frozen memory recall, if it holds the run and froze one.
+   *
+   * The routed version joined `harness_runs` to prove the lease was live, which
+   * made "no context yet" and "you lost the run" the same empty result. They
+   * still collapse here — the caller's next step is the same either way, and
+   * `persistMemoryContext` is where a lost lease is actually refused — but the
+   * fence is now read rather than joined.
+   */
+  memoryContext(input: AttemptFence): MemoryContextRow | undefined {
+    if (this.attemptOwnership(input).outcome !== "owned") return undefined;
+    return first(this.sql.exec<MemoryContextRow>(
+      `SELECT run_id, attempt_id, memory_scope_ids_json, query_text, retrieval_mode,
+              results_json, memory_context_hash, created_at
+         FROM run_memory_contexts WHERE run_id = ? AND attempt_id = ?`,
+      input.runId,
+      input.attemptId,
+    ));
+  }
+
+  /**
+   * Freeze what memory this attempt recalled, or hand back what won the race.
+   *
+   * `persistScope`'s shape for a different table, with one difference: the
+   * value being written costs a vector search to compute, so the read and the
+   * write cannot be one operation. A loser therefore gets the winner's row back
+   * rather than an outcome to interpret — the whole point of freezing recall is
+   * that every replay of this attempt sees the same memories, so returning the
+   * row the run will actually use is the only useful answer.
+   */
+  persistMemoryContext(input: AttemptFence & {
+    memoryScopeIdsJson: string;
+    queryText: string;
+    retrievalMode: string;
+    resultsJson: string;
+    memoryContextHash: string;
+  }): { outcome: "persisted" | "reused"; row: MemoryContextRow } | { outcome: "ownership_lost" } {
+    return this.storage.transactionSync(() => {
+      const existing = first(this.sql.exec<MemoryContextRow>(
+        `SELECT run_id, attempt_id, memory_scope_ids_json, query_text, retrieval_mode,
+                results_json, memory_context_hash, created_at
+           FROM run_memory_contexts WHERE run_id = ?`,
+        input.runId,
+      ));
+      if (existing) return { outcome: "reused" as const, row: existing };
+      if (this.attemptOwnership(input).outcome !== "owned") {
+        return { outcome: "ownership_lost" as const };
+      }
+      this.sql.exec(
+        `INSERT INTO run_memory_contexts
+           (run_id, attempt_id, memory_scope_ids_json, query_text, retrieval_mode,
+            results_json, memory_context_hash, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        input.runId,
+        input.attemptId,
+        input.memoryScopeIdsJson,
+        input.queryText,
+        input.retrievalMode,
+        input.resultsJson,
+        input.memoryContextHash,
+        input.now,
+      );
+      return {
+        outcome: "persisted" as const,
+        row: {
+          run_id: input.runId,
+          attempt_id: input.attemptId,
+          memory_scope_ids_json: input.memoryScopeIdsJson,
+          query_text: input.queryText,
+          retrieval_mode: input.retrievalMode,
+          results_json: input.resultsJson,
+          memory_context_hash: input.memoryContextHash,
+          created_at: input.now,
+        },
+      };
     });
   }
 

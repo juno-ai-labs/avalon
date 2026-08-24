@@ -139,14 +139,13 @@ function seededDatabase(options: { brief?: string } = {}): DatabaseSync {
   );
   workstreamObjectRun(
     objectStore,
-    `INSERT INTO harness_run_memory_contexts
-       (harness_run_id, workspace_id, workstream_id, attempt_id, memory_scope_ids_json,
-        query_text, retrieval_mode, results_json, memory_context_hash, created_at)
-     VALUES (?, ?, ?, ?, '[]', 'digest', 'fts_only', '[]', 'hash', '2026-08-11')`,
+    `INSERT INTO run_memory_contexts
+       (run_id, attempt_id, memory_scope_ids_json, query_text, retrieval_mode,
+        results_json, memory_context_hash, created_at)
+     VALUES (?, ?, '[]', 'digest', 'fts_only', '[]', 'hash', ?)`,
     RUN,
-    WORKSPACE,
-    WORKSTREAM,
     ATTEMPT,
+    Date.parse("2026-08-11T00:00:00.000Z"),
   );
   return database;
 }
