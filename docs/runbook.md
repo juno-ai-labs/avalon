@@ -37,7 +37,11 @@ Create independent resource sets for `global` and `eu`:
 - Queues need no manual step: the deployment preflight creates every queue the
   Wrangler files declare, and Cloudflare creates each dead-letter queue on first
   deploy (see [the migration tracker section](#the-durable-object-migration-tracker)).
-  R2 is the one preflighted resource still created by hand.
+  The inference lakehouse is also automatic: the API deployment creates its
+  Global and EU R2 buckets, enables both Data Catalogs, creates their streams,
+  sinks, and pipelines, and materializes the generated stream IDs into the
+  Worker deploy configs. The general payload and telemetry R2 buckets remain
+  one-time resources created by hand.
 - The Worker, Durable Object namespaces, Workflows, and `CRASH_SYMBOLICATOR`
   Container declared in the regional Wrangler file
 
@@ -50,9 +54,11 @@ Wrangler validates an R2 binding without proving its named bucket exists. Run
 Wrangler file. It is read-only: the R2 half proves each bucket exists, and the
 queue half reports any queue a deployment would create without creating it
 (`pnpm cloudflare:queues:ensure` creates them from a laptop, for break-glass
-only). The API deployment runs the same R2 check before any remote migration or
-Worker deploy and logs every required region, binding, bucket, and
-jurisdiction, then creates the missing queues. A missing bucket is an infrastructure failure even if
+only), and the inference-lakehouse half verifies both complete immutable
+resource chains. The API deployment runs the same general R2 check before any
+remote migration or Worker deploy, creates the missing queues, then creates or
+verifies both inference lakehouses and resolves their generated Pipeline stream
+IDs. A missing general bucket is an infrastructure failure even if
 the Wrangler dry build and Worker binding are otherwise deployable.
 
 `avalon-api` and its seven per-agent flags are provisioned, and both regional Wrangler files carry the `app_id`; [the feature-flag document](feature-flags.md#provisioning) has the commands for rebuilding them in a fresh account. Each flag is seeded with the model ids already in the `OPENROUTER_*` variables, so the flags change nothing until one is edited. Keep the two in step afterwards — an agent whose flag is missing or unreadable falls back to the variables. Changing which OpenRouter model an agent runs on is a flag change, not a deploy.
@@ -249,6 +255,11 @@ Use a custom token restricted to the Avalon Cloudflare account and the `with-ava
 - Account: Workers Scripts Write (shown as Edit in older dashboards)
 - Account: D1 Write/Edit
 - Account: Workers R2 Storage Write/Edit
+- Account: R2 Admin Read & Write — required by each R2 Data Catalog sink and
+  used by the inference-lakehouse preflight to create/enable its regional
+  bucket and catalog
+- Account: Pipelines Write/Edit — to create and inspect the regional stream,
+  sink, and pipeline; Worker ingestion itself uses the generated binding
 - Account: Queues Write/Edit — to attach a consumer on deploy and for the
   preflight to create a declared queue. A token that can only list queues fails
   the create with `Authentication error [code: 10000]`.
@@ -650,7 +661,12 @@ without putting either setup material or its signing secret into logs:
 For ordinary releases after both entrypoints exist:
 
 1. Validate both Wrangler configurations with dry-run builds.
-2. Create or confirm each region's named Cloudflare resources. Scoped memory requires `avalon-global-memory` and `avalon-eu-memory` Vectorize indexes with 1,024 dimensions and cosine distance, plus the Workers AI binding declared by each API Worker.
+2. Create or confirm each region's named Cloudflare resources. The deployment
+   automatically creates and verifies the inference Queues, R2 Data Catalog
+   buckets/catalogs, streams, sinks, pipelines, and generated bindings. Scoped
+   memory still requires `avalon-global-memory` and `avalon-eu-memory` Vectorize
+   indexes with 1,024 dimensions and cosine distance, plus the Workers AI
+   binding declared by each API Worker.
 3. Confirm each configured D1 ID belongs to the intended region.
 4. Set the regional Worker secrets.
 5. Apply the D1 migration remotely to EU and Global with `pnpm db:migrate:remote:eu` and `pnpm db:migrate:remote`. Inspect the pending set first with `pnpm db:migrate:remote:list:eu` and `pnpm db:migrate:remote:list`. The unsuffixed `pnpm db:migrate` targets local Wrangler state only and never touches a hosted database.
@@ -671,7 +687,7 @@ Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers af
 Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
 
 - `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop and API Vitest suites each use two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
-- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing; it does not create other resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
+- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), the inference-lakehouse manifests/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and fully provisions/verifies both regional inference lakehouses before migrations. It does not create unrelated resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
   Migration 0090 is the one destructive exception to normal migration-first ordering: when it is the sole pending migration, compatible Workers deploy before it. The workflow fails closed if 0090 appears beside any other pending migration, because Wrangler applies the complete pending ledger and must never move an ordinary later migration behind the Worker that may require it.
 - `.github/workflows/release-desktop-macos.yml` guards the tag, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, and deploys the landing site. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its `paths:` filter — the files the installed app is built from — bumping the version itself, and on a manual dispatch naming an existing tag. Nothing triggers on a tag.
 
@@ -739,19 +755,26 @@ Because API deployment is continuous, a merge to `main` is a production release.
 
 The deploy job applies both regions' migrations before it deploys either Worker, so for the length of one deployment — around twenty seconds when it goes well — **the previous Worker is writing into the new schema**. That is the correct order, because new code must never meet an old table; the consequence is that a new column's `DEFAULT` is not a fallback during that window, it is the value.
 
-Migration `0090_drop_legacy_product_tables.sql` is the one deliberate reverse-order
-exception. It deletes tables and columns the previous Worker still names, so
-applying it first would break every new work-stream creation until deployment
-finished — or indefinitely if deployment failed. The deployment workflow reads
-each remote pending-migration ledger; when 0090 is pending in a region, it
-deploys the replacement Workers first and applies 0090 afterward. The
-replacement Worker probes the regional `workstreams` shape when reserving an
-identity anchor and can write both the through-0089 required-column shape and
-the final three-column shape. Therefore a failed Worker deploy leaves the old
-schema untouched, while a failed migration leaves the compatible Worker serving
-the old schema. Detection comes from the remote ledger, not the triggering Git
-diff, so a superseded workflow or later regional retry retains the barrier.
-Once 0090 is no longer pending, the workflow automatically returns to the
+Migrations `0090_drop_legacy_product_tables.sql` and
+`0094_retire_agent_inference_payload_ledger.sql` are deliberate reverse-order
+exceptions. Each deletes tables or columns the previous Worker still names, so
+applying either first would break live requests until deployment finished — or
+indefinitely if deployment failed. The deployment workflow reads each remote
+pending-migration ledger; when one configured Worker-first migration is the sole
+pending entry in a region, it deploys the replacement Workers first and applies
+that migration afterward. If it has any companion migration, deployment fails
+closed instead of silently moving an ordinary migration across the Worker.
+
+For 0090, the replacement Worker probes the regional `workstreams` shape when
+reserving an identity anchor and can write both the through-0089 required-column
+shape and the final three-column shape. For 0094, the replacement Worker no
+longer reads `workspaces.log_agent_inference` or
+`agent_inference_payload_logs`, while it remains compatible with a database that
+still has them. Therefore a failed Worker deploy leaves the old schema untouched,
+while a failed migration leaves the compatible Worker serving the old schema.
+Detection comes from the remote ledger, not the triggering Git diff, so a
+superseded workflow or later regional retry retains the barrier. Once no
+Worker-first migration is pending, the workflow automatically returns to the
 ordinary migration-first order.
 
 Twenty seconds is the happy path, and it is the figure that makes this rule feel safe to skip. A failed deployment leaves the migrations applied, as the paragraph above says, so a deploy that breaks after the migration step leaves the previous Worker writing through the new default until a fix-forward lands — minutes or hours, not seconds, and every row written in that time takes the default.
@@ -1189,7 +1212,7 @@ buckets as credential-adjacent: bucket-scoped write-only delivery credentials,
 no wider dashboard access than a responder needs. Moving those two secrets off
 the query string is the only fix that removes them from the capture.
 
-Every OpenRouter call that the provider refuses records `provider_error_code` and `provider_error_provider` — the provider's own classification of the rejection, which is what separates a bad model id from a provider outage. The provider's free-text message is deliberately **not** recorded: some upstreams quote the request back inside it, these lines are written for every workspace into Workers Logs and 90-day Logpush storage, and the key-based redactor has no way to recognise it. The response body is not retained either, for the same reason. Rejections are logged for every workspace; the `log_agent_inference` preference gates only the R2 payload ledger, not this. A `request_failed` at `error_name = ZodError` is a response that failed *its own* contract before it left the Worker — the log carries the route and the offending field paths, so fix the row or the schema rather than the caller.
+Every OpenRouter call that the provider refuses records `provider_error_code` and `provider_error_provider` — the provider's own classification of the rejection, which is what separates a bad model id from a provider outage. The provider's free-text message is deliberately **not** recorded in Workers Logs: some upstreams quote the request back inside it, these lines are written for every workspace into Workers Logs and 90-day Logpush storage, and the key-based redactor has no way to recognise it. The sensitive regional lakehouse retains the bounded provider failure beside the exact request instead. A `request_failed` at `error_name = ZodError` is a response that failed *its own* contract before it left the Worker — the log carries the route and the offending field paths, so fix the row or the schema rather than the caller.
 
 Account-level `workers_trace_events` Logpush jobs route `avalon-api-global` to the `avalon-global-observability` R2 bucket and `avalon-api-eu` to the EU-jurisdiction `avalon-eu-observability` bucket. Both buckets use an automatic 90-day object-expiration rule. Keep the destination credentials bucket-scoped and write-only. The configuration command also reconciles bucket retention and verifies each existing job's filter, fields, destination bucket, and redacted delivery state. The read-only release check must report all saved-query drift at once so a partial repair cannot make the next release discover one definition at a time.
 
@@ -1209,72 +1232,282 @@ a fabricated value, a tool the model never called, a question it should not have
 needed to ask — the answer is the recorded request body, and this section turns a
 work-stream URL into it. Nothing here mutates production; every step is a read.
 
-**Preconditions.** `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are already
-present in the sandbox environment and in `.env.local` locally — check for them
-before concluding that production data is out of reach. Payload capture is
-per-workspace and **off by default**: `workspaces.log_agent_inference` must have
-been `1` while the run happened. No rows means logging was off, not that the run
-did not happen, and it cannot be turned on retroactively.
+The regional inference lakehouse is the only raw-inference surface. It captures
+request and terminal-attempt events automatically, retains the exact record
+under `inference-lakehouse/records/` in regional R2, and exposes typed dimensions
+plus request/response/error JSON through that region's `avalon.llm_inference`
+Iceberg table. The former workspace preference, D1 payload index, and
+`agent-inference/` request-only writer no longer exist.
 
-1. **Pull the ID out of the URL.** In the canonical
-   `https://with-avalon.com/app/workstreams/<uuid>` and in the
-   `avalon://workstreams/<uuid>` deep link it wraps, that `<uuid>` is
-   `workstreams.id` — see [`workstream-links.md`](workstream-links.md).
-2. **Find the region.** Query Global first
-   (`avalon-global`, `3802fdab-e21c-4313-beb2-c1defb37f253`), then EU
-   (`avalon-eu`, `099eb3bf-4291-4a0f-a051-645e5c338881`). A workspace's region is
-   immutable, so exactly one holds the row — see
-   [`regionalization.md`](regionalization.md). The same query returns the
-   `workspace_id` the next steps need:
+#### Before querying
 
-   ```sql
-   SELECT id, workspace_id FROM workstreams WHERE id = '<uuid>';
-   ```
-3. **List the turns.** One row per model request, with its `turn_id`, model,
-   outcome, token counts, and the R2 `object_key`. A `turn_id` may repeat: each
-   row is one *attempt*, so a turn that fell back to another model or was
-   re-executed after a transport fault has several, and duplicates are the retry
-   trail rather than a data defect. Lead with the `workspace_id`
-   from step 2 — the index is `(workspace_id, workstream_id, created_at DESC)`,
-   so a filter on the work stream alone still answers but scans:
+1. Copy the work-stream UUID from the canonical
+   `https://with-avalon.com/app/workstreams/<uuid>` URL. The current main
+   substream ID is `0`. When Avalon exposes additional product substreams, copy
+   the canonical substream ID from the API response or route that opened that
+   substream; do not infer it from an inline child run. These opaque IDs are safe
+   to place in the query examples below; do not paste a title, prompt fragment,
+   email, or other user content into SQL.
+2. Resolve the workspace's immutable **Data region** in the desktop Workspace
+   settings or from the regional API route serving its session. Do not search
+   both catalogs merely because one returned no row.
+3. Select the matching resources:
 
-   ```sql
-   SELECT turn_id, model, outcome, object_key, created_at
-     FROM agent_inference_payload_logs
-    WHERE workspace_id = '<workspace-id>' AND workstream_id = '<uuid>'
-    ORDER BY created_at ASC;
-   ```
-4. **Fetch the payload.** `object_key` addresses the region's payload bucket —
-   `avalon-global-payloads`, or the EU-jurisdiction `avalon-eu-payloads` — under
-   `agent-inference/<workspace-id>/<YYYY-MM-DD>/<inference-request-id>.json`. Each
-   object holds `{metadata, request}`, where `request` is the exact OpenRouter
-   body: the frozen system prompt, every message, and the full tool schemas as
-   the model saw them. The **last** turn's `messages` array is the whole
-   conversation, so start there rather than reassembling the earlier ones.
+   | Data region | Data Catalog bucket | Exact-record `PAYLOADS` bucket |
+   | --- | --- | --- |
+   | Global | `avalon-global-inference-lakehouse` | `avalon-global-payloads` |
+   | EU | `avalon-eu-inference-lakehouse` | `avalon-eu-payloads` with `eu` jurisdiction |
 
-`wrangler d1 execute --remote` and `wrangler r2 object get` do the same job when
-Wrangler is available. When it is not — a sandbox that denies it, or CI — the
-REST API takes the same token:
+Use Cloudflare's R2 SQL HTTP API, not the dashboard or Wrangler query command.
+The endpoint takes the **Data Catalog bucket name**, not a warehouse ID:
 
-```bash
-curl -sS -X POST "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/<database-id>/query" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
-  -d '{"sql":"SELECT …","params":[]}'
-curl -sS "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/<bucket>/objects/<object-key>" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+```text
+POST https://api.sql.cloudflarestorage.com/api/v1/accounts/<account-id>/r2-sql/query/<data-catalog-bucket>
+Authorization: Bearer <inference-lakehouse-api-token>
+Content-Type: application/json
+
+{"query":"SELECT ..."}
 ```
 
-Add `-H "cf-r2-jurisdiction: eu"` to every REST object request for
-`avalon-eu-payloads` or `avalon-eu-telemetry`; omit it only for Global buckets.
-Without that header Cloudflare addresses the default jurisdiction and a real EU
-object appears to be missing.
+Store a dedicated responder token in the ignored `.env.local` as
+`INFERENCE_LAKEHOUSE_API_TOKEN`; the existing `CLOUDFLARE_ACCOUNT_ID` supplies
+the account path. Never reuse `CLOUDFLARE_API_TOKEN`, which is the deployment
+credential. Cloudflare currently labels the query token's required permissions
+**R2 SQL Read**, **R2 Data Catalog Read**, and **R2 Admin Read & Write**, even
+for a query client. The last permission means the token is not cryptographically
+read-only at the R2 layer: restrict it to the Avalon account and only the one
+regional catalog and payload bucket under investigation, and use it only with
+the two GET/POST requests documented here.
+
+R2 SQL is a Cloudflare beta surface. If the HTTP contract has changed, use
+Cloudflare's current [R2 SQL query
+guide](https://developers.cloudflare.com/r2-sql/query-data/) rather than
+guessing. The table and bucket names in this runbook remain repository-owned.
+Start with the narrow typed columns and time window below; selecting every JSON
+column across an unbounded table is both an unnecessary exposure of customer
+content and an unnecessary scan.
+
+#### Find the inference pair
+
+Pipeline rolls files every 300 seconds, so a just-finished call may not be
+queryable for roughly one roll interval. Query a bounded time range around the
+incident and inspect identifiers before selecting raw JSON:
+
+```sql
+SELECT
+  captured_at,
+  event_id,
+  event_type,
+  source,
+  invocation_type,
+  substream_id,
+  request_id,
+  parent_request_id,
+  inference_request_id,
+  turn_id,
+  provider,
+  model,
+  provider_model,
+  success,
+  disposition,
+  failure_kind,
+  latency_ms,
+  ttft_ms,
+  input_tokens,
+  output_tokens,
+  reasoning_tokens,
+  cached_input_tokens,
+  cost_microusd,
+  response_bytes,
+  payload_object_key
+FROM avalon.llm_inference
+WHERE workstream_id = '<workstream-uuid>'
+  AND substream_id = '0'
+  AND captured_at >= '2026-08-24T19:00:00Z'
+  AND captured_at <  '2026-08-24T20:00:00Z'
+ORDER BY captured_at ASC
+LIMIT 200;
+```
+
+Create a scratch directory, save that SQL as `find.sql`, then build the JSON
+request body without hand-escaping it and call the API. Set the catalog bucket
+to the Global or EU value from the table above:
+
+```text
+lakehouse_scratch="$(mktemp -d)"
+lakehouse_catalog_bucket='avalon-global-inference-lakehouse'
+lakehouse_request="$lakehouse_scratch/find-request.json"
+lakehouse_response="$lakehouse_scratch/find-response.json"
+node -e 'const fs=require("node:fs"); process.stdout.write(JSON.stringify({query:fs.readFileSync(process.argv[1],"utf8")}))' \
+  "$lakehouse_scratch/find.sql" > "$lakehouse_request"
+pnpm exec dotenv -e .env.local -- sh -c '
+  curl --fail-with-body --silent --show-error \
+    --request POST \
+    "https://api.sql.cloudflarestorage.com/api/v1/accounts/${CLOUDFLARE_ACCOUNT_ID}/r2-sql/query/$1" \
+    --header "Authorization: Bearer ${INFERENCE_LAKEHOUSE_API_TOKEN}" \
+    --header "Content-Type: application/json" \
+    --data-binary "@$2" \
+    --output "$3"
+' _ "$lakehouse_catalog_bucket" "$lakehouse_request" "$lakehouse_response"
+```
+
+Keep the response in the scratch directory rather than printing it into a
+terminal transcript. Inspect only the identifier and typed columns needed to
+choose the `inference_request_id` for the next query.
+
+Use `substream_id` to isolate the product conversation and `request_id` to
+isolate one API/harness run. `"0"` is the current main substream. An inline
+child remains in the same product substream as its root; identify it by its own
+`request_id` and the root's `parent_request_id`, never by inventing another
+substream. Each provider call normally has one `request` and one terminal
+`attempt` row sharing `inference_request_id`. After copying that opaque ID from
+the first query, retrieve only that pair:
+
+```sql
+SELECT
+  captured_at,
+  event_id,
+  event_type,
+  source,
+  provider,
+  model,
+  provider_model,
+  success,
+  disposition,
+  failure_kind,
+  latency_ms,
+  ttft_ms,
+  request,
+  response,
+  error,
+  metadata,
+  payload_object_key,
+  payload_sha256,
+  payload_bytes
+FROM avalon.llm_inference
+WHERE inference_request_id = '<inference-request-id>'
+ORDER BY captured_at ASC
+LIMIT 10;
+```
+
+Save this second statement as `$lakehouse_scratch/pair.sql` and invoke the same
+API recipe with `pair-request.json` and `pair-response.json`. That response
+contains raw customer content; do not print it, pipe it through a logging tool,
+or attach it to an incident.
+
+Interpret the pair rather than one row in isolation:
+
+- `request` is what Avalon sent to the provider, including messages, tool
+  schemas, routing options, and structured-output schema when applicable.
+- `response` is the normalized terminal provider result; `error` and
+  `failure_kind` explain a failed attempt. `metadata` carries retry, repair,
+  cursor, validation, and source-specific context.
+- `model` is Avalon's requested route; `provider_model` is the concrete model
+  reported by the provider. Do not substitute one for the other in an incident
+  report.
+- Queue and Pipeline delivery are at-least-once. Duplicate physical rows with
+  the same `event_id` are one logical event. A quick duplicate check is:
+
+  ```sql
+  SELECT event_id, COUNT(*) AS copies
+  FROM avalon.llm_inference
+  WHERE inference_request_id = '<inference-request-id>'
+  GROUP BY event_id
+  HAVING COUNT(*) > 1;
+  ```
+
+#### Retrieve the exact archived record
+
+Every row also has an exact JSON archive in its regional `PAYLOADS` bucket. Use
+the archive when the Iceberg row is pointer-backed, when the R2 SQL response is
+awkward to inspect, or when byte-for-byte evidence matters.
+
+- If `payload_object_key` is present, use it exactly. The row also supplies the
+  expected SHA-256 and byte count.
+- Otherwise derive the key as
+  `inference-lakehouse/records/<UTC YYYY-MM-DD>/<event_id>.json`, using the UTC
+  date in `captured_at`. Ordinary rows omit the pointer columns because their
+  complete JSON already fits in the Iceberg row, but their archive still exists.
+- Download it with Cloudflare's R2 Object REST API and the same dedicated token.
+  Never use the Data Catalog bucket for this request; it contains
+  Iceberg/Parquet internals, not the per-event JSON archive.
+- If the pointer supplied `payload_sha256` and `payload_bytes`, verify both
+  before treating the file as evidence.
+
+The object GET is also API-only:
+
+```text
+lakehouse_payload_bucket='avalon-global-payloads'
+lakehouse_jurisdiction='default'
+lakehouse_object_key='<generated-object-key>'
+lakehouse_expected_bytes='<payload_bytes>'
+lakehouse_expected_sha256='<payload_sha256-base64url>'
+pnpm exec dotenv -e .env.local -- sh -c '
+  curl --fail-with-body --silent --show-error \
+    "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/r2/buckets/$1/objects/$2" \
+    --header "Authorization: Bearer ${INFERENCE_LAKEHOUSE_API_TOKEN}" \
+    --header "cf-r2-jurisdiction: $3" \
+    --output "$4"
+' _ "$lakehouse_payload_bucket" "$lakehouse_object_key" "$lakehouse_jurisdiction" \
+  "$lakehouse_scratch/record.json"
+node -e '
+  const fs = require("node:fs");
+  const crypto = require("node:crypto");
+  const bytes = fs.readFileSync(process.argv[1]);
+  const digest = crypto.createHash("sha256").update(bytes).digest("base64url");
+  if (bytes.length !== Number(process.argv[2]) || digest !== process.argv[3]) {
+    throw new Error("inference archive failed byte-count or SHA-256 verification");
+  }
+  process.stdout.write(`verified ${bytes.length} bytes\n`);
+' "$lakehouse_scratch/record.json" "$lakehouse_expected_bytes" \
+  "$lakehouse_expected_sha256"
+```
+
+For EU, use `avalon-eu-payloads` and `eu`; for Global, use
+`avalon-global-payloads` and `default`. The object key is generated by Avalon
+and contains only the fixed prefix, UTC date, inference ID, event suffix, and
+`.json`; do not substitute an arbitrary user-controlled path. The responder
+token is for these query and object-GET requests, not for provisioning,
+deploying, replaying, deleting, acknowledging a DLQ, or changing table
+maintenance.
+
+#### When a row is missing
+
+No row is not proof that no model call occurred. Wait through the five-minute
+roll interval, confirm the workspace region and time window, then correlate the
+content-free Workers events by `request_id`/`inference_request_id`:
+
+- `inference_lakehouse_stage_failed` means archive or Queue acceptance failed.
+- `inference_lakehouse_delivery_failed` means a delivery is retrying.
+- A non-empty `avalon-<region>-inference-lakehouse-dead-letter` queue is the
+  definitive terminal delivery alarm.
+- `inference_lakehouse_delivered` confirms Pipeline acceptance, not that product
+  state committed and not that the row is already visible to R2 SQL.
+
+Keep this distinction during incident reconstruction: the owning
+`SubstreamAgent`/`BlockDashboardAgent` `inference_attempts` ledger is operational
+authority for attempt recovery, while the lakehouse is best-effort analytical
+evidence. Never repair product state from an Iceberg row.
+
+[`inference-lakehouse.md`](inference-lakehouse.md) owns the complete schema,
+regional resource names, deduplication rule, and failure operations.
 
 A retrieved payload contains the prompt, the connector data pulled into it, and
 whatever the person wrote. Treat it as production user content: read it from a
-scratch directory, keep it out of logs, tickets, and commits, and delete it when
-the investigation is done. What the feature stores and why is
-[`agent-harness.md`](agent-harness.md#failure-modes-and-limits); this section is
-only how to read it back.
+scratch directory, do not reproduce it in a user-facing agent response or
+persistent task note, keep it out of logs, tickets, and commits, record only the
+minimum content-free identifiers and conclusion needed for the incident, and
+delete the scratch copy when the investigation is done. Cleanup is explicit and
+bounded to the directory created by `mktemp`:
+
+```text
+/usr/bin/find "$lakehouse_scratch" -type f -delete
+/bin/rmdir "$lakehouse_scratch"
+```
+
+What the feature stores and why is
+[`inference-lakehouse.md`](inference-lakehouse.md); this section is only how to
+read it back.
 
 ## Regional telemetry
 

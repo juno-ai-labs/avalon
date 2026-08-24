@@ -48,6 +48,7 @@
   "queues": {
     "producers": [
       { "binding": "ACTIVITY_QUEUE", "queue": "avalon-do-runtime-test-activity" },
+      { "binding": "INFERENCE_LAKEHOUSE_QUEUE", "queue": "avalon-do-runtime-test-inference-lakehouse" },
       { "binding": "ACCESS_REVOCATION_QUEUE", "queue": "avalon-do-runtime-test-access-revocations" }
     ]
   }

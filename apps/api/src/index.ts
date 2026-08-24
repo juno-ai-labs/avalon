@@ -4,6 +4,10 @@ import { assertEnvContract, EnvContractError, type Env } from "./env";
 import { misconfiguredResponse } from "./lib/misconfigured-response";
 import { logStructuredEvent } from "./observability/logger";
 import { consumeAccessRevocationQueue } from "./queues/access-revocation-consumer";
+import {
+  consumeInferenceLakehouseQueue,
+  isInferenceLakehouseQueue,
+} from "./queues/inference-lakehouse-consumer";
 import { consumeMigrationCommandQueue } from "./queues/migration-command-consumer";
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
@@ -150,6 +154,12 @@ export default {
     // hangs up. See docs/access-revocation.md.
     if (isAccessRevocationQueue(batch.queue)) {
       return consumeAccessRevocationQueue(batch, env);
+    }
+    // Inference archival is an analytical projection of work that already
+    // happened. It drains during product maintenance so a cutover cannot turn
+    // accepted records into a regional dead-letter backlog.
+    if (isInferenceLakehouseQueue(batch.queue)) {
+      return consumeInferenceLakehouseQueue(batch, env);
     }
     // Forced migrations dispatch before the gate too, and for a closely related
     // reason: a migration pass is schema work, not new work-stream work — it

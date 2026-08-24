@@ -27,7 +27,6 @@ const session = {
     region: 'global' as const,
     role: 'owner' as const,
     timezone: 'America/Los_Angeles',
-    logAgentInference: false,
     createdAt: '2026-08-01T12:00:00.000Z',
   },
   apiBaseUrl: 'https://api.with-avalon.com',

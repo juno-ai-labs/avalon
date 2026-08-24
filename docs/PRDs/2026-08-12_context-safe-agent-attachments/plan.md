@@ -432,9 +432,10 @@ deployed, tested, and observed reaching every routed model.
   derivative-byte, image-count, and long-edge limits. Mixed good/bad batches
   preserve message text and other attachments, and every emitted visual part has
   a same-ID persisted derivative.
-- Verify through opt-in inference logging in an internal workspace that manifests
-  and tool continuations reach every routed work-stream and automation model.
-  This evidence is a mandatory pre-cutover gate and must not log file contents.
+- Verify through the regional inference lakehouse in an internal workspace that
+  manifests and tool continuations reach every routed work-stream and automation
+  model. This evidence is a mandatory pre-cutover gate and must not copy file
+  contents into ordinary logs or tickets.
 
 ### Implementation
 

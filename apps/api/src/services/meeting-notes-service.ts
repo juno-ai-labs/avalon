@@ -221,6 +221,7 @@ export class MeetingNotesService {
     const final = input.mode === "final";
     const inferenceLogger = createAgentInferenceLogger(this.env, {
       workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
       requestId,
       source: "meeting_notes",
     });

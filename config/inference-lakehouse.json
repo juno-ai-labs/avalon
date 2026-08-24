@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "binding": "INFERENCE_LAKEHOUSE",
+  "namespace": "avalon",
+  "table": "llm_inference",
+  "streamSchema": "config/inference-lakehouse-stream-schema.json",
+  "regions": {
+    "global": {
+      "jurisdiction": "default",
+      "bucket": "avalon-global-inference-lakehouse",
+      "stream": "avalon_global_inference_lakehouse_stream",
+      "sink": "avalon_global_inference_lakehouse_sink",
+      "pipeline": "avalon_global_inference_lakehouse"
+    },
+    "eu": {
+      "jurisdiction": "eu",
+      "bucket": "avalon-eu-inference-lakehouse",
+      "stream": "avalon_eu_inference_lakehouse_stream",
+      "sink": "avalon_eu_inference_lakehouse_sink",
+      "pipeline": "avalon_eu_inference_lakehouse"
+    }
+  }
+}

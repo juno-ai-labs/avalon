@@ -51,6 +51,13 @@ defined in [`docs/sandbox.md`](docs/sandbox.md).
 - When an outbound HTTPS request fails in a way that does not look like a
   network error, read [`docs/sandbox-proxy.md`](docs/sandbox-proxy.md) before
   retrying. Never disable TLS verification or unset `HTTPS_PROXY`.
+- **Debugging a production model run?** Start with
+  [`docs/runbook.md`](docs/runbook.md#inspecting-a-runs-raw-inference). Raw
+  inference is in the workspace region's lakehouse, not D1 or Workers Logs;
+  use its region-scoped R2 SQL/Object API procedure (not the web dashboard),
+  filter by canonical work-stream and substream IDs (`"0"` is the main feed),
+  and keep retrieved user content out of logs, tickets, commits, and agent
+  responses.
 
 ## Quality gates
 
