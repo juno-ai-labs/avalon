@@ -268,7 +268,19 @@ remain are bounded by somebody having named this person. Two colour rules were
 deleted rather than left dead, so widening the membership rule again means
 adding the rule back for whatever state is admitted.
 
-Shipped in TBD.
+**It also takes a failed run off this screen**, which is worth stating plainly
+because nothing here ever tested for one. `workstreamNeedsAttention` has never
+checked `harnessStatus === 'failed'`; a broken run reached the section because a
+run that fails almost always leaves a message nobody has read, so it arrived
+through `hasUnread` — by accident rather than by design. It now appears here
+only if the person was mentioned in it or newly added to it, and otherwise its
+only surface is the sidebar dot. That follows the line this change draws — a
+failure is the run's own state, not somebody addressing you — but if the product
+wants failures on the home screen, the honest fix is to name `failed` in the
+membership rule rather than to let unread smuggle it back in, and that decision
+belongs with the ranking question below.
+
+Shipped in #272.
 
 ### 2026-08-24 — One ranked marker per work stream, with unseen as its own state
 
@@ -332,4 +344,4 @@ label is what the screen reader hears, so it is not optional. The two backfills
 mean nobody sees a wave of markers at the deploy; a future migration that
 touches either column must keep that property.
 
-Shipped in TBD.
+Shipped in #267.
