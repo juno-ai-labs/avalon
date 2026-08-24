@@ -3,7 +3,6 @@ import type { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  connectorTypesForOpportunity,
   recordWorkstreamCreatedTelemetry,
   workstreamCreationEventId,
 } from "../src/telemetry/workstream-creation";
@@ -19,7 +18,6 @@ import {
 const userId = asUserId("018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1");
 const workspaceId = asWorkspaceId("018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2");
 const workstreamId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d3";
-const opportunityId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d4";
 
 function fixture() {
   const database = preRetirementProductSqliteDatabase();
@@ -136,58 +134,4 @@ describe("server-authoritative work-stream creation telemetry", () => {
     vi.useRealTimers();
   });
 
-  it("resolves all distinct connector types from an opportunity's stored activity roots", async () => {
-    const { database, env } = fixture();
-    database.exec(`
-      INSERT INTO connector_connections
-        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
-         granted_scopes_json, status, created_at, updated_at, model_plugin_id)
-      VALUES
-        ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901', '${workspaceId}', 'linear', 'workspace', NULL,
-         'Linear', '[]', 'healthy', '2026-08-13T17:00:00.000Z', '2026-08-13T17:00:00.000Z',
-         'plugin_linear'),
-        ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902', '${workspaceId}', 'slack', 'workspace', NULL,
-         'Slack', '[]', 'healthy', '2026-08-13T17:00:00.000Z', '2026-08-13T17:00:00.000Z',
-         'plugin_slack');
-      INSERT INTO activities
-        (id, workspace_id, connection_id, connection_scope, provider, provider_event_id,
-         event_type, actor_json, subject_json, occurred_at, received_at, title, summary,
-         text_snippet, visibility_json, entity_keys_json, dedupe_key, processing_status,
-         metadata_json)
-      VALUES
-        ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7911', '${workspaceId}',
-         '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901', 'workspace', 'linear', 'linear-1',
-         'issue.updated', '{}', '{}', '2026-08-13T17:00:00.000Z', '2026-08-13T17:00:00.000Z',
-         'Issue', '', '', '{}', '[]', 'linear-1', 'processed', '{}'),
-        ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7912', '${workspaceId}',
-         '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902', 'workspace', 'slack', 'slack-1',
-         'message.created', '{}', '{}', '2026-08-13T17:00:00.000Z', '2026-08-13T17:00:00.000Z',
-         'Thread', '', '', '{}', '[]', 'slack-1', 'processed', '{}');
-      INSERT INTO work_opportunities
-        (id, workspace_id, audience_scope, audience_user_id, display_prompt, execution_prompt,
-         admission_reasoning, source_fingerprint, display_prompt_hash, execution_prompt_hash,
-         expires_at, created_at, updated_at)
-      VALUES
-        ('${opportunityId}', '${workspaceId}', 'workspace', NULL, 'Do the work', 'Do the work',
-         'Useful', 'fingerprint', 'display-hash', 'execution-hash', '2026-08-14T17:00:00.000Z',
-         '2026-08-13T17:00:00.000Z', '2026-08-13T17:00:00.000Z');
-      INSERT INTO opportunity_provenance_nodes
-        (id, workspace_id, node_kind, source_id, provider, label, visibility_scope, locator_json, created_at)
-      VALUES
-        ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7921', '${workspaceId}', 'activity',
-         '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7911', 'linear', 'Issue', 'workspace', '{}',
-         '2026-08-13T17:00:00.000Z'),
-        ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7922', '${workspaceId}', 'activity',
-         '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7912', 'slack', 'Thread', 'workspace', '{}',
-         '2026-08-13T17:00:00.000Z');
-      INSERT INTO work_opportunity_provenance_roots (opportunity_id, node_id, position)
-      VALUES
-        ('${opportunityId}', '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7921', 0),
-        ('${opportunityId}', '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7922', 1);
-    `);
-
-    await expect(connectorTypesForOpportunity(env, workspaceId, opportunityId))
-      .resolves.toEqual(["linear", "slack"]);
-    database.close();
-  });
 });
