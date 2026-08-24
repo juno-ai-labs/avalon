@@ -13,8 +13,14 @@ const environment = {
   CLOUDFLARE_ACCOUNT_ID: 'test-account',
   CLOUDFLARE_API_TOKEN: 'test-token',
 };
+const userTokenId = 'a'.repeat(32);
+const accountTokenId = 'b'.repeat(32);
+const expectedR2SecretAccessKey = [
+  '4c5dc9b7', '708905f7', '7f5e5d16', '316b5dfb',
+  '425e68cb', '326dcd55', 'a860e90a', '7707031e',
+].join('');
 
-function accountDouble() {
+function accountDouble({ tokenOwner = 'user' } = {}) {
   const buckets = new Set();
   const catalogs = new Map();
   const entities = {
@@ -24,6 +30,7 @@ function accountDouble() {
   };
   const requests = [];
   let nextId = 1;
+  let tokenId = tokenOwner === 'account' ? accountTokenId : userTokenId;
 
   const success = (result) => Response.json({ success: true, result });
   const missing = (code = 10006) => Response.json(
@@ -41,6 +48,20 @@ function accountDouble() {
       body: init.body === undefined ? undefined : JSON.parse(init.body),
     };
     requests.push(request);
+
+    if (url.pathname === '/client/v4/user/tokens/verify') {
+      if (tokenOwner === 'account') {
+        return Response.json(
+          { success: false, errors: [{ code: 1000, message: 'account-owned token' }] },
+          { status: 403 },
+        );
+      }
+      return success({ id: tokenId, status: 'active' });
+    }
+    if (path === '/tokens/verify') {
+      assert.equal(tokenOwner, 'account');
+      return success({ id: tokenId, status: 'active' });
+    }
 
     if (path === '/r2/buckets' && method === 'POST') {
       buckets.add(request.body.name);
@@ -77,7 +98,16 @@ function accountDouble() {
     assert.fail(`unexpected Cloudflare request: ${method} ${path}`);
   };
 
-  return { buckets, catalogs, entities, requests, fetchImpl };
+  return {
+    buckets,
+    catalogs,
+    entities,
+    requests,
+    fetchImpl,
+    setTokenId(value) {
+      tokenId = value;
+    },
+  };
 }
 
 test('an empty account is fully provisioned by one idempotent deploy preflight', async () => {
@@ -92,7 +122,7 @@ test('an empty account is fully provisioned by one idempotent deploy preflight',
       outputDirectory,
     });
     const createsAfterFirstRun = account.requests.filter((request) => request.method === 'POST');
-    assert.equal(createsAfterFirstRun.length, 10);
+    assert.equal(createsAfterFirstRun.length, 9);
     assert.deepEqual([...account.buckets].sort(), [
       'avalon-eu-inference-lakehouse',
       'avalon-global-inference-lakehouse',
@@ -100,6 +130,32 @@ test('an empty account is fully provisioned by one idempotent deploy preflight',
     assert.equal(account.entities.streams.size, 2);
     assert.equal(account.entities.sinks.size, 2);
     assert.equal(account.entities.pipelines.size, 2);
+
+    assert.deepEqual([...account.catalogs.keys()], ['avalon-global-inference-lakehouse']);
+    const euSink = [...account.entities.sinks.values()].find((sink) => sink.type === 'r2');
+    assert.match(
+      euSink.name,
+      /^avalon_eu_inference_lakehouse_sink_credential_[a-f0-9]{64}$/u,
+    );
+    assert.equal(euSink.name.includes(userTokenId), false);
+    assert.deepEqual(euSink, {
+      id: euSink.id,
+      name: euSink.name,
+      type: 'r2',
+      format: { type: 'parquet', compression: 'zstd' },
+      config: {
+        account_id: 'test-account',
+        bucket: 'avalon-eu-inference-lakehouse',
+        jurisdiction: 'eu',
+        path: 'avalon/llm_inference',
+        partitioning: { time_pattern: 'year=%Y/month=%m/day=%d/hour=%H' },
+        credentials: {
+          access_key_id: userTokenId,
+          secret_access_key: expectedR2SecretAccessKey,
+        },
+        rolling_policy: { interval_seconds: 300 },
+      },
+    });
 
     const euResourceRequests = account.requests.filter((request) =>
       request.path.includes('avalon-eu-inference-lakehouse'));
@@ -159,6 +215,38 @@ test('immutable stream drift stops deployment instead of silently splitting the 
     ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
     /schema drifted; Pipeline stream schemas are immutable/u,
   );
+});
+
+test('account-owned deployment tokens provision the direct R2 sink without a user token', async () => {
+  const account = accountDouble({ tokenOwner: 'account' });
+  await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
+  const euSink = [...account.entities.sinks.values()].find((sink) => sink.type === 'r2');
+  assert.equal(euSink.config.credentials.access_key_id, accountTokenId);
+  assert.ok(account.requests.some((request) => request.path === '/tokens/verify'));
+});
+
+test('immutable EU sink drift stops deployment', async () => {
+  const account = accountDouble();
+  await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
+  const euSink = [...account.entities.sinks.values()].find((sink) => sink.type === 'r2');
+  euSink.config.jurisdiction = 'default';
+
+  await assert.rejects(
+    ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
+    /destination or rolling policy drifted; sinks are immutable/u,
+  );
+});
+
+test('deployment credential replacement stops before creating conflicting immutable sinks', async () => {
+  const account = accountDouble();
+  await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
+  account.setTokenId('c'.repeat(32));
+
+  await assert.rejects(
+    ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
+    /uses a different deployment credential; sinks are immutable/u,
+  );
+  assert.equal(account.entities.sinks.size, 2);
 });
 
 test('the deploy provisions bindings before migration or Worker deployment', async () => {
