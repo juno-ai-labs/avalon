@@ -720,8 +720,13 @@ while the pass could only select three narrow paths and starves the stale-lease
 reap now that it selects every unmarked terminal row — and that reap is the only
 recovery for an executor that died without terminalizing at all. The page is
 also ordered newest-first, so a card stranded minutes ago is repaired before a
-year of history, and a row that can never settle sits at the tail instead of
-occupying a slot at the head forever.
+year of history. Ordering does nothing for a row that can never settle — one
+whose object-side terminal stamp does not match records no marker however often
+it is tried, so it holds a slot in every page, and the order only decides
+whether the wedged rows are the recent or the old ones. Enough of them in one
+work stream and the rest of its history is never reached; the signal is
+`harness_residual_receipt_repair_failed` repeating one run id, and the fix
+would be durable per-row retry state and a backoff whose number is the team's.
 
 A settlement failure still throws out of terminalization rather than being
 swallowed, and that now reaches every run rather than only a stopped one. The
