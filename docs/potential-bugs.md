@@ -86,6 +86,39 @@ screen with the most behaviour in the renderer is the least covered.
 
 ---
 
+## A digest follows the account timezone; an automation created from it does not
+
+**Severity:** wrong-answer
+
+**Observed.** `workspace-service.ts:363` re-derives every digest's `schedules`
+rows when somebody changes their account timezone
+(`rebuildDigestSchedulesForTimezone`), and the cron reconciler repairs any it
+misses by comparing each derived row's zone against the account. Nothing does
+either for automations: `automation-service.ts:1898` resolves an unnamed
+calendar zone from the account when the row is written and the resolved value is
+frozen there.
+
+**Why it is suspicious.** Both rows are derived from the same column for the
+same reason, and one follows it while the other does not. Somebody who moves
+from New York to London and updates the setting gets their digest at nine in
+London and their morning briefing at nine in New York, from one change they made
+in one place.
+
+**What would settle it.** Whether an automation's zone is part of its
+*definition* or of its *owner's day*. The case for frozen: unlike a digest, an
+automation displays its zone — the trigger summary is prose naming it, written
+when the automation was created — so moving the occurrence silently contradicts
+the sentence on the screen. The case for following: an unnamed zone was never
+part of the definition, which is exactly what `timezone: null` now records, and
+the summary is regenerated whenever the automation is edited anyway. If it
+should follow, the mechanism is the digest's: re-derive the `schedules` rows of
+every personal automation whose pinned version has a null-zoned calendar
+trigger, in every workspace the person belongs to, and let the same comparison
+repair what a failed pass missed. An automation whose trigger names a zone must
+not move either way.
+
+---
+
 ## `completeOpportunityStart` throws across an RPC boundary its caller does not catch
 
 **Severity:** wrong-answer

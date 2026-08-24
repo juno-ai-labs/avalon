@@ -95,6 +95,15 @@ appear while they described the automation is the row that becomes the
 automation. A request without a `draftId`, or with one naming anything the caller
 may not write through to, inserts a new automation exactly as it always did.
 
+Promotion is also where a calendar trigger's timezone is settled. A draft carries
+the zone the person named for it and null when they named none, and the
+`schedules` row is derived in the account's — the owner's `users.timezone` for a
+personal automation, `workspaces.timezone` for a workspace one. It is read here
+rather than when the draft was compiled because the scope is chosen on this
+screen, not by the compiler: a draft the compiler suggested sharing and its
+author kept to themselves would otherwise run in the workspace's day rather than
+their own.
+
 ## Invariants
 
 - **A draft never runs.** Every path that starts a run — the scheduler alarm,
@@ -286,6 +295,25 @@ conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
 ## Changelog
+
+### 2026-08-24 — A promoted draft is scheduled in the account's timezone
+
+**What changed:** A calendar trigger's `timezone` is nullable, and
+`AutomationService` resolves an absent one against the automation's owner where
+it derives the `schedules` row — on this path, on template subscription, and on
+version adoption. The compiler is separately given the account's zones so the
+draft a person reviews names the right one.
+
+**Why:** A briefing created by somebody whose account said America/New_York ran
+on Pacific time. The compiler had never been told the account's zone, and the
+zone it invented was frozen into the definition at compile time — before the
+scope was even chosen — so nothing downstream could correct it.
+
+**Consequences:** The zone is settled twice on purpose: the compiler's normalizer
+fills the applicable default into the draft returned to the client, so the create
+screen and every existing client still see a concrete zone, and the server
+resolves it again against the real owner and scope when the schedule is written.
+A zone the person actually named survives both.
 
 ### 2026-08-23 — The compiler names the destination it was asked for
 
