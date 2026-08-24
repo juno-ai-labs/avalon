@@ -5,6 +5,7 @@ import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import type { HarnessTool, HarnessToolResult } from "@avalon/agent-harness";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
+import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 
 export const MEMORY_EMBEDDING_MODEL = "@cf/qwen/qwen3-embedding-0.6b" as const;
 
@@ -540,14 +541,15 @@ async function memoryReadById(
 function parseFrozenContext(row: {
   memory_scope_ids_json: string;
   query_text: string;
-  retrieval_mode: MemoryRetrievalMode;
+  // The object stores what it was given; the narrow union is the runtime's.
+  retrieval_mode: string;
   results_json: string;
   memory_context_hash: string;
 }): FrozenMemoryContext {
   return {
     memoryScopeIds: JSON.parse(row.memory_scope_ids_json) as string[],
     query: row.query_text,
-    retrievalMode: row.retrieval_mode,
+    retrievalMode: row.retrieval_mode as MemoryRetrievalMode,
     results: JSON.parse(row.results_json) as MemorySearchItem[],
     memoryContextHash: row.memory_context_hash,
   };
@@ -561,30 +563,14 @@ export async function freezeRunMemoryContext(
 ): Promise<FrozenMemoryContext> {
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const query = rawQuery.trim() || "Current work-stream objective and trigger";
-  const existing = await env.DB.prepare(
-    `SELECT context.memory_scope_ids_json, context.query_text, context.retrieval_mode,
-            context.results_json, context.memory_context_hash
-       FROM harness_run_memory_contexts context
-       JOIN harness_runs run ON run.id = context.harness_run_id
-      WHERE context.harness_run_id = ? AND context.workspace_id = ?
-        AND context.workstream_id = ? AND context.attempt_id = ?
-        AND run.attempt_id = ? AND run.lease_owner = ? AND run.status = 'running'
-        AND run.terminalized_at IS NULL
-        AND run.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
-  ).bind(
-    input.harnessRunId,
-    input.workspaceId,
-    input.workstreamId,
-    lease.attemptId,
-    lease.attemptId,
-    lease.owner,
-  ).first<{
-    memory_scope_ids_json: string;
-    query_text: string;
-    retrieval_mode: MemoryRetrievalMode;
-    results_json: string;
-    memory_context_hash: string;
-  }>();
+  const runs = createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId);
+  const fence = {
+    runId: input.harnessRunId,
+    attemptId: lease.attemptId,
+    owner: lease.owner,
+    now: Date.now(),
+  };
+  const existing = await runs.memoryContext(fence);
   if (existing) return parseFrozenContext(existing);
 
   const recalled = await hybridMemorySearch(env, input, query);
@@ -596,50 +582,24 @@ export async function freezeRunMemoryContext(
     retrievalMode: recalled.retrievalMode,
     results,
   }));
-  const createdAt = nowIso();
-  const inserted = await env.DB.prepare(
-    `INSERT INTO harness_run_memory_contexts
-       (harness_run_id, workspace_id, workstream_id, attempt_id,
-        memory_scope_ids_json, query_text, retrieval_mode, results_json,
-        memory_context_hash, created_at)
-     SELECT ?1, ?2, ?3, ?4, ?7, ?8, ?9, ?10, ?11, ?12
-       FROM harness_runs
-      WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
-        AND attempt_id = ?4 AND lease_owner = ?5 AND status = 'running'
-        AND terminalized_at IS NULL
-        AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-     ON CONFLICT(harness_run_id) DO NOTHING`,
-  ).bind(
-    input.harnessRunId,
-    input.workspaceId,
-    input.workstreamId,
-    lease.attemptId,
-    lease.owner,
-    null,
-    JSON.stringify(memoryScopeIds),
-    query,
-    recalled.retrievalMode,
-    JSON.stringify(results),
+  // The recall above costs a vector search, so the read and the write cannot be
+  // one operation. A loser gets the winner's row rather than an outcome to
+  // interpret: freezing recall exists so every replay of this attempt sees the
+  // same memories, which makes the row the run will actually use the only
+  // useful answer.
+  const frozen = await runs.persistMemoryContext({
+    ...fence,
+    now: Date.now(),
+    memoryScopeIdsJson: JSON.stringify(memoryScopeIds),
+    queryText: query,
+    retrievalMode: recalled.retrievalMode,
+    resultsJson: JSON.stringify(results),
     memoryContextHash,
-    createdAt,
-  ).run();
-  if (d1Changes(inserted) > 0) {
-    return { memoryScopeIds, query, retrievalMode: recalled.retrievalMode, results, memoryContextHash };
+  });
+  if (frozen.outcome === "ownership_lost") {
+    throw new Error("memory_context_run_ownership_lost");
   }
-
-  const raced = await env.DB.prepare(
-    `SELECT memory_scope_ids_json, query_text, retrieval_mode, results_json, memory_context_hash
-       FROM harness_run_memory_contexts
-      WHERE harness_run_id = ? AND attempt_id = ?`,
-  ).bind(input.harnessRunId, lease.attemptId).first<{
-    memory_scope_ids_json: string;
-    query_text: string;
-    retrieval_mode: MemoryRetrievalMode;
-    results_json: string;
-    memory_context_hash: string;
-  }>();
-  if (raced) return parseFrozenContext(raced);
-  throw new Error("memory_context_run_ownership_lost");
+  return parseFrozenContext(frozen.row);
 }
 
 function requireReceipt(context: { providerIdempotencyKey?: string }): string {

@@ -26,10 +26,7 @@ export interface WorkstreamRuntimeSqlResult {
 }
 
 const TABLE_REWRITES = [
-  ["harness_run_memory_contexts", "_runtime_run_memory_contexts"],
-  ["harness_run_plugin_activations", "_runtime_run_plugin_activations"],
   ["harness_run_lifecycle_events", "_runtime_run_lifecycle_events"],
-  ["harness_run_scopes", "_runtime_run_scopes"],
   ["message_attachments", "_runtime_message_attachments"],
   ["message_mentions", "_runtime_message_mentions"],
   ["workstream_participants", "_runtime_workstream_participants"],
