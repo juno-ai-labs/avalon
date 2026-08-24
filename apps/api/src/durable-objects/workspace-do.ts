@@ -4,6 +4,8 @@ import {
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
   UserIdSchema,
+  WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
+  WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSPACE_SYNC_TOPICS,
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
@@ -179,6 +181,7 @@ import {
   WorkspaceOpportunityBatchEventsRequestSchema,
   WorkspaceOpportunityClaimStartRequestSchema,
   WorkspaceOpportunityCompleteStartRequestSchema,
+  WorkspaceOpportunityDismissResultSchema,
   WorkspaceOpportunityDismissRequestSchema,
   WorkspaceOpportunityEnqueueRequestSchema,
   WorkspaceOpportunityEnqueueResultSchema,
@@ -197,6 +200,8 @@ import {
   WorkspaceOpportunityRankingStateSchema,
   WorkspaceOpportunityReleaseStartRequestSchema,
   WorkspaceOpportunityStoreRankingRequestSchema,
+  WorkspaceOpportunityTelemetryContextSchema,
+  WorkspaceOpportunityTelemetryContextsSchema,
   WorkspaceOpportunityWindowRequestSchema,
   WorkspaceOpportunityWindowSchema,
   WorkspaceOpportunityWindowSettleRequestSchema,
@@ -896,6 +901,46 @@ function disconnect(socket: WebSocket, code: number, reason: string): void {
   }
 }
 
+type WorkspaceSocketOperation =
+  | "attachment"
+  | "decode"
+  | "validate"
+  | "subscribe"
+  | "list_workstreams"
+  | "create_message";
+
+function closeWorkspaceSocket(
+  env: Env,
+  socket: WebSocket,
+  attachment: WorkspaceSocketAttachment | null,
+  input: {
+    code: number;
+    reason: string;
+    cause: string;
+    operation: WorkspaceSocketOperation;
+    frameBytes?: number;
+    validationIssues?: ReadonlyArray<{ path: string; code: string }>;
+  },
+): void {
+  logWarn(env, "workspace_socket_closed", {
+    code: input.cause,
+    close_code: input.code,
+    close_reason: input.reason,
+    operation: input.operation,
+    ...(input.frameBytes === undefined ? {} : { frame_bytes: input.frameBytes }),
+    ...(input.validationIssues ? { validation_issues: input.validationIssues.slice(0, 25) } : {}),
+    ...(attachment
+      ? {
+        workspace_id: attachment.workspaceId,
+        user_id: attachment.userId,
+        session_id: attachment.sessionId,
+        connection_id: attachment.connectionId,
+      }
+      : {}),
+  });
+  disconnect(socket, input.code, input.reason);
+}
+
 function epoch(value: string | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   const parsed = Date.parse(value);
@@ -1211,15 +1256,30 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const attachment = readAttachment(socket);
     if (!attachment) {
-      socket.close(1011, "Missing workspace connection identity");
+      closeWorkspaceSocket(this.env, socket, null, {
+        code: 1011,
+        reason: "Missing workspace connection identity",
+        cause: "missing_connection_identity",
+        operation: "attachment",
+      });
       return;
     }
     const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
+    const frameBytes = typeof message === "string"
+      ? new TextEncoder().encode(message).byteLength
+      : message.byteLength;
     let decoded: unknown;
     try {
       decoded = JSON.parse(raw);
     } catch {
-      socket.close(1008, "Workspace commands must be JSON");
+      closeWorkspaceSocket(this.env, socket, attachment, {
+        code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
+        reason: "Workspace commands must be JSON",
+        cause: "invalid_json",
+        operation: "decode",
+        frameBytes,
+        validationIssues: [{ path: "(root)", code: "invalid_json" }],
+      });
       return;
     }
     // Ahead of the parse, and the only bound that is. Every other way this
@@ -1243,13 +1303,28 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const parsed = WorkspaceSocketClientEventSchema.safeParse(decoded);
     if (!parsed.success) {
-      socket.close(1008, "Invalid workspace socket event");
+      closeWorkspaceSocket(this.env, socket, attachment, {
+        code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
+        reason: "Invalid workspace socket event",
+        cause: "invalid_event",
+        operation: "validate",
+        frameBytes,
+        validationIssues: parsed.error.issues.map((issue) => ({
+          path: issue.path.map(String).join(".") || "(root)",
+          code: issue.code,
+        })),
+      });
       return;
     }
     if (parsed.data.type === "subscribe") {
       const auth = await this.sessionAuth(attachment);
       if (!auth) {
-        socket.close(1008, "Session no longer active");
+        closeWorkspaceSocket(this.env, socket, attachment, {
+          code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
+          reason: "Session no longer active",
+          cause: "session_inactive",
+          operation: "subscribe",
+        });
         return;
       }
       await this.subscribe(socket, attachment, parsed.data.afterWaterline);
@@ -1258,7 +1333,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (parsed.data.type === "list_workstreams") {
       const auth = await this.sessionAuth(attachment);
       if (!auth) {
-        socket.close(1008, "Session no longer active");
+        closeWorkspaceSocket(this.env, socket, attachment, {
+          code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
+          reason: "Session no longer active",
+          cause: "session_inactive",
+          operation: "list_workstreams",
+        });
         return;
       }
       const page = this.listDirectory({
@@ -2305,21 +2385,41 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
-  async recordOpportunityImpressions(input: WorkspaceOpportunityImpressionsRequest): Promise<void> {
+  async recordOpportunityImpressions(input: WorkspaceOpportunityImpressionsRequest) {
     await this.initialized;
     const request = WorkspaceOpportunityImpressionsRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    this.productStorage().recordImpressions(request);
+    const result = this.productStorage().recordImpressions(request);
+    const contexts = WorkspaceOpportunityTelemetryContextsSchema.safeParse(result.telemetryContexts);
+    if (result.telemetryContextReadFailed || !contexts.success) {
+      logWarn(this.env, "workspace_opportunity_telemetry_context_failed", {
+        workspace_id: request.workspaceId,
+        operation: "impression",
+      });
+    }
     await this.refreshProductAlarm();
+    return contexts.success ? contexts.data : [];
   }
 
-  async dismissOpportunity(input: WorkspaceOpportunityDismissRequest): Promise<boolean> {
+  async dismissOpportunity(input: WorkspaceOpportunityDismissRequest) {
     await this.initialized;
     const request = WorkspaceOpportunityDismissRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const dismissed = this.productStorage().dismissOpportunity(request);
+    const result = this.productStorage().dismissOpportunity(request);
+    const parsed = WorkspaceOpportunityDismissResultSchema.safeParse({
+      dismissed: result.dismissed,
+      telemetryContext: result.telemetryContext,
+    });
+    if (result.telemetryContextReadFailed || !parsed.success) {
+      logWarn(this.env, "workspace_opportunity_telemetry_context_failed", {
+        workspace_id: request.workspaceId,
+        operation: "dismiss",
+      });
+    }
     await this.refreshProductAlarm();
-    return dismissed;
+    return parsed.success
+      ? parsed.data
+      : { dismissed: result.dismissed, telemetryContext: null };
   }
 
   async getOpportunity(input: WorkspaceOpportunityGetRequest) {
@@ -2352,7 +2452,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceOpportunityClaimStartRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    return this.productStorage().claimOpportunityStart(request);
+    const result = this.productStorage().claimOpportunityStart(request);
+    const context = WorkspaceOpportunityTelemetryContextSchema.nullable().safeParse(result.telemetryContext);
+    if (result.telemetryContextReadFailed || !context.success) {
+      logWarn(this.env, "workspace_opportunity_telemetry_context_failed", {
+        workspace_id: request.workspaceId,
+        operation: "start",
+      });
+    }
+    return {
+      outcome: result.outcome,
+      opportunity: result.opportunity,
+      telemetryContext: context.success ? context.data : null,
+    };
   }
 
   async releaseOpportunityStart(input: WorkspaceOpportunityClaimStartRequest): Promise<void> {
@@ -3018,7 +3130,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }));
         if (!auth) {
           span.setError("session_inactive");
-          socket.close(1008, "Session no longer active");
+          closeWorkspaceSocket(this.env, socket, attachment, {
+            code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
+            reason: "Session no longer active",
+            cause: "session_inactive",
+            operation: "create_message",
+          });
           return;
         }
         const result = await span.step("workstream.message.object_write", () => new WorkstreamObjectClient(
