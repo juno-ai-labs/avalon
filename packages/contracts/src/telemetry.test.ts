@@ -603,9 +603,14 @@ describe("telemetry registry", () => {
     expect(TelemetryEnvelopeSchema.safeParse(socketEnvelope({
       socket: "workspace", state: "retrying", cause: "server_closed", attempts: "one", closeCode: 1006,
     })).success).toBe(false);
+    // Dictation's audio socket is deliberately outside this contract: it is an
+    // Azure transport with its own lifecycle, not one of the room sockets.
     expect(TelemetryEnvelopeSchema.safeParse(socketEnvelope({
-      socket: "block_dashboard", state: "connected", cause: "opened", attempts: "zero",
+      socket: "dictation", state: "connected", cause: "opened", attempts: "zero",
     })).success).toBe(false);
+    expect(TelemetryEnvelopeSchema.parse(socketEnvelope({
+      socket: "block_dashboard", state: "connected", cause: "opened", attempts: "zero",
+    }))).toMatchObject({ name: "realtime_socket_state" });
     expect(TelemetryEnvelopeSchema.safeParse(socketEnvelope({
       socket: "workspace", state: "retrying", cause: "server_closed", attempts: 3,
     })).success).toBe(false);

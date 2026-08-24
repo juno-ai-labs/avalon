@@ -23,7 +23,7 @@ terminates in Avalon's EU-isolated Cloudflare resources.
 | `apps/desktop/src/main/product-analytics-settings.ts` | Local-first disable, fail-closed enable/refresh, preference synchronization, crash invalidation, and spool purge. |
 | `apps/desktop/src/main/index.ts` | Startup ordering, Crashpad start, process observers, IPC sender validation, upload scheduling, and product integration points. |
 | `apps/desktop/src/renderer/lib/telemetry.ts` | Narrow renderer facade for registered screen, product-intent, and error-candidate calls. |
-| `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, WorkstreamDO-control, and SubstreamAgent-feed hooks. |
+| `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, WorkstreamDO-control, SubstreamAgent-feed, and per-block HyperSight hooks. |
 | `apps/api/src/routes/telemetry.ts` | Bounded bootstrap, anonymous/authenticated event, identity-link, preference, and crash-ingest routes. |
 | `apps/api/src/routes/telemetry-operations.ts`, `apps/api/src/telemetry/operator-auth.ts` | Bearer-authenticated, role-restricted regional status, replay, raw-crash access, and EU analysis HTTP surface. |
 | `apps/api/src/telemetry/` | Regional collector, identity/preference logic, PostHog adapter, EU sink, replay, crash processing, operations, and lifecycle jobs. |
@@ -91,12 +91,17 @@ the richer position fall back to the legacy successful-start event, but one
 request never emits both versions. None of these events includes routes, titles,
 or prompts.
 
-The three realtime sockets report their own connection transitions. The renderer
-is the authoritative source because it is the only party that can tell a first
+Every realtime socket reports its own connection transitions. The renderer is the
+authoritative source because it is the only party that can tell a first
 connection from a reconnection, and how many attempts one took: the room sees an
 admission either way. One `realtime_socket_state` names which socket
-(`workspace`, `workstream_control`, `substream_feed`), whether it is connected,
-retrying, or stopped, the bounded cause, and the retry depth as a count bucket.
+(`workspace`, `workstream_control`, `substream_feed`, `block_dashboard`), whether
+it is connected, retrying, or stopped, the bounded cause, and the retry depth as
+a count bucket. HyperSight opens one socket per configured block, so a dashboard
+of six blocks reports six connections; the event names no block, so what it
+measures is the drop rate of that socket kind rather than of any one block.
+Dictation's audio socket is deliberately outside this contract: it is an Azure
+transport with its own lifecycle, not one of the room sockets.
 The cause is stated where it is known rather than derived from a close code,
 which carries none of it — a heartbeat that went unanswered, a transport error, a
 ticket that could not be issued, a room that could not replay, going offline, and
@@ -597,6 +602,32 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-24 — HyperSight's per-block sockets join the same contract
+
+**What changed:** `block_dashboard` is a fourth value in
+`TELEMETRY_REALTIME_SOCKETS`, and `use-block-dashboard-sockets.ts` reports
+through the same producer, one instance per block connection.
+
+**Why:** It was left out of the first pass because it is shaped differently —
+one loop holds N sockets, one per configured block, rather than one per screen —
+and that difference needed a decision rather than a copy. The decision is that
+the socket kind is the unit, not the block: the event names no block, so a
+dashboard's six connections aggregate into the drop rate for this kind. Leaving
+it uninstrumented would have made the other three look like the whole picture
+while the noisiest, shortest-lived sockets in the client went unmeasured.
+
+**Considered and rejected:** Adding a block ID so a single flapping block could
+be found. It is an opaque UUID the registry would permit, but it answers a
+debugging question, not a product one, and every block on every dashboard would
+carry one into the destination for the life of the retention window.
+
+**Consequences:** Volume scales with configured blocks rather than with screens,
+which is the one place this event could grow faster than the surfaces around it;
+if that becomes a cost, the sample rate on this contract is the lever, not the
+call sites. Dictation remains outside the contract, and adding it would need a
+fifth registry value and a decision about an audio transport whose failures are
+not the room's.
+
 ### 2026-08-24 — The three realtime sockets report their own connections
 
 **What changed:** A `realtime_socket_state` contract, and one producer —
@@ -629,11 +660,11 @@ cannot be taken back.
 
 **Consequences:** Socket drop rates are visible per socket kind, and
 `resync_required` — the room telling a client its cursor is beyond replay — is
-now a first-class cause rather than an indistinguishable drop. Any fourth socket
-(the block-dashboard channel, dictation) must add its own value to
-`TELEMETRY_REALTIME_SOCKETS` before reporting rather than borrowing one of these
-three, and any new close path has to name its cause through `willClose` or it
-will be counted as the server's.
+now a first-class cause rather than an indistinguishable drop. Any further socket
+must add its own value to `TELEMETRY_REALTIME_SOCKETS` before reporting rather
+than borrowing one of these three — the entry above did exactly that for
+HyperSight — and any new close path has to name its cause through `willClose` or
+it will be counted as the server's.
 
 ### 2026-08-20 — Global Worker telemetry is exported to PostHog, traces included
 
