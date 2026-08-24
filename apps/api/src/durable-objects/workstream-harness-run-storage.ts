@@ -153,6 +153,58 @@ export type InlineChildAdmissionOutcome =
   | { outcome: "parent_scope_missing" }
   | { outcome: "ownership_lost" };
 
+/**
+ * How a root run's terminalization landed, and what the caller must still do.
+ *
+ * The routed version was a four-statement batch — the lifecycle event, the run,
+ * the work stream's sidebar state, and the descendant sweep — where the last two
+ * re-derived the second through `EXISTS (… terminalized_at = ?)` because a batch
+ * cannot ask whether its own earlier statement landed. All four are one
+ * transaction here.
+ *
+ * `already_terminal` carries the stored terminal state, because the caller's
+ * next step depends on it: a stopped run whose residual receipts were never
+ * reconciled must finish that work, and the receipts live in a different
+ * authority, so it cannot happen inside this transaction.
+ */
+export type TerminalizeOutcome =
+  | { outcome: "terminalized" }
+  | {
+      outcome: "already_terminal";
+      status: string;
+      terminalizedAt: number;
+      errorJson: string | null;
+      memberSafePayloadJson: string;
+      /** Whether the residual-receipt marker for this attempt is already written. */
+      receiptsReconciled: boolean;
+    }
+  | { outcome: "ownership_lost" }
+  | { outcome: "not_found" };
+
+/** One run the reaper found terminal but never receipt-reconciled. */
+export interface ResidualRepairRow extends Record<string, SqlStorageValue> {
+  run_id: string;
+  attempt_id: string;
+  origin: string;
+  status: string;
+  terminalized_at: number;
+  error_json: string | null;
+  parent_tool_call_id: string | null;
+  member_safe_payload_json: string;
+}
+
+/** One run whose lease ran out while it was still claimed. */
+export interface StaleRunRow extends Record<string, SqlStorageValue> {
+  run_id: string;
+  attempt_id: string;
+  lease_owner: string;
+  lease_expires_at: number;
+  origin: string;
+  parent_run_id: string | null;
+  parent_tool_call_id: string | null;
+  cancellation_requested_at: number | null;
+}
+
 export type HeartbeatOutcome =
   | { outcome: "renewed"; leaseExpiresAt: number }
   | { outcome: "cancelled" }
@@ -889,6 +941,485 @@ export class WorkstreamHarnessRunStorage {
       return { outcome: "ownership_lost" };
     }
     return { outcome: "owned" };
+  }
+
+  /**
+   * Settle a root run: the event, the run, the sidebar and the descendants.
+   *
+   * The routed version was a four-statement batch in which the third and fourth
+   * statements each carried `EXISTS (SELECT 1 FROM harness_runs … AND
+   * terminalized_at = ?)` — a correlated subquery whose only job was to ask
+   * whether the batch's *own* second statement had landed, since D1 gives a
+   * batch no way to branch on its own progress. Here the fence is checked once
+   * and the four writes follow it.
+   *
+   * The caller still has work after this returns, and deliberately outside the
+   * transaction: a stopped run's open tool receipts belong to another
+   * authority, and of the two possible orderings only "terminalize, then
+   * settle" fails safe. `already_terminal` therefore reports whether that
+   * settlement was ever recorded, so a crash between the two is repaired on
+   * the next attempt rather than leaving a tool card spinning forever.
+   */
+  terminalizeAttempt(input: AttemptFence & {
+    status: string;
+    finalPartId: string | null;
+    model: string | null;
+    usageJson: string | null;
+    errorJson: string | null;
+    memberSafePayloadJson: string;
+    lifecycleEventId: string;
+    receiptMarkerEventKey: string;
+  }): TerminalizeOutcome {
+    return this.storage.transactionSync(() => {
+      const run = this.run({ runId: input.runId });
+      if (!run || run.parent_tool_call_id !== null) return { outcome: "not_found" as const };
+      const stopping = input.status === "cancelled";
+      if (run.legacy_attempt_id === input.attemptId
+        && run.terminalized_at !== null
+        && run.status === input.status) {
+        const terminal = this.lifecycleEvent({ runId: input.runId, eventKey: "terminal" });
+        return {
+          outcome: "already_terminal" as const,
+          status: run.status,
+          terminalizedAt: run.terminalized_at,
+          errorJson: run.error_json,
+          memberSafePayloadJson: terminal?.member_safe_payload_json ?? "{}",
+          receiptsReconciled: this.lifecycleEvent({
+            runId: input.runId,
+            eventKey: input.receiptMarkerEventKey,
+          })?.attempt_id === run.legacy_attempt_id,
+        };
+      }
+      if (run.legacy_attempt_id !== input.attemptId
+        || run.lease_owner !== input.owner
+        || run.terminalized_at !== null
+        || (!stopping && run.cancellation_requested_at !== null)
+        || run.lease_expires_at === null
+        || run.lease_expires_at <= input.now) {
+        return { outcome: "ownership_lost" as const };
+      }
+
+      this.recordLifecycleEvent({
+        eventId: input.lifecycleEventId,
+        runId: input.runId,
+        attemptId: input.attemptId,
+        eventKey: "terminal",
+        eventType: "terminal",
+        status: input.status,
+        memberSafePayloadJson: input.memberSafePayloadJson,
+        now: input.now,
+      });
+      this.sql.exec(
+        `UPDATE runs
+            SET status = ?2, completed_at = ?3, terminalized_at = ?3, final_part_id = ?4,
+                model = COALESCE(?5, model), usage_json = COALESCE(?6, usage_json),
+                error_json = ?7, lease_owner = NULL, lease_expires_at = NULL, updated_at = ?3
+          WHERE run_id = ?1`,
+        input.runId,
+        input.status,
+        input.now,
+        input.finalPartId,
+        input.model,
+        input.usageJson,
+        input.errorJson,
+      );
+      if (run.origin !== "block_dashboard_block") this.settleWorkstreamState(input.runId, input.status, input.now);
+      this.cancelDescendants({
+        rootRunId: input.runId,
+        reason: "parent_terminalized",
+        now: input.now,
+      });
+      return { outcome: "terminalized" as const };
+    });
+  }
+
+  /**
+   * Terminal runs whose residual receipts were never reconciled.
+   *
+   * Terminalization and receipt settlement are two authorities, so a crash
+   * between them leaves a run permanently terminal with a member-visible tool
+   * card still spinning. The absent marker is how those rows are found, and
+   * recording it is what makes the bounded walk advance instead of rescanning
+   * the same history on every activation.
+   */
+  residualRepairCandidates(input: {
+    markerEventKey: string;
+    blockOnly: boolean;
+    limit: number;
+  }): ResidualRepairRow[] {
+    return this.sql.exec<ResidualRepairRow>(
+      `SELECT run.run_id, run.legacy_attempt_id AS attempt_id, run.origin, run.status,
+              run.terminalized_at, run.error_json, run.parent_tool_call_id,
+              COALESCE(terminal.member_safe_payload_json, '{}') AS member_safe_payload_json
+         FROM runs run
+         LEFT JOIN run_lifecycle_events terminal
+           ON terminal.run_id = run.run_id AND terminal.event_key = 'terminal'
+        WHERE run.status IN ('failed', 'cancelled') AND run.terminalized_at IS NOT NULL
+          AND run.legacy_attempt_id IS NOT NULL
+          -- Exactly the terminal-first paths that attempt residual settlement
+          -- today: member-stopped roots, reaped children, and stale-lease
+          -- roots. Direct completed, needs-input and failed root
+          -- terminalization does not start this protocol. If that changes, its
+          -- first-pass call and this retry predicate must change together.
+          AND (
+            run.status = 'cancelled'
+            OR run.parent_tool_call_id IS NOT NULL
+            OR json_extract(run.error_json, '$.code') = 'stale_run_reaped'
+          )
+          AND (?1 = 0 OR run.parent_tool_call_id IS NOT NULL OR run.origin = 'block_dashboard_block')
+          AND NOT EXISTS (
+            SELECT 1 FROM run_lifecycle_events settled
+             WHERE settled.run_id = run.run_id
+               AND settled.attempt_id = run.legacy_attempt_id
+               AND settled.event_key = ?2
+          )
+        ORDER BY run.terminalized_at ASC, run.run_id ASC
+        LIMIT ?3`,
+      input.blockOnly ? 1 : 0,
+      input.markerEventKey,
+      input.limit,
+    ).toArray();
+  }
+
+  /**
+   * Root runs whose lease has run out.
+   *
+   * Ordinary attempts are the only runs whose expired lease is itself a
+   * terminal condition. A sub-agent is deliberately reclaimable while its
+   * parent still owns a live attempt, so including children here would race
+   * their idempotent takeover path — `reapableInlineChildren` asks the
+   * narrower question instead.
+   */
+  staleLeaseRuns(input: {
+    blockOnly: boolean;
+    now: number;
+    limit: number;
+  }): StaleRunRow[] {
+    return this.sql.exec<StaleRunRow>(
+      `SELECT run_id, legacy_attempt_id AS attempt_id, lease_owner, lease_expires_at,
+              origin, parent_run_id, parent_tool_call_id, cancellation_requested_at
+         FROM runs
+        WHERE status = 'running' AND terminalized_at IS NULL
+          AND parent_tool_call_id IS NULL
+          AND legacy_attempt_id IS NOT NULL AND lease_expires_at IS NOT NULL
+          AND lease_expires_at <= ?1
+          AND (?2 = 0 OR origin = 'block_dashboard_block')
+        ORDER BY lease_expires_at ASC
+        LIMIT ?3`,
+      input.now,
+      input.blockOnly ? 1 : 0,
+      input.limit,
+    ).toArray();
+  }
+
+  /**
+   * End a root run whose executor lost its lease.
+   *
+   * The routed version was another four-statement batch whose last two asked,
+   * through `EXISTS (… terminalized_at = ?)`, whether its own second statement
+   * had landed. `leaseExpiresAt` is the compare-and-swap: the row must still
+   * carry the exact deadline the scan saw, or a heartbeat won the race and this
+   * run is not stale after all.
+   */
+  reapStaleRoot(input: {
+    runId: string;
+    attemptId: string;
+    leaseExpiresAt: number;
+    lifecycleEventId: string;
+    now: number;
+  }): { outcome: "reaped" | "not_stale" } {
+    return this.storage.transactionSync(() => {
+      const run = this.run({ runId: input.runId });
+      if (!run
+        || run.parent_tool_call_id !== null
+        || run.legacy_attempt_id !== input.attemptId
+        || run.lease_expires_at !== input.leaseExpiresAt
+        || run.status !== "running"
+        || run.terminalized_at !== null) {
+        return { outcome: "not_stale" as const };
+      }
+      this.recordLifecycleEvent({
+        eventId: input.lifecycleEventId,
+        runId: input.runId,
+        attemptId: input.attemptId,
+        eventKey: "terminal",
+        eventType: "terminal",
+        status: "failed",
+        memberSafePayloadJson: '{"code":"stale_run_reaped"}',
+        now: input.now,
+      });
+      this.sql.exec(
+        `UPDATE runs
+            SET status = 'failed', completed_at = ?2, terminalized_at = ?2,
+                error_json = '{"code":"stale_run_reaped","message":"The prior executor lost its durable lease"}',
+                lease_owner = NULL, lease_expires_at = NULL, updated_at = ?2
+          WHERE run_id = ?1`,
+        input.runId,
+        input.now,
+      );
+      if (run.origin !== "block_dashboard_block") {
+        this.settleWorkstreamState(input.runId, "failed", input.now);
+      }
+      this.cancelDescendants({
+        rootRunId: input.runId,
+        reason: "parent_stale_run_reaped",
+        now: input.now,
+      });
+      return { outcome: "reaped" as const };
+    });
+  }
+
+  /**
+   * Sub-agents whose own lease expired *and* whose parent can no longer supervise.
+   *
+   * A stale child beneath a live parent is deliberately omitted: the same
+   * parent tool call can reclaim its durable attempt, and reaping it here would
+   * race that. The routed version spelled this parent test three times — once
+   * in the scan and twice more inside the batch that acted on it — because a
+   * batch cannot carry a decision between its statements.
+   */
+  reapableInlineChildren(input: { now: number; limit: number }): StaleRunRow[] {
+    return this.sql.exec<StaleRunRow>(
+      `SELECT child.run_id, child.legacy_attempt_id AS attempt_id, child.lease_owner,
+              child.lease_expires_at, child.origin, child.parent_run_id,
+              child.parent_tool_call_id, child.cancellation_requested_at
+         FROM runs child
+        WHERE child.status = 'running' AND child.terminalized_at IS NULL
+          AND child.parent_run_id IS NOT NULL
+          AND child.parent_tool_call_id IS NOT NULL
+          AND child.legacy_attempt_id IS NOT NULL AND child.lease_owner IS NOT NULL
+          AND child.lease_expires_at IS NOT NULL
+          AND child.lease_expires_at <= ?1
+          AND (
+            child.cancellation_requested_at IS NOT NULL
+            OR NOT EXISTS (
+              SELECT 1 FROM runs parent
+               WHERE parent.run_id = child.parent_run_id
+                 AND parent.status = 'running' AND parent.terminalized_at IS NULL
+                 AND parent.cancellation_requested_at IS NULL
+                 AND parent.legacy_attempt_id IS NOT NULL AND parent.lease_owner IS NOT NULL
+                 AND parent.lease_expires_at > ?1
+            )
+          )
+        ORDER BY child.lease_expires_at ASC
+        LIMIT ?2`,
+      input.now,
+      input.limit,
+    ).toArray();
+  }
+
+  /**
+   * End a sub-agent its parent can no longer supervise, storing its result.
+   *
+   * The parent test is re-run here rather than trusted from the scan, because
+   * a parent that heartbeats in between is supervising again and its child must
+   * be left alone. In the routed version that re-check was the same `NOT
+   * EXISTS` block pasted into two statements, with `child.` rewritten to
+   * `harness_runs.` in one of them by string replacement.
+   */
+  reapStaleInlineChild(input: {
+    runId: string;
+    attemptId: string;
+    owner: string;
+    leaseExpiresAt: number;
+    status: string;
+    errorJson: string | null;
+    childResultJson: string;
+    childResultHash: string;
+    memberSafePayloadJson: string;
+    lifecycleEventId: string;
+    now: number;
+  }): { outcome: "reaped" | "not_stale" } {
+    return this.storage.transactionSync(() => {
+      const child = this.run({ runId: input.runId });
+      if (!child
+        || child.parent_run_id === null
+        || child.parent_tool_call_id === null
+        || child.legacy_attempt_id !== input.attemptId
+        || child.lease_owner !== input.owner
+        || child.lease_expires_at !== input.leaseExpiresAt
+        || child.lease_expires_at > input.now
+        || child.status !== "running"
+        || child.terminalized_at !== null
+        || !this.parentCannotSupervise(child, input.now)) {
+        return { outcome: "not_stale" as const };
+      }
+      this.recordLifecycleEvent({
+        eventId: input.lifecycleEventId,
+        runId: input.runId,
+        attemptId: input.attemptId,
+        eventKey: "terminal",
+        eventType: "terminal",
+        status: input.status,
+        memberSafePayloadJson: input.memberSafePayloadJson,
+        now: input.now,
+      });
+      this.sql.exec(
+        `UPDATE runs
+            SET status = ?2, completed_at = ?3, terminalized_at = ?3, error_json = ?4,
+                child_result_json = ?5, child_result_hash = ?6,
+                lease_owner = NULL, lease_expires_at = NULL, updated_at = ?3
+          WHERE run_id = ?1`,
+        input.runId,
+        input.status,
+        input.now,
+        input.errorJson,
+        input.childResultJson,
+        input.childResultHash,
+      );
+      return { outcome: "reaped" as const };
+    });
+  }
+
+  /** Whether a sub-agent's parent has stopped being able to look after it. */
+  private parentCannotSupervise(child: RunRow, now: number): boolean {
+    if (child.cancellation_requested_at !== null) return true;
+    const parent = child.parent_run_id === null
+      ? undefined
+      : this.run({ runId: child.parent_run_id });
+    return !parent
+      || parent.status !== "running"
+      || parent.terminalized_at !== null
+      || parent.cancellation_requested_at !== null
+      || parent.legacy_attempt_id === null
+      || parent.lease_owner === null
+      || parent.lease_expires_at === null
+      || parent.lease_expires_at <= now;
+  }
+
+  /**
+   * Settle a run that was never claimed.
+   *
+   * `terminalizeAttempt`'s fence inverted: the run must have *no* attempt at
+   * all, because this is how a queued run dies when its executor never arrived
+   * — a rejected admission, a Workflow that failed to start. It still stamps an
+   * attempt id, so the terminal event and the run agree on who ended it and a
+   * retry of the same identity is a replay rather than a second ending.
+   */
+  terminalizeQueuedRun(input: {
+    runId: string;
+    attemptId: string;
+    status: string;
+    errorJson: string | null;
+    memberSafePayloadJson: string;
+    lifecycleEventId: string;
+    now: number;
+  }): { outcome: "terminalized" | "already_terminal" | "ownership_lost" | "not_found" } {
+    return this.storage.transactionSync(() => {
+      const run = this.run({ runId: input.runId });
+      if (!run || run.parent_tool_call_id !== null) return { outcome: "not_found" as const };
+      if (run.legacy_attempt_id === input.attemptId
+        && run.status === input.status
+        && run.terminalized_at !== null) {
+        return { outcome: "already_terminal" as const };
+      }
+      if (run.legacy_attempt_id !== null
+        || !["admitted", "running"].includes(run.status)
+        || run.terminalized_at !== null) {
+        return { outcome: "ownership_lost" as const };
+      }
+      this.recordLifecycleEvent({
+        eventId: input.lifecycleEventId,
+        runId: input.runId,
+        attemptId: input.attemptId,
+        eventKey: "terminal",
+        eventType: "terminal",
+        status: input.status,
+        memberSafePayloadJson: input.memberSafePayloadJson,
+        now: input.now,
+      });
+      this.sql.exec(
+        `UPDATE runs
+            SET legacy_attempt_id = ?2, attempt_epoch = attempt_epoch + 1,
+                status = ?3, completed_at = ?4, terminalized_at = ?4, error_json = ?5,
+                lease_owner = NULL, lease_expires_at = NULL, updated_at = ?4
+          WHERE run_id = ?1`,
+        input.runId,
+        input.attemptId,
+        input.status,
+        input.now,
+        input.errorJson,
+      );
+      if (run.origin !== "block_dashboard_block") {
+        this.settleWorkstreamState(input.runId, input.status, input.now);
+      }
+      return { outcome: "terminalized" as const };
+    });
+  }
+
+  /**
+   * Hand the work stream back to the member, if nothing else still holds it.
+   *
+   * The claim batch's third statement in reverse — `markWorkstreamRunning`'s
+   * counterpart. The `NOT EXISTS` matters: a superseding turn admitted while
+   * this one was finishing must keep the sidebar busy, or the member watches a
+   * work stream go idle and then immediately start again. A stopped run leaves
+   * it `idle` rather than recording a terminal state, because a stop is the
+   * member taking the conversation back rather than an outcome to report.
+   */
+  private settleWorkstreamState(runId: string, status: string, now: number): void {
+    const stillBusy = first(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count FROM runs
+        WHERE run_id != ?
+          AND origin != 'block_dashboard_block'
+          AND parent_tool_call_id IS NULL
+          AND status IN ('admitted', 'running', 'waiting', 'steering')
+          AND terminalized_at IS NULL
+          AND cancellation_requested_at IS NULL`,
+      runId,
+    ))?.count ?? 0;
+    if (stillBusy > 0) return;
+    const state = status === "cancelled" ? "idle" : status;
+    this.sql.exec(
+      `UPDATE workstream
+          SET exact_state = ?1,
+              state_reason_code = ?2,
+              state_changed_at = ?3,
+              completed_at = CASE WHEN ?1 = 'completed' THEN COALESCE(completed_at, ?3) ELSE completed_at END,
+              last_people_activity_at = ?3,
+              updated_at = ?3
+        WHERE id = 1`,
+      state,
+      `runtime_${state}`,
+      now,
+    );
+  }
+
+  /**
+   * Mark this attempt's residual receipts reconciled, fenced on the settlement.
+   *
+   * `terminalized_at` is the fence rather than the attempt alone: the marker
+   * must belong to the terminalization the caller just made or observed, so a
+   * late repair for a superseded attempt cannot claim a newer one's work.
+   */
+  recordReceiptReconciliation(input: {
+    runId: string;
+    attemptId: string;
+    terminalizedAt: number;
+    eventKey: string;
+    eventId: string;
+    now: number;
+  }): { outcome: "recorded" | "replayed" | "not_terminal" } {
+    return this.storage.transactionSync(() => {
+      const run = this.run({ runId: input.runId });
+      if (!run
+        || run.legacy_attempt_id !== input.attemptId
+        || run.terminalized_at !== input.terminalizedAt) {
+        return this.lifecycleEvent({ runId: input.runId, eventKey: input.eventKey })
+          ? { outcome: "replayed" as const }
+          : { outcome: "not_terminal" as const };
+      }
+      return this.recordLifecycleEvent({
+        eventId: input.eventId,
+        runId: input.runId,
+        attemptId: input.attemptId,
+        eventKey: input.eventKey,
+        eventType: "receipt_reconciliation",
+        status: run.status,
+        memberSafePayloadJson: "{}",
+        now: input.now,
+      });
+    });
   }
 
   /**

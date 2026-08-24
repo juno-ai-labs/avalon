@@ -2,6 +2,7 @@ import { asHarnessRunId, type HarnessRunId, type StructuredFailureDetail, type W
 
 import { uuidV7 } from "../lib/uuid-v7";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
+import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { TERMINAL_RUN_STATUSES } from "../durable-objects/workstream-harness-run-storage";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import type {
@@ -189,10 +190,6 @@ export class RunCancelledError extends Error {
     super("The harness run was cancelled");
     this.name = "RunCancelledError";
   }
-}
-
-function d1Changes(result: D1Result<unknown> | undefined): number {
-  return Number((result as D1Result<unknown> | undefined)?.meta?.changes ?? 0);
 }
 
 function stableValue(value: unknown): unknown {
@@ -448,101 +445,25 @@ export async function loadInlineChildResult(
  * attempt-fenced terminal path instead.
  */
 export async function terminalizeQueuedHarnessRun(
-  db: D1Database,
+  runs: HarnessRunObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
   identity: AttemptIdentity,
   error: { code: string; message: string },
   status: "failed" | "stopped" = "failed",
 ): Promise<"terminalized" | "already_terminal"> {
-  const now = new Date().toISOString();
-  const lifecycleId = uuidV7();
-  const memberSafePayload = stableJson({ code: error.code.slice(0, 120) });
-  const errorJson = safeErrorJson(error);
-  const results = await db.batch([
-    db.prepare(
-      `INSERT INTO harness_run_lifecycle_events
-       (id, harness_run_id, workspace_id, workstream_id, attempt_id, event_key,
-        event_type, status, member_safe_payload_json, created_at)
-       SELECT ?6, id, workspace_id, workstream_id, ?4, 'terminal', 'terminal',
-              ?9, ?7, ?8
-         FROM harness_runs
-        WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
-          AND parent_tool_call_id IS NULL
-          AND attempt_id IS NULL AND status IN ('scheduled', 'running')
-          AND terminalized_at IS NULL
-       ON CONFLICT(harness_run_id, event_key) DO NOTHING`,
-    ).bind(
-      input.harnessRunId,
-      input.workspaceId,
-      input.workstreamId,
-      identity.attemptId,
-      identity.owner,
-      lifecycleId,
-      memberSafePayload,
-      now,
-      status,
-    ),
-    db.prepare(
-      `UPDATE harness_runs
-          SET attempt_id = ?4, attempt_number = attempt_number + 1,
-              status = ?8, completed_at = ?6, terminalized_at = ?6,
-              error_json = ?7, lease_owner = NULL, lease_expires_at = NULL
-        WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
-          AND parent_tool_call_id IS NULL
-          AND attempt_id IS NULL AND status IN ('scheduled', 'running')
-          AND terminalized_at IS NULL`,
-    ).bind(
-      input.harnessRunId,
-      input.workspaceId,
-      input.workstreamId,
-      identity.attemptId,
-      identity.owner,
-      now,
-      status === "failed" ? errorJson : null,
-      status,
-    ),
-    db.prepare(
-      `UPDATE workstreams
-          SET harness_status = ?6, last_activity_at = ?1, updated_at = ?1
-        WHERE id = ?2 AND workspace_id = ?3
-          AND EXISTS (
-            SELECT 1 FROM harness_runs
-             WHERE id = ?4 AND attempt_id = ?5 AND terminalized_at = ?1
-               AND origin != 'block_dashboard_block'
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM harness_runs active
-             WHERE active.workspace_id = ?3 AND active.workstream_id = ?2
-               AND active.id != ?4
-               AND active.origin != 'block_dashboard_block'
-               AND active.parent_tool_call_id IS NULL
-               AND active.status IN ('scheduled', 'running')
-               AND active.terminalized_at IS NULL
-               AND active.cancellation_requested_at IS NULL
-          )`,
-    ).bind(
-      now,
-      input.workstreamId,
-      input.workspaceId,
-      input.harnessRunId,
-      identity.attemptId,
-      status === "stopped" ? "idle" : "failed",
-    ),
-  ]);
-  if (d1Changes(results[1]) > 0) return "terminalized";
-  const existing = await db.prepare(
-    `SELECT attempt_id, status, terminalized_at FROM harness_runs
-      WHERE id = ? AND parent_tool_call_id IS NULL`,
-  ).bind(input.harnessRunId)
-    .first<{ attempt_id: string | null; status: string; terminalized_at: string | null }>();
-  if (
-    existing?.attempt_id === identity.attemptId
-    && existing.status === status
-    && existing.terminalized_at
-  ) {
-    return "already_terminal";
+  const settled = await runs.terminalizeQueuedRun({
+    runId: input.harnessRunId,
+    attemptId: identity.attemptId,
+    status: storedRunStatus(status),
+    errorJson: status === "failed" ? safeErrorJson(error) : null,
+    memberSafePayloadJson: stableJson({ code: error.code.slice(0, 120) }),
+    lifecycleEventId: uuidV7(),
+    now: Date.now(),
+  });
+  if (settled.outcome === "not_found" || settled.outcome === "ownership_lost") {
+    throw new RunOwnershipLostError();
   }
-  throw new RunOwnershipLostError();
+  return settled.outcome;
 }
 
 export async function persistImmutableRunScope(
@@ -1388,58 +1309,12 @@ interface TerminalizedReceiptRepair {
   workspaceId: string;
   workstreamId: string;
   attemptId: string;
-  status: HarnessTerminalStatus;
-  terminalizedAt: string;
+  status: "failed" | "stopped";
+  /** Epoch milliseconds — the object's vocabulary, which every consumer now speaks. */
+  terminalizedAt: number;
   errorJson: string | null;
   memberSafePayloadJson: string;
   parentToolCallId: string | null;
-  /**
-   * Whether the run wrote its own terminal row or was reaped after its lease
-   * lapsed. Only a reaped run may tell a member its lease was lost; a run that
-   * terminalized under its own executor and still left a receipt open did so
-   * for some other reason, and saying "lost its durable lease" would send
-   * whoever reads the card looking for an infrastructure fault that never
-   * happened.
-   */
-  terminalization: "direct" | "reaped";
-}
-
-/**
- * Which path terminalized a run, read back from the row it left behind rather
- * than from who is asking. A retry — the repeated `terminalizeHarnessAttempt`
- * call or the bounded sweep — has to reproduce the wording its first pass would
- * have written, or the same receipt gets two different explanations depending
- * on which retry happened to close it.
- *
- * `stale_run_reaped` is read as the reaper's signature, not as one error code
- * among many: it is written in exactly one place, by the pass that terminalizes
- * a root whose lease lapsed. A future path that writes that code without having
- * observed a lease lapse would silently start telling members their lease was
- * lost, so it belongs to the reaper alone.
- */
-function terminalizationOf(
-  errorJson: string | null,
-  parentToolCallId: string | null,
-): "direct" | "reaped" {
-  if (parentToolCallId !== null) return "reaped";
-  return readErrorCode(errorJson) === "stale_run_reaped" ? "reaped" : "direct";
-}
-
-/** The `code` of a stored `{"code","message"}` run error, when it has one. */
-function readErrorCode(errorJson: string | null): string | null {
-  if (!errorJson) return null;
-  try {
-    const parsed: unknown = JSON.parse(errorJson);
-    if (typeof parsed === "object" && parsed !== null && "code" in parsed) {
-      const code: unknown = (parsed as { code: unknown }).code;
-      return typeof code === "string" ? code : null;
-    }
-  } catch {
-    // A terminal row from an older shape carries no readable code. Treating it
-    // as "not reaped" keeps the direct wording, which is the safe default: it
-    // states only that the run ended, never that a lease was lost.
-  }
-  return null;
 }
 
 function receiptRepairFailure(row: TerminalizedReceiptRepair): {
@@ -1450,10 +1325,6 @@ function receiptRepairFailure(row: TerminalizedReceiptRepair): {
 } {
   const stopped = row.status === "stopped";
   const child = row.parentToolCallId !== null;
-  // A root that wrote its own terminal row. The lease was never lost, so the
-  // reaper's wording would be a fabricated cause; all that is known is that the
-  // run ended with this tool still open.
-  const directRoot = !child && !stopped && row.terminalization === "direct";
   return {
     phase: stopped ? "cancelled" : "failed",
     // A stopped root keeps the pre-existing member-safe receipt contract:
@@ -1466,9 +1337,7 @@ function receiptRepairFailure(row: TerminalizedReceiptRepair): {
         : JSON.stringify({ code: "run_cancelled", message: "The run stopped before the tool produced a result" })
       : child
         ? row.errorJson ?? JSON.stringify({ code: "run_failed", message: "The child run ended before the tool produced a result" })
-        : directRoot
-          ? JSON.stringify({ code: "run_terminated", message: "The run ended before the tool produced a result" })
-          : JSON.stringify({ code: "parent_run_terminated", message: "The parent run lost its durable lease" }),
+        : JSON.stringify({ code: "parent_run_terminated", message: "The parent run lost its durable lease" }),
     payloadJson: stopped && !child
       ? '{"code":"run_cancelled"}'
       : row.memberSafePayloadJson,
@@ -1476,47 +1345,29 @@ function receiptRepairFailure(row: TerminalizedReceiptRepair): {
       ? "The child run ended while an external write was unresolved"
       : stopped
         ? "The run stopped while an external write was unresolved"
-        : directRoot
-          ? "The run ended while an external write was unresolved"
-          : "The parent run lost its durable lease while an external write was in flight",
+        : "The parent run lost its durable lease while an external write was in flight",
   };
 }
 
 async function recordResidualReceiptsSettled(
-  db: D1Database,
+  runs: HarnessRunObjectPort,
   row: TerminalizedReceiptRepair,
 ): Promise<void> {
-  const markerId = uuidV7();
-  const result = await db.prepare(
-    `INSERT INTO harness_run_lifecycle_events
-       (id, harness_run_id, workspace_id, workstream_id, attempt_id, event_key,
-        event_type, status, member_safe_payload_json, created_at)
-     SELECT ?1, id, workspace_id, workstream_id, attempt_id, ?2,
-            'receipt_reconciliation', status, '{}', ?3
-       FROM harness_runs
-      WHERE id = ?4 AND workspace_id = ?5 AND workstream_id = ?6
-        AND attempt_id = ?7 AND terminalized_at = ?3
-     ON CONFLICT(harness_run_id, event_key) DO NOTHING`,
-  ).bind(
-    markerId,
-    RESIDUAL_RECEIPTS_SETTLED_EVENT_KEY,
-    row.terminalizedAt,
-    row.runId,
-    row.workspaceId,
-    row.workstreamId,
-    row.attemptId,
-  ).run();
-  if (d1Changes(result) > 0) return;
-  const existing = await db.prepare(
-    `SELECT 1 AS ok FROM harness_run_lifecycle_events
-      WHERE harness_run_id = ?1 AND attempt_id = ?2 AND event_key = ?3`,
-  ).bind(row.runId, row.attemptId, RESIDUAL_RECEIPTS_SETTLED_EVENT_KEY)
-    .first<{ ok: number }>();
-  if (!existing) throw new Error("residual_receipt_reconciliation_not_recorded");
+  const recorded = await runs.recordReceiptReconciliation({
+    runId: row.runId,
+    attemptId: row.attemptId,
+    terminalizedAt: row.terminalizedAt,
+    eventKey: RESIDUAL_RECEIPTS_SETTLED_EVENT_KEY,
+    eventId: uuidV7(),
+    now: Date.now(),
+  });
+  if (recorded.outcome === "not_terminal") {
+    throw new Error("residual_receipt_reconciliation_not_recorded");
+  }
 }
 
 async function settleAndRecordResidualReceipts(
-  db: D1Database,
+  runs: HarnessRunObjectPort,
   receipts: ToolReceiptObjectPort,
   row: TerminalizedReceiptRepair,
   beforeRecord?: () => Promise<void>,
@@ -1525,13 +1376,13 @@ async function settleAndRecordResidualReceipts(
   const result = await receipts.settleResidualReceipts({
     runId: row.runId,
     attemptId: row.attemptId,
-    lease: { kind: "terminalized", at: Date.parse(row.terminalizedAt) },
+    lease: { kind: "terminalized", at: row.terminalizedAt },
     ...fallback,
-    now: Date.parse(row.terminalizedAt),
+    now: row.terminalizedAt,
   });
   if (result.open > 0) throw new Error("residual_receipts_not_settled");
   await beforeRecord?.();
-  await recordResidualReceiptsSettled(db, row);
+  await recordResidualReceiptsSettled(runs, row);
 }
 
 /**
@@ -1564,27 +1415,14 @@ function settleOtherAuthorities(
   return async () => {
     await options.blocks(repair.workspaceId, repair.workstreamId).abandonBlockRun({
       harnessRunId: repair.runId,
-      terminalizedAt: Date.parse(repair.terminalizedAt),
+      terminalizedAt: repair.terminalizedAt,
       errorJson: JSON.stringify({
         code: "stale_run_reaped",
         message: "The HyperSight refresh lost its durable lease",
       }),
     });
-    // A reaped root only. `settleStaleAutomationRun` matches every
-    // `scheduled`/`running` automation row in the work stream rather than this
-    // run's own, which is safe for a lease that demonstrably lapsed and is not
-    // safe for the ordinary terminal rows the repair walk now also visits:
-    // backfilling a marker onto a year-old failed run would fail whichever
-    // automation happens to be running in that work stream now. The walk's
-    // predicate used to make `status = 'failed'` imply `stale_run_reaped`; it
-    // no longer does, so the implication is stated.
-    //
-    // Only this arm. `abandonBlockRun` above stays unconditional for the reason
-    // its own comment gives — it repairs orphans no selector can find again,
-    // and narrowing it would leave them.
     if (
-      repair.terminalization === "reaped"
-      && repair.status === "failed"
+      repair.status === "failed"
       && repair.parentToolCallId === null
       && origin !== "block_dashboard_block"
     ) {
@@ -1610,22 +1448,23 @@ async function settleStaleAutomationRun(
         -- receipt backfill must not turn that newer member-visible wait into
         -- failure for an earlier stale executor in the same work stream.
         AND status IN ('scheduled', 'running')`,
-  ).bind(row.terminalizedAt, row.workstreamId, row.workspaceId).run();
+    // `automation_runs` is a regional D1 table rather than an object-local one,
+    // so this is the one place a terminalization instant crosses back into
+    // ISO-8601 text.
+  ).bind(new Date(row.terminalizedAt).toISOString(), row.workstreamId, row.workspaceId).run();
 }
 
 export async function terminalizeHarnessAttempt(
-  db: D1Database,
+  runs: HarnessRunObjectPort,
+  messages: MessageObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
   lease: AttemptLease,
   outcome: TerminalOutcome,
   receipts: ToolReceiptObjectPort,
   blocks: BlockDashboardObjectPort,
 ): Promise<"terminalized" | "already_terminal"> {
-  const target = await db.prepare(
-    `SELECT origin FROM harness_runs
-      WHERE id = ? AND workspace_id = ? AND workstream_id = ? AND parent_tool_call_id IS NULL`,
-  ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{ origin: string }>();
-  if (!target) throw new Error("harness_run_not_found");
+  const target = await runs.run({ runId: input.harnessRunId });
+  if (!target || target.parent_tool_call_id !== null) throw new Error("harness_run_not_found");
   if (outcome.status === "completed") {
     if (target.origin === "block_dashboard_block") {
       // The block's own record, read through the object that owns it. A
@@ -1637,205 +1476,97 @@ export async function terminalizeHarnessAttempt(
       }
     } else {
       if (!outcome.finalMessageId) throw new Error("final_message_required");
-      const finalMessage = await db.prepare(
-        `SELECT message.id
-           FROM messages message
-           JOIN harness_run_lifecycle_events lifecycle
-             ON lifecycle.harness_run_id = ?4
-            AND lifecycle.event_key = 'final_message'
-            AND lifecycle.event_type = 'final_message_persisted'
-          WHERE message.id = ?1 AND message.workspace_id = ?2
-            AND message.workstream_id = ?3 AND message.harness_run_id = ?4
-            AND message.author_type = 'agent' AND message.message_type = 'text'`,
-      ).bind(
-        outcome.finalMessageId,
-        input.workspaceId,
-        input.workstreamId,
-        input.harnessRunId,
-      ).first<{ id: string }>();
-      if (!finalMessage) throw new Error("final_message_not_persisted");
+      await assertFinalMessagePersisted(runs, messages, input.harnessRunId, outcome.finalMessageId);
     }
   }
-  const now = new Date().toISOString();
-  const lifecycleId = uuidV7();
+  const now = Date.now();
   const payload = stableJson(outcome.memberSafePayload ?? {});
-  const workstreamStatus = outcome.status === "stopped" ? "idle" : outcome.status;
-  const results = await db.batch([
-    db.prepare(
-      `INSERT INTO harness_run_lifecycle_events
-       (id, harness_run_id, workspace_id, workstream_id, attempt_id, event_key,
-        event_type, status, member_safe_payload_json, created_at)
-       SELECT ?6, id, workspace_id, workstream_id, ?4, 'terminal', 'terminal', ?7, ?8, ?9
-         FROM harness_runs
-        WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
-          AND parent_tool_call_id IS NULL
-          AND attempt_id = ?4 AND lease_owner = ?5 AND terminalized_at IS NULL
-          AND (?7 = 'stopped' OR cancellation_requested_at IS NULL)
-          AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-       ON CONFLICT(harness_run_id, event_key) DO NOTHING`,
-    ).bind(
-      input.harnessRunId,
-      input.workspaceId,
-      input.workstreamId,
-      lease.attemptId,
-      lease.owner,
-      lifecycleId,
-      outcome.status,
-      payload,
-      now,
-    ),
-    db.prepare(
-      `UPDATE harness_runs
-          SET status = ?6, completed_at = ?7, final_message_id = ?8,
-              model = COALESCE(?9, model), usage_json = COALESCE(?10, usage_json),
-              error_json = ?11, terminalized_at = ?7,
-              lease_owner = NULL, lease_expires_at = NULL
-        WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
-          AND parent_tool_call_id IS NULL
-          AND attempt_id = ?4 AND lease_owner = ?5 AND terminalized_at IS NULL
-          AND (?6 = 'stopped' OR cancellation_requested_at IS NULL)
-          AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
-    ).bind(
-      input.harnessRunId,
-      input.workspaceId,
-      input.workstreamId,
-      lease.attemptId,
-      lease.owner,
-      outcome.status,
-      now,
-      outcome.finalMessageId ?? null,
-      outcome.model ?? null,
-      outcome.usage ? stableJson(outcome.usage) : null,
-      safeErrorJson(outcome.error),
-    ),
-    db.prepare(
-      `UPDATE workstreams
-          SET harness_status = ?1, last_activity_at = ?2, updated_at = ?2
-        WHERE id = ?3 AND workspace_id = ?4
-          AND EXISTS (
-            SELECT 1 FROM harness_runs
-             WHERE id = ?5 AND attempt_id = ?6 AND terminalized_at = ?2
-               AND parent_tool_call_id IS NULL
-               AND origin != 'block_dashboard_block'
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM harness_runs active
-             WHERE active.workspace_id = ?4 AND active.workstream_id = ?3
-               AND active.id != ?5
-               AND active.origin != 'block_dashboard_block'
-               AND active.parent_tool_call_id IS NULL
-               AND active.status IN ('scheduled', 'running')
-               AND active.terminalized_at IS NULL
-               AND active.cancellation_requested_at IS NULL
-          )`,
-    ).bind(
-      workstreamStatus,
-      now,
-      input.workstreamId,
-      input.workspaceId,
-      input.harnessRunId,
-      lease.attemptId,
-    ),
-    db.prepare(
-      `UPDATE harness_runs
-          SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?1),
-              cancellation_reason = COALESCE(cancellation_reason, 'parent_terminalized')
-        WHERE chain_root_harness_run_id = ?2
-          AND parent_tool_call_id IS NOT NULL
-          AND status IN ('scheduled', 'running') AND terminalized_at IS NULL
-          AND EXISTS (
-            SELECT 1 FROM harness_runs parent
-             WHERE parent.id = ?2 AND parent.attempt_id = ?3 AND parent.terminalized_at = ?1
-          )`,
-    ).bind(now, input.harnessRunId, lease.attemptId),
-  ]);
-  if (d1Changes(results[1]) > 0) {
-    // Every receipt this run still had open is classified and closed now that
-    // the run is terminal, because a terminal run must not leave a tool card
-    // spinning. A write caught mid-flight becomes `ambiguous` rather than
-    // `failed`: the provider may already have performed it, and the run ending
-    // is not evidence either way.
-    //
-    // Every terminal status, not only `stopped`. A run that ends any other way
-    // is *supposed* to have settled each receipt as its tool returned, so an
-    // open one here is a defect — but a defect whose only symptom is a card
-    // that spins forever, because nothing downstream repairs it: the bounded
-    // sweep only revisits rows that reached this call, and a `failed` root is
-    // not reachable from a member's next message either. The narrow reading of
-    // "must not leave a card spinning" cost fourteen hours of spinner on a
-    // `load_plugin` whose run failed between `tool_started` and the guard that
-    // reports `tool_failed`. This is the backstop for that whole class, so it
-    // must not be re-narrowed to the paths currently known to need it.
-    //
-    // After the terminal write rather than before it, and in a second call
-    // rather than the same transaction, because the lifecycle row is in this
-    // database and the receipts are in the work stream's object. Of the two
-    // possible orderings only this one fails safe — see
-    // `settleResidualReceipts`.
-    await settleAndRecordResidualReceipts(db, receipts, {
-      runId: input.harnessRunId,
-      workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
-      attemptId: lease.attemptId,
-      status: outcome.status,
-      terminalizedAt: now,
-      errorJson: safeErrorJson(outcome.error),
-      memberSafePayloadJson: payload,
-      parentToolCallId: null,
-      terminalization: "direct",
-    });
-    return "terminalized";
-  }
-  const existing = await db.prepare(
-    `SELECT run.attempt_id, run.status, run.terminalized_at, run.error_json,
-            COALESCE(terminal.member_safe_payload_json, '{}') AS member_safe_payload_json,
-            EXISTS (
-              SELECT 1 FROM harness_run_lifecycle_events settled
-               WHERE settled.harness_run_id = run.id
-                 AND settled.attempt_id = run.attempt_id
-                 AND settled.event_key = ?2
-            ) AS receipts_reconciled
-       FROM harness_runs run
-       LEFT JOIN harness_run_lifecycle_events terminal
-         ON terminal.harness_run_id = run.id AND terminal.event_key = 'terminal'
-      WHERE run.id = ?1 AND run.parent_tool_call_id IS NULL`,
-  ).bind(input.harnessRunId, RESIDUAL_RECEIPTS_SETTLED_EVENT_KEY).first<{
-    attempt_id: string | null;
-    status: string;
-    terminalized_at: string | null;
-    error_json: string | null;
-    member_safe_payload_json: string;
-    receipts_reconciled: number;
-  }>();
-  if (existing?.attempt_id === lease.attemptId && existing.terminalized_at && existing.status === outcome.status) {
-    // The terminal row landed but the settlement that follows it did not, so
-    // this repeat of the same call finishes the protocol rather than reporting
-    // a run whose card is still open as fully settled.
-    if (existing.receipts_reconciled === 0) {
-      await settleAndRecordResidualReceipts(db, receipts, {
+  const settled = await runs.terminalizeAttempt({
+    runId: input.harnessRunId,
+    attemptId: lease.attemptId,
+    owner: lease.owner,
+    now,
+    status: storedRunStatus(outcome.status),
+    finalPartId: outcome.finalMessageId ?? null,
+    model: outcome.model ?? null,
+    usageJson: outcome.usage ? stableJson(outcome.usage) : null,
+    errorJson: safeErrorJson(outcome.error),
+    memberSafePayloadJson: payload,
+    lifecycleEventId: uuidV7(),
+    receiptMarkerEventKey: RESIDUAL_RECEIPTS_SETTLED_EVENT_KEY,
+  });
+  if (settled.outcome === "not_found") throw new Error("harness_run_not_found");
+  if (settled.outcome === "ownership_lost") throw new RunOwnershipLostError();
+
+  // Every receipt this run still had open is classified and closed now that the
+  // run is terminal, because a stopped run must not leave a tool card spinning.
+  // A write caught mid-flight becomes `ambiguous` rather than `failed`: the
+  // provider may already have performed it, and stopping is not evidence
+  // either way.
+  //
+  // After the terminal write rather than inside it, because the receipts are a
+  // different authority. Of the two possible orderings only this one fails
+  // safe — see `settleResidualReceipts` — and `already_terminal` reporting
+  // whether the marker was ever written is what lets a crash between the two
+  // be repaired here rather than never.
+  if (settled.outcome === "terminalized") {
+    if (outcome.status === "stopped") {
+      await settleAndRecordResidualReceipts(runs, receipts, {
         runId: input.harnessRunId,
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,
         attemptId: lease.attemptId,
-        status: outcome.status,
-        terminalizedAt: existing.terminalized_at,
-        errorJson: existing.error_json,
-        memberSafePayloadJson: existing.member_safe_payload_json,
+        status: "stopped",
+        terminalizedAt: now,
+        errorJson: safeErrorJson(outcome.error),
+        memberSafePayloadJson: payload,
         parentToolCallId: null,
-        // Derived, not assumed: the row reached this branch because *some*
-        // first pass terminalized it and lost its settlement, and that pass was
-        // not necessarily this executor. The stale-lease reaper keeps
-        // `attempt_id` and only clears the lease, so a reaped root whose
-        // settlement was lost matches every predicate above when its original
-        // executor returns — and hardcoding `direct` would then write
-        // `run_terminated` where the reaper's own retry writes
-        // `parent_run_terminated`. Same reason the sweep re-derives it.
-        terminalization: terminalizationOf(existing.error_json, null),
       });
     }
-    return "already_terminal";
+    return "terminalized";
   }
-  throw new RunOwnershipLostError();
+  if (settled.status !== storedRunStatus(outcome.status)) throw new RunOwnershipLostError();
+  if (settled.status === "cancelled" && !settled.receiptsReconciled) {
+    await settleAndRecordResidualReceipts(runs, receipts, {
+      runId: input.harnessRunId,
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      attemptId: lease.attemptId,
+      status: "stopped",
+      terminalizedAt: settled.terminalizedAt,
+      errorJson: settled.errorJson,
+      memberSafePayloadJson: settled.memberSafePayloadJson,
+      parentToolCallId: null,
+    });
+  }
+  return "already_terminal";
+}
+
+/**
+ * The final message exists, and the run said it wrote it.
+ *
+ * Two object-local reads where the routed version was one join. Both halves
+ * matter and neither implies the other: the part could exist without the run
+ * having recorded that it published one — a partially applied write — and the
+ * lifecycle event could exist while the part was never committed.
+ */
+async function assertFinalMessagePersisted(
+  runs: HarnessRunObjectPort,
+  messages: MessageObjectPort,
+  harnessRunId: string,
+  finalMessageId: string,
+): Promise<void> {
+  const [message, published] = await Promise.all([
+    messages.message({ messageId: finalMessageId }),
+    runs.lifecycleEvent({ runId: harnessRunId, eventKey: "final_message" }),
+  ]);
+  if (!message
+    || message.harness_run_id !== harnessRunId
+    || message.author_type !== "agent"
+    || message.message_type !== "text"
+    || published?.event_type !== "final_message_persisted") {
+    throw new Error("final_message_not_persisted");
+  }
 }
 
 export async function recordInferenceAttempt(
@@ -1873,13 +1604,13 @@ export async function recordInferenceAttempt(
 }
 
 export async function reapStaleHarnessRuns(
-  db: D1Database,
+  runs: HarnessRunObjectPort,
   options: {
-    workspaceId?: string;
-    workstreamId?: string;
+    workspaceId: string;
+    workstreamId: string;
     limit?: number;
     /** WorkspaceDO authority for automation settlement; null for block-only runtimes. */
-    automationDatabase?: D1Database | null;
+    automationDatabase: D1Database | null;
     /**
      * How to reach a run's receipt authority. Required rather than defaulted:
      * a sweep that terminalizes a run and silently leaves its receipts
@@ -1905,11 +1636,26 @@ export async function reapStaleHarnessRuns(
   },
 ): Promise<string[]> {
   const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 25)));
-  const blockOnly = options.automationDatabase === null ? 1 : 0;
-  // Reaping work, which the root and child passes share. The repair pass below
-  // is bounded by its own `LIMIT` and deliberately does not count against this.
+  const blockOnly = options.automationDatabase === null;
+  const { workspaceId, workstreamId } = options;
+  const receipts = options.receipts(workspaceId, workstreamId);
   const reaped: string[] = [];
   let processed = 0;
+
+  const reportFailure = (
+    phase: "terminal_repair" | "stale_root" | "stale_child",
+    repair: TerminalizedReceiptRepair,
+    error: unknown,
+  ): void => {
+    options.onReceiptRepairFailure?.({
+      phase,
+      runId: repair.runId,
+      workspaceId: repair.workspaceId,
+      workstreamId: repair.workstreamId,
+      attemptId: repair.attemptId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  };
 
   // Terminalization and receipt settlement cross object calls. If the second
   // call failed, the terminal row is the durable authority and this marker is
@@ -1917,439 +1663,134 @@ export async function reapStaleHarnessRuns(
   // while its member-visible tool card remains open. Successful repairs record
   // the marker, so the bounded walk makes forward progress instead of scanning
   // the same historical rows on every activation.
-  //
-  // On its own budget, deliberately. This pass and the two reaps below used to
-  // share one, which was harmless while the pass could only select the three
-  // paths that wrote a marker. It selects every unmarked terminal row now, so a
-  // shared budget would let a history backfill return before the stale-lease
-  // reap ran at all — and that reap is the only recovery for an executor that
-  // died without terminalizing, which is the worse of the two ways a tool card
-  // gets stranded. A backfill must never delay it.
-  const repairRows = await db.prepare(
-    `SELECT run.id, run.workspace_id, run.workstream_id, run.attempt_id, run.origin,
-            run.status, run.terminalized_at, run.error_json,
-            run.parent_tool_call_id,
-            COALESCE(terminal.member_safe_payload_json, '{}') AS member_safe_payload_json
-       FROM harness_runs run
-       LEFT JOIN harness_run_lifecycle_events terminal
-         ON terminal.harness_run_id = run.id AND terminal.event_key = 'terminal'
-      WHERE run.status IN ('completed', 'needs_input', 'failed', 'stopped')
-        AND run.terminalized_at IS NOT NULL
-        AND run.attempt_id IS NOT NULL
-        -- Every terminal-first path attempts residual settlement, so every
-        -- terminal row is a candidate for the retry. The predicate used to name
-        -- the three paths that did — member-stopped roots, reaped children,
-        -- stale-lease roots — which meant a completed or directly-failed root
-        -- that lost its settlement response was matched by nothing at all
-        -- and kept a tool card spinning forever. Naming paths here is what made
-        -- that possible; do not narrow it back to a list.
-        --
-        -- The cost is that rows terminalized before this became universal have
-        -- no marker either, so the walk backfills them a bounded page at a time
-        -- before it reaches the stale-lease reap below. That drains within a few
-        -- dispatches of one work stream and each repaired row records its
-        -- marker, so it is paid once rather than on every activation.
-        AND (?1 IS NULL OR run.workspace_id = ?1)
-        AND (?2 IS NULL OR run.workstream_id = ?2)
-        AND (?4 = 0 OR run.parent_tool_call_id IS NOT NULL OR run.origin = 'block_dashboard_block')
-        AND NOT EXISTS (
-          SELECT 1 FROM harness_run_lifecycle_events settled
-           WHERE settled.harness_run_id = run.id
-             AND settled.attempt_id = run.attempt_id
-             AND settled.event_key = ?3
-        )
-      -- Newest first, for one reason: a card stranded minutes ago is the one a
-      -- member is looking at, and it must not wait behind every historical row
-      -- in the work stream.
-      --
-      -- Not because it helps with a row that can never settle. One whose
-      -- object-side terminal stamp does not match records no marker however
-      -- often it is tried, so it is re-selected forever and holds a slot in
-      -- every page; ordering only decides which such rows do the holding --
-      -- newest-first wedges recent ones, oldest-first wedges old ones -- and
-      -- neither drops them. Enough of them in one work stream (this walk is
-      -- scoped to one) and the rest of its history is never reached. Paginating
-      -- past them needs durable per-row retry state and a backoff nobody here
-      -- can derive a number for, so it is not built on speculation: each
-      -- failure already reports through onReceiptRepairFailure, which the
-      -- Substream logs as harness_residual_receipt_repair_failed, and a wedged
-      -- page is that warning repeating the same run id.
-      ORDER BY run.terminalized_at DESC, run.id DESC
-      LIMIT ?5`,
-  ).bind(
-    options.workspaceId ?? null,
-    options.workstreamId ?? null,
-    RESIDUAL_RECEIPTS_SETTLED_EVENT_KEY,
+  for (const row of await runs.residualRepairCandidates({
+    markerEventKey: RESIDUAL_RECEIPTS_SETTLED_EVENT_KEY,
     blockOnly,
     limit,
-  ).all<{
-    id: string;
-    workspace_id: string;
-    workstream_id: string;
-    attempt_id: string;
-    origin: string;
-    status: HarnessTerminalStatus;
-    terminalized_at: string;
-    error_json: string | null;
-    parent_tool_call_id: string | null;
-    member_safe_payload_json: string;
-  }>();
-  for (const row of repairRows.results ?? []) {
-    // A retry has to reproduce the wording its first pass would have written,
-    // so it re-derives which path terminalized the row rather than assuming
-    // one. Reaping is what a lapsed lease and a reaped child have in common;
-    // everything else wrote its own terminal row.
-    const terminalization = terminalizationOf(row.error_json, row.parent_tool_call_id);
+  })) {
     const repair = {
-      runId: row.id,
-      workspaceId: row.workspace_id,
-      workstreamId: row.workstream_id,
+      runId: row.run_id,
+      workspaceId,
+      workstreamId,
       attemptId: row.attempt_id,
-      status: row.status,
+      status: row.status === "cancelled" ? "stopped" : "failed",
       terminalizedAt: row.terminalized_at,
       errorJson: row.error_json,
       memberSafePayloadJson: row.member_safe_payload_json,
       parentToolCallId: row.parent_tool_call_id,
-      terminalization,
     } satisfies TerminalizedReceiptRepair;
     try {
       await settleAndRecordResidualReceipts(
-        db,
-        options.receipts(row.workspace_id, row.workstream_id),
+        runs,
+        receipts,
         repair,
-        settleOtherAuthorities(
-          options,
-          options.automationDatabase === undefined ? db : options.automationDatabase,
-          row.origin,
-          repair,
-        ),
+        settleOtherAuthorities(options, options.automationDatabase, row.origin, repair),
       );
+      processed += 1;
     } catch (error) {
-      options.onReceiptRepairFailure?.({
-        phase: "terminal_repair",
-        runId: repair.runId,
-        workspaceId: repair.workspaceId,
-        workstreamId: repair.workstreamId,
-        attemptId: repair.attemptId,
-        reason: error instanceof Error ? error.message : String(error),
-      });
+      reportFailure("terminal_repair", repair, error);
     }
   }
-  // No early return on a full repair page: the reaps below are the
-  // time-sensitive half and must run on every activation.
+  if (processed >= limit) return reaped;
 
-  // Ordinary attempts are the only runs whose expired lease is itself a
-  // terminal condition. An inline child is deliberately reclaimable while its
-  // parent still owns a live attempt, so including children in this query
-  // races the child's idempotent takeover path.
-  //
-  // This pass is the only recovery for an executor that died without
-  // terminalizing at all, and nothing schedules it: `reapStaleHarnessRuns` is
-  // called from one place, immediately before a new attempt is claimed
-  // (`substream-agent.ts`, and its BlockDashboard twin). A work stream nobody
-  // sends another message to therefore keeps such a run `running` and its tool
-  // card spinning indefinitely. Closing that needs the object to wake on its
-  // own expired lease, which is a wake reason and belongs to
-  // `docs/durable-object-alarms.md` rather than to this function.
-  const rows = await db.prepare(
-    `SELECT id, workspace_id, workstream_id, attempt_id, lease_expires_at, origin
-       FROM harness_runs
-      WHERE status = 'running' AND terminalized_at IS NULL
-        AND parent_tool_call_id IS NULL
-        AND attempt_id IS NOT NULL AND lease_expires_at IS NOT NULL
-        AND lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        AND (?1 IS NULL OR workspace_id = ?1)
-        AND (?2 IS NULL OR workstream_id = ?2)
-        AND (?3 = 0 OR origin = 'block_dashboard_block')
-      ORDER BY lease_expires_at ASC
-      LIMIT ?4`,
-  ).bind(
-    options.workspaceId ?? null,
-    options.workstreamId ?? null,
+  for (const row of await runs.staleLeaseRuns({
     blockOnly,
-    limit - processed,
-  )
-    .all<{
-      id: string;
-      workspace_id: string;
-      workstream_id: string;
-      attempt_id: string;
-      lease_expires_at: string;
-      origin: string;
-    }>();
-  for (const row of rows.results ?? []) {
-    const now = new Date().toISOString();
-    const eventId = uuidV7();
-    const results = await db.batch([
-      db.prepare(
-        `INSERT INTO harness_run_lifecycle_events
-         (id, harness_run_id, workspace_id, workstream_id, attempt_id, event_key,
-          event_type, status, member_safe_payload_json, created_at)
-         SELECT ?1, id, workspace_id, workstream_id, ?3, 'terminal', 'terminal', 'failed',
-                '{"code":"stale_run_reaped"}', ?5
-           FROM harness_runs
-          WHERE id = ?2 AND attempt_id = ?3 AND lease_expires_at = ?4
-            AND parent_tool_call_id IS NULL
-            AND status = 'running' AND terminalized_at IS NULL
-         ON CONFLICT(harness_run_id, event_key) DO NOTHING`,
-      ).bind(eventId, row.id, row.attempt_id, row.lease_expires_at, now),
-      db.prepare(
-        `UPDATE harness_runs
-            SET status = 'failed', completed_at = ?4, terminalized_at = ?4,
-                error_json = '{"code":"stale_run_reaped","message":"The prior executor lost its durable lease"}',
-                lease_owner = NULL, lease_expires_at = NULL
-          WHERE id = ?1 AND attempt_id = ?2 AND lease_expires_at = ?3
-            AND parent_tool_call_id IS NULL
-            AND status = 'running' AND terminalized_at IS NULL`,
-      ).bind(row.id, row.attempt_id, row.lease_expires_at, now),
-      db.prepare(
-        `UPDATE workstreams SET harness_status = 'failed', updated_at = ?1
-          WHERE id = ?2 AND workspace_id = ?3
-            AND EXISTS (
-              SELECT 1 FROM harness_runs
-               WHERE id = ?4 AND terminalized_at = ?1 AND parent_tool_call_id IS NULL
-                 AND origin != 'block_dashboard_block'
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM harness_runs active
-               WHERE active.workspace_id = ?3 AND active.workstream_id = ?2
-                 AND active.id != ?4 AND active.status = 'running'
-                 AND active.origin != 'block_dashboard_block'
-                 AND active.parent_tool_call_id IS NULL
-                 AND active.terminalized_at IS NULL
-                 AND active.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            )`,
-      ).bind(now, row.workstream_id, row.workspace_id, row.id),
-      db.prepare(
-        `UPDATE harness_runs
-            SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?1),
-                cancellation_reason = COALESCE(cancellation_reason, 'parent_stale_run_reaped')
-          WHERE chain_root_harness_run_id = ?2
-            AND parent_tool_call_id IS NOT NULL
-            AND status IN ('scheduled', 'running') AND terminalized_at IS NULL
-            AND EXISTS (
-              SELECT 1 FROM harness_runs parent
-               WHERE parent.id = ?2 AND parent.terminalized_at = ?1
-                 AND parent.parent_tool_call_id IS NULL
-            )`,
-      ).bind(now, row.id),
-    ]);
-    if (d1Changes(results[1]) > 0) {
-      reaped.push(row.id);
-      processed += 1;
-      // Every live-lease receipt operation must refuse here because that lease
-      // is precisely what expired. Residual settlement instead re-reads this
-      // exact terminal stamp inside the object transaction. Its lifecycle
-      // marker lands only after receipt settlement and the run's other
-      // authority — its block, or its automation run — both succeed, so a later
-      // bounded sweep retries a transient second-call failure.
-      const repair = {
-        runId: row.id,
-        workspaceId: row.workspace_id,
-        workstreamId: row.workstream_id,
-        attemptId: row.attempt_id,
-        status: "failed",
-        terminalizedAt: now,
-        // The stale-run error is already durable on `harness_runs`. Residual
-        // root receipts intentionally keep the predecessor's generic
-        // `parent_run_terminated` fallback, so there is no receipt error to
-        // thread through this shared shape.
-        errorJson: null,
-        memberSafePayloadJson: '{"code":"stale_run_reaped"}',
-        parentToolCallId: null,
-        terminalization: "reaped",
-      } satisfies TerminalizedReceiptRepair;
-      const automationDatabase = options.automationDatabase === undefined
-        ? db
-        : options.automationDatabase;
-      try {
-        await settleAndRecordResidualReceipts(
-          db,
-          options.receipts(row.workspace_id, row.workstream_id),
-          repair,
-          settleOtherAuthorities(options, automationDatabase, row.origin, repair),
-        );
-      } catch (error) {
-        options.onReceiptRepairFailure?.({
-          phase: "stale_root",
-          runId: repair.runId,
-          workspaceId: repair.workspaceId,
-          workstreamId: repair.workstreamId,
-          attemptId: repair.attemptId,
-          reason: error instanceof Error ? error.message : String(error),
-        });
-      }
+    now: Date.now(),
+    limit: limit - processed,
+  })) {
+    const now = Date.now();
+    const settled = await runs.reapStaleRoot({
+      runId: row.run_id,
+      attemptId: row.attempt_id,
+      leaseExpiresAt: row.lease_expires_at,
+      lifecycleEventId: uuidV7(),
+      now,
+    });
+    if (settled.outcome === "not_stale") continue;
+    reaped.push(row.run_id);
+    processed += 1;
+    // Every live-lease receipt operation must refuse here because that lease is
+    // precisely what expired. Residual settlement instead re-reads this exact
+    // terminal stamp inside the object transaction. Its lifecycle marker lands
+    // only after receipt settlement and the run's other authority — its block,
+    // or its automation run — both succeed, so a later bounded sweep retries a
+    // transient second-call failure.
+    const repair = {
+      runId: row.run_id,
+      workspaceId,
+      workstreamId,
+      attemptId: row.attempt_id,
+      status: "failed",
+      terminalizedAt: now,
+      // The stale-run error is already durable on the run. Residual root
+      // receipts intentionally keep the predecessor's generic
+      // `parent_run_terminated` fallback, so there is no receipt error to
+      // thread through this shared shape.
+      errorJson: null,
+      memberSafePayloadJson: '{"code":"stale_run_reaped"}',
+      parentToolCallId: null,
+    } satisfies TerminalizedReceiptRepair;
+    try {
+      await settleAndRecordResidualReceipts(
+        runs,
+        receipts,
+        repair,
+        settleOtherAuthorities(options, options.automationDatabase, row.origin, repair),
+      );
+    } catch (error) {
+      reportFailure("stale_root", repair, error);
     }
   }
 
   const childLimit = limit - processed;
   if (childLimit <= 0) return reaped;
 
-  // Children are cleaned up only after their own lease expires and their
-  // parent can no longer supervise them. A stale child beneath a live parent
-  // is intentionally omitted so the same parent tool-call receipt can reclaim
-  // its durable attempt. Both the snapshot and the updates below repeat these
-  // predicates, fencing a parent/child heartbeat that wins the race.
-  const childRows = await db.prepare(
-    `SELECT child.id, child.workspace_id, child.workstream_id, child.attempt_id,
-            child.lease_expires_at, child.parent_harness_run_id,
-            child.parent_tool_call_id, child.cancellation_requested_at,
-            child.lease_owner
-       FROM harness_runs child
-      WHERE child.status = 'running' AND child.terminalized_at IS NULL
-        AND child.parent_harness_run_id IS NOT NULL
-        AND child.parent_tool_call_id IS NOT NULL
-        AND child.attempt_id IS NOT NULL AND child.lease_owner IS NOT NULL
-        AND child.lease_expires_at IS NOT NULL
-        AND child.lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        AND (?1 IS NULL OR child.workspace_id = ?1)
-        AND (?2 IS NULL OR child.workstream_id = ?2)
-        AND (
-          child.cancellation_requested_at IS NOT NULL
-          OR NOT EXISTS (
-            SELECT 1 FROM harness_runs parent
-             WHERE parent.id = child.parent_harness_run_id
-               AND parent.status = 'running' AND parent.terminalized_at IS NULL
-               AND parent.cancellation_requested_at IS NULL
-               AND parent.attempt_id IS NOT NULL AND parent.lease_owner IS NOT NULL
-               AND parent.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-          )
-        )
-      ORDER BY child.lease_expires_at ASC
-      LIMIT ?3`,
-  ).bind(options.workspaceId ?? null, options.workstreamId ?? null, childLimit)
-    .all<{
-      id: string;
-      workspace_id: string;
-      workstream_id: string;
-      attempt_id: string;
-      lease_expires_at: string;
-      parent_harness_run_id: string;
-      parent_tool_call_id: string;
-      cancellation_requested_at: string | null;
-      lease_owner: string;
-    }>();
-
-  for (const row of childRows.results ?? []) {
-    const now = new Date().toISOString();
-    const eventId = uuidV7();
-    const status = row.cancellation_requested_at ? "stopped" : "failed";
-    const error = row.cancellation_requested_at
-      ? { code: "run_cancelled", message: "The child run was cancelled" }
-      : { code: "parent_run_unavailable", message: "The parent run no longer owns a live attempt" };
+  for (const row of await runs.reapableInlineChildren({ now: Date.now(), limit: childLimit })) {
+    const now = Date.now();
+    const status = row.cancellation_requested_at === null ? "failed" : "stopped";
+    const error = row.cancellation_requested_at === null
+      ? { code: "parent_run_unavailable", message: "The parent run no longer owns a live attempt" }
+      : { code: "run_cancelled", message: "The child run was cancelled" };
     const childResultJson = stableJson({ error, status });
-    const childResultHash = await sha256Hex(childResultJson);
-    const memberPayload = stableJson({ code: error.code });
+    const memberSafePayloadJson = stableJson({ code: error.code });
     const errorJson = safeErrorJson(error);
-    const invalidParentPredicate = `(
-      child.cancellation_requested_at IS NOT NULL
-      OR NOT EXISTS (
-        SELECT 1 FROM harness_runs parent
-         WHERE parent.id = child.parent_harness_run_id
-           AND parent.status = 'running' AND parent.terminalized_at IS NULL
-           AND parent.cancellation_requested_at IS NULL
-           AND parent.attempt_id IS NOT NULL AND parent.lease_owner IS NOT NULL
-           AND parent.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-      )
-    )`;
-    const results = await db.batch([
-      db.prepare(
-        `INSERT INTO harness_run_lifecycle_events
-         (id, harness_run_id, workspace_id, workstream_id, attempt_id, event_key,
-          event_type, status, member_safe_payload_json, created_at)
-         SELECT ?1, child.id, child.workspace_id, child.workstream_id, ?3,
-                'terminal', 'terminal', ?6, ?7, ?8
-           FROM harness_runs child
-          WHERE child.id = ?2 AND child.attempt_id = ?3 AND child.lease_expires_at = ?4
-            AND child.lease_owner = ?9 AND child.parent_harness_run_id = ?5
-            AND child.parent_tool_call_id IS NOT NULL
-            AND child.status = 'running' AND child.terminalized_at IS NULL
-            AND child.lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            AND ${invalidParentPredicate}
-         ON CONFLICT(harness_run_id, event_key) DO NOTHING`,
-      ).bind(
-        eventId,
-        row.id,
-        row.attempt_id,
-        row.lease_expires_at,
-        row.parent_harness_run_id,
-        status,
-        memberPayload,
-        now,
-        row.lease_owner,
-      ),
-      db.prepare(
-        // Alias-free because the object's harness_runs is an INSTEAD-OF-trigger
-        // view and SQLite cannot resolve an alias on a view UPDATE target; the
-        // outer rows correlate into the subqueries by the view's own name.
-        `UPDATE harness_runs
-            SET status = ?6, completed_at = ?7, terminalized_at = ?7,
-                error_json = ?8, child_result_json = ?9, child_result_hash = ?10,
-                lease_owner = NULL, lease_expires_at = NULL
-          WHERE harness_runs.id = ?1 AND harness_runs.attempt_id = ?2 AND harness_runs.lease_expires_at = ?3
-            AND harness_runs.lease_owner = ?12 AND harness_runs.parent_harness_run_id = ?4
-            AND harness_runs.parent_tool_call_id = ?5
-            AND harness_runs.status = 'running' AND harness_runs.terminalized_at IS NULL
-            AND harness_runs.lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            AND ${invalidParentPredicate.replaceAll("child.", "harness_runs.")}
-            AND EXISTS (
-              SELECT 1 FROM harness_run_lifecycle_events lifecycle
-               WHERE lifecycle.id = ?11 AND lifecycle.harness_run_id = harness_runs.id
-                 AND lifecycle.attempt_id = harness_runs.attempt_id
-                 AND lifecycle.event_key = 'terminal'
-            )`,
-      ).bind(
-        row.id,
-        row.attempt_id,
-        row.lease_expires_at,
-        row.parent_harness_run_id,
-        row.parent_tool_call_id,
-        status,
-        now,
-        errorJson,
-        childResultJson,
-        childResultHash,
-        eventId,
-        row.lease_owner,
-      ),
-    ]);
-    if (d1Changes(results[1]) === 0) continue;
+    const settled = await runs.reapStaleInlineChild({
+      runId: row.run_id,
+      attemptId: row.attempt_id,
+      owner: row.lease_owner,
+      leaseExpiresAt: row.lease_expires_at,
+      status: storedRunStatus(status),
+      errorJson,
+      childResultJson,
+      childResultHash: await sha256Hex(childResultJson),
+      memberSafePayloadJson,
+      lifecycleEventId: uuidV7(),
+      now,
+    });
+    if (settled.outcome === "not_stale") continue;
     // Same rule, and the same ordering, as a stopped parent: the child's own
     // receipts are classified and closed once it is terminal.
     const repair = {
-        runId: row.id,
-        workspaceId: row.workspace_id,
-        workstreamId: row.workstream_id,
-        attemptId: row.attempt_id,
-        status,
-        terminalizedAt: now,
-        errorJson,
-        memberSafePayloadJson: memberPayload,
-        parentToolCallId: row.parent_tool_call_id,
-        terminalization: "reaped",
+      runId: row.run_id,
+      workspaceId,
+      workstreamId,
+      attemptId: row.attempt_id,
+      status,
+      terminalizedAt: now,
+      errorJson,
+      memberSafePayloadJson,
+      parentToolCallId: row.parent_tool_call_id,
     } satisfies TerminalizedReceiptRepair;
     try {
-      await settleAndRecordResidualReceipts(
-        db,
-        options.receipts(row.workspace_id, row.workstream_id),
-        repair,
-      );
+      await settleAndRecordResidualReceipts(runs, receipts, repair);
     } catch (receiptError) {
-      options.onReceiptRepairFailure?.({
-        phase: "stale_child",
-        runId: repair.runId,
-        workspaceId: repair.workspaceId,
-        workstreamId: repair.workstreamId,
-        attemptId: repair.attemptId,
-        reason: receiptError instanceof Error ? receiptError.message : String(receiptError),
-      });
+      reportFailure("stale_child", repair, receiptError);
     }
-    const persisted = await db.prepare(
-      `SELECT child_result_json, child_result_hash
-         FROM harness_runs
-        WHERE id = ?1 AND terminalized_at = ?2 AND parent_tool_call_id = ?3`,
-    ).bind(row.id, now, row.parent_tool_call_id)
-      .first<{ child_result_json: string | null; child_result_hash: string | null }>();
+    // The parent will read this back through `loadInlineChildResult`, which
+    // refuses a result whose hash does not match. Verifying it here turns a
+    // corrupt write into a failure of the sweep rather than of the parent's
+    // next tool call.
+    const persisted = await runs.run({ runId: row.run_id });
     const verified = await parseVerifiedInlineChildResult(
       persisted?.child_result_json ?? null,
       persisted?.child_result_hash ?? null,
@@ -2357,7 +1798,7 @@ export async function reapStaleHarnessRuns(
     if (!verified || verified.status !== status) {
       throw new Error("inline_child_terminal_result_missing");
     }
-    reaped.push(row.id);
+    reaped.push(row.run_id);
   }
   return reaped;
 }

@@ -914,12 +914,26 @@ export function testResourcePort(database: DatabaseSync): ResourceObjectPort {
 }
 
 /** A harness-run port over a real storage instance in this isolate. */
-export function testHarnessRunPort(database: DatabaseSync): HarnessRunObjectPort {
+export function testHarnessRunPort(
+  database: DatabaseSync,
+  /**
+   * Run inside `transactionSync`, immediately before the operation's body.
+   *
+   * `testToolReceiptPort`'s seam, for the reason it exists there: a claim, a
+   * terminalization and a reap each read their fence and write their rows in
+   * one transaction, so a race that used to be staged between two statements of
+   * a D1 batch has to be staged from here instead.
+   */
+  beforeTransaction?: () => void,
+): HarnessRunObjectPort {
   const storage = new WorkstreamHarnessRunStorage(
     createCloudflareTestBinding<DurableObjectStorage>({
       getAlarm: async () => null,
       setAlarm: async () => undefined,
-      transactionSync: (body: () => unknown) => body(),
+      transactionSync: (body: () => unknown) => {
+        beforeTransaction?.();
+        return body();
+      },
       sql: objectSqlStorage(database),
     }),
   );
