@@ -2,6 +2,7 @@ import { asWorkspaceId, type WorkspaceId } from "@avalon/contracts";
 import { workspaceDOName } from "../durable-objects/names";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
+import { activityContentAudience } from "../lib/activity-visibility";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 
 interface EnqueueInput {
@@ -61,59 +62,31 @@ export async function enqueueActivityOpportunity(
     visibility_json: JSON.stringify(durableActivity.activity.visibility),
     target_user_ids_json: JSON.stringify(durableActivity.activity.targetUserIds),
   };
-  const personal = activity.connection_scope === "personal";
-  const ownerId = activity.connection_owner_user_id == null ? null : String(activity.connection_owner_user_id);
-  if (personal && !ownerId) return;
   const workspaceId = asWorkspaceId(String(activity.workspace_id));
   const approximateCharacters = [activity.title, activity.summary, activity.text_snippet, activity.actor_json, activity.subject_json]
     .reduce<number>((sum, value) => sum + String(value ?? "").length, 0);
-  let restrictedUserIds: string[] = [];
-  if (!personal) {
-    if (typeof activity.target_user_ids_json === "string") {
-      try {
-        const parsed: unknown = JSON.parse(activity.target_user_ids_json);
-        restrictedUserIds = Array.isArray(parsed)
-          ? parsed.filter((value): value is string => typeof value === "string")
-          : [];
-      } catch {
-        restrictedUserIds = [];
-      }
-    }
-  }
-  if (!personal && restrictedUserIds.length === 0 && typeof activity.visibility_json === "string") {
-    try {
-      const visibility = JSON.parse(activity.visibility_json) as Record<string, unknown>;
-      const rawIds = visibility.targetUserIds ?? visibility.allowedUserIds;
-      if (Array.isArray(rawIds)) {
-        restrictedUserIds = [...new Set(rawIds.filter((value): value is string => typeof value === "string"))];
-      }
-    } catch {
-      restrictedUserIds = [];
-    }
-  }
-  if (restrictedUserIds.length > 0) {
-    await Promise.all(restrictedUserIds.map((userId) => enqueue(env, {
-      workspaceId,
-      partitionKey: `restricted:${String(activity.connection_id)}:${userId}`,
-      audienceScope: "personal",
-      audienceUserId: userId,
-      sourceKind: "activity",
-      sourceId: activityId,
-      occurredAt: String(activity.occurred_at),
-      inputCharacters: approximateCharacters,
-    })));
-    return;
-  }
-  await enqueue(env, {
+  const sourceAudience = activityContentAudience(activity);
+  if (!sourceAudience) return;
+  const audienceUserIds = sourceAudience.scope === "users"
+    ? sourceAudience.userIds
+    : (await env.DB.prepare(
+      `SELECT user_id FROM workspace_members
+        WHERE workspace_id = ? AND status = 'active' ORDER BY user_id`,
+    ).bind(workspaceId).all<{ user_id: string }>()).results.map((row) => row.user_id);
+  await Promise.all(audienceUserIds.map((userId) => enqueue(env, {
     workspaceId,
-    partitionKey: personal ? `personal:${ownerId}` : "workspace",
-    audienceScope: personal ? "personal" : "workspace",
-    audienceUserId: personal ? ownerId : null,
+    partitionKey: sourceAudience.scope === "workspace"
+      ? `workspace:${userId}`
+      : durableActivity.activity.connectionScope === "personal"
+        ? `personal:${userId}`
+        : `restricted:${String(activity.connection_id)}:${userId}`,
+    audienceScope: "personal",
+    audienceUserId: userId,
     sourceKind: "activity",
     sourceId: activityId,
     occurredAt: String(activity.occurred_at),
     inputCharacters: approximateCharacters,
-  });
+  })));
 }
 
 export async function enqueueMentionOpportunitySnapshot(

@@ -7,6 +7,7 @@ import {
 import { z } from "zod";
 
 import { WorkstreamRegionalEffectEnvelopeSchema } from "./workstream-regional-effect";
+import { ContentAudienceSchema } from "../lib/audience-containment";
 
 const TimestampSchema = z.string().datetime({ offset: true });
 const UuidV7Schema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
@@ -68,8 +69,14 @@ export const WorkspaceDirectoryExistsRequestSchema = z.object({
 
 export const WorkspaceDirectoryPlannedRequestSchema = z.object({
   workspaceId: IdSchema,
-  /** Null is reserved for the workspace's trusted scheduler. */
-  userId: IdSchema.nullable(),
+  userId: IdSchema,
+  automationSubscriptionId: IdSchema,
+  plannedFor: TimestampSchema,
+}).strict();
+
+/** Internal scheduler lookup; unlike the member-facing lookup it is not visibility-filtered. */
+export const WorkspaceDirectoryPlannedAutomationRequestSchema = z.object({
+  workspaceId: IdSchema,
   automationSubscriptionId: IdSchema,
   plannedFor: TimestampSchema,
 }).strict();
@@ -133,9 +140,14 @@ export const WorkspaceDirectoryLookupResultSchema = z.object({
   items: z.array(WorkspaceDirectoryInternalItemSchema).max(250),
 }).strict();
 
+export const WorkspaceDirectoryAudienceSchema = z.discriminatedUnion("scope", [
+  z.object({ scope: z.literal("workspace") }).strict(),
+  z.object({ scope: z.literal("user"), userId: IdSchema }).strict(),
+]);
+
 export const WorkspaceDirectoryRecentRequestSchema = z.object({
   workspaceId: IdSchema,
-  userId: IdSchema.nullable(),
+  audience: WorkspaceDirectoryAudienceSchema,
   includeSystem: z.boolean(),
   participantsOnly: z.boolean(),
   limit: z.number().int().min(1).max(250),
@@ -162,7 +174,7 @@ export const WorkspaceDirectoryScheduleTargetsResultSchema = z.object({
 
 export const WorkspaceDirectoryRoutingCandidatesRequestSchema = z.object({
   workspaceId: IdSchema,
-  restrictedUserIds: z.array(IdSchema).max(1_000).nullable(),
+  audience: ContentAudienceSchema,
   excludedWorkstreamIds: z.array(IdSchema).max(10_000),
   feedbackSince: TimestampSchema,
   dismissalLimit: z.number().int().positive(),
@@ -286,6 +298,9 @@ export type WorkspaceDirectoryVisibleIdsRequest = z.infer<typeof WorkspaceDirect
 export type WorkspaceDirectoryVisibleIdsPage = z.infer<typeof WorkspaceDirectoryVisibleIdsPageSchema>;
 export type WorkspaceDirectoryExistsRequest = z.infer<typeof WorkspaceDirectoryExistsRequestSchema>;
 export type WorkspaceDirectoryPlannedRequest = z.infer<typeof WorkspaceDirectoryPlannedRequestSchema>;
+export type WorkspaceDirectoryPlannedAutomationRequest = z.infer<
+  typeof WorkspaceDirectoryPlannedAutomationRequestSchema
+>;
 export type WorkspaceDirectoryPinRequest = z.infer<typeof WorkspaceDirectoryPinRequestSchema>;
 export type WorkspaceDirectoryReorderPinsRequest = z.infer<typeof WorkspaceDirectoryReorderPinsRequestSchema>;
 export type WorkspaceDirectoryNotificationRequest = z.infer<typeof WorkspaceDirectoryNotificationRequestSchema>;

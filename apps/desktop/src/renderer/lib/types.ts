@@ -107,9 +107,9 @@ export interface WorkstreamSummary {
   createdByUserId?: string;
   automationName?: string;
   /**
-   * Set when an automation generated this work stream, which is what makes its
-   * audience that automation's rather than its own: `scope` is not the rule
-   * that decides who reads it, so it is not offered as one.
+   * Set when an automation generated this work stream. Generated execution
+   * records are fixed private work streams, so this identifies their origin;
+   * their own scope, creator, and participants still decide who may read them.
    */
   automationSubscriptionId?: string;
   automationRunId?: string;

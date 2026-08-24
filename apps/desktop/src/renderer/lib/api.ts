@@ -508,6 +508,7 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
 export function messagesWithTransientBlocks(
   mapped: Message[],
   detail: WorkstreamDetail,
+  dismissedSuggestionIds: readonly string[] = [],
 ): Message[] {
   // Both the question and its durable human response remain separate rows in
   // the model transcript. mapMessage intentionally gives those rows one UI
@@ -530,7 +531,24 @@ export function messagesWithTransientBlocks(
     createdAt: elicitation.createdAt ?? detail.lastActivityAt,
     elicitation,
   }));
-  return visibleTranscriptMessages([...canonicalMessages, ...elicitationMessages]);
+  const canonicalSuggestionIds = new Set(canonicalMessages.flatMap((message) => (
+    message.activitySuggestion ? [message.activitySuggestion.id] : []
+  )));
+  const suggestionMessages = (detail.suggestions ?? [])
+    .filter((suggestion) => !canonicalSuggestionIds.has(suggestion.id))
+    .map<Message>((suggestion) => ({
+    id: `suggestion-${suggestion.id}`,
+    workstreamId: detail.id,
+    sequenceNumber: ++sequence,
+    authorType: 'system',
+    messageType: 'activity_suggestion',
+    createdAt: suggestion.occurredAt ?? detail.lastActivityAt,
+    activitySuggestion: suggestion,
+    }));
+  return visibleTranscriptMessages(
+    [...canonicalMessages, ...elicitationMessages, ...suggestionMessages],
+    dismissedSuggestionIds,
+  );
 }
 
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
@@ -1664,6 +1682,13 @@ export class AvalonApi {
         ? { skipped: true }
         : { answer, ...(customResponse ? { customResponse } : {}) },
       schema: z.object({ elicitation: WireElicitationSchema.optional(), harnessRunId: z.string().nullable() }),
+    });
+  }
+
+  async resolveActivitySuggestion(id: string, suggestionId: string, action: 'accept' | 'dismiss'): Promise<void> {
+    await this.request(`/workstreams/${encodeURIComponent(id)}/activities/${encodeURIComponent(suggestionId)}/${action}`, {
+      method: 'POST',
+      schema: z.object({ suggestion: WireActivitySuggestionSchema.optional(), resourceId: z.string().nullable() }),
     });
   }
 

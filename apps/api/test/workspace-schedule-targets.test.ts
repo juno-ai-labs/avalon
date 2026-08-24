@@ -62,7 +62,7 @@ function scheduleContext(database: DatabaseSync): WorkspaceScheduleContext {
     workspaceId: WORKSPACE_ID,
     directory: {
       workstreamScheduleTargets: async () => ({ items: [] }),
-      plannedWorkstream: async () => null,
+      plannedAutomationWorkstream: async () => null,
     },
   };
 }
