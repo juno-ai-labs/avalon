@@ -26,6 +26,7 @@ const DISPATCHED_OPERATIONS = [
   "heartbeatAttempt",
   "attemptOwnership",
   "recordLifecycleEvent",
+  "publishFinalMessage",
   "lifecycleEvent",
   "persistScope",
   "scope",
@@ -92,6 +93,7 @@ const RUN_STATE_WRITES = new Set<HarnessRunOperation>([
   "terminalizeQueuedRun",
   "failUnlaunchedRun",
   "reapStaleRoot",
+  "publishFinalMessage",
 ]);
 
 export function mutatesRunState(operation: HarnessRunOperation): boolean {

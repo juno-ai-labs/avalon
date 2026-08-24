@@ -1349,7 +1349,39 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "retire the run-scope, plugin-activation and memory-context views",
     statements: harnessRunAuthorityPromotion(),
   },
+  {
+    version: 22,
+    description: "retire the run lifecycle-event view now the final message is an object write",
+    statements: runLifecycleAuthorityPromotion(),
+  },
 ];
+
+/**
+ * Retires the lifecycle-event view, which slice 6 could not.
+ *
+ * It survived that slice for one reason: the two functions that publish and
+ * recover a run's final message joined it to `messages`, so it could not go
+ * until the transcript write did. `publishFinalMessage` makes that one
+ * transaction inside the object — the append and the event it records — and
+ * `loadPersistedHarnessFinalOutcome` asks the two authorities separately, so
+ * the join and the view it needed are both gone.
+ */
+function runLifecycleAuthorityPromotion(): string[] {
+  const names = /^_runtime_run_lifecycle_events/;
+  const compatObjects = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.flatMap((statement) => {
+    const trigger = /CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    if (trigger) return names.test(trigger) ? [`DROP TRIGGER IF EXISTS ${trigger}`] : [];
+    const view = /CREATE VIEW IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    return view && names.test(view) ? [`DROP VIEW IF EXISTS ${view}`] : [];
+  });
+  if (compatObjects.length !== 2) {
+    throw new Error(`expected two lifecycle compat objects, found ${compatObjects.length}`);
+  }
+  return [
+    ...compatObjects.filter((statement) => statement.startsWith("DROP TRIGGER")),
+    ...compatObjects.filter((statement) => statement.startsWith("DROP VIEW")),
+  ];
+}
 
 /**
  * Retires three of the harness-run slice's six compatibility views.
