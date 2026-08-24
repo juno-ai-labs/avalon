@@ -41,6 +41,7 @@ import {
   reportTelemetryProductIntent,
 } from '../lib/telemetry';
 import { useDraftText } from '../lib/use-draft-text';
+import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
@@ -751,6 +752,13 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     : (connections.data ?? [])
       .filter((connection) => connection.displayName.toLowerCase().includes(mentionQuery.toLowerCase()))
       .slice(0, 8);
+  const mentionNavigation = useMentionNavigation(
+    visibleMentionConnections.map((connection) => connection.id),
+    (index) => {
+      const connection = visibleMentionConnections[index];
+      if (connection) insertConnectionMention(connection);
+    },
+  );
   const mentionLabels = useMemo(
     () => (connections.data ?? []).map((connection) => connection.displayName),
     [connections.data],
@@ -762,24 +770,64 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
 
   const updateInput = (value: string): void => {
     setInput(value);
-    setMentionQuery(value.match(/(?:^|\s)@([^\s@]*)$/u)?.[1] ?? null);
+    syncMentionQuery(value);
+  };
+
+  /** What the caret is naming, recomputed as the draft changes. */
+  const syncMentionQuery = (value: string): void => {
+    setMentionQuery(mentionQueryAtCaret(value, textareaRef.current?.selectionStart));
+  };
+
+  /**
+   * The caret moved without the draft changing — an arrow key, a click, a drag.
+   * This may only *close* the list: a list that outlives the mention the caret
+   * was in still answers `Enter` and inserts against an `@` the caret has left.
+   * It may not open one, or `Escape` would last exactly until the next arrow
+   * key, and wandering back through an old mention would raise a list nobody
+   * asked for.
+   */
+  const refreshOpenMentionQuery = (value: string): void => {
+    setMentionQuery((current) => current === null
+      ? null
+      : mentionQueryAtCaret(value, textareaRef.current?.selectionStart));
   };
 
   const beginConnectionMention = (): void => {
-    setInput((current) => current.length === 0 || /\s$/u.test(current) ? `${current}@` : `${current} @`);
+    const started = draftWithMentionStarted(input, textareaRef.current?.selectionStart);
+    setInput(started.value);
     setMentionQuery('');
     requestAnimationFrame(() => {
       const textarea = textareaRef.current;
       textarea?.focus();
-      textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
+      // Only while the draft is still the one this opened. A frame is enough
+      // room for a keystroke, and putting the caret back where the `@` went
+      // would drag it out of whatever was typed in the meantime.
+      if (textarea?.value === started.value) textarea.setSelectionRange(started.caret, started.caret);
     });
   };
 
   const insertConnectionMention = (connection: WorkstreamConnection): void => {
-    const atIndex = input.lastIndexOf('@');
-    setInput(`${input.slice(0, atIndex)}@${connection.displayName} `);
+    const textarea = textareaRef.current;
+    const caret = textarea?.selectionStart ?? input.length;
+    const before = input.slice(0, caret);
+    const atIndex = before.lastIndexOf('@');
+    // The caret has left the mention this list belongs to; `slice(0, -1)` would
+    // eat the character before it rather than replacing a half-typed name.
+    if (atIndex < 0) {
+      setMentionQuery(null);
+      return;
+    }
+    // Whatever followed the caret is kept and the caret lands after the name,
+    // so picking mid-sentence does not truncate the rest of it.
+    const after = input.slice(caret);
+    const separator = /^\s/u.test(after) ? '' : ' ';
+    setInput(`${before.slice(0, atIndex)}@${connection.displayName}${separator}${after}`);
     setMentionQuery(null);
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      const nextCaret = atIndex + connection.displayName.length + 1 + separator.length;
+      textarea?.setSelectionRange(nextCaret, nextCaret);
+    });
   };
 
   // Avalon's suggestion is the default; the creator can still redirect the
@@ -1287,9 +1335,19 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
             {!selectedTemplate && (
               <div className="automation-composer-wrap">
                 {visibleMentionConnections.length > 0 && (
-                  <div className="mention-popover" role="listbox" aria-label="Connections">
-                    {visibleMentionConnections.map((connection) => (
-                      <button key={connection.id} onClick={() => insertConnectionMention(connection)} role="option" type="button">
+                  <div className="mention-popover" id="automation-mention-listbox" role="listbox" aria-label="Connections">
+                    {visibleMentionConnections.map((connection, index) => (
+                      <button
+                        aria-selected={index === mentionNavigation.activeIndex}
+                        className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
+                        id={mentionOptionId(connection.id)}
+                        key={connection.id}
+                        onClick={() => insertConnectionMention(connection)}
+                        onMouseMove={() => mentionNavigation.setActiveIndex(index)}
+                        ref={index === mentionNavigation.activeIndex ? mentionNavigation.activeOptionRef : undefined}
+                        role="option"
+                        type="button"
+                      >
                         <span className="mention-icon"><AtSign size={14} /></span>
                         <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Your connection' : 'Workspace connection'}</small></span>
                         <Badge>Connection</Badge>
@@ -1305,10 +1363,14 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                   fileInputRef={fileInputRef}
                   mentionLabel="Mention a connection"
                   mentionLabels={mentionLabels}
+                  mentionListbox={visibleMentionConnections.length > 0
+                    ? { id: 'automation-mention-listbox', activeOptionId: mentionNavigation.activeOptionId }
+                    : undefined}
                   model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
                   onAttach={attachmentDraft.addFiles}
                   onMention={beginConnectionMention}
                   onKeyDown={(event) => {
+                    if (mentionNavigation.handleKeyDown(event)) return;
                     if (event.key !== 'Escape' || mentionQuery === null) return;
                     event.preventDefault();
                     setMentionQuery(null);
@@ -1316,6 +1378,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                   onOpenAttachment={setAttachmentPreview}
                   onRemoveAttachment={attachmentDraft.removeAttachment}
                   onRetryAttachment={attachmentDraft.retryAttachment}
+                  onSelect={() => refreshOpenMentionQuery(input)}
                   onSubmit={() => submitAsync().catch(() => undefined)}
                   onValueChange={updateInput}
                   placeholder={draft?.question?.placeholder ?? draft?.question?.prompt ?? 'Describe what should happen…'}

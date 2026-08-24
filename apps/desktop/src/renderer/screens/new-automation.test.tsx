@@ -139,7 +139,73 @@ describe('New automation composer', () => {
     expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue('@');
   });
 
-  it('keeps Enter from submitting a connection mention and dismisses it with Escape', async () => {
+  it('picks a connection mention with the arrow keys and Enter instead of submitting', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-slack',
+        modelPluginId: 'plugin_slack',
+        connectorType: 'slack',
+        displayName: 'Slack',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: [],
+      },
+      {
+        id: 'connection-slack-you',
+        modelPluginId: 'plugin_slack',
+        connectorType: 'slack',
+        displayName: 'Slack · you',
+        scope: 'you',
+        status: 'healthy',
+        capabilities: [],
+      },
+    ]);
+    renderScreen();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mention a connection' }));
+    const composer = screen.getByRole('textbox', { name: 'Describe an automation' });
+    // The caret travels with the typing: `fireEvent.change` replaces the value
+    // without moving it, and everything about a mention is read from the caret.
+    fireEvent.change(composer, { target: { value: '@sla', selectionStart: 4, selectionEnd: 4 } });
+    expect(await screen.findByRole('listbox', { name: 'Connections' })).toBeVisible();
+
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+    expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
+      .toEqual(['false', 'true']);
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('@Slack · you '));
+    expect(api.compileAutomation).not.toHaveBeenCalled();
+    expect(screen.queryByRole('listbox', { name: 'Connections' })).not.toBeInTheDocument();
+  });
+
+  it('inserts a connection at the caret without truncating the rest of the draft', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: 'connection-slack',
+      modelPluginId: 'plugin_slack',
+      connectorType: 'slack',
+      displayName: 'Slack',
+      scope: 'workspace',
+      status: 'healthy',
+      capabilities: [],
+    }]);
+    renderScreen();
+
+    const composer = screen.getByRole('textbox', { name: 'Describe an automation' });
+    // The caret sits just after the half-typed name, in the middle of the
+    // draft, the way it does when someone clicks back into a sentence.
+    fireEvent.change(composer, { target: { value: 'post to @sla every Friday', selectionStart: 12, selectionEnd: 12 } });
+
+    expect(await screen.findByRole('listbox', { name: 'Connections' })).toBeVisible();
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    // The words after the caret survive, behind exactly one space: the name's
+    // own separator is dropped when the rest of the line already starts with one.
+    await waitFor(() => expect(composer).toHaveValue('post to @Slack every Friday'));
+  });
+
+  it('dismisses the connection list with Escape', async () => {
     api.getConnections.mockResolvedValue([{
       id: 'connection-slack',
       modelPluginId: 'plugin_slack',
@@ -156,10 +222,10 @@ describe('New automation composer', () => {
     fireEvent.change(composer, { target: { value: '@sla' } });
     expect(await screen.findByRole('listbox', { name: 'Connections' })).toBeVisible();
 
-    fireEvent.keyDown(composer, { key: 'Enter' });
-    expect(api.compileAutomation).not.toHaveBeenCalled();
     fireEvent.keyDown(composer, { key: 'Escape' });
+
     expect(screen.queryByRole('listbox', { name: 'Connections' })).not.toBeInTheDocument();
+    expect(api.compileAutomation).not.toHaveBeenCalled();
   });
 
   it('keeps successful compile attachments available in the transcript', async () => {

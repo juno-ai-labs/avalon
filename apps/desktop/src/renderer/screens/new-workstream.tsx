@@ -9,6 +9,7 @@ import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import { formatRelative, workstreamMarkerStatus, workstreamNeedsAttention } from '../lib/format';
 import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { useDraftText } from '../lib/use-draft-text';
+import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
@@ -17,7 +18,7 @@ import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
-import { Avatar, AvatarStack, AvalonMark, Button, Modal, StatusDot, TitleSkeleton } from '../components/primitives';
+import { Avatar, AvatarStack, AvalonMark, Badge, Button, Modal, StatusDot, TitleSkeleton } from '../components/primitives';
 import { withSuggestedPrompts } from '../components/suggested-prompts';
 import { MessageBlock } from '../components/workstream-blocks';
 
@@ -265,6 +266,8 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const { text: message, setText: setMessage } = useDraftText(draftKey);
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   // Not kept in the draft cache: the draft outlives the session, and a model
   // pinned last week is not a choice anyone would expect to still be in force.
   const [modelOverride, setModelOverride] = useState<AgentModelOverride | null>(null);
@@ -506,6 +509,99 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   // it comes back the moment the launch ends either way.
   const draftHidden = launching?.origin === 'suggested-work';
   const participants = [workspace.currentUser, ...selectedMembers];
+  // A membership that is not active is one the work-stream endpoints refuse, so
+  // neither the inline list nor the dialog may offer it: picking one here also
+  // adds them to the create request, which would then fail as a whole.
+  const activeMembers = useMemo(
+    () => (members.data ?? []).filter((member) => (member.status ?? 'active') === 'active'),
+    [members.data],
+  );
+  const mentionCandidates = activeMembers;
+  const mentionLabels = useMemo(() => mentionCandidates.map((member) => member.name), [mentionCandidates]);
+  const visibleCandidates = mentionQuery === null
+    ? []
+    : mentionCandidates.filter((member) => member.name.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 8);
+  const mentionNavigation = useMentionNavigation(
+    visibleCandidates.map((member) => member.id),
+    (index) => {
+      const member = visibleCandidates[index];
+      if (member) insertMention(member);
+    },
+  );
+
+  const updateMessage = (value: string): void => {
+    setMessage(value);
+    syncMentionQuery(value);
+  };
+
+  /** What the caret is naming, recomputed as the draft changes. */
+  const syncMentionQuery = (value: string): void => {
+    setMentionQuery(mentionQueryAtCaret(value, textareaRef.current?.selectionStart));
+  };
+
+  /**
+   * The caret moved without the draft changing — an arrow key, a click, a drag.
+   * This may only *close* the list: a list that outlives the mention the caret
+   * was in still answers `Enter` and inserts against an `@` the caret has left.
+   * It may not open one, or `Escape` would last exactly until the next arrow
+   * key, and wandering back through an old mention would raise a list nobody
+   * asked for.
+   */
+  const refreshOpenMentionQuery = (value: string): void => {
+    setMentionQuery((current) => current === null
+      ? null
+      : mentionQueryAtCaret(value, textareaRef.current?.selectionStart));
+  };
+
+  const beginMention = (): void => {
+    const started = draftWithMentionStarted(message, textareaRef.current?.selectionStart);
+    setMessage(started.value);
+    setMentionQuery('');
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      textarea?.focus();
+      // Only while the draft is still the one this opened. A frame is enough
+      // room for a keystroke, and putting the caret back where the `@` went
+      // would drag it out of whatever was typed in the meantime.
+      if (textarea?.value === started.value) textarea.setSelectionRange(started.caret, started.caret);
+    });
+  };
+
+  /**
+   * Names the person in the opening message and adds them to the work stream
+   * being started. Nothing exists yet to mention someone *into*: `POST
+   * /workstreams` carries participant ids and no mention spans, so a name that
+   * only reached the text would leave with nobody attached to it. Adding here
+   * is the same silent toggle the picker above the composer performs, and shows
+   * in the same avatar row; deleting the text again does not remove them, for
+   * the same reason unticking is that row's job rather than the draft's.
+   */
+  const insertMention = (member: WorkspaceMember): void => {
+    const textarea = textareaRef.current;
+    const caret = textarea?.selectionStart ?? message.length;
+    const before = message.slice(0, caret);
+    const atIndex = before.lastIndexOf('@');
+    // The caret has left the mention this list belongs to; there is nothing
+    // here to complete, and `slice(0, -1)` would eat the character before it.
+    if (atIndex < 0) {
+      setMentionQuery(null);
+      return;
+    }
+    const after = message.slice(caret);
+    // One separator, not two: the name brings its own unless the rest of the
+    // line already starts with one.
+    const separator = /^\s/u.test(after) ? '' : ' ';
+    setMessage(`${before.slice(0, atIndex)}@${member.name}${separator}${after}`);
+    if (member.id !== workspace.currentUser.id) {
+      setSelectedMembers((current) => current.some((candidate) => candidate.id === member.id) ? current : [...current, member]);
+    }
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      const nextCaret = atIndex + member.name.length + 1 + separator.length;
+      textarea?.setSelectionRange(nextCaret, nextCaret);
+    });
+  };
   const participantSummary = participants.length <= 2
     ? participants.map((participant) => participant.name).join(', ')
     : `${workspace.currentUser.name} +${participants.length - 1}`;
@@ -630,6 +726,27 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
         </div>
 
         <div className="composer-stack">
+          {visibleCandidates.length > 0 && (
+            <div className="mention-popover" id="launch-mention-listbox" role="listbox" aria-label="Mentions">
+              {visibleCandidates.map((member, index) => (
+                <button
+                  aria-selected={index === mentionNavigation.activeIndex}
+                  className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
+                  id={mentionOptionId(member.id)}
+                  key={member.id}
+                  onClick={() => insertMention(member)}
+                  onMouseMove={() => mentionNavigation.setActiveIndex(index)}
+                  ref={index === mentionNavigation.activeIndex ? mentionNavigation.activeOptionRef : undefined}
+                  role="option"
+                  type="button"
+                >
+                  <span className="mention-icon"><Avatar member={member} size="small" /></span>
+                  <span><strong>{member.name}</strong><small>{member.email}</small></span>
+                  <Badge>Person</Badge>
+                </button>
+              ))}
+            </div>
+          )}
           <ComposerInput
             api={api ?? undefined}
             ariaLabel="Opening work-stream message"
@@ -641,19 +758,32 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             footerHint="Enter to create · Shift+Enter for a new line"
             maxHeight={220}
             model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
+            mentionLabels={mentionLabels}
+            mentionListbox={visibleCandidates.length > 0
+              ? { id: 'launch-mention-listbox', activeOptionId: mentionNavigation.activeOptionId }
+              : undefined}
             onAttach={attachmentDraft.addFiles}
-            onMention={() => setPickerOpen(true)}
+            onKeyDown={(event) => {
+              if (mentionNavigation.handleKeyDown(event)) return;
+              if (event.key !== 'Escape' || mentionQuery === null) return;
+              event.preventDefault();
+              setMentionQuery(null);
+            }}
+            onMention={beginMention}
             onOpenAttachment={setAttachmentPreview}
             onRemoveAttachment={attachmentDraft.removeAttachment}
             onRetryAttachment={attachmentDraft.retryAttachment}
+            onSelect={() => { if (!draftHidden) refreshOpenMentionQuery(message); }}
             onSubmit={submit}
             // Held back rather than merely hidden: the composer is controlled,
             // so a keystroke during a suggested-work launch would otherwise
             // write the empty value it is being shown back over the draft it is
             // hiding, and lose it.
-            onValueChange={(value) => { if (draftHidden) return; setMessage(value); setTooLong(false); }}
+            onValueChange={(value) => { if (draftHidden) return; updateMessage(value); setTooLong(false); }}
             placeholder="Describe a task or ask a question…"
+            ref={textareaRef}
             rows={2}
+            shouldSubmitOnEnter={() => mentionQuery === null}
             submitDisabled={attachmentDraft.uploading || (!message.trim() && attachmentDraft.ready.length === 0) || launching !== null}
             submitLabel="Create work stream"
             // Not a cosmetic state: it is what freezes the attachment tiles and
@@ -669,7 +799,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
 
       <ParticipantPicker
         currentUser={workspace.currentUser}
-        members={members.data ?? []}
+        members={activeMembers}
         onOpenChange={setPickerOpen}
         onToggle={(member) => {
           setSelectedMembers((current) =>

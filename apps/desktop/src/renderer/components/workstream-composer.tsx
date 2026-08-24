@@ -1,21 +1,27 @@
-import { AtSign, LoaderCircle, Square, UserPlus } from 'lucide-react';
+import { LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { AvalonApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { NO_MENTIONS, useDraftText } from '../lib/use-draft-text';
+import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { AttachmentPreview } from './attachments';
 import { ComposerInput } from './composer-input';
 import { Avatar, Badge, Button, Modal } from './primitives';
 
+/**
+ * Someone an `@` can name here. Only people for now: the work stream's
+ * connections were offered alongside them and have been taken back out, so a
+ * connection is neither pickable nor highlighted in a draft written here. What
+ * the transcript renders is unaffected — a connector mention that reaches it
+ * from anywhere else still draws its chip.
+ */
 interface MentionCandidate {
   id: string;
-  kind: 'person' | 'connector';
   label: string;
   description: string;
-  member?: WorkspaceMember;
-  connectorType?: string;
+  member: WorkspaceMember;
 }
 
 interface WorkstreamComposerProps {
@@ -48,7 +54,7 @@ interface ComposerCommand {
 }
 
 const BASE_COMMANDS: ComposerCommand[] = [
-  { id: 'participants', label: 'participants', description: 'Mention a participant or connection' },
+  { id: 'participants', label: 'participants', description: 'Mention a participant' },
   { id: 'attach', label: 'attach', description: 'Choose a file to attach' },
   { id: 'clear', label: 'clear', description: 'Clear this draft' },
 ];
@@ -83,27 +89,29 @@ export function WorkstreamComposer({
   const [confirming, setConfirming] = useState(false);
   const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;
   const participantIds = useMemo(() => new Set(workstream.participants.map((person) => person.id)), [workstream.participants]);
-  const candidates = useMemo<MentionCandidate[]>(() => [
-    ...members.map((member) => ({
+  const candidates = useMemo<MentionCandidate[]>(() => members
+    // The same rule the participants rail applies: a membership that is not
+    // active is one the work-stream endpoint refuses, so naming it here would
+    // only produce a failure nobody can act on.
+    .filter((member) => (member.status ?? 'active') === 'active')
+    .map((member) => ({
       id: member.id,
-      kind: 'person' as const,
       label: member.name,
       description: participantIds.has(member.id) ? member.email : `${member.email} · not participating`,
       member,
-    })),
-    ...workstream.connections.map((connection) => ({
-      id: connection.id,
-      kind: 'connector' as const,
-      label: connection.displayName,
-      description: `${connection.scope === 'you' ? 'Your' : 'Workspace'} connection`,
-      connectorType: connection.connectorType,
-    })),
-  ], [members, participantIds, workstream.connections]);
+    })), [members, participantIds]);
 
   const mentionLabels = useMemo(() => candidates.map((candidate) => candidate.label), [candidates]);
   const visibleCandidates = mentionQuery === null
     ? []
     : candidates.filter((candidate) => candidate.label.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 8);
+  const mentionNavigation = useMentionNavigation(
+    visibleCandidates.map((candidate) => candidate.id),
+    (index) => {
+      const candidate = visibleCandidates[index];
+      if (candidate) insertMention(candidate);
+    },
+  );
   const slashMatch = text.match(/^\/([^\s/]*)$/u);
   const commandQuery = slashMatch?.[1]?.toLowerCase() ?? null;
   const commands = useMemo(
@@ -119,10 +127,30 @@ export function WorkstreamComposer({
     draftRevisionRef.current += 1;
     setText(value);
     setSlashDismissed(false);
-    setSelectedMentions((current) => current.filter((mention) => value.toLocaleLowerCase().includes(`@${mention.label.toLocaleLowerCase()}`)));
-    const beforeCaret = value.slice(0, textareaRef.current?.selectionStart ?? value.length);
-    const match = beforeCaret.match(/(?:^|\s)@([^\s@]*)$/);
-    setMentionQuery(match?.[1] ?? null);
+    // `toLowerCase`, not `toLocaleLowerCase`: this has to agree with
+    // `mention-highlight.ts`, which uses the locale-independent one so a Turkish
+    // dotted I does not make a name highlighted here unmatched there.
+    setSelectedMentions((current) => current.filter((mention) => value.toLowerCase().includes(`@${mention.label.toLowerCase()}`)));
+    syncMentionQuery(value);
+  };
+
+  /** What the caret is naming, recomputed as the draft changes. */
+  const syncMentionQuery = (value: string): void => {
+    setMentionQuery(mentionQueryAtCaret(value, textareaRef.current?.selectionStart));
+  };
+
+  /**
+   * The caret moved without the draft changing — an arrow key, a click, a drag.
+   * This may only *close* the list: a list that outlives the mention the caret
+   * was in still answers `Enter` and inserts against an `@` the caret has left.
+   * It may not open one, or `Escape` would last exactly until the next arrow
+   * key, and wandering back through an old mention would raise a list nobody
+   * asked for.
+   */
+  const refreshOpenMentionQuery = (value: string): void => {
+    setMentionQuery((current) => current === null
+      ? null
+      : mentionQueryAtCaret(value, textareaRef.current?.selectionStart));
   };
 
   const resetDraft = (): void => {
@@ -146,22 +174,33 @@ export function WorkstreamComposer({
     });
   };
 
-  const beginMention = (): void => {
+  /**
+   * Opens a mention where the caret is. `from` replaces the draft it starts in,
+   * for the one caller that clears the composer first: `/participants` empties
+   * the draft and the textarea has not seen that yet when this runs, so reading
+   * the caret out of it would measure against the command that is being
+   * replaced.
+   */
+  const beginMention = (from?: string): void => {
     draftRevisionRef.current += 1;
-    setText((current) => current.length === 0 || /\s$/u.test(current) ? `${current}@` : `${current} @`);
+    const started = draftWithMentionStarted(from ?? text, from === undefined ? textareaRef.current?.selectionStart : from.length);
+    setText(started.value);
     setMentionQuery('');
     setSlashDismissed(true);
     requestAnimationFrame(() => {
       const textarea = textareaRef.current;
       textarea?.focus();
-      textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
+      // Only while the draft is still the one this opened. A frame is enough
+      // room for a keystroke, and putting the caret back where the `@` went
+      // would drag it out of whatever was typed in the meantime.
+      if (textarea?.value === started.value) textarea.setSelectionRange(started.caret, started.caret);
     });
   };
 
   const runCommand = async (command: ComposerCommand): Promise<void> => {
     if (command.id === 'participants') {
       setText('');
-      beginMention();
+      beginMention('');
       return;
     }
     resetDraft();
@@ -179,11 +218,19 @@ export function WorkstreamComposer({
     const before = text.slice(0, caret);
     const after = text.slice(caret);
     const atIndex = before.lastIndexOf('@');
-    const nextText = `${before.slice(0, atIndex)}@${candidate.label} ${after}`;
+    // Nothing to replace: the caret is no longer standing after an `@`, so
+    // there is no mention here to complete. `slice(0, -1)` would silently eat
+    // the character before the caret instead.
+    if (atIndex < 0) {
+      setMentionQuery(null);
+      return;
+    }
+    // The separator is the name's own, unless what follows already begins with
+    // one: picking mid-sentence otherwise leaves two spaces where the caret was.
+    const separator = /^\s/u.test(after) ? '' : ' ';
+    const nextText = `${before.slice(0, atIndex)}@${candidate.label}${separator}${after}`;
     setText(nextText);
-    const identity: MentionIdentity = candidate.kind === 'person'
-      ? { type: 'person', label: candidate.label, userId: candidate.member?.id ?? candidate.id, connectorType: null }
-      : { type: 'connector', label: candidate.label, userId: null, connectorType: candidate.connectorType ?? null };
+    const identity: MentionIdentity = { type: 'person', label: candidate.label, userId: candidate.member.id, connectorType: null };
     setSelectedMentions((current) => [
       ...current.filter((mention) => !(mention.type === identity.type && mention.userId === identity.userId && mention.connectorType === identity.connectorType)),
       identity,
@@ -191,7 +238,7 @@ export function WorkstreamComposer({
     setMentionQuery(null);
     requestAnimationFrame(() => {
       textarea?.focus();
-      const nextCaret = atIndex + candidate.label.length + 2;
+      const nextCaret = atIndex + candidate.label.length + 1 + separator.length;
       textarea?.setSelectionRange(nextCaret, nextCaret);
     });
   };
@@ -261,14 +308,25 @@ export function WorkstreamComposer({
         </div>
       )}
       {visibleCandidates.length > 0 && (
-        <div className="mention-popover" role="listbox" aria-label="Mentions">
-          {visibleCandidates.map((candidate) => (
-            <button key={`${candidate.kind}-${candidate.id}`} onClick={() => insertMention(candidate)} role="option" type="button">
-              <span className="mention-icon">
-                {candidate.member ? <Avatar member={candidate.member} size="small" /> : <AtSign size={14} />}
-              </span>
+        <div className="mention-popover" id="workstream-mention-listbox" role="listbox" aria-label="Mentions">
+          {visibleCandidates.map((candidate, index) => (
+            <button
+              aria-selected={index === mentionNavigation.activeIndex}
+              className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
+              id={mentionOptionId(candidate.id)}
+              key={candidate.id}
+              onClick={() => insertMention(candidate)}
+              /* Move rather than enter: the list scrolls under a still pointer
+                 when the arrows walk past its edge, and that must not steal the
+                 highlight back. */
+              onMouseMove={() => mentionNavigation.setActiveIndex(index)}
+              ref={index === mentionNavigation.activeIndex ? mentionNavigation.activeOptionRef : undefined}
+              role="option"
+              type="button"
+            >
+              <span className="mention-icon"><Avatar member={candidate.member} size="small" /></span>
               <span><strong>{candidate.label}</strong><small>{candidate.description}</small></span>
-              <Badge>{candidate.kind === 'person' ? 'Person' : 'Connection'}</Badge>
+              <Badge>Person</Badge>
             </button>
           ))}
         </div>
@@ -281,7 +339,12 @@ export function WorkstreamComposer({
         fileInputRef={fileInputRef}
         onAttach={onAttach}
         onKeyDown={(event) => {
-          if (event.key === 'Escape') {
+          if (mentionNavigation.handleKeyDown(event)) return;
+          if (event.key === 'Escape' && (mentionQuery !== null || visibleCommands.length > 0)) {
+            // Prevented like the other two composers do, and only when there is
+            // something here to dismiss: an Escape this composer ignores should
+            // keep travelling to whatever else is listening for it.
+            event.preventDefault();
             if (mentionQuery !== null) setMentionQuery(null);
             if (visibleCommands.length > 0) setSlashDismissed(true);
           }
@@ -291,6 +354,9 @@ export function WorkstreamComposer({
           }
         }}
         mentionLabels={mentionLabels}
+        mentionListbox={visibleCandidates.length > 0
+          ? { id: 'workstream-mention-listbox', activeOptionId: mentionNavigation.activeOptionId }
+          : undefined}
         // The run first, the pin second. What a run recorded is what actually
         // ran — the pin where it was pinned, the flag's served answer where it
         // was not, and the only place that served variation is visible to a
@@ -319,6 +385,7 @@ export function WorkstreamComposer({
         onOpenAttachment={onOpenAttachment}
         onRemoveAttachment={onRemoveAttachment}
         onRetryAttachment={onRetryAttachment}
+        onSelect={() => refreshOpenMentionQuery(text)}
         onSubmit={send}
         onValueChange={updateText}
         placeholder="Message the work stream…"
