@@ -207,7 +207,7 @@ describe("boundary contracts", () => {
     expect(new Set(AGENT_MODEL_OVERRIDES).size).toBe(AGENT_MODEL_OVERRIDES.length);
   });
 
-  it("defaults inference logging off and accepts only explicit workspace preference updates", () => {
+  it("accepts only explicit workspace timezone updates", () => {
     expect(WorkspaceSchema.parse({
       id,
       name: "Avalon",
@@ -216,9 +216,9 @@ describe("boundary contracts", () => {
       role: "owner",
       timezone: "America/Los_Angeles",
       createdAt: "2026-08-05T00:00:00.000Z",
-    }).logAgentInference).toBe(false);
-    expect(UpdateWorkspaceRequestSchema.parse({ logAgentInference: true }))
-      .toEqual({ logAgentInference: true });
+    }).timezone).toBe("America/Los_Angeles");
+    expect(UpdateWorkspaceRequestSchema.parse({ timezone: "Europe/London" }))
+      .toEqual({ timezone: "Europe/London" });
     expect(UpdateWorkspaceRequestSchema.safeParse({}).success).toBe(false);
   });
 
@@ -1002,7 +1002,7 @@ describe("boundary contracts", () => {
     });
     // Details are an allowlist, not a convention: adapters already attach whole
     // parsed provider error bodies, and forwarding those would put raw provider
-    // JSON into the transcript and the inference payload logs.
+    // JSON into the transcript and the lossless inference lakehouse.
     expect(readStructuredFailure(new ProviderError("provider_error", "Google API failed (403)", {
       error: { code: 403, message: "Request had insufficient authentication scopes", errors: [{ reason: "forbidden" }] },
       accessToken: "ya29.secret",

@@ -186,6 +186,11 @@
   "queues": {
     "producers": [
       { "binding": "ACTIVITY_QUEUE", "queue": "avalon-global-activities" },
+      // Every inference request and terminal attempt is staged in the regional
+      // payload bucket, then this queue carries only its content-addressed
+      // pointer to the regional Pipeline consumer. The queue keeps provider
+      // execution independent of lakehouse availability.
+      { "binding": "INFERENCE_LAKEHOUSE_QUEUE", "queue": "avalon-global-inference-lakehouse" },
       // Access retractions on their way to open sockets. A queue rather
       // than RPC from the route that wrote the fact: the fan-out walks the
       // whole object hierarchy, nothing waits on its outcome, and a
@@ -223,6 +228,14 @@
         "max_batch_timeout": 1,
         "max_retries": 5,
         "dead_letter_queue": "avalon-global-activities-dead-letter"
+      },
+      {
+        "queue": "avalon-global-inference-lakehouse",
+        // Cloudflare's platform defaults (10 records, 5 seconds, 3 retries)
+        // are sufficient: this is invisible analytical work with one Pipeline
+        // send per record. The DLQ is the zero-setup signal that ingestion is
+        // not converging; see docs/inference-lakehouse.md.
+        "dead_letter_queue": "avalon-global-inference-lakehouse-dead-letter"
       },
       {
         "queue": "avalon-global-access-revocations",

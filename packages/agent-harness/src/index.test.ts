@@ -1209,11 +1209,15 @@ describe("agent harness", () => {
 
   it("binds host fetch before invoking it from the client", async () => {
     let requestBody: Record<string, unknown> | null = null;
+    const diagnostics: StructuredModelDiagnostic[] = [];
     const receiverAwareFetch = function (this: unknown, _request: RequestInfo | URL, init?: RequestInit): Promise<Response> {
       if (this !== globalThis) throw new TypeError("illegal invocation");
       requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return Promise.resolve(Response.json({
-        choices: [{ message: { content: '{"ok":true}' } }],
+        id: "generation-1",
+        model: "test/model",
+        choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 12, completion_tokens: 3, reasoning_tokens: 1 },
       }));
     } as typeof fetch;
     const client = new OpenRouterClient({
@@ -1232,6 +1236,7 @@ describe("agent harness", () => {
         additionalProperties: false,
       },
       parse: (value) => value as { ok: boolean },
+      onDiagnostic: (diagnostic) => { diagnostics.push(diagnostic); },
     })).resolves.toEqual({ ok: true });
 
     const messages = requestBody!.messages as Array<{ role: string; content: string }>;
@@ -1244,6 +1249,19 @@ describe("agent harness", () => {
         name: "host_fetch",
         strict: true,
         schema: { required: ["ok"], additionalProperties: false },
+      },
+    });
+    const requestDiagnostic = diagnostics.find((diagnostic) => diagnostic.stage === "model_request");
+    const completionDiagnostic = diagnostics.find((diagnostic) => diagnostic.stage === "complete");
+    expect(requestDiagnostic).toMatchObject({
+      inferenceRequestId: expect.any(String),
+      requestPayload: requestBody,
+    });
+    expect(completionDiagnostic).toMatchObject({
+      inferenceRequestId: requestDiagnostic?.inferenceRequestId,
+      responsePayload: {
+        id: "generation-1",
+        usage: { prompt_tokens: 12, completion_tokens: 3, reasoning_tokens: 1 },
       },
     });
   });
@@ -2259,6 +2277,14 @@ describe("agent harness", () => {
       { id: inferenceRequests[0]?.inferenceRequestId, inputTokens: 10, outputTokens: 2 },
       { id: inferenceRequests[1]?.inferenceRequestId, inputTokens: 5, outputTokens: 3 },
     ]);
+    expect(inferenceAttempts[1]).toMatchObject({
+      providerInvocationModel: "test/model",
+      response: {
+        content: "done",
+        finishReason: "stop",
+        usage: { prompt_tokens: 5, completion_tokens: 3 },
+      },
+    });
   });
 
   it("normalizes schema-declared numeric strings before receipts and execution", async () => {

@@ -54,7 +54,6 @@ export interface Workspace {
   name: string;
   region: Region;
   timezone: string;
-  logAgentInference: boolean;
   currentUser: WorkspaceMember;
 }
 

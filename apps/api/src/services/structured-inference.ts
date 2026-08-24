@@ -11,6 +11,7 @@ import {
   type AgentModelFlagContext,
   type AgentModelRole,
 } from "./agent-model-flags";
+import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
 
 const STRUCTURED_INFERENCE_TIMEOUT_MS = 2 * 60_000;
 
@@ -61,7 +62,7 @@ export async function runStructuredInference<T>(
   const signal = input.signal
     ? AbortSignal.any([input.signal, deadline.signal])
     : deadline.signal;
-  const onDiagnostic = (diagnostic: StructuredModelDiagnostic): void => {
+  const onDiagnostic = async (diagnostic: StructuredModelDiagnostic): Promise<void> => {
     logStructuredEvent(
       env,
       diagnostic.validationIssues || diagnostic.failureKind ? "warn" : "info",
@@ -89,6 +90,12 @@ export async function runStructuredInference<T>(
         validation_issues: diagnostic.validationIssues,
       },
     );
+    await captureStructuredInferenceDiagnostic(env, {
+      source: input.role,
+      ...(input.context.workspaceId ? { workspaceId: input.context.workspaceId } : {}),
+      ...(input.context.userId ? { userId: input.context.userId } : {}),
+      ...(input.context.workstreamId ? { workstreamId: input.context.workstreamId } : {}),
+    }, diagnostic);
   };
   try {
     const result = await client.structured({

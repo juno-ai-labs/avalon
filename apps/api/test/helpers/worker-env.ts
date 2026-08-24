@@ -22,6 +22,8 @@ export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
     WORKSTREAM_DOS: binding(), WORKSPACE_DOS: binding(),
     SLACK_REACTION_TICKERS: binding(),
     ACTIVITY_QUEUE: binding(),
+    INFERENCE_LAKEHOUSE_QUEUE: binding(),
+    INFERENCE_LAKEHOUSE: binding(),
     ACCESS_REVOCATION_QUEUE: binding(),
     CONNECTOR_POLL_WORKFLOW: binding(),
     CONNECTOR_EVENT_WORKFLOW: binding(), WORK_OPPORTUNITY_WORKFLOW: binding(),

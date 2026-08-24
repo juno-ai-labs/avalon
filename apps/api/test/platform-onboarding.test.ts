@@ -66,7 +66,6 @@ function workspace(
     region,
     role: "member",
     timezone: region === "eu" ? "Europe/London" : "America/Los_Angeles",
-    logAgentInference: false,
     createdAt: at,
     placementAffinity: placementAffinity(region),
   };
