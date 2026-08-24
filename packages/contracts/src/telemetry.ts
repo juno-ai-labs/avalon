@@ -148,7 +148,12 @@ const automationDeliveryTargetType = z.enum(["email", "slack_agent_dm"]);
 const connectorScope = z.enum(["personal", "workspace"]);
 const connectorSetupMethod = z.enum(["oauth", "api_key", "direct", "webhook"]);
 const connectorHealth = z.enum(["healthy", "needs_reconnect", "error", "disabled", "unknown"]);
-export const TELEMETRY_REALTIME_SOCKETS = ["workspace", "workstream_control", "substream_feed"] as const;
+export const TELEMETRY_REALTIME_SOCKETS = [
+  "workspace",
+  "workstream_control",
+  "substream_feed",
+  "block_dashboard",
+] as const;
 export type TelemetryRealtimeSocket = typeof TELEMETRY_REALTIME_SOCKETS[number];
 export const TELEMETRY_REALTIME_SOCKET_CAUSES = [
   "opened",
@@ -318,7 +323,7 @@ export const TELEMETRY_EVENTS = {
   realtime_socket_state: event({
     ...common,
     name: "realtime_socket_state",
-    definition: "A bounded connection transition on one of the desktop client's three realtime sockets.",
+    definition: "A bounded connection transition on one of the desktop client's realtime sockets.",
     productQuestion: "Which realtime sockets drop, why, and how many attempts does a client spend getting back?",
     sources: ["desktop-renderer"],
     authoritativeSource: "desktop-renderer",
