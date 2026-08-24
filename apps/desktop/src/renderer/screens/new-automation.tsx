@@ -168,6 +168,7 @@ function AutomationMessageBlock({
       message={message}
       onAnswerElicitation={(_elicitationId, answer) => onAnswerElicitation?.(answer) ?? Promise.resolve()}
       onOpenAttachment={onOpenAttachment}
+      onResolveSuggestion={async () => undefined}
     />
   );
 }

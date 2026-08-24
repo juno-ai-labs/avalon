@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { ContentAudience } from "./audience-containment";
+
 /**
  * The columns that decide who a connector activity may reach, under the names
  * D1 returns them. Every one is optional so a caller holding a narrower row
@@ -41,6 +43,14 @@ export function restrictedActivityUserIds(activity: ActivityVisibilityRow): stri
     if (restricted.success && restricted.data.length > 0) return [...new Set(restricted.data)];
   }
   return visibility.workspaceAutomationAllowed === false ? [] : null;
+}
+
+export function activityContentAudience(activity: ActivityVisibilityRow): ContentAudience | null {
+  const restrictedUserIds = restrictedActivityUserIds(activity);
+  if (restrictedUserIds === null) return { scope: "workspace" };
+  return restrictedUserIds.length > 0
+    ? { scope: "users", userIds: restrictedUserIds }
+    : null;
 }
 
 /**

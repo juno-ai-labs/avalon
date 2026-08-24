@@ -44,7 +44,7 @@
 - [x] Add one smart-routed public GitHub App, one smart-routed public Linear app with a first-class resource surface and feature-gated `protocol_only` native-agent surface, and regional Notion connection adapters with bounded tools, resource hydration, credential lifecycle, and signed inbound events.
 - [x] Replace model-native web discovery with bounded Firecrawl search and page-fetch tools and regional usage accounting.
 - [x] Add HMAC generic webhooks, normalized activities, Queue ingestion, and deduplication.
-- [x] Add direct watches/triggers and deterministic-then-LLM contextual routing with accept/dismiss feedback. Contextual routing is currently paused pending relevance tuning.
+- [x] Add direct watches/triggers and deterministic-then-LLM contextual routing with accept/dismiss feedback, fenced to the activity audience.
 
 ## Phase 7 — hardening and delivery
 

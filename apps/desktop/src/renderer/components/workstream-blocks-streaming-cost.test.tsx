@@ -40,16 +40,25 @@ function measureTailAppends(initialText: string): { mount: number; updates: numb
     durations.push(actualDuration);
   };
   const onAnswerElicitation = vi.fn(async () => undefined);
+  const onResolveSuggestion = vi.fn(async () => undefined);
   const view = render(
     <Profiler id="streaming-cost" onRender={onRender}>
-      <MessageBlock message={message(text)} onAnswerElicitation={onAnswerElicitation} />
+      <MessageBlock
+        message={message(text)}
+        onAnswerElicitation={onAnswerElicitation}
+        onResolveSuggestion={onResolveSuggestion}
+      />
     </Profiler>,
   );
   for (let index = 0; index < 10; index += 1) {
     text += 'more streamed tail text ';
     view.rerender(
       <Profiler id="streaming-cost" onRender={onRender}>
-        <MessageBlock message={message(text)} onAnswerElicitation={onAnswerElicitation} />
+        <MessageBlock
+          message={message(text)}
+          onAnswerElicitation={onAnswerElicitation}
+          onResolveSuggestion={onResolveSuggestion}
+        />
       </Profiler>,
     );
   }

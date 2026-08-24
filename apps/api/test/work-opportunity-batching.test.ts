@@ -3,6 +3,7 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { __workOpportunityTesting, WorkOpportunityService } from "../src/services/work-opportunity-service";
+import { enqueueActivityOpportunity } from "../src/services/work-opportunity-batching";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { createCloudflareTestBinding, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
 import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding } from "./helpers/durable-authority";
@@ -150,6 +151,71 @@ function insertOpportunityWorkstream(
 }
 
 describe("suggested-work aggregation", () => {
+  it("fans workspace-visible activity into every active member's personal admission window", async () => {
+    const database = migratedDatabase();
+    seed(database);
+    const activityId = "00000000-0000-7000-8000-000000000120";
+    const enqueueOpportunitySource = vi.fn(async (input: Record<string, unknown>) => {
+      void input;
+    });
+    const workspaces = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: vi.fn().mockReturnValue({}),
+      get: vi.fn().mockReturnValue({
+        connectorEvent: vi.fn(async () => ({
+          connectorType: "github",
+          activity: {
+            id: activityId,
+            workspaceId,
+            region: "global",
+            connectionId: "00000000-0000-7000-8000-000000000011",
+            connectionScope: "workspace",
+            connectionOwnerUserId: null,
+            provider: "github",
+            providerEventId: "workspace-event",
+            eventType: "pull_request.opened",
+            resourceType: "github_pull_request",
+            providerResourceId: "juno-ai-labs/avalon#120",
+            actor: {},
+            subject: {},
+            occurredAt: "2026-08-07T00:00:00.000Z",
+            receivedAt: "2026-08-07T00:00:01.000Z",
+            title: "Workspace-visible review request",
+            summary: "Every member may use this as private Suggested Work context",
+            textSnippet: "Review requested",
+            payloadRef: null,
+            visibility: {},
+            targetUserIds: [],
+            entityKeys: ["github:pr:120"],
+            dedupeKey: "github:workspace-event",
+            rawContentHash: null,
+            metadata: {},
+            externalPeople: [],
+          },
+        })),
+        enqueueOpportunitySource,
+      }),
+    });
+
+    await enqueueActivityOpportunity(
+      environment(database, { WORKSPACE_DOS: workspaces }),
+      activityId,
+      workspaceId,
+    );
+
+    expect(enqueueOpportunitySource.mock.calls.map(([input]) => input)).toEqual([
+      expect.objectContaining({
+        partitionKey: `workspace:${userOne}`,
+        audience: { scope: "personal", userId: userOne },
+        sourceId: activityId,
+      }),
+      expect.objectContaining({
+        partitionKey: `workspace:${userTwo}`,
+        audience: { scope: "personal", userId: userTwo },
+        sourceId: activityId,
+      }),
+    ]);
+  });
+
   // Two suites lived here and covered the D1 batching window: the debounce and
   // one-hour cap on `process_after`, and the retry that moves an event when its
   // window is claimed between select and insert. `enqueue` no longer owns that
@@ -161,7 +227,7 @@ describe("suggested-work aggregation", () => {
   it("enforces model batch bounds and maximum concurrency three", async () => {
     const source = (index: number, text = "x") => ({
       event: { id: String(index), source_kind: "activity" as const, source_id: String(index), occurred_at: "2026-08-07T00:00:00.000Z", input_characters: text.length, attempt_count: 0 },
-      source: { id: String(index), kind: "activity" as const, provider: "test", providerTenantId: "tenant", connectionId: "connection", title: `Title ${index}`, summary: "", text, actor: {}, subject: {}, externalPeople: [], entityKeys: ["same"], canonicalUrl: null, workstreamId: null, occurredAt: "2026-08-07T00:00:00.000Z" },
+      source: { id: String(index), kind: "activity" as const, provider: "test", providerTenantId: "tenant", connectionId: "connection", title: `Title ${index}`, summary: "", text, actor: {}, subject: {}, externalPeople: [], entityKeys: ["same"], canonicalUrl: null, workstreamId: null, occurredAt: "2026-08-07T00:00:00.000Z", sourceAudience: { scope: "workspace" as const } },
     });
     const batches = __workOpportunityTesting.packBatches(Array.from({ length: 33 }, (_, index) => source(index)));
     expect(batches.map((batch) => batch.length)).toEqual([16, 16, 1]);
@@ -287,6 +353,7 @@ describe("suggested-work aggregation", () => {
       canonicalUrl: null,
       workstreamId: null,
       occurredAt: "2026-08-07T00:00:00.000Z",
+      sourceAudience: { scope: "workspace" as const },
     };
     const windowFor = (userId: string) => ({
       id: `window-${userId}`,
@@ -313,7 +380,7 @@ describe("suggested-work aggregation", () => {
     ]);
   });
 
-  it("does not turn route_existing decisions into work-stream suggestions while the surface is paused", async () => {
+  it("routes public and restricted sources from a user's window without broadening either source", async () => {
     const database = migratedDatabase();
     seed(database);
     const activityId = "00000000-0000-7000-8000-000000000110";
@@ -328,19 +395,59 @@ describe("suggested-work aggregation", () => {
       workstreamId, workspaceId, userOne,
       "2026-08-07T00:00:00.000Z", "2026-08-07T00:00:00.000Z", "2026-08-07T00:00:00.000Z",
     );
-    const roomFetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    const createRuntimeSuggestion = vi.fn((request: {
+      workstreamId: string;
+      input: {
+        id: string;
+        activityId: string;
+        title: string;
+        summary: string;
+        reason: string;
+        source: string;
+        sourceAudience: { scope: string; userIds?: string[] };
+      };
+    }) => ({
+      status: 200,
+      bodyJson: JSON.stringify({
+        inserted: true,
+        suggestion: {
+          id: request.input.id,
+          activityId: request.input.activityId,
+          workstreamId: request.workstreamId,
+          title: request.input.title,
+          summary: request.input.summary,
+          confidence: 1,
+          reason: request.input.reason,
+          status: "pending",
+          createdAt: "2026-08-07T00:00:00.000Z",
+          resolvedAt: null,
+        },
+      }),
+    }));
+    let targetUserIds = [userOne as string];
     const rooms = createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
       idFromName: vi.fn().mockReturnValue({}),
-      get: vi.fn().mockReturnValue({ fetch: roomFetch }),
+      get: vi.fn().mockReturnValue({
+        createRuntimeSuggestion,
+        readerAudience: vi.fn(async () => ({ scope: "personal", userIds: targetUserIds })),
+      }),
+    });
+    const directories = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: vi.fn().mockReturnValue({}),
+      get: vi.fn().mockReturnValue({}),
+    });
+    const routeEnv = environment(database, {
+      SUBSTREAM_AGENTS: rooms,
+      WORKSPACE_DOS: directories,
     });
     const routed = await __workOpportunityTesting.routeExistingDecision(
-      environment(database, { SUBSTREAM_AGENTS: rooms }),
+      routeEnv,
       {
         id: "window-route",
         workspace_id: workspaceId,
-        partition_key: "workspace",
-        audience_scope: "workspace",
-        audience_user_id: null,
+        partition_key: `workspace:${userOne}`,
+        audience_scope: "personal",
+        audience_user_id: userOne,
         first_event_at: "2026-08-07T00:00:00.000Z",
         last_event_at: "2026-08-07T00:00:00.000Z",
       },
@@ -369,15 +476,24 @@ describe("suggested-work aggregation", () => {
         canonicalUrl: null,
         workstreamId: null,
         occurredAt: "2026-08-07T00:00:00.000Z",
+        sourceAudience: { scope: "workspace" },
       }],
       [{ id: workstreamId, title: "Existing launch work", objective: "Ship the launch" }],
     );
-    expect(routed).toBe(false);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM activity_suggestions").get()).toEqual({ count: 0 });
-    expect(roomFetch).not.toHaveBeenCalled();
+    expect(routed).toBe(true);
+    expect(createRuntimeSuggestion).toHaveBeenCalledOnce();
+    expect(createRuntimeSuggestion.mock.calls[0]?.[0]).toMatchObject({
+      workstreamId,
+      input: {
+        activityId,
+        source: "suggested_work",
+        sourceAudience: { scope: "workspace" },
+      },
+    });
 
+    const personalActivityId = "00000000-0000-7000-8000-000000000111";
     await expect(__workOpportunityTesting.routeExistingDecision(
-      environment(database, { SUBSTREAM_AGENTS: rooms }),
+      routeEnv,
       {
         id: "window-private-route",
         workspace_id: workspaceId,
@@ -394,12 +510,78 @@ describe("suggested-work aggregation", () => {
         executionPrompt: "",
         admissionReasoning: "Private source reasoning.",
         linkedUsers: [],
-        sourceIds: [activityId],
+        sourceIds: [personalActivityId],
       },
-      [],
+      [{
+        id: personalActivityId,
+        kind: "activity",
+        provider: "test",
+        providerTenantId: "tenant-gh",
+        connectionId: "00000000-0000-7000-8000-000000000013",
+        title: "Private launch update",
+        summary: "A private launch dependency changed",
+        text: "",
+        actor: {},
+        subject: {},
+        externalPeople: [],
+        entityKeys: ["launch"],
+        canonicalUrl: null,
+        workstreamId: null,
+        occurredAt: "2026-08-07T00:00:00.000Z",
+        sourceAudience: { scope: "users", userIds: [userOne] },
+      }],
+      [{ id: workstreamId, title: "Existing launch work", objective: "Ship the launch" }],
+    )).resolves.toBe(true);
+    expect(createRuntimeSuggestion).toHaveBeenCalledTimes(2);
+    expect(createRuntimeSuggestion.mock.calls[1]?.[0]).toMatchObject({
+      input: {
+        activityId: personalActivityId,
+        sourceAudience: { scope: "users", userIds: [userOne] },
+      },
+    });
+
+    targetUserIds = [userOne, userTwo];
+    await expect(__workOpportunityTesting.routeExistingDecision(
+      routeEnv,
+      {
+        id: "window-private-shared-target",
+        workspace_id: workspaceId,
+        partition_key: `personal:${userOne}`,
+        audience_scope: "personal",
+        audience_user_id: userOne,
+        first_event_at: "2026-08-07T00:00:00.000Z",
+        last_event_at: "2026-08-07T00:00:00.000Z",
+      },
+      {
+        action: "route_existing",
+        existingTargetId: workstreamId,
+        displayPrompt: "Do not expose this private update",
+        executionPrompt: "",
+        admissionReasoning: "The target has a broader audience.",
+        linkedUsers: [],
+        sourceIds: [personalActivityId],
+      },
+      [{
+        id: personalActivityId,
+        kind: "activity",
+        provider: "test",
+        providerTenantId: "tenant-gh",
+        connectionId: "00000000-0000-7000-8000-000000000013",
+        title: "Private launch update",
+        summary: "A private launch dependency changed",
+        text: "",
+        actor: {},
+        subject: {},
+        externalPeople: [],
+        entityKeys: ["launch"],
+        canonicalUrl: null,
+        workstreamId: null,
+        occurredAt: "2026-08-07T00:00:00.000Z",
+        sourceAudience: { scope: "users", userIds: [userOne] },
+      }],
       [{ id: workstreamId, title: "Existing launch work", objective: "Ship the launch" }],
     )).resolves.toBe(false);
-    expect(roomFetch).not.toHaveBeenCalled();
+    expect(createRuntimeSuggestion).toHaveBeenCalledTimes(2);
   });
 
   it("keeps execution prompts and reasoning out of the renderer contract and rejects stale starts", async () => {

@@ -18,6 +18,7 @@ import { AutomationCompilerError, OpenRouterError } from "@avalon/agent-harness"
 import type { AutomationCompilerStreamEvent } from "@avalon/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
+import { workstreamAudienceAllowsUser } from "../lib/audience-containment";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { automationModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
@@ -46,7 +47,10 @@ import {
 } from "../telemetry/product-usage";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { createMessageObjectPort } from "../runtime/message-port";
-import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
+import {
+  attachWorkstreamRuntimeResource,
+  readWorkstreamRuntimeAudience,
+} from "./workstream-object-client";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
@@ -1212,7 +1216,20 @@ export class AutomationService {
       `SELECT * FROM automation_runs WHERE workspace_id = ? AND automation_subscription_id = ?
        ORDER BY created_at DESC LIMIT ?`,
     ).bind(this.auth.workspaceId, id, Math.min(limit, 100)).all<Record<string, unknown>>();
-    return { items: (result.results ?? []).map(toAutomationRun) };
+    const items: ReturnType<typeof toAutomationRun>[] = [];
+    // Keep these reads serial: one history request must not turn a long run list
+    // into enough simultaneous Durable Object calls to exhaust the Worker's
+    // outbound connection allowance.
+    for (const row of result.results ?? []) {
+      const run = toAutomationRun(row);
+      const audience = await readWorkstreamRuntimeAudience(
+        this.env,
+        this.auth.workspaceId,
+        run.workstreamId,
+      );
+      if (workstreamAudienceAllowsUser(audience, this.auth.userId)) items.push(run);
+    }
+    return { items };
   }
 
   async nextRun(id: string) {
@@ -1574,17 +1591,21 @@ export class AutomationService {
     try {
       const statements = [
         executionEnv.DB.prepare(
-          // `scope` is stated rather than defaulted. An automation's work stream
-          // seats no participants — it is reached by owning the automation, and
-          // `PATCH /workstreams/:id` refuses to move it for exactly that reason
-          // — so the participant-only default every other create now takes
-          // would hide it from the person it belongs to.
+          // Every automation run is a private work stream. The member who
+          // starts it is both its durable creator and its initial participant,
+          // so every later read uses the ordinary work-stream visibility rule.
           `INSERT INTO workstreams
-           (id, workspace_id, title, objective, email_address, email_route_status, origin_type, automation_subscription_id,
+           (id, workspace_id, title, objective, email_address, email_route_status, origin_type,
+            created_by_user_id, automation_subscription_id,
             automation_run_id, planned_for, harness_status, next_sequence_number,
             latest_attention_sequence_number, last_activity_at, created_at, updated_at, model_override, scope)
-           VALUES (?, ?, ?, ?, ?, 'reserved', 'automation', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'workspace')`,
-        ).bind(workstreamId, this.auth.workspaceId, String(subscription.name), String(subscription.description), emailRoute.emailAddress, subscription.id, runId, plannedFor, "scheduled", openingInput ? 2 : 1, openingInput ? 1 : 0, at, at, at, modelOverride),
+           VALUES (?, ?, ?, ?, ?, 'reserved', 'automation', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'personal')`,
+        ).bind(workstreamId, this.auth.workspaceId, String(subscription.name), String(subscription.description), emailRoute.emailAddress, this.auth.userId, subscription.id, runId, plannedFor, "scheduled", openingInput ? 2 : 1, openingInput ? 1 : 0, at, at, at, modelOverride),
+        executionEnv.DB.prepare(
+          `INSERT INTO workstream_participants
+             (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
+           VALUES (?, ?, ?, 'creator', ?, NULL)`,
+        ).bind(workstreamId, this.auth.userId, this.auth.userId, at),
       ];
       const runStatement = this.env.DB.prepare(
         `INSERT INTO automation_runs

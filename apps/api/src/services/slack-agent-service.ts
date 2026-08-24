@@ -2822,7 +2822,7 @@ export class SlackAgentService {
         .then((workspace) => (
           workspace.recentWorkstreamDirectory({
             workspaceId: connection.workspace_id,
-            userId: link.user_id,
+            audience: { scope: "user", userId: link.user_id },
             includeSystem: false,
             participantsOnly: true,
             limit: 50,

@@ -104,9 +104,14 @@ the identity anchor and dropped that column.
 
 Mail sent to a **work-stream** address is attached to that existing work stream as
 an untrusted resource and transcript entry. It does not start an agent run.
+Listing, detail, preview, and content reads authorize that resource through the
+attached work stream's own scope and active participants. A private
+ad-hoc work stream does not become workspace-readable merely because its email
+resource has no automation subscription.
 
 Mail sent to an active **automation** address creates a new automation run and a
-new work stream. The received message is its explicit opening input and attached
+new **private** work stream, with the automation owner recorded as creator and
+participant. The received message is its explicit opening input and attached
 resource, labelled as untrusted external data before it reaches the model. A
 provider retry uses the Resend email ID as the idempotency key, so it resolves to
 the same work stream and run. Receipt rows use reclaimable processing
@@ -414,6 +419,26 @@ Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
 
 ## Changelog
+
+### 2026-08-24 — Inbound mail inherits the generated work stream's privacy
+
+**What changed:** Every automation-email run creates a personal work stream and
+seats its owner. Email-resource authorization now uses the attached work stream's
+scope and active participants for both automation and ad-hoc mail resources.
+
+**Why:** The resource layer treated every non-automation attachment as
+workspace-readable, and automation runs were workspace-scoped. A private
+work-stream address could therefore turn private mail into a workspace resource;
+the resource and transcript boundaries disagreed about the same content.
+
+**Considered and rejected:** Looking up automation scope, special-casing ad-hoc
+mail only, or hiding the resource just from list results. Automation sharing is
+not execution-content visibility, and every resource surface must make the same
+authorization decision.
+
+**What a future change has to respect:** An inbound email is readable exactly
+where its attached work stream is readable. Provider identity and attachment
+state may narrow access further, but neither may widen it.
 
 ### 2026-08-23 — A destination that is switched off is retired, not deleted
 

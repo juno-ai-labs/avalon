@@ -712,6 +712,21 @@ export function testSubstreamAgentsBinding(
       }
       return { status: 200, bodyJson: JSON.stringify({ results }) };
     }),
+    readerAudience: vi.fn((input: { workspaceId: string; workstreamId: string }) => {
+      const store = storeFor(input.workstreamId, input.workspaceId);
+      const root = store.prepare(
+        `SELECT scope FROM workstream WHERE id = 1`,
+      ).get() as { scope: "personal" | "workspace" } | undefined;
+      if (!root) return null;
+      if (root.scope === "workspace") return { scope: "workspace" as const };
+      const participants = store.prepare(
+        `SELECT user_id FROM participants WHERE status = 'active' ORDER BY user_id`,
+      ).all() as Array<{ user_id: string }>;
+      return {
+        scope: "personal" as const,
+        userIds: participants.map((participant) => participant.user_id),
+      };
+    }),
     dispatchRun: vi.fn((input: RecordedDispatch) => {
       const failure = options.failDispatch?.(input);
       if (failure) return failure;

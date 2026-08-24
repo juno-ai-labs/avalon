@@ -65,6 +65,9 @@ class ManualRunDatabase {
   run: StoredRun | null = null;
   harnessRun: StoredHarnessRun | null = null;
   workstreamStatus: string | null = null;
+  workstreamCreatorUserId: string | null = null;
+  workstreamParticipantUserId: string | null = null;
+  workstreamScope: "personal" | "workspace" | null = null;
   workstreamEmailOwner: StoredWorkstreamEmailOwner | null = null;
   /** Every statement that arrived on the work-stream object's port. */
   readonly objectPortSql: string[] = [];
@@ -229,13 +232,17 @@ class ManualRunStatement {
       // product state lives behind the object port below.
     } else if (normalized.startsWith("INSERT INTO workstreams")) {
       this.database.workstreamInsertCount += 1;
-      this.database.workstreamStatus = String(this.values[8]);
+      this.database.workstreamStatus = String(this.values[9]);
+      this.database.workstreamCreatorUserId = String(this.values[5]);
+      this.database.workstreamScope = normalized.includes("'personal')") ? "personal" : "workspace";
       this.database.workstreamEmailOwner = {
         id: String(this.values[0]),
         workspace_id: String(this.values[1]),
         email_address: String(this.values[4]),
         archived_at: null,
       };
+    } else if (normalized.startsWith("INSERT INTO workstream_participants")) {
+      this.database.workstreamParticipantUserId = String(this.values[1]);
     } else if (normalized.startsWith("INSERT INTO workstream_email_routes")) {
       if (!this.database.emailRoute) {
         this.database.emailRoute = {
@@ -531,6 +538,9 @@ describe("manual automation run recovery", () => {
     });
     expect(database.workstreamInsertCount).toBe(1);
     expect(database.automationRunInsertCount).toBe(1);
+    expect(database.workstreamScope).toBe("personal");
+    expect(database.workstreamCreatorUserId).toBe(database.subscription.owner_user_id);
+    expect(database.workstreamParticipantUserId).toBe(database.subscription.owner_user_id);
     expect(database.attachedResourceId).toBe("resource-email-1");
     expect(database.openingMessage).toMatchObject({
       clientMessageId: "resend:resend-email-1",

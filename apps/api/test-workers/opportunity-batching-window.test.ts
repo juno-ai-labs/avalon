@@ -194,4 +194,24 @@ describe("the window a burst of activity is aggregated into", () => {
     // private activity into a suggestion the whole workspace can read.
     expect(personal.windowId).not.toBe(shared.windowId);
   });
+
+  it("admits the same public source once in each member's personal partition", async () => {
+    const sourceId = "workspace-source-for-every-member";
+    const enqueueFor = (userId: string) => workspace().enqueueOpportunitySource({
+      workspaceId: WORKSPACE_ID,
+      partitionKey: `workspace:${userId}`,
+      audience: { scope: "personal" as const, userId },
+      sourceKind: "activity" as const,
+      sourceId,
+      occurredAt: new Date().toISOString(),
+      inputCharacters: 100,
+    });
+
+    const first = await enqueueFor("00000000-0000-7000-8000-0000000006a1");
+    const second = await enqueueFor("00000000-0000-7000-8000-0000000006a2");
+
+    expect(first.inserted).toBe(true);
+    expect(second.inserted).toBe(true);
+    expect(second.windowId).not.toBe(first.windowId);
+  });
 });
