@@ -18,6 +18,12 @@ import {
   MESSAGE_OPERATIONS,
   type MessageObjectPort,
 } from "../../src/durable-objects/workstream-message-protocol";
+import { WorkstreamResourceStorage } from "../../src/durable-objects/workstream-resource-storage";
+import {
+  RESOURCE_OPERATIONS,
+  type ResourceObjectPort,
+  type ResourceOperation,
+} from "../../src/durable-objects/workstream-resource-protocol";
 import { WorkstreamSchedulingStorage } from "../../src/durable-objects/workstream-scheduling-storage";
 import {
   SCHEDULING_OPERATIONS,
@@ -571,6 +577,39 @@ export function testSubstreamAgentsBinding(
       }
     }),
     /**
+     * The resource-attachment port's counterpart, on the same object database.
+     *
+     * Same shape and reasoning as its siblings: real storage, real schema, real
+     * constraints, with only the transport standing in.
+     */
+    executeResourceOperation: vi.fn((input: {
+      workspaceId: string;
+      workstreamId: string;
+      operation: string;
+      args: unknown[];
+    }) => {
+      const store = storeFor(input.workstreamId, input.workspaceId);
+      const storage = new WorkstreamResourceStorage(
+        createCloudflareTestBinding<DurableObjectStorage>({
+          getAlarm: async () => null,
+          setAlarm: async () => undefined,
+          transactionSync: (body: () => unknown) => body(),
+          sql: objectSqlStorage(store),
+        }),
+      ) as unknown as Record<string, (...args: unknown[]) => unknown>;
+      try {
+        const value = storage[input.operation]!.apply(storage, input.args);
+        return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
+      } catch (error) {
+        return {
+          status: 409,
+          bodyJson: JSON.stringify({
+            error: error instanceof Error ? error.message : "resource_operation_failed",
+          }),
+        };
+      }
+    }),
+    /**
      * The scheduling port's counterpart, on the same object database.
      *
      * Same shape and reasoning as the two above. A refused claim comes back as
@@ -839,6 +878,28 @@ export function testSchedulingPort(database: DatabaseSync): SchedulingObjectPort
     new WorkstreamSchedulingStorage(plainBinding(database)),
     SCHEDULING_OPERATIONS,
   );
+}
+
+/**
+ * A resource-attachment port over a real storage instance in this isolate.
+ *
+ * On the shared helper like its three siblings — this arrived as a fifth
+ * hand-written copy, from a branch written before they were folded together.
+ */
+export function testResourcePort(database: DatabaseSync): ResourceObjectPort {
+  return testObjectPort<WorkstreamResourceStorage, ResourceOperation, ResourceObjectPort>(
+    new WorkstreamResourceStorage(plainBinding(database)),
+    RESOURCE_OPERATIONS,
+  );
+}
+
+/** The same port as a factory, for a caller that takes one. */
+export function testResourcePortFactory(database: DatabaseSync): (
+  workspaceId: string,
+  workstreamId: string,
+) => ResourceObjectPort {
+  const port = testResourcePort(database);
+  return () => port;
 }
 
 /** A block-dashboard port over a real storage instance in this isolate. */

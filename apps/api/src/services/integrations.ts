@@ -141,7 +141,6 @@ import {
 } from "./workstream-runtime-database";
 import {
   withWorkspaceRuntimeDatabase,
-  workspaceRegionalDatabase,
 } from "./workspace-runtime-database";
 import {
   markConnectorNeedsReconnect,
@@ -186,8 +185,10 @@ import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { createBlockDashboardObjectPort } from "../runtime/block-dashboard-port";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
+import { createResourceObjectPort } from "../runtime/resource-port";
 import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { transcriptLister } from "../runtime/message-projection";
+import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import {
@@ -779,6 +780,7 @@ type TranscriptMessageLister = (
 async function loadWorkstreamContextCompaction(
   database: D1Database,
   scheduling: SchedulingObjectPort,
+  attachments: ResourceObjectPort,
   workspaceId: string,
   workstreamId: string,
   principal: ExecutionPrincipal,
@@ -807,11 +809,11 @@ async function loadWorkstreamContextCompaction(
     }
     return null;
   }
-  const visible = await loadVisibleWorkstreamResourceInventory(database, {
-    workspaceId,
-    workstreamId,
-    principal,
-  });
+  const visible = await loadVisibleWorkstreamResourceInventory(
+    database,
+    attachments,
+    { workspaceId, workstreamId, principal },
+  );
   if (row.execution_principal_key !== principalKey
     || row.resource_visibility_fingerprint !== visible.fingerprint) {
     if (fence !== undefined) {
@@ -2020,6 +2022,7 @@ export async function runWorkstreamHarness(
   const priorCompaction = await loadWorkstreamContextCompaction(
     env.DB,
     createSchedulingObjectPort(env, input.workspaceId, input.workstreamId),
+    createResourceObjectPort(env, input.workspaceId, input.workstreamId),
     input.workspaceId,
     input.workstreamId,
     input.executionPrincipal,
@@ -2317,9 +2320,7 @@ export async function runWorkstreamHarness(
             await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
             preparedCompactionVisibilityFingerprint = await loadWorkstreamResourceInventoryFingerprint(
-              env.DB,
-              input.workspaceId,
-              input.workstreamId,
+              createResourceObjectPort(env, input.workspaceId, input.workstreamId),
             );
           },
           renderAppendix: async () => {
@@ -2330,12 +2331,16 @@ export async function runWorkstreamHarness(
             }
             let current;
             try {
-              current = await loadVisibleWorkstreamResourceInventory(env.DB, {
-                workspaceId: input.workspaceId,
-                workstreamId: input.workstreamId,
-                principal: input.executionPrincipal,
-                expectedFingerprint: preparedCompactionVisibilityFingerprint,
-              });
+              current = await loadVisibleWorkstreamResourceInventory(
+                env.DB,
+                createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+                {
+                  workspaceId: input.workspaceId,
+                  workstreamId: input.workstreamId,
+                  principal: input.executionPrincipal,
+                  expectedFingerprint: preparedCompactionVisibilityFingerprint,
+                },
+              );
             } catch (error) {
               if (error instanceof WorkstreamResourceInventoryChangedError) {
                 throw new Error("compaction_resource_visibility_changed", { cause: error });
@@ -4848,7 +4853,6 @@ async function loadHarnessTools(
   idempotencyByTool: Map<string, "safe" | "provider_key" | "record_before_execute">;
   modeByTool: Map<string, "read" | "write">;
 }> {
-  const workstreamDatabase = workspaceRegionalDatabase(env);
   const [subscriptionDefaults, attachedLinks, connectionRows] = await Promise.all([
     input.automationSubscriptionId
       ? env.DB.prepare(
@@ -4856,38 +4860,29 @@ async function loadHarnessTools(
            WHERE id = ? AND workspace_id = ?`,
         ).bind(input.automationSubscriptionId, input.workspaceId).first<{ default_plugins_json: string }>()
       : Promise.resolve(null),
-    env.WORKSPACE_DOS
-      ? workstreamDatabase.prepare(
-          `SELECT DISTINCT resource_id FROM workstream_resources WHERE workstream_id = ?`,
-        ).bind(input.workstreamId).all<{ resource_id: string; connection_id?: never }>()
-      : workstreamDatabase.prepare(
-          `SELECT DISTINCT r.connection_id FROM workstream_resources wr
-           JOIN resources r ON r.id = wr.resource_id
-           WHERE wr.workstream_id = ? AND r.workspace_id = ? AND r.connection_id IS NOT NULL`,
-        ).bind(input.workstreamId, input.workspaceId)
-        .all<{ resource_id?: never; connection_id: string }>(),
+    createResourceObjectPort(env, input.workspaceId, input.workstreamId).attachedResourceIds(),
     env.DB.prepare(
       `SELECT * FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'
        ORDER BY created_at ASC`,
     ).bind(input.workspaceId).all<Record<string, unknown>>(),
   ]);
   const defaultModelPluginIds = new Set(parseJson<string[]>(subscriptionDefaults?.default_plugins_json, []));
-  const attached = new Set<string>(attachedLinks.results.flatMap((row) => (
-    row.connection_id ? [row.connection_id] : []
-  )));
-  if (env.WORKSPACE_DOS) {
-    for (let offset = 0; offset < attachedLinks.results.length; offset += 100) {
-      const ids = attachedLinks.results.slice(offset, offset + 100).flatMap((row) => (
-        row.resource_id ? [row.resource_id] : []
-      ));
-      if (ids.length === 0) continue;
-      const rows = await env.DB.prepare(
-        `SELECT DISTINCT connection_id FROM resources
-          WHERE workspace_id = ? AND id IN (${ids.map(() => "?").join(", ")})
-            AND connection_id IS NOT NULL`,
-      ).bind(input.workspaceId, ...ids).all<{ connection_id: string }>();
-      for (const row of rows.results) attached.add(row.connection_id);
-    }
+  // Two reads, one per authority, where the retired statement was a join.
+  // Which resources this work stream has attached is the object's, and which
+  // connection owns each of them is the workspace's — `_runtime_resources`
+  // existed only so one statement could pretend otherwise. The arm that took
+  // that join is gone with it: `WORKSPACE_DOS` is required before request
+  // dispatch, so it has not run since the cutover.
+  const attached = new Set<string>();
+  for (let offset = 0; offset < attachedLinks.length; offset += 100) {
+    const ids = attachedLinks.slice(offset, offset + 100);
+    if (ids.length === 0) continue;
+    const rows = await env.DB.prepare(
+      `SELECT DISTINCT connection_id FROM resources
+        WHERE workspace_id = ? AND id IN (${ids.map(() => "?").join(", ")})
+          AND connection_id IS NOT NULL`,
+    ).bind(input.workspaceId, ...ids).all<{ connection_id: string }>();
+    for (const row of rows.results) attached.add(row.connection_id);
   }
   const registry = connectorRegistryForEnv(env);
   const coreTools = createAvalonTools(env, input);

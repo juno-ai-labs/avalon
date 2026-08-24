@@ -14,7 +14,12 @@ vi.mock("../src/services/workstream-wakeup-service", async (importOriginal) => (
 
 import { refreshWorkspaceSchedule } from "../src/services/workstream-wakeup-service";
 import { ResourceService } from "../src/services/resource-service";
-import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestDurableObjectId, createTestDurableObjectInstance, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+} from "./helpers/durable-authority";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const userId = asUserId("00000000-0000-7000-8000-000000000002");
@@ -33,7 +38,6 @@ class WatchDatabase {
   /** Make the regional half of the two-authority write fail, and only that half. */
   failRegionalWatchWrite = false;
 
-  constructor(private readonly connectorType: string) {}
 
   readonly binding = createTestD1Database({
     prepare: (sql: string) => {
@@ -69,9 +73,6 @@ class WatchDatabase {
               status: "healthy",
             } as T;
           }
-          if (recorded.sql.startsWith("SELECT watch_enabled FROM workstream_resources")) {
-            return { watch_enabled: 0 } as T;
-          }
           if (recorded.sql.startsWith("SELECT placement_affinity FROM workspaces")) {
             // Routing a statement at the work stream's object resolves where
             // this workspace is placed first. One region here, one answer.
@@ -98,20 +99,21 @@ class WatchDatabase {
   });
 
   /**
-   * The work stream's own object, over the same recorder.
+   * The work stream's own object, with a real store behind it.
    *
-   * Watch writes are the work stream's, so they reach `executeRuntimeSql`
-   * rather than `env.DB` directly. Replaying each statement through `prepare`
-   * keeps this file's assertions on the SQL the service issued, which is the
-   * whole subject of these tests.
+   * The attachment half of a watch toggle is an operation now rather than SQL,
+   * so there is nothing left to record for it — and nothing to fake either. The
+   * link lives in a real object database with the real schema, and the
+   * assertions below read it. The regional watch row is still SQL and is still
+   * recorded, because it is still the half these tests are about.
    */
-  readonly agents = createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
-    idFromName: () => createTestDurableObjectId("substream"),
-    get: () => createTestDurableObjectInstance({
+  readonly objectStore = testWorkstreamObjectStore();
+
+  readonly agents = testSubstreamAgentsBinding(this.objectStore, {
+    extra: {
       executeRuntimeSql: async (input: {
         statements: Array<{ sql: string; params: unknown[] }>;
-      }) => {
-        return {
+      }) => ({
         status: 200,
         bodyJson: JSON.stringify({
           results: await Promise.all(input.statements.map(async ({ sql, params }) => {
@@ -127,11 +129,26 @@ class WatchDatabase {
             return { columns: [], rows: [], changes: 1 };
           })),
         }),
-        };
-      },
-    }),
-    jurisdiction() { return this as Env["SUBSTREAM_AGENTS"]; },
+      }),
+    },
   });
+
+  constructor(readonly connectorType: string) {
+    seedWorkstreamObjectRoot(this.objectStore, { workspaceId, workstreamId });
+    this.objectStore.prepare(
+      `INSERT INTO workstream_resource_links
+         (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+          resource_json, attached_at, updated_at)
+       VALUES (?, NULL, 0, 'explicit', '{}', 1, 1)`,
+    ).run(resourceId);
+  }
+
+  /** What the object holds for the one attachment these tests toggle. */
+  watchEnabled(): number {
+    return Number((this.objectStore.prepare(
+      `SELECT watch_enabled FROM workstream_resource_links WHERE resource_id = ?`,
+    ).get(resourceId) as { watch_enabled: number }).watch_enabled);
+  }
 }
 
 const auth: AuthContext = {
@@ -203,11 +220,11 @@ describe("resource watch scheduling modes", () => {
     await expect(new ResourceService(environment(database), auth).watch(resourceId, workstreamId))
       .rejects.toThrow("resource_watch_row_unavailable");
 
-    const attachmentWrites = database.statements
-      .filter((statement) => statement.sql.startsWith("UPDATE workstream_resources SET watch_enabled"));
-    // Two: the optimistic enable, then the restore of the value it replaced.
-    expect(attachmentWrites).toHaveLength(2);
-    expect(attachmentWrites.at(-1)?.values[0]).toBe(0);
+    // The link is back where it started. `setWatchEnabled` answers with the
+    // value it replaced, so the compensation restores *that* rather than a
+    // value read three statements earlier — which is the difference between
+    // this and the routed version it replaces.
+    expect(database.watchEnabled()).toBe(0);
     // Nothing is due, so nothing asks the scheduler to look.
     expect(refreshWorkspaceSchedule).not.toHaveBeenCalled();
   });

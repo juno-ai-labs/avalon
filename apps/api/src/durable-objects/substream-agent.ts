@@ -130,6 +130,12 @@ import {
   MessageOperationRequestSchema,
   mutatesTranscript,
 } from "./workstream-message-protocol";
+import { WorkstreamResourceStorage } from "./workstream-resource-storage";
+import {
+  type ResourceOperationRequest,
+  ResourceOperationRequestSchema,
+  mutatesInventory,
+} from "./workstream-resource-protocol";
 import { WorkstreamSchedulingStorage } from "./workstream-scheduling-storage";
 import {
   type SchedulingOperationRequest,
@@ -542,6 +548,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private scheduling!: WorkstreamSchedulingStorage;
 
   private messages!: WorkstreamMessageStorage;
+  private resources!: WorkstreamResourceStorage;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
@@ -599,6 +606,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.blockDashboard = new WorkstreamBlockDashboardStorage(state.storage);
       this.scheduling = new WorkstreamSchedulingStorage(state.storage);
       this.messages = new WorkstreamMessageStorage(state.storage);
+      this.resources = new WorkstreamResourceStorage(state.storage);
       await this.objectStore.waitUntilReady();
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
@@ -762,6 +770,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/internal/messages") {
       return this.acceptMessageOperation(request);
     }
+    if (request.method === "POST" && url.pathname === "/internal/resources") {
+      return this.acceptResourceOperation(request);
+    }
     if (request.method === "POST" && url.pathname === "/internal/block-dashboard") {
       return this.acceptBlockDashboardOperation(request);
     }
@@ -876,6 +887,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async executeMessageOperation(input: MessageOperationRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return objectPortRpcResult(await this.messageOperationOutcome(input));
+  }
+
+  async executeResourceOperation(input: ResourceOperationRequest): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return objectPortRpcResult(await this.resourceOperationOutcome(input));
   }
 
   async executeSchedulingOperation(
@@ -1207,6 +1223,43 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         true,
       )
       : method.apply(this.messages, parsed.data.args);
+    return { status: 200, payload: { ok: true, value: value ?? null } };
+  }
+
+  private async acceptResourceOperation(request: Request): Promise<Response> {
+    const outcome = await this.resourceOperationOutcome(await request.json().catch(() => null));
+    return jsonResponse(outcome.payload, outcome.status);
+  }
+
+  /**
+   * Dispatch one resource-attachment operation against this object's own rows.
+   *
+   * The watch toggle runs inside `commitRuntimeMutation` for the reason the
+   * transcript's appends do: the sidebar renders what a work stream is watching,
+   * and a write whose directory projection is a second commit can lose it.
+   *
+   * The inventory revision is *not* advanced here, and that is deliberate:
+   * `watch_enabled` does not change which resources a run is authorized to see,
+   * which is what `inventory:<revision>` fences. The retired
+   * `_runtime_workstream_resources` update trigger bumped it on every column it
+   * could write, including this one — so this stops invalidating compaction
+   * checkpoints that were never affected. The paths that do change the
+   * authorized set are the product service's, and they still bump it.
+   */
+  private async resourceOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
+    const parsed = ResourceOperationRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return { status: 400, payload: { ok: false, error: "invalid_resource_operation" } };
+    }
+    const refusal = this.objectPortRefusal(parsed.data, "workstream_resource_identity_mismatch");
+    if (refusal) return refusal;
+    const method = this.resources[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const value = mutatesInventory(parsed.data.operation)
+      ? await this.product.commitRuntimeMutation(
+        () => method.apply(this.resources, parsed.data.args),
+        true,
+      )
+      : method.apply(this.resources, parsed.data.args);
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 

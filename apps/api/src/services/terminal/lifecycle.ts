@@ -373,22 +373,20 @@ export function createTerminalFinalDiffPreserver(
         timestamp,
         timestamp,
       );
-    const attachmentStatement = env.DB.prepare(
-        `INSERT INTO workstream_resources
-         (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
-         VALUES (?, ?, NULL, 0, 'generated', ?)`,
-      ).bind(workstreamId, resourceId, timestamp);
-
     const cleanupStatement = regional.prepare(
         "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
       ).bind(workspaceId, objectRef);
-    // The Terminal write no longer joins this batch: it belongs to the owning
-    // object, and a D1 batch cannot span that boundary. It runs last, after
-    // the resource and its link are durable, so a failure here leaves a
-    // capturable diff rather than a resource id pointing at nothing.
-    if (regional === env.DB) {
-      await env.DB.batch([resourceStatement, attachmentStatement, cleanupStatement]);
-    } else {
+    // Three writes, three authorities, and no batch spans them: the resource is
+    // the workspace's, the link is the object's, and the outbox row is
+    // regional. The link runs after the resource is durable, so a failure
+    // between them leaves a capturable diff rather than a resource id pointing
+    // at nothing.
+    //
+    // The one-batch arm that used to sit here ran only when no workspace
+    // runtime database was installed, which production requires before request
+    // dispatch — so it has not run since the cutover, and it wrote
+    // `workstream_resources` through a view this slice retires.
+    {
       await resourceStatement.run();
       await attachWorkstreamRuntimeResource(env, {
         workspaceId,
@@ -561,17 +559,12 @@ export function createTerminalWorkspaceBackup(
         createdAt,
         createdAt,
       );
-    const attachmentStatement = env.DB.prepare(
-        `INSERT INTO workstream_resources
-         (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
-         VALUES (?, ?, NULL, 0, 'generated', ?)`,
-      ).bind(input.workstreamId, resourceId, createdAt);
     const cleanupStatement = regional.prepare(
         "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
       ).bind(input.workspaceId, objectRef);
-    if (regional === env.DB) {
-      await env.DB.batch([resourceStatement, attachmentStatement, cleanupStatement]);
-    } else {
+    // Same three authorities, same order, and the same retired one-batch arm as
+    // the final-diff preserver above.
+    {
       await resourceStatement.run();
       await (inObjectResourceAttacher ?? ((attachment) =>
         attachWorkstreamRuntimeResource(env, attachment)))({

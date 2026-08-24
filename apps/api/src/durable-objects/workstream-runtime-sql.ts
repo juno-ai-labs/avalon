@@ -29,13 +29,10 @@ const TABLE_REWRITES = [
   ["harness_run_memory_contexts", "_runtime_run_memory_contexts"],
   ["harness_run_plugin_activations", "_runtime_run_plugin_activations"],
   ["harness_run_lifecycle_events", "_runtime_run_lifecycle_events"],
-  ["workstream_resource_inventory_revisions", "_runtime_resource_revisions"],
   ["harness_run_scopes", "_runtime_run_scopes"],
   ["message_attachments", "_runtime_message_attachments"],
   ["message_mentions", "_runtime_message_mentions"],
   ["workstream_participants", "_runtime_workstream_participants"],
-  ["workstream_resources", "_runtime_workstream_resources"],
-  ["resources", "_runtime_resources"],
   ["users", "_runtime_users"],
   ["inference_attempts", "_runtime_inference_attempts"],
   ["harness_runs", "_runtime_harness_runs"],
@@ -139,7 +136,7 @@ export async function executeWorkstreamRuntimeSql(
   // effect is published where the wake-up is written. Leaving the name here
   // would be a rule for statements that can no longer arrive.
   const affectsDirectory = request.statements.some((statement) =>
-    /\b(?:workstreams|messages|workstream_resources|workstream_participants)\b/iu
+    /\b(?:workstreams|messages|workstream_participants)\b/iu
       .test(statement.sql));
   const committed = await product.commitRuntimeMutation(
     (sql) => {
