@@ -1061,6 +1061,184 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-24 — Lease fences keep the projection the compatibility view had
+
+**What changed:** the block dashboard's `#holdsLease` and the tool receipt
+storage's `#fence` accept `waiting` and `steering` alongside `running`, spelled
+out in a named `LEASE_HOLDING_STATUSES` on the receipt side. Both had narrowed
+to `status = 'running'` when they moved off the routed SQL.
+
+**Why:** the routed versions read `_runtime_harness_runs`, whose projection
+mapped both statuses onto `running`, so the fences they replaced accepted a run
+in any of the three. Nothing writes `waiting` or `steering` today — the `runs`
+CHECK constraint admits them and several readers tolerate them, but no code path
+produces one — which is why the narrowing was not a behaviour change and why the
+first version of this slice left it, with a comment for whoever added the first
+writer.
+
+Review made the better argument: retiring a compatibility view should not
+quietly narrow what the product accepts, and the two directions are not equally
+safe to be wrong about. A fence that does not recognise a status refuses the
+write, and both fences report a refusal as a lost lease — so the first writer of
+either status would silently drop settled block results and demote returned tool
+results to the residual stop fallback, with nothing failing anywhere a person
+would look. Carrying three statuses instead of one costs a `Set` membership test
+and removes the trap.
+
+**What a future change has to respect:** these two fences and the view's old
+`CASE` are one decision. A new lease fence written against `runs.status` decides
+the same question, and `running` alone is the wrong default — a busy run is any
+of the three. If the product ever settles on a single busy status, retire the
+other two from the CHECK constraint rather than from the fences, so the
+narrowing is enforced where it can be seen.
+
+### 2026-08-23 — One object-port factory, and the fence the typed endpoints dropped
+
+**What changed:** the four typed object ports stop being four copies of one
+file. `runtime/object-port.ts` and `durable-objects/object-port-protocol.ts`
+hold the machinery; each port is now its storage class, an operation list and
+an error code. The four `*PortError` classes collapse into one `ObjectPortError`
+— none was ever caught by type. And every `/internal/*` endpoint re-checks
+`authority_mode`, which the routed path checked and these endpoints had
+silently dropped.
+
+**Why:** the normalized diff between two of the port files was twenty-four
+lines, all of them comments. That is not four things that might diverge, it is
+one thing written four times — so a fix to the pattern had to be made four
+times, and a divergence between them was invisible. Three more slices would
+have added three more copies.
+
+The authority fence is the concrete cost of that duplication.
+`executeWorkstreamRuntimeSql` refuses every statement when the object is
+`preparing` or `quarantined`; the first typed endpoint kept the identity check
+beside it and dropped this one, and the next three copied that. The wake-up
+mutations happen to keep an equivalent check through
+`commitWithRegionalEffects`; nothing else did, so compaction, plugin-hint and
+description-refresh writes were committing against an object whose writes do
+not count.
+
+**What a future change has to respect:** `objectPortRefusal` is the one place
+these two checks live. An endpoint that re-implements them inline is how the
+fence went missing the first time.
+
+**Two things deliberately *not* built, after review asked for them.** Both are
+guards for states this product cannot reach, and the reasoning is the same in
+each case as for the `waiting`/`steering` fence recorded below.
+
+`admitDispatch` does not compare `block_id`. `blockRunId` is a fresh `uuidV7()`
+per dispatch, so the pair recurring under a different block needs a UUIDv7
+collision; the branch, and the error code that fed it, are gone rather than
+written for an event that cannot happen.
+
+The object ports do not carry a substream id. Every one of them addresses the
+main child and every endpoint refuses a non-main substream, and no non-main
+substream is ever created — `workstream-object-storage.ts` inserts `'0'` and
+nothing else does. Threading an id through four ports to serve a child object
+that cannot exist would be handling for an unreachable path. The first person
+to create one revisits this and the two fences below.
+
+**One thing deliberately un-built.** `BlockWriteOutcome` went back to two
+members. A third, `already_terminal`, told a caller that a fenced write failed
+because the block was already settled rather than because the lease had moved —
+which no caller acts on: both throw, and the two error codes it added were
+caught nowhere. The distinction is real and the object can make it; it is worth
+making when something needs it.
+
+### 2026-08-23 — Three block-dashboard answers the compatibility layer could not give
+
+**What changed:** `admitDispatch` gained a `dispatch_conflict` outcome, and the
+two fenced writes — `submitMarkdown` and `settleBlockRun` — gained
+`already_terminal` alongside `ownership_lost`. `BlockDashboardAgent` throws
+`block_dashboard_runtime_initialization_conflict` on the first, and
+`integrations.ts` names the second apart from a lost lease at both call sites.
+
+**Why:** review of the slice found the port had quietly lost two distinctions
+the code it replaced still made. The retired UNIQUE-violation rescue re-read the
+existing row by five columns including `block_id`, and rethrew when it found
+none; the first port compared only the row's own identity, so a dispatch naming
+an admitted `(blockRunId, harnessRunId)` pair for a *different* block came back
+`already_admitted`. `blockRunId` is a fresh `uuidV7()` per dispatch rather than
+a value derived from `blockId`, so nothing upstream makes that impossible — and
+admitting it would write one block's markdown under another block's row. The
+guard that was supposed to catch it had become unreachable, which is worse than
+absent: the code asserted a case was handled while the operation could no longer
+report it.
+
+The second distinction was cheaper to lose and just as wrong. A fence that holds
+over a row that has already settled is a redelivery, not a takeover, and folding
+it into `ownership_lost` told a member's tool call that its run had been
+superseded when it had not. The routed statements genuinely could not tell the
+two apart — one `meta.changes` count, zero either way — so this is a distinction
+the object makes because it can, not one that regressed.
+
+**What a future change has to respect:** `already_terminal` also covers a block
+row that does not exist, and there is deliberately no fourth outcome for that,
+because `admitDispatch` writes the block row in the same transaction as the run
+whose lease is fenced — a held lease implies the row. If block rows ever become
+writable without their run, that reasoning goes with it. And `#holdsLease` reads
+`status = 'running'` where the retired view's projection also accepted `waiting`
+and `steering`: inert today because nothing writes those two statuses, so
+widening it would be handling for a state the product cannot reach. The first
+writer of either revisits this fence and the receipt storage's `#fence`, which
+narrowed identically.
+
+### 2026-08-23 — The block dashboard leaves the compatibility layer
+
+**What changed:** `WorkstreamBlockDashboardStorage` owns
+`block_dashboard_block_runs`, `block_dashboard_configuration_versions` and
+`block_dashboard_user_preferences`, reached through a typed port and an
+`/internal/block-dashboard` endpoint. Object schema migration 18 drops the three
+`_runtime_block_dashboard_*` views and their four triggers, and the routing
+tables lose all three entries. This is slice 2 of
+[the compat-layer retirement](PRDs/2026-08-22_retiring-the-runtime-compat-layer/prd.md).
+
+**Why:** the same reason slice 1 gives, plus one specific to these rows. Every
+member-visible write here had to hold the run's lease, and a routed statement has
+no transaction to hold that answer in — so each restated the fence as an
+`EXISTS (SELECT 1 FROM harness_runs …)` subquery and then compared `meta.changes`
+to tell a lost lease from a no-op. The fence is now read once and the write
+follows in the same `transactionSync`.
+
+**The decision worth recording** is that `admitDispatch` writes the *run* row as
+well as the two block rows, which belongs to the harness-runs slice by the PRD's
+table. It had to: the routed dispatch was a three-statement batch spanning both
+slices, and the object executed it atomically only because the router happened to
+send it as one batch. Converting the two block statements and leaving the run
+statement routed would have turned that into two round trips with a real window
+between them, in which a block run exists whose `run_id` foreign key points at
+nothing. The PRD anticipates this — it lists `block-dashboard + harness-runs` as
+a cross-slice pair, and says such statements "decide method ownership rather than
+order".
+
+**The repair rides on traffic, not on a schedule.** `#closeOrphanedBlockRuns`
+runs from both write paths that can see an orphan: every reap of the work
+stream — whatever the reaped run's origin — and every dispatch admitted to it.
+Neither alone is enough, which review established after the first version gated
+the reap arm on the reaped run's own origin: a work stream whose later stale
+runs happen to be ordinary ones would have kept its orphan forever, and a quiet
+one may never have another stale run at all. The dispatch arm answers the quiet
+case in the way a member experiences it — a dashboard that is refreshing is a
+dashboard that dispatches, so their own next refresh clears the block the last
+one stranded. The rejected alternative was a durable retry: an outbox row or a
+reconciliation alarm, either of which is real machinery to carry an
+inconsistency that slice 6 deletes outright by folding the sweep into the
+object.
+
+The reason a repaired block records is the repair's own
+(`block_run_orphaned`), not the reaping caller's `stale_run_reaped`. An
+orphan's run may have ended any way at all, and stamping it with the cause of
+whatever run happened to be reaped alongside it would put a story in front of a
+member that nobody established.
+
+**What a future change has to respect:** `recordBlockRunProgress` is
+deliberately unfenced and `settleBlockRun` is deliberately fenced. They are two
+authorities, not an inconsistency — `BlockDashboardAgent` owns the dispatch and
+writes `running` before any executor holds a lease, while the executor's claim on
+the *result* must prove it is still the attempt entitled to make one. And
+`abandonBlockRun`, like `abandonRunReceipts`, is tied to the exact
+`terminalized_at` the reaper stamped rather than to a live lease, because an
+expired lease is the reaper's whole premise.
+
 ### 2026-08-23 — The router learns `tool_effects`, the name migration 17 left it without
 
 **What changed:** `LOCAL_TABLES` in `workstream-runtime-database.ts` gains
