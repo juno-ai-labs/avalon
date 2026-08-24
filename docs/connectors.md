@@ -496,7 +496,7 @@ activityTriggers: defineConnectorActivityTriggers("GitHub", {
 
 The shape is the point. There is no list meaning "I did not think about this", so adding an event type is adding it to a list, and an event type in both is refused where it is written rather than resolved silently. Ask it this way: **would a person who was away for a day want this read back to them?** A pull request opened, yes. The eleven check runs it started, no.
 
-`operational` is not a rejected event. It is verified or polled, normalized, routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface except the one that interrupts somebody on a schedule. The paused [contextual routing](contextual-routing.md) implementation retains the declaration as a prior for a future re-enable: an operational type starts at a higher confidence bar before it can become Suggested context, and a workspace's own acceptances can overrule that prior. Answer the digest question when classifying an event type, and nothing else; that document is responsible for anything it infers from the answer. Most of what a provider emits belongs here, and that is the normal case rather than a failure: the GitHub manifest declares ninety-one activity types and thirty of them are digestible. Every current connector's classification, one row per activity type with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
+`operational` is not a rejected event. It is verified or polled, normalized, routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface except the one that interrupts somebody on a schedule. [Contextual routing](contextual-routing.md) uses the declaration as a prior: an operational type starts at a higher confidence bar before it can become Suggested context, and a workspace's own acceptances can overrule that prior. Answer the digest question when classifying an event type, and nothing else; that document is responsible for anything it infers from the answer. Most of what a provider emits belongs here, and that is the normal case rather than a failure: the GitHub manifest declares ninety-one activity types and thirty of them are digestible. Every current connector's classification, one row per activity type with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
 
 A **polling activity stream** declares `digestible` too, and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. **A stream can only ever withhold.** An activity is digestible when its event type says so *and* the stream that produced it agrees, so the two declarations cannot contradict each other into somebody's inbox, and a stream saying yes grants nothing on its own. `pollCheckpointedActivityStreams` stamps the withholding onto every activity a non-digestible stream returns, at the one place all polled activity passes through, so an adapter can neither forget to mark its output nor grant itself a digest it was not given.
 
@@ -514,9 +514,9 @@ Manifests and facets are cross-validated at registry construction: a connector t
 5. The Queue consumer resolves the workspace's jurisdiction and placement affinity and calls `WorkspaceDO.ingestConnectorEvent`. Provider identity and dedupe uniqueness are enforced inside that object's transaction, and an ingress receipt makes Queue/provider replay idempotent.
 6. After the object commits, the consumer creates deterministic `connector-event:<canonical-event-id>:<attempt>` in `CONNECTOR_EVENT_WORKFLOW` and acknowledges the Queue message. A duplicate Workflow-ID conflict means the earlier send won and is success.
 7. The Workflow claims the event from WorkspaceDO and evaluates explicit resource watches and deterministic automation triggers. Semantic trigger matching runs only after deterministic prefilters.
-8. Create automation work idempotently; unclaimed activity is enqueued into WorkspaceDO's opportunity batch tables while contextual routing is paused. Admission and ranking are separate fenced Workflows whose durable product results—including provenance and per-user resolutions—commit in the same WorkspaceDO. The connector Workflow then settles the authoritative event as processed or failed. An exhausted processing attempt enqueues the next numbered attempt; duplicate redrive messages converge on the same Workflow ID and the object admits a new claimant only from `failed`.
+8. Create automation work idempotently; contextual routing may offer unclaimed activity to an audience-authorized existing work stream, and activity it declines is enqueued into WorkspaceDO's opportunity batch tables. Admission and ranking are separate fenced Workflows whose durable product results—including provenance and per-user resolutions—commit in the same WorkspaceDO. The connector Workflow then settles the authoritative event as processed or failed. An exhausted processing attempt enqueues the next numbered attempt; duplicate redrive messages converge on the same Workflow ID and the object admits a new claimant only from `failed`.
 9. WorkspaceDO retains/reaps the canonical event according to product retention. Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
-10. When contextual routing is re-enabled, persist accepted/dismissed feedback that decides what step 8 offers next.
+10. Persist accepted/dismissed feedback that decides what step 8 offers next.
 
 The canonical event remains the automation trigger's evidence after admission.
 Prompt construction and between-turn authorization revalidation load it from
@@ -537,14 +537,23 @@ The global router may inspect routing metadata, but EU workspace content is
 forwarded to the EU regional Worker, EU Queue, EU-locked WorkspaceDO, and EU
 Workflow. Normalized content never crosses through the global D1 routing plane.
 
-Steps 1 through 6 are deterministic and are what this document owns. **Step 7's
-speculative half is paused.** Its retained classifier, feedback gates, and the
-single switch that must guard every producer and reader live in
+Steps 1 through 6 are deterministic and are what this document owns. Step 7's
+speculative classifier, feedback gates, explicit candidate audience, and the
+single switch that guards every producer and reader live in
 [`contextual-routing.md`](contextual-routing.md). It consumes the digestibility
-declaration described above and nothing else from here; change or re-enable it
-there, not in this document.
+declaration described above and nothing else from here; change it there, not in
+this document.
 
-The dormant routing feedback endpoint remains idempotent in the direction it was given so a rolling-deploy client can settle a card it already held. Work-stream reads return no pending suggestions and current clients ignore suggestion events, so no new resolution control is exposed while the surface is paused. Repeating the same accept or dismissal reports the state the suggestion already reached; only a contradictory resolution is refused with `409 suggestion_already_resolved`.
+The routing feedback endpoint is idempotent in the direction it was given.
+Repeating the same accept or dismissal reports the state the suggestion already
+reached; only a contradictory resolution is refused with
+`409 suggestion_already_resolved`.
+
+An explicit resource watch may move content only into an audience no broader
+than the activity's. Workspace-visible activity may enter any watched work
+stream. Restricted activity requires a private target whose complete
+creator-and-participant audience is contained in the activity's permitted user
+set; one overlapping reader is not enough, and a workspace target is refused.
 
 Native GitHub, Linear, and Notion deliveries use the same compact Queue envelope
 and routing pipeline. Their exact signed raw payload is retained regionally in
@@ -554,7 +563,7 @@ normalized-event authority.
 
 #### Suggested work admission
 
-Eligible connector activity is grouped into bounded personal or workspace batch windows before the suggested-work admission agent decides whether to ignore it, route it into existing work, or create/update a work opportunity. The model-facing JSON Schema deliberately uses only the portable structural subset: object and array shapes, primitive types, required fields, enums, and `additionalProperties: false`. Do not add string formats, string-length bounds, numeric bounds, or array-length bounds to that provider schema. Nested limits such as `linkedUsers.maxItems` can make the schema's constrained-decoding state space too large for otherwise supported Gemini structured-output endpoints, causing every admission request to fail before inference.
+Eligible connector activity is grouped into bounded per-member personal batch windows before the suggested-work admission agent decides whether to ignore it, route it into existing work, or create/update a work opportunity. A workspace-visible event is copied into one window per active member; the event remains workspace-visible while each inference sees only that member's authorized directory context. The model-facing JSON Schema deliberately uses only the portable structural subset: object and array shapes, primitive types, required fields, enums, and `additionalProperties: false`. Do not add string formats, string-length bounds, numeric bounds, or array-length bounds to that provider schema. Nested limits such as `linkedUsers.maxItems` can make the schema's constrained-decoding state space too large for otherwise supported Gemini structured-output endpoints, causing every admission request to fail before inference.
 
 The stricter `AdmissionResultSchema` remains authoritative after generation. It enforces UUIDs, string lengths, offsets, source counts, linked-user counts, and the four-decision cap before any result reaches persistence. This separation is intentional: the provider schema guides portable constrained generation, while Zod is Avalon's trust boundary. Keep regression coverage asserting both halves whenever the admission response changes. The repository ESLint rule `avalon/provider-json-schema-complexity` statically follows schemas passed through a `jsonSchema` property and rejects excessive schema depth, node count, detailed constraints, or nested bounded-array expansion; a dynamic or imported schema that the rule cannot resolve still needs an explicit unit test.
 
@@ -640,14 +649,15 @@ is the only input contract Avalon owns.
 This document owns the connector registry and the contract every adapter meets:
 authorization, credential freshness, health semantics, actor identity, discovery,
 refusals, activation acknowledgement, and the deterministic half of activity
-ingestion (steps 1 through 6). The adapter owns provider protocol details; Avalon
+ingestion (steps 1 through 6 plus step 7's watches and automation triggers). The
+adapter owns provider protocol details; Avalon
 owns tenancy, execution principals, persistence, retries, schedules, and audit.
 
 It does not own:
 
 | For | Read |
 | --- | --- |
-| The paused Suggested context surface and its retained accept/dismiss model | [`contextual-routing.md`](contextual-routing.md) |
+| The Suggested context surface and its accept/dismiss model | [`contextual-routing.md`](contextual-routing.md) |
 | Which unclaimed activity becomes a home-screen suggestion | [`suggested-work.md`](suggested-work.md) |
 | One row per declared activity type, with the reason | [`connector-digestibility.md`](connector-digestibility.md) |
 | What happens to `digestible` after the log is written | [`digests.md`](digests.md#digestible-what-a-person-should-be-told) |
@@ -757,6 +767,47 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-24 — Public activity fans into private admission contexts
+
+**What changed:** When deterministic and contextual routes decline a
+workspace-visible connector event, Suggested Work enqueues it once for every
+active member rather than once for the workspace. Each window is personal, while
+the event retains its workspace source audience for later routing authorization.
+
+**Why:** Every member may read a workspace event, and each may have a private
+work stream where it belongs. A workspace-only directory read could not consider
+those authorized private targets.
+
+**Considered and rejected:** A single inference over the union of private
+directories, or duplicating both workspace and user batches. Those respectively
+disclose private titles across members or create competing suggestions from the
+same event.
+
+**What a future change has to respect:** Fan-out may duplicate public evidence;
+it must never merge users' private contexts. Source visibility and admission
+window visibility remain separate facts.
+
+### 2026-08-24 — A resource watch cannot broaden a restricted activity
+
+**What changed:** Before injecting a restricted connector activity through an
+explicit resource watch, the consumer now asks WorkspaceDO for the watched work
+stream's exact audience. The target must be personal and every creator or active
+participant must already be in the activity audience. Workspace-visible
+activity is unchanged.
+
+**Why:** The old check admitted a target when any one permitted activity reader
+could read it. That allowed one person's private connector activity to be copied
+into a workspace stream, or into a private stream shared with somebody outside
+the activity audience.
+
+**Considered and rejected:** Checking only the connection owner, retaining the
+any-reader test, or reading legacy D1 participants. None proves the required
+subset relationship, and WorkspaceDO is the post-cutover audience authority.
+
+**What a future change has to respect:** Moving content is authorized from
+source audience to target audience, not by one actor's ability to see both. A
+target may narrow an activity audience; it may never broaden it.
 
 ### 2026-08-21 — A conversation too large to be a room opens to the workspace
 

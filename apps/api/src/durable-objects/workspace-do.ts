@@ -103,6 +103,7 @@ import {
   WorkspaceDirectoryVisibilityRequestSchema,
   WorkspaceDirectoryVisibleIdsRequestSchema,
   WorkspaceDirectoryVisibleIdsPageSchema,
+  WorkspaceDirectoryWorkstreamAudienceResultSchema,
   WorkspaceRegionalEffectApplyRequestSchema,
   WorkspaceRegionalEffectApplyResultSchema,
   type WorkspaceDirectoryApplyRequest,
@@ -131,6 +132,7 @@ import {
   type WorkspaceDirectoryVisibilityRequest,
   type WorkspaceDirectoryVisibleIdsRequest,
   type WorkspaceDirectoryVisibleIdsPage,
+  type WorkspaceDirectoryWorkstreamAudienceResult,
   type WorkspaceRegionalEffectApplyRequest,
   type WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
@@ -2450,13 +2452,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         AND viewer.authority_generation = directory.authority_generation
        WHERE directory.archived_at IS NULL
          AND (? = 1 OR directory.system_kind IS NULL)
-         AND ((? = 0 AND directory.scope = 'workspace') OR viewer.is_participant = 1)
+         AND ((? = 0 AND directory.scope = 'workspace')
+              OR directory.created_by_user_id = ? OR viewer.is_participant = 1)
          AND (? IS NULL OR directory.workstream_id > ?)
        ORDER BY directory.workstream_id
        LIMIT ?`,
       request.userId,
       request.includeSystem ? 1 : 0,
       request.participantsOnly ? 1 : 0,
+      request.userId,
       request.after ?? null,
       request.after ?? null,
       request.limit + 1,
@@ -2484,12 +2488,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceDirectoryPlannedRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const viewerId = request.userId ?? "";
+    const viewerId = request.userId;
     const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.automation_subscription_id = ?
          AND directory.planned_for = ? AND directory.archived_at IS NULL
-         AND (? IS NULL OR directory.scope = 'workspace' OR viewer.is_participant = 1)
+         AND (directory.scope = 'workspace' OR directory.created_by_user_id = ?
+              OR viewer.is_participant = 1)
        ORDER BY directory.source_updated_at DESC, directory.workstream_id LIMIT 1`,
       viewerId,
       viewerId,
@@ -2638,6 +2643,41 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  /** Exact reader audience used when moving restricted content into a watched work stream. */
+  async workstreamAudience(
+    input: WorkspaceDirectoryExistsRequest,
+  ): Promise<WorkspaceDirectoryWorkstreamAudienceResult> {
+    await this.initialized;
+    const request = WorkspaceDirectoryExistsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{
+      authority_generation: number;
+      scope: "personal" | "workspace";
+      created_by_user_id: string | null;
+    }>(
+      `SELECT authority_generation, scope, created_by_user_id
+         FROM workspace_workstream_directory
+        WHERE workstream_id = ? AND archived_at IS NULL`,
+      request.workstreamId,
+    ).toArray()[0];
+    if (!row) return null;
+    if (row.scope === "workspace") {
+      return WorkspaceDirectoryWorkstreamAudienceResultSchema.parse({ scope: "workspace" });
+    }
+    const userIds = new Set<string>();
+    if (row.created_by_user_id) userIds.add(row.created_by_user_id);
+    for (const viewer of this.state.storage.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM workspace_workstream_viewers
+        WHERE workstream_id = ? AND authority_generation = ? AND is_participant = 1`,
+      request.workstreamId,
+      row.authority_generation,
+    ).toArray()) userIds.add(viewer.user_id);
+    return WorkspaceDirectoryWorkstreamAudienceResultSchema.parse({
+      scope: "personal",
+      userIds: [...userIds],
+    });
+  }
+
   /** Internal cross-workstream lookup; never exposes viewer-specific state. */
   async lookupWorkstreamDirectory(
     input: WorkspaceDirectoryLookupRequest,
@@ -2665,18 +2705,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceDirectoryRecentRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const viewerId = request.userId ?? "";
+    const viewerId = request.audience.scope === "user" ? request.audience.userId : "";
+    const audienceScope = request.audience.scope;
     const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL
          AND (? = 1 OR directory.system_kind IS NULL)
-         AND (? IS NULL OR ((? = 0 AND directory.scope = 'workspace') OR viewer.is_participant = 1))
+         AND ((? = 'workspace' AND directory.scope = 'workspace')
+           OR (? = 'user' AND (
+             (? = 0 AND directory.scope = 'workspace')
+             OR directory.created_by_user_id = ?
+             OR viewer.is_participant = 1
+           )))
        ORDER BY directory.last_activity_at DESC, directory.workstream_id LIMIT ?`,
       viewerId,
       viewerId,
       request.includeSystem ? 1 : 0,
-      request.userId,
+      audienceScope,
+      audienceScope,
       request.participantsOnly ? 1 : 0,
+      viewerId,
       request.limit,
     ).toArray();
     return WorkspaceDirectoryLookupResultSchema.parse({ items: rows.map(internalDirectoryItem) });
@@ -2727,9 +2775,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceDirectoryRoutingCandidatesRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const restrictedJson = request.restrictedUserIds === null
-      ? null
-      : JSON.stringify(request.restrictedUserIds);
+    const restrictedJson = request.audience.scope === "users"
+      ? JSON.stringify(request.audience.userIds)
+      : "[]";
+    const audienceScope = request.audience.scope;
     const excludedJson = JSON.stringify(request.excludedWorkstreamIds);
     const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
@@ -2737,14 +2786,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          AND directory.system_kind IS NULL
          AND directory.exact_state IN ('idle', 'running', 'interrupting', 'preparing_context',
                                        'waiting_capacity', 'needs_input', 'scheduled')
-         AND (? IS NULL OR directory.created_by_user_id IN (SELECT value FROM json_each(?))
-           OR EXISTS (
-             SELECT 1 FROM workspace_workstream_viewers allowed
-              WHERE allowed.workstream_id = directory.workstream_id
-                AND allowed.authority_generation = directory.authority_generation
-                AND allowed.user_id IN (SELECT value FROM json_each(?))
-                AND allowed.is_participant = 1
-           ))
+         AND ((? = 'workspace' AND directory.scope = 'workspace')
+           OR (? = 'users' AND (
+             directory.scope = 'personal'
+             AND (directory.created_by_user_id IS NULL
+               OR directory.created_by_user_id IN (SELECT value FROM json_each(?)))
+             AND NOT EXISTS (
+               SELECT 1 FROM workspace_workstream_viewers reader
+                WHERE reader.workstream_id = directory.workstream_id
+                  AND reader.authority_generation = directory.authority_generation
+                  AND reader.is_participant = 1
+                  AND reader.user_id NOT IN (SELECT value FROM json_each(?))
+             )
+             AND (directory.created_by_user_id IN (SELECT value FROM json_each(?))
+               OR EXISTS (
+                 SELECT 1 FROM workspace_workstream_viewers allowed
+                  WHERE allowed.workstream_id = directory.workstream_id
+                    AND allowed.authority_generation = directory.authority_generation
+                    AND allowed.user_id IN (SELECT value FROM json_each(?))
+                    AND allowed.is_participant = 1
+               ))
+           )))
          AND (
            SELECT COUNT(*) FROM workspace_workstream_suggestion_feedback dismissed
             WHERE dismissed.workstream_id = directory.workstream_id
@@ -2764,6 +2826,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
        LIMIT ?`,
       "",
       "",
+      audienceScope,
+      audienceScope,
+      restrictedJson,
       restrictedJson,
       restrictedJson,
       restrictedJson,
@@ -3277,13 +3342,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL AND pin.user_id IS NULL
          AND (? = 1 OR directory.system_kind IS NULL)
-         AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+         AND (directory.scope = 'workspace' OR directory.created_by_user_id = ?
+              OR viewer.is_participant = 1)
          AND (? IS NULL OR directory.last_activity_at < ?
               OR (directory.last_activity_at = ? AND directory.workstream_id > ?))
        ORDER BY directory.last_activity_at DESC, directory.workstream_id LIMIT ?`,
       request.userId,
       request.userId,
       request.includeSystem ? 1 : 0,
+      request.userId,
       cursor?.lastActivityAt ?? null,
       cursor?.lastActivityAt ?? 0,
       cursor?.lastActivityAt ?? 0,
@@ -3338,11 +3405,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL AND pin.user_id IS NOT NULL
          AND (? = 1 OR directory.system_kind IS NULL)
-         AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+         AND (directory.scope = 'workspace' OR directory.created_by_user_id = ?
+              OR viewer.is_participant = 1)
        ORDER BY pin.position, directory.workstream_id`,
       userId,
       userId,
       includeSystem ? 1 : 0,
+      userId,
     ).toArray();
   }
 
@@ -3354,9 +3423,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
        WHERE directory.workstream_id = ? AND directory.archived_at IS NULL
-         AND (directory.scope = 'workspace' OR viewer.is_participant = 1)`,
+         AND (directory.scope = 'workspace' OR directory.created_by_user_id = ?
+              OR viewer.is_participant = 1)`,
       userId,
       workstreamId,
+      userId,
     ).toArray().length === 1;
   }
 

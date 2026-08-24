@@ -7,6 +7,7 @@ import {
 import { z } from "zod";
 
 import { WorkstreamRegionalEffectEnvelopeSchema } from "./workstream-regional-effect";
+import { ContentAudienceSchema } from "../lib/audience-containment";
 
 const TimestampSchema = z.string().datetime({ offset: true });
 const UuidV7Schema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
@@ -68,8 +69,7 @@ export const WorkspaceDirectoryExistsRequestSchema = z.object({
 
 export const WorkspaceDirectoryPlannedRequestSchema = z.object({
   workspaceId: IdSchema,
-  /** Null is reserved for the workspace's trusted scheduler. */
-  userId: IdSchema.nullable(),
+  userId: IdSchema,
   automationSubscriptionId: IdSchema,
   plannedFor: TimestampSchema,
 }).strict();
@@ -106,6 +106,14 @@ export const WorkspaceDirectoryResourceResultSchema = z.object({
   workstreamIds: z.array(IdSchema).max(10_000),
 }).strict();
 
+export const WorkspaceDirectoryWorkstreamAudienceResultSchema = z.discriminatedUnion("scope", [
+  z.object({ scope: z.literal("workspace") }).strict(),
+  z.object({
+    scope: z.literal("personal"),
+    userIds: z.array(IdSchema),
+  }).strict(),
+]).nullable();
+
 export const WorkspaceDirectoryInternalItemSchema = z.object({
   workstreamId: IdSchema,
   title: z.string().min(1).max(500),
@@ -133,9 +141,14 @@ export const WorkspaceDirectoryLookupResultSchema = z.object({
   items: z.array(WorkspaceDirectoryInternalItemSchema).max(250),
 }).strict();
 
+export const WorkspaceDirectoryAudienceSchema = z.discriminatedUnion("scope", [
+  z.object({ scope: z.literal("workspace") }).strict(),
+  z.object({ scope: z.literal("user"), userId: IdSchema }).strict(),
+]);
+
 export const WorkspaceDirectoryRecentRequestSchema = z.object({
   workspaceId: IdSchema,
-  userId: IdSchema.nullable(),
+  audience: WorkspaceDirectoryAudienceSchema,
   includeSystem: z.boolean(),
   participantsOnly: z.boolean(),
   limit: z.number().int().min(1).max(250),
@@ -162,7 +175,7 @@ export const WorkspaceDirectoryScheduleTargetsResultSchema = z.object({
 
 export const WorkspaceDirectoryRoutingCandidatesRequestSchema = z.object({
   workspaceId: IdSchema,
-  restrictedUserIds: z.array(IdSchema).max(1_000).nullable(),
+  audience: ContentAudienceSchema,
   excludedWorkstreamIds: z.array(IdSchema).max(10_000),
   feedbackSince: TimestampSchema,
   dismissalLimit: z.number().int().positive(),
@@ -292,6 +305,7 @@ export type WorkspaceDirectoryNotificationRequest = z.infer<typeof WorkspaceDire
 export type WorkspaceDirectoryNotificationState = z.infer<typeof WorkspaceDirectoryNotificationStateSchema>;
 export type WorkspaceDirectoryResourceRequest = z.infer<typeof WorkspaceDirectoryResourceRequestSchema>;
 export type WorkspaceDirectoryResourceResult = z.infer<typeof WorkspaceDirectoryResourceResultSchema>;
+export type WorkspaceDirectoryWorkstreamAudienceResult = z.infer<typeof WorkspaceDirectoryWorkstreamAudienceResultSchema>;
 export type WorkspaceDirectoryLookupRequest = z.infer<typeof WorkspaceDirectoryLookupRequestSchema>;
 export type WorkspaceDirectoryLookupResult = z.infer<typeof WorkspaceDirectoryLookupResultSchema>;
 export type WorkspaceDirectoryRecentRequest = z.infer<typeof WorkspaceDirectoryRecentRequestSchema>;

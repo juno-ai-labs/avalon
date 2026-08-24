@@ -148,19 +148,22 @@ hash-checked RPCs rather than cross-object SQL joins.
   enforces the authoritative participant/scope rule and publishes its viewer
   projection to WorkspaceDO, whose directory applies it for lists and socket
   admission without consulting D1.
-- **`personal` means "an active participant — or the creator" on the single-row
-  read, and "an active participant" everywhere else, and the two are not the
-  same rule.** `participantVisible` in the work-stream object, which `authorize`
-  runs, also admits `created_by_user_id`; `WorkstreamDO.canRead` and the
-  `listable` flag it projects test participation alone. `removeParticipant` lets
-  anyone remove *themselves* with no exemption for the creator, so the gap is
-  reachable rather than theoretical: a creator who leaves a private work stream
-  can still `GET` it, while its socket refuses them and it is absent from their
-  list. Do not restate either half as the whole rule — this document said
-  "an active participant, and nobody else" and was wrong about the read it
-  named. Closing the gap means picking which rule is the real one; that is a
-  product decision nobody has made, and neither half should be copied into a new
-  caller until somebody does.
+- **`personal` means “the creator or an active participant” at every serving
+  boundary.** Detail authorization, sockets, workspace lists, pins, visibility
+  checks, resource reads, Suggested Work, and contextual routing all use that
+  same rule. `removeParticipant` may remove the creator's participant row, but it
+  does not transfer or erase creator visibility; a caller must never equate a
+  missing participant projection with a missing read permission.
+- **Cross-work-stream content moves from a source audience to an equal or
+  narrower target audience.** Workspace activity may enter a workspace work
+  stream or a private work stream a particular member may read. Suggested Work
+  evaluates that public activity in a separate personal window for every active
+  member; the personal window is an inference boundary, not a narrowing of the
+  source. Restricted activity may enter only a personal work stream whose
+  creator and every active participant are in its permitted user set. Suggested
+  context persists that source audience and WorkstreamDO rechecks it before
+  storing, reading, or resolving a card; a legacy row with no auditable audience
+  is not visible.
 - **A work stream is born `personal`, and every path that means otherwise says
   so.** `POST /workstreams` carries no scope — a request on the wire cannot claim
   an audience — so the creator plus whoever they named in `participantUserIds` are
@@ -168,11 +171,13 @@ hash-checked RPCs rather than cross-object SQL joins.
   the object is created with is `personal` too, which matters because the runtime
   compatibility insert writes `COALESCE(NEW.scope, scope)`: a path that names no
   scope inherits that row's, so the default has to be the narrow one for the
-  omission to be safe. Two families state `workspace` outright, and both would be
-  readable by *nobody* under the default because they seat no participants: a
-  thread in a public Slack channel, whose room is the channel rather than a
-  participant list, and an automation's work stream, which is reached by owning
-  the automation. A suggestion carries its own `audience_scope` across the same
+  omission to be safe. A thread in a public Slack channel states `workspace`
+  outright because its room is the channel rather than a participant list.
+  **Every automation-generated work stream is `personal`**, regardless of the
+  automation's sharing scope: a manual or inbound-email run seats the member who
+  started it, while scheduled and activity-triggered runs seat the automation
+  owner (falling back to the template owner). A suggestion carries its own
+  `audience_scope` across the same
   way: a `workspace` one was shown to every member before anyone started it, and
   the work stream it becomes stays readable by the people it was offered to. A `system_kind` row — a digest occurrence — is the other
   direction: `personal` with its single recipient seated, so every tool the run
@@ -202,9 +207,9 @@ hash-checked RPCs rather than cross-object SQL joins.
   `workstream_scope_changed` to the rest. Two kinds of row refuse the change with
   `scope_change_unsupported`, because `scope` is not what decides who reads them: a
   `system_kind` row is machinery assembled from one person's activity, and an
-  automation-generated row takes its audience from that automation's scope —
-  opening it would broaden nothing and closing it would hide it from the owner, who
-  reaches it by owning the automation rather than by being a participant.
+  automation-generated row is an immutable private execution record — opening it
+  would expose the run to the workspace, while closing it is already its fixed
+  state. Its creator is also seated as a participant.
 - `workstream.system_kind` is the different question of whether a work stream is
   *machinery*. `NULL` is ordinary work; any non-`NULL` value (`digest` today) is a
   subsystem's own work stream, so an internal run can reuse the whole agent loop
@@ -724,6 +729,36 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-24 — Generated runs default private and viewer permission is one rule
+
+**What changed:** Manual, inbound-email, scheduled, and activity-triggered
+automation runs now create personal work streams with a concrete creator and
+creator participant. WorkspaceDO and WorkstreamDO visibility reads consistently
+admit a private stream's creator as well as active participants; directory
+inference APIs require explicit workspace or user audiences instead of nullable
+authorization predicates. Restricted contextual routing and watched-resource
+delivery additionally require the source audience to contain the target work
+stream's complete reader audience.
+
+**Why:** Automation sharing controls who can use an automation, not who may read
+the contents of each execution. Treating generated work streams as workspace
+rows exposed their transcripts and inbound mail. Separately, interpreting a null
+viewer as “all rows” let workspace inference inspect private titles and
+objectives, while creator-only detail permission disagreed with lists and sockets.
+
+**Considered and rejected:** Inheriting automation scope, authorizing generated
+runs through automation ownership without participants, and retaining null as a
+trusted internal scheduler bypass. Those respectively widen execution content,
+create a second visibility model, and make omission indistinguishable from
+privilege.
+
+**What a future change has to respect:** New work-stream creation paths default
+personal unless they state and justify a broader audience. Every private read
+uses creator-or-active-participant permission, every cross-work-stream inference
+names its audience before it queries the directory, and permission to read one
+target cannot be mistaken for permission to widen the source content to all of
+that target's readers.
 
 ### 2026-08-24 — Membership records when somebody first opened the work stream
 

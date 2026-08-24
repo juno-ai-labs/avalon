@@ -54,7 +54,7 @@ describe('transcript cursor pagination', () => {
     expect(preservedPrependScrollTop(120, 2_000, 1_900)).toBe(120);
   });
 
-  it('merges successive pages in transcript order without duplicates or hidden rows', () => {
+  it('merges successive pages in transcript order without duplicates, including suggestion rows', () => {
     const current = [transcriptMessage(3), transcriptMessage(4), transcriptMessage(5)];
     const first = mergeTranscriptPage(current, {
       items: [
@@ -72,7 +72,7 @@ describe('transcript cursor pagination', () => {
       newerCursor: null,
     });
 
-    expect(second.map((message) => message.sequenceNumber)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(second.map((message) => message.sequenceNumber)).toEqual([0, 1, 2, 3, 4, 5, 99]);
   });
 
   it('advances the direction-specific cursor and rejects a repeated page', () => {

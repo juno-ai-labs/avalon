@@ -2718,6 +2718,43 @@ describe("Durable Objects in the Workers runtime", () => {
         }, `00000000-0000-7000-8000-00000000f${String(envelope += 1).padStart(3, "0")}`, 1, asWorkstreamId(workstreamId))],
       });
     }
+    const privateWorkstreamId = asWorkstreamId("00000000-0000-7000-8000-0000000005af");
+    await stub.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [
+        effectEnvelope({
+          kind: "directory_common",
+          title: "Private candidate",
+          description: "Only an authorized user may offer this to the router",
+          preview: "",
+          scope: "personal",
+          state: "idle",
+          systemKind: null,
+          lastActivityAt: daysAgo(0),
+          completedAt: null,
+          archivedAt: null,
+          originType: "ad_hoc",
+          createdByUserId: USER_ID,
+          latestAttentionOrdinal: 0,
+          unreadTrackingStartOrdinal: 0,
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: daysAgo(0),
+          resourceLinks: [],
+        }, "00000000-0000-7000-8000-00000000f100", 1, privateWorkstreamId),
+        effectEnvelope({
+          kind: "directory_user",
+          userId: USER_ID,
+          isParticipant: true,
+          unreadCount: 0,
+          youAreMentioned: false,
+          listable: true,
+          seenAttentionOrdinal: 0,
+          manualUnreadFromOrdinal: null,
+          manualUnreadGeneration: 0,
+          latestMentionAttentionOrdinal: 0,
+        }, "00000000-0000-7000-8000-00000000f101", 1, privateWorkstreamId),
+      ],
+    });
     const feedback = (
       workstreamId: string,
       actionId: string,
@@ -2742,12 +2779,71 @@ describe("Durable Objects in the Workers runtime", () => {
     });
     const candidates = (excluded: string[] = []) => stub.routingCandidates({
       workspaceId: WORKSPACE_ID,
-      restrictedUserIds: null,
+      audience: { scope: "workspace" },
       excludedWorkstreamIds: excluded,
       feedbackSince: daysAgo(30),
       dismissalLimit: 3,
       limit: 12,
     }).then((result) => result.items.map((item) => item.workstreamId));
+
+    await expect(candidates()).resolves.not.toContain(privateWorkstreamId);
+    await expect(stub.routingCandidates({
+      workspaceId: WORKSPACE_ID,
+      audience: { scope: "users", userIds: [USER_ID] },
+      excludedWorkstreamIds: [],
+      feedbackSince: daysAgo(30),
+      dismissalLimit: 3,
+      limit: 12,
+    }).then((result) => result.items.map((item) => item.workstreamId)))
+      .resolves.toContain(privateWorkstreamId);
+    await expect(stub.routingCandidates({
+      workspaceId: WORKSPACE_ID,
+      audience: { scope: "users", userIds: [USER_ID] },
+      excludedWorkstreamIds: [],
+      feedbackSince: daysAgo(30),
+      dismissalLimit: 3,
+      limit: 12,
+    }).then((result) => result.items.map((item) => item.workstreamId)))
+      .resolves.not.toContain(streams[0]);
+
+    const outsiderId = "00000000-0000-7000-8000-000000000099";
+    await env.DB.prepare(
+      `INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+       VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`,
+    ).bind(WORKSPACE_ID, outsiderId).run();
+    await stub.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [effectEnvelope({
+        kind: "directory_user",
+        userId: outsiderId,
+        isParticipant: true,
+        unreadCount: 0,
+        youAreMentioned: false,
+        listable: true,
+        seenAttentionOrdinal: 0,
+        manualUnreadFromOrdinal: null,
+        manualUnreadGeneration: 0,
+        latestMentionAttentionOrdinal: 0,
+      }, "00000000-0000-7000-8000-00000000f102", 1, privateWorkstreamId)],
+    });
+    await expect(stub.routingCandidates({
+      workspaceId: WORKSPACE_ID,
+      audience: { scope: "users", userIds: [USER_ID] },
+      excludedWorkstreamIds: [],
+      feedbackSince: daysAgo(30),
+      dismissalLimit: 3,
+      limit: 12,
+    }).then((result) => result.items.map((item) => item.workstreamId)))
+      .resolves.not.toContain(privateWorkstreamId);
+    await expect(stub.routingCandidates({
+      workspaceId: WORKSPACE_ID,
+      audience: { scope: "users", userIds: [USER_ID, outsiderId] },
+      excludedWorkstreamIds: [],
+      feedbackSince: daysAgo(30),
+      dismissalLimit: 3,
+      limit: 12,
+    }).then((result) => result.items.map((item) => item.workstreamId)))
+      .resolves.toContain(privateWorkstreamId);
 
     // Three dismissals inside the window take a work stream out of the pool.
     for (const [index, day] of [1, 2, 3].entries()) {
@@ -3655,7 +3751,12 @@ describe("Durable Objects in the Workers runtime", () => {
       workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
     const at = "2026-08-22T12:00:00.000Z";
-    const directory = (scope: "workspace" | "personal", eventId: string) => effectEnvelope({
+    const otherCreator = "00000000-0000-7000-8000-000000000706";
+    const directory = (
+      scope: "workspace" | "personal",
+      eventId: string,
+      creatorUserId = otherCreator,
+    ) => effectEnvelope({
       kind: "directory_common" as const,
       title: "Narrowing work stream",
       description: "Readable, then not",
@@ -3668,7 +3769,7 @@ describe("Durable Objects in the Workers runtime", () => {
       archivedAt: null,
       emailAddress: "workstream@automation.with-avalon.com",
       originType: "ad_hoc" as const,
-      createdByUserId: USER_ID,
+      createdByUserId: creatorUserId,
       automationSubscriptionId: null,
       automationRunId: null,
       plannedFor: null,
@@ -3682,7 +3783,7 @@ describe("Durable Objects in the Workers runtime", () => {
       updatedAt: at,
     }, eventId);
     // Readable because the work stream is open to the workspace — this reader
-    // is explicitly not a participant, which is what the narrowing then costs
+    // is neither its creator nor a participant, which is what narrowing costs
     // them.
     await stub.receiveSubstreamEffects({
       substreamId: "0",
@@ -3719,13 +3820,27 @@ describe("Durable Objects in the Workers runtime", () => {
     await subscribed;
 
     try {
+      const creatorUpdate = nextMessage(socket);
+      await stub.receiveSubstreamEffects({
+        substreamId: "0",
+        envelopes: [directory(
+          "personal",
+          "00000000-0000-7000-8000-000000000704",
+          USER_ID,
+        )],
+      });
+      expect(JSON.parse(String((await creatorUpdate).data))).toMatchObject({
+        type: "workstream_metadata",
+        metadata: { scope: "personal", createdByUserId: USER_ID },
+      });
+
       const closed = nextClose(socket);
       // Object-local: whether this work stream still admits this reader lives in
       // this object's own SQL, and no revocation message carries it. Without the
       // check they keep receiving title, description, preview and state.
       await stub.receiveSubstreamEffects({
         substreamId: "0",
-        envelopes: [directory("personal", "00000000-0000-7000-8000-000000000704")],
+        envelopes: [directory("personal", "00000000-0000-7000-8000-000000000707")],
       });
       expect((await closed).code).toBe(1008);
     } finally {

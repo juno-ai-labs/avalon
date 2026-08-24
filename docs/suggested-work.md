@@ -30,7 +30,7 @@ route them are in [`feature-flags.md`](feature-flags.md).
 
 ```
 connector activity / Avalon mention
-  → WorkspaceDO event → connector-event Workflow: watches and automations (contextual routing paused)
+  → WorkspaceDO event → connector-event Workflow: watches, automations, contextual routing
   → nothing claimed it? enqueueActivityOpportunity()
   → WorkspaceDO.opportunity_batch_windows          (10-minute debounce, 60-minute cap)
   → WorkspaceDO alarm → fenced admission Workflow
@@ -43,17 +43,28 @@ connector activity / Avalon mention
 ### Admission
 
 An activity only becomes a candidate if nothing else claimed it — no resource
-watch and no matching automation. Contextual routing is currently paused, so it
-does not claim activity before this gate. The deterministic gate remains
-exclusive: work explicitly routed to a home should not also be offered as new
-work.
+watch, matching automation, or contextual-routing card. The gate remains
+exclusive: work already routed to a home should not also be offered as new work.
 
 Admission retains the `route_existing` decision so activity that plainly belongs
 to current work does not become a duplicate home-screen opportunity. While
-Suggested context is paused, that decision is terminal and creates no
-`activity_suggestions` row or work-stream card. If the surface is re-enabled,
-the row is stamped `source = 'suggested_work'` so its feedback remains separate
+the per-activity router judges one activity at a time, this branch judges the
+batched admission context and may create the same work-stream card. A personal
+batch may contain workspace-visible or restricted sources: a workspace-visible
+source can route into any target offered to that member, while a restricted
+source requires the target's complete creator-and-participant audience to fit
+inside its source audience.
+The row is stamped `source = 'suggested_work'` so its feedback remains separate
 from the per-activity router.
+
+Admission context never performs an unrestricted directory read. Live connector
+activity is admitted through personal windows: each names one audience member
+and receives workspace rows plus private rows that member created or actively
+participates in. A workspace-visible connector event fans out to one such window
+per active member; it never combines their private directory permissions in one
+inference. The explicit workspace directory form remains fail-closed to
+workspace-scoped rows for callers that genuinely hold a workspace audience. No
+request has a nullable viewer form; omission cannot broaden the candidate set.
 
 Admission itself is a model decision (`work_opportunity_admission`) and is biased
 toward `ignore`. It resolves the people named in the evidence against verified
@@ -62,8 +73,11 @@ audience, a link may explain a suggestion but can only ever target the audience
 member.
 
 Audience is decided by the batch window's partition. A personal connector's
-activity is `personal:<owner>` and is visible to that member alone; a workspace
-connector's is `workspace` and is visible to every active member.
+activity enters `personal:<owner>`. Restricted activity enters one personal
+window per permitted user. Workspace-visible activity enters
+`workspace:<user-id>` for every active member. The window audience controls
+whose private context the model may inspect; the source keeps its independent
+workspace or restricted audience for the final routing check.
 
 ### Ranking
 
@@ -208,15 +222,14 @@ the stored set the home screen reads. It does not own:
 
 | For | Read |
 | --- | --- |
-| The paused Suggested context card and its retained confidence learning | [`contextual-routing.md`](contextual-routing.md) |
+| The Suggested context card and its confidence learning | [`contextual-routing.md`](contextual-routing.md) |
 | What happens after a suggestion is started | [`workstream-creation.md`](workstream-creation.md) |
 | The model contracts and structured-output rules | [`agent-harness.md`](agent-harness.md) |
 | Which model each of these prompts runs on | [`feature-flags.md`](feature-flags.md) |
 | The activity ingestion that feeds it | [`connectors.md`](connectors.md) |
 
 Whether contextual routing suppressing an event type should also silence this
-module remains undecided for a future re-enable; if it is ever decided yes, the
-gate belongs here.
+module remains undecided; if it is ever decided yes, the gate belongs here.
 
 ## Failure modes and limits
 
@@ -331,6 +344,51 @@ of how the last ranking ended — and `request_seq` against the scheduler's clai
 value.
 
 ## Changelog
+
+### 2026-08-24 — Workspace-visible activity enters every member's private context
+
+**What changed:** Suggested Work now fans an unrestricted workspace connector
+event into one personal admission window per active member. Each inference sees
+that member's workspace-visible and private work streams. The source retains its
+workspace audience, so it may route into any target the member can read; a
+restricted source in the same kind of window remains unable to broaden.
+
+**Why:** A workspace event is readable by every member, but the former single
+workspace window could inspect only workspace-scoped work streams. It therefore
+could not recognize that the public event belonged to one member's private work.
+
+**Considered and rejected:** One workspace inference over the union of every
+member's private work streams, or keeping both workspace and personal copies.
+The first leaks private titles across users; the second creates duplicate
+opportunities and competing routing decisions.
+
+**What a future change has to respect:** The admission audience and source
+audience answer different questions. Public evidence may be evaluated separately
+in every member's authorized context, but those contexts must never be merged.
+
+### 2026-08-24 — Admission context carries an explicit reader audience
+
+**What changed:** Suggested Work's admission read now sends WorkspaceDO either a
+workspace audience or the exact personal audience member. Workspace admission
+can inspect only workspace-scoped work streams; personal admission can inspect
+everything that member may already view. The enabled `route_existing` decision
+may create a card again only after a separate source-to-target audience check.
+
+**Why:** The previous workspace call passed `userId = null`, and WorkspaceDO
+interpreted null as “do not apply visibility.” That exposed private work-stream
+titles and objectives to a workspace inference even though no workspace reader
+had permission to see them.
+
+**Considered and rejected:** Picking a representative member for workspace
+admission or filtering after the 20-row recency limit. The first borrows private
+permissions the batch does not own; the second lets hidden rows consume the
+bounded candidate set.
+
+**What a future change has to respect:** Every cross-work-stream inference read
+must name its audience before SQL executes. Workspace and personal are distinct
+authorization cases, not null and non-null variants of one optional predicate.
+Permission to inspect a target does not by itself authorize moving source content
+there; the source audience must contain every target reader.
 
 ### 2026-08-23 — The batching window and the ranking pipeline get workerd suites
 

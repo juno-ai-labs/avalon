@@ -34,6 +34,12 @@ import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { logWarn } from "../observability/logger";
+import {
+  ContentAudienceSchema,
+  contentAudienceContainsWorkstream,
+  type ContentAudience,
+  type WorkstreamReaderAudience,
+} from "../lib/audience-containment";
 import { prepareMentionMarkdown, type MentionPerson } from "../lib/message-mentions";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -88,6 +94,7 @@ export const WorkstreamObjectCreateSuggestionInputSchema = z.object({
   reason: z.string().min(1).max(1_200),
   matchedEntities: z.array(z.string().max(500)).max(100),
   source: z.enum(["contextual_routing", "suggested_work"]),
+  sourceAudience: ContentAudienceSchema,
 }).strict();
 
 export type WorkstreamObjectCreateSuggestionInput = z.infer<
@@ -115,9 +122,9 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
    * has said anything about is the one somebody just started for themselves,
    * and the two mistakes are not symmetrical — a private work stream that
    * should have been public is opened from its own right-click menu, while the
-   * reverse has already been read. Callers that *know* the audience — a public
-   * Slack channel's thread, an automation whose row is reached by owning the
-   * automation rather than by being a participant — say `workspace` outright.
+   * reverse has already been read. A caller that *knows* the audience is public
+   * — a public Slack channel's thread, for example — says `workspace` outright.
+   * Automation executions remain private and seat their creator.
    *
    * Defaulted rather than required so a rolling deploy stays safe in the one
    * direction it can go wrong: the previous Worker's creation service names no
@@ -812,7 +819,7 @@ export class WorkstreamObjectProductService {
         "scope_change_unsupported",
         before.system_kind !== null
           ? "This work stream belongs to Avalon itself, so its visibility cannot be changed"
-          : "This work stream is visible to whoever the automation that created it is visible to",
+          : "Automation execution work streams are private and their visibility cannot be changed",
       );
     }
     const now = Date.now();
@@ -1708,9 +1715,26 @@ export class WorkstreamObjectProductService {
     }));
   }
 
+  private readerAudience(root: RootRow = this.root()): WorkstreamReaderAudience {
+    if (root.scope === "workspace") return { scope: "workspace" };
+    const userIds = new Set<string>();
+    if (root.created_by_user_id) userIds.add(root.created_by_user_id);
+    for (const participant of this.storage.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM participants WHERE status = 'active'`,
+    ).toArray()) userIds.add(participant.user_id);
+    return { scope: "personal", userIds: [...userIds] };
+  }
+
+  private sourceAudience(value: string | null): ContentAudience | null {
+    const intent = parseJson<{ sourceAudience?: unknown }>(value, {});
+    const parsed = ContentAudienceSchema.safeParse(intent.sourceAudience);
+    return parsed.success ? parsed.data : null;
+  }
+
   private suggestions(): WorkstreamDetail["suggestions"] {
     if (!SUGGESTED_CONTEXT_ENABLED) return [];
     const root = this.root();
+    const targetAudience = this.readerAudience(root);
     return this.storage.sql.exec<{
       action_id: string; source_activity_id: string; display_title: string; display_body: string;
       share_intent_json: string | null; status: string; created_at: number; resolved_at: number | null;
@@ -1719,9 +1743,13 @@ export class WorkstreamObjectProductService {
               status, created_at, resolved_at
          FROM suggested_actions WHERE status = 'pending'
         ORDER BY created_at DESC, action_id`,
-    ).toArray().map((row) => {
+    ).toArray().flatMap((row) => {
+      const sourceAudience = this.sourceAudience(row.share_intent_json);
+      if (!sourceAudience || !contentAudienceContainsWorkstream(sourceAudience, targetAudience)) {
+        return [];
+      }
       const intent = parseJson<{ confidence?: number; reason?: string }>(row.share_intent_json, {});
-      return {
+      return [{
         id: row.action_id,
         activityId: row.source_activity_id,
         workstreamId: root.workstream_key,
@@ -1732,7 +1760,7 @@ export class WorkstreamObjectProductService {
         status: "pending" as const,
         createdAt: iso(row.created_at)!,
         resolvedAt: iso(row.resolved_at),
-      };
+      }];
     });
   }
 
@@ -1748,6 +1776,10 @@ export class WorkstreamObjectProductService {
       actionId,
     ));
     if (!row || !["pending", "accepted", "dismissed"].includes(row.status)) return undefined;
+    const sourceAudience = this.sourceAudience(row.share_intent_json);
+    if (!sourceAudience || !contentAudienceContainsWorkstream(sourceAudience, this.readerAudience(root))) {
+      return undefined;
+    }
     const intent = parseJson<{ confidence?: number; reason?: string }>(row.share_intent_json, {});
     return ActivitySuggestionSchema.parse({
       id: row.action_id,
@@ -1772,6 +1804,13 @@ export class WorkstreamObjectProductService {
       throw new ApiError(409, "workstream_object_identity_mismatch", "The object identity does not match");
     }
     const input = WorkstreamObjectCreateSuggestionInputSchema.parse(rawInput);
+    if (!contentAudienceContainsWorkstream(input.sourceAudience, this.readerAudience(root))) {
+      throw new ApiError(
+        403,
+        "suggestion_audience_mismatch",
+        "The activity audience does not contain every reader of this work stream",
+      );
+    }
     const now = Date.now();
     const inserted = this.storage.sql.exec<{ action_id: string }>(
       `INSERT OR IGNORE INTO suggested_actions
@@ -1797,6 +1836,7 @@ export class WorkstreamObjectProductService {
         reason: input.reason,
         matchedEntities: input.matchedEntities,
         source: input.source,
+        sourceAudience: input.sourceAudience,
       }),
     ).toArray().length > 0;
     const suggestion = this.suggestion(input.id);

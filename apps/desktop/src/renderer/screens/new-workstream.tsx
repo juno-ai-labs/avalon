@@ -579,6 +579,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
                     message={openingTurn}
                     onAnswerElicitation={async () => undefined}
                     onOpenAttachment={setAttachmentPreview}
+                    onResolveSuggestion={async () => undefined}
                   />
                 </div>
               )}
