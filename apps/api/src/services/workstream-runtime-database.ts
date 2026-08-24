@@ -59,7 +59,6 @@ const LOCAL_TABLES = [
   "harness_runs",
   "runs",
   "run_steering",
-  "harness_run_lifecycle_events",
   "inference_attempts",
   "message_attachments",
   "message_mentions",

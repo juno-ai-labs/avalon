@@ -711,132 +711,39 @@ export async function assertInlineChildAttemptOwned(
 }
 
 export async function persistHarnessFinalMessage(
-  db: D1Database,
   runs: HarnessRunObjectPort,
+  messages: MessageObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
   lease: AttemptLease,
-  message: { id: string; sequenceNumber: number; text: string; createdAt: string },
+  message: { id: string; text: string },
   hostOutcome: Pick<TerminalOutcome, "status" | "error">,
 ): Promise<void> {
-  if (hostOutcome.status === "stopped") {
-    const owned = await db.prepare(
-      `SELECT 1 AS owned
-         FROM harness_runs
-        WHERE id = ?1 AND attempt_id = ?2 AND lease_owner = ?3
-          AND status = 'running' AND terminalized_at IS NULL
-          AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
-    ).bind(input.harnessRunId, lease.attemptId, lease.owner).first<{ owned: number }>();
-    if (!owned) throw new RunOwnershipLostError();
-  } else {
-    await assertHarnessAttemptOwned(runs, input.harnessRunId, lease);
-  }
-  const lifecycleId = uuidV7();
-  const eventPayload = stableJson({
-    finalMessageId: message.id,
-    hostOutcome: {
-      status: hostOutcome.status,
-      ...(hostOutcome.error ? { error: hostOutcome.error } : {}),
-    },
+  const published = await runs.publishFinalMessage({
+    runId: input.harnessRunId,
+    attemptId: lease.attemptId,
+    owner: lease.owner,
+    now: Date.now(),
+    messageId: message.id,
+    text: message.text,
+    hostOutcomeStatus: hostOutcome.status,
+    eventPayloadJson: stableJson({
+      finalMessageId: message.id,
+      hostOutcome: {
+        status: hostOutcome.status,
+        ...(hostOutcome.error ? { error: hostOutcome.error } : {}),
+      },
+    }),
+    lifecycleEventId: uuidV7(),
+    // A member who stopped the run still gets to read what it had already
+    // written. The routed statement made the same exemption, and for the same
+    // reason `assertHarnessToolSettlementOwned` does.
+    allowCancellationRequested: hostOutcome.status === "stopped",
   });
-  await db.batch([
-    db.prepare(
-      `INSERT INTO messages
-       (id, client_message_id, workspace_id, workstream_id, author_type,
-        message_type, text_content, sequence_number, created_at,
-        harness_run_id, harness_attempt_id)
-       SELECT ?6, ?7, ?2, ?3, 'agent', 'text', ?8, ?9, ?10, ?1, ?4
-         FROM harness_runs
-        WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
-          AND parent_tool_call_id IS NULL
-          AND attempt_id = ?4 AND lease_owner = ?5 AND status = 'running'
-          AND terminalized_at IS NULL
-          AND (?11 = 'stopped' OR cancellation_requested_at IS NULL)
-          AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-       ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
-    ).bind(
-      input.harnessRunId,
-      input.workspaceId,
-      input.workstreamId,
-      lease.attemptId,
-      lease.owner,
-      message.id,
-      `harness:${input.harnessRunId}`,
-      message.text,
-      message.sequenceNumber,
-      message.createdAt,
-      hostOutcome.status,
-    ),
-    db.prepare(
-      `INSERT INTO harness_run_lifecycle_events
-       (id, harness_run_id, workspace_id, workstream_id, attempt_id, event_key,
-        event_type, status, member_safe_payload_json, created_at)
-       SELECT ?6, run.id, run.workspace_id, run.workstream_id, ?4,
-              'final_message', 'final_message_persisted', ?10, ?8, ?9
-         FROM harness_runs run
-         JOIN messages message
-           ON message.id = ?7
-          AND message.workspace_id = run.workspace_id
-          AND message.workstream_id = run.workstream_id
-          AND message.harness_run_id = run.id
-          AND message.harness_attempt_id = run.attempt_id
-        WHERE run.id = ?1 AND run.workspace_id = ?2 AND run.workstream_id = ?3
-          AND run.parent_tool_call_id IS NULL
-          AND run.attempt_id = ?4 AND run.lease_owner = ?5
-          AND run.status = 'running' AND run.terminalized_at IS NULL
-          AND (?10 = 'stopped' OR run.cancellation_requested_at IS NULL)
-          AND run.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-       ON CONFLICT(harness_run_id, event_key) DO NOTHING`,
-    ).bind(
-      input.harnessRunId,
-      input.workspaceId,
-      input.workstreamId,
-      lease.attemptId,
-      lease.owner,
-      lifecycleId,
-      message.id,
-      eventPayload,
-      message.createdAt,
-      hostOutcome.status,
-    ),
-    db.prepare(
-      `UPDATE workstreams
-          SET latest_attention_sequence_number = MAX(latest_attention_sequence_number, ?4),
-              last_activity_at = ?5,
-              updated_at = ?5
-        WHERE id = ?1 AND workspace_id = ?2
-          AND EXISTS (
-            SELECT 1 FROM messages
-             WHERE id = ?3 AND workstream_id = ?1 AND workspace_id = ?2
-               AND author_type = 'agent' AND message_type = 'text'
-          )`,
-    ).bind(
-      input.workstreamId,
-      input.workspaceId,
-      message.id,
-      message.sequenceNumber,
-      message.createdAt,
-    ),
-  ]);
-  const persisted = await db.prepare(
-    `SELECT message.id
-       FROM messages message
-       JOIN harness_run_lifecycle_events lifecycle
-         ON lifecycle.harness_run_id = message.harness_run_id
-        AND lifecycle.attempt_id = message.harness_attempt_id
-        AND lifecycle.event_key = 'final_message'
-        AND lifecycle.event_type = 'final_message_persisted'
-      WHERE message.id = ?1 AND message.workspace_id = ?2
-        AND message.workstream_id = ?3 AND message.harness_run_id = ?4
-        AND message.harness_attempt_id = ?5 AND lifecycle.attempt_id = ?5`,
-  ).bind(
-    message.id,
-    input.workspaceId,
-    input.workstreamId,
-    input.harnessRunId,
-    lease.attemptId,
-  ).first<{ id: string }>();
-  if (!persisted) throw new RunOwnershipLostError();
-  const persistedOutcome = await loadPersistedHarnessFinalOutcome(db, input);
+  if (published.outcome === "ownership_lost") throw new RunOwnershipLostError();
+  // Read back through the same pair a recovery would, rather than trusting the
+  // write: the two rows are what every later reader joins, and a mismatch here
+  // is the one chance to notice before the run is reported terminal.
+  const persistedOutcome = await loadPersistedHarnessFinalOutcome(runs, messages, input);
   if (
     !persistedOutcome
     || persistedOutcome.messageId !== message.id
@@ -848,31 +755,32 @@ export async function persistHarnessFinalMessage(
 }
 
 export async function loadPersistedHarnessFinalOutcome(
-  db: D1Database,
+  runs: HarnessRunObjectPort,
+  messages: MessageObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
 ): Promise<PersistedHarnessHostOutcome | null> {
-  const row = await db.prepare(
-    `SELECT message.id AS message_id, lifecycle.status, lifecycle.member_safe_payload_json
-       FROM messages message
-       JOIN harness_run_lifecycle_events lifecycle
-         ON lifecycle.harness_run_id = message.harness_run_id
-        AND lifecycle.attempt_id = message.harness_attempt_id
-        AND lifecycle.event_key = 'final_message'
-        AND lifecycle.event_type = 'final_message_persisted'
-      WHERE message.workspace_id = ?1 AND message.workstream_id = ?2
-        AND message.harness_run_id = ?3
-        AND message.client_message_id = ?4`,
-  ).bind(
-    input.workspaceId,
-    input.workstreamId,
-    input.harnessRunId,
-    `harness:${input.harnessRunId}`,
-  ).first<{
-    message_id: string;
-    status: string | null;
-    member_safe_payload_json: string;
-  }>();
-  if (!row) return null;
+  // The routed version was one join across two authorities, so every way of
+  // failing produced the same empty row. These are the join's three conditions,
+  // asked separately: the message exists and this run wrote it, the event
+  // exists, and the two agree on which attempt did it. Only the last is a
+  // corruption rather than an absence, and it still reads as "nothing
+  // persisted" because that is what a caller must do about it either way.
+  const [message, lifecycle] = await Promise.all([
+    messages.messageByClientId({ clientMessageId: `harness:${input.harnessRunId}` }),
+    runs.lifecycleEvent({ runId: input.harnessRunId, eventKey: "final_message" }),
+  ]);
+  if (!message
+    || message.harness_run_id !== input.harnessRunId
+    || !lifecycle
+    || lifecycle.event_type !== "final_message_persisted"
+    || lifecycle.attempt_id !== message.harness_attempt_id) {
+    return null;
+  }
+  const row = {
+    message_id: message.id,
+    status: lifecycle.status,
+    member_safe_payload_json: lifecycle.member_safe_payload_json,
+  };
   if (!row.status || !TERMINAL_STATUSES.has(row.status)) {
     throw new Error("final_message_host_outcome_invalid");
   }

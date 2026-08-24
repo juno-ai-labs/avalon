@@ -2005,7 +2005,11 @@ export async function runWorkstreamHarness(
   }
   const messageId = input.harnessRunId;
   if (!blockDashboardRun) {
-    const persistedHostOutcome = await loadPersistedHarnessFinalOutcome(env.DB, input);
+    const persistedHostOutcome = await loadPersistedHarnessFinalOutcome(
+      createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
+      createMessageObjectPort(env, input.workspaceId, input.workstreamId),
+      input,
+    );
     if (persistedHostOutcome) return persistedHostOutcome;
   }
   const runAuthoritySnapshot = await assertRunAuthorityStillValid(env, input);
@@ -2083,7 +2087,6 @@ export async function runWorkstreamHarness(
   let streamedText = "";
   let modelName: string | null = null;
   let streamStarted = false;
-  let sequenceNumber: number | null = null;
   const harnessTools = await loadHarnessTools(
     env,
     input,
@@ -2199,19 +2202,6 @@ export async function runWorkstreamHarness(
       });
     },
   );
-
-  const ensureSequence = async (): Promise<number> => {
-    if (sequenceNumber != null) return sequenceNumber;
-    const row = await env.DB.prepare(
-      `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1, updated_at = ?
-       WHERE id = ? AND workspace_id = ? RETURNING next_sequence_number - 1 AS sequence_number`,
-    )
-      .bind(nowIso(), input.workstreamId, input.workspaceId)
-      .first<{ sequence_number: number }>();
-    if (!row) throw new Error("Work stream disappeared while the harness was running");
-    sequenceNumber = row.sequence_number;
-    return row.sequence_number;
-  };
 
   const publishEvent = async (event: Record<string, unknown>) => {
     const publishers = [
@@ -3102,16 +3092,17 @@ export async function runWorkstreamHarness(
       eventId: resourceTelemetryEventId(input.harnessRunId, 7),
     }).catch(() => undefined);
   } else if (streamedText) {
-    const at = nowIso();
-    await persistHarnessFinalMessage(env.DB, runs, input, liveness.lease, {
-      id: messageId,
-      sequenceNumber: await ensureSequence(),
-      text: streamedText,
-      createdAt: at,
-    }, {
-      status: terminalResult.status,
-      ...(terminalResult.error ? { error: terminalResult.error } : {}),
-    });
+    await persistHarnessFinalMessage(
+      runs,
+      createMessageObjectPort(env, input.workspaceId, input.workstreamId),
+      input,
+      liveness.lease,
+      { id: messageId, text: streamedText },
+      {
+        status: terminalResult.status,
+        ...(terminalResult.error ? { error: terminalResult.error } : {}),
+      },
+    );
   }
   // Workflow terminalization owns the monotonic state transition and publishes
   // terminal realtime state only after the final message + lifecycle event are
