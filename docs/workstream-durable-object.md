@@ -1063,6 +1063,27 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-24 — The harness-run migration renumbers to 22, the third collision today
+
+**What changed:** `harnessRunAuthorityPromotion` is object schema migration 22,
+and `WORKSTREAM_OBJECT_SCHEMA_VERSION` is 22. It was written as 21, which the
+resource slice took on the way in.
+
+**Why:** the two entries above record the same thing happening to scheduling and
+to resources. This one is the silent shape again — the rebase was clean, every
+gate passed, and the only symptom was two entries numbered 21 in one array.
+Three times in one afternoon is no longer a run of bad luck; it is what a stack
+of branches does when the number each one claims is decided when it is written
+and nothing rechecks it.
+
+**What a future change has to respect:** the check that catches this is
+`grep -oP 'version: \d+' … | sort | uniq -d` against the branch, run
+immediately before merging. Nothing in the repository does it, so a duplicate
+merges clean and leaves the runner applying whichever entry came first and
+skipping the other as already applied. If this keeps happening, the fix is a
+CI gate rather than more diligence — but that is a new gate on every pull
+request, and the team's call rather than one to add quietly.
+
 ### 2026-08-24 — The main child answers current reader-audience questions
 
 **What changed:** `SubstreamAgent.readerAudience` exposes the main child's
@@ -1092,6 +1113,7 @@ WorkspaceDO, but a permanent content move or direct disclosure rechecks the
 selected work stream's current authority. Private reader identity comes only
 from active participant rows. Direct SQL audience writes remain subject to the
 accepted-content triggers; do not replace them with a service-only check.
+
 
 ### 2026-08-24 — The resource migration renumbers to 21, and this time Git said nothing
 
@@ -1390,7 +1412,7 @@ for byte unchanged.
 
 ### 2026-08-23 — Three of the six harness-run views retire, and why the other three cannot
 
-**What changed:** migration 21 drops `_runtime_run_scopes`,
+**What changed:** migration 22 drops `_runtime_run_scopes`,
 `_runtime_run_plugin_activations` and `_runtime_run_memory_contexts` with their
 insert triggers, and removes all three from `LOCAL_TABLES` and `TABLE_REWRITES`.
 `freezeRunMemoryContext` moved onto the port to make the third of them possible.
