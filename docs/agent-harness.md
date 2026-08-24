@@ -101,7 +101,7 @@ Request-scoped attachment tools may be added directly to the preloaded automatio
 
 The compiler narrates while it researches, and the composer streams that narration. `compileAutomation` emits `started` once for the whole compile, a `thinking` frame per inference request, a `tool` row per discovery call, and `delta` frames carrying the architect's own text: the plan it states alongside its first tool calls, and a progress update every three or four calls after that. The `# Narration` section of the compiler policy owns what belongs in that text — settled sentences about the automation, never a question, never internal deliberation, never a tool or field name — and the submission turn is the one turn that carries none of it, because Rally renders the settled result from the saved draft and the elicitation instead. Narration accumulates into one composer bubble across turns, so the compiler tracks what earlier turns settled: a route restart replays only its own turn, and the reset frame restores the earlier updates rather than clearing text the reader has already seen.
 
-The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone is filled into the returned draft from the personal or workspace default according to scope, and resolved again against the automation's own owner when its `schedules` row is derived; an explicit trigger timezone wins at both points. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Invalid structured output gets one sanitized repair attempt, then `502 model_output_invalid` with a request ID.
+The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone stays null through the draft and into storage, and is resolved against the automation's own owner and scope when its `schedules` row is derived; an explicit trigger timezone wins there. Null is the distinction that makes the resolution possible at all — a default filled in at compile time is indistinguishable from a zone the person named, and answers for the scope the compiler guessed rather than the one the automation was created with. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Invalid structured output gets one sanitized repair attempt, then `502 model_output_invalid` with a request ID.
 
 ### Connection plugins and authority narrowing
 
@@ -734,12 +734,15 @@ every turn.
 
 **Consequences:** the policy is back to 9,943 bytes against its 10,000 ceiling,
 so the byte cap held without being raised. The field is now expected to be null
-in the ordinary case; the harness normalizer fills the applicable default into
-the returned draft, and `AutomationService` resolves it again when it derives a
-`schedules` row, so a model that ignores the rule can no longer decide when an
-automation runs. `prompts.test.ts` pins the message, its position, and the
-policy's deference to it; `index.test.ts` pins that `compileAutomation` sends
-both halves.
+in the ordinary case, and the normalizer no longer substitutes a default for it —
+`AutomationService` resolves it where the `schedules` row is derived, so a model
+that ignores the rule can no longer decide when an automation runs. The
+substitution was kept in a first draft of this change to keep the wire non-null,
+which made the server's resolution unreachable for everything the pipeline
+produced: review of #263 found the two cases that cost, and the normalizer's
+fill went. `prompts.test.ts` pins the message, its position, and the policy's
+deference to it; `index.test.ts` pins that `compileAutomation` sends both halves
+and that an unnamed zone comes back null.
 
 ### 2026-08-25 — A platform refusal stops being the asking port's fault
 

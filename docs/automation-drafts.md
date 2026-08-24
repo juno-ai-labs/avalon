@@ -101,8 +101,14 @@ the zone the person named for it and null when they named none, and the
 personal automation, `workspaces.timezone` for a workspace one. It is read here
 rather than when the draft was compiled because the scope is chosen on this
 screen, not by the compiler: a draft the compiler suggested sharing and its
-author kept to themselves would otherwise run in the workspace's day rather than
-their own.
+author kept to themselves runs in their day, not the workspace's.
+
+The null is what makes that possible, which is why nothing fills it in earlier.
+The client posts the draft it holds beside the scope it chose, so a default
+substituted at compile time arrives here as a concrete zone indistinguishable
+from one the person asked for, and this screen has no way to tell the two apart.
+The same distinction is what a shared template needs: an adopter takes the
+author's zone when the author named one, and their own when nobody did.
 
 ## Invariants
 
@@ -309,11 +315,14 @@ on Pacific time. The compiler had never been told the account's zone, and the
 zone it invented was frozen into the definition at compile time — before the
 scope was even chosen — so nothing downstream could correct it.
 
-**Consequences:** The zone is settled twice on purpose: the compiler's normalizer
-fills the applicable default into the draft returned to the client, so the create
-screen and every existing client still see a concrete zone, and the server
-resolves it again against the real owner and scope when the schedule is written.
-A zone the person actually named survives both.
+**Consequences:** The draft — and the wire — now carry `timezone: null` for a
+recurrence nobody named a zone for. A first draft of this change filled the
+default in at compile time to keep the wire non-null, and review found that this
+left the server's resolution unreachable for everything the pipeline produced,
+including the scope-switch case above. Desktop builds that predate this cannot
+parse such a draft; nothing in the renderer reads the field, and an automation
+already stored keeps its concrete zone, so the exposure is a build older than
+this release opening the *builder*.
 
 ### 2026-08-23 — The compiler names the destination it was asked for
 

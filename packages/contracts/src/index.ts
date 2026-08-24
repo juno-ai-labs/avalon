@@ -1041,13 +1041,15 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
      * The zone the recurrence's wall-clock time is read in, or `null` when
      * nobody named one.
      *
-     * Nullable because the compiler is asked to leave it unset rather than
-     * guess: a zone nobody named is one the account already answers, and the
-     * server resolves it — explicit trigger, then the owner's `users.timezone`,
-     * then `workspaces.timezone` — at the moment it derives the `schedules`
-     * row. Nothing Avalon compiles reaches a client with this null: the
-     * compiler's normalizer fills the applicable default into the draft, so the
-     * value a person reviews is the value their automation will run in.
+     * Null is the ordinary case and it is load-bearing, not a gap: it is what
+     * distinguishes a zone somebody asked for from one nothing but a default
+     * would answer, and it survives all the way into storage so that every
+     * later reader resolves it against the account the automation actually runs
+     * for — explicit trigger, then the owner's `users.timezone`, then
+     * `workspaces.timezone`, read where the `schedules` row is derived. Filling
+     * a default in earlier makes the two indistinguishable, and then a draft
+     * created under a different scope than the compiler suggested, and every
+     * copy of a shared template, silently keeps the drafting session's answer.
      */
     timezone: IanaTimezoneSchema.nullable(),
     summary: z.string().min(1)
