@@ -29,42 +29,6 @@ const suggestionActionQuery = z.object({
   position: z.coerce.number().int().min(1).max(4).optional(),
 });
 
-const CONNECTOR_TYPES = new Set(["github", "google", "granola", "linear", "notion", "slack", "x", "generic_webhook"]);
-
-async function suggestionTelemetryContext(env: HonoAppEnv["Bindings"], auth: ReturnType<typeof getAuth>, id: string) {
-  const [row, providers] = await Promise.all([
-    env.DB.prepare(
-      `SELECT o.version, o.audience_scope, o.created_at, s.impression_count, s.first_impressed_at
-       FROM work_opportunities o
-       LEFT JOIN work_opportunity_user_states s ON s.opportunity_id = o.id AND s.user_id = ?
-       WHERE o.id = ? AND o.workspace_id = ? LIMIT 1`,
-    ).bind(auth.userId, id, auth.workspaceId).first<Record<string, unknown>>(),
-    env.DB.prepare(
-      `WITH RECURSIVE provenance(id, provider, depth) AS (
-         SELECT n.id, n.provider, 0 FROM work_opportunity_provenance_roots r
-         JOIN opportunity_provenance_nodes n ON n.id = r.node_id WHERE r.opportunity_id = ?
-         UNION ALL
-         SELECT n.id, n.provider, provenance.depth + 1 FROM provenance
-         JOIN opportunity_provenance_edges e ON e.parent_node_id = provenance.id
-         JOIN opportunity_provenance_nodes n ON n.id = e.child_node_id
-         WHERE provenance.depth < 3
-       ) SELECT DISTINCT provider FROM provenance WHERE provider IS NOT NULL LIMIT 16`,
-    ).bind(id).all<{ provider: string }>(),
-  ]);
-  if (!row) return null;
-  return {
-    version: Number(row.version),
-    audienceScope: row.audience_scope === "workspace" ? "workspace" as const : "personal" as const,
-    createdAt: String(row.created_at),
-    impressionCount: Number(row.impression_count ?? 0),
-    firstImpressedAt: row.first_impressed_at == null ? null : String(row.first_impressed_at),
-    connectorTypes: [...new Set(providers.results.map(({ provider }) => provider)
-      .filter((provider) => CONNECTOR_TYPES.has(provider)))].sort() as Array<
-        "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x" | "generic_webhook"
-      >,
-  };
-}
-
 function suggestionFreshness(createdAt: string): "lt_1h" | "1h_24h" | "1d_7d" | "gte_7d" {
   const age = Math.max(0, Date.now() - Date.parse(createdAt));
   if (age < 60 * 60 * 1_000) return "lt_1h";
@@ -103,9 +67,10 @@ workOpportunityRoutes.post(
   async (c) => {
     const input = c.req.valid("json");
     const auth = getAuth(c);
-    await new WorkOpportunityService(c.env, auth).recordImpressions(input.opportunityIds);
+    const contexts = await new WorkOpportunityService(c.env, auth).recordImpressions(input.opportunityIds);
+    const contextById = new Map(contexts.map((context) => [context.opportunityId, context]));
     await Promise.all(input.opportunityIds.map(async (opportunityId, index) => {
-      const context = await suggestionTelemetryContext(c.env, auth, opportunityId);
+      const context = contextById.get(opportunityId);
       if (!context) return;
       await emitProductUsageTelemetry(c.env, {
         workspaceId: auth.workspaceId,
@@ -133,8 +98,7 @@ workOpportunityRoutes.delete("/:id", zValidator("param", idParam), zValidator("q
   const id = c.req.valid("param").id;
   const input = c.req.valid("query");
   const auth = getAuth(c);
-  const context = await suggestionTelemetryContext(c.env, auth, id);
-  await new WorkOpportunityService(c.env, auth).dismiss(id);
+  const context = await new WorkOpportunityService(c.env, auth).dismiss(id);
   if (context && input.surface && input.position && (!input.version || input.version === context.version)) {
     await emitProductUsageTelemetry(c.env, {
       workspaceId: auth.workspaceId,
@@ -165,13 +129,13 @@ workOpportunityRoutes.post(
   async (c) => {
     const input = c.req.valid("json");
     const auth = getAuth(c);
-    const context = await suggestionTelemetryContext(c.env, auth, c.req.valid("param").id);
-    const started = StartedWorkOpportunityResponseSchema.parse(
-      await new WorkOpportunityService(c.env, auth, requestDeferral(c)).start(
-        c.req.valid("param").id,
-        input.version,
-        input.idempotencyKey,
-      ));
+    const startResult = await new WorkOpportunityService(c.env, auth, requestDeferral(c)).start(
+      c.req.valid("param").id,
+      input.version,
+      input.idempotencyKey,
+    );
+    const context = startResult.telemetryContext;
+    const started = StartedWorkOpportunityResponseSchema.parse(startResult);
     const surface = input.surface;
     const hasDetailedContext = Boolean(context && surface && input.position);
     if (!hasDetailedContext) {

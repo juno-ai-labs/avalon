@@ -1,4 +1,6 @@
 import {
+  WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
+  WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceSidebarListEventSchema,
   WorkspaceSocketSyncEventSchema,
@@ -192,7 +194,7 @@ export function WorkspaceSocketProvider({
 
   useEffect(() => {
     let stopped = false;
-    let accessRevoked = false;
+    let permanentlyClosed = false;
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
@@ -293,7 +295,7 @@ export function WorkspaceSocketProvider({
       rejectPendingDirectoryRequests(error);
     };
     const scheduleReconnect = (): void => {
-      if (stopped || accessRevoked || reconnectTimer !== null) return;
+      if (stopped || permanentlyClosed || reconnectTimer !== null) return;
       if (navigator.onLine === false) {
         setState('unavailable');
         return;
@@ -306,7 +308,7 @@ export function WorkspaceSocketProvider({
       }, reconnectDelay(attempt));
     };
     const connect = async (): Promise<void> => {
-      if (stopped || accessRevoked || connecting) return;
+      if (stopped || permanentlyClosed || connecting) return;
       if (socket?.readyState === WebSocket.CONNECTING || socket?.readyState === WebSocket.OPEN) return;
       if (navigator.onLine === false) {
         setState('unavailable');
@@ -462,15 +464,39 @@ export function WorkspaceSocketProvider({
           if (socket !== next) return;
           clearHeartbeat();
           socket = null;
-          if (event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
-            accessRevoked = true;
-            socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'access_revoked' });
-            setState('unavailable');
-            rejectPending(new ApiError(
+          const accessRevoked = event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE;
+          const permanentError = accessRevoked
+            ? new ApiError(
               'You can no longer access this workspace.',
               403,
               'workspace_access_revoked',
-            ));
+            )
+            : event.code === WORKSPACE_SOCKET_SESSION_INACTIVE_CODE
+              ? new ApiError(
+                'Your session is no longer active. Sign in again.',
+                401,
+                'workspace_session_inactive',
+              )
+              : event.code === WORKSPACE_SOCKET_INVALID_MESSAGE_CODE
+                ? new ApiError(
+                  'Avalon could not complete this action because its realtime command was invalid. Restart the app and try again.',
+                  400,
+                  'workspace_socket_invalid_message',
+                )
+                : null;
+          if (permanentError) {
+            permanentlyClosed = true;
+            if (accessRevoked) {
+              socketTelemetry.disconnected({
+                attempts: attempt,
+                retrying: false,
+                cause: 'access_revoked',
+              });
+            } else {
+              socketTelemetry.disconnected({ attempts: attempt, retrying: false });
+            }
+            setState('unavailable');
+            rejectPending(permanentError);
             return;
           }
           if (!stopped) {

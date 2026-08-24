@@ -1,4 +1,9 @@
-import { WORKSPACE_SYNC_TOPICS } from '@avalon/contracts';
+import {
+  WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
+  WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
+  WORKSPACE_SYNC_TOPICS,
+  WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+} from '@avalon/contracts';
 import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render } from '@testing-library/react';
@@ -90,6 +95,97 @@ afterEach(() => {
 });
 
 describe('WorkspaceSocketProvider', () => {
+  it.each([
+    {
+      closeCode: WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+      status: 403,
+      code: 'workspace_access_revoked',
+      message: 'You can no longer access this workspace.',
+      telemetryCause: 'access_revoked',
+    },
+    {
+      closeCode: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
+      status: 401,
+      code: 'workspace_session_inactive',
+      message: 'Your session is no longer active. Sign in again.',
+      telemetryCause: 'server_closed',
+    },
+    {
+      closeCode: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
+      status: 400,
+      code: 'workspace_socket_invalid_message',
+      message: 'Avalon could not complete this action because its realtime command was invalid. Restart the app and try again.',
+      telemetryCause: 'server_closed',
+    },
+  ])('reports close code $closeCode truthfully and does not reconnect', async ({
+    closeCode,
+    status,
+    code,
+    message,
+    telemetryCause,
+  }) => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    let createMessage: ReturnType<typeof useWorkspaceSocket>['createMessage'] | null = null;
+    function Probe(): null {
+      const workspaceSocket = useWorkspaceSocket();
+      useEffect(() => {
+        createMessage = workspaceSocket.createMessage;
+      }, [workspaceSocket.createMessage]);
+      return null;
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <Probe />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    reportTelemetryProductIntent.mockClear();
+    let result: Promise<unknown> | null = null;
+    act(() => {
+      result = createMessage!({
+        type: 'create_message',
+        workstreamId: '00000000-0000-7000-8000-000000000002',
+        substreamId: '0',
+        operationId: '00000000-0000-7000-8000-000000000003',
+        payload: {
+          text: 'Send once',
+          clientMessageId: 'client-message-close-code',
+          mentions: [],
+          confirmedParticipantUserIds: [],
+          attachmentIds: [],
+        },
+      });
+    });
+
+    act(() => socket.close(closeCode));
+    await expect(result).rejects.toMatchObject({ status, code, message });
+    expect(socketTelemetry()).toEqual([{
+      kind: 'realtime_socket_state',
+      socket: 'workspace',
+      state: 'stopped',
+      cause: telemetryCause,
+      attempts: 'zero',
+    }]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
   it('keeps one workspace socket, subscribes durably, and invalidates every workspace surface', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
