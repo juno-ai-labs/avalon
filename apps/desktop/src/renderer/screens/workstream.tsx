@@ -1383,9 +1383,16 @@ export function WorkstreamScreen(): React.JSX.Element {
     // Ahead of the optimistic turn and of `sending`. A message the server will
     // refuse must not appear in the transcript first and be pulled back out of
     // it, and the person is the only one who can resolve this.
+    //
+    // Rejecting rather than returning, because `WorkstreamComposer.send` clears
+    // the draft *before* awaiting this and restores it only if this rejects. A
+    // refusal that resolved would therefore delete the message it is asking the
+    // person to shorten — the one outcome worse than sending it. Every other
+    // failure below throws for the same reason; this is not an error path that
+    // happens to throw, it is the contract that surface is built on.
     if (text.length > MESSAGE_MAX_CHARACTERS) {
       setSendError(MESSAGE_TOO_LONG_MESSAGE);
-      return;
+      throw new ApiError(MESSAGE_TOO_LONG_MESSAGE, 400, 'message_too_long');
     }
     // Sending is the strongest statement anyone can make that they mean to be
     // at the end: they are about to add to it, and the answer is what they are
