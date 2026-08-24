@@ -229,7 +229,18 @@ describe("automation drafts", () => {
       triggerTimezone: null,
       expected: "America/Los_Angeles",
     },
-  ])("$name", async ({ scope, triggerTimezone, expected }) => {
+    {
+      // The compiler suggested sharing this one and its author kept it to
+      // themselves. The scope is chosen here, after the draft was written, so
+      // the zone has to be answered here too — a draft that arrived carrying
+      // the workspace's zone would run in the workspace's morning, not theirs.
+      name: "answers the scope chosen on the create screen, not the one suggested",
+      scope: "personal" as const,
+      suggestedScope: "workspace" as const,
+      triggerTimezone: null,
+      expected: "America/New_York",
+    },
+  ])("$name", async ({ scope, suggestedScope, triggerTimezone, expected }) => {
     const database = seededDatabase();
     // The workspace stays on Pacific: the defect this covers was a New York
     // account whose automation was created on Pacific time, so the two zones
@@ -238,7 +249,7 @@ describe("automation drafts", () => {
     compileAutomationDraft.mockResolvedValue(draft({
       followUpQuestion: null,
       ready: true,
-      suggestedScope: scope,
+      suggestedScope: suggestedScope ?? scope,
       triggers: [{
         type: "calendar",
         rrule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0",

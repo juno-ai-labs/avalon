@@ -1551,7 +1551,7 @@ export async function compileAutomation(input: {
           fallbackAttempt: 0,
           repairAttempt: 0,
         });
-        const normalized = normalizeAutomationDraft(raw, input.defaultTimezones);
+        const normalized = normalizeAutomationDraft(raw);
         const parsed = AutomationDraftSchema.safeParse(normalized);
         await input.onDiagnostic?.({
           stage: "validate",
@@ -2026,16 +2026,11 @@ function easyEnglishCurrentTime(
   ].join("\n");
 }
 
-function normalizeAutomationDraft(
-  value: unknown,
-  defaultTimezones?: { personal: string; workspace: string },
-): unknown {
+function normalizeAutomationDraft(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const draft = value as Record<string, unknown>;
-  const scope = draft.suggestedScope === "workspace" ? "workspace" : "personal";
-  const defaultTimezone = defaultTimezones?.[scope];
   const triggers = Array.isArray(draft.triggers)
-    ? draft.triggers.map((trigger) => normalizeAutomationTrigger(trigger, defaultTimezone))
+    ? draft.triggers.map((trigger) => normalizeAutomationTrigger(trigger))
     : draft.triggers;
   const ready = draft.ready !== false;
   return {
@@ -2060,7 +2055,7 @@ function normalizeAutomationDraft(
   };
 }
 
-function normalizeAutomationTrigger(value: unknown, defaultTimezone?: string): unknown {
+function normalizeAutomationTrigger(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const trigger = value as Record<string, unknown>;
   switch (trigger.type) {
@@ -2070,9 +2065,14 @@ function normalizeAutomationTrigger(value: unknown, defaultTimezone?: string): u
       return {
         type: "calendar",
         rrule: trigger.rrule,
+        // A zone nobody named stays absent all the way to storage. Filling the
+        // account default in here would make it byte-identical to a zone the
+        // person asked for, and every later reader — the create screen's chosen
+        // scope, somebody adopting a shared template — would be answering with
+        // the drafting session's guess instead of their own account.
         timezone: typeof trigger.timezone === "string" && trigger.timezone.trim()
           ? trigger.timezone
-          : defaultTimezone,
+          : null,
         summary: normalizeTriggerSummary(trigger.summary, "Recurring schedule"),
       };
     case "interval":
