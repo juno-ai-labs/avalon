@@ -139,7 +139,46 @@ describe('New automation composer', () => {
     expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue('@');
   });
 
-  it('keeps Enter from submitting a connection mention and dismisses it with Escape', async () => {
+  it('picks a connection mention with the arrow keys and Enter instead of submitting', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-slack',
+        modelPluginId: 'plugin_slack',
+        connectorType: 'slack',
+        displayName: 'Slack',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: [],
+      },
+      {
+        id: 'connection-slack-you',
+        modelPluginId: 'plugin_slack',
+        connectorType: 'slack',
+        displayName: 'Slack · you',
+        scope: 'you',
+        status: 'healthy',
+        capabilities: [],
+      },
+    ]);
+    renderScreen();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mention a connection' }));
+    const composer = screen.getByRole('textbox', { name: 'Describe an automation' });
+    fireEvent.change(composer, { target: { value: '@sla' } });
+    expect(await screen.findByRole('listbox', { name: 'Connections' })).toBeVisible();
+
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+    expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
+      .toEqual(['false', 'true']);
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('@Slack · you '));
+    expect(api.compileAutomation).not.toHaveBeenCalled();
+    expect(screen.queryByRole('listbox', { name: 'Connections' })).not.toBeInTheDocument();
+  });
+
+  it('dismisses the connection list with Escape', async () => {
     api.getConnections.mockResolvedValue([{
       id: 'connection-slack',
       modelPluginId: 'plugin_slack',
@@ -156,10 +195,10 @@ describe('New automation composer', () => {
     fireEvent.change(composer, { target: { value: '@sla' } });
     expect(await screen.findByRole('listbox', { name: 'Connections' })).toBeVisible();
 
-    fireEvent.keyDown(composer, { key: 'Enter' });
-    expect(api.compileAutomation).not.toHaveBeenCalled();
     fireEvent.keyDown(composer, { key: 'Escape' });
+
     expect(screen.queryByRole('listbox', { name: 'Connections' })).not.toBeInTheDocument();
+    expect(api.compileAutomation).not.toHaveBeenCalled();
   });
 
   it('keeps successful compile attachments available in the transcript', async () => {

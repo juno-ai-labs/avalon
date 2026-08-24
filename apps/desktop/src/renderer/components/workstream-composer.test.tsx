@@ -288,6 +288,85 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(screen.getByLabelText('Message the work stream')).toHaveValue('');
   });
 
+  it('walks the mention list with the arrow keys and inserts the highlighted candidate on Enter', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend);
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false']);
+
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+
+    expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
+      .toEqual(['false', 'true', 'false']);
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('@Bob Builder '));
+    expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
+    // Enter chose a name rather than sending the half-written mention.
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('wraps to the last candidate when the highlight is walked up off the top', async () => {
+    renderComposer();
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+    await screen.findAllByRole('option');
+    fireEvent.keyDown(composer, { key: 'ArrowUp' });
+
+    expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
+      .toEqual(['false', 'false', 'true']);
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('@Cara Chen '));
+  });
+
+  it('returns the highlight to the top when the typed query drops the highlighted candidate', async () => {
+    renderComposer();
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+    await screen.findAllByRole('option');
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+
+    // Bob was highlighted and the narrowed list has no Bob in it, so Enter must
+    // fall back to the first row rather than to whoever inherited his place.
+    fireEvent.change(composer, { target: { value: '@a' } });
+
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2));
+    expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
+      .toEqual(['true', 'false']);
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('@Adam '));
+  });
+
+  it('opens the mention list at the top again after it has been dismissed', async () => {
+    renderComposer();
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+    await screen.findAllByRole('option');
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+    fireEvent.change(composer, { target: { value: 'Ship it' } });
+
+    expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
+
+    fireEvent.change(composer, { target: { value: 'Ship it @' } });
+
+    // A highlight left over from the last time it was open would send Enter to
+    // whoever was under it, which is not the row this list is showing first.
+    await waitFor(() => expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
+      .toEqual(['true', 'false', 'false']));
+  });
+
   it('sends participant mentions without asking for confirmation', async () => {
     const onSend = vi.fn(async () => undefined);
     renderComposer(onSend);
