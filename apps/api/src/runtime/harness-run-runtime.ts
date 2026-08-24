@@ -1525,8 +1525,10 @@ export async function terminalizeHarnessAttempt(
     }
     return "terminalized";
   }
-  if (settled.status !== storedRunStatus(outcome.status)) throw new RunOwnershipLostError();
-  if (settled.status === "cancelled" && !settled.receiptsReconciled) {
+  // `already_terminal` is only returned for a run whose stored status already
+  // equals the one asked for, so this branch's status is `outcome.status` by
+  // construction and there is nothing left to compare it against.
+  if (outcome.status === "stopped" && !settled.receiptsReconciled) {
     await settleAndRecordResidualReceipts(runs, receipts, {
       runId: input.harnessRunId,
       workspaceId: input.workspaceId,

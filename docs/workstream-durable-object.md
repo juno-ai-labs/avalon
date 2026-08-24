@@ -1305,6 +1305,39 @@ of the three. If the product ever settles on a single busy status, retire the
 other two from the CHECK constraint rather than from the fences, so the
 narrowing is enforced where it can be seen.
 
+### 2026-08-24 — Four regressions a review caught, and the edits that caused them
+
+**`admitRun` threw where the retired trigger had swallowed.**
+`runs_mutating_substream_uq` allows one mutating run per substream and every
+root run shares `'0'`, so admitting a second `running` run collides. The retired
+`_runtime_harness_runs_insert` trigger used `INSERT OR IGNORE`, which turned
+that into a zero-change result the caller reported as a stale request; the bare
+`INSERT` that replaced it throws, and a throw takes the whole `transactionSync`
+with it — including the supersede immediately above. A superseding Slack message
+would have neither started its run nor stopped the one it meant to replace, and
+the caller would have seen `harness_run_operation_failed` instead of a 409.
+
+A supersede does not clear the way by itself: it stamps
+`cancellation_requested_at` and leaves the incumbent `running` until that run
+notices, so the collision is *most* likely in exactly the case supersede exists
+for. `mutatingRunHoldsSubstream` now asks before writing and answers `busy`,
+mirroring the index including its block-dashboard exemption. `busy` and `stale`
+carry the same member-visible 409 for now, because the routed version could not
+tell them apart either — splitting what a member is told is a product decision
+rather than part of this conversion.
+
+**`memoryContext` read by attempt where the write reads by run.** The table is
+`PRIMARY KEY (run_id)`, so a second attempt missed the fast path, paid a full
+vector search, and threw the result away when the insert returned the first
+attempt's row. Both are keyed by run now: freezing recall exists so every
+attempt of a run sees the same memories, which makes that row the later
+attempt's answer rather than something to look for under its own id.
+
+**A dead comparison in `terminalizeHarnessAttempt`.** `already_terminal` is
+returned only for a run whose stored status already equals the one asked for, so
+comparing them again described a case that cannot happen.
+
+
 ### 2026-08-24 — Two regressions a review caught, and the edit that caused one
 
 **What changed:** `activeLeaseExpiresAt` no longer excludes the contended run

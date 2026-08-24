@@ -205,7 +205,15 @@ export async function launchWorkstreamHarness(
     expectedLatestRunId: input.expectedLatestHarnessRunId ?? null,
     now: Date.parse(at),
   });
-  if (admission.outcome === "stale") {
+  // Both refusals carry the same member-visible error, which is what the routed
+  // version did: its staleness check and its swallowed UNIQUE collision were
+  // both a zero-change insert, and neither could say which it had been. They
+  // are different conditions — `stale` means someone else got here first,
+  // `busy` means the run this one superseded has not stopped yet — and the
+  // second is the common one on a follow-up into a live work stream. Splitting
+  // what a member is told is a product decision rather than part of this
+  // conversion.
+  if (admission.outcome === "stale" || admission.outcome === "busy") {
     throw new ApiError(409, "terminal_repository_request_stale", "A newer run replaced this Terminal repository request. Reload the work stream before continuing.");
   }
   const workflowInput: WorkstreamWorkflowInput = {
