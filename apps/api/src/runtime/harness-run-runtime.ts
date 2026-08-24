@@ -1966,6 +1966,37 @@ interface TerminalizedReceiptRepair {
   terminalization: "direct" | "reaped";
 }
 
+/**
+ * Which path terminalized a run, read back from the row it left behind rather
+ * than from who is asking. A retry — the repeated `terminalizeHarnessAttempt`
+ * call or the bounded sweep — has to reproduce the wording its first pass would
+ * have written, or the same receipt gets two different explanations depending
+ * on which retry happened to close it.
+ */
+function terminalizationOf(
+  errorJson: string | null,
+  parentToolCallId: string | null,
+): "direct" | "reaped" {
+  if (parentToolCallId !== null) return "reaped";
+  return readErrorCode(errorJson) === "stale_run_reaped" ? "reaped" : "direct";
+}
+
+function readErrorCode(errorJson: string | null): string | null {
+  if (!errorJson) return null;
+  try {
+    const parsed: unknown = JSON.parse(errorJson);
+    if (typeof parsed === "object" && parsed !== null && "code" in parsed) {
+      const code: unknown = (parsed as { code: unknown }).code;
+      return typeof code === "string" ? code : null;
+    }
+  } catch {
+    // A terminal row from an older shape carries no readable code. Treating it
+    // as "not reaped" keeps the direct wording, which is the safe default: it
+    // states only that the run ended, never that a lease was lost.
+  }
+  return null;
+}
+
 function receiptRepairFailure(row: TerminalizedReceiptRepair): {
   phase: string;
   errorJson: string;
@@ -2346,7 +2377,15 @@ export async function terminalizeHarnessAttempt(
         errorJson: existing.error_json,
         memberSafePayloadJson: existing.member_safe_payload_json,
         parentToolCallId: null,
-        terminalization: "direct",
+        // Derived, not assumed: the row reached this branch because *some*
+        // first pass terminalized it and lost its settlement, and that pass was
+        // not necessarily this executor. The stale-lease reaper keeps
+        // `attempt_id` and only clears the lease, so a reaped root whose
+        // settlement was lost matches every predicate above when its original
+        // executor returns — and hardcoding `direct` would then write
+        // `run_terminated` where the reaper's own retry writes
+        // `parent_run_terminated`. Same reason the sweep re-derives it.
+        terminalization: terminalizationOf(existing.error_json, null),
       });
     }
     return "already_terminal";
@@ -2432,6 +2471,8 @@ export async function reapStaleHarnessRuns(
 ): Promise<string[]> {
   const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 25)));
   const blockOnly = options.automationDatabase === null ? 1 : 0;
+  // Reaping work, which the root and child passes share. The repair pass below
+  // is bounded by its own `LIMIT` and deliberately does not count against this.
   const reaped: string[] = [];
   let processed = 0;
 
@@ -2441,10 +2482,17 @@ export async function reapStaleHarnessRuns(
   // while its member-visible tool card remains open. Successful repairs record
   // the marker, so the bounded walk makes forward progress instead of scanning
   // the same historical rows on every activation.
+  //
+  // On its own budget, deliberately. This pass and the two reaps below used to
+  // share one, which was harmless while the pass could only select the three
+  // paths that wrote a marker. It selects every unmarked terminal row now, so a
+  // shared budget would let a history backfill return before the stale-lease
+  // reap ran at all — and that reap is the only recovery for an executor that
+  // died without terminalizing, which is the worse of the two ways a tool card
+  // gets stranded. A backfill must never delay it.
   const repairRows = await db.prepare(
     `SELECT run.id, run.workspace_id, run.workstream_id, run.attempt_id, run.origin,
             run.status, run.terminalized_at, run.error_json,
-            json_extract(run.error_json, '$.code') AS error_code,
             run.parent_tool_call_id,
             COALESCE(terminal.member_safe_payload_json, '{}') AS member_safe_payload_json
        FROM harness_runs run
@@ -2475,7 +2523,13 @@ export async function reapStaleHarnessRuns(
              AND settled.attempt_id = run.attempt_id
              AND settled.event_key = ?3
         )
-      ORDER BY run.terminalized_at ASC, run.id ASC
+      -- Newest first: a card stranded minutes ago is the one a member is
+      -- looking at, and it must not wait behind every historical row in the
+      -- work stream. It also keeps a row that can never settle -- one whose
+      -- object-side terminal stamp does not match, so it records no marker and
+      -- is re-selected forever -- at the tail of the page rather than the head,
+      -- where it would occupy a slot ahead of every repairable row behind it.
+      ORDER BY run.terminalized_at DESC, run.id DESC
       LIMIT ?5`,
   ).bind(
     options.workspaceId ?? null,
@@ -2492,7 +2546,6 @@ export async function reapStaleHarnessRuns(
     status: HarnessTerminalStatus;
     terminalized_at: string;
     error_json: string | null;
-    error_code: string | null;
     parent_tool_call_id: string | null;
     member_safe_payload_json: string;
   }>();
@@ -2501,7 +2554,8 @@ export async function reapStaleHarnessRuns(
     // so it re-derives which path terminalized the row rather than assuming
     // one. Reaping is what a lapsed lease and a reaped child have in common;
     // everything else wrote its own terminal row.
-    const reaped = row.parent_tool_call_id !== null || row.error_code === "stale_run_reaped";
+    const terminalization = terminalizationOf(row.error_json, row.parent_tool_call_id);
+    const reaped = terminalization === "reaped";
     const repair = {
       runId: row.id,
       workspaceId: row.workspace_id,
@@ -2512,7 +2566,7 @@ export async function reapStaleHarnessRuns(
       errorJson: row.error_json,
       memberSafePayloadJson: row.member_safe_payload_json,
       parentToolCallId: row.parent_tool_call_id,
-      terminalization: reaped ? "reaped" as const : "direct" as const,
+      terminalization,
     } satisfies TerminalizedReceiptRepair;
     try {
       await settleAndRecordResidualReceipts(
@@ -2526,7 +2580,6 @@ export async function reapStaleHarnessRuns(
           repair,
         ),
       );
-      processed += 1;
     } catch (error) {
       options.onReceiptRepairFailure?.({
         phase: "terminal_repair",
@@ -2538,7 +2591,8 @@ export async function reapStaleHarnessRuns(
       });
     }
   }
-  if (processed >= limit) return reaped;
+  // No early return on a full repair page: the reaps below are the
+  // time-sensitive half and must run on every activation.
 
   // Ordinary attempts are the only runs whose expired lease is itself a
   // terminal condition. An inline child is deliberately reclaimable while its
