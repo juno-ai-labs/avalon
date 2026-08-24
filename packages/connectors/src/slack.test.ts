@@ -297,8 +297,10 @@ describe("Slack connector", () => {
     const fetcher: FetchLike = vi.fn(async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
       calls.push(url.pathname);
-      // Slack documents `oauth.v2.user.access` only as RFC 6749 compliant, and
-      // an RFC token response carries no identity. This is that response.
+      // Slack's own envelope minus the user identity — `ok: true` with a
+      // `team`, which is what the production failures must have carried:
+      // they logged no `response_invalid`, so the body satisfied
+      // `SlackOAuthSuccessSchema`, and that schema requires `team`.
       if (url.pathname.endsWith("oauth.v2.user.access")) return json({
         ok: true,
         access_token: "xoxp-user",
@@ -308,7 +310,9 @@ describe("Slack connector", () => {
       });
       if (url.pathname.endsWith("auth.test")) {
         expect(init?.headers).toBeDefined();
-        return json({ ok: true, user_id: "UADA", team_id: "TACME" });
+        // A divergent header, to pin which source wins: the recovery fills a
+        // gap and never overrides what this authorization itself granted.
+        return json({ ok: true, user_id: "UADA" }, { "x-oauth-scopes": "im:history" });
       }
       throw new Error(`Unexpected URL ${url}`);
     });
@@ -326,6 +330,7 @@ describe("Slack connector", () => {
         slackUserId: "UADA",
         userAccessToken: "xoxp-user",
         teamId: "TACME",
+        oauthScopes: ["chat:write", "search:read.public"],
       });
     expect(calls).toEqual(["/api/oauth.v2.user.access", "/api/auth.test"]);
   });
@@ -354,6 +359,39 @@ describe("Slack connector", () => {
     await expect(adapter.handleAuthorizationCallback!({ code: "user-code", codeVerifier: "verifier", connectionScope: "personal" }))
       .resolves.toMatchObject({ providerAccountId: "TACME:UADA", slackUserId: "UADA" });
     expect(calls).toEqual(["/api/oauth.v2.user.access"]);
+  });
+
+  it("recovers the granted scopes from the identity call when the body names none", async () => {
+    const calls: string[] = [];
+    const fetcher: FetchLike = vi.fn(async (input) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      calls.push(url.pathname);
+      // No `scope` and no user: without the recovery this connection is stored
+      // with an empty grant, which `refreshCredentials` then carries forward.
+      if (url.pathname.endsWith("oauth.v2.user.access")) return json({
+        ok: true,
+        access_token: "xoxp-user",
+        team: { id: "TACME", name: "Acme" },
+      });
+      if (url.pathname.endsWith("auth.test")) {
+        return json({ ok: true, user_id: "UADA" }, { "x-oauth-scopes": "chat:write, search:read.public" });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: fetcher,
+    });
+
+    await expect(adapter.handleAuthorizationCallback!({ code: "user-code", codeVerifier: "verifier", connectionScope: "personal" }))
+      .resolves.toMatchObject({
+        slackUserId: "UADA",
+        oauthScopes: ["chat:write", "search:read.public"],
+      });
+    expect(calls).toEqual(["/api/oauth.v2.user.access", "/api/auth.test"]);
   });
 
   it("attributes every OAuth callback failure to the phase that produced it", async () => {
