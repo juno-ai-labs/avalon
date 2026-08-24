@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { TERMINAL_STATES, buildPlan, modelGateDecision, runOutcomeOracle } from "./e2e-local.mjs";
+import { readFileSync } from "node:fs";
+
+import {
+  OVERSIZE_MESSAGE_CHARACTERS,
+  TERMINAL_STATES,
+  buildPlan,
+  modelGateDecision,
+  runOutcomeOracle,
+} from "./e2e-local.mjs";
 
 // The oracles are the part of the e2e lane that can rot silently: a driver
 // whose pass condition is wrong runs green forever over a broken system. Both
@@ -49,4 +57,26 @@ test("a missing model key refuses the lane unless degradation is chosen", () => 
   const degraded = modelGateDecision(false, true);
   assert.equal(degraded.run, true);
   assert.equal(degraded.degraded, true);
+});
+
+// The lane is plain Node and the contract is TypeScript, so the ceiling exists
+// twice and cannot be imported into agreement. This is the gate that keeps the
+// copy honest. It is not hypothetical: the fixture sat at 50,001 while the
+// ceiling moved to 100,000, which silently turned the one scenario that proves
+// an over-long message is refused into one that creates a work stream and
+// launches a model-backed run — passing nothing and costing a run every time.
+test("the oversize scenario stays one character over the contract ceiling", () => {
+  const contracts = readFileSync(
+    new URL("../packages/contracts/src/index.ts", import.meta.url),
+    "utf8",
+  );
+  const declared = /export const MESSAGE_MAX_CHARACTERS = ([\d_]+);/u.exec(contracts);
+  assert.ok(declared, "MESSAGE_MAX_CHARACTERS is no longer declared where this test reads it");
+  const ceiling = Number(declared[1].replaceAll("_", ""));
+
+  assert.equal(
+    OVERSIZE_MESSAGE_CHARACTERS,
+    ceiling + 1,
+    "scripts/e2e-local.mjs must send exactly one character more than the contract accepts",
+  );
 });

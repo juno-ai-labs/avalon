@@ -100,15 +100,28 @@ describe("the message ceiling", () => {
     expect(refused.message).toBe(MESSAGE_TOO_LONG_MESSAGE);
   });
 
-  it("lets a message at exactly the ceiling through the guard", async () => {
-    // Both of these get past the length guard and fail further in for want of a
-    // session. What matters is which refusal they are not: an off-by-one here
-    // is a person told to shorten a message that was never too long.
+  it("lets a message at exactly the ceiling through the guard, and leaves the body readable behind it", async () => {
+    // Two assertions in one request, and the second is the load-bearing one.
+    //
+    // `authentication_required` rather than merely "not message_too_long":
+    // reaching the handler at all proves `zValidator` parsed this body *after*
+    // the guard had already read it. The guard's safety rests on Hono caching
+    // the parsed body, which is a property of Hono rather than of this code —
+    // if that ever stopped holding, the validator would meet a drained stream
+    // and answer `invalid_request`, and asserting only the absence of
+    // `message_too_long` would sail straight past it.
+    //
+    // The first assertion is the off-by-one: a person told to shorten a message
+    // that was never too long.
     const create = await post("/workstreams", createBody("x".repeat(MESSAGE_MAX_CHARACTERS)));
     const send = await post(`/workstreams/${workstreamId}/messages`, messageBody("x".repeat(MESSAGE_MAX_CHARACTERS)));
 
-    expect(create.code).not.toBe("message_too_long");
-    expect(send.code).not.toBe("message_too_long");
+    // The two routes refuse for different reasons — the create reaches the
+    // session check, the send reaches the authority check that precedes it —
+    // and either is proof of the same thing: a handler ran, so the body was
+    // still there to be parsed.
+    expect(create.code).toBe("authentication_required");
+    expect(send.code).toBe("workstream_authority_not_open");
   });
 
   it("leaves a body it cannot read to the validator", async () => {
