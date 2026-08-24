@@ -2572,7 +2572,6 @@ export async function reapStaleHarnessRuns(
     // one. Reaping is what a lapsed lease and a reaped child have in common;
     // everything else wrote its own terminal row.
     const terminalization = terminalizationOf(row.error_json, row.parent_tool_call_id);
-    const reaped = terminalization === "reaped";
     const repair = {
       runId: row.id,
       workspaceId: row.workspace_id,
