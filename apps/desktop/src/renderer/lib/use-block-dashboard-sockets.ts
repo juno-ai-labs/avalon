@@ -264,6 +264,9 @@ export function useBlockDashboardSockets(
           scheduleReconnect();
         });
         socket.addEventListener('error', () => {
+          // See `use-workstream-socket.ts`: the pending cause belongs to this
+          // block's connection rather than to one of its sockets.
+          if (stopped || connection.socket !== socket) return;
           connection.telemetry.willClose('transport_error');
           socket.close();
         });

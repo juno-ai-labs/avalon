@@ -134,7 +134,10 @@ text under another's header.
   fixture.
 - **The grace is one constant, exported from contracts.** A client and a server
   that disagree about it produce a row whose skeleton and whose title come from
-  different rules.
+  different rules. All three readers import `WORKSTREAM_NAMING_GRACE_MS`:
+  `useNamingSkeleton`, `directoryWorkstream` in WorkspaceDO, and `summary` in the
+  work-stream object. A fourth that writes the number instead is invisible to
+  anyone changing the constant, and to anyone grepping for the rule.
 - **Naming never fails its caller.** Both passes swallow everything: they are
   called after a work stream is created, after a run has finished, beside a
   message that is already durable. None of those can be failed by a title.
@@ -204,6 +207,22 @@ ordinary work-stream update and belongs to the object's product service.
   file's hard-coded date asserts nothing.
 
 ## Changelog
+
+### 2026-08-24 — Both server read sites import the grace they were spelling out
+
+**What changed:** `directoryWorkstream` in WorkspaceDO and `summary` in the
+work-stream object now import `WORKSTREAM_NAMING_GRACE_MS` instead of comparing
+against a literal `60_000`.
+
+**Why:** Review on #271. The invariant above says the grace is one constant, and
+the code did not hold it: the constant had exactly one non-test importer — the
+client hook this change added — while both authorities wrote the number. Nobody
+grepping for `60_000` would have found the client rule, and nobody changing the
+constant would have found the server ones. The pull request that writes an
+invariant down is the cheapest place to make it true.
+
+**Consequences:** Changing the grace is now one edit. The three readers agree by
+construction rather than by review.
 
 ### 2026-08-24 — The grace is derived per render rather than held in state
 

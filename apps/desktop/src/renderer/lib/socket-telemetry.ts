@@ -36,8 +36,14 @@ export interface RealtimeSocketTelemetry {
   /**
    * The socket is down. `retrying` is whether anything is scheduled to bring it
    * back: a client that has stopped is the interesting half of this event, and
-   * it is not derivable from the cause — being offline stops one loop and only
-   * delays another.
+   * the loop decides it, not the cause — a revocation never retries, a ticket
+   * failure retries unless the desktop is offline, and every loop refuses to
+   * schedule while it is.
+   *
+   * Callers gate this on their own teardown flag. A hook closing its socket
+   * because the screen went away is not a drop, and counting it would put every
+   * ordinary navigation in the drop rate; the flag lives in the loop, so only
+   * the loop can tell the two closes apart.
    */
   disconnected(input: { attempts: number; retrying: boolean; cause?: RealtimeSocketCause }): void;
 }
