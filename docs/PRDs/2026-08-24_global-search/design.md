@@ -60,11 +60,11 @@ register them.
 
 ```sql
 CREATE TABLE workspace_search_documents (
-  source_kind TEXT NOT NULL CHECK (source_kind IN (
+  source_type TEXT NOT NULL CHECK (source_type IN (
     'workstream', 'automation', 'note', 'note_segment', 'document', 'message'
   )),
   source_id TEXT NOT NULL,
-  -- The row the authorization join runs against, named by source_kind:
+  -- The row the authorization join runs against, named by source_type:
   -- workstream/message -> workstream_id, note/note_segment -> note_id,
   -- document -> resource_id, automation -> automation_subscription_id.
   --
@@ -96,11 +96,11 @@ CREATE TABLE workspace_search_documents (
   waterline INTEGER CHECK (waterline IS NULL OR waterline > 0),
   payload_hash TEXT,
   CHECK ((authority_generation IS NULL) = (waterline IS NULL)),
-  PRIMARY KEY (source_kind, source_id)
+  PRIMARY KEY (source_type, source_id)
 ) STRICT;
 
 CREATE INDEX workspace_search_documents_scope_idx
-  ON workspace_search_documents(source_kind, scope_id);
+  ON workspace_search_documents(source_type, scope_id);
 
 CREATE VIRTUAL TABLE workspace_search_fts USING fts5(
   title,
@@ -122,7 +122,7 @@ CREATE VIRTUAL TABLE workspace_search_fts USING fts5(
 );
 ```
 
-The index on `(source_kind, scope_id)` is what the cascade deletes below use.
+The index on `(source_type, scope_id)` is what the cascade deletes below use.
 There is deliberately no `(scope_id, updated_at DESC)` index: the query enters
 `workspace_search_documents` by rowid from the FTS match and never looks a
 document up by scope, and `ORDER BY` runs over a computed `bm25()` that no index
@@ -180,9 +180,9 @@ unrelated row, the orphaned terms resolve to a row the searcher *can* see — a
 content-existence disclosure that the visibility join cannot catch, because the
 join runs against the innocent row.
 
-Every projection therefore writes `UPDATE … WHERE source_kind = ? AND source_id = ?`
+Every projection therefore writes `UPDATE … WHERE source_type = ? AND source_id = ?`
 and falls back to `INSERT` when no row was changed, or uses
-`INSERT … ON CONFLICT(source_kind, source_id) DO UPDATE SET …`, both of which
+`INSERT … ON CONFLICT(source_type, source_id) DO UPDATE SET …`, both of which
 fire the update trigger.
 
 ### Byte bounds
@@ -385,13 +385,13 @@ Three changes from the memory copies, each load-bearing:
 ### The visibility join
 
 Every source kind gets a predicate, and the predicates are inside the same
-statement as the `MATCH`. A `CASE` over `source_kind` rather than a chain of
+statement as the `MATCH`. A `CASE` over `source_type` rather than a chain of
 `OR`s, because `CASE` is exhaustive and fails closed: a source kind added later
 with no arm returns `NULL` and is excluded, where an `OR` chain of
 `(scope_id IS NULL) OR (…)` guards admits it unconditionally.
 
 ```sql
-SELECT source_kind, source_id, scope_id, title, body, updated_at, rank, total_matches
+SELECT source_type, source_id, scope_id, title, body, updated_at, rank, total_matches
   FROM (
     SELECT m.*,
            COUNT(*) OVER () AS total_matches,
@@ -399,31 +399,31 @@ SELECT source_kind, source_id, scope_id, title, body, updated_at, rank, total_ma
              PARTITION BY m.group_key ORDER BY m.rank, m.updated_at DESC
            ) AS rn
       FROM (
-        SELECT d.source_kind, d.source_id, d.scope_id, d.title, d.body, d.updated_at,
+        SELECT d.source_type, d.source_id, d.scope_id, d.title, d.body, d.updated_at,
                -- The panel's groups, not the storage kinds: note and
                -- note_segment render as one Meeting notes group.
-               CASE WHEN d.source_kind IN ('note', 'note_segment')
-                    THEN 'note' ELSE d.source_kind END AS group_key,
+               CASE WHEN d.source_type IN ('note', 'note_segment')
+                    THEN 'note' ELSE d.source_type END AS group_key,
                bm25(workspace_search_fts, 10.0, 1.0) AS rank
           FROM workspace_search_fts f
           JOIN workspace_search_documents d ON d.rowid = f.rowid
           LEFT JOIN workspace_workstream_directory wd
-                 ON d.source_kind IN ('workstream', 'message')
+                 ON d.source_type IN ('workstream', 'message')
                 AND wd.workstream_id = d.scope_id
           LEFT JOIN workspace_workstream_viewers wv
                  ON wv.workstream_id = wd.workstream_id
                 AND wv.user_id = ?1
                 AND wv.authority_generation = wd.authority_generation
           LEFT JOIN notes n
-                 ON d.source_kind IN ('note', 'note_segment') AND n.id = d.scope_id
+                 ON d.source_type IN ('note', 'note_segment') AND n.id = d.scope_id
           LEFT JOIN resources r
-                 ON d.source_kind = 'document' AND r.id = d.scope_id
+                 ON d.source_type = 'document' AND r.id = d.scope_id
           LEFT JOIN connector_connections cc ON cc.id = r.connection_id
           LEFT JOIN automation_subscriptions s
-                 ON d.source_kind = 'automation' AND s.id = d.scope_id
+                 ON d.source_type = 'automation' AND s.id = d.scope_id
           LEFT JOIN automation_templates t ON t.id = s.template_id
          WHERE workspace_search_fts MATCH ?2
-           AND CASE d.source_kind
+           AND CASE d.source_type
              WHEN 'workstream'   THEN <workstream_visible>
              WHEN 'message'      THEN <workstream_visible>
              WHEN 'note'         THEN <note_visible>
@@ -579,7 +579,7 @@ segments matching, every slot goes to transcript rows and the Work streams,
 Documents, and Automations groups render as *no matches* even though each holds a
 title hit — indistinguishable, to the person, from the work stream not existing.
 
-**It partitions on `group_key`, not `source_kind`.** `note` and `note_segment`
+**It partitions on `group_key`, not `source_type`.** `note` and `note_segment`
 are two storage kinds and one rendered group, so partitioning on the storage kind
 gives Meeting notes up to ten rows against a stated cap of five. It also needs
 de-duplication the SQL alone does not provide: a note whose title *and* five of
@@ -620,7 +620,7 @@ client by filtering what is already on screen:
   skips when the index moves under a person mid-scroll, which during the phase 2
   backfill is the normal case rather than the rare one.
 
-`group_key` — not `source_kind` — is what is bound, so scoping **Meeting notes**
+`group_key` — not `source_type` — is what is bound, so scoping **Meeting notes**
 correctly reaches both `note` and `note_segment` rows, and the client's
 `scope_id` collapse still applies within the page.
 
@@ -654,8 +654,8 @@ WorkspaceDO does **not** set `PRAGMA foreign_keys = ON` — `workstream-do.ts`,
 `workstream-object-schema.ts`, and `block-dashboard-agent.ts` each do, and
 WorkspaceDO does not — so a declared `REFERENCES … ON DELETE CASCADE` cannot be
 assumed to enforce there, whatever the sibling tables declare. Every parent deletion therefore issues an explicit
-`DELETE FROM workspace_search_documents WHERE source_kind IN (…) AND scope_id = ?`,
-served by the `(source_kind, scope_id)` index. Without it a deleted work stream's
+`DELETE FROM workspace_search_documents WHERE source_type IN (…) AND scope_id = ?`,
+served by the `(source_type, scope_id)` index. Without it a deleted work stream's
 20,000 message rows stay forever: invisible in results, since the predicate fails
 closed, and accumulating against the 10 GB ceiling the PRD flags as an outage
 condition.
@@ -791,6 +791,9 @@ Per [`testing.md`](../../testing.md), the default is the real pipeline:
 - [`implementation-plan.md`](../../implementation-plan.md) — its release gate
   independently names global search as a completion blocker. See the PRD's
   [Impact on the product contract](prd.md#impact-on-the-product-contract).
+- [`transcript-scrolling.md`](../../transcript-scrolling.md) — the anchored open
+  a message result performs, as a fifth reason the screen moves the viewport, and
+  the rule that the match keeps it until the reader scrolls.
 - [`workstream-durable-object.md`](../../workstream-durable-object.md) — the
   fourth effect kind and the `durable_outbox` rebuild it requires.
 - [`choosing-sockets-or-rest.md`](../../choosing-sockets-or-rest.md) — `GET

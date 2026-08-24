@@ -293,7 +293,12 @@ Three structural notes the table would otherwise hide. A **Messages** row has no
 title of its own — it renders the snippet as its primary line and names its work
 stream as metadata, and the indexed row's `title` is deliberately empty, because
 stamping the work stream's title onto every message would give all of them a
-title-weighted hit and bury the work stream itself. **People** and **Actions**
+title-weighted hit and bury the work stream itself. **Opening one lands on that
+message**, with the transcript anchored to it and the matched phrase in view —
+not at the bottom of the work stream, where a busy thread may have put hundreds
+of parts between the reader and the thing they searched for. The match holds the
+viewport until the reader scrolls, so a turn streaming in below does not take it
+away. See key design decision 8. **People** and **Actions**
 are not indexed rows and carry no relevance score; they are matched entirely on
 the client, sort within their own groups, and never compete for the top hit.
 And `⏎` on a person opens the workspace-member surface, not a work stream — the
@@ -523,6 +528,29 @@ None yet.
    matched, and has its own key (`⌘⏎`). A search that fails should cost one
    keystroke to turn into work.
 
+8. **A message result opens the work stream *at that message*, not at the
+   bottom.** Landing at the tail and leaving the person to find the line they
+   searched for is the whole feature failing at the last step: the phrase they
+   typed is the one thing they cannot see. **Rejected:** shipping bottom-anchored
+   in phase 2 and improving it later — the improvement is the feature, and a
+   transcript that jumps to the newest message actively hides the match, since a
+   busy work stream may have hundreds of parts after it.
+
+   It costs more than a `scrollTo`, and the cost is worth stating because it is
+   the reason this was nearly deferred. The transcript is **not virtualized**, so
+   a part that has not been paged in is not in the DOM to scroll to — a match
+   from three months ago is not in the loaded window at all. So the work is an
+   *anchored open*: read the page around the matched `sequence_number` instead of
+   the tail, and put the viewport there. Two pieces already exist and one does
+   not. `messageRows` already takes `before`/`after` cursors, so a centred read
+   is two existing reads rather than a new query shape; and
+   [`transcript-scrolling.md`](../../transcript-scrolling.md) already has the
+   concept of the screen asking the hook to move the viewport — on open, after an
+   older page is prepended, on **Jump to latest**, and on send. This adds a fifth
+   reason, which is exactly the shape that document is built for. What is new is
+   the anchored read itself, and the rule that the match keeps the viewport until
+   the reader scrolls, so a streaming turn below does not yank it away.
+
 ## Data model
 
 Sketch only; [`design.md`](design.md) carries the DDL, the projection protocol,
@@ -532,7 +560,7 @@ authoritative when it ships.
 Two new tables in WorkspaceDO, beside the directory they are joined to:
 
 - **`workspace_search_documents`** — one row per searchable thing, keyed by
-  `(source_kind, source_id)` where `source_kind` is one of `workstream`,
+  `(source_type, source_id)` where `source_type` is one of `workstream`,
   `message`, `note`, `note_segment`, `document`, `automation`. Carries a single
   `scope_id` naming the row the authorization join runs against, a `title`, the
   indexed `body`, `updated_at` for recency ranking, and the
@@ -720,9 +748,12 @@ the pause duration is a number, it is not set here, and it is on the list above.
    not by a component test.
 3. Typing three characters of a work stream's title selects it as the top hit and
    `⏎` opens it.
-4. A phrase that appears only in the body of one message finds that message,
+4. **A phrase that appears only in the body of one message finds that message,
    shows the work stream it is in and a snippet with the phrase highlighted, and
-   opens to it.
+   opens the work stream scrolled to that message with the phrase in view** —
+   including when the match is old enough that the transcript's tail page does
+   not contain it, which is the case that distinguishes an anchored read from a
+   `scrollTo`. A turn streaming in below must not move the viewport off it.
 5. A phrase that appears only in a meeting transcript finds its note; a phrase
    that appears only inside an uploaded document finds that document.
 6. **A second member, signed in separately, searches a phrase that appears only
@@ -779,13 +810,51 @@ name and nothing else, phase 2's cost is not yet justified.
 ## Open questions
 
 1. **What is the retention horizon for indexed message text?** Blocking for
-   phase 2, not for phase 1. Indexing every message body forever grows the
-   WorkspaceDO index without bound against a 10 GB ceiling that, when reached,
-   stops the object accepting writes — an outage, not a degradation
-   ([`data-model.md`](../../data-model.md)). A horizon makes search a recency
-   tool; no horizon makes it an archive with an eviction event in its future. The
-   answer changes what the product promises, so it is the team's, not the
-   implementer's.
+   phase 2a, and **not for phase 1 at all** — phase 1 indexes no message text, so
+   everything below is separable from shipping the surface and judging it.
+
+   **The structural point, which matters more than the multiplier.** Message
+   bodies today are spread across *N* `SubstreamAgent` objects, each with its own
+   10 GB. Phase 2a puts a second copy of all of them into **one** WorkspaceDO
+   with **one** 10 GB budget. So the index does not merely consume space — it
+   re-bounds the workspace's whole message capacity against a single object's
+   ceiling, and it is the first thing in the product to do that. Everything else
+   WorkspaceDO holds (the directory, notes and transcripts, memory, activity,
+   opportunities) shares that budget.
+
+   **The arithmetic, so the horizon can be argued rather than guessed.**
+   External-content FTS5 keeps one copy of the text — it avoids the `%_content`
+   shadow table — but not the inverted index, and `detail=full` is required for
+   phrase queries and carries a position per term occurrence. Measured on 50,000
+   rows of ~40 words: 18.7 MB of table against 9.9 MB of FTS index, so **about
+   570 bytes per indexed part, or roughly 2.3× the raw message text** once row
+   overhead, the primary key, and the scope index are counted. That gives:
+
+   | Indexed parts | Index size | Share of a 10 GB object |
+   | --- | --- | --- |
+   | 1 million | ~570 MB | ~6% |
+   | 5 million | ~2.8 GB | ~28% |
+   | 10 million | ~5.7 GB | ~57% |
+
+   So the index is comfortable to roughly ten million parts and becomes the
+   object's dominant consumer somewhere past that. **The failure at the end is
+   not degradation:** a full object stops accepting writes — deletes still work,
+   which is exactly what makes it an outage rather than a policy
+   ([`data-model.md`](../../data-model.md)).
+
+   **The levers, cheapest to reverse first**, because the horizon is only one of
+   them: a retention window (index the last *N* months); a bounded prefix of each
+   message rather than its whole body; `detail=column` or `detail=none` on the
+   FTS table, which cuts the inverted index materially but gives up phrase
+   queries; a contentless index (`content=''`), which drops the body copy
+   entirely and roughly halves the cost, at the price of fetching every snippet
+   from the owning object; and not indexing messages at all, which is simply
+   phase 1.
+
+   A horizon makes search a recency tool; no horizon makes it an archive with an
+   eviction event in its future. That is a promise to users either way, so it is
+   the team's call and not the implementer's — but it should now be made against
+   these numbers rather than against the bare word "unbounded".
 2. **Does a work stream a person created but then left appear in their
    results?** Blocking, and not a question this PRD may answer by itself.
    [`data-model.md`](../../data-model.md) records that `personal` visibility
@@ -809,13 +878,7 @@ name and nothing else, phase 2's cost is not yet justified.
    before phase 1 ships: the answer is worth making for every caller at once,
    and `removeParticipant` permits self-removal with no creator exemption, so
    the gap is reachable rather than theoretical.
-3. **Should a message match open the work stream at that message, or at the
-   bottom?** Opening at the match needs a scroll-to-sequence path the transcript
-   does not currently expose, and
-   [`transcript-scrolling.md`](../../transcript-scrolling.md) is deliberate about
-   who owns the viewport. Phase 2 can ship opening at the bottom; landing on the
-   match is the better behavior and the larger change.
-4. **Do automation *runs* deserve their own group?** Every run owns a work
+3. **Do automation *runs* deserve their own group?** Every run owns a work
    stream, so runs are already reachable through the **Work streams** group — but
    a person looking for "the competitor digest from last Tuesday" is thinking
    about the automation, not the work stream it produced. Deferred until phase 1
