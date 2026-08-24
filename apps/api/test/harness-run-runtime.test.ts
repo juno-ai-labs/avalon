@@ -3266,6 +3266,61 @@ describe("durable harness attempt runtime", () => {
     ).get(automationRunId)).toEqual({ status: "running" });
   });
 
+  it("closes the tool card of a run that suspended for input with a receipt still open", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-needs-input-residual",
+      owner: "owner-needs-input-residual",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
+      invocationId: "invocation-needs-input-residual",
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: `${RUN_ONE}:turn:2:tool:0`,
+      toolName: "load_plugin",
+      inputHash: "needs-input-residual-input",
+      input: { pluginId: "plugin_x" },
+      plan: { operation: "avalon.plugins.load", mode: "read", idempotency: "safe" },
+      mode: "read",
+    });
+    seedPendingToolCard(sqlite, "invocation-needs-input-residual", "load_plugin");
+
+    // The fourth terminal status, and the one whose safety the change argues
+    // rather than demonstrates elsewhere: an elicitation returns a normal result
+    // carrying `halt`, so its own receipt settles before the run suspends and a
+    // receipt still open here belongs to some earlier call. Settling it is
+    // therefore right, and a continuation gets a fresh run id, so nothing is
+    // closed out from under a run that will resume.
+    expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
+      status: "needs_input",
+      memberSafePayload: {},
+    }, sqlite.receipts)).toBe("terminalized");
+
+    expect(sqlite.object.prepare(
+      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
+    ).get("invocation-needs-input-residual")).toEqual({
+      status: "failed",
+      error_json: '{"code":"run_terminated","message":"The run ended before the tool produced a result"}',
+    });
+    expect(sqlite.object.prepare(
+      "SELECT tool_status FROM parts WHERE id = ?",
+    ).get("invocation-needs-input-residual")).toEqual({ tool_status: "failed" });
+    expect(sqlite.object.prepare(
+      `SELECT COUNT(*) AS count FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'residual_receipts_settled'`,
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+    // Settling the receipt does not relabel the run itself: it is still waiting
+    // on a person, not failed. (Asserted on the run rather than the work stream,
+    // whose status is held back here by the fixture's second scheduled run --
+    // an interaction this change has nothing to do with.)
+    expect(sqlite.object.prepare(
+      "SELECT status FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toEqual({ status: "needs_input" });
+  });
+
   it("repairs a marker backfill without delaying the stale-lease reap behind it", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
