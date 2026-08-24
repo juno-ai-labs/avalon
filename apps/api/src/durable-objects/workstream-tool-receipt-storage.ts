@@ -188,6 +188,21 @@ function first<T extends Record<string, SqlStorageValue>>(
   return cursor.toArray()[0];
 }
 
+/**
+ * The run statuses that count as still holding a lease.
+ *
+ * These are the ones the retired `_runtime_harness_runs` view called `running`:
+ * its projection mapped `waiting` and `steering` onto `running`, so the routed
+ * fence this replaces accepted a run in any of them. Nothing writes those two
+ * today, so fencing on `running` alone would also pass — but the two are not
+ * equally safe to be wrong about. A fence that does not recognise a lease
+ * refuses the write, and a refusal is reported as a lost lease, so the first
+ * writer of either status would turn settled receipts into the residual stop
+ * fallback rather than fail anywhere anyone would look. The block dashboard
+ * storage's `#holdsLease` carries the same set for the same reason.
+ */
+const LEASE_HOLDING_STATUSES = new Set(["running", "waiting", "steering"]);
+
 export class WorkstreamToolReceiptStorage {
   constructor(private readonly storage: DurableObjectStorage) {}
 
@@ -234,7 +249,9 @@ export class WorkstreamToolReceiptStorage {
       now,
     ));
     if (!row) return "lost";
-    if (row.status !== "running") return row.status === "cancelled" ? "cancelled" : "lost";
+    if (!LEASE_HOLDING_STATUSES.has(row.status)) {
+      return row.status === "cancelled" ? "cancelled" : "lost";
+    }
     if (row.cancellation_requested_at !== null && !allowCancellationRequested) return "cancelled";
     return "held";
   }
@@ -758,23 +775,6 @@ export class WorkstreamToolReceiptStorage {
     });
   }
 
-  /**
-   * Settle every in-flight receipt of a run whose lease was reaped.
-   *
-   * This is the one operation here that is not fenced on a lease, and it could
-   * not be: `#fence` demands a live one, and the sweep's entire premise is that
-   * none exists. Every other method would answer `ownership_lost` by
-   * construction. The guard is the run's own `terminalized_at`, re-read here
-   * rather than trusted from the caller, so this is safe to call after the batch
-   * that terminalized the run rather than only inside it.
-   *
-   * Write-ness comes from the execution plan, not from `tool_effects.mode`, and
-   * the two disagree on purpose. For an absent or malformed plan the column says
-   * `read`, while this treats it as possibly-a-write and settles `ambiguous`.
-   * Preferring the column would silently turn "we could not confirm the write"
-   * into "it definitely failed" for exactly the receipts whose provider request
-   * may have landed — the wrong direction for the only case that matters.
-   */
   /**
    * Close every receipt a run still has open, because the run is ending now.
    *

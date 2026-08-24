@@ -172,6 +172,30 @@ describe("tool-receipt authority on real workerd", () => {
     expect(body).toMatchObject({ error: "workstream_tool_receipt_identity_mismatch" });
   });
 
+  it("refuses a write against an object that is no longer the authority", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      seedLiveRun(state);
+      state.storage.sql.exec(`UPDATE workstream SET authority_mode = 'quarantined' WHERE id = 1`);
+    });
+
+    const result = await receipt(stub, "admit", admission("effect-1", "call-1"));
+
+    // The check the routed path made and these endpoints dropped:
+    // `executeWorkstreamRuntimeSql` refused every statement against a
+    // `preparing` or `quarantined` object, and the typed ports kept only the
+    // identity half of it. A quarantined object is not the one whose writes
+    // count, so a write reaching it must fail rather than commit.
+    expect(result.status).toBe(409);
+    expect(result.error).toBe("workstream_runtime_authority_fenced");
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM tool_effects`).one().count)
+        .toBe(0);
+    });
+  });
+
   it("refuses an operation that is not on the contract", async () => {
     const stub = agent();
     await boot(stub);

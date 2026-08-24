@@ -2,6 +2,10 @@ import { asHarnessRunId, asWorkspaceId, asWorkstreamId, type HarnessRunId, type 
 
 import { uuidV7 } from "../lib/uuid-v7";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
+import type {
+  BlockDashboardObjectPort,
+} from "../durable-objects/workstream-block-dashboard-protocol";
+import type { BlockDashboardPortFactory } from "./block-dashboard-port";
 import type { ToolReceiptPortFactory } from "./tool-receipt-port";
 import type {
   ToolReceiptAdmission,
@@ -2037,6 +2041,52 @@ async function settleAndRecordResidualReceipts(
   await recordResidualReceiptsSettled(db, row);
 }
 
+/**
+ * Everything a terminalized run left open outside its own receipts, settled
+ * before the marker that says its reconciliation finished.
+ *
+ * Two authorities, and both are reached the same way and for the same reason:
+ * neither can be another statement in the batch that terminalized the run — the
+ * block lives in its own object and the automation run in another database —
+ * and each re-reads the run's `terminalized_at` inside its own transaction, so
+ * a run since taken over is not closed by the sweep that lost it. Running them
+ * here rather than beside the batch is what makes a transient failure retried:
+ * `settleAndRecordResidualReceipts` records nothing when this throws, and the
+ * bounded sweep comes back for every terminal run missing that marker.
+ *
+ * `abandonBlockRun` is called for every run, not only a HyperSight one, and not
+ * because this run has a block — it may well not. The operation also repairs
+ * blocks whose runs are already terminal but which never settled, the state a
+ * failed settlement RPC leaves behind and which no selector here can find
+ * again. Gating it on the run's own origin would mean a work stream whose later
+ * stale runs happen to be ordinary ones never clears its orphan. The cost is
+ * one round trip per run on a sweep that already makes one for receipts.
+ */
+function settleOtherAuthorities(
+  options: { blocks: BlockDashboardPortFactory },
+  automationDatabase: D1Database | null,
+  origin: string,
+  repair: TerminalizedReceiptRepair,
+): () => Promise<void> {
+  return async () => {
+    await options.blocks(repair.workspaceId, repair.workstreamId).abandonBlockRun({
+      harnessRunId: repair.runId,
+      terminalizedAt: Date.parse(repair.terminalizedAt),
+      errorJson: JSON.stringify({
+        code: "stale_run_reaped",
+        message: "The HyperSight refresh lost its durable lease",
+      }),
+    });
+    if (
+      repair.status === "failed"
+      && repair.parentToolCallId === null
+      && origin !== "block_dashboard_block"
+    ) {
+      await settleStaleAutomationRun(automationDatabase, repair);
+    }
+  };
+}
+
 async function settleStaleAutomationRun(
   db: D1Database | null,
   row: Pick<TerminalizedReceiptRepair, "workspaceId" | "workstreamId" | "terminalizedAt">,
@@ -2063,6 +2113,7 @@ export async function terminalizeHarnessAttempt(
   lease: AttemptLease,
   outcome: TerminalOutcome,
   receipts: ToolReceiptObjectPort,
+  blocks: BlockDashboardObjectPort,
 ): Promise<"terminalized" | "already_terminal"> {
   const target = await db.prepare(
     `SELECT origin FROM harness_runs
@@ -2071,12 +2122,13 @@ export async function terminalizeHarnessAttempt(
   if (!target) throw new Error("harness_run_not_found");
   if (outcome.status === "completed") {
     if (target.origin === "block_dashboard_block") {
-      const result = await db.prepare(
-        `SELECT id FROM block_dashboard_block_runs
-          WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?
-            AND status = 'completed' AND markdown IS NOT NULL`,
-      ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{ id: string }>();
-      if (!result) throw new Error("block_dashboard_result_not_persisted");
+      // The block's own record, read through the object that owns it. A
+      // HyperSight run that has not produced markdown has not produced the
+      // thing it exists for, and calling it completed leaves a member looking
+      // at an empty block the product believes succeeded.
+      if (!await blocks.hasPersistedResult({ harnessRunId: input.harnessRunId })) {
+        throw new Error("block_dashboard_result_not_persisted");
+      }
     } else {
       if (!outcome.finalMessageId) throw new Error("final_message_required");
       const finalMessage = await db.prepare(
@@ -2326,6 +2378,12 @@ export async function reapStaleHarnessRuns(
       attemptId: string;
       reason: string;
     }) => void;
+    /**
+     * How to reach a run's HyperSight block authority. Required for the reason
+     * `receipts` is: a sweep that terminalizes a block's run and leaves the
+     * block `running` is worse than one that fails to start.
+     */
+    blocks: BlockDashboardPortFactory;
   },
 ): Promise<string[]> {
   const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 25)));
@@ -2405,12 +2463,12 @@ export async function reapStaleHarnessRuns(
         db,
         options.receipts(row.workspace_id, row.workstream_id),
         repair,
-        row.status === "failed" && row.parent_tool_call_id === null && row.origin !== "block_dashboard_block"
-          ? () => settleStaleAutomationRun(
-            options.automationDatabase === undefined ? db : options.automationDatabase,
-            repair,
-          )
-          : undefined,
+        settleOtherAuthorities(
+          options,
+          options.automationDatabase === undefined ? db : options.automationDatabase,
+          row.origin,
+          repair,
+        ),
       );
       processed += 1;
     } catch (error) {
@@ -2500,16 +2558,6 @@ export async function reapStaleHarnessRuns(
             )`,
       ).bind(now, row.workstream_id, row.workspace_id, row.id),
       db.prepare(
-        `UPDATE block_dashboard_block_runs
-            SET status = 'failed', completed_at = ?1,
-                error_json = '{"code":"stale_run_reaped","message":"The HyperSight refresh lost its durable lease"}'
-          WHERE harness_run_id = ?2 AND status IN ('queued', 'running')
-            AND EXISTS (
-              SELECT 1 FROM harness_runs
-               WHERE id = ?2 AND terminalized_at = ?1 AND origin = 'block_dashboard_block'
-            )`,
-      ).bind(now, row.id),
-      db.prepare(
         `UPDATE harness_runs
             SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?1),
                 cancellation_reason = COALESCE(cancellation_reason, 'parent_stale_run_reaped')
@@ -2529,8 +2577,9 @@ export async function reapStaleHarnessRuns(
       // Every live-lease receipt operation must refuse here because that lease
       // is precisely what expired. Residual settlement instead re-reads this
       // exact terminal stamp inside the object transaction. Its lifecycle
-      // marker lands only after receipt and automation settlement both succeed,
-      // so a later bounded sweep retries a transient second-call failure.
+      // marker lands only after receipt settlement and the run's other
+      // authority — its block, or its automation run — both succeed, so a later
+      // bounded sweep retries a transient second-call failure.
       const repair = {
         runId: row.id,
         workspaceId: row.workspace_id,
@@ -2554,9 +2603,7 @@ export async function reapStaleHarnessRuns(
           db,
           options.receipts(row.workspace_id, row.workstream_id),
           repair,
-          automationDatabase && row.origin !== "block_dashboard_block"
-            ? () => settleStaleAutomationRun(automationDatabase, repair)
-            : undefined,
+          settleOtherAuthorities(options, automationDatabase, row.origin, repair),
         );
       } catch (error) {
         options.onReceiptRepairFailure?.({

@@ -553,6 +553,22 @@ export class WorkstreamObjectStore {
     return this.storage.sql.databaseSize;
   }
 
+  /**
+   * Whether this object may still be written through as the work stream's
+   * authority.
+   *
+   * The check `executeWorkstreamRuntimeSql` makes before it runs any routed
+   * statement. The typed object ports replaced that path and each re-checks
+   * identity, so this is the half they need to keep: a `preparing` or
+   * `quarantined` object is not the one whose writes count, and the routed
+   * statement would have been refused.
+   */
+  isAuthoritative(): boolean {
+    return first(this.storage.sql.exec<{ authority_mode: string }>(
+      `SELECT authority_mode FROM workstream WHERE id = 1`,
+    ))?.authority_mode === "authoritative";
+  }
+
   /** Legacy generation zero and an activated imported generation may emit room state. */
   isRealtimeWritable(): boolean {
     const row = first(this.storage.sql.exec<{
