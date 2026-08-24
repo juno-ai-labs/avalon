@@ -629,7 +629,7 @@ describe('Avalon API wire adapter', () => {
     )).toEqual([answeredResponse]);
   });
 
-  it('omits activity suggestions from rebuilt transcripts while the surface is paused', () => {
+  it('rebuilds one pending suggestion card and keeps a locally dismissed card hidden', () => {
     const suggestion = {
       id: taskId,
       activityId: resourceId,
@@ -654,7 +654,13 @@ describe('Avalon API wire adapter', () => {
       sequenceNumber: 5,
     });
 
-    expect(messagesWithTransientBlocks([legacySuggestion], mappedDetail)).toEqual([]);
+    const visible = messagesWithTransientBlocks([legacySuggestion], mappedDetail);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]).toMatchObject({
+      messageType: 'activity_suggestion',
+      activitySuggestion: { id: taskId, status: 'pending' },
+    });
+    expect(messagesWithTransientBlocks([legacySuggestion], mappedDetail, [taskId])).toEqual([]);
   });
 
   it('maps background activity into the durable rail model', () => {

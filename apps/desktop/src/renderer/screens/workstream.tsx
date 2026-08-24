@@ -44,7 +44,10 @@ import {
   workstreamNavigation,
 } from '../lib/telemetry';
 import {
+  appendDismissedSuggestionId,
   createTextMessage,
+  dismissedSuggestionIdsQueryKey,
+  removeTranscriptMessage,
   visibleTranscriptMessages,
 } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
@@ -946,7 +949,11 @@ export function WorkstreamScreen(): React.JSX.Element {
         queryClient.setQueryData(['messages-cursor', id], page.nextCursor);
       }
       queryClient.setQueryData(['messages-newer-cursor', id], page.newerCursor);
-      const canonicalMessages = messagesWithTransientBlocks(page.items, detail);
+      const canonicalMessages = messagesWithTransientBlocks(
+        page.items,
+        detail,
+        queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(id)),
+      );
       return reconcileCanonicalTranscript(previous, canonicalMessages, detail.harnessStatus);
     },
     enabled: Boolean(api && id),
@@ -1472,6 +1479,37 @@ export function WorkstreamScreen(): React.JSX.Element {
     }
   };
 
+  const resolveSuggestion = async (suggestionId: string, action: 'accept' | 'dismiss'): Promise<void> => {
+    // Remove the pending detail entry before the request so an overlapping
+    // transcript rebuild cannot restore a card whose decision is in flight.
+    const pending = queryClient.getQueryData<WorkstreamDetail>(['workstream', id])
+      ?.suggestions?.find((suggestion) => suggestion.id === suggestionId);
+    queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current
+      ? { ...current, suggestions: (current.suggestions ?? []).filter((suggestion) => suggestion.id !== suggestionId) }
+      : current);
+    try {
+      await api!.resolveActivitySuggestion(id, suggestionId, action);
+      if (action === 'dismiss') {
+        queryClient.setQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(id), (current) =>
+          appendDismissedSuggestionId(current, suggestionId));
+        queryClient.setQueryData<Message[]>(['messages', id], (current) =>
+          removeTranscriptMessage(current, `suggestion-${suggestionId}`));
+      }
+    } catch (error) {
+      const status = error instanceof ApiError ? error.status : 0;
+      if (pending && status !== 404 && status !== 409) {
+        queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current
+          && !(current.suggestions ?? []).some((suggestion) => suggestion.id === suggestionId)
+          ? { ...current, suggestions: [...(current.suggestions ?? []), pending] }
+          : current);
+      } else {
+        void workstream.refetch();
+      }
+      throw error;
+    }
+    await Promise.all([messages.refetch(), workstream.refetch()]);
+  };
+
   useEffect(() => {
     if (!workstream.data || messages.isLoading || initialPositionedWorkstreamRef.current === id) return;
     initialPositionedWorkstreamRef.current = id;
@@ -1736,6 +1774,7 @@ export function WorkstreamScreen(): React.JSX.Element {
                       message={message}
                       onAnswerElicitation={answerElicitation}
                       onOpenAttachment={setAttachmentPreview}
+                      onResolveSuggestion={resolveSuggestion}
                       systemRowDisclosure={systemRowDisclosure}
                     />
                   </div>

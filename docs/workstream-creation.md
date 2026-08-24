@@ -211,7 +211,8 @@ than whichever rejection landed first.
   exists.
 - **A create that names no audience writes a private work stream.** `POST
   /workstreams` carries no scope — a request on the wire cannot claim one — so
-  the room is the creator plus whoever they named, and the scope reaches the
+  the creator is seated beside whoever they named, those active participant rows
+  are the room's complete reader authority, and the scope reaches the
   object as an argument rather than a hardcoded `'workspace'`. A create path
   added later inherits that: omitting the scope is a decision for private, and
   only a caller that *knows* the audience is wider — an ingress reading a public

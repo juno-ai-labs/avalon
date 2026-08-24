@@ -36,6 +36,12 @@ import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { logWarn } from "../observability/logger";
+import {
+  ContentAudienceSchema,
+  contentAudienceContainsWorkstream,
+  type ContentAudience,
+  type WorkstreamReaderAudience,
+} from "../lib/audience-containment";
 import { prepareMentionMarkdown, type MentionPerson } from "../lib/message-mentions";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -90,6 +96,7 @@ export const WorkstreamObjectCreateSuggestionInputSchema = z.object({
   reason: z.string().min(1).max(1_200),
   matchedEntities: z.array(z.string().max(500)).max(100),
   source: z.enum(["contextual_routing", "suggested_work"]),
+  sourceAudience: ContentAudienceSchema,
 }).strict();
 
 export type WorkstreamObjectCreateSuggestionInput = z.infer<
@@ -117,9 +124,9 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
    * has said anything about is the one somebody just started for themselves,
    * and the two mistakes are not symmetrical — a private work stream that
    * should have been public is opened from its own right-click menu, while the
-   * reverse has already been read. Callers that *know* the audience — a public
-   * Slack channel's thread, an automation whose row is reached by owning the
-   * automation rather than by being a participant — say `workspace` outright.
+   * reverse has already been read. A caller that *knows* the audience is public
+   * — a public Slack channel's thread, for example — says `workspace` outright.
+   * Automation executions remain private and seat their creator.
    *
    * Defaulted rather than required so a rolling deploy stays safe in the one
    * direction it can go wrong: the previous Worker's creation service names no
@@ -286,8 +293,8 @@ function harnessStatus(exactState: string): Workstream["harnessStatus"] {
   return "idle";
 }
 
-function participantVisible(root: RootRow, userId: string, participant: boolean): boolean {
-  return root.scope === "workspace" || participant || root.created_by_user_id === userId;
+function participantVisible(root: RootRow, participant: boolean): boolean {
+  return root.scope === "workspace" || participant;
 }
 
 function userFromRow(row: UserRow) {
@@ -689,7 +696,7 @@ export class WorkstreamObjectProductService {
 
   canRead(userId: string): boolean {
     const root = this.root();
-    return participantVisible(root, userId, this.isParticipant(userId));
+    return participantVisible(root, this.isParticipant(userId));
   }
 
   activeParticipantIds(): string[] {
@@ -707,7 +714,7 @@ export class WorkstreamObjectProductService {
       `SELECT 1 AS one FROM workspace_members
         WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
     ).bind(auth.workspaceId, auth.userId).first<{ one: number }>();
-    if (!membership || !participantVisible(root, auth.userId, this.isParticipant(auth.userId))) {
+    if (!membership || !participantVisible(root, this.isParticipant(auth.userId))) {
       throw new ApiError(404, "workstream_not_found", "Work stream not found");
     }
     if (!includeArchived && root.archived_at !== null) {
@@ -814,11 +821,14 @@ export class WorkstreamObjectProductService {
         "scope_change_unsupported",
         before.system_kind !== null
           ? "This work stream belongs to Avalon itself, so its visibility cannot be changed"
-          : "This work stream is visible to whoever the automation that created it is visible to",
+          : "Automation execution work streams are private and their visibility cannot be changed",
       );
     }
     const now = Date.now();
     const scopeChanged = input.scope !== undefined && input.scope !== before.scope;
+    if (scopeChanged && input.scope === "workspace") {
+      this.assertAcceptedContentContains({ scope: "workspace" });
+    }
     const joined = scopeChanged && input.scope === "personal" && !this.isParticipant(auth.userId);
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
@@ -1395,6 +1405,13 @@ export class WorkstreamObjectProductService {
     if (!member) {
       throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
     }
+    const audience = this.readerAudience();
+    if (audience.scope === "personal" && !audience.userIds.includes(userId)) {
+      this.assertAcceptedContentContains({
+        scope: "personal",
+        userIds: [...audience.userIds, userId],
+      });
+    }
     // Both names are read before the commit because the effects that carry
     // them are built inside it: an effect callback runs against object SQL and
     // cannot await a regional round trip.
@@ -1710,9 +1727,40 @@ export class WorkstreamObjectProductService {
     }));
   }
 
+  readerAudience(root: RootRow = this.root()): WorkstreamReaderAudience {
+    if (root.scope === "workspace") return { scope: "workspace" };
+    const userIds = this.storage.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM participants WHERE status = 'active'`,
+    ).toArray().map((participant) => participant.user_id);
+    return { scope: "personal", userIds };
+  }
+
+  private sourceAudience(value: string | null): ContentAudience | null {
+    const intent = parseJson<{ sourceAudience?: unknown }>(value, {});
+    const parsed = ContentAudienceSchema.safeParse(intent.sourceAudience);
+    return parsed.success ? parsed.data : null;
+  }
+
+  /** Accepted activity resources remain attached, so their audience remains a lifetime fence. */
+  private assertAcceptedContentContains(targetAudience: WorkstreamReaderAudience): void {
+    const rows = this.storage.sql.exec<{ share_intent_json: string | null }>(
+      `SELECT share_intent_json FROM suggested_actions WHERE status = 'accepted'`,
+    ).toArray();
+    for (const row of rows) {
+      const sourceAudience = this.sourceAudience(row.share_intent_json);
+      if (sourceAudience && contentAudienceContainsWorkstream(sourceAudience, targetAudience)) continue;
+      throw new ApiError(
+        409,
+        "workstream_audience_restricted_content",
+        "This work stream contains accepted content that the wider audience cannot view",
+      );
+    }
+  }
+
   private suggestions(): WorkstreamDetail["suggestions"] {
     if (!SUGGESTED_CONTEXT_ENABLED) return [];
     const root = this.root();
+    const targetAudience = this.readerAudience(root);
     return this.storage.sql.exec<{
       action_id: string; source_activity_id: string; display_title: string; display_body: string;
       share_intent_json: string | null; status: string; created_at: number; resolved_at: number | null;
@@ -1721,9 +1769,13 @@ export class WorkstreamObjectProductService {
               status, created_at, resolved_at
          FROM suggested_actions WHERE status = 'pending'
         ORDER BY created_at DESC, action_id`,
-    ).toArray().map((row) => {
+    ).toArray().flatMap((row) => {
+      const sourceAudience = this.sourceAudience(row.share_intent_json);
+      if (!sourceAudience || !contentAudienceContainsWorkstream(sourceAudience, targetAudience)) {
+        return [];
+      }
       const intent = parseJson<{ confidence?: number; reason?: string }>(row.share_intent_json, {});
-      return {
+      return [{
         id: row.action_id,
         activityId: row.source_activity_id,
         workstreamId: root.workstream_key,
@@ -1734,7 +1786,7 @@ export class WorkstreamObjectProductService {
         status: "pending" as const,
         createdAt: iso(row.created_at)!,
         resolvedAt: iso(row.resolved_at),
-      };
+      }];
     });
   }
 
@@ -1750,6 +1802,10 @@ export class WorkstreamObjectProductService {
       actionId,
     ));
     if (!row || !["pending", "accepted", "dismissed"].includes(row.status)) return undefined;
+    const sourceAudience = this.sourceAudience(row.share_intent_json);
+    if (!sourceAudience || !contentAudienceContainsWorkstream(sourceAudience, this.readerAudience(root))) {
+      return undefined;
+    }
     const intent = parseJson<{ confidence?: number; reason?: string }>(row.share_intent_json, {});
     return ActivitySuggestionSchema.parse({
       id: row.action_id,
@@ -1774,6 +1830,13 @@ export class WorkstreamObjectProductService {
       throw new ApiError(409, "workstream_object_identity_mismatch", "The object identity does not match");
     }
     const input = WorkstreamObjectCreateSuggestionInputSchema.parse(rawInput);
+    if (!contentAudienceContainsWorkstream(input.sourceAudience, this.readerAudience(root))) {
+      throw new ApiError(
+        403,
+        "suggestion_audience_mismatch",
+        "The activity audience does not contain every reader of this work stream",
+      );
+    }
     const now = Date.now();
     const inserted = this.storage.sql.exec<{ action_id: string }>(
       `INSERT OR IGNORE INTO suggested_actions
@@ -1799,6 +1862,7 @@ export class WorkstreamObjectProductService {
         reason: input.reason,
         matchedEntities: input.matchedEntities,
         source: input.source,
+        sourceAudience: input.sourceAudience,
       }),
     ).toArray().length > 0;
     const suggestion = this.suggestion(input.id);
@@ -2087,7 +2151,7 @@ export class WorkstreamObjectProductService {
       unreadCount: unreadFrom === null ? 0 : Math.max(1, latest - unreadFrom + 1),
       youAreMentioned: attention.latest_mention_attention_ordinal > attention.seen_attention_ordinal,
       unseen: this.isUnseen(userId),
-      listable: root.archived_at === null && participantVisible(root, userId, participant),
+      listable: root.archived_at === null && participantVisible(root, participant),
       seenAttentionOrdinal: attention.seen_attention_ordinal,
       manualUnreadFromOrdinal: attention.manual_unread_from_ordinal,
       manualUnreadGeneration: attention.version,
@@ -2159,6 +2223,15 @@ export class WorkstreamObjectProductService {
         workflowInput: null,
         inserted: false,
       };
+    }
+
+    if (root.scope === "personal" && input.confirmedParticipantUserIds.length > 0) {
+      const currentAudience = this.readerAudience(root);
+      if (currentAudience.scope !== "personal") throw new Error("personal_reader_audience_expected");
+      this.assertAcceptedContentContains({
+        scope: "personal",
+        userIds: [...new Set([...currentAudience.userIds, ...input.confirmedParticipantUserIds])],
+      });
     }
 
     const personIds = [...new Set(input.mentions.flatMap((mention) =>

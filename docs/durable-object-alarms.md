@@ -385,12 +385,33 @@ a failing target a free immediate attempt.
 
 ## Changelog
 
+### 2026-08-24 — Scheduler idempotency is not a member-facing directory read
+
+**What changed:** The automation firing path now uses
+`plannedAutomationWorkstream`, an exact internal WorkspaceDO lookup keyed by
+subscription and planned instant. The member-facing `plannedWorkstream` remains
+filtered to work streams that member may read.
+
+**Why:** Reusing a viewer-filtered lookup for idempotency meant an ownership or
+participation change could hide the already-created planned row from the
+scheduler. It would bootstrap a second work-stream object, lose the unique
+`automation_runs` insert, and leave the new object orphaned.
+
+**Considered and rejected:** Passing the automation owner as a privileged
+viewer, or making the member API unfiltered. Idempotency is not permission, and
+neither a historic owner nor an API caller should gain visibility from the
+scheduler's need to find its own prior write.
+
+**What a future change has to respect:** Scheduler recovery uses exact internal
+identity reads. Product directory reads always retain a concrete viewer or a
+workspace audience and never double as authorization bypasses.
+
 ### 2026-08-22 — The automation firing path reads only the object
 
 **What changed:** `runAutomationSchedule` in
 `services/workspace-schedule-execution.ts` no longer reads
-`workstream_authority_control`. The planned work stream comes from
-`directory.plannedWorkstream` unconditionally, and the losing-claim cleanup that
+`workstream_authority_control`. The planned work stream comes from the
+directory's exact internal lookup unconditionally, and the losing-claim cleanup that
 deleted a regional `workstreams` row is gone with the branch that reached it.
 
 **Why:** Migration 0090 closed the phase permanently, so both arms had been

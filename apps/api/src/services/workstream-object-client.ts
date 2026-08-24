@@ -35,6 +35,10 @@ import type {
 import type { WorkstreamObjectCreateSuggestionInput } from "../durable-objects/workstream-object-product";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import {
+  WorkstreamReaderAudienceSchema,
+  type WorkstreamReaderAudience,
+} from "../lib/audience-containment";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 
 const MessagePageSchema = z.object({
@@ -109,6 +113,20 @@ export interface WorkstreamRuntimeResourceAttachment {
 export type WorkstreamRuntimeResourceAttacher = (
   input: WorkstreamRuntimeResourceAttachment,
 ) => Promise<void>;
+
+/** Read audience from the work stream that owns participant and scope state. */
+export async function readWorkstreamRuntimeAudience(
+  env: Env,
+  workspaceId: string,
+  workstreamId: string,
+): Promise<WorkstreamReaderAudience | null> {
+  return WorkstreamReaderAudienceSchema.nullable().parse(
+    await (await objectStub(env, workspaceId, workstreamId)).readerAudience({
+      workspaceId,
+      workstreamId,
+    }),
+  );
+}
 
 export async function createWorkstreamRuntimeSuggestion(
   env: Env,

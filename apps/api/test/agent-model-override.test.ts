@@ -99,7 +99,7 @@ function scheduleRunnerFor(fixture: Fixture) {
     workspaceId: WORKSPACE_ID,
     directory: {
       workstreamScheduleTargets: async () => ({ items: [] }),
-      plannedWorkstream: async () => null,
+      plannedAutomationWorkstream: async () => null,
     },
   };
   return {
@@ -112,12 +112,27 @@ function scheduleRunnerFor(fixture: Fixture) {
   };
 }
 
-function runWorkstream(objectStore: DatabaseSync, subscriptionId: string): { id: string; model_override: string | null } {
+interface RunWorkstreamRow {
+  id: string;
+  model_override: string | null;
+  scope: string;
+  created_by_user_id: string | null;
+  participant_user_id: string | null;
+}
+
+function runWorkstream(objectStore: DatabaseSync, subscriptionId: string): RunWorkstreamRow {
   return workstreamObjectGet(
     objectStore,
-    "SELECT id, model_override FROM workstreams WHERE automation_subscription_id = ? ORDER BY created_at DESC LIMIT 1",
+    `SELECT workstream.id, workstream.model_override, workstream.scope,
+            workstream.created_by_user_id,
+            (SELECT participant.user_id FROM workstream_participants participant
+              WHERE participant.workstream_id = workstream.id
+                AND participant.removed_at IS NULL LIMIT 1) AS participant_user_id
+       FROM workstreams workstream
+      WHERE workstream.automation_subscription_id = ?
+      ORDER BY workstream.created_at DESC LIMIT 1`,
     subscriptionId,
-  ) as { id: string; model_override: string | null };
+  ) as unknown as RunWorkstreamRow;
 }
 
 describe("automation model override", () => {
@@ -191,6 +206,11 @@ describe("automation model override", () => {
 
     const workstream = runWorkstream(fixture.objectStore, PINNED_SUBSCRIPTION_ID);
     expect(workstream.model_override).toBe("openai/gpt-5.6-terra");
+    expect(workstream).toMatchObject({
+      scope: "personal",
+      created_by_user_id: USER_ID,
+      participant_user_id: USER_ID,
+    });
     // The scheduler creates the harness run after the work stream exists, so
     // it resolves the model from the row rather than being handed the value.
     expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", workstream.id))
@@ -256,6 +276,11 @@ describe("automation model override", () => {
 
     const workstream = runWorkstream(objectStore, PINNED_SUBSCRIPTION_ID);
     expect(workstream.model_override).toBe("openai/gpt-5.6-terra");
+    expect(workstream).toMatchObject({
+      scope: "personal",
+      created_by_user_id: USER_ID,
+      participant_user_id: USER_ID,
+    });
     expect(workstreamObjectGet(objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", workstream.id))
       .toEqual({ model: "openai/gpt-5.6-terra" });
   });

@@ -553,29 +553,7 @@ export class ResourceService {
       userId: this.auth.userId,
     });
     if (access.items.length === 0) return false;
-    const subscriptionIds = [...new Set(access.items.flatMap((item) => (
-      item.automationSubscriptionId ? [item.automationSubscriptionId] : []
-    )))];
-    const subscriptions = new Map<string, { scope: string; owner_user_id: string | null }>();
-    if (subscriptionIds.length > 0) {
-      const placeholders = subscriptionIds.map(() => "?").join(",");
-      const rows = await this.env.DB.prepare(
-        `SELECT id, scope, owner_user_id FROM automation_subscriptions
-          WHERE workspace_id = ? AND id IN (${placeholders})`,
-      ).bind(this.auth.workspaceId, ...subscriptionIds).all<{
-        id: string;
-        scope: string;
-        owner_user_id: string | null;
-      }>();
-      for (const row of rows.results ?? []) subscriptions.set(row.id, row);
-    }
-    return access.items.some((item) => {
-      if (!item.automationSubscriptionId) return true;
-      const subscription = subscriptions.get(item.automationSubscriptionId);
-      return subscription?.scope === "workspace"
-        || subscription?.owner_user_id === this.auth.userId
-        || item.isParticipant;
-    });
+    return access.items.some((item) => item.scope === "workspace" || item.isParticipant);
   }
 
   private workspaceDirectory() {

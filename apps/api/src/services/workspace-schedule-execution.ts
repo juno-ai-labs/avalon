@@ -32,7 +32,7 @@ import { newId } from "@avalon/db";
 
 import type { Env } from "../env";
 import type {
-  WorkspaceDirectoryPlannedRequest,
+  WorkspaceDirectoryPlannedAutomationRequest,
   WorkspaceDirectoryScheduleTargetsRequest,
   WorkspaceDirectoryScheduleTargetsResult,
 } from "../durable-objects/workspace-directory-protocol";
@@ -74,7 +74,7 @@ import type { TerminalLifecycleTransition } from "./terminal/lifecycle";
  * passes its stub. Typed structurally so neither side has to import the other.
  */
 export interface WorkspaceScheduleDirectory {
-  plannedWorkstream(input: WorkspaceDirectoryPlannedRequest): Promise<Workstream | null>;
+  plannedAutomationWorkstream(input: WorkspaceDirectoryPlannedAutomationRequest): Promise<Workstream | null>;
   workstreamScheduleTargets(
     input: WorkspaceDirectoryScheduleTargetsRequest,
   ): Promise<WorkspaceDirectoryScheduleTargetsResult>;
@@ -126,6 +126,7 @@ interface ScheduleRow {
 
 interface AutomationSourceRow {
   subscription_id: string;
+  audience_user_id: string;
   execution_principal_json: string;
   model_override: string | null;
   template_name: string;
@@ -617,6 +618,7 @@ async function startAutomation(
 
   const source = await workspaceEnv.DB.prepare(
     `SELECT s.id AS subscription_id,
+            COALESCE(s.owner_user_id, t.owner_user_id) AS audience_user_id,
             s.execution_principal_json,
             s.model_override,
             t.name AS template_name,
@@ -646,9 +648,8 @@ async function startAutomation(
     .first<AutomationRunRow>();
 
   if (!run) {
-    const planned = await ctx.directory.plannedWorkstream({
+    const planned = await ctx.directory.plannedAutomationWorkstream({
       workspaceId: schedule.workspace_id,
-      userId: null,
       automationSubscriptionId: subscriptionId,
       plannedFor: schedule.next_run_at,
     }).then((workstream) => workstream ? ({
@@ -670,25 +671,22 @@ async function startAutomation(
         workspaceId: schedule.workspace_id,
         workstreamId,
       });
-      await executionEnv.DB.prepare(
-        // `scope` is stated rather than defaulted, for the reason
-        // `AutomationService.createRun` states it: an automation's work stream
-        // carries no participants, so the participant-only default would leave
-        // it readable by nobody at all.
-        `INSERT INTO workstreams (
+      await executionEnv.DB.batch([
+        executionEnv.DB.prepare(
+          `INSERT INTO workstreams (
            id, workspace_id, title, objective, email_address, email_route_status, origin_type,
            created_by_user_id, automation_subscription_id, automation_run_id,
            planned_for, harness_status, last_activity_at, created_at, updated_at, archived_at,
            model_override, scope
-         ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', NULL, ?6, NULL, ?7,
-                   'scheduled', ?8, ?8, ?8, NULL, ?9, 'workspace')`
-      )
-        .bind(
+         ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', ?6, ?7, NULL, ?8,
+                   'scheduled', ?9, ?9, ?9, NULL, ?10, 'personal')`,
+        ).bind(
           workstreamId,
           schedule.workspace_id,
           source.template_name,
           source.template_description || source.instructions,
           emailRoute.emailAddress,
+          source.audience_user_id,
           subscriptionId,
           schedule.next_run_at,
           timestamp,
@@ -699,9 +697,14 @@ async function startAutomation(
           automationModelOverride(ctx.env, source.model_override, {
             workspaceId: schedule.workspace_id,
             automationSubscriptionId: subscriptionId,
-          })
-        )
-        .run();
+          }),
+        ),
+        executionEnv.DB.prepare(
+          `INSERT INTO workstream_participants
+             (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
+           VALUES (?1, ?2, ?2, 'creator', ?3, NULL)`,
+        ).bind(workstreamId, source.audience_user_id, timestamp),
+      ]);
     }
 
     const inserted = await workspaceEnv.DB.prepare(
