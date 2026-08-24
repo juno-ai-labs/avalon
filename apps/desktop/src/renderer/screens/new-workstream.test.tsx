@@ -298,6 +298,33 @@ describe('New work-stream home', () => {
     expect(api.createWorkstream).not.toHaveBeenCalled();
   });
 
+  it('keeps a non-active membership out of both the mention list and the dialog', async () => {
+    api.getWorkspaceMembers.mockResolvedValue([
+      currentUser,
+      { ...teammate, status: 'invited' },
+      { id: 'user-3', name: 'Rae Okafor', email: 'rae@example.com', timezone: 'America/Los_Angeles', status: 'active' },
+    ]);
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+
+    fireEvent.change(composer, { target: { value: 'ask @' } });
+
+    // Picking someone here puts them in the create request, and the work-stream
+    // endpoints refuse a membership that is not active.
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual([
+      'Adam Juhaszadam@example.comPerson',
+      'Rae Okaforrae@example.comPerson',
+    ]);
+
+    fireEvent.keyDown(composer, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'Manage participants: Adam Juhasz' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Add people' });
+    expect(within(dialog).queryByRole('checkbox', { name: /Samantha Lee/u })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('checkbox', { name: /Rae Okafor/u })).toBeVisible();
+  });
+
   it('dismisses the mention list with Escape and leaves the draft alone', async () => {
     renderScreen();
     const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });

@@ -198,10 +198,9 @@ describe('New automation composer', () => {
     expect(await screen.findByRole('listbox', { name: 'Connections' })).toBeVisible();
     fireEvent.keyDown(composer, { key: 'Enter' });
 
-    // The words after the caret survive. The doubled space is what every
-    // composer's insert does — the name is always followed by one, whatever
-    // came next — and is left alone here rather than changed on one surface.
-    await waitFor(() => expect(composer).toHaveValue('post to @Slack  every Friday'));
+    // The words after the caret survive, behind exactly one space: the name's
+    // own separator is dropped when the rest of the line already starts with one.
+    await waitFor(() => expect(composer).toHaveValue('post to @Slack every Friday'));
   });
 
   it('dismisses the connection list with Escape', async () => {

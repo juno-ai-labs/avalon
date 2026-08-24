@@ -793,11 +793,13 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     const atIndex = before.lastIndexOf('@');
     // Whatever followed the caret is kept and the caret lands after the name,
     // so picking mid-sentence does not truncate the rest of it.
-    setInput(`${before.slice(0, atIndex)}@${connection.displayName} ${input.slice(caret)}`);
+    const after = input.slice(caret);
+    const separator = /^\s/u.test(after) ? '' : ' ';
+    setInput(`${before.slice(0, atIndex)}@${connection.displayName}${separator}${after}`);
     setMentionQuery(null);
     requestAnimationFrame(() => {
       textarea?.focus();
-      const nextCaret = atIndex + connection.displayName.length + 2;
+      const nextCaret = atIndex + connection.displayName.length + 1 + separator.length;
       textarea?.setSelectionRange(nextCaret, nextCaret);
     });
   };

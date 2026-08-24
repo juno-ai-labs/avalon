@@ -61,6 +61,7 @@ function renderComposer(
   sending = false,
   onAttach: (files: FileList | File[]) => void = vi.fn(),
   detail: WorkstreamDetail = workstream,
+  members: WorkspaceMember[] = [creator, bob, cara],
 ): ReturnType<typeof render> {
   vi.stubGlobal('ResizeObserver', class {
     observe(): void {}
@@ -72,7 +73,7 @@ function renderComposer(
       <WorkstreamComposer
         attachments={[]}
         fileInputRef={createRef<HTMLInputElement>()}
-        members={[creator, bob, cara]}
+        members={members}
         onAttach={onAttach}
         onOpenAttachment={() => undefined}
         onRemoveAttachment={() => undefined}
@@ -286,6 +287,36 @@ describe('WorkstreamComposer mention confirmation', () => {
       ['user-2', 'user-3'],
     ));
     expect(screen.getByLabelText('Message the work stream')).toHaveValue('');
+  });
+
+  it('inserts one space when the line already continues after the caret', async () => {
+    renderComposer();
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, {
+      target: { value: 'ask @Bo about the release', selectionStart: 7, selectionEnd: 7 },
+    });
+    await screen.findAllByRole('option');
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('ask @Bob Builder about the release'));
+  });
+
+  it('leaves a non-active membership out of the list it can be mentioned from', async () => {
+    renderComposer(undefined, false, undefined, workstream, [
+      creator,
+      { ...bob, status: 'invited' },
+      { ...cara, status: 'suspended' },
+    ]);
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+
+    // Mentioning one adds them to the work stream, and the endpoint refuses a
+    // membership that is not active — the participants rail already filters for
+    // exactly this reason.
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(['Adamadam@example.comPerson']);
   });
 
   it('offers people only, leaving the work stream\'s connections out of the list and out of the highlight', async () => {
