@@ -58,8 +58,9 @@ person. The asymmetry is the problem: a member who remembers that *someone
 worked out the pricing tiers* can ask the agent to go and find it — spending a
 model run, and a wait, on a keyword lookup — or can scroll.
 
-**One narrow search does exist, and this PRD subsumes it.** `GET /resources?q=`
-matches document titles and providers with `LIKE`, and backs the debounced
+**One narrow search does exist, and this PRD has to reckon with it.**
+`GET /resources?q=` substring-matches four columns with `LIKE` — `title`,
+`provider`, `resource_type`, and `provider_resource_id` — and backs the debounced
 filter box in the work-stream resource picker. It is scoped to one dialog, it
 searches titles rather than contents, and its match semantics are substring
 where this change's are tokenized — which is precisely why it cannot be left
@@ -157,14 +158,18 @@ to route around it.
     called out because it is the first thing someone will ask for: archiving is
     currently how a person says "stop showing me this", and search re-showing it
     would undo that. Revisit behind an explicit filter, which is non-goal 12.
-15. **The existing `GET /resources?q=` picker filter is not left standing beside
-    this.** In scope, and named as a non-goal only to say which way it resolves:
-    two server-side searches over the same `resources` table with different match
-    semantics and different authorization paths would return different documents
-    for the same string in two places in one app. The picker's filter is
-    re-pointed at the shared index, or its rule and this one are lifted into one
-    shared SQL fragment. What is *not* in scope is changing the picker's
-    behaviour or its surface.
+15. **Changing the resource picker's own match behaviour is out of scope; making
+    the two searches agree on *authorization* is not.** The picker matches four
+    columns by substring, including `resource_type` and `provider_resource_id`,
+    which an FTS index over title and body does not carry — so re-pointing it at
+    the shared index would silently narrow it, and "one shared match rule" is not
+    available. What *is* available, and is in scope, is one shared set of
+    **visibility** fragments: both reads run in WorkspaceDO over the same tables,
+    and today they already disagree — the picker's inlined draft-upload predicate
+    omits the `uploaded_by_user_id` arm that the single-resource read applies, so
+    a person cannot see their own unattached draft in the picker. Search takes the
+    read-one form. Whether the picker should be corrected to match is a separate,
+    smaller decision this PRD surfaces rather than makes.
 
 ## Product behavior
 
@@ -402,18 +407,27 @@ None yet.
    makes access *removal* an indexing job. With a query-time join, a person who
    loses access stops matching on their next keystroke with nothing to sweep.
 
-4. **Name matching happens on the client, before any request.** The sidebar
-   already holds the directory page and the member list, which is what makes the
-   common case — "get me back to the thing I was in yesterday" — instant and
-   offline-capable, and what lets a failed request degrade to a still-useful
-   palette rather than to nothing. **The matcher itself is new work.** The
-   composer's `@` mention picker is a case-insensitive `includes()` over a label
-   list, and `mention-highlight.ts` is an exact case-folded slice; neither is a
-   fuzzy or prefix matcher, so there is nothing to reuse but the data. Its
-   semantics also have to be reconciled with the server's, which tokenizes and
-   prefixes only the trailing term — the same query otherwise returns different
-   sets from the two halves of one list, and a work stream matched by both has
-   to deduplicate to one row with one identity.
+4. **Name matching happens on the client, before any request.** The client
+   already holds the directory page (in the sidebar) and the member list (at the
+   app root — a different cache, which the People group reads), which is what
+   makes the common case — "get me back to the thing I was in yesterday" —
+   instant and offline-capable, and what lets a failed request degrade to a
+   still-useful palette rather than to nothing. **The matcher is largely new
+   work.** The composer's `@` mention picker is a case-insensitive `includes()`
+   over a label list and `mention-highlight.ts` is an exact case-folded slice;
+   neither is a fuzzy or prefix matcher. The nearest reusable thing is
+   `searchAvailablePlugins` in `packages/agent-harness`, which is the whole
+   shape — NFKC normalise, token extract, dedupe, exact/phrase/overlap scoring,
+   deterministic tiebreak, cap, and a total — and `workspace-settings.tsx`
+   already does grouped client filtering with empty groups dropped. No fuzzy
+   library exists in the repo and none should be added. Its semantics still have
+   to be reconciled with the server's, which tokenizes and prefixes only the
+   trailing term: the same query otherwise returns different sets from the two
+   halves of one list, a work stream matched by both has to deduplicate to one
+   row with one identity, and a client row carries no `bm25` score, so it cannot
+   compete for the top hit on rank — client matches sort within their groups and
+   the top hit is chosen among scored rows, falling back to the first client row
+   only when no scored row exists.
 
 5. **Phased by where the text already lives, not by which source sounds most
    important.** Phase 1 covers every source whose text WorkspaceDO already
@@ -563,6 +577,13 @@ property that makes this cheap to reverse.
 Split per
 [`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md).
 
+**One product question the team has to settle with the candidate cap**, because
+the two cannot both hold: an exact `N MORE RESULTS` counts every authorized
+match, but a candidate cap truncates the set being counted, so the footer would
+report the cap rather than the remainder. Either the count becomes `N+ more`
+above the cap, or the cap is high enough that the difference is theoretical and
+the per-keystroke cost is accepted. This PRD does not choose.
+
 **Product limits — set here, and cited to this PRD:**
 
 | Limit | Value |
@@ -584,10 +605,10 @@ placeholdered**, and the implementing change does not start until they are set:
 
 | Limit | Why it cannot ship open | Starting point for the team |
 | --- | --- | --- |
-| Maximum accepted query length | Allocation sized by untrusted caller input | `GET /resources?q=` already caps a search string at 200 characters; matching it needs no new decision |
-| Maximum candidate rows before ranking | Binds into `LIMIT ?`, where a non-finite value fails or coerces rather than meaning "no limit" | Groups × rows-per-group × a factor for filtered-out rows |
-| Per-request server time budget | Spends single-threaded WorkspaceDO time per keystroke | — |
-| Maximum indexed **bytes** per message and per document | Crosses the wire into `durable_outbox.payload_json`, which has a ~1.9 MB `CHECK`; an open bound aborts the *producing* transaction, so the message write itself fails | Must sit under that row bound with envelope overhead to spare |
+| Maximum indexed **bytes** per message and per document | Lands in a SQLite `CHECK` inside a hashed migration. Placeholders live in TypeScript source only, a `CHECK` has no inert value, and a versioned migration is not "one edit away" — so this one must be set *before the migration is written*, not handed back after | Under `durable_outbox.payload_json`'s ~1.9 MB `CHECK` with envelope overhead to spare; an over-large body aborts the *producing* transaction, so the message write itself fails |
+| Maximum accepted query length | Allocation sized by untrusted caller input | `GET /resources?q=` already caps a search string at 200 characters; matching it needs no new decision. Note the existing FTS sanitizer also truncates at 96 tokens, which silently pre-empts any larger value |
+| Maximum candidate rows before ranking | The statement materialises every authorized match before emitting one, on the single-threaded WorkspaceDO, per settled keystroke | The existing FTS precedent caps candidates at 20 per leg and reports no total. Setting this also decides the `N MORE RESULTS` question below |
+| Per-wake backfill batch size | The backfill queues ahead of live directory projections, and there is no natural bound on a drain | `processMemoryIndexOutbox` runs at 50 per wake against a hard cap of 200 — the same outbox shape |
 
 Note the unit: **bytes, not characters.** The `CHECK` is byte-counted per
 `data-model.md`, so a character-denominated bound cannot be substituted into it,
@@ -684,7 +705,9 @@ name and nothing else, phase 2's cost is not yet justified.
 
    That document is also wrong about which half is which, in a way that inverts
    the risk and that this change should correct in the same breath as answering
-   the question. It says the `listable` flag "tests participation alone";
+   the question. Its sentence — "`WorkstreamDO.canRead` and the `listable` flag
+   it projects test participation alone" — is right about `canRead`, which does
+   test participation alone, and wrong about `listable`:
    `listable` is computed through `participantVisible`, which is
    `scope === 'workspace' || participant || created_by_user_id === userId`. So
    `listable` is the **creator-inclusive** half. Choosing it would not hide a
