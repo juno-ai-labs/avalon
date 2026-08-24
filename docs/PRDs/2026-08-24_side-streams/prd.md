@@ -344,9 +344,13 @@ way every other resource is, so N side streams handed off from one work stream
 produce one row and N links.
 
 `workstream-resource-visibility.ts` gains a rule for `avalon_workstream`
-alongside the ones it already carries for `resend`, `avalon_upload`, and
-`avalon_note`. See [Security and trust model](#security-and-trust-model) — this
-is the part of the change with a real way to be wrong.
+alongside the note-scope rule it already carries for `avalon_note`, which is the
+one provider-specific rule in that file. The other two provider rules —
+`resend` and `avalon_upload` — live in `resource-service.ts`, against a
+different query; a rule written in the wrong one of those two files guards
+nothing on the path the agent actually reads through. See
+[Security and trust model](#security-and-trust-model) — this is the part of the
+change with a real way to be wrong.
 
 ## Regional impact
 
