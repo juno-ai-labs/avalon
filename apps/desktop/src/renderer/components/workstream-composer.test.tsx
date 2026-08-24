@@ -289,6 +289,36 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(screen.getByLabelText('Message the work stream')).toHaveValue('');
   });
 
+  it('starts a mention where the caret is rather than at the end of the draft', async () => {
+    renderComposer();
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, {
+      target: { value: 'ask about the release', selectionStart: 3, selectionEnd: 3 },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Mention a participant' }));
+
+    // Someone who came back to finish a sentence keeps it: the `@` lands under
+    // the caret, not at the end of what they had already written.
+    await waitFor(() => expect(composer).toHaveValue('ask @ about the release'));
+    expect(screen.getByRole('listbox', { name: 'Mentions' })).toBeVisible();
+  });
+
+  it('keeps Escape from travelling on when it dismissed something here', async () => {
+    renderComposer();
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+    await screen.findAllByRole('option');
+
+    // `fireEvent` returns false when the handler cancelled the event, which is
+    // what the other two composers already did with a dismissing Escape.
+    expect(fireEvent.keyDown(composer, { key: 'Escape' })).toBe(false);
+    expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
+    // Nothing left to dismiss: this one belongs to whatever else is listening.
+    expect(fireEvent.keyDown(composer, { key: 'Escape' })).toBe(true);
+  });
+
   it('inserts one space when the line already continues after the caret', async () => {
     renderComposer();
     const composer = screen.getByLabelText('Message the work stream');

@@ -164,7 +164,9 @@ describe('New automation composer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Mention a connection' }));
     const composer = screen.getByRole('textbox', { name: 'Describe an automation' });
-    fireEvent.change(composer, { target: { value: '@sla' } });
+    // The caret travels with the typing: `fireEvent.change` replaces the value
+    // without moving it, and everything about a mention is read from the caret.
+    fireEvent.change(composer, { target: { value: '@sla', selectionStart: 4, selectionEnd: 4 } });
     expect(await screen.findByRole('listbox', { name: 'Connections' })).toBeVisible();
 
     fireEvent.keyDown(composer, { key: 'ArrowDown' });
