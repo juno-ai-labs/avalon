@@ -30,6 +30,7 @@ import {
   workstreamSummaryState,
 } from './workstream-state-store';
 import { applyVersionedSidebarList } from './sidebar-list-store';
+import { realtimeSocketTelemetry } from './socket-telemetry';
 import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 type CreateMessageCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
@@ -198,6 +199,8 @@ export function WorkspaceSocketProvider({
     let pongTimer: number | null = null;
     let connecting = false;
     let attempt = 0;
+    const socketTelemetry = realtimeSocketTelemetry('workspace');
+    const isOffline = (): boolean => navigator.onLine === false;
     let lastWaterline = -1;
     const pending = new Map<string, PendingCommand>();
     const pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
@@ -220,7 +223,9 @@ export function WorkspaceSocketProvider({
         target.send('ping');
         pongTimer = window.setTimeout(() => {
           pongTimer = null;
-          if (!stopped && socket === target && target.readyState === WebSocket.OPEN) target.close();
+          if (stopped || socket !== target || target.readyState !== WebSocket.OPEN) return;
+          socketTelemetry.willClose('heartbeat_timeout');
+          target.close();
         }, PONG_TIMEOUT_MS);
       }, HEARTBEAT_MS);
     };
@@ -313,10 +318,21 @@ export function WorkspaceSocketProvider({
       try {
         const ticket = await api.getWorkspaceSocketTicket();
         if (stopped) return;
+        // Going offline while the ticket was in flight left the offline handler
+        // nothing to close, so this is where that transition is noticed at all.
+        // Dialling anyway would fail and be recorded as a transport error,
+        // which is the one reading this event exists to keep apart from
+        // "the desktop lost its network".
+        if (isOffline()) {
+          socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
+          setState('unavailable');
+          return;
+        }
         const next = new WebSocket(ticket.url, ticket.protocols);
         socket = next;
         next.addEventListener('open', () => {
           if (stopped || socket !== next) return;
+          socketTelemetry.connected(attempt);
           attempt = 0;
           setState('connected');
           next.send(JSON.stringify({
@@ -448,6 +464,7 @@ export function WorkspaceSocketProvider({
           socket = null;
           if (event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
             accessRevoked = true;
+            socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'access_revoked' });
             setState('unavailable');
             rejectPending(new ApiError(
               'You can no longer access this workspace.',
@@ -456,10 +473,26 @@ export function WorkspaceSocketProvider({
             ));
             return;
           }
+          if (!stopped) {
+            socketTelemetry.disconnected({ attempts: attempt, retrying: !isOffline() });
+          }
           scheduleReconnect();
         });
-        next.addEventListener('error', () => next.close());
+        next.addEventListener('error', () => {
+          // See `use-workstream-socket.ts`: the pending cause is the loop's, so
+          // a superseded socket's error must not arm the live one's.
+          if (stopped || socket !== next) return;
+          socketTelemetry.willClose('transport_error');
+          next.close();
+        });
       } catch {
+        if (!stopped) {
+          socketTelemetry.disconnected({
+            attempts: attempt,
+            retrying: !isOffline(),
+            cause: 'ticket_failed',
+          });
+        }
         scheduleReconnect();
       } finally {
         connecting = false;
@@ -509,6 +542,7 @@ export function WorkspaceSocketProvider({
     const offline = (): void => {
       clearReconnect();
       clearHeartbeat();
+      if (socket) socketTelemetry.willClose('offline');
       setState('unavailable');
       rejectPendingDirectoryRequests(new ApiError(
         'The work-stream directory cannot be loaded while offline.',

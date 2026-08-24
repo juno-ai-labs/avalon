@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 
 import { logWarn } from '../../common/logger';
 import type { AvalonApi } from './api';
+import { realtimeSocketTelemetry, type RealtimeSocketTelemetry } from './socket-telemetry';
 
 type BlockDashboardBlockSocketApi = Pick<AvalonApi, 'getBlockDashboardBlockSocketTicket'>;
 const HEARTBEAT_MS = 50_000;
@@ -29,6 +30,7 @@ interface BlockConnection {
   pongTimer: number | null;
   stabilityTimer: number | null;
   attempt: number;
+  telemetry: RealtimeSocketTelemetry;
   connecting: boolean;
   revoked: boolean;
 }
@@ -144,6 +146,18 @@ export function useBlockDashboardSockets(
       try {
         const ticket = await api.getBlockDashboardBlockSocketTicket(workstreamId, blockId);
         if (stopped || !connections.has(blockId)) return;
+        // See `workspace-socket.tsx`: an offline transition during the ticket
+        // request is invisible to the offline handler, because there was no
+        // socket to close.
+        if (browserIsOffline()) {
+          connection.telemetry.disconnected({
+            attempts: connection.attempt,
+            retrying: false,
+            cause: 'offline',
+          });
+          updateConnectionState(blockId, 'offline');
+          return;
+        }
         const socket = new WebSocket(ticket.url, ticket.protocols);
         connection.socket = socket;
         const scheduleHeartbeat = (): void => {
@@ -155,12 +169,16 @@ export function useBlockDashboardSockets(
             socket.send('ping');
             connection.pongTimer = window.setTimeout(() => {
               connection.pongTimer = null;
-              if (!stopped && connection.socket === socket && socket.readyState === WebSocket.OPEN) socket.close();
+              if (stopped || connection.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
+              connection.telemetry.willClose('heartbeat_timeout');
+              socket.close();
             }, PONG_TIMEOUT_MS);
           }, HEARTBEAT_MS);
         };
         socket.addEventListener('open', () => {
           if (stopped || connection.socket !== socket) return;
+          // Before the stability timer resets the counter below.
+          connection.telemetry.connected(connection.attempt);
           const subscribe = (): void => {
             if (!stopped && connection.socket === socket && socket.readyState === WebSocket.OPEN) {
               socket.send(JSON.stringify({ type: 'subscribe' }));
@@ -228,14 +246,38 @@ export function useBlockDashboardSockets(
           connection.socket = null;
           if (event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
             connection.revoked = true;
+            connection.telemetry.disconnected({
+              attempts: connection.attempt,
+              retrying: false,
+              cause: 'access_revoked',
+            });
             updateConnectionState(blockId, 'revoked');
             return;
+          }
+          if (!stopped) {
+            connection.telemetry.disconnected({
+              attempts: connection.attempt,
+              retrying: !browserIsOffline(),
+            });
           }
           updateConnectionState(blockId, navigator.onLine === false ? 'offline' : 'reconnecting');
           scheduleReconnect();
         });
-        socket.addEventListener('error', () => socket.close());
+        socket.addEventListener('error', () => {
+          // See `use-workstream-socket.ts`: the pending cause belongs to this
+          // block's connection rather than to one of its sockets.
+          if (stopped || connection.socket !== socket) return;
+          connection.telemetry.willClose('transport_error');
+          socket.close();
+        });
       } catch {
+        if (!stopped) {
+          connection.telemetry.disconnected({
+            attempts: connection.attempt,
+            retrying: !browserIsOffline(),
+            cause: 'ticket_failed',
+          });
+        }
         if (browserIsOffline()) {
           updateConnectionState(blockId, 'offline');
           return;
@@ -260,6 +302,7 @@ export function useBlockDashboardSockets(
         pongTimer: null,
         stabilityTimer: null,
         attempt: 0,
+        telemetry: realtimeSocketTelemetry('block_dashboard'),
         connecting: false,
         revoked: false,
       });
@@ -277,6 +320,7 @@ export function useBlockDashboardSockets(
       for (const [blockId, connection] of connections) {
         updateConnectionState(blockId, 'offline');
         clearTimers(connection);
+        if (connection.socket) connection.telemetry.willClose('offline');
         connection.socket?.close();
       }
     };

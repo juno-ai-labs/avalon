@@ -11,6 +11,7 @@ import { logWarn } from '../../common/logger';
 import { normalizeHarnessStatus, type AvalonApi } from './api';
 import type { WorkstreamSummary } from './types';
 import { applyVersionedWorkstreamState } from './workstream-state-store';
+import { realtimeSocketTelemetry } from './socket-telemetry';
 import { setCachedWorkstreams } from './workstreams-cache';
 
 type WorkstreamControlSocketApi = Pick<AvalonApi, 'getWorkstreamControlSocketTicket'>;
@@ -118,6 +119,8 @@ export function useWorkstreamControlSocket(
     let connecting = false;
     let attempt = 0;
     let protocolWarningReported = false;
+    const socketTelemetry = realtimeSocketTelemetry('workstream_control');
+    const isOffline = (): boolean => navigator.onLine === false;
 
     const clearReconnect = (): void => {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
@@ -137,7 +140,9 @@ export function useWorkstreamControlSocket(
         target.send('ping');
         pongTimer = window.setTimeout(() => {
           pongTimer = null;
-          if (!stopped && socket === target && target.readyState === WebSocket.OPEN) target.close();
+          if (stopped || socket !== target || target.readyState !== WebSocket.OPEN) return;
+          socketTelemetry.willClose('heartbeat_timeout');
+          target.close();
         }, PONG_TIMEOUT_MS);
       }, HEARTBEAT_MS);
     };
@@ -186,10 +191,18 @@ export function useWorkstreamControlSocket(
       try {
         const ticket = await api.getWorkstreamControlSocketTicket(workstreamId);
         if (stopped) return;
+        // See `workspace-socket.tsx`: an offline transition during the ticket
+        // request is invisible to the offline handler, because there was no
+        // socket to close.
+        if (isOffline()) {
+          socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
+          return;
+        }
         const next = new WebSocket(ticket.url, ticket.protocols);
         socket = next;
         next.addEventListener('open', () => {
           if (stopped || socket !== next) return;
+          socketTelemetry.connected(attempt);
           attempt = 0;
           next.send(JSON.stringify({ type: 'subscribe' }));
           scheduleHeartbeat(next);
@@ -237,14 +250,31 @@ export function useWorkstreamControlSocket(
           socket = null;
           if (event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
             accessRevoked = true;
+            socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'access_revoked' });
             setCachedWorkstreams(queryClient, (current) => current?.filter((item) => item.id !== workstreamId));
             queryClient.removeQueries({ queryKey: ['workstream', workstreamId], exact: true });
             return;
           }
+          if (!stopped) {
+            socketTelemetry.disconnected({ attempts: attempt, retrying: !isOffline() });
+          }
           scheduleReconnect();
         });
-        next.addEventListener('error', () => next.close());
+        next.addEventListener('error', () => {
+          // See `use-workstream-socket.ts`: the pending cause is the loop's, so
+          // a superseded socket's error must not arm the live one's.
+          if (stopped || socket !== next) return;
+          socketTelemetry.willClose('transport_error');
+          next.close();
+        });
       } catch {
+        if (!stopped) {
+          socketTelemetry.disconnected({
+            attempts: attempt,
+            retrying: !isOffline(),
+            cause: 'ticket_failed',
+          });
+        }
         scheduleReconnect();
       } finally {
         connecting = false;
@@ -257,6 +287,7 @@ export function useWorkstreamControlSocket(
     const offline = (): void => {
       clearReconnect();
       clearHeartbeat();
+      if (socket) socketTelemetry.willClose('offline');
       socket?.close();
     };
     window.addEventListener('online', online);

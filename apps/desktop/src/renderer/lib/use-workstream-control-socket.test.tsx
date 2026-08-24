@@ -8,6 +8,20 @@ import type { WorkstreamSummary } from './types';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
+import type * as TelemetryModule from './telemetry';
+
+const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
+vi.mock('./telemetry', async (importOriginal) => ({
+  ...await importOriginal<typeof TelemetryModule>(),
+  reportTelemetryProductIntent,
+}));
+
+function socketTelemetry(): unknown[] {
+  return reportTelemetryProductIntent.mock.calls
+    .map(([intent]) => intent as { kind: string })
+    .filter((intent) => intent.kind === 'realtime_socket_state');
+}
+
 class FakeWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
@@ -138,6 +152,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  reportTelemetryProductIntent.mockClear();
   FakeWebSocket.instances = [];
 });
 
@@ -220,6 +235,82 @@ describe('useWorkstreamControlSocket', () => {
     const second = FakeWebSocket.instances[1]!;
     act(() => second.open());
     expect(second.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe' }));
+  });
+
+  it('reports its own connections under the control socket rather than the feed', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getWorkstreamControlSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    }));
+    renderHook(
+      () => useWorkstreamControlSocket({ getWorkstreamControlSocketTicket }, workstreamId, true),
+      { wrapper: wrapper(queryClient) },
+    );
+    await flushPromises();
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.open());
+    act(() => first.close(1012));
+    await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+    await flushPromises();
+    act(() => FakeWebSocket.instances[1]!.open());
+
+    // Two sockets serve one open work stream, and they fail independently:
+    // reporting both under one name would make either one's drop rate wrong.
+    expect(socketTelemetry()).toEqual([
+      {
+        kind: 'realtime_socket_state',
+        socket: 'workstream_control',
+        state: 'connected',
+        cause: 'opened',
+        attempts: 'zero',
+      },
+      {
+        kind: 'realtime_socket_state',
+        socket: 'workstream_control',
+        state: 'retrying',
+        cause: 'server_closed',
+        attempts: 'zero',
+      },
+      {
+        kind: 'realtime_socket_state',
+        socket: 'workstream_control',
+        state: 'connected',
+        cause: 'opened',
+        attempts: 'one',
+      },
+    ]);
+  });
+
+  it('stops rather than retries when the room says the reader lost access', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [summary()]);
+    const getWorkstreamControlSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    }));
+    renderHook(
+      () => useWorkstreamControlSocket({ getWorkstreamControlSocketTicket }, workstreamId, true),
+      { wrapper: wrapper(queryClient) },
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    reportTelemetryProductIntent.mockClear();
+    act(() => socket.close(1008));
+
+    expect(socketTelemetry()).toEqual([{
+      kind: 'realtime_socket_state',
+      socket: 'workstream_control',
+      state: 'stopped',
+      cause: 'access_revoked',
+      attempts: 'zero',
+    }]);
   });
 
   it('applies HyperSight configuration and personal visibility from WorkstreamDO', async () => {

@@ -3,6 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { formatDateTime } from '../lib/format';
@@ -427,7 +428,14 @@ describe('Sidebar work-stream markers', () => {
   });
 
   it('waits for a name rather than showing the request a work stream was created from', () => {
-    const naming = { ...workstream('naming', 'Create an email draft to Danny from Mucker that…', 'running'), titleStatus: 'naming' as const };
+    const naming = {
+      ...workstream('naming', 'Create an email draft to Danny from Mucker that…', 'running'),
+      titleStatus: 'naming' as const,
+      // A work stream is named seconds after it is created, which is the only
+      // time the skeleton is shown; the fixture's own date is days old, and
+      // past the grace the provisional title is the title.
+      createdAt: new Date().toISOString(),
+    };
     render(
       <MemoryRouter initialEntries={['/workstreams/naming']}>
         <Tooltip.Provider>
@@ -448,6 +456,55 @@ describe('Sidebar work-stream markers', () => {
     // A settled title is text, not a skeleton — the placeholder is only for the
     // second or so before Avalon answers.
     expect(screen.getByRole('link', { name: /Board decision/u }).querySelector('.title-skeleton')).toBeNull();
+  });
+
+  it('gives up on a name that never arrives rather than shimmering for the session', () => {
+    vi.useFakeTimers();
+    try {
+      const created = new Date('2026-08-07T12:00:00.000Z');
+      vi.setSystemTime(created);
+      const naming = {
+        ...workstream('naming', "let's talk about avalon pricing", 'running'),
+        titleStatus: 'naming' as const,
+        createdAt: created.toISOString(),
+      };
+      // A row that cannot say when it was created cannot say the promise is
+      // still live, so it shows the title it has from the start.
+      const undated = {
+        ...workstream('undated', 'Reconcile the July invoices', 'running'),
+        titleStatus: 'naming' as const,
+      };
+      render(
+        <MemoryRouter>
+          <Tooltip.Provider>
+            <Sidebar
+              {...defaultActions}
+              automations={[]}
+              onSignOut={vi.fn()}
+              workspace={workspace}
+              workstreams={[naming, undated]}
+            />
+          </Tooltip.Provider>
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByRole('link', { name: /naming this work stream/u })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /July invoices/u })
+        .querySelector('.title-skeleton')).toBeNull();
+
+      // A row is a cache entry the sockets push into, and nothing refetches the
+      // sidebar on its own — so a rename that never reached this client would
+      // otherwise leave the row pulsing until the window is reopened. Somebody
+      // who is a participant in a work stream and has not opened it has no
+      // other repair path at all.
+      act(() => { vi.advanceTimersByTime(WORKSTREAM_NAMING_GRACE_MS + 1_000); });
+
+      const row = screen.getByRole('link', { name: /avalon pricing/u });
+      expect(row.querySelector('.title-skeleton')).toBeNull();
+      expect(row.textContent).toContain("let's talk about avalon pricing");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('explains a work-stream dot color on hover', async () => {

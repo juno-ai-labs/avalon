@@ -33,6 +33,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import { formatDateTime, formatRelative, groupActivityItems, workstreamMarkerStatus } from '../lib/format';
+import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
 import {
   markSurfaceEntrypoint,
@@ -431,6 +432,10 @@ function WorkstreamRow({
   onTogglePin: (workstream: WorkstreamSummary, pinned: boolean) => void;
 }): React.JSX.Element {
   const location = useLocation();
+  // The row is a cache entry, not a read: nothing here refetches, so the grace
+  // is what ends a skeleton whose rename never arrived. Read
+  // `lib/naming-skeleton.ts` before changing when it comes down.
+  const naming = useNamingSkeleton(workstream);
   const isPrivate = workstream.scope === 'personal';
   const isPinned = workstream.pinPosition !== null;
   const nextWakeupTime = workstream.nextPendingWakeup
@@ -526,9 +531,7 @@ function WorkstreamRow({
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">
                 {workstream.systemKind && <Cog aria-label="System work stream" size={11} />}
-                {workstream.titleStatus === 'naming'
-                  ? <TitleSkeleton />
-                  : workstream.title}
+                {naming ? <TitleSkeleton /> : workstream.title}
               </span>
               {(workstream.preview || workstream.automationName) && (
                 <span className="sidebar-row-hint">

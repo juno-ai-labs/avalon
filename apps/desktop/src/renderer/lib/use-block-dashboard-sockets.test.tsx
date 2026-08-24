@@ -5,7 +5,20 @@ import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type * as TelemetryModule from './telemetry';
 import { useBlockDashboardSockets } from './use-block-dashboard-sockets';
+
+const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
+vi.mock('./telemetry', async (importOriginal) => ({
+  ...await importOriginal<typeof TelemetryModule>(),
+  reportTelemetryProductIntent,
+}));
+
+function socketTelemetry(): unknown[] {
+  return reportTelemetryProductIntent.mock.calls
+    .map(([intent]) => intent as { kind: string })
+    .filter((intent) => intent.kind === 'realtime_socket_state');
+}
 
 class FakeWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
@@ -84,6 +97,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  reportTelemetryProductIntent.mockClear();
   FakeWebSocket.instances = [];
 });
 
@@ -208,6 +222,99 @@ describe('useBlockDashboardSockets', () => {
     expect(rendered.result.current[blockId]).toBe('revoked');
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
     expect(FakeWebSocket.instances).toHaveLength(2);
+    rendered.unmount();
+  });
+
+  it('reports each block connection under its own socket kind', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], {
+      versionId,
+      versionNumber: 1,
+      updatedAt: '2026-08-18T20:00:00.000Z',
+      blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
+    });
+    const ticket = {
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
+      ticket: 'block-ticket',
+      protocols: socketTicketProtocols('block-ticket'),
+    };
+    const getBlockDashboardBlockSocketTicket = vi.fn()
+      .mockRejectedValueOnce(new Error('ticket service unavailable'))
+      .mockResolvedValue(ticket);
+    // Hoisted rather than inline: this hook's effect depends on `api` identity,
+    // and a fresh object per render re-runs it on every connection-state update.
+    const api = { getBlockDashboardBlockSocketTicket };
+    const rendered = renderHook(
+      () => useBlockDashboardSockets(api, workstreamId, [blockId], true),
+      { wrapper: wrapper(queryClient) },
+    );
+    await act(async () => Promise.resolve());
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.open());
+    await act(async () => Promise.resolve());
+    act(() => first.close());
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    const second = FakeWebSocket.instances[1]!;
+    act(() => second.open());
+    await act(async () => Promise.resolve());
+    act(() => second.close(1008));
+
+    // One producer per block, so a dashboard of six blocks reports six
+    // connections. The event names no block, so the reading is the drop rate of
+    // this socket kind rather than of any one block.
+    expect(socketTelemetry()).toEqual([
+      { kind: 'realtime_socket_state', socket: 'block_dashboard', state: 'retrying', cause: 'ticket_failed', attempts: 'zero' },
+      { kind: 'realtime_socket_state', socket: 'block_dashboard', state: 'connected', cause: 'opened', attempts: 'one' },
+      { kind: 'realtime_socket_state', socket: 'block_dashboard', state: 'retrying', cause: 'server_closed', attempts: 'one' },
+      { kind: 'realtime_socket_state', socket: 'block_dashboard', state: 'connected', cause: 'opened', attempts: 'two_to_five' },
+      { kind: 'realtime_socket_state', socket: 'block_dashboard', state: 'stopped', cause: 'access_revoked', attempts: 'two_to_five' },
+    ]);
+    rendered.unmount();
+  });
+
+  it('reports a block connection as stopped when the desktop goes offline', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], {
+      versionId,
+      versionNumber: 1,
+      updatedAt: '2026-08-18T20:00:00.000Z',
+      blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
+    });
+    const getBlockDashboardBlockSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
+      ticket: 'block-ticket',
+      protocols: socketTicketProtocols('block-ticket'),
+    }));
+    const api = { getBlockDashboardBlockSocketTicket };
+    const rendered = renderHook(
+      () => useBlockDashboardSockets(api, workstreamId, [blockId], true),
+      { wrapper: wrapper(queryClient) },
+    );
+    await act(async () => Promise.resolve());
+    act(() => FakeWebSocket.instances[0]!.open());
+    await act(async () => Promise.resolve());
+    reportTelemetryProductIntent.mockClear();
+
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    act(() => window.dispatchEvent(new Event('offline')));
+
+    // The same answer the feed gives, reached by a different route: this loop's
+    // `scheduleReconnect` returns before arming anything while offline. Both
+    // are `stopped`, and neither is derivable from the cause alone.
+    expect(socketTelemetry()).toEqual([{
+      kind: 'realtime_socket_state',
+      socket: 'block_dashboard',
+      state: 'stopped',
+      cause: 'offline',
+      attempts: 'zero',
+    }]);
     rendered.unmount();
   });
 
