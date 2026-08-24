@@ -2524,12 +2524,22 @@ export async function reapStaleHarnessRuns(
              AND settled.attempt_id = run.attempt_id
              AND settled.event_key = ?3
         )
-      -- Newest first: a card stranded minutes ago is the one a member is
-      -- looking at, and it must not wait behind every historical row in the
-      -- work stream. It also keeps a row that can never settle -- one whose
-      -- object-side terminal stamp does not match, so it records no marker and
-      -- is re-selected forever -- at the tail of the page rather than the head,
-      -- where it would occupy a slot ahead of every repairable row behind it.
+      -- Newest first, for one reason: a card stranded minutes ago is the one a
+      -- member is looking at, and it must not wait behind every historical row
+      -- in the work stream.
+      --
+      -- Not because it helps with a row that can never settle. One whose
+      -- object-side terminal stamp does not match records no marker however
+      -- often it is tried, so it is re-selected forever and holds a slot in
+      -- every page; ordering only decides which such rows do the holding --
+      -- newest-first wedges recent ones, oldest-first wedges old ones -- and
+      -- neither drops them. Enough of them in one work stream (this walk is
+      -- scoped to one) and the rest of its history is never reached. Paginating
+      -- past them needs durable per-row retry state and a backoff nobody here
+      -- can derive a number for, so it is not built on speculation: each
+      -- failure already reports through onReceiptRepairFailure, which the
+      -- Substream logs as harness_residual_receipt_repair_failed, and a wedged
+      -- page is that warning repeating the same run id.
       ORDER BY run.terminalized_at DESC, run.id DESC
       LIMIT ?5`,
   ).bind(
