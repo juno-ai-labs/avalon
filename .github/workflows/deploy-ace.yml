@@ -4,13 +4,25 @@ on:
   push:
     branches: [main]
     paths:
+      # The Worker, browser bundle, package/configuration, and every future
+      # runtime asset live below apps/ace. Tests stay on CI and do not change
+      # the deployed application.
       - "apps/ace/**"
+      - "!apps/ace/test/**"
+      # Ace compiles this verifier directly into its Worker.
       - "apps/migration-tracker/src/access.ts"
+      # Runtime contracts are a bundle input; contract tests are not.
       - "packages/contracts/**"
+      - "!packages/contracts/src/**/*.test.ts"
+      # Dependency resolution and the shared compiler configuration can change
+      # Ace's emitted bundle without touching apps/ace itself.
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
+      # These are the deployment-time modules the workflow executes directly
+      # or transitively. Their tests run in CI without redeploying production.
       - "scripts/ensure-cloudflare-queues.mjs"
-      - "scripts/ensure-cloudflare-queues.test.mjs"
+      - "scripts/entry-point.mjs"
       - "scripts/wrangler-config.mjs"
       - ".github/workflows/deploy-ace.yml"
   workflow_dispatch:
