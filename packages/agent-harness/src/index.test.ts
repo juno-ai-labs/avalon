@@ -122,6 +122,13 @@ describe("agent harness", () => {
       message: "Review the launch checklist",
       activeTask: false,
     })).toMatchObject({ classification: "agent_action", rationaleCode: "imperative" });
+    // Both spellings reach the fast path. It returns without invoking the
+    // model, so a name it fails to recognize is not a worse classification —
+    // it is silence in reply to someone addressing the agent directly.
+    expect(classifyAddressingHeuristically({
+      message: "Rally, what changed?",
+      activeTask: false,
+    })).toMatchObject({ classification: "agent_action", rationaleCode: "rally_reference" });
     expect(classifyAddressingHeuristically({
       message: "Avalon, what changed?",
       activeTask: false,
