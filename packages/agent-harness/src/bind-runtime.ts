@@ -310,14 +310,42 @@ class ProviderCircuitOpenError extends Error {
   }
 }
 
+/**
+ * The platform refusing to carry a call, as distinct from the call failing.
+ *
+ * Cloudflare bounds how deep one request may recurse through Workers and how
+ * many subrequests one invocation may make, and enforces both by refusing
+ * whichever call asks next — a D1 read, a Durable Object hop, a fetch. The
+ * refusal therefore surfaces at an arbitrary port, and attributing it to that
+ * port is how a run came to report a receipt-persistence defect for a fault the
+ * receipt authority never saw.
+ *
+ * Matched on the message because the platform gives no code to match on: these
+ * are the two wordings workerd produces, and D1 forwards the first with a
+ * `D1_ERROR:` prefix. A wording that changes falls back to the port's own
+ * classification, which is exactly today's behaviour — so this can only
+ * improve an attribution, never break one.
+ */
+export function platformLimitRefusal(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return /subrequest depth limit exceeded|too many subrequests/iu.test(message);
+}
+
 class FatalHarnessPortError extends Error {
+  readonly code: "harness_execution_failed" | "tool_receipt_persistence_failed"
+    | "run_state_persistence_failed" | "platform_limit_exceeded";
+
   constructor(
-    readonly code: "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed",
+    code: "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed",
     message: string,
     readonly causeValue?: unknown,
   ) {
     super(message);
     this.name = "FatalHarnessPortError";
+    // Decided here rather than at the call sites so no port can forget it:
+    // every one of them wraps its own failure, and none of them is in a
+    // position to know that the platform, not the port, is what said no.
+    this.code = platformLimitRefusal(causeValue) ? "platform_limit_exceeded" : code;
   }
 }
 
@@ -1246,6 +1274,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           ? "provider"
         : error instanceof ProviderCircuitOpenError
           ? "routing"
+        : error instanceof FatalHarnessPortError && error.code === "platform_limit_exceeded"
+          ? "platform"
           : "execution",
       code,
       message: error instanceof Error ? error.message : "Harness execution failed",

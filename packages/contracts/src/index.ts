@@ -138,7 +138,17 @@ export const HarnessFailureCodeSchema = z.enum([
   // naming those as the provider's is exactly what the sibling code forbids.
   // The member-facing remedy is the same for both; the codes differ so an
   // operator can tell "we tried and got nothing" from "we did not try".
-  "provider_circuit_open"
+  "provider_circuit_open",
+  // The platform refused the call, not the thing being called. Cloudflare caps
+  // how deep a request may recurse through Workers and how many subrequests one
+  // invocation may make, and answers both with a refusal that arrives at
+  // whichever port happened to ask next — a D1 read, a Durable Object hop, a
+  // fetch. Filing that under the port's own code sends a reader to the storage
+  // layer for a fault that storage never saw: on 2026-08-24 a work stream died
+  // reporting `tool_receipt_persistence_failed` when nothing about the receipt
+  // had failed. Same reasoning as the two provider arms above — the code exists
+  // so the failure names the system that produced it.
+  "platform_limit_exceeded"
 ]);
 export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
 

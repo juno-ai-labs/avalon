@@ -14,6 +14,7 @@ export type HarnessRunPortFactory = (
 ) => HarnessRunObjectPort;
 
 const CONTRACT: ObjectPortContract<WorkstreamHarnessRunStorage, HarnessRunOperation> = {
+  authority: "harnessRun",
   operations: HARNESS_RUN_OPERATIONS,
   dispatch: (stub, request) => stub.executeHarnessRunOperation(request),
   failureCode: "harness_run_operation_failed",

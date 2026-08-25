@@ -14,6 +14,7 @@ export type MessagePortFactory = (
 ) => MessageObjectPort;
 
 const CONTRACT: ObjectPortContract<WorkstreamMessageStorage, MessageOperation> = {
+  authority: "message",
   operations: MESSAGE_OPERATIONS,
   dispatch: (stub, request) => stub.executeMessageOperation(request),
   failureCode: "message_operation_failed",
