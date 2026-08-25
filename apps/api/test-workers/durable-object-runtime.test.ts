@@ -4452,6 +4452,75 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(Math.max(...resume)).toBeGreaterThan(resumeAt);
   });
 
+  it("serves a canonical snapshot on the same socket when hibernation lost replay history", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000602",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+
+    // The durable cursor survived, while the events that produced it existed
+    // only in the old instance's bounded replay cache.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE workstream SET title = 'Hibernation recovery', updated_at = ? WHERE id = 1`,
+        Date.now(),
+      );
+      state.storage.sql.exec(`UPDATE realtime_state SET event_sequence = 2 WHERE id = 1`);
+    });
+    await evictDurableObject(stub);
+
+    const delivered = nextMessages(socket, 2);
+    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 1 }));
+    const frames = (await delivered).map((event) => JSON.parse(String(event.data)) as {
+      type: string;
+      sequence: number;
+    });
+
+    expect(frames[0]).toMatchObject({ type: "snapshot", sequence: 2 });
+    expect(frames[1]).toMatchObject({ type: "presence_changed", sequence: 3 });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.getWebSockets()[0]!.deserializeAttachment()).toMatchObject({
+        afterSequence: 2,
+        subscribed: true,
+      });
+    });
+    socket.close(1000, "test complete");
+  });
+
   it("re-serves canonical state to a subscribed viewer and puts it back in the room", async () => {
     await seedOpenAuthority();
     // The snapshot is assembled from D1 as well as object-local SQL, and this

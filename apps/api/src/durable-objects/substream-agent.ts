@@ -503,15 +503,17 @@ export function distinctNonParticipantViewers<T extends { userId: string; connec
 }
 
 export type SocketReplayPlan =
-  | { type: "snapshot" }
+  | { type: "snapshot"; reason: "initial" | "history_unavailable" }
   | { type: "replay"; events: ServerSocketEvent[] }
-  | { type: "resync_required"; reason: "history_unavailable" | "sequence_ahead" };
+  | { type: "resync_required"; reason: "sequence_ahead" };
 
 /**
  * The replay window intentionally lives only in object memory. Persisting every
  * token event would turn an ephemeral optimization into storage write cost.
- * After hibernation, clients receive an explicit resync instruction and use
- * the canonical REST surface for the current authority generation.
+ * After hibernation, a stale client receives the current canonical snapshot on
+ * the same socket. Only a client cursor ahead of the object's durable sequence
+ * requires an out-of-band resync because a lower-sequence snapshot would be
+ * rejected by the client's ordinary cursor guard.
  */
 export function planSocketReplay(
   afterSequence: number,
@@ -520,17 +522,19 @@ export function planSocketReplay(
   recentEvents: readonly ServerSocketEvent[],
   allowInitialSnapshot = true,
 ): SocketReplayPlan {
-  if (afterSequence === 0 && allowInitialSnapshot) return { type: "snapshot" };
+  if (afterSequence === 0 && allowInitialSnapshot) {
+    return { type: "snapshot", reason: "initial" };
+  }
   if (afterSequence > currentSequence) {
     return { type: "resync_required", reason: "sequence_ahead" };
   }
   if (afterSequence === currentSequence) return { type: "replay", events: [] };
   if (replayFloorSequence === null || afterSequence < replayFloorSequence) {
-    return { type: "resync_required", reason: "history_unavailable" };
+    return { type: "snapshot", reason: "history_unavailable" };
   }
   const events = recentEvents.filter((event) => event.sequence > afterSequence);
   if (events.length === 0 || events.at(-1)?.sequence !== currentSequence) {
-    return { type: "resync_required", reason: "history_unavailable" };
+    return { type: "snapshot", reason: "history_unavailable" };
   }
   return { type: "replay", events };
 }
@@ -3854,11 +3858,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.recentEvents,
     );
     // Which of the three plans a subscription takes is the first question
-    // asked of a slow open: a snapshot reads the whole transcript, a replay
-    // sends what is already in memory, and a resync makes the client fetch
-    // canonical state over HTTP instead.
+    // asked of a slow open: a snapshot reads canonical state, a replay sends
+    // what is already in memory, and a sequence-ahead resync makes the client
+    // fetch canonical state over HTTP instead.
     span.setAttributes({
       "rally.subscribe.replay_plan": plan.type,
+      ...(plan.type === "snapshot" ? { "rally.subscribe.snapshot_reason": plan.reason } : {}),
       ...(plan.type === "replay" ? { "rally.subscribe.replay_event_count": plan.events.length } : {}),
     });
     await span.step("workstream.room.subscribe.deliver", () =>
@@ -3918,9 +3923,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       occurredAt: new Date().toISOString(),
       reason: plan.reason,
       latestSequence: currentSequence,
-      activeStreams: plan.reason === "history_unavailable"
-        ? this.objectStore.activeStreamCheckpoints()
-        : [],
+      activeStreams: [],
       activeCompaction: this.objectStore.activeCompaction(),
     });
     socket.send(JSON.stringify(event));

@@ -448,13 +448,49 @@ recovered attempt at the same run/index. Snapshot and resync frames carry that
 singleton. It exists solely to restore the desktop activity indicator and never
 substitutes for `compaction_checkpoints`.
 
-The child keeps a bounded replay window in memory. A connected desktop can
-switch from stream A to stream B and back with no loss: it sends its last room
-sequence; the child replays when the window is present, otherwise it returns
-`resync_required`, and the desktop rebuilds from the authoritative message feed
-plus active checkpoint. The renderer may animate a received text batch one
-token at a time; that presentation trick does not change durable text or cursor
-semantics.
+#### Hibernation replay recovery
+
+The child keeps a bounded replay window in class memory. Cloudflare hibernation
+preserves the accepted WebSocket, its serialized attachment, SQLite, and the
+durable room sequence; it does **not** preserve `recentEvents` or
+`replayFloorSequence`. An activated object can therefore receive a valid resume
+cursor that is behind its durable sequence while having no in-memory events to
+bridge the gap. That is an expected cache miss, not evidence that the socket or
+canonical product state is invalid.
+
+`planSocketReplay` handles the four cursor relationships explicitly:
+
+1. A new subscription at sequence zero receives an `initial` canonical
+   snapshot.
+2. A cursor at the durable sequence needs no frames; a cursor behind it receives
+   replay when the complete interval is still in memory.
+3. A cursor behind the durable sequence with an absent or incomplete replay
+   interval receives a canonical snapshot at the durable sequence on the same
+   socket. `history_unavailable` is the internal snapshot reason recorded in
+   `rally.subscribe.snapshot_reason`; it is not a `resync_required` wire frame.
+4. A cursor ahead of the durable sequence receives `resync_required` with reason
+   `sequence_ahead`. The current desktop cursor guard would reject a
+   lower-sequence snapshot, so this case alone recovers over HTTP.
+
+Snapshot delivery follows the subscribe race boundary: the socket remains
+unsubscribed while canonical detail, transcript windows, active output, and
+compaction state are assembled; the child then replays anything published
+during assembly before serializing the attachment as subscribed. The next
+presence event and every later feed frame use the same open connection.
+
+The correct workaround for hibernation loss is therefore to fall back from the
+memory replay optimization to the child's canonical snapshot path. Do not close
+and reconnect the restored socket, persist every replay event solely to keep the
+cache alive, or suppress presence events to hide cursor movement. Reconnecting
+can itself publish subscribe/close presence events, advance the durable cursor,
+and recreate the same gap after the next activation; persisting the cache turns
+an optimization into a write-ahead event log; suppressing one event producer
+leaves every other replayable event exposed. Any future change to this recovery
+must preserve canonical snapshot contents, the post-snapshot catch-up, and the
+separate `sequence_ahead` compatibility case.
+
+The renderer may animate a received text batch one token at a time; that
+presentation trick does not change durable text or cursor semantics.
 
 The newest bounded message page and its older/newer cursors ride in the initial
 snapshot. Further pages are direct `load_message_page` requests against the
@@ -751,7 +787,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Workspace socket hibernates | Runtime restores attachments; replayed tickets are rejected, topic waterlines resume, and pending commands resend under the same client message ID. |
 | Workstream metadata socket hibernates | Runtime restores identity; subscribe returns a complete authoritative viewer snapshot and later effects push newer revisions. |
 | Child evicted during a 2–30 minute or rare 2+ hour run | Keep-alive reduces occurrence; dispatch ledger plus lease resumes after activation/expiry. |
-| Feed replay window lost | Child sends `resync_required`; desktop reloads canonical parts and active output checkpoint. |
+| Feed replay window lost | Child sends a canonical snapshot on the admitted socket, catches up events published during assembly, and keeps the subscription open. |
 | Transcript page requested | The agent accepts an opaque before/after cursor, defaults to 200 rows, and rejects limits above 250. A per-socket request has a 15-second desktop timeout and is queued again after reconnect without advancing the room cursor. |
 | Encoded transcript page would exceed 900 KB | The agent shortens the page toward the requested boundary and returns an adjusted continuation cursor. A single defensive oversize message produces a correlated `message_page_too_large` error instead of an oversized frame. |
 | Historical-page read loses authorization | The agent returns a correlated authorization error and closes the revoked socket with policy code 1008; cached history is not treated as current authority. |
@@ -1063,6 +1099,29 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-25 — Hibernation replay misses stay on the child socket
+
+**What changed:** When a resume cursor is behind the durable room sequence but
+the memory-only replay events are unavailable or incomplete, SubstreamAgent now
+serves its canonical snapshot and admits the same socket. Only
+`sequence_ahead` returns `resync_required`. The streaming/reconnect contract now
+records exactly which hibernation state survives, the four replay-plan outcomes,
+and the workarounds that would recreate or merely hide the failure.
+
+**Why:** A hibernated object preserves WebSocket attachments and SQLite but not
+class memory. The old response turned that expected state into a reconnect loop:
+the close and next subscribe could each publish presence, move the durable
+sequence, and leave the next activated instance without the new replay events.
+
+**Considered and rejected:** A durable replay log adds storage writes for every
+ephemeral frame. Suppressing presence avoids one producer but leaves the same
+failure for every other replayable event. The snapshot path already reads the
+child's canonical authorities and already performs a post-assembly catch-up.
+
+**Consequences:** Replay loss costs snapshot assembly but no disconnect. Traces
+record `rally.subscribe.snapshot_reason = history_unavailable`, and the
+sequence-ahead compatibility path remains an HTTP resync.
 
 ### 2026-08-25 — Identity decides locality, and an object declares what it owns
 
