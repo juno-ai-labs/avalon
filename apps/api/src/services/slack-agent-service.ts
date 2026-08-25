@@ -275,6 +275,10 @@ const SLACK_RETRYABLE_DENIAL_PREFIXES = [
   "Rally workspace tasks are not enabled for this Slack surface",
   "Rally needs updated Slack permissions before it can start workspace tasks here",
   "Rally couldn’t verify whether this Slack channel is public or private",
+  "Avalon’s Slack workspace connection needs attention",
+  "Avalon workspace tasks are not enabled for this Slack surface",
+  "Avalon needs updated Slack permissions before it can start workspace tasks here",
+  "Avalon couldn’t verify whether this Slack channel is public or private",
 ] as const;
 
 type SlackPendingDenialReason = "connection" | "channel_resolution" | "policy";

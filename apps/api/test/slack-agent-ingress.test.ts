@@ -188,6 +188,16 @@ describe("Slack Agent durable ingress", () => {
     ];
     expect(__slackAgentTesting.recoverSlackDeniedPrompt(messages, "U1", "UBOT"))
       .toBe("grab the documents above");
+    expect(__slackAgentTesting.recoverSlackDeniedPrompt([
+      messages[0]!,
+      messages[1]!,
+      {
+        user: "UBOT",
+        text: "Avalon workspace tasks are not enabled for this Slack surface. Ask an admin.",
+        ts: "1.2",
+        thread_ts: "1.0",
+      },
+    ], "U1", "UBOT")).toBe("grab the documents above");
     expect(__slackAgentTesting.recoverSlackDeniedPrompt(messages, "U2", "UBOT")).toBeNull();
     expect(__slackAgentTesting.recoverSlackDeniedPrompt([
       messages[0]!,
