@@ -1,3 +1,5 @@
+import { WorkstreamMessageStorage } from "./workstream-message-storage";
+
 /**
  * Object-local scheduling state for one work stream.
  *
@@ -79,7 +81,20 @@ function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageVa
 }
 
 export class WorkstreamSchedulingStorage {
-  constructor(private readonly storage: DurableObjectStorage) {}
+  /**
+   * The transcript authority, over this same object storage.
+   *
+   * Composed for the reason `WorkstreamHarnessRunStorage` composes it: asking a
+   * question and answering one each write a transcript part in the same
+   * transaction as the row this class owns, and `parts` has exactly one writer.
+   * Both wrap the same `DurableObjectStorage`, so the nested `transactionSync`
+   * is the same transaction rather than a second one.
+   */
+  private readonly messages: WorkstreamMessageStorage;
+
+  constructor(private readonly storage: DurableObjectStorage) {
+    this.messages = new WorkstreamMessageStorage(storage);
+  }
 
   private get sql(): SqlStorage {
     return this.storage.sql;
@@ -315,6 +330,154 @@ export class WorkstreamSchedulingStorage {
       input.elicitationId,
       input.runId,
     )) !== undefined;
+  }
+
+  /**
+   * Ask a person a question, and put it in the transcript.
+   *
+   * The routed batch was three statements, and each of the last two existed to
+   * work around the first two being separate. The transcript insert was an
+   * `INSERT … SELECT … FROM workstreams` so it could read
+   * `next_sequence_number` off the root in the same statement that consumed it,
+   * with an `EXISTS` on the request row standing in for "the statement before
+   * me succeeded"; the counter update then re-stated that fence twice more,
+   * comparing `next_sequence_number` against the sequence the part had just
+   * taken. A batch cannot see its own earlier statements' rows, so every one of
+   * those clauses was asking the database a question the caller already knew
+   * the answer to. Here the three are one transaction and none of it is needed.
+   *
+   * `needs_input` is stamped last and only on a move, which is what the retired
+   * `_runtime_workstreams` update trigger did with `harness_status`: it left
+   * `state_reason_code` and `state_changed_at` alone when the status it was
+   * given matched the one already there.
+   *
+   * The part is `appendMessage`'s. It carries no run even though a run asked
+   * the question — the routed insert never named `harness_run_id`, so NULL is
+   * what every stored elicitation part has, and giving them their run is a
+   * change that belongs to whoever needs it.
+   */
+  openElicitation(input: {
+    elicitationId: string;
+    runId: string;
+    prompt: string;
+    responseType: string;
+    optionsJson: string;
+    minimumSelections: number;
+    maximumSelections: number | null;
+    targetUserId: string | null;
+    messageId: string;
+    structuredContentJson: string;
+    now: number;
+  }): { outcome: "opened" | "exists"; sequenceNumber: number | null } {
+    return this.storage.transactionSync(() => {
+      if (this.elicitationExistsForRun({
+        elicitationId: input.elicitationId,
+        runId: input.runId,
+      })) {
+        return { outcome: "exists" as const, sequenceNumber: null };
+      }
+      this.sql.exec(
+        `INSERT INTO elicitation_requests
+           (elicitation_id, run_id, prompt, response_type, options_json, minimum_selections,
+            maximum_selections, target_user_id, status, answer_json, answered_by_user_id,
+            external_actor_json, created_at, answered_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, NULL)`,
+        input.elicitationId,
+        input.runId,
+        input.prompt,
+        input.responseType,
+        input.optionsJson,
+        input.minimumSelections,
+        input.maximumSelections,
+        input.targetUserId,
+        input.now,
+      );
+      const appended = this.messages.appendMessage({
+        messageId: input.messageId,
+        clientMessageId: `elicitation:${input.elicitationId}`,
+        authorType: "agent",
+        authorUserId: null,
+        externalActorJson: null,
+        messageType: "elicitation",
+        text: "",
+        structuredContentJson: input.structuredContentJson,
+        producedByRunId: null,
+        now: input.now,
+      });
+      this.sql.exec(
+        `UPDATE workstream
+            SET exact_state = 'needs_input',
+                state_reason_code = CASE WHEN exact_state = 'needs_input'
+                  THEN state_reason_code ELSE 'runtime_needs_input' END,
+                state_changed_at = CASE WHEN exact_state = 'needs_input'
+                  THEN state_changed_at ELSE ?1 END,
+                updated_at = ?1
+          WHERE id = 1`,
+        input.now,
+      );
+      return { outcome: "opened" as const, sequenceNumber: appended.sequenceNumber };
+    });
+  }
+
+  /**
+   * Answer the question on behalf of someone Avalon has no account for.
+   *
+   * The external half of the elicitation answer; the member half is
+   * `WorkstreamObjectProduct.answerElicitation`, which also admits the run that
+   * resumes the work stream. This one does not, because its caller decides
+   * separately — a Slack answer only launches a run once no question is left
+   * open, and that count is read after this returns.
+   *
+   * `already_answered` rather than a throw: the routed batch expressed the race
+   * as `WHERE … status = 'open'` and read `meta.changes` to find out whether it
+   * had won, and losing it is an ordinary outcome — somebody else answered
+   * first. The caller still turns it into a 409.
+   *
+   * The transcript part does not move the work stream out of `needs_input`. The
+   * routed counter update never named `harness_status`, and the state belongs
+   * to whether any question is still open rather than to this one having been
+   * answered.
+   */
+  answerElicitationExternally(input: {
+    elicitationId: string;
+    answerJson: string;
+    externalActorJson: string;
+    messageId: string;
+    clientMessageId: string;
+    structuredContentJson: string;
+    now: number;
+  }): { outcome: "answered" | "already_answered"; sequenceNumber: number | null } {
+    return this.storage.transactionSync(() => {
+      const pending = first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
+        `SELECT 1 AS ok FROM elicitation_requests
+          WHERE elicitation_id = ? AND status = 'pending'`,
+        input.elicitationId,
+      )) !== undefined;
+      if (!pending) return { outcome: "already_answered" as const, sequenceNumber: null };
+      this.sql.exec(
+        `UPDATE elicitation_requests
+            SET status = 'answered', answer_json = ?, answered_by_user_id = NULL,
+                external_actor_json = ?, answered_at = ?
+          WHERE elicitation_id = ?`,
+        input.answerJson,
+        input.externalActorJson,
+        input.now,
+        input.elicitationId,
+      );
+      const appended = this.messages.appendMessage({
+        messageId: input.messageId,
+        clientMessageId: input.clientMessageId,
+        authorType: "external",
+        authorUserId: null,
+        externalActorJson: input.externalActorJson,
+        messageType: "elicitation",
+        text: "",
+        structuredContentJson: input.structuredContentJson,
+        producedByRunId: null,
+        now: input.now,
+      });
+      return { outcome: "answered" as const, sequenceNumber: appended.sequenceNumber };
+    });
   }
 
   // ----------------------------------------------------- plugin activation
