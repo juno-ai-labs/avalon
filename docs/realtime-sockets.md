@@ -310,7 +310,7 @@ viewer revalidation cannot retain one ever-growing text value per token batch.
 
 `SubstreamAgent` remains the only socket for transcript parts, attachments,
 tool/elicitation/suggestion blocks, active token frames/checkpoints, explicit
-compaction activity, presence, replay cursors, and resync/download. A
+compaction activity, presence, replay cursors, snapshots, and resync/download. A
 compaction start is durable object-local state included in snapshots and resync
 frames; the matching finish or a terminal run status clears it. No workspace or
 work-stream metadata is inferred from token frames or token silence.
@@ -332,9 +332,15 @@ canonical state is saying its own may be wrong, which is exactly why a cursor it
 supplied cannot be trusted to bound the answer. The request is refused unless
 the socket is already subscribed: an unsubscribed socket has no feed to refresh,
 and answering one would serve canonical state on a connection that never passed
-the subscribe path's authority and maintenance checks. Reconciliation over REST
-survives only for recovery after `resync_required`, where no socket is open to
-ask on; [`architecture.md`](architecture.md) owns the rest of that behavior.
+the subscribe path's authority and maintenance checks. When hibernation has
+discarded the replay window, subscribe itself answers with that canonical
+snapshot on the still-admitted socket and then catches up any event published
+during assembly. If snapshot assembly fails or that one catch-up has already
+overflowed the memory window, the room keeps the attachment cursor unchanged
+and returns `resync_required` with reason `history_unavailable`. The same REST
+fallback uses `sequence_ahead` when the client's cursor guard cannot accept a
+lower-sequence socket snapshot; [`architecture.md`](architecture.md) owns the
+rest of that behavior.
 
 The initial socket snapshot still carries the newest page and both cursors.
 When a user scrolls within 160 px of the top, Electron requests the preceding
@@ -500,6 +506,28 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-25 — A lost replay cache no longer discards a healthy socket
+
+**What changed:** Resume subscriptions now receive canonical state on the same
+SubstreamAgent connection when hibernation lost the in-memory replay window.
+`resync_required` is reserved for `sequence_ahead` and the last-resort
+`history_unavailable` fallback when a canonical snapshot cannot be delivered
+without reopening the subscribe race.
+
+**Why:** Cloudflare restores hibernating sockets and their attachments, not the
+object instance's replay array. Closing the restored socket for that normal
+condition could generate presence changes on subscribe and close, advance the
+durable cursor, and repeat the miss after the next activation.
+
+**Considered and rejected:** Persisting the replay cache pays durable writes for
+an optimization; removing presence changes only narrows the trigger. The
+existing canonical snapshot and catch-up boundary repairs all replay-event
+classes without a new client message.
+
+**Consequences:** The connection remains usable after an ordinary repair. A
+failed or overflowed repair retains the old cursor and takes explicit REST
+recovery, as does an impossible client-ahead cursor.
 
 ### 2026-08-25 — The ticket sentinel is rally.ticket.v1, and the offered one is echoed
 
