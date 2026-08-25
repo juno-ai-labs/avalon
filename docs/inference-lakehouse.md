@@ -110,10 +110,13 @@ The API deployment does all resource work before migrations or Worker upload:
 4. The workflow deploys EU and then Global with those generated configs. Health
    requires both the Queue and Pipeline binding in staging and production.
 
-Later merges run the same path. Existing resources are read back and compared to
-the manifest; immutable schema, sink, or SQL drift fails the deployment rather
-than creating a parallel table or silently dropping fields. No resource requires
-a dashboard or laptop step. The existing account-owned deployment token must have
+Later merges run the same path. `config/inference-lakehouse.json` declares the
+deployment credential as account-owned, so provisioning uses the account token
+verifier directly and does not guess ownership from an API failure. Existing
+resources are read back and compared to the manifest; immutable schema, sink, or
+SQL drift fails the deployment rather than creating a parallel table or silently
+dropping fields. No resource requires a dashboard or laptop step. The existing
+account-owned deployment token must have
 Workers R2 Storage Admin Read & Write, Object Read & Write on
 `avalon-eu-inference-lakehouse`, Pipelines, Queues, and Worker deployment
 permissions.
@@ -295,8 +298,9 @@ decided retention policy, not a speculative cache or aggregation layer.
 ### 2026-08-24 — Account-owned deployment tokens use their owning verifier
 
 **What changed:** Merge provisioning now resolves the deployment token's S3
-access-key ID through the account-owned token verification endpoint first and
-falls back to user-token verification only when the credential is user-owned.
+access-key ID through the account-owned token verification endpoint selected by
+the checked-in lakehouse manifest. User-owned credentials remain supported only
+when that ownership is declared explicitly in the manifest.
 The production credential contract also names EU bucket-item Object Read &
 Write separately from account-level R2 administration.
 
@@ -312,8 +316,9 @@ existing account-owned deployment credential is already registered for R2 and
 can be scoped to the EU lakehouse bucket.
 
 **Consequences:** First-merge provisioning remains non-interactive, account and
-user deployment tokens both retain explicit coverage, and rotating the existing
-credential still triggers the immutable sink identity guard.
+user deployment tokens both retain explicit coverage, verifier failures cannot
+silently switch credential identity, and rotating the existing credential still
+triggers the immutable sink identity guard.
 
 ### 2026-08-24 — Sink creation leaves account ownership to the API path
 
