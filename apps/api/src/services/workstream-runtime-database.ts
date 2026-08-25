@@ -57,7 +57,6 @@ const responseSchema = z.object({
 });
 
 const LOCAL_TABLES = [
-  "workstream_participants",
   "harness_runs",
   "runs",
   "run_steering",
@@ -65,7 +64,6 @@ const LOCAL_TABLES = [
   "message_attachments",
   "message_mentions",
   "messages",
-  "workstreams",
   // The object's own receipt table, not a legacy name: when migration 17
   // retired `tool_invocations` from this list, the dev seed moved to writing
   // `tool_effects` directly — and a statement naming only that table fell

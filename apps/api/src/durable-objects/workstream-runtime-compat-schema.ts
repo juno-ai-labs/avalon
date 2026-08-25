@@ -531,6 +531,45 @@ export const WORKSTREAM_RUNTIME_COMPAT_SCHEMA = [
        UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;
      END`,
 
+  `CREATE VIEW IF NOT EXISTS _runtime_elicitations AS
+     SELECT request.elicitation_id AS id, root.parent_workspace_key AS workspace_id,
+            root.workstream_key AS workstream_id, request.run_id AS harness_run_id,
+            request.prompt, request.response_type, request.options_json,
+            request.minimum_selections, request.maximum_selections, request.target_user_id,
+            CASE request.status WHEN 'pending' THEN 'open' ELSE request.status END AS status,
+            request.answer_json, request.answered_by_user_id,
+            strftime('%Y-%m-%dT%H:%M:%fZ', request.created_at / 1000.0, 'unixepoch') AS created_at,
+            CASE WHEN request.answered_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%fZ', request.answered_at / 1000.0, 'unixepoch') END AS answered_at,
+            request.external_actor_json AS answered_by_external_actor_json
+       FROM elicitation_requests request CROSS JOIN workstream root WHERE root.id = 1`,
+  `CREATE TRIGGER IF NOT EXISTS _runtime_elicitations_insert
+     INSTEAD OF INSERT ON _runtime_elicitations BEGIN
+       INSERT OR IGNORE INTO elicitation_requests
+         (elicitation_id, run_id, prompt, response_type, options_json, minimum_selections,
+          maximum_selections, target_user_id, status, answer_json, answered_by_user_id,
+          external_actor_json, created_at, answered_at)
+       VALUES (NEW.id, NEW.harness_run_id, NEW.prompt, NEW.response_type,
+          COALESCE(NEW.options_json, '[]'), COALESCE(NEW.minimum_selections, 0),
+          NEW.maximum_selections, NEW.target_user_id,
+          CASE NEW.status WHEN 'open' THEN 'pending' ELSE NEW.status END,
+          NEW.answer_json, NEW.answered_by_user_id, NEW.answered_by_external_actor_json,
+          CAST((julianday(NEW.created_at) - 2440587.5) * 86400000 AS INTEGER),
+          CASE WHEN NEW.answered_at IS NULL THEN NULL ELSE CAST((julianday(NEW.answered_at) - 2440587.5) * 86400000 AS INTEGER) END);
+       UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;
+     END`,
+  `CREATE TRIGGER IF NOT EXISTS _runtime_elicitations_update
+     INSTEAD OF UPDATE ON _runtime_elicitations BEGIN
+       UPDATE elicitation_requests SET
+          status = CASE NEW.status WHEN 'open' THEN 'pending' ELSE NEW.status END,
+          answer_json = NEW.answer_json,
+          answered_by_user_id = NEW.answered_by_user_id,
+          external_actor_json = NEW.answered_by_external_actor_json,
+          answered_at = CASE WHEN NEW.answered_at IS NULL THEN NULL
+            ELSE CAST((julianday(NEW.answered_at) - 2440587.5) * 86400000 AS INTEGER) END
+        WHERE elicitation_id = OLD.id;
+       UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;
+     END`,
+
   `CREATE VIEW IF NOT EXISTS _runtime_compactions AS
      SELECT root.parent_workspace_key AS workspace_id, root.workstream_key AS workstream_id,
             checkpoint.execution_principal_key, checkpoint.resource_visibility_fingerprint,
