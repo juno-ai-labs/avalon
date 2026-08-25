@@ -167,6 +167,30 @@ describe("workspace preferences", () => {
     expect(update?.values[0]).toBe("Europe/London");
   });
 
+  it("records that the account timezone was chosen rather than inferred", async () => {
+    const database = new StubDatabase(({ sql }) =>
+      sql.startsWith("SELECT id, email, name, avatar_url, timezone")
+        ? {
+            id: ownerAuth.userId,
+            email: "owner@example.com",
+            name: "Owner",
+            avatar_url: null,
+            timezone: "America/New_York",
+            created_at: "2026-08-01T00:00:00.000Z",
+          }
+        : undefined);
+    const service = new WorkspaceService(environment(database), ownerAuth);
+
+    await expect(service.updateMyTimezone("America/New_York"))
+      .resolves.toMatchObject({ timezone: "America/New_York" });
+
+    // Without the recorded source, the next desktop sign-in writes the
+    // machine's zone back over this and every schedule derived from it.
+    const update = database.runs.find((statement) => statement.sql.startsWith("UPDATE users SET timezone"));
+    expect(update!.sql).toContain("timezone_source = 'user'");
+    expect(update!.values[0]).toBe("America/New_York");
+  });
+
   it("keeps workspace preferences admin-only", async () => {
     const database = new StubDatabase(() => undefined);
     const service = new WorkspaceService(environment(database), { ...ownerAuth, role: "member" });
@@ -656,6 +680,42 @@ describe("desktop login ticket PKCE binding", () => {
     });
     await expect(service.exchangeDesktopTicket(request))
       .rejects.toMatchObject({ status: 401, code: "invalid_login_ticket" });
+  });
+
+  it("seeds the account timezone from the signing-in machine but never over a chosen one", async () => {
+    const verifier = "v".repeat(64);
+    const challenge = await sha256(verifier);
+    const database = new StubDatabase(({ sql }) => {
+      if (sql.startsWith("UPDATE desktop_login_tickets")) {
+        return {
+          user_id: identity.user_id,
+          workspace_id: identity.workspace_id,
+          desktop_code_challenge: challenge,
+        };
+      }
+      if (sql.startsWith("SELECT u.id AS user_id")) return identity;
+      return undefined;
+    });
+    const service = new AuthService(environment(database));
+    const request = {
+      ticket: "ticket-value-longer-than-twenty-characters",
+      region: "global" as const,
+      attemptId: "a".repeat(43),
+      codeVerifier: verifier,
+    };
+
+    await service.exchangeDesktopTicket({ ...request, timezone: "America/New_York" });
+    const seeded = database.runs.find((statement) => statement.sql.startsWith("UPDATE users SET timezone"));
+    // Guarded, so an account whose owner picked a zone in settings keeps it
+    // when they next sign in from a machine somewhere else.
+    expect(seeded!.sql).toContain("timezone_source = 'client'");
+    expect(seeded!.values[0]).toBe("America/New_York");
+
+    // A client that sends no zone knows nothing about where this person is; it
+    // used to be answered with Pacific, which is a guess written over an answer.
+    await service.exchangeDesktopTicket(request);
+    expect(database.runs.filter((statement) =>
+      statement.sql.startsWith("UPDATE users SET timezone"))).toHaveLength(1);
   });
 
   it("burns a correctly targeted ticket when the verifier proof is wrong", async () => {

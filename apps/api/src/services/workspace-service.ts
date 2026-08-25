@@ -360,7 +360,11 @@ export class WorkspaceService {
   }
 
   async updateMyTimezone(timezone: string) {
-    await this.env.DB.prepare("UPDATE users SET timezone = ?, updated_at = ? WHERE id = ?")
+    // `timezone_source` is what stops the next sign-in writing the machine's
+    // zone back over this choice.
+    await this.env.DB.prepare(
+      "UPDATE users SET timezone = ?, timezone_source = 'user', updated_at = ? WHERE id = ?",
+    )
       .bind(timezone, nowIso(), this.auth.userId)
       .run();
     // A digest's times are wall-clock times in this person's day, so moving

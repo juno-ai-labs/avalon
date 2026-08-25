@@ -93,13 +93,15 @@ Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are ne
 
 ### Automation compilation
 
+Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. A calendar recurrence carries the IANA timezone a person named for it and null otherwise, and the account zones it would otherwise have to guess at — the requester's and the workspace's — are rendered into a user-role message the policy defers to by name; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. A destination Avalon delivers to is described rather than instructed: the compiler never writes a provider send for one, because Avalon sends the result there itself. Which destinations the owner asked for is a required field of the submit-draft schema, `requestedDelivery`, closed to the two Avalon offers — the create screen selects from it rather than re-reading the draft's prose. It records what was asked and never what was inferred: a briefing *about* somebody's inbox is not a request to be emailed, a send aimed at a third party is not a request for the owner, and a request to be "sent the result" that names no channel resolves to nothing rather than to a guess.
+
 Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. A destination Rally delivers to is described rather than instructed: the compiler never writes a provider send for one, because Rally sends the result there itself. Which destinations the owner asked for is a required field of the submit-draft schema, `requestedDelivery`, closed to the two Rally offers — the create screen selects from it rather than re-reading the draft's prose. It records what was asked and never what was inferred: a briefing *about* somebody's inbox is not a request to be emailed, a send aimed at a third party is not a request for the owner, and a request to be "sent the result" that names no channel resolves to nothing rather than to a guess.
 
 Request-scoped attachment tools may be added directly to the preloaded automation architect. They inherit its `automation_*` wire prefix and are not catalog-loaded connector capabilities. The API host freezes their admitted resource IDs and owns every authorization recheck; the harness only exposes the supplied strict tools for that compiler run.
 
 The compiler narrates while it researches, and the composer streams that narration. `compileAutomation` emits `started` once for the whole compile, a `thinking` frame per inference request, a `tool` row per discovery call, and `delta` frames carrying the architect's own text: the plan it states alongside its first tool calls, and a progress update every three or four calls after that. The `# Narration` section of the compiler policy owns what belongs in that text — settled sentences about the automation, never a question, never internal deliberation, never a tool or field name — and the submission turn is the one turn that carries none of it, because Rally renders the settled result from the saved draft and the elicitation instead. Narration accumulates into one composer bubble across turns, so the compiler tracks what earlier turns settled: a route restart replays only its own turn, and the reset frame restores the earlier updates rather than clearing text the reader has already seen.
 
-The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone resolves from the personal user or workspace according to scope; an explicit trigger timezone wins. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Invalid structured output gets one sanitized repair attempt, then `502 model_output_invalid` with a request ID.
+The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone stays null through the draft and into storage, and is resolved against the automation's own owner and scope when its `schedules` row is derived; an explicit trigger timezone wins there. Null is the distinction that makes the resolution possible at all — a default filled in at compile time is indistinguishable from a zone the person named, and answers for the scope the compiler guessed rather than the one the automation was created with. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Invalid structured output gets one sanitized repair attempt, then `502 model_output_invalid` with a request ID.
 
 ### Connection plugins and authority narrowing
 
@@ -755,6 +757,53 @@ already `execution`.
 lands anywhere. *Adding a retry* for it inside the harness: the invocation is
 already spent, so a retry inside it fails identically; the honest recovery is
 the next run, which is what the member-facing message says.
+
+### 2026-08-24 — The compiler is told the timezone it was being asked to schedule in
+
+**What changed:** `renderAutomationCompilerMessages` takes the account's
+personal and workspace zones and renders them as a user-role scheduling-defaults
+message. The policy line that said to use "the user's timezone" now says to set
+a calendar trigger's timezone only to a zone the person named, otherwise to
+leave it null for that default, and to name the zone that applies in the trigger
+summary. The submit-draft schema's `timezone` field carries the same contract in
+its own description. Two sentences left the policy to pay for it — "Flat trigger
+records require null for every unused field" and the JSON-string encoding rule —
+both of which the rendered submit schema already states per field.
+
+**Why:** the rule referred to a fact the model was never given. Asked to
+schedule in a timezone it could not read, a model supplies a popular one, and a
+New York account got a 9:00 AM briefing on Pacific time — in the field *and* in
+the summary sentence the person reads on the automation, which is model prose
+and would still have named the wrong zone had only the field been repaired.
+The defaults are a user-role message rather than an interpolation into the
+policy: the policy is one constant string every workspace shares, which is the
+block a prompt-cache hit is worth the most on, and an account's zones do not
+change between turns, so they sit ahead of the draft state that is rewritten
+every turn.
+
+**Consequences:** the policy is back to 9,943 bytes against its 10,000 ceiling,
+so the byte cap held without being raised. The field is now expected to be null
+in the ordinary case, and the normalizer no longer substitutes a default for it —
+`AutomationService` resolves it where the `schedules` row is derived. A zone the
+model *writes* is still honoured, deliberately: a shared template naming an
+American market open must not follow its adopter. So the policy line is what
+keeps a model from deciding when an automation runs, not a server-side guard, and
+`prompts.test.ts` asserts its wording for that reason. The
+substitution was kept in a first draft of this change to keep the wire non-null,
+which made the server's resolution unreachable for everything the pipeline
+produced: review of #263 found the two cases that cost, and the normalizer's
+fill went. `prompts.test.ts` pins the message, its position, and the policy's
+deference to it; `index.test.ts` pins that `compileAutomation` sends both halves
+and that an unnamed zone comes back null.
+
+A second review round caught the trigger enumeration two paragraphs above still
+defining a calendar trigger as "RRULE and timezone", with no tie-break against
+the new rule — the reading a medium model is likeliest to take is the earlier
+definitional one, which fills the field and puts the resolution back where it
+was. It now says "optional timezone". The summary rule was conditioned on the
+same predicate at the same time: naming "the zone that applies" asked the model
+to pick by a scope chosen after it writes, so an unnamed zone now gets a summary
+with no zone in it rather than a guess in the one sentence a person reads.
 
 ### 2026-08-24 — EU hosts intentionally discard analytical inference events
 
