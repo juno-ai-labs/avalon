@@ -236,6 +236,70 @@ describe("identity authority on real workerd", () => {
     });
   });
 
+  it("seats a whole audience or none of it, and reports what each seating did", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
+    await identity(stub, "admitParticipant", {
+      userId: TAYLOR, addedByUserId: TAYLOR, reason: "creator", now: 3,
+    });
+
+    const seated = await identity(stub, "admitParticipants", {
+      userIds: [TAYLOR, JORDAN],
+      addedByUserId: null,
+      reason: "explicit",
+      now: 7,
+    });
+
+    // The rows come back from the write, so the caller that publishes a
+    // `participant_joined` for each new seating never asks a second time — and
+    // `unchanged` is how it tells an arrival from somebody already in the room.
+    expect(seated.value).toEqual([
+      { userId: TAYLOR, outcome: "unchanged", participationReason: "creator", addedAt: 3 },
+      { userId: JORDAN, outcome: "admitted", participationReason: "explicit", addedAt: 7 },
+    ]);
+    // `addedByUserId: null` is the arriving-member case: nobody else is
+    // credited, so each member is recorded as having seated themselves.
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT user_id, added_by_user_id, added_at FROM participants ORDER BY user_id`,
+      ).toArray()).toEqual([
+        { user_id: TAYLOR, added_by_user_id: TAYLOR, added_at: 3 },
+        { user_id: JORDAN, added_by_user_id: JORDAN, added_at: 7 },
+      ]);
+    });
+  });
+
+  it("leaves the whole audience unseated when one of its members cannot be", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      // A row the insert cannot satisfy: the seating below reaches it second,
+      // after the first member has already been written in the same
+      // transaction. Without that transaction the first would survive the
+      // throw, and the retry — recomputing who is new against a roster that
+      // now holds them — would never publish their arrival.
+      state.storage.sql.exec(
+        `CREATE TRIGGER refuse_jordan BEFORE INSERT ON participants
+           WHEN NEW.user_id = '${JORDAN}'
+           BEGIN SELECT RAISE(ABORT, 'refused'); END`,
+      );
+    });
+
+    await expect(identity(stub, "admitParticipants", {
+      userIds: [TAYLOR, JORDAN],
+      addedByUserId: null,
+      reason: "explicit",
+      now: 7,
+    })).rejects.toThrow(/refused/u);
+
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS n FROM participants`).one())
+        .toEqual({ n: 0 });
+    });
+  });
+
   it("moves the creator seat and the reason that goes with it together", async () => {
     const stub = agent();
     await boot(stub);

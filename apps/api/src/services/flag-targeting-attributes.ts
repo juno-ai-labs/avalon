@@ -214,19 +214,23 @@ async function loadRow<T>(
  * evaluate against a subject Avalon never described. The port throws where the
  * statement threw, so the distinction survives the move; only the statement is
  * gone.
+ *
+ * The workspace arrives as an argument rather than being read off the subject.
+ * It was a binding on the retired statement, where a missing one simply matched
+ * nothing; addressing an object needs it before the question can be asked at
+ * all. Its caller already refuses a subject without one, and a second guard
+ * here would be unreachable — and disagreed with the reachable one about
+ * whether an under-described subject is an absent fact or a failed read, which
+ * is the one distinction `LoadOutcome` exists to keep.
  */
 async function loadIdentity(
   env: Env,
   subject: FlagTargetingSubject,
+  workspaceId: string,
   workstreamId: string,
 ): Promise<LoadOutcome<IdentityRow>> {
-  // The workspace was a binding on the retired statement, where a missing one
-  // simply matched nothing. It addresses the object here, so an evaluation
-  // that does not know its workspace cannot ask — and that is "no read", not
-  // "no such work stream".
-  if (subject.workspaceId === undefined) return { value: null, failed: true };
   try {
-    const value = await createIdentityObjectPort(env, subject.workspaceId, workstreamId)
+    const value = await createIdentityObjectPort(env, workspaceId, workstreamId)
       .identity();
     return { value: value ?? null, failed: false };
   } catch (error) {
@@ -313,7 +317,7 @@ async function workstreamFacts(env: Env, subject: FlagTargetingSubject, workstre
     // that followed was a statement that had to be routed. The port addresses
     // the object itself, so a failure to reach it is `loadIdentity`'s to report
     // rather than a second try/catch logging the same event above it.
-    const outcome = await loadIdentity(env, subject, workstreamId);
+    const outcome = await loadIdentity(env, subject, subject.workspaceId, workstreamId);
     if (!outcome.value) return { value: null, failed: outcome.failed };
     const creator = outcome.value.created_by_user_id
       ? await loadRow<{ email: string }>(

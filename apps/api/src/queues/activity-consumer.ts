@@ -813,7 +813,7 @@ async function startActivityAutomation(
       workstreamId,
     });
     // The automation's pin follows the work streams its runs create. The work
-    // stream is written in the same batch as its harness run, so the pin cannot
+    // stream is provisioned below, alongside its harness run, so the pin cannot
     // be read back from the row yet — it is the value being written beside it.
     const modelOverride = automationModelOverride(env, subscription.model_override, {
       workspaceId: activity.workspace_id,

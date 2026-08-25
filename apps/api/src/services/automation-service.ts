@@ -1584,6 +1584,23 @@ export class AutomationService {
     );
     let controlRunInserted = false;
     try {
+      // The control row is claimed first, so the unique keys on it — the
+      // idempotency key and the subscription's planned-for slot — decide who
+      // provisions before anything visible exists. Two concurrent requests
+      // sharing a key both pass the lookup above; the loser fails here, with
+      // nothing object-side to compensate, and falls through to the existing
+      // run below. Provisioning first would leave it an orphaned sidebar entry
+      // and a permanently reserved email address for a run that never was.
+      const runStatement = this.env.DB.prepare(
+        `INSERT INTO automation_runs
+         (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
+          trigger_activity_id, planned_for, started_at, status, idempotency_key, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(runId, this.auth.workspaceId, subscription.id, workstreamId, triggerType, activityId, plannedFor, null, "scheduled", idempotencyKey, at);
+      // The regional row is a control-plane run record; the root, transcript,
+      // run and resource links below belong to the newly bootstrapped object.
+      const inserted = await runStatement.run();
+      controlRunInserted = (inserted.meta.changes ?? 0) > 0;
       // Every automation run is a private work stream. The member who starts
       // it is both its durable creator and its initial participant, so every
       // later read uses the ordinary work-stream visibility rule.
@@ -1606,16 +1623,6 @@ export class AutomationService {
         modelOverride,
         now: Date.parse(at),
       });
-      const runStatement = this.env.DB.prepare(
-        `INSERT INTO automation_runs
-         (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
-          trigger_activity_id, planned_for, started_at, status, idempotency_key, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(runId, this.auth.workspaceId, subscription.id, workstreamId, triggerType, activityId, plannedFor, null, "scheduled", idempotencyKey, at);
-      // The regional row is a control-plane run record; the root, transcript,
-      // run and resource links below belong to the newly bootstrapped object.
-      const inserted = await runStatement.run();
-      controlRunInserted = (inserted.meta.changes ?? 0) > 0;
       if (openingInput && triggerMessageId) {
         // The routed batch wrote `sequence_number = 1` and set the root's
         // counters to 2 in the same statement set. The transcript authority
@@ -1639,8 +1646,8 @@ export class AutomationService {
         });
       }
       if (start) {
-        // The work stream is created in this same batch, so its override cannot
-        // be read back yet — it is the value being written just above.
+        // The work stream is provisioned just above, and its override is the
+        // value that write carries, so it cannot be read back off the row yet.
         const model = modelOverride ?? await scheduledWorkstreamModel(executionEnv, {
           workspaceId: this.auth.workspaceId,
           workstreamId,
