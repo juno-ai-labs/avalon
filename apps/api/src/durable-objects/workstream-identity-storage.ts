@@ -441,6 +441,15 @@ export class WorkstreamIdentityStorage {
    * authoritative; re-running the write would reset counters a first run may
    * have advanced, so a root that has left `runtime_bootstrap` answers
    * `already_provisioned` without touching anything.
+   *
+   * The two throws are the other half of that pairing, and they are the reason
+   * this reads the root before it writes rather than trusting its caller.
+   * Every producer calls `bootstrapRuntimeAuthority` first, so a missing row
+   * means the bootstrap never ran and `preparing` means it ran and did not
+   * take — its update is fenced on `authority_mode = 'preparing'`. Both are
+   * sequencing failures rather than states to handle, and provisioning over
+   * either would write product state into an object that is not yet the
+   * authority for it.
    */
   provision(input: WorkstreamProvisionInput): { outcome: "provisioned" | "already_provisioned" } {
     return this.storage.transactionSync(() => {
