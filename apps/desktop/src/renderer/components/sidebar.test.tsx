@@ -15,6 +15,8 @@ const openSettings = vi.hoisted(() => vi.fn());
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
 const markWorkstreamNavigation = vi.hoisted(() => vi.fn());
 const markSurfaceEntrypoint = vi.hoisted(() => vi.fn());
+const startWorkstreamSocketWarmup = vi.hoisted(() => vi.fn());
+const cancelWorkstreamSocketWarmup = vi.hoisted(() => vi.fn());
 const applicationSettings = vi.hoisted(() => ({
   current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
   listeners: new Set<(settings: unknown) => void>(),
@@ -45,6 +47,13 @@ vi.mock('../lib/telemetry', () => ({
   markWorkstreamNavigation,
   reportTelemetryProductIntent,
   telemetryVisibility: (scope: string) => scope === 'workspace' ? 'public' : 'private',
+}));
+
+vi.mock('../lib/workstream-socket-pool', () => ({
+  useWorkstreamSocketHoverWarmup: (workstreamId: string) => ({
+    onPointerEnter: () => startWorkstreamSocketWarmup(workstreamId),
+    onPointerLeave: () => cancelWorkstreamSocketWarmup(workstreamId),
+  }),
 }));
 
 const workspace: Workspace = {
@@ -137,6 +146,8 @@ describe('Sidebar work-stream markers', () => {
     copyText.mockReset().mockResolvedValue(undefined);
     markWorkstreamNavigation.mockReset();
     reportTelemetryProductIntent.mockReset();
+    startWorkstreamSocketWarmup.mockReset();
+    cancelWorkstreamSocketWarmup.mockReset();
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
@@ -167,6 +178,30 @@ describe('Sidebar work-stream markers', () => {
 
     fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
     expect(resizer).toHaveAttribute('aria-valuenow', '300');
+  });
+
+  it('forwards a work-stream row hover to the pooled socket warm-up', () => {
+    const hovered = workstream('hovered-workstream', 'Warm this work stream', 'completed');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[hovered]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    const row = screen.getByText('Warm this work stream').closest('[data-workstream-id]');
+    if (!row) throw new Error('The work-stream row has no hover target.');
+
+    fireEvent.pointerEnter(row);
+    expect(startWorkstreamSocketWarmup).toHaveBeenCalledWith(hovered.id);
+    fireEvent.pointerLeave(row);
+    expect(cancelWorkstreamSocketWarmup).toHaveBeenCalledWith(hovered.id);
   });
 
   // The pill answers to how near the pointer is rather than to hovering the

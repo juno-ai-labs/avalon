@@ -35,6 +35,7 @@ import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import { formatDateTime, formatRelative, groupActivityItems, workstreamMarkerStatus } from '../lib/format';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
+import { useWorkstreamSocketHoverWarmup } from '../lib/workstream-socket-pool';
 import {
   markSurfaceEntrypoint,
   markWorkstreamNavigation,
@@ -438,6 +439,7 @@ function WorkstreamRow({
   onTogglePin: (workstream: WorkstreamSummary, pinned: boolean) => void;
 }): React.JSX.Element {
   const location = useLocation();
+  const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
   // The row is a cache entry, not a read: nothing here refetches, so the grace
   // is what ends a skeleton whose rename never arrived. Read
   // `lib/naming-skeleton.ts` before changing when it comes down.
@@ -504,6 +506,8 @@ function WorkstreamRow({
               drag.onMove(workstream, event.key === 'ArrowUp' ? -1 : 1);
             }
             : undefined}
+          onPointerEnter={socketWarmup.onPointerEnter}
+          onPointerLeave={socketWarmup.onPointerLeave}
         >
           <NavLink
             aria-keyshortcuts={commandShortcut === undefined ? undefined : `Meta+${commandShortcut}`}

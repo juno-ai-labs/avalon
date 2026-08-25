@@ -41,7 +41,7 @@ is recorded.
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps the selected/running SubstreamAgent feed and invokes the separate WorkstreamDO control lifecycle. |
-| `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns those two work-stream sockets above the route and retains recently viewed work streams without remounting their connection hooks. |
+| `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns those two work-stream sockets above the route, warms them after a one-second sidebar hover, and retains warmed or recently viewed work streams without remounting their connection hooks. |
 | `apps/desktop/src/renderer/lib/api.ts` | Parses every ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
 
 ## How it works
@@ -133,11 +133,15 @@ configured block. Switching away keeps the exact metadata/feed socket pair
 mounted for at least five minutes, so returning to a recently viewed work stream
 does not spend another ticket request, handshake, subscribe, or snapshot. The
 five-minute clock restarts each time the work stream leaves the foreground;
-background-running conversation streams remain connected beyond it. Block
-sockets still close with the panel and recover from durable checkpoints when it
-is opened again. Access revocation is not delayed: the server closes every
-affected retained socket immediately, and that socket permanently stops
-reconnecting.
+background-running conversation streams remain connected beyond it. Holding a
+pointer over any sidebar work-stream row for one second warms that same socket
+pair before navigation. Leaving before the second passes cancels the warm-up;
+once it passes, the pool retains the pair for the ordinary five-minute window so
+pointer movement or the route transition cannot immediately undo the work.
+Keyboard focus alone does not warm a socket. Block sockets still close with the
+panel and recover from durable checkpoints when it is opened again. Access
+revocation is not delayed: the server closes every affected retained socket
+immediately, and that socket permanently stops reconnecting.
 
 The workspace socket carries its authoritative work-stream directory rows plus
 durable topic invalidations for the other D1-owned workspace modules. Its
@@ -512,6 +516,33 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-25 — A deliberate sidebar hover warms the work-stream socket pair
+
+**What changed:** Holding the pointer over a sidebar work-stream row for one
+second opens its pooled WorkstreamDO metadata and SubstreamAgent feed sockets.
+A shorter hover opens nothing. Once warmed, the pair follows the existing
+five-minute recent-work-stream retention lifetime and is reused if the row is
+opened.
+
+**Why:** The five-minute pool removed the repeat cost when switching back to a
+work stream, but the first switch to a listed work stream still waited for two
+ticket requests, handshakes, subscriptions, and snapshots after the click. A
+one-second dwell is a direct signal that the row may be opened soon and gives
+that work a head start without making pointer travel through the sidebar open
+connections.
+
+**Considered and rejected:** Warming immediately on pointer entry would turn
+ordinary cursor movement into network work. Opening every listed work stream
+would make the whole sidebar live and abandon the pool's time-bounded scope.
+Closing the pair on pointer leave would throw away the warm-up during the click
+and route transition that it exists to accelerate.
+
+**Consequences:** A warmed-but-unopened work stream can keep two hibernatable
+sockets for five minutes, and repeated qualifying hovers restart that lifetime.
+The pool still deduplicates active, running, recent, and warmed membership;
+access revocation still closes the pair immediately. The one-second threshold
+is the product promise and must remain literal in its test.
 
 ### 2026-08-25 — Recently viewed work-stream sockets survive navigation for five minutes
 
