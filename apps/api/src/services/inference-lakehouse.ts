@@ -134,7 +134,7 @@ function payloadObjectKey(record: InferenceLakehouseRecord): string {
 /**
  * Persist first, then enqueue a compact pointer. Queue messages top out at
  * 128 KB while Pipeline ingestion accepts 5 MB, and multimodal inference bodies
- * can exceed either. R2 is the regional durable hand-off that keeps the exact
+ * can exceed either. Global R2 is the durable hand-off that keeps the exact
  * record available without truncating it to fit the transport.
  */
 export async function stageInferenceLakehouseRecord(
@@ -145,6 +145,8 @@ export async function stageInferenceLakehouseRecord(
   if (record.region !== env.AVALON_REGION) {
     throw new Error(`inference_lakehouse_region_mismatch:${record.region}:${env.AVALON_REGION}`);
   }
+  const queue = env.INFERENCE_LAKEHOUSE_QUEUE;
+  if (!queue) throw new Error("inference_lakehouse_queue_binding_missing");
   const serialized = JSON.stringify(record);
   const payloadBytes = new TextEncoder().encode(serialized).byteLength;
   const payloadSha256 = await sha256(serialized);
@@ -169,7 +171,7 @@ export async function stageInferenceLakehouseRecord(
     },
   });
   try {
-    await env.INFERENCE_LAKEHOUSE_QUEUE.send(pointer, { contentType: "json" });
+    await queue.send(pointer, { contentType: "json" });
   } catch (error) {
     await env.PAYLOADS.delete(objectKey).catch(() => undefined);
     throw error;
@@ -178,10 +180,14 @@ export async function stageInferenceLakehouseRecord(
 }
 
 async function captureBestEffort(env: Env, record: InferenceLakehouseRecord): Promise<void> {
-  // Local Wrangler cannot emulate Pipeline bindings. Production and staging
-  // require the binding in `withEnvContract`; local/test environments omit it
-  // and deliberately skip lakehouse capture instead of creating R2 orphans.
-  if (!env.INFERENCE_LAKEHOUSE) return;
+  // EU inference analytics are intentionally deferred: Cloudflare Data Catalog
+  // cannot use an EU-jurisdiction bucket, and we are not exporting EU workspace
+  // content into Global. Keep this explicit even if a stray binding appears.
+  if (env.AVALON_REGION === "eu") return;
+  // Local Wrangler cannot emulate Pipeline bindings. Hosted Global requires
+  // both bindings in `withEnvContract`; local/test environments omit them and
+  // deliberately skip lakehouse capture instead of creating R2 orphans.
+  if (!env.INFERENCE_LAKEHOUSE || !env.INFERENCE_LAKEHOUSE_QUEUE) return;
   try {
     const pointer = await stageInferenceLakehouseRecord(env, record);
     logStructuredEvent(env, "info", "inference_lakehouse_staged", {
