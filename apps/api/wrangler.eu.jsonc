@@ -178,6 +178,9 @@
       // EU inference analytics export is intentionally deferred. Do not add an
       // inference Queue or Pipeline binding here until a separately approved
       // EU-resident analytical sink exists; EU model calls are not archived.
+      // The analytics-events lakehouse is intentionally Global-only too. EU
+      // client and backend events remain in EU telemetry D1/R2 and are not
+      // copied into a cross-region analytical destination.
       // Access retractions on their way to open sockets. A queue rather
       // than RPC from the route that wrote the fact: the fan-out walks the
       // whole object hierarchy, nothing waits on its outcome, and a

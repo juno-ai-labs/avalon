@@ -57,6 +57,8 @@ type CloudflareBinding =
   | DurableObjectStorage
   | Flagship
   | ImagesBinding
+  | Env["ANALYTICS_LAKEHOUSE"]
+  | Env["INFERENCE_LAKEHOUSE"]
   | Queue
   | R2Bucket
   | SqlStorage

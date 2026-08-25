@@ -37,6 +37,42 @@ export interface SchemaSnapshot {
   }>;
 }
 
+export type DatabaseDescription = Record<string, unknown>;
+
+function plainRows(rows: unknown[]): Array<Record<string, unknown>> {
+  return (rows as Array<Record<string, unknown>>).map((row) => Object.fromEntries(Object.entries(row)));
+}
+
+function plainRow(row: unknown): Record<string, unknown> | undefined {
+  if (row === undefined) return undefined;
+  return Object.fromEntries(Object.entries(row as Record<string, unknown>));
+}
+
+/**
+ * Everything SQLite exposes about a finished schema, including seeded rows.
+ * Captured beside the compact rebuild snapshot in global setup so the fidelity
+ * test compares against the real replay without replaying 95 migrations again
+ * inside a contended test worker.
+ */
+export function describeDatabase(database: DatabaseSync): DatabaseDescription {
+  const described: DatabaseDescription = {
+    schema: plainRows(database.prepare(
+      "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name",
+    ).all()),
+    foreignKeysEnforced: plainRow(database.prepare("PRAGMA foreign_keys").get()),
+  };
+  const tables = (database.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+  ).all() as Array<{ name: string }>).map(({ name }) => name);
+  for (const table of tables) {
+    described[`${table}::columns`] = plainRows(database.prepare(`PRAGMA table_info("${table}")`).all());
+    described[`${table}::foreign-keys`] = plainRows(database.prepare(`PRAGMA foreign_key_list("${table}")`).all());
+    described[`${table}::indexes`] = plainRows(database.prepare(`PRAGMA index_list("${table}")`).all());
+    described[`${table}::rows`] = plainRows(database.prepare(`SELECT * FROM "${table}"`).all());
+  }
+  return described;
+}
+
 /**
  * Replaying every checked-in migration costs ~800ms, and the suite asks for a
  * fresh database once per test — which was the whole runtime of the Node suite,
@@ -208,4 +244,3 @@ function detachImportedWorkstreamForeignKeys(database: DatabaseSync): void {
     database.exec("PRAGMA foreign_keys = ON");
   }
 }
-
