@@ -13,7 +13,7 @@ const DOWNLOAD_RETRY_BASE_DELAY_MS = 3_000;
 const MAX_DOWNLOAD_RETRIES = 5;
 
 export const MANUAL_UPDATE_URL =
-  'https://downloads.with-avalon.com/stable/darwin/arm64/Avalon.dmg';
+  'https://downloads.rallywith.ai/stable/darwin/arm64/Avalon.dmg';
 
 export type UpdateStatus =
   | { readonly kind: 'idle' }

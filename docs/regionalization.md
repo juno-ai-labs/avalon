@@ -68,7 +68,7 @@ The same Worker source is deployed twice:
 | Binding | Global | European Union |
 | --- | --- | --- |
 | Worker | `avalon-api-global` | `avalon-api-eu` |
-| API | `api.with-avalon.com` | `eu.api.with-avalon.com` |
+| API | `api.rallywith.ai` | `eu.api.rallywith.ai` |
 | D1 | global database | EU-jurisdiction database |
 | Agent memory vectors | `avalon-global-memory` Vectorize index | `avalon-eu-memory` Vectorize index |
 | R2 | global bucket | EU-jurisdiction bucket |
@@ -103,7 +103,7 @@ provisioning contract.
 Five providers cannot address a region, so a Global host answers for both and
 routes:
 
-- **GitHub** — the smart ingress is host-gated at `github.with-avalon.com`. It
+- **GitHub** — the smart ingress is host-gated at `github.rallywith.ai`. It
   verifies GitHub's signature before parsing or routing, consults the
   installation-to-region directory, and forwards the exact signed bytes over RPC
   when the installation is connected in EU. It never exposes its EU bridge as
@@ -112,7 +112,7 @@ routes:
   workspace region.
 - **Notion** — Notion issues one redirect URI and one webhook URL per public
   connection and cannot tell which region a Notion workspace belongs to, so
-  `notion.with-avalon.com` answers both for Global and EU. The host is gated to
+  `notion.rallywith.ai` answers both for Global and EU. The host is gated to
   the callback, the webhook, and health. OAuth state carries a `<region>.` routing
   prefix that authorizes nothing — the pending authorization, its verifier, and its
   capabilities never leave the region that started it.
@@ -123,7 +123,7 @@ routes:
   Tokens, ingress jobs, user links, Agent sessions, work streams, and outputs stay
   regional.
 - **Linear** — one public app registers both regional OAuth callbacks, so consent
-  is never shared, but it has a single webhook. `linear.with-avalon.com` verifies
+  is never shared, but it has a single webhook. `linear.rallywith.ai` verifies
   the exact signed body and timestamp, reads only the organization routing key, and
   forwards the untouched bytes over `EU_LINEAR_BRIDGE` when the organization is
   connected in EU, where the signature is verified again before persistence. A

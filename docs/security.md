@@ -98,13 +98,14 @@ are canonical storage services, not authorization layers.
   window that is deliberately *less* privileged than any other: no preload and
   therefore no bridge, no Node, no devtools, sandboxed, and served a document
   under `default-src 'none'; img-src data: https:; style-src 'unsafe-inline'`.
-  That document is built from text a model wrote, so it is given a scheme of its
-  own — `avalon-export://`, one in-memory document per single-use token — rather
-  than the renderer's origin. Its IPC entry point parses all four fields of the
-  request, and the file name it proposes to the save dialog is *rejected* unless
-  it matches `^[a-z0-9][a-z0-9-]{0,79}$`, because that name is derived from the
-  message's own text. The only thing written is the file the person chose in a
-  native dialog. [`message-export.md`](message-export.md) owns the mechanism.
+  That document is built from text a model wrote, so it is given a scheme of
+  its own — `rallywithai-export://`, one in-memory document per single-use
+  token — rather than the renderer's origin. Its IPC entry point parses all four
+  fields of the request, and the file name it proposes to the save dialog is
+  *rejected* unless it matches `^[a-z0-9][a-z0-9-]{0,79}$`, because that name is
+  derived from the message's own text. The only thing written is the file the
+  person chose in a native dialog. [`message-export.md`](message-export.md)
+  owns the mechanism.
 - The native Settings window uses the same sandbox, preload, CSP, navigation
   denial, and regional session bridge as the main window. **Command-,** opens a
   singleton window rather than a privileged remote page.
@@ -231,9 +232,13 @@ runs, which appears to the renderer as a transport failure and leaves no API
 request log for the blocked mutation. The required implementation and test steps
 live in [When adding a new HTTP header](when-adding-a-new-http-header.md).
 
-The same exact origin policy admits `https://with-avalon.com` and
-`https://www.with-avalon.com` so the public site can call only the capability-
-bound anonymous telemetry surface from a browser. CORS is not authorization: the
+The same exact origin policy admits `https://rallywith.ai`,
+`https://www.rallywith.ai`, `https://with-avalon.com`, and
+`https://www.with-avalon.com` — the public site is served on both zones while
+the rename is in flight, and an origin the browser actually used but the Worker
+does not list is rejected by Chromium before any route code runs — so the public
+site can call only the capability-bound anonymous telemetry surface from a
+browser. CORS is not authorization: the
 site receives no session, provider token, PostHog token, signing key, or named-RPC
 authority. Its route lookup returns only a coarse two-value decision; its
 capability permits only the registered pre-authentication event names. Handoff
@@ -512,8 +517,8 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   `-1`, and raw values, Zod messages, regexes, and unmasked request bodies do not
   enter the log.
 - **A document built out of model output is never same-origin with the
-  application.** The exported message card gets `avalon-export://`, no preload,
-  and a policy that forbids script; putting it on `app://avalon` would buy one
+  application.** The exported message card gets `rallywithai-export://`, no preload,
+  and a policy that forbids script; putting it on `app://rallywithai` would buy one
   fewer scheme at the price of the boundary.
 - **A webhook is verified against its exact raw body before anything parses,
   stores, or queues it.**
@@ -638,6 +643,56 @@ incident response that may prompt it.
 
 ## Changelog
 
+### 2026-08-25 — The renderer origin is app://rallywithai, and both are admitted
+
+**What changed:** The packaged renderer serves from `app://rallywithai`. Both regional
+Workers list `app://rallywithai` and `app://avalon` in `ALLOWED_ORIGINS`. The saved
+message card's scheme became `rallywithai-export://`.
+
+**Why:** The rebrand to Rally reached the two internal schemes. The renderer
+origin is not merely internal — it is the `Origin` header on every API request
+and WebSocket upgrade the desktop makes, and a desktop build shipped before the
+rename sends `app://avalon` with no way to change it. An origin that is actually
+sent but not listed fails at the CORS preflight, before any route code runs, so
+it produces a transport error in the renderer and no API request log at all: the
+exact failure this policy exists to prevent, applied to ourselves.
+
+The export scheme took no such window. It is registered, served, and loaded
+inside one process against a single-use in-memory token, so no other party holds
+an `avalon-export://` URL to honour.
+
+**Considered and rejected:** Leaving the renderer origin alone, since nothing
+outside the product reads the string. That is true of the name and false of the
+header: the Workers read it on every request, which is what makes it a
+compatibility surface rather than a label.
+
+**Consequences:** `app://avalon` stays in the allowlist until shipped clients
+carrying it are gone; removing it is a decision about installed builds.
+`apps/api/test/domain-migration-config.test.ts` asserts both origins are listed
+in both regions, so dropping one fails on the edit. The origin policy is
+otherwise unchanged — it still admits exact origins only, and CORS remains not
+authorization. See [`domain-migration.md`](domain-migration.md).
+### 2026-08-25 — The origin allowlist admits both site zones
+
+**What changed:** `ALLOWED_ORIGINS` on the Global Worker admits
+`https://rallywith.ai` and `https://www.rallywith.ai` alongside the two Avalon
+origins. The site's CSP `connect-src` permits both API origins.
+
+**Why:** The rebrand to Rally put the public site on two zones at once. CORS is an
+exact-origin match made by the browser before any route code runs, so an origin
+that is actually served but not listed fails as a transport error with no API
+request logged — the failure mode this policy already exists to prevent. Listing
+all four served origins is the same rule applied to a site that now has four.
+
+**Considered and rejected:** Matching the site origins by suffix or pattern
+instead of listing them. Exact origins are the entire strength of this check; a
+pattern that admits `rallywith.ai` also admits a look-alike that ends in it.
+
+**Consequences:** The list grows and shrinks with what is actually served, and an
+origin is removed from it only when its route is. This widens who may *call* the
+capability-bound anonymous telemetry surface and nothing else — CORS remains not
+authorization, and the site still receives no session, token, or signing key. See
+[`domain-migration.md`](domain-migration.md).
 ### 2026-08-24 — Input validation keeps body shape without keeping content
 
 **What changed:** Avalon's Hono validator now throws a typed internal validation

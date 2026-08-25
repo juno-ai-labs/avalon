@@ -531,7 +531,7 @@ export class TelemetryReporter {
         return;
       }
       const endpoint = capabilityDelivery
-        ? `${this.options.globalApiBaseUrl ?? 'https://api.with-avalon.com'}/telemetry/anonymous`
+        ? `${this.options.globalApiBaseUrl ?? 'https://api.rallywith.ai'}/telemetry/anonymous`
         : `${authenticated!.apiBaseUrl}/telemetry/events`;
       const response = await this.options.fetch(endpoint, {
         method: 'POST',

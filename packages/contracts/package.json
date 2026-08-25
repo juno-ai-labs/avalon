@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./desktop-deep-link": "./src/desktop-deep-link.ts",
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
     "./durable-object-migrations": "./src/durable-object-migrations.ts",
     "./socket-tickets": "./src/socket-tickets.ts",

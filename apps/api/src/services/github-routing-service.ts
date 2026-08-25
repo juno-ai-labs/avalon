@@ -17,7 +17,7 @@ import {
   type ProviderWebhookIngestionResult,
 } from "./provider-webhook-service";
 
-export const DEFAULT_GITHUB_INGRESS_BASE_URL = "https://github.with-avalon.com";
+export const DEFAULT_GITHUB_INGRESS_BASE_URL = "https://github.rallywith.ai";
 
 export interface GitHubRegionalWebhookInput {
   rawBody: ArrayBuffer;
@@ -122,7 +122,7 @@ interface ExpiredPendingDeliveryRow {
 /**
  * Coordinates the one public GitHub App without moving canonical connector
  * state out of its workspace region. This service is used only by the Global
- * `github.with-avalon.com` ingress.
+ * `github.rallywith.ai` ingress.
  */
 export class GitHubRoutingService {
   private readonly now: () => number;

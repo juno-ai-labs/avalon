@@ -1,7 +1,7 @@
 # Work-stream links
 
 Every surface that points at a work stream from outside the desktop app emits one
-shape: `https://with-avalon.com/app/workstreams/<uuid>`. The `avalon://` deep link
+shape: `https://rallywith.ai/app/workstreams/<uuid>`. The `rallywithai://` deep link
 is still what actually opens a work stream, but it is now the last hop of that
 HTTPS page rather than the thing Avalon hands out — because a custom scheme cannot
 be unfurled by Slack, is not linkified by mail clients, and is dead for anyone
@@ -32,10 +32,10 @@ changing the Slack unfurl card or the sweep that keeps it current.
 
 | Form | Shape | Who mints it |
 | --- | --- | --- |
-| **Canonical link** | `https://with-avalon.com/app/workstreams/<uuid>` | Every surface that emits a work-stream link |
-| **Deep link** | `avalon://workstreams/<uuid>` | The canonical page, in the browser, as the last hop |
+| **Canonical link** | `https://rallywith.ai/app/workstreams/<uuid>` | Every surface that emits a work-stream link |
+| **Deep link** | `rallywithai://workstreams/<uuid>` | The canonical page, in the browser, as the last hop |
 
-`avalon://workstreams/<uuid>` is still the protocol the desktop client registers,
+`rallywithai://workstreams/<uuid>` is still the protocol the desktop client registers,
 and it is still what actually opens a work stream. It stopped being what Avalon
 *hands out*, for three reasons:
 
@@ -187,7 +187,7 @@ with no version constant for a future change to remember to bump.
 ## Invariants
 
 - **The canonical HTTPS link is the only form Avalon hands out.** Never emit
-  `avalon://` into anything a human can copy; it cannot be unfurled, linkified, or
+  `rallywithai://` into anything a human can copy; it cannot be unfurled, linkified, or
   opened without the app.
 - **The work-stream id lives in the path, never in a fragment.** A server has to be
   able to read it, which is the exact opposite of what the OAuth handoffs need.
@@ -234,8 +234,8 @@ The row it stores is described in [`data-model.md`](data-model.md).
 
 ### Deep links that have no canonical form
 
-`avalon://settings/workspace`, `avalon://settings/connections`, and
-`avalon://automations/new` still go through the `/open#target=` handoff, whose
+`rallywithai://settings/workspace`, `rallywithai://settings/connections`, and
+`rallywithai://automations/new` still go through the `/open#target=` handoff, whose
 allowlist lives in `apps/site/src/desktop-open.ts`. They address no shareable
 object, so they need neither a stable URL nor an unfurl. Give a new deep link a
 canonical HTTPS form only when someone would reasonably paste it somewhere else.
@@ -308,6 +308,36 @@ copied into this table; they come from `WorkspaceDO.workspace_workstream_directo
 
 ## Changelog
 
+### 2026-08-25 — The deep link is minted as rallywithai://, and avalon:// is still read
+
+**What changed:** `workstreamDeepLink` mints `rallywithai://workstreams/<id>`.
+`parseWorkstreamLink` accepts either scheme. The scheme list moved to
+`packages/contracts/src/desktop-deep-link.ts`, which the API, the site, and the
+desktop main process all read. Canonical HTTPS links are minted on
+`rallywith.ai`.
+
+**Why:** The rebrand to Rally moves the scheme along with the domains, and a
+scheme is the hardest part of it to move: it is claimed by an *installed* build,
+so no server change can make an older client answer to one it never registered.
+A desktop shipped before the rename knows `avalon:` alone, and the links it minted
+are in inboxes and Slack history that cannot be reissued. Minting one scheme while
+reading both is what lets the change ship without invalidating either.
+
+The list was extracted because five surfaces have to agree on it and none can
+check the others. A copy left behind would not fail loudly — it would classify a
+real link as untrusted on one surface, which is the kind of bug that reaches a
+user before it reaches a test.
+
+**Considered and rejected:** Keeping `avalon:` as the minted scheme until every
+old build is gone, and switching once. That defers the same break rather than
+removing it, and it means the product keeps emitting the superseded brand in
+links people paste to each other for the whole migration.
+
+**Consequences:** Parsing accepts both schemes, which makes minting the wrong one
+invisible to any round-trip test — `never mints the superseded scheme` asserts the
+writing side alone and must survive. Removing `avalon:` is a decision about
+shipped clients, not about this module. See
+[`domain-migration.md`](domain-migration.md).
 ### 2026-08-22 — The unfurl sweep and App Home read only the object
 
 **What changed:** `slack-unfurl-refresh.ts`'s stale-card selection,

@@ -1,5 +1,23 @@
 import type { ConnectorOAuthProvider } from "@avalon/contracts";
+import { COMPATIBLE_DESKTOP_DEEP_LINK_PROTOCOL } from "@avalon/contracts/desktop-deep-link";
 import type { Env } from "../env";
+
+/**
+ * The configured desktop deep link, rewritten into the scheme every live build
+ * answers to.
+ *
+ * Use this wherever the server mints a deep link it cannot attribute to a
+ * calling build. Host and path stay exactly as configured; only the scheme
+ * moves. See `COMPATIBLE_DESKTOP_DEEP_LINK_PROTOCOL` for why it is the legacy
+ * one, and `docs/domain-migration.md` for when it stops being.
+ */
+export function compatibleDesktopDeepLink(
+  env: Pick<Env, "DESKTOP_DEEP_LINK_URI">,
+): URL {
+  const target = new URL(env.DESKTOP_DEEP_LINK_URI);
+  target.protocol = COMPATIBLE_DESKTOP_DEEP_LINK_PROTOCOL;
+  return target;
+}
 
 export function desktopHandoffUrl(
   env: Pick<Env, "PUBLIC_WEB_BASE_URL">,
@@ -25,7 +43,7 @@ export function connectorAttemptTarget(
     errorCode?: string;
   },
 ): string {
-  const target = new URL(env.DESKTOP_DEEP_LINK_URI);
+  const target = compatibleDesktopDeepLink(env);
   target.searchParams.set("provider", input.provider);
   target.searchParams.set("region", env.AVALON_REGION);
   if (input.attemptId) target.searchParams.set("attempt", input.attemptId);

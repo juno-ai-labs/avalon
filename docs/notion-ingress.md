@@ -5,7 +5,7 @@ its webhook subscription to exactly one URL, for every Notion workspace that
 installs it. Avalon's personal connection to Notion's official hosted MCP server
 also uses the connector's registered redirect. Avalon runs two regional Workers.
 This module is how both authorization modes, and the workspace mode's webhook,
-serve both: `notion.with-avalon.com` is bound to the Global Worker, answers the
+serve both: `notion.rallywith.ai` is bound to the Global Worker, answers the
 callback and webhook, and hands each to the region that owns the Avalon
 workspace involved. Read it before changing Notion authorization, Notion webhook
 ingestion, or anything that assumes a connector's callback is regional —
@@ -38,7 +38,7 @@ boundary this module bends is defined in
 `ConnectionService.beginProvider` mints the OAuth state as
 `<region>.<32 bytes of entropy>` for Notion alone, and stores the row in the
 region that started the attempt. The authorize URL carries the shared redirect
-URI, so Notion returns the user to `notion.with-avalon.com` whichever region they
+URI, so Notion returns the user to `notion.rallywith.ai` whichever region they
 belong to.
 
 The connection scope chooses the provider protocol after that shared routing.
@@ -235,7 +235,7 @@ ingresses, extended to the OAuth code because Notion allows only one redirect UR
 
 ## Operations
 
-`notion.with-avalon.com` must exist as a custom domain on `avalon-api-global`
+`notion.rallywith.ai` must exist as a custom domain on `avalon-api-global`
 before the connection is registered with Notion.
 
 **The release that first ships this module needs the three-stage Worker rollout
