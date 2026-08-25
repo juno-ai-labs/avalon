@@ -538,6 +538,8 @@ but HyperSight block sockets still follow panel visibility. Access revocation
 still closes retained sockets immediately. Future route refactors must keep the
 pool keyed by work-stream id or they will turn retention into close-and-redial.
 
+Shipped in #305.
+
 ### 2026-08-25 — A lost replay cache no longer discards a healthy socket
 
 **What changed:** Resume subscriptions now receive canonical state on the same
