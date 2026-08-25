@@ -267,9 +267,9 @@ notification addresses elsewhere remain governed by the retirement conditions
 in [`domain-migration.md`](domain-migration.md), not by this completed site pass.
 
 The Slack installation landing page now documents `/rally` so it agrees with
-the provider registration. The Slack manifest deliberately retains the known
-`support@with-avalon.com` mailbox until the new support alias is operationally
-confirmed; the provider cut-over must not turn a rebrand into a support outage.
+the provider registration. Its public directory contact is the same confirmed
+`help@rallywith.ai` catch-all used by the site; `support@with-avalon.com` and
+other role aliases are not published as parallel external contact paths.
 
 ### 8. Internal prose — cheapest, and safe to move alone
 
@@ -367,6 +367,16 @@ It belongs to section 1, not here.
 
 ## Changelog
 
+### 2026-08-25 — Rally help became the sole published catch-all
+
+The public site and Slack app directory now publish `help@rallywith.ai` as the
+one role-based inbound contact. Earlier work deliberately held Slack on
+`support@with-avalon.com` until a Rally alias was confirmed; the product owner
+has now confirmed `help@rallywith.ai` as the operational catch-all, so keeping
+the compatibility address public would create the split this inventory exists
+to prevent. Named-person addresses and outbound transactional senders remain
+separate identities rather than catch-alls.
+
 ### 2026-08-25 — Public site and brand pipeline completed
 
 Sections 6 and 7 were closed when the Rally public site landed. Review found
@@ -396,9 +406,9 @@ through Slack's App Manifest editor instead.
 
 Compatibility remains where external state requires it: old OAuth redirects,
 the legacy unfurl domain, and the four Avalon denial prefixes already present in
-Slack channel history stay accepted. The support address also remains
-`support@with-avalon.com` until the new alias is operationally confirmed.
-Section 9's non-Slack agent identity remains open.
+Slack channel history stay accepted. The support-address hold described in this
+historical entry was closed when `help@rallywith.ai` was confirmed as the sole
+public catch-all. Section 9's non-Slack agent identity remains open.
 
 ### 2026-08-25 — What the sweep's verification could not see
 
