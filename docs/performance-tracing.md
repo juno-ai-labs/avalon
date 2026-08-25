@@ -259,8 +259,9 @@ subscription snapshot also records `rally.subscribe.snapshot_reason` as
 `initial` or `history_unavailable`, so hibernation recovery can be separated
 from a cold open. The trim loop re-serializes the whole frame per dropped
 message, and that count is the only place its cost appears. `GET /:id` and
-`GET /:id/messages` carry the same flow only for a `sequence_ahead` resync; lost
-replay history is repaired by the subscription snapshot itself.
+`GET /:id/messages` carry the same flow for `sequence_ahead` and for the rare
+`history_unavailable` fallback after snapshot failure or catch-up overflow;
+ordinary lost replay history is repaired by the subscription snapshot itself.
 
 **`workstream_message_send`** — the desktop sends over the workspace command
 socket, so `workstream.message.send` on WorkspaceDO is the trace to read:
@@ -409,8 +410,8 @@ This module owns latency diagnosis for the three named flows and nothing else.
   closes the trace on the first valid server frame and records which one it was
   as `outcome`. A `snapshot` means the screen filled, whether it was an initial
   open or a replay-history repair; use `rally.subscribe.snapshot_reason` to
-  separate them. A `resync_required` means the client's cursor was ahead and
-  the server sent it to HTTP instead, closing the socket and deferring
+  separate them. A `resync_required` means the client's cursor was ahead or the
+  canonical repair could not be completed safely, so the server sent it to HTTP instead, closing the socket and deferring
   reconciliation to the next connect, which this trace does not cover. The
   durations are therefore only comparable within one outcome — **filter
   `outcome = snapshot` before reading a percentile.** Making the trace span the
@@ -544,7 +545,8 @@ would require joining application payloads that traces deliberately do not
 store. A dedicated outcome value would duplicate `replay_plan = snapshot`.
 
 **Consequences:** Snapshot latency can be compared by cause. HTTP reads under
-`workstream_open` now represent only the remaining `sequence_ahead` fallback.
+`workstream_open` now represent `sequence_ahead` plus failed or overflowed
+`history_unavailable` snapshot fallbacks, not ordinary replay-cache loss.
 
 ### 2026-08-25 — Span attributes are namespaced rally.*
 

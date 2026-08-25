@@ -383,10 +383,12 @@ checkpoints, assembled at one sequence. The room holds the asking socket out of
 broadcasts while it assembles, exactly as it does for an initial subscribe, then
 replays anything published in that window. Because the answer is ordered against
 every other frame, the client's ordinary cursor guard decides whether to apply
-it, and a viewer keeps at most one request outstanding. REST reconciliation
-remains only where the socket cursor is ahead of the agent's durable sequence
-and a lower-sequence snapshot would be rejected: recovery after
-`resync_required` with reason `sequence_ahead`.
+it, and a viewer keeps at most one request outstanding. If snapshot assembly
+fails, or if its one in-memory catch-up has itself fallen outside the replay
+window, the agent retains the old attachment cursor and uses
+`resync_required` with reason `history_unavailable` as the last-resort REST
+fallback. A socket cursor ahead of the durable sequence likewise uses
+`sequence_ahead`, because a lower-sequence snapshot would be rejected.
 
 The desktop applies each complete WorkstreamDO snapshot through one shared
 common/viewer waterline ledger behind the open detail and sidebar caches, so the
@@ -688,8 +690,10 @@ it.
 - **A SubstreamAgent feed that cannot prove its replay gap is complete is
   snapshotted, not guessed.** If hibernation discarded the in-memory window or
   the gap is incomplete, the agent sends canonical state on the same socket and
-  then closes the subscription race with an in-memory catch-up. A client cursor
-  ahead of the durable sequence is different: the agent sends
+  then closes the subscription race with one in-memory catch-up. Snapshot
+  failure or catch-up overflow falls back to `history_unavailable` without
+  admitting or advancing the socket. A client cursor ahead of the durable
+  sequence is different: the agent sends
   `resync_required` with reason `sequence_ahead`, and the client refreshes over
   HTTP because its ordinary cursor guard would reject a lower-sequence snapshot.
 - **The SubstreamAgent replay cache is bounded to 256 events or 512 KB**, and is memory-only by
@@ -783,9 +787,11 @@ access and no-egress symbolication.
 
 **What changed:** A SubstreamAgent subscription whose durable cursor is newer
 than its memory-only replay window now receives the ordinary canonical
-`snapshot` on the same socket. `resync_required` remains only for a client cursor
-ahead of the object's durable sequence. Subscription traces distinguish initial
-and replay-loss snapshots with `rally.subscribe.snapshot_reason`.
+`snapshot` on the same socket. `resync_required` remains for a client cursor
+ahead of the object's durable sequence and as a last-resort fallback when a
+snapshot or its one-stage catch-up cannot complete safely. Subscription traces
+distinguish initial and replay-loss snapshots with
+`rally.subscribe.snapshot_reason`.
 
 **Why:** Hibernation intentionally discards the replay cache while preserving
 the socket and durable sequence. Sending `history_unavailable` made Rally close
@@ -802,9 +808,11 @@ the cache. Treating `sequence_ahead` the same way would send a snapshot the
 current client correctly rejects as stale.
 
 **Consequences:** Normal hibernation recovery no longer tears down the socket or
-depends on REST. A `sequence_ahead` result still requires the explicit resync
-path, and a future client protocol may remove that exception only by defining
-how an authoritative lower cursor replaces local state.
+depends on REST. A failed snapshot or incomplete one-stage catch-up retains the
+old cursor and deliberately falls back through `history_unavailable`; a
+`sequence_ahead` result also requires explicit resync. A future client protocol
+may remove the latter exception only by defining how an authoritative lower
+cursor replaces local state.
 
 ### 2026-08-24 — Ace is a separate internal deployment surface
 

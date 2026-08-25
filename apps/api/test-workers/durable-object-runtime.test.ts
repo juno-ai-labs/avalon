@@ -4496,9 +4496,34 @@ describe("Durable Objects in the Workers runtime", () => {
     // only in the old instance's bounded replay cache.
     await runInDurableObject(stub, (_instance, state) => {
       state.storage.sql.exec(
-        `UPDATE workstream SET title = 'Hibernation recovery', updated_at = ? WHERE id = 1`,
+        `UPDATE workstream
+            SET title = 'Hibernation recovery', next_attention_ordinal = 61, updated_at = ?
+          WHERE id = 1`,
         Date.now(),
       );
+      state.storage.sql.exec(
+        `INSERT INTO member_attention
+           (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
+            manual_unread_from_ordinal, latest_mention_attention_ordinal, version,
+            last_seen_at, updated_at)
+         VALUES (?, 0, 30, NULL, 0, 1, ?, ?)`,
+        USER_ID,
+        Date.now(),
+        Date.now(),
+      );
+      for (let sequence = 1; sequence <= 60; sequence += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO parts
+             (id, substream_id, sequence_number, role, kind, author_type, content,
+              visibility, pinned, created_at, updated_at)
+           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
+          `00000000-0000-7000-8006-${String(sequence).padStart(12, "0")}`,
+          sequence,
+          `message ${sequence}`,
+          6_000 + sequence,
+          6_000 + sequence,
+        );
+      }
       state.storage.sql.exec(`UPDATE realtime_state SET event_sequence = 2 WHERE id = 1`);
     });
     await evictDurableObject(stub);
@@ -4508,14 +4533,87 @@ describe("Durable Objects in the Workers runtime", () => {
     const frames = (await delivered).map((event) => JSON.parse(String(event.data)) as {
       type: string;
       sequence: number;
+      messageFeed?: { items: { sequenceNumber: number }[] };
+      resumeFeed?: { items: { sequenceNumber: number }[] } | null;
     });
 
     expect(frames[0]).toMatchObject({ type: "snapshot", sequence: 2 });
+    expect(frames[0]!.messageFeed?.items.at(-1)?.sequenceNumber).toBe(60);
+    // A repair always installs the newest canonical page. Sending the reader's
+    // older first-unread window here would make a pre-fix desktop treat the
+    // first frame seen by a fresh hook as an arrival and visibly roll back.
+    expect(frames[0]!.resumeFeed).toBeNull();
     expect(frames[1]).toMatchObject({ type: "presence_changed", sequence: 3 });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.getWebSockets()[0]!.deserializeAttachment()).toMatchObject({
         afterSequence: 2,
         subscribed: true,
+      });
+    });
+    socket.close(1000, "test complete");
+  });
+
+  it("falls back without admitting the socket when a recovery snapshot cannot be assembled", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000603",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`UPDATE realtime_state SET event_sequence = 2 WHERE id = 1`);
+    });
+    // Revocation between socket admission and cold snapshot assembly is one
+    // real failure boundary. It leaves every binding and schema intact while
+    // making the canonical snapshot deliberately unavailable.
+    await env.DB.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`)
+      .bind(new Date().toISOString(), SESSION_ID).run();
+    await evictDurableObject(stub);
+
+    const fallback = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 1 }));
+    expect(JSON.parse(String((await fallback).data))).toMatchObject({
+      type: "resync_required",
+      reason: "history_unavailable",
+      latestSequence: 2,
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.getWebSockets()[0]!.deserializeAttachment()).toMatchObject({
+        afterSequence: 0,
+        subscribed: false,
       });
     });
     socket.close(1000, "test complete");

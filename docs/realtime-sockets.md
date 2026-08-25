@@ -335,10 +335,12 @@ and answering one would serve canonical state on a connection that never passed
 the subscribe path's authority and maintenance checks. When hibernation has
 discarded the replay window, subscribe itself answers with that canonical
 snapshot on the still-admitted socket and then catches up any event published
-during assembly. Reconciliation over REST survives only after
-`resync_required` with reason `sequence_ahead`, where the client's cursor guard
-cannot accept a lower-sequence socket snapshot; [`architecture.md`](architecture.md)
-owns the rest of that behavior.
+during assembly. If snapshot assembly fails or that one catch-up has already
+overflowed the memory window, the room keeps the attachment cursor unchanged
+and returns `resync_required` with reason `history_unavailable`. The same REST
+fallback uses `sequence_ahead` when the client's cursor guard cannot accept a
+lower-sequence socket snapshot; [`architecture.md`](architecture.md) owns the
+rest of that behavior.
 
 The initial socket snapshot still carries the newest page and both cursors.
 When a user scrolls within 160 px of the top, Electron requests the preceding
@@ -509,7 +511,9 @@ what that leaves exposed.
 
 **What changed:** Resume subscriptions now receive canonical state on the same
 SubstreamAgent connection when hibernation lost the in-memory replay window.
-`resync_required` is reserved for `sequence_ahead`.
+`resync_required` is reserved for `sequence_ahead` and the last-resort
+`history_unavailable` fallback when a canonical snapshot cannot be delivered
+without reopening the subscribe race.
 
 **Why:** Cloudflare restores hibernating sockets and their attachments, not the
 object instance's replay array. Closing the restored socket for that normal
@@ -521,8 +525,9 @@ an optimization; removing presence changes only narrows the trigger. The
 existing canonical snapshot and catch-up boundary repairs all replay-event
 classes without a new client message.
 
-**Consequences:** The connection remains usable after the repair, while an
-impossible client-ahead cursor still takes the explicit REST recovery path.
+**Consequences:** The connection remains usable after an ordinary repair. A
+failed or overflowed repair retains the old cursor and takes explicit REST
+recovery, as does an impossible client-ahead cursor.
 
 ### 2026-08-25 — The ticket sentinel is rally.ticket.v1, and the offered one is echoed
 

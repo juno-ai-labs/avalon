@@ -589,10 +589,13 @@ Not every read is a push. Reach for a `GET` when one of these holds:
 - **There is no socket yet.** Sign-in, session establishment, the identity
   endpoint, and choosing which workspace to open all precede the socket that
   would have pushed them. This is a bootstrap, not a data plane.
-- **Recovery when the socket cursor is ahead.** A lost in-memory replay window
-  is repaired by a canonical snapshot on the admitted socket. After
-  `resync_required` with reason `sequence_ahead`, the normal cursor guard cannot
-  accept a lower-sequence snapshot, so reconciliation goes over HTTP.
+- **Recovery when the socket cannot install canonical state.** A lost in-memory
+  replay window is normally repaired by a canonical snapshot on the admitted
+  socket. Snapshot failure or catch-up overflow returns `resync_required` with
+  reason `history_unavailable` without advancing the attachment cursor. A
+  cursor ahead of the room instead uses `sequence_ahead`; the normal cursor
+  guard cannot accept a lower-sequence snapshot, so both last-resort cases
+  reconcile over HTTP.
 - **The user asked for something specific and large.** A resource's content
   bytes, a note transcript, an export, an attachment preview. It is one
   person's explicit act, it is big, and nobody else's screen depends on it.
