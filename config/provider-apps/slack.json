@@ -4,9 +4,9 @@
     "minor_version": 1
   },
   "display_information": {
-    "name": "Avalon",
+    "name": "Rally",
     "description": "A durable AI agent for cross-app work and personal automations.",
-    "long_description": "Avalon is a durable AI agent that carries work across Slack, Gmail, calendars, documents, issue trackers, and other connected services. Start a task from a DM, mention, shortcut, command, or message. The workspace bot subscribes to bounded message, reaction, file-share, channel, and membership events for explicit @Avalon interactions, follow-ups in Avalon-owned threads, and automations a workspace member deliberately configures. Events that match none of those uses are discarded, and Avalon does not scrape, mirror, or build a second searchable Slack workspace. In response to a user-initiated Slack message or mention, Avalon can use Slack's event-scoped Real-time Search API with keyword and semantic search to find relevant public-channel messages. Semantic Real-time Search requires a Slack Business+ or Enterprise+ plan. It can also read bounded context visible to the bot and, after confirmation where required, send bot-authored messages, add reactions, and create conversations. Slack members can start workspace-authorized tasks without linking an Avalon account; those tasks use only shared workspace connections and remain attributed to the initiating Slack identity. Linking lets that member's own messages use personal authority and personal connectors. Avalon keeps the task's own work history in Avalon, streams status and results back to the originating Slack thread, and can deliver personal scheduled briefings to the user's Avalon Agent DM. Personal Slack context and actions use the connected user's permissions. AI output can be incorrect; users should review important decisions and external actions.",
+    "long_description": "Rally is a durable AI agent that carries work across Slack, Gmail, calendars, documents, issue trackers, and other connected services. Start a task from a DM, mention, shortcut, command, or message. The workspace bot subscribes to bounded message, reaction, file-share, channel, and membership events for explicit @Rally interactions, follow-ups in Rally-owned threads, and automations a workspace member deliberately configures. Events that match none of those uses are discarded, and Rally does not scrape, mirror, or build a second searchable Slack workspace. In response to a user-initiated Slack message or mention, Rally can use Slack's event-scoped Real-time Search API with keyword and semantic search to find relevant public-channel messages. Semantic Real-time Search requires a Slack Business+ or Enterprise+ plan. It can also read bounded context visible to the bot and, after confirmation where required, send bot-authored messages, add reactions, and create conversations. Slack members can start workspace-authorized tasks without linking a Rally account; those tasks use only shared workspace connections and remain attributed to the initiating Slack identity. Linking lets that member's own messages use personal authority and personal connectors. Rally keeps the task's own work history in Rally, streams status and results back to the originating Slack thread, and can deliver personal scheduled briefings to the user's Rally Agent DM. Personal Slack context and actions use the connected user's permissions. AI output can be incorrect; users should review important decisions and external actions.",
     "background_color": "#1B2400"
   },
   "features": {
@@ -33,28 +33,28 @@
       "messages_tab_read_only_enabled": false
     },
     "bot_user": {
-      "display_name": "Avalon",
+      "display_name": "Rally",
       "always_online": true
     },
     "shortcuts": [
       {
-        "name": "Start an Avalon task",
+        "name": "Start a Rally task",
         "type": "global",
         "callback_id": "rally_start_task",
-        "description": "Delegate a new durable task to Avalon."
+        "description": "Delegate a new durable task to Rally."
       },
       {
-        "name": "Work on this with Avalon",
+        "name": "Work on this with Rally",
         "type": "message",
         "callback_id": "rally_work_on_message",
-        "description": "Start an Avalon task using this message as context."
+        "description": "Start a Rally task using this message as context."
       }
     ],
     "slash_commands": [
       {
-        "command": "/avalon",
-        "description": "Start or continue a task with Avalon.",
-        "usage_hint": "what you want Avalon to do",
+        "command": "/rally",
+        "description": "Start or continue a task with Rally.",
+        "usage_hint": "what you want Rally to do",
         "should_escape": true,
         "url": "https://slack.rallywith.ai/slack/commands"
       }
@@ -171,10 +171,10 @@
     "installation_landing_page": "https://rallywith.ai/slack",
     "privacy_policy_url": "https://rallywith.ai/privacy",
     "support_url": "https://rallywith.ai/support",
-    "support_email": "support@with-avalon.com",
+    "support_email": "help@rallywith.ai",
     "supported_languages": [
       "en-US"
     ],
-    "pricing": "Paid Avalon and Slack plans."
+    "pricing": "Paid Rally and Slack plans."
   }
 }
