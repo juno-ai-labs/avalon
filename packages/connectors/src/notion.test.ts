@@ -102,7 +102,7 @@ describe("Notion connector", () => {
       }
       if (url.pathname === "/register") {
         expect(JSON.parse(String(init?.body))).toMatchObject({
-          client_name: "Avalon",
+          client_name: "Rally",
           redirect_uris: ["https://api.avalon.test/connections/notion/callback"],
           token_endpoint_auth_method: "none",
         });
@@ -194,7 +194,7 @@ describe("Notion connector", () => {
     });
     expect(result.output).toMatchObject({
       page: { object: "page", id: "page-1" },
-      markdown: { markdown: "# Roadmap\n\nShip it", avalonTruncated: false },
+      markdown: { markdown: "# Roadmap\n\nShip it", rallyTruncated: false },
     });
     expect(refreshes).toBe(1);
     expect(authorizations).toEqual(["Bearer old-access", "Bearer new-access", "Bearer new-access"]);

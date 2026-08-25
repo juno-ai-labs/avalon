@@ -370,7 +370,7 @@ function googleFileFamilyError(
 }
 
 export const GoogleFileWriteAuthorizationGuidance =
-  "Only files with writableByAvalon=true are eligible for Docs or Sheets write tools; files created through this connection are writable, but an arbitrary Drive search result might be read-only under Google's per-file authorization.";
+  "Only files with writableByRally=true are eligible for Docs or Sheets write tools; files created through this connection are writable, but an arbitrary Drive search result might be read-only under Google's per-file authorization.";
 
 export const googleTools: ToolDefinition[] = [
   {
@@ -633,7 +633,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "docs.create_document",
-    description: "Create a Google Doc that subsequent Avalon tools can edit, optionally with initial plain-text content.",
+    description: "Create a Google Doc that subsequent Rally tools can edit, optionally with initial plain-text content.",
     capability: "docs.write",
     mode: "write",
     idempotency: "record_before_execute",
@@ -649,7 +649,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "docs.append_text",
-    description: "Append plain text to a Google Doc writable under Avalon's per-file Google Drive grant.",
+    description: "Append plain text to a Google Doc writable under Rally's per-file Google Drive grant.",
     capability: "docs.write",
     mode: "write",
     idempotency: "record_before_execute",
@@ -666,7 +666,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "docs.replace_text",
-    description: "Replace every exact occurrence of text in a Google Doc writable under Avalon's per-file Google Drive grant.",
+    description: "Replace every exact occurrence of text in a Google Doc writable under Rally's per-file Google Drive grant.",
     capability: "docs.write",
     mode: "write",
     idempotency: "record_before_execute",
@@ -720,7 +720,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "sheets.create_spreadsheet",
-    description: "Create a Google spreadsheet that subsequent Avalon tools can edit, with optional named sheets.",
+    description: "Create a Google spreadsheet that subsequent Rally tools can edit, with optional named sheets.",
     capability: "sheets.write",
     mode: "write",
     idempotency: "record_before_execute",
@@ -740,7 +740,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "sheets.update_values",
-    description: "Replace cell values in a Google Sheet writable under Avalon's per-file Google Drive grant.",
+    description: "Replace cell values in a Google Sheet writable under Rally's per-file Google Drive grant.",
     capability: "sheets.write",
     mode: "write",
     idempotency: "record_before_execute",
@@ -748,7 +748,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "sheets.append_values",
-    description: "Append rows to a Google Sheet writable under Avalon's per-file Google Drive grant.",
+    description: "Append rows to a Google Sheet writable under Rally's per-file Google Drive grant.",
     capability: "sheets.write",
     mode: "write",
     idempotency: "record_before_execute",
@@ -2431,7 +2431,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             title: readString(created, "title") ?? args.title,
             webUrl: `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`,
             initialTextCharacters: args.text?.length ?? 0,
-            writableByAvalon: true
+            writableByRally: true
           }),
           summary: `Created Google Doc “${args.title}”`,
           providerOperationId: documentId
@@ -2544,7 +2544,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         }).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
         const spreadsheetId = requiredString(payload, "spreadsheetId", "Google Sheets did not return a spreadsheet ID");
         return {
-          output: boundedToolOutput({ ...sanitizeGoogleSpreadsheet(payload), writableByAvalon: true }),
+          output: boundedToolOutput({ ...sanitizeGoogleSpreadsheet(payload), writableByRally: true }),
           summary: `Created Google spreadsheet “${args.title}”`,
           providerOperationId: spreadsheetId
         };
@@ -3786,7 +3786,7 @@ function sanitizeDriveFile(payload: Record<string, unknown>): Record<string, unk
     description: truncateNullable(readString(payload, "description"), 20_000),
     isAppAuthorized,
     canEdit,
-    writableByAvalon: isAppAuthorized && canEdit
+    writableByRally: isAppAuthorized && canEdit
   };
 }
 
@@ -3843,7 +3843,7 @@ function googleDriveFileNotWritableError(
 ): ConnectorError {
   return new ConnectorError(
     "unsupported_capability",
-    "Google file is read-only for Avalon; create it through Avalon or explicitly open/share it with Avalon before editing",
+    "Google file is read-only for Rally; create it through Rally or explicitly open/share it with Rally before editing",
     {
       provider: "google",
       reason: "drive_file_not_writable",

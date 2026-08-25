@@ -385,7 +385,7 @@ export async function beginHostedMcpAuthorization(
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify({
-        client_name: config.clientName ?? "Avalon",
+        client_name: config.clientName ?? "Rally",
         ...(config.clientUri ? { client_uri: config.clientUri } : {}),
         redirect_uris: [normalizeHttpsUrl(config.redirectUri)],
         grant_types: ["authorization_code", "refresh_token"],
@@ -553,7 +553,7 @@ async function withHostedMcpSession<T>(
       params: {
         protocolVersion: HOSTED_MCP_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: "Avalon", version: "1.0.0" },
+        clientInfo: { name: "Rally", version: "1.0.0" },
       },
     }, false));
     if (initialized.protocolVersion !== HOSTED_MCP_PROTOCOL_VERSION) {

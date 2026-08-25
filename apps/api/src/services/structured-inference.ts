@@ -52,7 +52,7 @@ export async function runStructuredInference<T>(
     primaryModel: routing.model,
     fallbackModels: routing.fallbackModels,
     appUrl: env.PUBLIC_API_BASE_URL,
-    appName: "Avalon",
+    appName: "Rally",
   });
   // Most callers are queue consumers and Workflow steps, whose invocation ends
   // when this returns. An `AbortSignal.timeout` would stay armed for the rest of

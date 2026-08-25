@@ -1056,8 +1056,8 @@ function boundMarkdown(payload: Record<string, unknown>): Record<string, unknown
   return {
     ...boundNotionValue(payload) as Record<string, unknown>,
     markdown: bounded.text,
-    avalonTruncated: bounded.truncated,
-    avalonTotalChars: bounded.totalChars,
+    rallyTruncated: bounded.truncated,
+    rallyTotalChars: bounded.totalChars,
   };
 }
 
@@ -1109,7 +1109,7 @@ function assertConfig(config: NotionConnectorConfig): void {
 
 function assertWorkspaceConnection(connection: ConnectorConnectionContext): void {
   if (connection.scope !== "workspace" || connection.ownerUserId !== null) {
-    throw new ConnectorError("unauthorized", "Notion connections must belong to one Avalon workspace");
+    throw new ConnectorError("unauthorized", "Notion connections must belong to one Rally workspace");
   }
 }
 

@@ -480,8 +480,8 @@ export function createTerminalWorkspaceBackup(
     if (result.exitCode !== 0) {
       throw new TerminalToolError(
         "workspace_backup_failed",
-        "Avalon could not create a recovery backup, so the repository was not changed. Inspect free space and retry repository checkout.",
-        { reason: "Repository replacement is blocked until Avalon can create its recovery backup." },
+        "Rally could not create a recovery backup, so the repository was not changed. Inspect free space and retry repository checkout.",
+        { reason: "Repository replacement is blocked until Rally can create its recovery backup." },
       );
     }
     if (result.stdout.trim() === "EMPTY") return null;
@@ -497,7 +497,7 @@ export function createTerminalWorkspaceBackup(
     if (!ready) {
       throw new TerminalToolError(
         "workspace_backup_failed",
-        "Avalon could not verify the recovery backup, so the repository was not changed. Retry repository checkout.",
+        "Rally could not verify the recovery backup, so the repository was not changed. Retry repository checkout.",
         { reason: "Repository replacement is blocked until the backup size and digest can be verified." },
       );
     }
@@ -515,7 +515,7 @@ export function createTerminalWorkspaceBackup(
     if (bytes.byteLength !== expectedSize || actualSha256 !== expectedSha256) {
       throw new TerminalToolError(
         "workspace_backup_changed",
-        "The recovery backup changed while Avalon read it, so the repository was not changed. Stop workspace writers and retry repository checkout.",
+        "The recovery backup changed while Rally read it, so the repository was not changed. Stop workspace writers and retry repository checkout.",
         { reason: "Wait for active writes to finish, then retry repository checkout." },
       );
     }
