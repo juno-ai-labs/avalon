@@ -2672,6 +2672,45 @@ describe("agent harness", () => {
       .toContain("Trying again usually works");
   });
 
+  it("still files a platform refusal under the platform when the clock has run out", async () => {
+    // The two chains that decide `kind` and `code` are separate expressions
+    // over the same error, and they disagreed here: `code` tested
+    // `FatalHarnessPortError` above `timedOut` and `kind` tested it below, so
+    // this run reported `deadline` beside `platform_limit_exceeded`. A reader
+    // meeting that pair goes looking at Avalon's wall clock, which is the
+    // reading that made 2026-08-24 look like a slow run.
+    //
+    // The deadline is real, not stubbed: the run's own wall clock expires while
+    // the persist is failing, so `timedOut` is genuinely true and the arm below
+    // it is genuinely reachable. That is what makes this a test of the
+    // ordering rather than of the platform arm, which the spec above covers.
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{
+        delta: { tool_calls: [toolDelta(0, "provider-write", "create_record")] },
+        finish_reason: "tool_calls",
+      }],
+    }])) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, { maxWallClockMs: 5 }),
+      corePlugins: [testCorePlugin([harnessTool("create_record", "write", [])])],
+      persistToolExecutionPlan: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        throw new Error(
+          "D1_ERROR: Subrequest depth limit exceeded. This request recursed through Workers too many times.",
+        );
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: {
+        kind: "platform",
+        code: "platform_limit_exceeded",
+      },
+    });
+  });
+
   it("files the count limit the same way as the depth limit", () => {
     // One invocation may make a bounded number of subrequests as well as reach a
     // bounded depth. Both are the platform refusing to carry the call, and the

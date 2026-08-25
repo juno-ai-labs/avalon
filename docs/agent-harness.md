@@ -717,6 +717,14 @@ the attribution without knowing to ask for it. The member-safe message says
 "this run" rather than naming an operation, and offers a retry, because the
 limit is per invocation and a fresh run starts a fresh one.
 
+Two things the new arm exposed came with it. `kind` tested `FatalHarnessPortError`
+*below* `timedOut` while `code` tested it above, so a platform refusal landing
+during a timed-out run reported `deadline` beside `platform_limit_exceeded`; the
+arms are now in one order in both chains. And `HarnessLimitError`'s constructor
+excludes the codes that are not limits, so `platform_limit_exceeded` is added to
+that list — without it a limit error could be constructed carrying it and would
+report kind `limit` for a platform refusal.
+
 **Why:** the codes exist to answer one question — which system produced this —
 and this class of failure was answering it wrongly. Cloudflare enforces its
 subrequest limits by refusing whichever call asks next, so the refusal surfaces
@@ -731,7 +739,17 @@ has to remember is one some author will not.
 through a receipt port that throws the platform's exact wording and expects
 `platform_limit_exceeded` with kind `platform`, alongside a case for the count
 limit and two negatives — an ordinary SQL error and a missing cause — so the
-matcher is asserted at both edges.
+matcher is asserted at both edges. A further case runs the same refusal past a
+real 5 ms wall clock, so `timedOut` is genuinely true and the arm under it is
+genuinely reachable, and expects `platform` rather than `deadline`; restoring
+the old arm order fails it on exactly the mismatched pair. The exclusion list is
+a compile-time claim and is proved by `pnpm typecheck` rather than a spec.
+
+**What a future change has to respect:** `kind` and `code` are two expressions
+over one error and answer one question, so an arm added to either goes in the
+same position in both. Both chains have been wrong about that once, in opposite
+directions, and neither cost anything until a code arrived whose kind was not
+already `execution`.
 
 **Considered and rejected:** *Matching on the port that failed* — the refusal
 lands anywhere. *Adding a retry* for it inside the harness: the invocation is

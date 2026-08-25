@@ -209,7 +209,7 @@ type RenderedSystemPrompt = {
 };
 
 class HarnessLimitError extends Error {
-  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable" | "provider_circuit_open">, message: string) {
+  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable" | "provider_circuit_open" | "platform_limit_exceeded">, message: string) {
     super(message);
     this.name = "HarnessLimitError";
   }
@@ -1243,10 +1243,18 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     // then expired, while a provider fault that ran out the clock is reported as
     // the deadline, because the wall clock is the thing the member can act on.
     //
-    // The two chains agree on that ordering. They did not always: `code` used to
-    // check `timedOut` third and `kind` first, so a `HarnessLimitError` thrown
-    // after the deadline fired reported `run_iteration_limit_exceeded` with kind
-    // `deadline` — a pairing no consumer could make sense of.
+    // The two chains agree on that ordering, and both have been wrong about it
+    // once. `code` used to check `timedOut` third and `kind` first, so a
+    // `HarnessLimitError` thrown after the deadline fired reported
+    // `run_iteration_limit_exceeded` with kind `deadline` — a pairing no
+    // consumer could make sense of. `kind` then kept `FatalHarnessPortError`
+    // *below* `timedOut` while `code` had it above, which is the same defect in
+    // the other chain and cost nothing only because every port failure was kind
+    // `execution` anyway. It stops being free with `platform_limit_exceeded`
+    // beside it: a platform refusal that lands during a timed-out run would
+    // report `deadline`, which is the reading that made 2026-08-24 look like a
+    // slow run rather than a refused subrequest. So the arms below are in the
+    // same order as the arms above, and have to stay that way.
     const providerCode = error instanceof ProviderUnavailableError
       ? "provider_unavailable" as const
       : error instanceof ProviderCircuitOpenError
@@ -1268,14 +1276,16 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           : "limit"
         : error instanceof AmbiguousExternalWriteError
           ? "ambiguous_external_write"
+        : error instanceof FatalHarnessPortError
+          ? error.code === "platform_limit_exceeded"
+            ? "platform"
+            : "execution"
         : timedOut
           ? "deadline"
         : error instanceof ProviderUnavailableError
           ? "provider"
         : error instanceof ProviderCircuitOpenError
           ? "routing"
-        : error instanceof FatalHarnessPortError && error.code === "platform_limit_exceeded"
-          ? "platform"
           : "execution",
       code,
       message: error instanceof Error ? error.message : "Harness execution failed",
