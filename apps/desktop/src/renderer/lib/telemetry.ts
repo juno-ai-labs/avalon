@@ -19,6 +19,25 @@ export type TelemetrySurfaceEntrypoint =
 let pendingSurfaceEntrypoint: TelemetrySurfaceEntrypoint = 'direct';
 let activeSurfaceEntrypoint: TelemetrySurfaceEntrypoint = 'direct';
 
+export type WorkstreamFeedCacheState = 'feed_cached' | 'detail_cached' | 'cold';
+export type WorkstreamFeedSidebarSection = 'pinned' | 'recent';
+export type WorkstreamFeedSocketPoolState = 'retained_pair' | 'control_warmup' | 'cold';
+export type WorkstreamSocketStartReason =
+  | 'hover_warmup' | 'active_workstream' | 'background_workstream' | 'retained_workstream' | 'reconnect';
+
+interface PendingWorkstreamFeedOpen {
+  workstreamId: string;
+  operationId: string;
+  startedAt: number;
+  dataReadyAt?: number;
+  sidebarSection: WorkstreamFeedSidebarSection;
+  socketPoolState: WorkstreamFeedSocketPoolState;
+  socketLeaseId?: string;
+  cacheState?: WorkstreamFeedCacheState;
+}
+
+let pendingWorkstreamFeedOpen: PendingWorkstreamFeedOpen | null = null;
+
 export function markSurfaceEntrypoint(entrypoint: TelemetrySurfaceEntrypoint): void {
   pendingSurfaceEntrypoint = entrypoint;
 }
@@ -79,6 +98,193 @@ export function telemetryVisibility(scope: 'personal' | 'workspace' | 'you'): 'p
 
 export function markWorkstreamNavigation(workstreamId: string, switched: boolean): void {
   pendingWorkstreamNavigation.set(workstreamId, switched ? 'switched' : 'opened');
+}
+
+/**
+ * Starts the one sidebar-click flow whose next painted feed is being measured.
+ * A duplicate click on the same destination preserves the first click; choosing
+ * another row replaces it so a late response cannot be attributed to the wrong
+ * interaction.
+ */
+export function markWorkstreamFeedOpenStarted(
+  workstreamId: string,
+  sidebarSection: WorkstreamFeedSidebarSection,
+  socketPoolState: WorkstreamFeedSocketPoolState,
+  startedAt = performance.now(),
+  socketLeaseId?: string,
+): string {
+  if (pendingWorkstreamFeedOpen?.workstreamId === workstreamId) {
+    if (socketLeaseId && !pendingWorkstreamFeedOpen.socketLeaseId) {
+      pendingWorkstreamFeedOpen.socketLeaseId = socketLeaseId;
+    }
+    return pendingWorkstreamFeedOpen.operationId;
+  }
+  if (pendingWorkstreamFeedOpen) {
+    const superseded = pendingWorkstreamFeedOpen;
+    reportTelemetryProductIntent({
+      kind: 'workstream_open_outcome',
+      operationId: superseded.operationId,
+      workstreamId: superseded.workstreamId,
+      outcome: 'superseded',
+      durationMs: Math.max(0, Math.round(startedAt - superseded.startedAt)),
+      ...(superseded.socketLeaseId ? { socketLeaseId: superseded.socketLeaseId } : {}),
+      supersedingWorkstreamId: workstreamId,
+    });
+  }
+  const operationId = uuidV7();
+  pendingWorkstreamFeedOpen = {
+    workstreamId,
+    operationId,
+    startedAt,
+    sidebarSection,
+    socketPoolState,
+    ...(socketLeaseId ? { socketLeaseId } : {}),
+  };
+  reportTelemetryProductIntent({
+    kind: 'workstream_open_started',
+    operationId,
+    workstreamId,
+    sidebarSection,
+    socketPoolState,
+    ...(socketLeaseId ? { socketLeaseId } : {}),
+  });
+  return operationId;
+}
+
+export function markWorkstreamFeedCacheState(
+  workstreamId: string,
+  cacheState: WorkstreamFeedCacheState,
+): void {
+  if (pendingWorkstreamFeedOpen?.workstreamId === workstreamId
+    && pendingWorkstreamFeedOpen.cacheState === undefined) {
+    pendingWorkstreamFeedOpen.cacheState = cacheState;
+  }
+}
+
+export function markWorkstreamFeedSocketLease(workstreamId: string, socketLeaseId?: string): void {
+  if (socketLeaseId && pendingWorkstreamFeedOpen?.workstreamId === workstreamId
+    && pendingWorkstreamFeedOpen.socketLeaseId === undefined) {
+    pendingWorkstreamFeedOpen.socketLeaseId = socketLeaseId;
+  }
+}
+
+/** The detail request shares this id with the final event for backend joins. */
+export function workstreamFeedOpenRequestId(workstreamId: string): string | undefined {
+  return pendingWorkstreamFeedOpen?.workstreamId === workstreamId
+    ? pendingWorkstreamFeedOpen.operationId
+    : undefined;
+}
+
+export function workstreamFeedOpenCacheState(
+  workstreamId: string,
+): WorkstreamFeedCacheState | undefined {
+  return pendingWorkstreamFeedOpen?.workstreamId === workstreamId
+    ? pendingWorkstreamFeedOpen.cacheState
+    : undefined;
+}
+
+export function cancelWorkstreamFeedOpen(
+  workstreamId: string,
+  failedAt = performance.now(),
+  socketLeaseId?: string,
+): void {
+  const attempt = pendingWorkstreamFeedOpen;
+  if (attempt?.workstreamId !== workstreamId) return;
+  pendingWorkstreamFeedOpen = null;
+  const resolvedSocketLeaseId = socketLeaseId ?? attempt.socketLeaseId;
+  reportTelemetryProductIntent({
+    kind: 'workstream_open_outcome',
+    operationId: attempt.operationId,
+    workstreamId,
+    outcome: 'load_failed',
+    durationMs: Math.max(0, Math.round(failedAt - attempt.startedAt)),
+    ...(resolvedSocketLeaseId ? { socketLeaseId: resolvedSocketLeaseId } : {}),
+  });
+}
+
+/** Returns true only for the first committed data-ready render in this flow. */
+export function markWorkstreamFeedDataReady(workstreamId: string, readyAt = performance.now()): boolean {
+  if (pendingWorkstreamFeedOpen?.workstreamId !== workstreamId
+    || pendingWorkstreamFeedOpen.dataReadyAt !== undefined) return false;
+  pendingWorkstreamFeedOpen.dataReadyAt = Math.max(pendingWorkstreamFeedOpen.startedAt, readyAt);
+  return true;
+}
+
+export function completeWorkstreamFeedPaint(
+  workstreamId: string,
+  feedSource: 'feed_cache' | 'boot_payload' | 'legacy_page',
+  messageCount: ReturnType<typeof telemetryCountBucket>,
+  paintedAt = performance.now(),
+  socketLeaseId?: string,
+): {
+  intent: DesktopTelemetryProductIntent;
+  operationId: string;
+  outcomeIntent: DesktopTelemetryProductIntent;
+} | null {
+  const attempt = pendingWorkstreamFeedOpen;
+  if (attempt?.workstreamId !== workstreamId || attempt.dataReadyAt === undefined
+    || attempt.cacheState === undefined) return null;
+  pendingWorkstreamFeedOpen = null;
+  const dataReadyDurationMs = Math.round(attempt.dataReadyAt - attempt.startedAt);
+  const durationMs = Math.max(dataReadyDurationMs, Math.round(paintedAt - attempt.startedAt));
+  const resolvedSocketLeaseId = socketLeaseId ?? attempt.socketLeaseId;
+  return {
+    operationId: attempt.operationId,
+    intent: {
+      kind: 'workstream_feed_visible',
+      operationId: attempt.operationId,
+      workstreamId,
+      ...(resolvedSocketLeaseId ? { socketLeaseId: resolvedSocketLeaseId } : {}),
+      durationMs,
+      dataReadyDurationMs,
+      sidebarSection: attempt.sidebarSection,
+      cacheState: attempt.cacheState,
+      socketPoolState: attempt.socketPoolState,
+      feedSource,
+      messageCount,
+    },
+    outcomeIntent: {
+      kind: 'workstream_open_outcome',
+      operationId: attempt.operationId,
+      workstreamId,
+      outcome: 'visible',
+      durationMs,
+      ...(resolvedSocketLeaseId ? { socketLeaseId: resolvedSocketLeaseId } : {}),
+    },
+  };
+}
+
+/**
+ * A requestAnimationFrame callback runs immediately before a paint. Scheduling
+ * the second frame from the first guarantees the committed transcript crossed
+ * one paint before the completion event is captured.
+ */
+export function reportWorkstreamFeedAfterPaint(
+  workstreamId: string,
+  feedSource: 'feed_cache' | 'boot_payload' | 'legacy_page',
+  messageCount: ReturnType<typeof telemetryCountBucket>,
+  socketLeaseId?: string,
+): () => void {
+  let paintedFrame = 0;
+  const committedFrame = window.requestAnimationFrame(() => {
+    paintedFrame = window.requestAnimationFrame(() => {
+      const completed = completeWorkstreamFeedPaint(
+        workstreamId,
+        feedSource,
+        messageCount,
+        performance.now(),
+        socketLeaseId,
+      );
+      if (completed) {
+        reportTelemetryProductIntent(completed.intent);
+        reportTelemetryProductIntent(completed.outcomeIntent);
+      }
+    });
+  });
+  return () => {
+    window.cancelAnimationFrame(committedFrame);
+    if (paintedFrame !== 0) window.cancelAnimationFrame(paintedFrame);
+  };
 }
 
 export function workstreamNavigation(workstreamId: string): 'opened' | 'switched' | 'reopened' {

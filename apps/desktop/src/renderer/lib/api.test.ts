@@ -1364,6 +1364,25 @@ describe('request correlation', () => {
 
     expect(new Headers(sent[0]?.headers).get('x-request-id')).toBe('trace-from-the-screen');
   });
+
+  it('correlates work-stream detail and control-ticket requests with their opening flow', async () => {
+    const sent: Array<RequestInit | undefined> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(init);
+      return String(input).endsWith('/control-socket')
+        ? json({ url: 'wss://api.rally.test/control', ticket: 'ticket' })
+        : json(detail);
+    }));
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await api.getWorkstream(workstreamId, undefined, 'feed-visible-operation');
+    await api.getWorkstreamControlSocketTicket(workstreamId, 'control-start-operation');
+
+    expect(sent.map((init) => new Headers(init?.headers).get('x-request-id'))).toEqual([
+      'feed-visible-operation',
+      'control-start-operation',
+    ]);
+  });
 });
 
 describe('expired access-token recovery', () => {

@@ -41,7 +41,7 @@ is recorded.
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps the selected/running SubstreamAgent feed and invokes the separate WorkstreamDO control lifecycle. |
-| `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the work-stream sockets above the route, warms one presence-free WorkstreamDO control socket after a one-second sidebar hover, and retains recently viewed work-stream pairs without remounting their connection hooks. |
+| `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the work-stream sockets above the route, gives each mounted owner one opaque lease ID shared by its control/feed starts, warms one presence-free WorkstreamDO control socket after a one-second sidebar hover, and retains recently viewed work-stream pairs without remounting their connection hooks. |
 | `apps/desktop/src/renderer/lib/api.ts` | Parses every ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
 
 ## How it works
@@ -521,6 +521,58 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-25 — A pooled owner has one traceable socket lease
+
+**What changed:** Every mounted work-stream socket owner receives one UUIDv7
+lease ID. Its WorkstreamDO control and SubstreamAgent feed starts share that ID
+across reconnects until the owner leaves the pool. Each start keeps a separate
+operation ID for its own ticket request and records a pending sidebar-opening
+ID when it has one. The click lifecycle records the serving lease, including a
+lease created by hover before the click.
+
+**Why:** A work-stream ID groups every historical connection and a socket
+request ID identifies only one dial. Neither says which retained control/feed
+pair served a specific opening. A click-parent ID alone also cannot connect a
+pre-click hover warmup to the later opening that consumed it.
+
+**Considered and rejected:** Reusing the click operation ID for ticket requests
+would make multiple distinct requests indistinguishable. Minting a new lease on
+every reconnect would reduce the lease to another attempt ID. Assigning a click
+retroactively to the hover-start event would rewrite causality rather than
+representing the pooled lifetime.
+
+**Consequences:** A lease is renderer-local correlation, not authorization or a
+server socket identity. It ends when the keyed pool owner unmounts; reconnects
+within that lifetime retain it. Direct non-pooled hooks generate the same shape
+for test and embedding compatibility. The ID is content-free Product analytics
+and follows the existing regional and consent boundary.
+
+### 2026-08-25 — Every work-stream socket attempt names why it started
+
+**What changed:** WorkstreamDO-control and SubstreamAgent-feed loops emit
+`workstream_socket_started` immediately before every ticket request. Initial
+attempts distinguish hover warmup, active work stream, background work stream,
+and retained work stream; every later attempt is `reconnect`. The event's
+operation ID is reused as the ticket request's `x-request-id`. The newer lease
+entry above adds pooled-lifetime and opening-parent lineage without changing
+that request correlation.
+
+**Why:** Connected/drop telemetry omits attempts that fail before a handshake,
+and pool call sites cannot see internal reconnects. With hover warming and
+five-minute retained pairs, counting only route opens also confuses “no socket
+needed” with “a socket start was missed.” The connection loop is the only
+boundary every reason crosses.
+
+**Considered and rejected:** Emitting from the pool would miss direct hooks and
+reconnects. Emitting on `WebSocket` construction would miss ticket failures.
+Calling a hover-warmed control socket a feed start would misstate the presence
+boundary: hover still never starts the SubstreamAgent feed.
+
+**Consequences:** Start counts are attempt counts and may exceed successful
+connections. Each start can join its regional ticket request, while the
+existing `realtime_socket_state` event remains the source for connected,
+retrying, and stopped outcomes. Both are Product analytics and honor opt-out.
 
 ### 2026-08-25 — A deliberate sidebar hover warms the work-stream control socket
 
