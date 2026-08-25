@@ -144,7 +144,6 @@ test('an empty account is fully provisioned by one idempotent deploy preflight',
       type: 'r2',
       format: { type: 'parquet', compression: 'zstd' },
       config: {
-        account_id: 'test-account',
         bucket: 'avalon-eu-inference-lakehouse',
         jurisdiction: 'eu',
         path: 'avalon/llm_inference',
@@ -156,6 +155,9 @@ test('an empty account is fully provisioned by one idempotent deploy preflight',
         rolling_policy: { interval_seconds: 300 },
       },
     });
+    const globalSink = [...account.entities.sinks.values()].find((sink) =>
+      sink.type === 'r2_data_catalog');
+    assert.equal(Object.hasOwn(globalSink.config, 'account_id'), false);
 
     const euResourceRequests = account.requests.filter((request) =>
       request.path.includes('avalon-eu-inference-lakehouse'));
@@ -231,6 +233,13 @@ test('immutable EU sink drift stops deployment', async () => {
   const euSink = [...account.entities.sinks.values()].find((sink) => sink.type === 'r2');
   euSink.config.jurisdiction = 'default';
 
+  await assert.rejects(
+    ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
+    /destination or rolling policy drifted; sinks are immutable/u,
+  );
+
+  euSink.config.jurisdiction = 'eu';
+  euSink.config.account_id = 'different-account';
   await assert.rejects(
     ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
     /destination or rolling policy drifted; sinks are immutable/u,
