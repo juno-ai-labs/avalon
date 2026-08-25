@@ -310,6 +310,41 @@ const SlackAutomationTargetSchema = z.object({
   last_delivered_workstream_id: z.string().nullable().optional(),
 }).passthrough();
 
+/** The prefix every Slack action id and modal callback id is minted with. */
+const SLACK_INTERACTION_PREFIX = "rally_";
+
+/**
+ * Prefixes still honoured inbound, and deliberately never emitted.
+ *
+ * A Slack action id is not a request header: it is baked into a surface that
+ * persists on Slack's side. An App Home view published before a deploy, a
+ * posted message with a button, and a modal already on someone's screen all
+ * keep the id they were minted with, and Slack echoes it back on the click. So
+ * the rename is only safe if the superseded spelling keeps resolving —
+ * otherwise every one of those buttons silently falls past its branch and
+ * opens the generic task modal instead.
+ *
+ * Removed once no surface minted before the rename can still be clicked, which
+ * is a fact about Slack's retained views rather than about this repository.
+ */
+const SUPERSEDED_SLACK_INTERACTION_PREFIXES: readonly string[] = Object.freeze([
+  "avalon_",
+]);
+
+/**
+ * An inbound action or callback id in its canonical spelling, so every branch
+ * below compares against one form. Anything not carrying a known prefix is
+ * returned unchanged and falls through as it did before.
+ */
+function canonicalSlackInteractionId(value: string): string {
+  for (const prefix of SUPERSEDED_SLACK_INTERACTION_PREFIXES) {
+    if (value.startsWith(prefix)) {
+      return `${SLACK_INTERACTION_PREFIX}${value.slice(prefix.length)}`;
+    }
+  }
+  return value;
+}
+
 export class SlackAgentService {
   private env: Env;
 
@@ -564,7 +599,7 @@ export class SlackAgentService {
 
     if (type === "view_submission") {
       const view = asRecord(payload.view);
-      if (view.callback_id === "rally_start_task_submit") {
+      if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_start_task_submit") {
         const prompt = modalPrompt(view.state);
         if (!prompt) return { response_action: "errors", errors: { prompt: "Describe what Avalon should do." } };
         if (!modalPromptSource(view.private_metadata)) {
@@ -576,12 +611,12 @@ export class SlackAgentService {
         await this.enqueueIngressJob({ id: `interaction:${bodyHash}`, teamId, bodyHash, kind: "interaction", payload });
         return { response_action: "clear" };
       }
-      if (view.callback_id === "rally_preferences_submit") {
+      if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_preferences_submit") {
         if (!await this.linkedAccount(teamId, slackUserId)) return { response_action: "errors", errors: { delivery: "Connect your Avalon account first." } };
         await this.enqueueIngressJob({ id: `interaction:${bodyHash}`, teamId, bodyHash, kind: "interaction", payload });
         return { response_action: "clear" };
       }
-      if (view.callback_id === "rally_feedback_submit") {
+      if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_feedback_submit") {
         const identity = await this.linkedAccount(teamId, slackUserId);
         const workstreamId = typeof view.private_metadata === "string" ? view.private_metadata : "";
         const rating = modalSelectedValues(view.state, "rating", "value")[0];
@@ -613,7 +648,7 @@ export class SlackAgentService {
     // of the link it just followed. The action id is the button, whatever it is
     // embedded in. The two manifest shortcuts carry no action at all and reach
     // the task modal below by falling past every branch here.
-    const actionId = String(action?.action_id ?? "");
+    const actionId = canonicalSlackInteractionId(String(action?.action_id ?? ""));
     // Slack follows a `url` button's link itself, so the interaction it also
     // sends needs nothing but an acknowledgement.
     if (type === "block_actions" && actionId.startsWith("rally_open_")) return {};
@@ -868,7 +903,7 @@ export class SlackAgentService {
     if (!teamId || !slackUserId) throw new ApiError(422, "slack_interaction_invalid", "Slack interaction identity is missing");
     if (payload.type !== "view_submission") return;
     const view = asRecord(payload.view);
-    if (view.callback_id === "rally_start_task_submit") {
+    if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_start_task_submit") {
       const prompt = modalPrompt(view.state);
       if (!prompt) throw new ApiError(422, "slack_prompt_missing", "The Slack task prompt is missing");
       const source = modalPromptSource(view.private_metadata);
@@ -886,7 +921,7 @@ export class SlackAgentService {
     }
     const identity = await this.linkedAccount(teamId, slackUserId);
     if (!identity) throw new ApiError(409, "slack_link_missing", "The Slack user link is no longer active");
-    if (view.callback_id === "rally_preferences_submit") {
+    if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_preferences_submit") {
       const selected = modalSelectedValues(view.state, "delivery", "value");
       await this.env.DB.prepare(
         `INSERT INTO slack_delivery_preferences
@@ -900,7 +935,7 @@ export class SlackAgentService {
       await this.publishHome(teamId, slackUserId);
       return;
     }
-    if (view.callback_id === "rally_feedback_submit") {
+    if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_feedback_submit") {
       const workstreamId = typeof view.private_metadata === "string" ? view.private_metadata : "";
       const rating = modalSelectedValues(view.state, "rating", "value")[0];
       if (!workstreamId || (rating !== "helpful" && rating !== "needs_improvement")) throw new ApiError(422, "slack_feedback_invalid", "Slack feedback is invalid");
