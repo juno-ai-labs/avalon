@@ -623,7 +623,7 @@ describe('New automation composer', () => {
     expect(api.resumeAutomationDraft).not.toHaveBeenCalled();
   });
 
-  it('uses workstream chat messages while streaming research and the assistant response', async () => {
+  it('keeps one status element beneath the request while tools run, then reveals the reply', async () => {
     let resolveCompile!: (value: unknown) => void;
     let stream!: (event: AutomationAssistantStreamEvent) => void;
     api.compileAutomation.mockImplementation((_input, onStream) => new Promise((resolve) => {
@@ -640,8 +640,12 @@ describe('New automation composer', () => {
     }, expect.any(Function)));
     const humanMessage = (await screen.findByText(example)).closest('article');
     expect(humanMessage).toHaveClass('message-block', 'human-message', 'own-human-message');
-    expect(screen.getByRole('status', { name: 'Rally is working' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'What should happen automatically?' })).not.toBeInTheDocument();
+    // One status element, anchored directly beneath the request, counting.
+    expect(screen.getByRole('status', { name: 'Rally is working' })).toBeInTheDocument();
+    expect(humanMessage?.nextElementSibling).toHaveClass('agent-run-status');
+    expect(screen.getByText('Understanding your automation request')).toBeInTheDocument();
+    expect(screen.getByText(/· Running for /)).toBeInTheDocument();
 
     act(() => {
       stream({
@@ -651,8 +655,9 @@ describe('New automation composer', () => {
         durationMs: 0,
       });
     });
-    expect(screen.getByRole('status', { name: 'Rally is working' })).toBeInTheDocument();
-    expect(screen.queryByText('Rally is working')).not.toBeInTheDocument();
+    // Model time is not on the status line, and thinking appends no row.
+    expect(screen.queryByText(/working for/)).not.toBeInTheDocument();
+    expect(document.querySelectorAll('.agent-run-status')).toHaveLength(1);
 
     act(() => {
       stream({
@@ -670,12 +675,13 @@ describe('New automation composer', () => {
         plugin: { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
       });
     });
-    const activeResearch = (await screen.findByText('Reviewing Google Drive + Docs + Sheets')).closest('details');
-    expect(activeResearch).toHaveClass('plugin-activity', 'tool-started');
+    // The status line takes the tool's own prose and provider face; no tool
+    // row is appended anywhere, and the raw summary stays out of the run view.
+    expect(screen.getByText('Reviewing Google Drive + Docs + Sheets')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Plugin: Google Drive + Docs + Sheets' })).toBeInTheDocument();
-    expect(screen.getByTitle('Google Drive + Docs + Sheets')).toBeInTheDocument();
-    expect(screen.getByText('working for 42ms')).toBeInTheDocument();
-    expect(screen.queryByText('Rally is working')).not.toBeInTheDocument();
+    expect(document.querySelector('.tool-block')).toBeNull();
+    expect(document.querySelectorAll('.agent-run-status')).toHaveLength(1);
+    expect(screen.queryByText('Using an authorized connector…')).not.toBeInTheDocument();
 
     act(() => {
       stream({
@@ -687,28 +693,15 @@ describe('New automation composer', () => {
         plugin: { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
         durationMs: 42,
       });
-      stream({
-        type: 'thinking',
-        inferenceRequestId: 'inference-2',
-        status: 'started',
-        durationMs: 42,
-      });
-      stream({
-        type: 'thinking',
-        inferenceRequestId: 'inference-2',
-        status: 'completed',
-        durationMs: 83_000,
-      });
       stream({ type: 'started' });
       stream({ type: 'delta', delta: 'Which blog ', reset: false });
       stream({ type: 'delta', delta: 'should Rally monitor?', reset: false });
     });
-    expect(await screen.findByText('Reviewed Google Drive + Docs + Sheets')).toBeInTheDocument();
-    expect(activeResearch).toHaveClass('plugin-activity', 'tool-completed');
-    expect(screen.getByText('42ms')).toBeInTheDocument();
-    expect(screen.getByText('working for 1m 23s')).toBeInTheDocument();
-    expect(await screen.findByText('Which blog should Rally monitor?')).toBeInTheDocument();
-    expect(screen.queryByText('Rally is working')).not.toBeInTheDocument();
+    // Every call settled: the run is composing. The narration streams in but
+    // never renders — no assistant text is visible until the reply is ready.
+    expect(screen.getByText('Finalizing your automation')).toBeInTheDocument();
+    expect(screen.queryByText('Which blog should Rally monitor?')).not.toBeInTheDocument();
+    expect(document.querySelector('.agent-message')).toBeNull();
 
     await act(async () => {
       resolveCompile({
@@ -724,17 +717,27 @@ describe('New automation composer', () => {
         },
       });
     });
-    expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
+    // The reply arrives only once the status element has settled above it.
+    expect(screen.getByText(/^Ran for /)).toBeInTheDocument();
+    expect(screen.queryByText(/Running for/)).not.toBeInTheDocument();
     const assistantMessage = (await screen.findByText('Which blog should Rally monitor?')).closest('article');
     expect(assistantMessage).toHaveClass('message-block', 'agent-message');
     expect(screen.getByRole('textbox', { name: 'Paste the full blog URL.' })).toHaveAttribute(
       'placeholder',
       'https://example.com/blog',
     );
+    // The record stays folded until asked for, then names what the run did
+    // once, however many wire calls it took.
+    expect(screen.queryByText('Searched the authorized Drive folder')).not.toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: 'Show what Rally did' });
+    expect(toggle).toHaveTextContent('1 step');
+    fireEvent.click(toggle);
+    expect(screen.getByText('Reviewed Google Drive + Docs + Sheets')).toBeInTheDocument();
+    expect(screen.getByText('Searched the authorized Drive folder')).toBeInTheDocument();
     expect(screen.getAllByText(example)).toHaveLength(1);
   });
 
-  it('retracts an abandoned narration turn without blanking the bubble', async () => {
+  it('collects narration without ever rendering it while the compile runs', async () => {
     let stream!: (event: AutomationAssistantStreamEvent) => void;
     api.compileAutomation.mockImplementation((_input, onStream) => new Promise(() => { stream = onStream; }));
     renderScreen();
@@ -743,82 +746,55 @@ describe('New automation composer', () => {
     fireEvent.click(screen.getByRole('button', { name: example }));
     await waitFor(() => expect(api.compileAutomation).toHaveBeenCalled());
 
-    // A model that opens a turn with a bare newline must not render a bubble
-    // before it has said anything.
+    // Narration is collected for the failure path, but a running compile
+    // shows the status element and nothing else — resets included.
     act(() => {
       stream({ type: 'started' });
-      stream({ type: 'delta', delta: '\n', reset: false });
-    });
-    expect(document.querySelector('.agent-message')).toBeNull();
-
-    act(() => {
       stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: false });
       stream({ type: 'delta', delta: '\n\nSearching GitHub next.', reset: false });
+      stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: true });
     });
-    expect(await screen.findByText(/Searching GitHub next\./)).toBeInTheDocument();
-
-    // The harness replays the settled text on a reset, so the abandoned turn
-    // disappears and the earlier update survives.
-    act(() => { stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: true }); });
-    expect(await screen.findByText('Checking the plugin catalog.')).toBeInTheDocument();
-    expect(screen.queryByText(/Searching GitHub next\./)).not.toBeInTheDocument();
-
-    // A reset with nothing to restore leaves no bubble at all.
-    act(() => { stream({ type: 'delta', delta: '', reset: true }); });
-    await waitFor(() => expect(document.querySelector('.agent-message')).toBeNull());
+    expect(document.querySelector('.agent-message')).toBeNull();
+    expect(screen.queryByText(/Checking the plugin catalog/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Searching GitHub next/)).not.toBeInTheDocument();
+    expect(document.querySelectorAll('.agent-run-status')).toHaveLength(1);
+    expect(screen.getByText('Understanding your automation request')).toBeInTheDocument();
   });
 
-  it('follows streaming narration to the bottom until the reader scrolls up', async () => {
+  it('brings a sent turn into view, and holds still while the compile runs', async () => {
     let stream!: (event: AutomationAssistantStreamEvent) => void;
     api.compileAutomation.mockImplementation((_input, onStream) => new Promise(() => { stream = onStream; }));
     renderScreen();
-
-    const example = 'Check this blog every 24 hours for a new post.';
-    fireEvent.click(screen.getByRole('button', { name: example }));
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalled());
 
     const surface = document.querySelector('.new-automation-screen') as HTMLElement;
     Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 4_000 });
     Object.defineProperty(surface, 'clientHeight', { configurable: true, value: 900 });
 
+    const example = 'Check this blog every 24 hours for a new post.';
+    fireEvent.click(screen.getByRole('button', { name: example }));
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalled());
+    // Sending appends the turn and its status row, which is the one moment
+    // the view moves: the bottom, where both just landed.
+    await waitFor(() => expect(surface.scrollTop).toBe(4_000));
+
+    // A reader who scrolls back up stays exactly where they went — narration
+    // and tool events change what the status element says, never the layout,
+    // so there is nothing to follow and nothing yanks the viewport back.
+    surface.scrollTop = 1_000;
+    fireEvent.scroll(surface);
     act(() => {
       stream({ type: 'started' });
       stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: false });
+      stream({
+        type: 'tool',
+        toolCallId: 'tool-1',
+        name: 'Searching connected plugins',
+        summary: 'Checking the catalog',
+        status: 'started',
+        plugin: null,
+      });
     });
-    await waitFor(() => expect(surface.scrollTop).toBe(4_000));
-
-    // The follow's own scroll event is dispatched at frame time, by which
-    // point more narration has landed and the bottom has moved. Measuring
-    // that as the reader scrolling up would switch the follow off a second
-    // into every compile.
-    Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 5_000 });
-    fireEvent.scroll(surface);
-    act(() => { stream({ type: 'delta', delta: ' Still following.', reset: false }); });
-    await waitFor(() => expect(surface.scrollTop).toBe(5_000));
-    Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 4_000 });
-
-    // A few pixels above the bottom of the 3_100 scroll range is still the
-    // reader taking control. A larger tolerance would read this as "close
-    // enough" and yank them forward on the next fragment.
-    surface.scrollTop = 3_090;
-    fireEvent.scroll(surface);
-    act(() => { stream({ type: 'delta', delta: '\n\nSearching GitHub next.', reset: false }); });
-    await screen.findByText(/Searching GitHub next\./);
-    expect(surface.scrollTop).toBe(3_090);
-
-    surface.scrollTop = 1_000;
-    fireEvent.scroll(surface);
-    act(() => { stream({ type: 'delta', delta: '\n\nReading the workflow docs.', reset: false }); });
-    await screen.findByText(/Reading the workflow docs\./);
     expect(surface.scrollTop).toBe(1_000);
-
-    // Back at the bottom by their own hand, the follow resumes. The one-pixel
-    // slack absorbs the fractional maximum a browser clamps a programmatic
-    // scroll to; it is not a "near the bottom" allowance.
-    surface.scrollTop = 3_099;
-    fireEvent.scroll(surface);
-    act(() => { stream({ type: 'delta', delta: '\n\nDrafting it now.', reset: false }); });
-    await waitFor(() => expect(surface.scrollTop).toBe(4_000));
   });
 
   it('preloads Rally’s plugin picks without a Default plugins section', async () => {
@@ -1515,10 +1491,12 @@ describe('New automation composer', () => {
       stream({ type: 'delta', delta: 'No blog connector is authorized,', reset: false });
       stream({ type: 'delta', delta: ' so I am checking the public web instead.', reset: false });
     });
-    await screen.findByText(/No blog connector is authorized/);
+    // Collected, not shown: while the compile runs the status element is the
+    // whole of what the reader sees.
+    expect(screen.queryByText(/No blog connector is authorized/)).not.toBeInTheDocument();
 
     // A compile that exhausts the wall clock is when the narration explains
-    // the most, so it settles into the transcript rather than being cleared.
+    // the most, so it settles into the transcript rather than being discarded.
     await act(async () => { rejectCompile(new Error('Rally took too long to refine the automation.')); });
 
     const settled = (await screen.findByText(
@@ -1526,6 +1504,8 @@ describe('New automation composer', () => {
     )).closest('article');
     expect(settled).toHaveClass('message-block', 'agent-message');
     expect(await screen.findByText(/Rally took too long/)).toBeInTheDocument();
+    // The status element reports the stop rather than a completed run.
+    expect(screen.getByText(/^Stopped after /)).toBeInTheDocument();
   });
 
   it('reapplies the elicitation answer when a failed follow-up is retried', async () => {

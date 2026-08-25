@@ -2092,7 +2092,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             nextPageToken: readString(payload, "nextPageToken"),
             resultSizeEstimate: readNumber(payload, "resultSizeEstimate")
           }),
-          summary: `Found ${messages.length} Gmail messages`
+          summary: `Found ${messages.length} Gmail message${messages.length === 1 ? "" : "s"}`
         };
       }
       if (name === "gmail.find_contacts") {
@@ -2144,8 +2144,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             ...gmailContactMiss(args.name, hits.length, contacts.length)
           }),
           summary: contacts.length
-            ? `Found ${contacts.length} candidate addresses for “${args.name}” in ${hits.length} messages`
-            : `No address for “${args.name}” appears in ${hits.length} searched messages`
+            ? `Found ${contacts.length} candidate address${contacts.length === 1 ? "" : "es"} for “${args.name}” in ${hits.length} message${hits.length === 1 ? "" : "s"}`
+            : `No address for “${args.name}” appears in ${hits.length} searched message${hits.length === 1 ? "" : "s"}`
         };
       }
       if (name === "gmail.read_thread") {
@@ -2249,7 +2249,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const calendars = recordArray(payload, "items").slice(0, args.maxResults).map(sanitizeGoogleCalendar);
         return {
           output: boundedToolOutput({ items: calendars, nextPageToken: readString(payload, "nextPageToken") }),
-          summary: `Found ${calendars.length} Google calendars`
+          summary: `Found ${calendars.length} Google calendar${calendars.length === 1 ? "" : "s"}`
         };
       }
       if (name === "calendar.list_events") {
@@ -2286,7 +2286,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         );
         return {
           output: boundedToolOutput({ items, nextPageToken: readString(payload, "nextPageToken") }),
-          summary: `Found ${items.length} calendar events`
+          summary: `Found ${items.length} calendar event${items.length === 1 ? "" : "s"}`
         };
       }
       if (name === "calendar.read_event") {
@@ -2457,7 +2457,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             charactersAppended: args.text.length,
             revisionId: readNestedString(payload, "writeControl", "requiredRevisionId")
           }),
-          summary: `Appended ${args.text.length} characters to Google Doc`,
+          summary: `Appended ${args.text.length} character${args.text.length === 1 ? "" : "s"} to Google Doc`,
           providerOperationId: args.documentId
         };
       }
@@ -2610,7 +2610,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const files = recordArray(payload, "files").slice(0, args.maxResults).map(sanitizeDriveFile);
         return {
           output: boundedToolOutput({ items: files, nextPageToken: readString(payload, "nextPageToken") }),
-          summary: `Found ${files.length} Drive files`
+          summary: `Found ${files.length} Drive file${files.length === 1 ? "" : "s"}`
         };
       }
       if (name === "drive.get_metadata" || name === "drive.download") {
@@ -2657,7 +2657,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const text = new TextDecoder().decode(bytes);
         return {
           output: boundedToolOutput({ text, mimeType: args.mimeType, bytes: bytes.byteLength }),
-          summary: `Exported ${text.length} characters`,
+          summary: `Exported ${text.length} character${text.length === 1 ? "" : "s"}`,
           providerOperationId: args.fileId
         };
       }

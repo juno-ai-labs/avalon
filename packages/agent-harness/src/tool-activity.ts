@@ -1,7 +1,8 @@
 /**
- * Transcript rows name what a tool did, not which wire symbol was called. Every
- * chat surface renders the same row component, so every surface has to get its
- * prose from here rather than falling back to a raw tool name.
+ * Tool activity is named for what it did, not which wire symbol was called.
+ * Every chat surface — the work-stream transcript's rows and the automation
+ * builder's run-status element alike — gets its prose from here rather than
+ * falling back to a raw tool name.
  */
 
 export type ToolActivityStatus = "started" | "completed" | "failed";

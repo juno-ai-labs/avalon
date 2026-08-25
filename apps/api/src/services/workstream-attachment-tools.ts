@@ -162,7 +162,7 @@ export function createWorkstreamAttachmentTools(
             items: page.map(resourceListItem),
             nextCursor,
           });
-          return { output, summary: `Listed ${page.length} of ${matching.length} matching work-stream resources` };
+          return { output, summary: `Listed ${page.length} of ${matching.length} matching work-stream resource${matching.length === 1 ? "" : "s"}` };
         }
         if (state && state.mode !== "database") {
           throw attachmentError("invalid_cursor", "This resource cursor belongs to another resource scope");
@@ -213,7 +213,7 @@ export function createWorkstreamAttachmentTools(
         });
         return {
           output,
-          summary: `Listed ${result.rows.length} of ${result.totalMatchingResources} matching work-stream resources`,
+          summary: `Listed ${result.rows.length} of ${result.totalMatchingResources} matching work-stream resource${result.totalMatchingResources === 1 ? "" : "s"}`,
         };
       },
     },
@@ -387,7 +387,7 @@ export function createWorkstreamAttachmentTools(
           passages,
           truncated: ranked.length > passages.length,
         });
-        return { output, summary: `Found ${ranked.length} matching passages in ${row.title}` };
+        return { output, summary: `Found ${ranked.length} matching passage${ranked.length === 1 ? "" : "s"} in ${row.title}` };
       },
     },
     {
@@ -494,7 +494,7 @@ export function createWorkstreamAttachmentTools(
         });
         return {
           output,
-          summary: `Viewed ${contentParts.length} of ${args.resourceIds.length} requested images`,
+          summary: `Viewed ${contentParts.length} of ${args.resourceIds.length} requested image${args.resourceIds.length === 1 ? "" : "s"}`,
           ...(contentParts.length > 0 ? { contentParts } : {}),
         };
       },

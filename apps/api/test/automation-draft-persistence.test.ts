@@ -188,6 +188,28 @@ describe("automation drafts", () => {
     });
   });
 
+  it("introduces a ready draft with its details rather than restating the request", async () => {
+    const database = seededDatabase();
+    compileAutomationDraft.mockResolvedValue(draft({ followUpQuestion: null, ready: true }));
+    const service = serviceFor(database);
+
+    const compiled = await service.compile({
+      messages: [{ role: "user", content: "Watch my blog." }],
+    }, "request-1");
+
+    // The reply is composed here rather than by the model, so the builder can
+    // rely on it: this sentence introduces the summary card rendered directly
+    // below it, and never opens with a restatement of the request.
+    expect(compiled.assistantMessage).toBe("Here are the details of your proposed automation.");
+    // The saved transcript ends on the same sentence, so a reopened draft
+    // reads exactly like the turn that produced it.
+    const state = await service.draftState(compiled.draftId);
+    expect(state.messages.at(-1)).toEqual({
+      role: "assistant",
+      content: "Here are the details of your proposed automation.",
+    });
+  });
+
   it("says a conversation it can no longer read is unavailable rather than failing", async () => {
     const database = seededDatabase();
     compileAutomationDraft.mockResolvedValue(draft());

@@ -23,7 +23,8 @@ or the New automation screen.
 | `apps/api/src/routes/automations.ts` | `POST /automations/draft/stream` and `POST /automations/draft` compile and persist; `GET /automations/:id/draft` returns the conversation; `POST /automations/:id/archive` hides it. |
 | `packages/contracts/src/index.ts` | `AutomationDraftStateSchema` is the resumable conversation; `AutomationDraftStreamEventSchema`'s `completed` event carries the draft's id; `CreateAutomationRequestSchema.draftId` is what makes creation a promotion. |
 | `apps/desktop/src/renderer/lib/api.ts` | `compileAutomation` adopts the id the API assigns; `resumeAutomationDraft` reopens one; `createAutomation` names the draft being promoted. |
-| `apps/desktop/src/renderer/screens/new-automation.tsx` | The builder: resumes `?draft=<id>`, and names the draft it wrote in the URL. |
+| `apps/desktop/src/renderer/screens/new-automation.tsx` | The builder: resumes `?draft=<id>`, names the draft it wrote in the URL, and keeps each turn's run record for the status element. |
+| `apps/desktop/src/renderer/components/agent-run-status.tsx` | The one element a compile turn shows while it runs — current activity, provider face, elapsed counter — and the folded activity record it settles into. |
 | `apps/desktop/src/renderer/components/sidebar.tsx` | Sinks drafts below the automations that run and points their rows back at the builder. |
 | `packages/db/migrations/0065_automation_draft_conversation.sql` | `draft_conversation_json`, the saved transcript. |
 
@@ -259,7 +260,7 @@ from the API, not a second renderer completion.
 | `apps/api/test/automation-lifecycle.test.ts` | Archival, and the refusal to archive an automation that runs. |
 | `apps/api/test/automation-compile-source-validation.test.ts` | An unbindable activity source still saving as a draft, and a hand-built `ConnectorError`'s mapping to a typed `ApiError` — reconnect-required only for the exact code-plus-detail shape `isReconnectRequiredConnectorError` checks, non-retryable otherwise. |
 | `apps/api/test/automation-compile-connector-registry.test.ts` | The mapping above against the real, unmocked `loadAutomationCreatorPluginCatalog`: a stored connection naming a `connector_type` this environment does not register reaches `AutomationService.compile`'s catch block and comes back as `automation_connector_failed`. |
-| `apps/desktop/src/renderer/screens/new-automation.test.tsx` | Resuming `?draft=`, the screen naming the draft it wrote, and the delivery choice a draft's `requestedDelivery` pre-selects. |
+| `apps/desktop/src/renderer/screens/new-automation.test.tsx` | Resuming `?draft=`, the screen naming the draft it wrote, the delivery choice a draft's `requestedDelivery` pre-selects, and the one status element a compile shows — anchored beneath its turn, no narration or tool rows while it runs, the folded record and the reply only once it settles. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | Draft ordering, the row's link, and the archive menu item. |
 | `packages/agent-harness/src/automation-compiler-wire-roundtrip.test.ts` | A regression pin, not a two-version-skew detector: the normalizer's trigger handling for an unnamed multi-time-daily calendar schedule surviving `AutomationDraftStreamEventSchema` and a JSON transport round trip. |
 
@@ -303,6 +304,60 @@ conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
 ## Changelog
+
+### 2026-08-25 — A compile shows one status element, not a stream
+
+**What changed:** While a compile turn runs, the builder renders exactly one
+element beneath the turn that sent it: a status line naming what the compiler
+is doing — "Understanding your automation request", the active tool's own
+prose with its provider face, "Finalizing your automation" — beside a
+wall-clock counter. Tool events update that element in place instead of
+appending transcript rows, and the streamed narration is collected but no
+longer rendered. When the turn settles, the same element becomes the run's
+record — duration, one face per provider used, and a collapsed fold-out
+naming each distinct call once with a count and its result summary — and only
+then does the reply render. The server now introduces a ready draft with
+"Here are the details of your proposed automation." rather than "The
+automation is ready to create.", so the reply reads as a caption for the
+summary card directly below it. The scroll-follow machinery that chased
+growing narration reduced to one scroll-to-bottom on send, since nothing grows
+mid-run any more. `AgentRunStatus` is deliberately surface-agnostic — it
+consumes the same event shape the work-stream transcript's tool rows carry —
+and `PluginFace` moved to `components/plugin-face.tsx` so both surfaces share
+one face. The shared connector and harness summaries also stopped
+mispluralizing a count of one ("Found 1 matching Slack users").
+
+**Why:** Watching a compile was churn. Narration streamed in before the work
+was done and opened by restating the request; tool rows appeared below the
+working timer and then jumped above it whenever thinking resumed, because the
+thought row was re-appended to the end on every restart; three Slack searches
+were three identical badges; and raw result summaries read as diagnostics.
+What a person needs during a compile is "what is Rally doing, and for how
+long" — and afterwards, "what did it do" — and one element answers both
+without the layout ever moving under the reader.
+
+**Considered and rejected:** Extending the same treatment to the work-stream
+transcript in this change. A work stream is a persistent multi-participant
+feed whose live narration is deliberately engineered
+([`streaming-reveal.md`](streaming-reveal.md), the active-stream checkpoints
+in [`agent-harness.md`](agent-harness.md)) and whose tool rows are durable
+history inside a virtualized transcript; hiding text until a run settles
+there would suppress the product, not tidy it. The component is shared so a
+later change can fold *settled* work-stream tool rows without a rebuild; the
+no-text-until-done interaction stays the builder's own. Also rejected:
+dropping the narration now that nobody watches it live — a failed compile
+still settles the retained narration into the transcript, because it is the
+only explanation a timeout has.
+
+**Consequences:** The compiler's narration now has exactly one reader, the
+failure path, while the prompt still tells the model a person watches it
+live; that sentence has become figurative, and rewording it is deliberately
+left to a pass that can re-verify narration quality against the failure path
+it feeds. Run records stay ephemeral client state, so a resumed draft shows
+its turns without them — unchanged in substance from the tool rows before,
+which were never persisted either. And the fold keys on the settled label and
+owning plugin, so calls a connector words differently stay separate rows;
+that is the intended reading of "each distinct thing the run did".
 
 ### 2026-08-25 — Review found the connector-error mapping below doesn't reach its motivating case
 

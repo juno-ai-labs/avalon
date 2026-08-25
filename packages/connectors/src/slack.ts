@@ -1485,12 +1485,12 @@ async function executeSlackDirectTool(
     case "find_users": {
       const args = SlackDirectInputSchemas.find_users.parse(rawArgs);
       const output = await findSlackUsers(token, args, context.signal, fetcher);
-      return { output, summary: `Found ${output.users.length} matching Slack users` };
+      return { output, summary: `Found ${output.users.length} matching Slack user${output.users.length === 1 ? "" : "s"}` };
     }
     case "find_channels": {
       const args = SlackDirectInputSchemas.find_channels.parse(rawArgs);
       const output = await findSlackChannels(token, args, context.signal, fetcher);
-      return { output, summary: `Found ${output.channels.length} matching Slack conversations` };
+      return { output, summary: `Found ${output.channels.length} matching Slack conversation${output.channels.length === 1 ? "" : "s"}` };
     }
     case "read_message_context": {
       const args = SlackDirectInputSchemas.read_message_context.parse(rawArgs);
@@ -1510,7 +1510,7 @@ async function executeSlackDirectTool(
           has_more: result.has_more ?? false,
           next_cursor: result.response_metadata?.next_cursor || null,
         },
-        summary: `Read ${result.messages.length} messages from Slack conversation ${args.channel_id}`,
+        summary: `Read ${result.messages.length} message${result.messages.length === 1 ? "" : "s"} from Slack conversation ${args.channel_id}`,
       };
     }
     case "read_thread": {
@@ -1527,7 +1527,7 @@ async function executeSlackDirectTool(
           has_more: result.has_more ?? false,
           next_cursor: result.response_metadata?.next_cursor || null,
         },
-        summary: `Read ${result.messages.length} messages from a Slack thread`,
+        summary: `Read ${result.messages.length} message${result.messages.length === 1 ? "" : "s"} from a Slack thread`,
       };
     }
     case "read_file": {
@@ -1605,7 +1605,7 @@ async function executeSlackDirectTool(
           member_user_ids: result.members,
           next_cursor: result.response_metadata?.next_cursor || null,
         },
-        summary: `Listed ${result.members.length} Slack conversation members`,
+        summary: `Listed ${result.members.length} Slack conversation member${result.members.length === 1 ? "" : "s"}`,
       };
     }
   }
