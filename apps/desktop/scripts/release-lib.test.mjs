@@ -7,10 +7,12 @@ import test from 'node:test';
 import {
   assertMinorReleaseVersion,
   assertNextReleaseVersion,
+  assertReleaseAfterMissingManifest,
   assertReleaseTag,
   compareVersions,
   normalizeReleasePrefix,
   parseMacUpdateFeed,
+  reconcileImmutableReleaseObject,
   releaseContentType,
   sha512File,
   verifyFeedArtifact,
@@ -36,11 +38,99 @@ test('release versions advance one minor, with a one-time 1.0.0 stable promotion
   assert.throws(() => assertNextReleaseVersion('1.0.0', '2.0.0'), /must be 1\.1\.0/u);
 });
 
+test('a missing live manifest fails closed when the site record says the release shipped', () => {
+  assert.equal(assertReleaseAfterMissingManifest('1.146.0', '1.147.0'), '1.147.0');
+  assert.throws(
+    () => assertReleaseAfterMissingManifest('1.147.0', '1.147.0'),
+    /Live latest-mac.yml is missing while the site release record is 1\.147\.0/u,
+  );
+  assert.throws(
+    () => assertReleaseAfterMissingManifest('1.148.0', '1.147.0'),
+    /Live latest-mac.yml is missing/u,
+  );
+});
+
 test('semantic versions compare with prerelease precedence', () => {
   assert.equal(compareVersions('1.2.3', '1.2.3'), 0);
   assert.equal(compareVersions('1.2.4', '1.2.3'), 1);
   assert.equal(compareVersions('1.2.3-beta.2', '1.2.3-beta.10'), -1);
   assert.equal(compareVersions('1.2.3', '1.2.3-rc.1'), 1);
+});
+
+test('a pre-manifest retry replaces orphaned bytes but a committed release stays immutable', async () => {
+  let uploads = 0;
+  assert.equal(await reconcileImmutableReleaseObject({
+    existingHash: 'old-notarized-build',
+    localHash: 'new-notarized-build',
+    referencedByLiveManifest: false,
+    releaseIsCommitted: false,
+    objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
+    upload: async () => { uploads += 1; },
+  }), 'replaced-orphan');
+  assert.equal(uploads, 1);
+
+  await assert.rejects(
+    reconcileImmutableReleaseObject({
+      existingHash: 'published-build',
+      localHash: 'different-build',
+      referencedByLiveManifest: false,
+      releaseIsCommitted: true,
+      objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
+      upload: async () => { uploads += 1; },
+    }),
+    /Committed release key .* already exists with different bytes/u,
+  );
+  assert.equal(uploads, 1);
+});
+
+test('an absent immutable object uploads and matching bytes are reused', async () => {
+  let uploads = 0;
+  assert.equal(await reconcileImmutableReleaseObject({
+    existingHash: undefined,
+    localHash: 'new-build',
+    referencedByLiveManifest: false,
+    releaseIsCommitted: false,
+    objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
+    upload: async () => { uploads += 1; },
+  }), 'uploaded');
+  assert.equal(await reconcileImmutableReleaseObject({
+    existingHash: 'new-build',
+    localHash: 'new-build',
+    referencedByLiveManifest: false,
+    releaseIsCommitted: true,
+    objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
+    upload: async () => { uploads += 1; },
+  }), 'reused');
+  assert.equal(uploads, 1);
+
+  await assert.rejects(
+    reconcileImmutableReleaseObject({
+      existingHash: undefined,
+      localHash: 'new-build',
+      referencedByLiveManifest: false,
+      releaseIsCommitted: true,
+      objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
+      upload: async () => { uploads += 1; },
+    }),
+    /is missing; restore its exact published bytes/u,
+  );
+  assert.equal(uploads, 1);
+});
+
+test('an object named by the live manifest cannot be replaced by the next release', async () => {
+  let uploads = 0;
+  await assert.rejects(
+    reconcileImmutableReleaseObject({
+      existingHash: 'published-build',
+      localHash: 'next-build',
+      objectLocation: 'r2://releases/Avalon-mac-arm64.zip',
+      referencedByLiveManifest: true,
+      releaseIsCommitted: false,
+      upload: async () => { uploads += 1; },
+    }),
+    /Live release key .* cannot be replaced/u,
+  );
+  assert.equal(uploads, 0);
 });
 
 test('mac update feed parser requires a local checksummed artifact', () => {

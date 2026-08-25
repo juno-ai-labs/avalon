@@ -99,6 +99,44 @@ export function assertNextReleaseVersion(currentVersion, nextVersion) {
   return nextVersion;
 }
 
+export function assertReleaseAfterMissingManifest(recordedVersion, candidateVersion) {
+  if (compareVersions(recordedVersion, candidateVersion) >= 0) {
+    throw new Error(
+      `Live latest-mac.yml is missing while the site release record is ${recordedVersion}`,
+    );
+  }
+  return assertNextReleaseVersion(recordedVersion, candidateVersion);
+}
+
+/**
+ * Reconciles one versioned object against a candidate build. Matching bytes
+ * are always safe to reuse. Before the manifest commits a version, an absent
+ * or mismatched object is uploaded. After commit, an absent or mismatched
+ * object fails closed because only its exact published bytes are valid. An
+ * object named by the currently live manifest also cannot be changed.
+ */
+export async function reconcileImmutableReleaseObject({
+  existingHash,
+  localHash,
+  objectLocation,
+  referencedByLiveManifest,
+  releaseIsCommitted,
+  upload,
+}) {
+  if (existingHash === localHash) return 'reused';
+  if (referencedByLiveManifest) {
+    throw new Error(`Live release key ${objectLocation} cannot be replaced or restored with different bytes`);
+  }
+  if (releaseIsCommitted) {
+    if (existingHash === undefined) {
+      throw new Error(`Committed release key ${objectLocation} is missing; restore its exact published bytes`);
+    }
+    throw new Error(`Committed release key ${objectLocation} already exists with different bytes`);
+  }
+  await upload();
+  return existingHash === undefined ? 'uploaded' : 'replaced-orphan';
+}
+
 function yamlScalar(value) {
   const trimmed = value.trim();
   if (trimmed.startsWith('"')) return JSON.parse(trimmed);
