@@ -10,6 +10,7 @@ import {
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectParticipantRows,
+  workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 import { publishedRunStatus } from "../src/runtime/harness-run-runtime";
 
@@ -271,20 +272,19 @@ interface RuntimeSqlRequest {
 
 /** The work stream the object holds, in the columns these tests assert on. */
 function storedWorkstream(objectStore: DatabaseSync) {
-  return workstreamObjectGet<{
-    id: string;
+  return workstreamObjectRootRow<{
+    workstream_key: string;
     title: string;
     scope: string;
     created_by_user_id: string | null;
     automation_subscription_id: string | null;
     automation_run_id: string | null;
-    archived_at: string | null;
-    harness_status: string;
+    archived_at: number | null;
+    exact_state: string;
   }>(
     objectStore,
-    `SELECT id, title, scope, created_by_user_id, automation_subscription_id,
-            automation_run_id, archived_at, harness_status
-       FROM workstreams`,
+    `workstream_key, title, scope, created_by_user_id, automation_subscription_id,
+     automation_run_id, archived_at, exact_state`,
   );
 }
 
@@ -417,8 +417,8 @@ describe("manual automation run recovery", () => {
     });
     expect(database.emailRoute).toMatchObject({ workstream_id: originalWorkstreamId });
     expect(storedWorkstream(agents.objectStore)).toMatchObject({
-      id: originalWorkstreamId,
-      harness_status: "running",
+      workstream_key: originalWorkstreamId,
+      exact_state: "running",
       archived_at: null,
     });
 
@@ -471,7 +471,7 @@ describe("manual automation run recovery", () => {
     });
     expect(database.automationRunInsertCount).toBe(1);
     expect(storedWorkstream(agents.objectStore)).toMatchObject({
-      id: first.workstreamId,
+      workstream_key: first.workstreamId,
       title: database.subscription.name,
       scope: "personal",
       created_by_user_id: database.subscription.owner_user_id,

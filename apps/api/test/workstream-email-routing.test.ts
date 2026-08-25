@@ -17,7 +17,6 @@ import {
   seedWorkstreamObjectRoot,
   testIdentityOperationStub,
   testWorkstreamObjectStore,
-  workstreamObjectRun,
   applyWorkstreamObjectRootFields,
 } from "./helpers/durable-authority";
 

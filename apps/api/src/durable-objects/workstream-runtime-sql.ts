@@ -123,14 +123,16 @@ export async function executeWorkstreamRuntimeSql(
     throw new Error("workstream_runtime_authority_fenced");
   }
 
-  // `workstream_wakeups` is deliberately not in this pattern any more. Wake-ups
-  // reach the object through `/internal/scheduling`, which runs its mutating
-  // operations inside `commitRuntimeMutation` itself, so a wake-up's directory
-  // effect is published where the wake-up is written. Leaving the name here
-  // would be a rule for statements that can no longer arrive.
+  // `workstream_wakeups`, `workstreams` and `workstream_participants` are
+  // deliberately not in this pattern any more, for one reason: each reaches the
+  // object through an endpoint of its own — `/internal/scheduling` for wake-ups
+  // and `/internal/identity` for the other two — which runs its mutating
+  // operations inside `commitRuntimeMutation` itself, so the directory effect
+  // is published where the write happens. Leaving a name here would be a rule
+  // for statements that can no longer arrive: neither table is routed, so one
+  // naming it fails against regional D1 rather than reaching this line.
   const affectsDirectory = request.statements.some((statement) =>
-    /\b(?:workstreams|messages|workstream_participants)\b/iu
-      .test(statement.sql));
+    /\bmessages\b/iu.test(statement.sql));
   const committed = await product.commitRuntimeMutation(
     (sql) => {
       const results: WorkstreamRuntimeSqlResult[] = [];

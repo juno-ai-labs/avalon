@@ -19,7 +19,6 @@ import {
   testSubstreamAgentsBinding,
   testWorkstreamContract,
   testWorkstreamObjectStore,
-  workstreamObjectRun,
   seedWorkstreamObjectParticipant,
 } from "./helpers/durable-authority";
 

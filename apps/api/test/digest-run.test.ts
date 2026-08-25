@@ -15,7 +15,6 @@ import { createTestSqlStorage } from "./helpers/sql-storage";
 import {
   openWorkstreamAuthorityForTest,
   testSubstreamAgentsBinding,
-  workstreamObjectAll,
   workstreamObjectGet,
   workstreamObjectRootRow,
   workstreamObjectParticipantRows,
