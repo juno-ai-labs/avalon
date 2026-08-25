@@ -50,11 +50,27 @@ export interface DurableObjectSelfReference<T extends RpcDurableObject> {
    * This object's own deterministic name, or `null` before it has an identity.
    *
    * A thunk because identity arrives after construction — a fresh object learns
-   * which workspace or work stream it is on its first scoped request. Until
-   * then nothing can legitimately address it by name, so `null` simply leaves
-   * every lookup on the namespace path.
+   * which workspace or work stream it is on its first scoped request.
+   *
+   * **Not a routing input.** Recognition is decided on {@link id} below; this
+   * exists so the stand-in stub can answer `name` the way a namespace stub
+   * does, and so a diagnostic can say what the object would have called itself.
+   * It was the routing input until 2026-08-25, and the window where it answers
+   * `null` is what took a work stream down the day before: an object that could
+   * not say its own name resolved that name through the namespace, landed back
+   * on itself, and did it fifteen times until Cloudflare refused every further
+   * subrequest from the invocation.
    */
   name: () => string | null;
+  /**
+   * This object's id — the routing decision, and the only one.
+   *
+   * Known from `state.id` at construction, before any durable fact is read, and
+   * already jurisdiction-asserted there. A name is only a way to compute one of
+   * these: `idFromName` is a pure function of the binding and the name, so a
+   * caller can derive the id it is about to reach and compare, with nothing to
+   * be missing and no window to fall through.
+   */
   id: DurableObjectId;
   instance: T;
 }
@@ -62,6 +78,7 @@ export interface DurableObjectSelfReference<T extends RpcDurableObject> {
 interface RegisteredSelf {
   namespace: unknown;
   name: () => string | null;
+  id: DurableObjectId;
   /**
    * The stand-in stub, kept opaque because the registry is heterogeneous. The
    * namespace identity check in {@link durableObjectSelf} is what recovers the
@@ -120,7 +137,12 @@ export function withDurableObjectSelf<TEnv extends object, T extends RpcDurableO
 ): TEnv {
   const carried: readonly RegisteredSelf[] = [
     ...registrations(env),
-    { namespace: reference.namespace, name: reference.name, stub: selfStub(reference) },
+    {
+      namespace: reference.namespace,
+      name: reference.name,
+      id: reference.id,
+      stub: selfStub(reference),
+    },
   ];
   return new Proxy(env, {
     get(target, property, receiver) {
@@ -131,26 +153,65 @@ export function withDurableObjectSelf<TEnv extends object, T extends RpcDurableO
 }
 
 /**
- * The caller's own object, when the name being resolved is its own.
+ * The caller's own object, when the id being resolved is its own.
  *
- * `null` for every other name, including a sibling of the same class, which is
- * an ordinary cross-object hop.
+ * `null` for every other id, including a sibling of the same class, which is an
+ * ordinary cross-object hop.
+ *
+ * The caller passes the id rather than the name because deriving one needs the
+ * region and environment that decide the jurisdiction, and that lives with the
+ * resolver. Deriving it costs a hash and no I/O, which is what lets this stay
+ * ahead of the placement-affinity read: an object must never need D1 to reach
+ * storage it is already holding.
+ *
+ * Ids are compared as strings. `DurableObjectId.equals` exists on a real id and
+ * on a jurisdictional one, and not on the stand-in a focused unit test builds;
+ * `toString` is the one representation all three have.
  */
-export function durableObjectSelf<T extends RpcDurableObject | undefined = undefined>(
+export function durableObjectSelfForId<T extends RpcDurableObject | undefined = undefined>(
   env: object,
   namespace: DurableObjectNamespace<T>,
-  name: string,
+  id: DurableObjectId,
 ): DurableObjectStub<T> | null {
   // A focused unit environment may omit a binding entirely, the same allowance
   // `withWorkspaceRuntimeDatabase` makes. Without this, two omitted bindings are
-  // both `undefined` and compare equal, and the match would fall to the name
-  // alone — which is exactly the comparison that is not sufficient, since
-  // `WorkstreamDO` and the main `SubstreamAgent` share a logical name.
+  // both `undefined` and compare equal, and the match would fall to the id
+  // alone — which may not be sufficient, since nothing here promises that two
+  // bindings hash a name to different ids.
   if (!namespace) return null;
+  const target = id.toString();
   for (const registered of registrations(env)) {
     if (registered.namespace !== namespace) continue;
-    if (registered.name() !== name) continue;
+    if (registered.id.toString() !== target) continue;
     return registered.stub as DurableObjectStub<T>;
+  }
+  return null;
+}
+
+/**
+ * The registration a resolved id belongs to, when a caller is about to address
+ * its own object through the namespace anyway.
+ *
+ * Every resolver consults {@link durableObjectSelfForId} first, so nothing they
+ * hand back can reach this. It is the backstop for a caller that skipped them,
+ * and for any future resolver that forgets to. Reaching it is a defect, which
+ * is why the caller treats it as one rather than as a slow path.
+ *
+ * It answers the registration rather than a boolean so a diagnostic can say what
+ * the object would have called itself; `null` there means the object could not
+ * name itself, which is worth knowing and no longer changes any routing.
+ */
+export function selfAddressedOverRpc<T extends RpcDurableObject | undefined = undefined>(
+  env: object,
+  namespace: DurableObjectNamespace<T>,
+  id: DurableObjectId,
+): { name: string | null } | null {
+  if (!namespace) return null;
+  const target = id.toString();
+  for (const registered of registrations(env)) {
+    if (registered.namespace !== namespace) continue;
+    if (registered.id.toString() !== target) continue;
+    return { name: registered.name() };
   }
   return null;
 }

@@ -14,6 +14,7 @@ export type ToolReceiptPortFactory = (
 ) => ToolReceiptObjectPort;
 
 const CONTRACT: ObjectPortContract<WorkstreamToolReceiptStorage, ToolReceiptOperation> = {
+  authority: "toolReceipt",
   operations: TOOL_RECEIPT_OPERATIONS,
   dispatch: (stub, request) => stub.executeToolReceiptOperation(request),
   failureCode: "tool_receipt_operation_failed",

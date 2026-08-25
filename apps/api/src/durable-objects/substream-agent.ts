@@ -94,13 +94,13 @@ import { settleDigestRun } from "../services/digest-run-settlement";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
+import {
+  objectOwnsWorkstreamAuthorities,
+  withLocalWorkstreamAuthorities,
+} from "../runtime/local-authorities";
 import { withWorkstreamRuntimeDatabase } from "../services/workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import {
-  createTerminalObjectPort,
-  TerminalObjectPortError,
-  type TerminalPortFactory,
-} from "../services/terminal/object-port";
+import { TerminalObjectPortError } from "../services/terminal/object-port";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import { loadWorkstreamWakeup } from "../services/workstream-wakeup-service";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
@@ -1503,21 +1503,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return value ?? null;
   }
 
-  /** Terminal port for a harness already executing in this object. */
-  private localTerminalPortFactory(): TerminalPortFactory {
-    return (workspaceId, workstreamId) => createTerminalObjectPort(
-      this.env,
-      workspaceId,
-      workstreamId,
-      (operation, args) => this.runTerminalOperation({
-        workspaceId,
-        workstreamId,
-        operation,
-        args,
-      }),
-    );
-  }
-
   /** Resource-link writer for a harness already executing in this object. */
   private localRuntimeResourceAttacher(
     workspaceId: string,
@@ -2377,11 +2362,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         {
           lease: claim.lease,
           publishRealtime: false,
-          // Terminal is work-stream-wide authority in the main child. A
-          // non-main substream still routes to that object; only the resident
-          // main loop may replace the RPC with direct in-event dispatch.
+          // Terminal reaches this object through the authorities installed on
+          // `executionEnv`, so it is not threaded here any more. The resource
+          // attacher still is, and deliberately: it carries a *scope* rather
+          // than a location — it refuses an attachment addressed to another
+          // work stream, which a port resolved by ids would happily deliver.
           ...(this.externalSubstreamId() === "0" ? {
-            terminalPortFactory: this.localTerminalPortFactory(),
             runtimeResourceAttacher: this.localRuntimeResourceAttacher(
               input.workspaceId,
               input.workstreamId,
@@ -2692,6 +2678,40 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   private localRuntimeEnvironment(
+    workspaceId: string,
+    workstreamId: string,
+    substreamId: string,
+  ): Env {
+    const routed = this.routedRuntimeEnvironment(workspaceId, workstreamId, substreamId);
+    // Everything this object owns about this work stream, declared in one
+    // place. A run executing here reaches each authority by holding it rather
+    // than by resolving a name, and the next authority to move into an object
+    // is added to `LocalWorkstreamAuthorities` instead of being given its own
+    // mechanism — which is how the receipt authority came to be the one that
+    // had none on 2026-08-24.
+    if (!objectOwnsWorkstreamAuthorities(
+      this.objectStore.identity(),
+      this.externalSubstreamId(),
+      { workspaceId, workstreamId, substreamId },
+    )) return routed;
+    return withLocalWorkstreamAuthorities(routed, workspaceId, workstreamId, {
+      blockDashboard: this.blockDashboard,
+      harnessRun: this.harnessRuns,
+      identity: this.identityRows,
+      message: this.messages,
+      resource: this.resources,
+      scheduling: this.scheduling,
+      toolReceipt: this.toolReceipts,
+      terminal: (operation, args) => this.runTerminalOperation({
+        workspaceId,
+        workstreamId,
+        operation,
+        args,
+      } as TerminalOperationRequest) as Promise<unknown>,
+    });
+  }
+
+  private routedRuntimeEnvironment(
     workspaceId: string,
     workstreamId: string,
     substreamId: string,

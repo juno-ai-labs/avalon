@@ -322,17 +322,17 @@ describe("runtime component invariants", () => {
     const namespace = createCloudflareTestBinding<DurableObjectNamespace>({ jurisdiction });
 
     expect(durableObjectStubForRegion(
+      { AVALON_REGION: "global", APP_ENV: "production" },
       namespace,
       "global",
       "workspace-one",
-      "production",
       "wnam",
     )).toBe(usStub);
     expect(durableObjectStubForRegion(
+      { AVALON_REGION: "eu", APP_ENV: "production" },
       namespace,
       "eu",
       "workspace-two",
-      "production",
       "weur",
     )).toBe(euStub);
     expect(jurisdiction.mock.calls).toEqual([["us"], ["eu"]]);
@@ -385,7 +385,13 @@ describe("runtime component invariants", () => {
       jurisdiction,
     });
 
-    expect(durableObjectStubForRegion(namespace, "eu", "local", "test", "eeur")).toBe(stub);
+    expect(durableObjectStubForRegion(
+      { AVALON_REGION: "eu", APP_ENV: "test" },
+      namespace,
+      "eu",
+      "local",
+      "eeur",
+    )).toBe(stub);
     expect(jurisdiction).not.toHaveBeenCalled();
     expect(get).toHaveBeenCalledWith(id);
   });

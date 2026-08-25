@@ -4,6 +4,7 @@ import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
+import { withLocalWorkstreamAuthorities } from "../src/runtime/local-authorities";
 import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -12,7 +13,7 @@ import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
-  testTerminalPortFactory,
+  testTerminalOperationExecutor,
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
@@ -128,35 +129,30 @@ describe("Terminal Bind integration", () => {
       R,
     );
     input.triggerMessageId = messageId;
-    const residentPort = vi.fn(testTerminalPortFactory(objectStore));
     const residentResourceAttacher = vi.fn(async () => undefined);
+    // The resident Terminal authority is installed on the environment now,
+    // rather than threaded in as a factory: the plugin builds its port from
+    // `env` either way and never learns which it got.
+    const resident = vi.fn(testTerminalOperationExecutor(objectStore));
 
     await __integrationTesting.loadHarnessTools(
-      withWorkstreamRuntimeDatabase(env, W, S),
+      withLocalWorkstreamAuthorities(
+        withWorkstreamRuntimeDatabase(env, W, S),
+        W,
+        S,
+        { terminal: resident },
+      ),
       input,
       undefined,
-      residentPort,
       residentResourceAttacher,
     );
 
-    expect(residentPort).toHaveBeenCalledWith(W, S);
+    expect(resident).toHaveBeenCalled();
     expect(workstreamObjectGet(
       objectStore,
       "SELECT run_id, repository_full_name FROM terminal_publication_grants WHERE run_id = ?",
       R,
     )).toEqual({ run_id: R, repository_full_name: "owner/repo" });
-  });
-
-  it("rejects an incomplete resident Terminal boundary", async () => {
-    const { objectStore, env, input } = fixture("supported");
-    const residentPort = vi.fn(testTerminalPortFactory(objectStore));
-
-    await expect(__integrationTesting.loadHarnessTools(
-      withWorkstreamRuntimeDatabase(env, W, S),
-      input,
-      undefined,
-      residentPort,
-    )).rejects.toThrow("terminal_resident_runtime_incomplete");
   });
 
   it("omits Terminal in unsupported regions", async () => {

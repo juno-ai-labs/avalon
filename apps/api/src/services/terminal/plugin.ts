@@ -25,7 +25,6 @@ import {
 import {
   createTerminalPortFactory,
   TerminalObjectPortError,
-  type TerminalPortFactory,
 } from "./object-port";
 import { createTerminalResourceBridge } from "./resource-bridge";
 import { createDaytonaTerminalRuntime } from "./runtime";
@@ -43,17 +42,17 @@ import type { WorkstreamRuntimeResourceAttacher } from "../workstream-object-cli
 export async function createAvalonTerminalPlugin(
   env: Env,
   input: WorkstreamWorkflowInput,
-  inObjectTerminalPort?: TerminalPortFactory,
   inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
 ): Promise<HarnessPlugin | null> {
-  if ((inObjectTerminalPort === undefined) !== (inObjectResourceAttacher === undefined)) {
-    throw new Error("terminal_resident_runtime_incomplete");
-  }
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const configuration = parseTerminalRegionConfiguration(env);
   if (configuration.capability === "unsupported") return null;
 
-  const terminalPort = inObjectTerminalPort ?? createTerminalPortFactory(env);
+  // No in-object variant to choose between: the owning object installs its
+  // Terminal executor on the environment a run is handed, so this factory is
+  // local inside that object and a stub anywhere else, without either caller
+  // knowing which. See `runtime/local-authorities.ts`.
+  const terminalPort = createTerminalPortFactory(env);
 
   await admitTerminalPublicationGrant(env, {
     workspaceId: input.workspaceId,
