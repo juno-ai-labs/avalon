@@ -1,4 +1,4 @@
-import { ProductFeatureFlagKeySchema } from '@avalon/contracts';
+import { ProductFeatureFlagKeySchema } from '@rally/contracts';
 import { z } from 'zod';
 
 export const MANAGED_FLAGS = [

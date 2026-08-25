@@ -2,9 +2,9 @@ import type { DesktopSettingsSection } from './settings';
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
 import type { ThemeChoice } from './themes';
 import type { MessageExportRequest, MessageExportResult } from './message-export';
-import type { ClientFeatureFlags, TelemetryEventProperties } from '@avalon/contracts';
+import type { ClientFeatureFlags, TelemetryEventProperties } from '@rally/contracts';
 
-export type AvalonRegion = 'global' | 'eu';
+export type RallyRegion = 'global' | 'eu';
 
 export type DesktopDeepLinkEntrypoint = 'deep_link' | 'menu_bar' | 'notification' | 'in_app_link';
 
@@ -17,7 +17,7 @@ export interface RuntimeConfig {
   appVersion: string;
   isPackaged: boolean;
   platform: string;
-  api: Record<AvalonRegion, string>;
+  api: Record<RallyRegion, string>;
   /** Public site origin. Canonical work-stream links are minted against it. */
   webBaseUrl: string;
   devAuthEnabled: boolean;
@@ -37,7 +37,7 @@ export interface DesktopSession {
   workspace: {
     id: string;
     name: string;
-    region: AvalonRegion;
+    region: RallyRegion;
     role: 'owner' | 'admin' | 'member';
     timezone?: string;
   } | null;
@@ -61,9 +61,9 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
   /** Whether the service allows this account the Developer section at all.
    * Off until a poll says otherwise, and off again on sign-out. */
   developerSettingsAvailable: boolean;
-  /** Whether the Avalon status item is in the macOS menu bar. On by default. */
+  /** Whether the Rally status item is in the macOS menu bar. On by default. */
   menuBarEnabled: boolean;
-  /** Whether this platform has a menu bar Avalon can live in at all. The
+  /** Whether this platform has a menu bar Rally can live in at all. The
    * preference is still stored where it is not, so moving the same profile to a
    * Mac restores the choice rather than the default. */
   menuBarAvailable: boolean;
@@ -72,8 +72,8 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
    * tell someone their choice did not take rather than showing a switch that is
    * on beside a menu bar that is empty. */
   menuBarPresent: boolean;
-  /** Whether Avalon is registered to open at login. Read back from the
-   * operating system, which owns it — not from Avalon's preference file — so
+  /** Whether Rally is registered to open at login. Read back from the
+   * operating system, which owns it — not from Rally's preference file — so
    * this reports what macOS actually holds, including a registration it is
    * still waiting for the person to approve. */
   launchAtLogin: boolean;
@@ -122,9 +122,9 @@ export type DesktopTelemetryConnectorSetupIntent = {
 } & TelemetryEventProperties<'connector_setup_requested_v2'>;
 
 export type DesktopTelemetryProductIntent =
-  | { kind: 'onboarding_region_selected'; selectedRegion: AvalonRegion; entrypoint: 'first_run' | 'settings' | 'invitation' }
-  | { kind: 'workspace_create_requested'; selectedRegion: AvalonRegion; entrypoint: 'first_run' | 'settings'; operationId: string }
-  | { kind: 'workspace_activation_requested'; selectedRegion: AvalonRegion; entrypoint: 'invitation' | 'workspace_switcher'; operationId: string }
+  | { kind: 'onboarding_region_selected'; selectedRegion: RallyRegion; entrypoint: 'first_run' | 'settings' | 'invitation' }
+  | { kind: 'workspace_create_requested'; selectedRegion: RallyRegion; entrypoint: 'first_run' | 'settings'; operationId: string }
+  | { kind: 'workspace_activation_requested'; selectedRegion: RallyRegion; entrypoint: 'invitation' | 'workspace_switcher'; operationId: string }
   | { kind: 'workstream_create_requested'; entrypoint: 'composer'; operationId: string }
   | { kind: 'run_requested'; entrypoint: 'composer'; operationId: string }
   | DesktopTelemetryConnectorSetupIntent
@@ -220,7 +220,7 @@ export interface DesktopTelemetryInspectorEntry {
   schemaVersion: number;
   policyClass: 'essential' | 'product' | 'diagnostic';
   propertyNames: string[];
-  route: AvalonRegion;
+  route: RallyRegion;
   validation: 'accepted' | 'suppressed' | 'rejected' | 'delivered' | 'retrying' | 'terminal';
   queueState: 'none' | 'queued' | 'delivered' | 'retrying' | 'removed';
 }
@@ -235,7 +235,7 @@ export interface DesktopWorkspaceSummary {
   id: string;
   name: string;
   slug: string;
-  region: AvalonRegion;
+  region: RallyRegion;
   role: 'owner' | 'admin' | 'member';
   createdAt: string;
 }
@@ -244,7 +244,7 @@ export interface DesktopPendingWorkspaceInvitation {
   id: string;
   workspaceId: string;
   workspaceName: string;
-  region: AvalonRegion;
+  region: RallyRegion;
   email: string;
   role: 'admin' | 'member';
   invitedByName: string;
@@ -273,7 +273,7 @@ export type MeetingAudioPermissionKind = 'microphone' | 'system-audio';
  * Command-W — and a recording in progress is worth a confirmation, because the
  * window is the only place the meeting exists until finalization lands.
  * `quit` is the application shutting down, where a window that stops to ask is
- * a window that refuses to close, and a quit vetoed that way leaves Avalon
+ * a window that refuses to close, and a quit vetoed that way leaves Rally
  * running with no way to finish. That path finalizes and closes as it always
  * has.
  */
@@ -289,7 +289,7 @@ export interface DesktopSystemAudioCaptureInfo {
   sampleRate: number;
 }
 
-export interface AvalonDesktopBridge {
+export interface RallyDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   getApplicationSettings: () => Promise<DesktopApplicationSettings>;
   setLockdownMode: (enabled: boolean) => Promise<DesktopApplicationSettings>;
@@ -331,20 +331,20 @@ export interface AvalonDesktopBridge {
    */
   onThemeChanged: (listener: (choice: ThemeChoice) => void) => () => void;
   getSession: () => Promise<DesktopSession | null>;
-  createDesktopAuthAttempt: (input: { apiBaseUrl: string; region: AvalonRegion }) => Promise<DesktopAuthAttempt>;
+  createDesktopAuthAttempt: (input: { apiBaseUrl: string; region: RallyRegion }) => Promise<DesktopAuthAttempt>;
   cancelDesktopAuthAttempt: (attemptId: string) => Promise<void>;
   exchangeDesktopTicket: (input: {
     apiBaseUrl: string;
-    region: AvalonRegion;
+    region: RallyRegion;
     ticket: string;
     attemptId: string;
   }) => Promise<DesktopSession>;
   createDevelopmentSession: (apiBaseUrl: string, workspaceName: string) => Promise<DesktopSession>;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
-  activateWorkspace: (input: { region: AvalonRegion; workspaceId: string; operationId?: string }) => Promise<DesktopSession>;
-  createWorkspace: (input: { region: AvalonRegion; name: string; operationId?: string }) => Promise<DesktopSession>;
-  acceptInvitation: (input: { region: AvalonRegion; invitationId: string; operationId?: string }) => Promise<DesktopSession>;
-  declineInvitation: (input: { region: AvalonRegion; invitationId: string }) => Promise<void>;
+  activateWorkspace: (input: { region: RallyRegion; workspaceId: string; operationId?: string }) => Promise<DesktopSession>;
+  createWorkspace: (input: { region: RallyRegion; name: string; operationId?: string }) => Promise<DesktopSession>;
+  acceptInvitation: (input: { region: RallyRegion; invitationId: string; operationId?: string }) => Promise<DesktopSession>;
+  declineInvitation: (input: { region: RallyRegion; invitationId: string }) => Promise<void>;
   refreshSession: () => Promise<DesktopSession>;
   /** Pure read of whether a durable credential is still stored. Unlike
    * `getSession`, this never reaches the network, so it can answer "was the
@@ -353,7 +353,7 @@ export interface AvalonDesktopBridge {
   logout: () => Promise<void>;
   copyText: (text: string) => Promise<void>;
   /**
-   * Renders one of Avalon's messages as a picture or a PDF and offers to save
+   * Renders one of Rally's messages as a picture or a PDF and offers to save
    * it. Resolves with `saved: false` when the person dismissed the dialog, and
    * rejects when the card could not be rendered or written.
    */

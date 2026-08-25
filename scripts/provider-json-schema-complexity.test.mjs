@@ -8,8 +8,8 @@ import {
 
 const config = {
   languageOptions: { ecmaVersion: 2024, sourceType: "module" },
-  plugins: { avalon: { rules: { "provider-json-schema-complexity": providerJsonSchemaComplexityRule } } },
-  rules: { "avalon/provider-json-schema-complexity": "error" },
+  plugins: { rally: { rules: { "provider-json-schema-complexity": providerJsonSchemaComplexityRule } } },
+  rules: { "rally/provider-json-schema-complexity": "error" },
 };
 
 function lint(source) {

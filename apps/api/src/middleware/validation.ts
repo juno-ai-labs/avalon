@@ -1,4 +1,4 @@
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from "@avalon/contracts";
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from "@rally/contracts";
 import { zValidator as honoZValidator } from "@hono/zod-validator";
 import type { MiddlewareHandler } from "hono";
 

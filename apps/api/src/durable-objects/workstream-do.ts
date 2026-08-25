@@ -1,3 +1,4 @@
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   BlockDashboardPreferenceSchema,
   BlockDashboardSchema,
@@ -15,8 +16,8 @@ import {
   type BlockDashboard,
   type BlockDashboardBlockRun,
   type WorkstreamControlSocketEvent,
-} from "@avalon/contracts";
-import { truncateUtf16Safe } from "@avalon/contracts/text";
+} from "@rally/contracts";
+import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
@@ -993,12 +994,12 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       return json({ error: "websocket_upgrade_required" }, 426);
     }
     const identity = WorkstreamSocketIdentitySchema.safeParse({
-      workspaceId: request.headers.get("x-avalon-workspace-id"),
-      workstreamId: request.headers.get("x-avalon-workstream-id"),
-      userId: request.headers.get("x-avalon-user-id"),
-      sessionId: request.headers.get("x-avalon-session-id"),
-      ticketId: request.headers.get("x-avalon-socket-ticket-id"),
-      ticketExpiresAt: request.headers.get("x-avalon-socket-ticket-expires-at"),
+      workspaceId: readRallyHeader(request.headers, RALLY_HEADERS.WORKSPACE_ID) ?? null,
+      workstreamId: readRallyHeader(request.headers, RALLY_HEADERS.WORKSTREAM_ID) ?? null,
+      userId: readRallyHeader(request.headers, RALLY_HEADERS.USER_ID) ?? null,
+      sessionId: readRallyHeader(request.headers, RALLY_HEADERS.SESSION_ID) ?? null,
+      ticketId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_ID) ?? null,
+      ticketExpiresAt: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT) ?? null,
     });
     if (!identity.success) return json({ error: "invalid_socket_identity" }, 400);
     const metadata = this.metadataRow();
@@ -1055,7 +1056,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     identity: Pick<WorkstreamSocketIdentity, "sessionId" | "userId" | "workspaceId">,
   ): Promise<AuthContext | null> {
     const role = this.env.APP_ENV === "development"
-      && this.env.AVALON_DEV_AUTH === "true"
+      && this.env.RALLY_DEV_AUTH === "true"
       && identity.sessionId === "development"
       ? await this.env.DB.prepare(
         `SELECT member.role FROM workspace_members member

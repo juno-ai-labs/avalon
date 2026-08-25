@@ -1,6 +1,6 @@
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
-import { NormalizedActivitySchema } from "@avalon/contracts";
+import { NormalizedActivitySchema } from "@rally/contracts";
 import {
   __testing,
   assertPrincipalAccess,

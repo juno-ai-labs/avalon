@@ -1,4 +1,4 @@
-import type { AutomationDraft } from "@avalon/contracts";
+import type { AutomationDraft } from "@rally/contracts";
 import type { PromptMessage } from "./types";
 import { ATTACHMENT_INSPECTION_POLICY } from "./attachment-policy";
 

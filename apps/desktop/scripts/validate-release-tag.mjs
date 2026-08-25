@@ -35,4 +35,4 @@ if (taggedCommit !== headCommit) {
   throw new Error(`Release tag ${tag} points to ${taggedCommit}, but HEAD is ${headCommit}`);
 }
 
-console.log(`Release guard passed: ${tag} at ${headCommit} packages Avalon ${version}`);
+console.log(`Release guard passed: ${tag} at ${headCommit} packages Rally ${version}`);

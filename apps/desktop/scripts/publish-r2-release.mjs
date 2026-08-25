@@ -37,7 +37,7 @@ const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(desktopDirectory, '../..');
 const defaultReleaseDirectory = join(desktopDirectory, 'release/release');
 const defaultSiteConfigPath = join(repositoryDirectory, 'apps/site/release.config.json');
-const canonicalDmgName = 'Avalon.dmg';
+const canonicalDmgName = 'Rally.dmg';
 const checksumsName = 'SHA256SUMS';
 const latestManifestName = 'latest-mac.yml';
 const releaseLockName = 'release-publish.lock';
@@ -103,13 +103,13 @@ const currentSiteConfig = await readSiteReleaseConfig(siteConfigPath);
 // later desktop work apart from work that already shipped. A publish run
 // outside the pipeline may not know it; the record then carries no watermark
 // and the next plan fails open rather than measuring against the wrong commit.
-const releaseCommit = arguments_.commit ?? (process.env.AVALON_RELEASE_COMMIT?.trim() || undefined);
-const bucket = configured('AVALON_RELEASE_R2_BUCKET', currentSiteConfig.bucket);
+const releaseCommit = arguments_.commit ?? (process.env.RALLY_RELEASE_COMMIT?.trim() || undefined);
+const bucket = configured('RALLY_RELEASE_R2_BUCKET', currentSiteConfig.bucket);
 if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u.test(bucket)) {
   throw new Error(`Invalid R2 release bucket: ${bucket}`);
 }
-const prefix = normalizeReleasePrefix(configured('AVALON_RELEASE_PREFIX', currentSiteConfig.prefix));
-const baseUrl = new URL(configured('AVALON_RELEASE_BASE_URL', currentSiteConfig.downloadBaseUrl));
+const prefix = normalizeReleasePrefix(configured('RALLY_RELEASE_PREFIX', currentSiteConfig.prefix));
+const baseUrl = new URL(configured('RALLY_RELEASE_BASE_URL', currentSiteConfig.downloadBaseUrl));
 if (
   baseUrl.protocol !== 'https:'
   || baseUrl.username
@@ -118,7 +118,7 @@ if (
   || baseUrl.hash
   || (baseUrl.pathname !== '/' && baseUrl.pathname !== '')
 ) {
-  throw new Error('AVALON_RELEASE_BASE_URL must be an HTTPS origin');
+  throw new Error('RALLY_RELEASE_BASE_URL must be an HTTPS origin');
 }
 
 const release = await loadReleaseDirectory(releaseDirectory);
@@ -128,7 +128,7 @@ for (const artifact of release.artifacts) {
     throw new Error(`Refusing to publish unversioned artifact ${artifact.name}`);
   }
 }
-const confirmation = arguments_.confirm ?? process.env.AVALON_RELEASE_PUBLISH_CONFIRM?.trim();
+const confirmation = arguments_.confirm ?? process.env.RALLY_RELEASE_PUBLISH_CONFIRM?.trim();
 if (!arguments_.dryRun && confirmation !== release.feed.version) {
   throw new Error(`Pass --confirm ${release.feed.version} to publish this release`);
 }
@@ -163,7 +163,7 @@ async function runCapture(command, args, environment = process.env) {
 }
 
 function wranglerArgs(command, objectPath, ...args) {
-  return ['--filter', '@avalon/api', 'exec', 'wrangler', 'r2', 'object', command, objectPath, '--remote', ...args];
+  return ['--filter', '@rally/api', 'exec', 'wrangler', 'r2', 'object', command, objectPath, '--remote', ...args];
 }
 
 async function getR2Object(key, destination) {
@@ -197,7 +197,7 @@ async function getPublicObject(key, destination, verificationId) {
     throw new Error(`Release object is outside the public prefix: ${key}`);
   }
   const url = new URL(publicUrl(key.slice(prefixWithSeparator.length)));
-  url.searchParams.set('avalon-release-verify', verificationId.slice(0, 24));
+  url.searchParams.set('rally-release-verify', verificationId.slice(0, 24));
   const response = await fetch(url, {
     headers: { 'cache-control': 'no-cache' },
     signal: AbortSignal.timeout(5 * 60_000),
@@ -250,7 +250,7 @@ function sleep(milliseconds) {
 
 async function verifyPublicArtifact(name, expectedSize, verificationId, { cacheBust = true } = {}) {
   const url = new URL(publicUrl(name));
-  if (cacheBust) url.searchParams.set('avalon-release-verify', verificationId.slice(0, 24));
+  if (cacheBust) url.searchParams.set('rally-release-verify', verificationId.slice(0, 24));
   let failure = 'no response';
   for (let attempt = 0; attempt < 7; attempt += 1) {
     try {
@@ -380,7 +380,7 @@ async function publishCanonicalDmg(versionedDmg, scratchDirectory) {
     cacheControl: 'public, max-age=86400',
     disposition: `attachment; filename="${canonicalDmgName}"`,
   });
-  await verifyR2Hash(key, localHash, join(scratchDirectory, 'verified-Avalon.dmg'));
+  await verifyR2Hash(key, localHash, join(scratchDirectory, 'verified-Rally.dmg'));
   await purgePublicUrl(publicUrl(canonicalDmgName));
   await verifyPublicArtifact(canonicalDmgName, metadata.size, localHash);
   console.log(`Promoted recovery installer ${publicUrl(canonicalDmgName)}`);
@@ -406,7 +406,7 @@ async function verifyPublicManifest(expectedBytes) {
   throw new Error(`Public manifest verification failed for ${url}: ${failure}`);
 }
 
-const scratchDirectory = await mkdtemp(join(tmpdir(), 'avalon-r2-release-'));
+const scratchDirectory = await mkdtemp(join(tmpdir(), 'rally-r2-release-'));
 try {
   const artifactDigests = await Promise.all(release.artifacts.map(async (artifact) => ({
     name: artifact.name,
@@ -557,7 +557,7 @@ try {
     });
     await writeSiteReleaseConfigAtomically(siteConfigPath, publishedSiteConfig);
     console.log(
-      `Published Avalon ${release.feed.version}: immutable artifacts, recovery DMG, latest-mac.yml, then site activation`,
+      `Published Rally ${release.feed.version}: immutable artifacts, recovery DMG, latest-mac.yml, then site activation`,
     );
   };
 

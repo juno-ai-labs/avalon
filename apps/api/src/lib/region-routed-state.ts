@@ -1,4 +1,4 @@
-import type { Region } from "@avalon/contracts";
+import type { Region } from "@rally/contracts";
 import { ApiError } from "./api-error";
 
 /**

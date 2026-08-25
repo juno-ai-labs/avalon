@@ -9,7 +9,7 @@
 /**
  * One whole HTML document per theme that brings a backdrop, keyed by theme id.
  *
- * Served over `avalon-backdrop://` under a policy that permits painting and
+ * Served over `rally-backdrop://` under a policy that permits painting and
  * nothing else. See `docs/theming.md` for what a backdrop document may do.
  */
 export const backdropDocuments: Record<string, string> = {

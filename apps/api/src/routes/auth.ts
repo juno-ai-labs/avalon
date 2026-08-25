@@ -7,8 +7,8 @@ import {
   RefreshTokenSchema,
   SessionSchema,
   WorkspaceInvitationPreviewSchema,
-} from "@avalon/contracts";
-import { HttpOrDesktopDeepLinkUrlSchema } from "@avalon/contracts/url-schemas";
+} from "@rally/contracts";
+import { HttpOrDesktopDeepLinkUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";

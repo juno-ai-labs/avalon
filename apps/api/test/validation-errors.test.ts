@@ -19,7 +19,7 @@ function authenticatedTestEnv(): Env {
   return createTestEnv({
     ...testEnv("global"),
     APP_ENV: "development",
-    AVALON_DEV_AUTH: "true",
+    RALLY_DEV_AUTH: "true",
     DB: createTestD1Database({
       prepare: () => statement,
     }),
@@ -61,8 +61,8 @@ describe("public validation errors", () => {
         headers: {
           "content-type": "application/json",
           "x-request-id": requestId,
-          "x-avalon-dev-user-id": "00000000-0000-7000-8000-0000000000e1",
-          "x-avalon-dev-workspace-id": "00000000-0000-7000-8000-0000000000e2",
+          "x-rally-dev-user-id": "00000000-0000-7000-8000-0000000000e1",
+          "x-rally-dev-workspace-id": "00000000-0000-7000-8000-0000000000e2",
         },
         body: JSON.stringify({
           text: "A valid message body",
@@ -186,8 +186,8 @@ describe("public validation errors", () => {
         headers: {
           "content-type": "application/json",
           "x-request-id": requestId,
-          "x-avalon-dev-user-id": "00000000-0000-7000-8000-0000000000e1",
-          "x-avalon-dev-workspace-id": "00000000-0000-7000-8000-0000000000e2",
+          "x-rally-dev-user-id": "00000000-0000-7000-8000-0000000000e1",
+          "x-rally-dev-workspace-id": "00000000-0000-7000-8000-0000000000e2",
         },
         body: JSON.stringify({ scope: "personal", capabilities: ["x.read"] }),
       },

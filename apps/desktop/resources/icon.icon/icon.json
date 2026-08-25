@@ -30,7 +30,7 @@
             }
           ],
           "glass" : false,
-          "image-name" : "avalon-mark.png",
+          "image-name" : "rally-mark.png",
           "name" : "Artwork",
           "position" : {
             "scale" : 1,
@@ -41,7 +41,7 @@
           }
         }
       ],
-      "name" : "Avalon",
+      "name" : "Rally",
       "shadow" : {
         "kind" : "neutral",
         "opacity" : 0.5

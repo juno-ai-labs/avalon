@@ -1,4 +1,4 @@
-import type { DurableObjectMigrationCommand } from "@avalon/contracts/durable-object-migrations";
+import type { DurableObjectMigrationCommand } from "@rally/contracts/durable-object-migrations";
 
 import type { AccessEnvironment } from "./access";
 import type { MigrationRegistry } from "./registry";
@@ -22,7 +22,7 @@ export interface Env extends AccessEnvironment {
 
   /**
    * Local-only Access bypass, held to the same shape as the API's
-   * `AVALON_DEV_AUTH`: it is honoured in `development` and nowhere else, so a
+   * `RALLY_DEV_AUTH`: it is honoured in `development` and nowhere else, so a
    * value left set in a hosted deployment changes nothing.
    */
   MIGRATION_TRACKER_DEV_AUTH?: string;

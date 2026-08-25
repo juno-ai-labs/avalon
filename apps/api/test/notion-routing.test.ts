@@ -1,4 +1,4 @@
-import type { Region } from "@avalon/contracts";
+import type { Region } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import {

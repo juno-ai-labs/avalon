@@ -9,7 +9,7 @@ import {
   WorkstreamIdSchema,
   UpdateBlockDashboardRequestSchema,
   WorkstreamCompactionFenceSchema,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { z } from "zod";
 
 const CoordinatesSchema = z.object({

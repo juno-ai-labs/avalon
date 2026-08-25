@@ -47,7 +47,7 @@ test('a script reached through a symlinked directory still runs', () => {
   // path under that platform's os.tmpdir() arrives through `/var`, a symlink to
   // `/private/var`, and a script that fails this check exits 0 having published
   // nothing and said nothing.
-  const enclosing = mkdtempSync(join(tmpdir(), 'avalon-entry-point-'));
+  const enclosing = mkdtempSync(join(tmpdir(), 'rally-entry-point-'));
   try {
     const real = join(enclosing, 'real');
     mkdirSync(real);

@@ -2,10 +2,10 @@ import type {
   AutomationMemoryTable,
   MemoryTableColumnType,
   WorkstreamWorkflowInput,
-} from "@avalon/contracts";
-import { AutomationMemoryTableSchema } from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
-import type { HarnessTool, HarnessToolResult } from "@avalon/agent-harness";
+} from "@rally/contracts";
+import { AutomationMemoryTableSchema } from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
+import type { HarnessTool, HarnessToolResult } from "@rally/agent-harness";
 import { z } from "zod";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";

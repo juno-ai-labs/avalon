@@ -3,8 +3,8 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { asWorkspaceId } from "@avalon/contracts";
-import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-object-migrations";
+import { asWorkspaceId } from "@rally/contracts";
+import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { Env } from "../src/env";
 import { createCloudflareTestBinding } from "../test/helpers/cloudflare-test";
 import {

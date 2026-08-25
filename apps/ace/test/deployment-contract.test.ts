@@ -10,7 +10,7 @@ describe('Ace deployment contract', () => {
     const workflow = await readFile(`${repositoryDirectory}/.github/workflows/deploy-ace.yml`, 'utf8');
 
     expect(workflow).toContain('branches: [main]');
-    expect(workflow).toContain('pnpm --filter @avalon/ace run deploy');
+    expect(workflow).toContain('pnpm --filter @rally/ace run deploy');
     expect(workflow).toContain(
       "curl --silent --show-error --output /dev/null --write-out '%{http_code}' https://ace.internal.rallywith.ai/ || true",
     );

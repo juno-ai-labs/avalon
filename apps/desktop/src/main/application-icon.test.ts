@@ -32,22 +32,22 @@ describe('application icon persistence', () => {
   it('uses the Dock plugin directory for packaged launches but isolates smoke tests', () => {
     expect(applicationIconPreferenceDirectoryForLaunch(
       '/Users/test/Library/Application Support',
-      '/tmp/avalon-profile',
+      '/tmp/rally-profile',
       true,
       false,
-    )).toBe('/Users/test/Library/Application Support/Avalon');
+    )).toBe('/Users/test/Library/Application Support/Rally');
     expect(applicationIconPreferenceDirectoryForLaunch(
       '/Users/test/Library/Application Support',
-      '/tmp/avalon-profile',
+      '/tmp/rally-profile',
       true,
       true,
-    )).toBe('/tmp/avalon-profile');
+    )).toBe('/tmp/rally-profile');
     expect(applicationIconPreferenceDirectoryForLaunch(
       '/Users/test/Library/Application Support',
-      '/tmp/avalon-development',
+      '/tmp/rally-development',
       false,
       false,
-    )).toBe('/tmp/avalon-development');
+    )).toBe('/tmp/rally-development');
   });
 
   it('accepts only the versioned allowlisted preference shape', () => {
@@ -58,7 +58,7 @@ describe('application icon persistence', () => {
   });
 
   it('writes, replaces, and clears the device preference atomically', async () => {
-    const directory = await mkdtemp(resolve(tmpdir(), 'avalon-application-icon-'));
+    const directory = await mkdtemp(resolve(tmpdir(), 'rally-application-icon-'));
     temporaryDirectories.push(directory);
 
     expect(await readStoredApplicationIcon(directory)).toBeNull();
@@ -82,8 +82,8 @@ describe('application icon persistence', () => {
   });
 
   it('resolves packaged selectable icons to system-compiled ICNS resources', () => {
-    expect(applicationIconPath('/Applications/Avalon.app/Contents/Resources/app-icons', 'ruby'))
-      .toBe('/Applications/Avalon.app/Contents/Resources/app-icons/ruby.icns');
+    expect(applicationIconPath('/Applications/Rally.app/Contents/Resources/app-icons', 'ruby'))
+      .toBe('/Applications/Rally.app/Contents/Resources/app-icons/ruby.icns');
   });
 
   it('provides compact Retina previews for every selectable icon', async () => {

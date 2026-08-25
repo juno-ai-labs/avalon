@@ -1,4 +1,4 @@
-import type { AutomationDeliveryTargetType, Connection, ConnectorUserDelivery } from "@avalon/contracts";
+import type { AutomationDeliveryTargetType, Connection, ConnectorUserDelivery } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { connectorRegistryForEnv } from "../lib/connector-registry";

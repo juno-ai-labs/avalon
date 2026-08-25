@@ -27,6 +27,7 @@ export {
   TelemetryBreadcrumbSchema,
   TelemetryBreadcrumbSidecarSchema,
   TelemetryEnvelopeSchema,
+  TELEMETRY_ENVELOPE_SCHEMA,
   telemetryEventNames,
   TELEMETRY_CONNECTOR_TYPES,
   type TelemetryBatch,

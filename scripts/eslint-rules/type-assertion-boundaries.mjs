@@ -55,7 +55,7 @@ function rootTypeNames(node, names = new Set()) {
 }
 
 function isApplicationImport(source) {
-  return (source.startsWith(".") || source.startsWith("@avalon/"))
+  return (source.startsWith(".") || source.startsWith("@rally/"))
     && !source.includes("/helpers/")
     && !source.startsWith("./helpers/");
 }

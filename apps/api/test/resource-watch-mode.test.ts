@@ -1,4 +1,4 @@
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import type * as WakeupService from "../src/services/workstream-wakeup-service";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";

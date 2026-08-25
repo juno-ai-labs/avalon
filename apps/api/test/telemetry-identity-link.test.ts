@@ -1,4 +1,4 @@
-import { asUserId } from "@avalon/contracts";
+import { asUserId } from "@rally/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TelemetryBootstrapService } from '../src/telemetry/bootstrap';
 import { linkAnonymousTelemetry } from '../src/telemetry/identity-link';

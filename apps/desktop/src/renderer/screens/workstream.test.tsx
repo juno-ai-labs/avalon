@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
+import { WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import type { DesktopSession } from '../../common/desktop';
 import type { ElicitationData, HarnessRunMetadata, Message, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
@@ -80,9 +80,9 @@ describe('transcript cursor pagination', () => {
     expect(transcriptPageCursor(page, '20', 'before')).toBe('10');
     expect(transcriptPageCursor(page, '20', 'after')).toBe('30');
     expect(() => transcriptPageCursor(page, '10', 'before'))
-      .toThrow('Avalon received a repeated transcript cursor.');
+      .toThrow('Rally received a repeated transcript cursor.');
     expect(() => transcriptPageCursor(page, '30', 'after'))
-      .toThrow('Avalon received a repeated transcript cursor.');
+      .toThrow('Rally received a repeated transcript cursor.');
   });
 });
 
@@ -174,7 +174,7 @@ describe('WorkstreamHeader origin affordances', () => {
     useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null });
   });
 
-  it('copies the canonical HTTPS link, which survives being pasted outside Avalon', async () => {
+  it('copies the canonical HTTPS link, which survives being pasted outside Rally', async () => {
     const workstreamId = '019fec70-fba0-7b0e-9f7a-3dd1ef56520f';
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
@@ -187,8 +187,8 @@ describe('WorkstreamHeader origin affordances', () => {
       appVersion: 'test',
       isPackaged: true,
       platform: 'darwin',
-      api: { global: 'https://api.with-avalon.com', eu: 'https://eu.api.with-avalon.com' },
-      webBaseUrl: 'https://with-avalon.com',
+      api: { global: 'https://api.rallywith.ai', eu: 'https://eu.api.rallywith.ai' },
+      webBaseUrl: 'https://rallywith.ai',
       devAuthEnabled: false,
     });
     renderWorkstreamHeader({ ...headerWorkstream, id: workstreamId });
@@ -200,9 +200,9 @@ describe('WorkstreamHeader origin affordances', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy work-stream link' }));
 
     await waitFor(() => expect(copyText).toHaveBeenCalledWith(
-      `https://with-avalon.com/app/workstreams/${workstreamId}`,
+      `https://rallywith.ai/app/workstreams/${workstreamId}`,
     ));
-    expect(copyText).not.toHaveBeenCalledWith(expect.stringContaining('avalon://'));
+    expect(copyText).not.toHaveBeenCalledWith(expect.stringContaining('rallywithai://'));
   });
 
   it('removes origin icons while preserving automation runs in the More menu', async () => {
@@ -384,7 +384,7 @@ describe('WorkstreamHeader inline rename', () => {
 
     // The heading is what carries the name, so it is the heading that has to
     // say a name is coming — a label on the placeholder itself reaches nobody.
-    expect(screen.getByRole('heading', { name: 'Avalon is naming this work stream' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Rally is naming this work stream' })).toBeInTheDocument();
     expect(screen.queryByText(/Create an email draft/u)).not.toBeInTheDocument();
     // Nothing to rename yet: the title on the row is a placeholder, and the
     // editor returns with the name a second later.
@@ -411,13 +411,13 @@ describe('WorkstreamHeader inline rename', () => {
         createdAt: created.toISOString(),
       });
 
-      expect(screen.getByRole('heading', { name: 'Avalon is naming this work stream' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Rally is naming this work stream' })).toBeInTheDocument();
 
       // Nothing refetches this query on its own, so a rename event that never
       // arrived would otherwise leave the skeleton up for good.
       act(() => { vi.advanceTimersByTime(WORKSTREAM_NAMING_GRACE_MS + 1_000); });
 
-      expect(screen.queryByRole('heading', { name: 'Avalon is naming this work stream' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Rally is naming this work stream' })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Create an email draft to Danny from Mucker' })).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
@@ -676,7 +676,7 @@ describe('transcript read positioning', () => {
 
 const openElicitation: ElicitationData = {
   id: 'elicitation-one',
-  prompt: 'What should Avalon do?',
+  prompt: 'What should Rally do?',
   responseType: 'single_select',
   options: [{ label: 'Review it', value: 'review' }],
   minimumSelections: 1,
@@ -910,10 +910,10 @@ describe('AddResourceDialog', () => {
   it('searches and attaches discovered connector resources while retaining upload fallback', () => {
     const resource: WorkstreamResource = {
       id: 'resource-1',
-      title: 'Avalon release pull request',
+      title: 'Rally release pull request',
       resourceType: 'github_pull_request',
       provider: 'github',
-      canonicalUrl: 'https://github.com/avalon/avalon/pull/42',
+      canonicalUrl: 'https://github.com/juno-ai-labs/rally/pull/42',
       watchEnabled: false,
       watchStatus: 'paused',
     };
@@ -942,7 +942,7 @@ describe('AddResourceDialog', () => {
 
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search resources' }), { target: { value: 'release' } });
     expect(onSearchChange).toHaveBeenCalledWith('release');
-    fireEvent.click(screen.getByRole('button', { name: /Avalon release pull request/u }));
+    fireEvent.click(screen.getByRole('button', { name: /Rally release pull request/u }));
     expect(onAttach).toHaveBeenCalledWith(resource);
     fireEvent.click(screen.getByRole('button', { name: 'Upload file' }));
     expect(onUpload).toHaveBeenCalledOnce();
@@ -954,7 +954,7 @@ describe('workspaceMemberFromSession', () => {
     const session: DesktopSession = {
       accessToken: 'access-token-longer-than-twenty-characters',
       expiresAt: '2026-07-31T20:00:00.000Z',
-      apiBaseUrl: 'https://api.with-avalon.com',
+      apiBaseUrl: 'https://api.rallywith.ai',
       user: {
         id: 'user-current',
         name: 'Current Person',
@@ -963,7 +963,7 @@ describe('workspaceMemberFromSession', () => {
       },
       workspace: {
         id: 'workspace-one',
-        name: 'Avalon',
+        name: 'Rally',
         region: 'global',
         role: 'member',
       },

@@ -18,7 +18,7 @@
  */
 import { env } from "cloudflare:workers";
 import type { DurableObject as RpcDurableObject } from "cloudflare:workers";
-import { asBlockId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asBlockId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 

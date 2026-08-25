@@ -19,7 +19,7 @@
  *
  * `docs/durable-object-migration-tracking.md` owns the design.
  */
-import type { DurableObjectMigrationCommand } from "@avalon/contracts/durable-object-migrations";
+import type { DurableObjectMigrationCommand } from "@rally/contracts/durable-object-migrations";
 
 import type { Env } from "./env";
 import type {

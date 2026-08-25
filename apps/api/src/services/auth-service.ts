@@ -1,7 +1,7 @@
 import { createRemoteJWKSet, jwtVerify, SignJWT } from "jose";
-import { newId, nowIso } from "@avalon/db";
-import { asUserId, asWorkspaceId, type Region, type Session } from "@avalon/contracts";
-import { isDesktopDeepLinkProtocol } from "@avalon/contracts/desktop-deep-link";
+import { newId, nowIso } from "@rally/db";
+import { asUserId, asWorkspaceId, type Region, type Session } from "@rally/contracts";
+import { isDesktopDeepLinkProtocol } from "@rally/contracts/desktop-deep-link";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { publishSessionRevocations, type RevokedSessionRow } from "./access-revocation";
@@ -53,7 +53,7 @@ interface IdentityRow {
 
 function secretKey(env: Env): Uint8Array {
   if (env.SESSION_SIGNING_KEY) return encoder.encode(env.SESSION_SIGNING_KEY);
-  if (env.APP_ENV === "development" && env.AVALON_DEV_AUTH === "true") {
+  if (env.APP_ENV === "development" && env.RALLY_DEV_AUTH === "true") {
     return encoder.encode("avalon-development-session-key-not-for-production");
   }
   throw new ApiError(503, "auth_not_configured", "Authentication is not configured");
@@ -197,7 +197,7 @@ export class AuthService {
   }
 
   async createDevelopmentSession(workspaceName = "Avalon Development"): Promise<Session> {
-    if (this.env.APP_ENV !== "development" || this.env.AVALON_DEV_AUTH !== "true") {
+    if (this.env.APP_ENV !== "development" || this.env.RALLY_DEV_AUTH !== "true") {
       throw new ApiError(404, "not_found", "Development authentication is unavailable");
     }
     const at = nowIso();

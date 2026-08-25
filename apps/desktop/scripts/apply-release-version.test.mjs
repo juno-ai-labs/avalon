@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { applyManifestVersion, applyReleaseVersion } from './apply-release-version.mjs';
 
-const manifest = (version) => `{\n  "name": "@avalon/desktop",\n  "version": "${version}",\n`
+const manifest = (version) => `{\n  "name": "@rally/desktop",\n  "version": "${version}",\n`
   + `  "private": true,\n  "dependencies": {\n    "electron-updater": "6.8.9"\n  }\n}\n`;
 
 test('only the version line changes', () => {
@@ -45,7 +45,7 @@ test('a manifest without a top-level version fails instead of inventing one', ()
 });
 
 test('both workspace manifests are stamped together', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-release-version-'));
+  const directory = await mkdtemp(join(tmpdir(), 'rally-release-version-'));
   try {
     const root = resolve(directory, 'package.json');
     const desktop = resolve(directory, 'desktop.json');
@@ -66,7 +66,7 @@ test('both workspace manifests are stamped together', async () => {
 });
 
 test('the release version policy is enforced before anything is written', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-release-version-'));
+  const directory = await mkdtemp(join(tmpdir(), 'rally-release-version-'));
   try {
     const root = resolve(directory, 'package.json');
     await writeFile(root, manifest('1.33.0'));

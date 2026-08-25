@@ -6,8 +6,8 @@ import { noRawEntryPointCheckRule } from "./eslint-rules/no-raw-entry-point-chec
 
 const config = {
   languageOptions: { ecmaVersion: 2024, sourceType: "module" },
-  plugins: { avalon: { rules: { "no-raw-entry-point-check": noRawEntryPointCheckRule } } },
-  rules: { "avalon/no-raw-entry-point-check": "error" },
+  plugins: { rally: { rules: { "no-raw-entry-point-check": noRawEntryPointCheckRule } } },
+  rules: { "rally/no-raw-entry-point-check": "error" },
 };
 
 function lint(source) {

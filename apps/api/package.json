@@ -1,5 +1,5 @@
 {
-  "name": "@avalon/api",
+  "name": "@rally/api",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -28,10 +28,10 @@
     "deploy:eu": "node ../../scripts/ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings && wrangler deploy --config .wrangler.lakehouses.eu.json"
   },
   "dependencies": {
-    "@avalon/agent-harness": "workspace:*",
-    "@avalon/connectors": "workspace:*",
-    "@avalon/contracts": "workspace:*",
-    "@avalon/db": "workspace:*",
+    "@rally/agent-harness": "workspace:*",
+    "@rally/connectors": "workspace:*",
+    "@rally/contracts": "workspace:*",
+    "@rally/db": "workspace:*",
     "@cloudflare/containers": "0.3.7",
     "@daytona/sdk": "^0.204.0",
     "@hono/zod-validator": "latest",

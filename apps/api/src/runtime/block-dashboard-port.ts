@@ -18,7 +18,7 @@ const CONTRACT: ObjectPortContract<WorkstreamBlockDashboardStorage, BlockDashboa
   operations: BLOCK_DASHBOARD_OPERATIONS,
   dispatch: (stub, request) => stub.executeBlockDashboardOperation(request),
   failureCode: "block_dashboard_operation_failed",
-  failureMessage: "Avalon's HyperSight authority rejected an internal request. Retry after the application and service versions are aligned.",
+  failureMessage: "Rally's HyperSight authority rejected an internal request. Retry after the application and service versions are aligned.",
 };
 
 export function createBlockDashboardPortFactory(

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
-import { asUserId, asWorkspaceId } from '@avalon/contracts';
+import { asUserId, asWorkspaceId } from '@rally/contracts';
 import type { HonoAppEnv } from '../src/env';
 import { ApiError } from '../src/lib/api-error';
 import { apiOperationTelemetry } from '../src/middleware/api-operation-telemetry';
@@ -61,7 +61,7 @@ describe('allowlisted API operation telemetry', () => {
     const operationId = '018f22f2-4c22-7abc-8def-0123456789ab';
 
     const response = await app.request('/workstreams', {
-      method: 'POST', headers: { 'x-avalon-operation-id': operationId },
+      method: 'POST', headers: { 'x-rally-operation-id': operationId },
     }, createTestEnv({ AVALON_REGION: 'global' }));
 
     expect(response.status).toBe(201);

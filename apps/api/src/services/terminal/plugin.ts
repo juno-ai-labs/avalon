@@ -1,6 +1,6 @@
-import type { HarnessPlugin } from "@avalon/agent-harness";
-import { asWorkspaceId, type WorkstreamWorkflowInput } from "@avalon/contracts";
-import { newId } from "@avalon/db";
+import type { HarnessPlugin } from "@rally/agent-harness";
+import { asWorkspaceId, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { newId } from "@rally/db";
 
 import type { Env } from "../../env";
 import { logStructuredEvent } from "../../observability/logger";

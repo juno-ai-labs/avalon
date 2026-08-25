@@ -1,4 +1,4 @@
-import { classifyAttachmentKind, type AttachmentKind, type ExecutionPrincipal } from "@avalon/contracts";
+import { classifyAttachmentKind, type AttachmentKind, type ExecutionPrincipal } from "@rally/contracts";
 import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
 import { BOUND_PARAMETER_ID_CHUNK } from "../durable-objects/bound-parameters";
 

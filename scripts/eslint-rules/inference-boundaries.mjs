@@ -31,7 +31,7 @@ export const noDirectOpenRouterClientRule = {
     const bindings = new Set();
     return {
       ImportDeclaration(node) {
-        if (node.source.value !== "@avalon/agent-harness") return;
+        if (node.source.value !== "@rally/agent-harness") return;
         for (const specifier of node.specifiers) {
           if (
             specifier.type === "ImportSpecifier"

@@ -21,7 +21,7 @@ async function harness(input: {
   refreshAnonymous?: () => Promise<{ capability: string; journeyId: string; expiresAt: string } | null>;
   now?: () => Date;
 } = {}) {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-reporter-'));
+  const directory = await mkdtemp(join(tmpdir(), 'rally-reporter-'));
   roots.push(directory);
   const spool = new TelemetrySpool({ rootDirectory: directory, maxRows: 50, maxBytes: 500_000 });
   const fetch = vi.fn<typeof globalThis.fetch>();
@@ -80,7 +80,7 @@ describe('TelemetryReporter', () => {
 
   it('records bounded menu, Command-shortcut, and suggested-work product signals', async () => {
     const { reporter, spool } = await harness({
-      auth: { apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global' },
+      auth: { apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global' },
     });
     await reporter.menuBarOpened({ signedIn: true, suggestionCount: 4, recentCount: 5, pinnedCount: 2 });
     await reporter.menuBarActionSelected('new_workstream');
@@ -118,7 +118,7 @@ describe('TelemetryReporter', () => {
 
   it('records applied application-settings state and successful changes', async () => {
     const { reporter, spool } = await harness({
-      auth: { apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global' },
+      auth: { apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global' },
     });
     await reporter.applicationSettingsState({
       launchAtLoginEnabled: true,
@@ -193,7 +193,7 @@ describe('TelemetryReporter', () => {
 
   it('records resource interactions with opaque ids and content-free metadata', async () => {
     const { reporter, spool } = await harness({
-      auth: { apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global' },
+      auth: { apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global' },
     });
     const workstreamId = '00000000-0000-4000-8000-000000000101';
     const messageId = '00000000-0000-4000-8000-000000000102';
@@ -348,7 +348,7 @@ describe('TelemetryReporter', () => {
 
     const authenticated = await harness({
       auth: {
-        apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global',
+        apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global',
       },
     });
     await authenticated.reporter.javascriptException(
@@ -369,7 +369,7 @@ describe('TelemetryReporter', () => {
   it('correlates one rich connector intent without emitting its legacy version', async () => {
     const { reporter, spool } = await harness({
       auth: {
-        apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global',
+        apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global',
       },
     });
     const operationId = '018f0000-0000-7000-8000-000000000099';
@@ -392,7 +392,7 @@ describe('TelemetryReporter', () => {
   it('carries a realtime socket transition as a workspace-scoped renderer signal', async () => {
     const { reporter, spool } = await harness({
       auth: {
-        apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global',
+        apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global',
       },
     });
 
@@ -421,7 +421,7 @@ describe('TelemetryReporter', () => {
     const { reporter, spool } = await harness({
       enabled: false,
       auth: {
-        apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global',
+        apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global',
       },
     });
 
@@ -434,7 +434,7 @@ describe('TelemetryReporter', () => {
 
   it('uploads authenticated rows to only their regional API and acknowledges durable results', async () => {
     const { reporter, spool, fetch } = await harness({
-      auth: { apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global' },
+      auth: { apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global' },
     });
     fetch.mockResolvedValue(new Response(JSON.stringify({
       results: [{ result: 'accepted', eventId: '018f0000-0000-7000-8000-000000000010' }],
@@ -444,7 +444,7 @@ describe('TelemetryReporter', () => {
 
     expect(fetch).toHaveBeenCalledTimes(1);
     const [url, request] = fetch.mock.calls[0]!;
-    expect(url).toBe('https://api.with-avalon.com/telemetry/events');
+    expect(url).toBe('https://api.rallywith.ai/telemetry/events');
     expect(new Headers(request?.headers).get('authorization')).toBe('Bearer secret');
     const body = JSON.parse(String(request?.body));
     expect(body.installationId).toBe(identity.installationId);
@@ -453,7 +453,7 @@ describe('TelemetryReporter', () => {
   });
 
   it('uses the Global capability endpoint for a route-fixed anonymous EU event', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'avalon-reporter-eu-'));
+    const directory = await mkdtemp(join(tmpdir(), 'rally-reporter-eu-'));
     roots.push(directory);
     const spool = new TelemetrySpool({ rootDirectory: directory });
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(JSON.stringify({
@@ -468,12 +468,12 @@ describe('TelemetryReporter', () => {
       }),
       fetch, now: () => new Date('2026-08-12T20:00:00.000Z'),
       runtime: { environment: 'development', release: '1.96.0', buildId: 'test' },
-      globalApiBaseUrl: 'https://api.with-avalon.com',
+      globalApiBaseUrl: 'https://api.rallywith.ai',
       eventId: () => '018f0000-0000-7000-8000-000000000010',
     });
     await reporter.screenViewed('onboarding_region');
     await reporter.flush();
-    expect(fetch.mock.calls[0]?.[0]).toBe('https://api.with-avalon.com/telemetry/anonymous');
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://api.rallywith.ai/telemetry/anonymous');
     expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({
       capability: 'c'.repeat(64),
       installationId: identity.installationId,
@@ -490,7 +490,7 @@ describe('TelemetryReporter', () => {
       route: 'eu',
       anonymous,
       auth: {
-        apiBaseUrl: 'https://api.with-avalon.com',
+        apiBaseUrl: 'https://api.rallywith.ai',
         accessToken: 'global-login-token',
         workspace: false,
         route: 'global',
@@ -557,7 +557,7 @@ describe('TelemetryReporter', () => {
 
   it('retains a row with bounded backoff when delivery fails and does not throw into the product path', async () => {
     const { reporter, spool, fetch } = await harness({
-      auth: { apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global' },
+      auth: { apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global' },
     });
     fetch.mockRejectedValue(new Error('offline'));
     await reporter.screenViewed('workspace_home');
@@ -569,7 +569,7 @@ describe('TelemetryReporter', () => {
   it('records the first actual send time and preserves it across delivery retries', async () => {
     let now = new Date('2026-08-01T20:00:00.000Z');
     const { reporter, spool, fetch } = await harness({
-      auth: { apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global' },
+      auth: { apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global' },
       now: () => now,
     });
     fetch

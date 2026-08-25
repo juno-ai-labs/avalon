@@ -1,4 +1,4 @@
-import { ConnectorError } from "@avalon/connectors";
+import { ConnectorError } from "@rally/connectors";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ApiError } from "../src/lib/api-error";

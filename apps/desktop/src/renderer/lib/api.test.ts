@@ -1,6 +1,6 @@
-import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
+import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks, redactQuery } from './api';
+import { RallyApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks, redactQuery } from './api';
 import type { ApiError } from './api';
 import type { DesktopSession } from '../../common/desktop';
 
@@ -41,7 +41,7 @@ const detail = {
   title: 'Investigate ENG-142',
   titleStatus: 'settled' as const,
   objective: 'Find the cause.',
-  emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
+  emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
   originType: 'ad_hoc' as const,
   originLabel: null,
   createdByUserId: userId,
@@ -139,7 +139,7 @@ const session: DesktopSession = {
   expiresAt: timestamp,
   apiBaseUrl: 'https://api.example.com',
   user: { id: user.id, email: user.email, name: user.name },
-  workspace: { id: workspaceId, name: 'Avalon Studio', region: 'global', role: 'owner' },
+  workspace: { id: workspaceId, name: 'Rally Studio', region: 'global', role: 'owner' },
 };
 
 function json(value: unknown, init: ResponseInit = {}): Response {
@@ -172,7 +172,7 @@ afterEach(() => {
   reportTelemetryProductIntent.mockReset();
 });
 
-describe('Avalon API wire adapter', () => {
+describe('Rally API wire adapter', () => {
   it.each([
     [['email'], true, false],
     [['slack_agent_dm'], false, true],
@@ -200,7 +200,7 @@ describe('Avalon API wire adapter', () => {
     vi.stubGlobal('fetch', vi.fn(async () => sse([
       { type: 'completed', draftId: '00000000-0000-7000-8000-000000000042', draft, assistantMessage: 'Ready.' },
     ], 47)));
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     const result = await api.compileAutomation({ message: 'Brief me.' });
 
@@ -273,7 +273,7 @@ describe('Avalon API wire adapter', () => {
       return sse(events, 47);
     });
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
     const streamed: unknown[] = [];
 
     const result = await api.compileAutomation(
@@ -293,7 +293,7 @@ describe('Avalon API wire adapter', () => {
 
     expect(streamed).toEqual(events.slice(0, -1));
     const request = fetchMock.mock.calls[0]!;
-    expect(String(request[0])).toBe('https://api.avalon.test/automations/draft/stream');
+    expect(String(request[0])).toBe('https://api.rally.test/automations/draft/stream');
     expect(new Headers(request[1]?.headers).get('Accept')).toBe('text/event-stream');
     const opening = JSON.parse(String(request[1]?.body));
     expect(opening).toMatchObject({
@@ -329,7 +329,7 @@ describe('Avalon API wire adapter', () => {
     expect(mapWorkstreamDetail(detail)).toMatchObject({
       id: workstreamId,
       origin: 'ad_hoc',
-      emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
+      emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
       harnessStatus: 'completed',
       participants: [{ id: userId, role: 'creator' }],
       viewers: [{ id: userId, viewing: true }],
@@ -396,14 +396,14 @@ describe('Avalon API wire adapter', () => {
       return json({ items: [resource], nextCursor: 'cursor-2' });
     });
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.listResources({ query: 'Launch brief', cursor: 'cursor-1', limit: 20 })).resolves.toEqual({
       items: [expect.objectContaining({ id: resourceId, title: 'Launch brief', provider: 'google_drive' })],
       nextCursor: 'cursor-2',
     });
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      'https://api.avalon.test/resources?limit=20&q=Launch+brief&cursor=cursor-1',
+      'https://api.rally.test/resources?limit=20&q=Launch+brief&cursor=cursor-1',
     );
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(`Bearer ${session.accessToken}`);
   });
@@ -486,7 +486,7 @@ describe('Avalon API wire adapter', () => {
           connectionId,
           plugin: { pluginId: 'plugin_google_2', displayName: 'Google Drive · Work', icon: 'brand-google-drive' },
           status: 'completed',
-          inputSummary: '{"query":"avalon"}',
+          inputSummary: '{"query":"rally"}',
           outputSummary: 'Found the authorized Drive folder.',
           startedAt: '2026-08-01T12:00:01.000Z',
           completedAt: '2026-08-01T12:00:04.000Z',
@@ -504,7 +504,7 @@ describe('Avalon API wire adapter', () => {
     expect(mapped.toolEvent?.name).toBe('Reviewed Google Drive · Work');
   });
 
-  it('leaves a work-stream tool row from an Avalon-owned tool unattributed', () => {
+  it('leaves a work-stream tool row from an Rally-owned tool unattributed', () => {
     const mapped = mapMessage({
       ...message,
       id: taskId,
@@ -691,7 +691,7 @@ describe('Avalon API wire adapter', () => {
     const workstreamId = '00000000-0000-7000-8000-000000000012';
     const fetchMock = vi.fn(async () => json({}));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.getWorkstreamContext(workstreamId)).resolves.toEqual({
       backgroundTasks: [],
@@ -708,7 +708,7 @@ describe('Avalon API wire adapter', () => {
         details: { expected: 'eu' },
       },
     }, { status: 409 })));
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     const expected: Partial<ApiError> = {
       status: 409,
@@ -722,17 +722,17 @@ describe('Avalon API wire adapter', () => {
   it('accepts successful 204 responses for command endpoints', async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.stopHarness(workstreamId)).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledWith(
-      `https://api.avalon.test/workstreams/${workstreamId}/stop`,
+      `https://api.rally.test/workstreams/${workstreamId}/stop`,
       expect.objectContaining({ method: 'POST' }),
     );
 
     await expect(api.archiveNote(noteId)).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenLastCalledWith(
-      `https://api.avalon.test/notes/${noteId}/archive`,
+      `https://api.rally.test/notes/${noteId}/archive`,
       expect.objectContaining({ method: 'POST' }),
     );
   });
@@ -750,13 +750,13 @@ describe('Avalon API wire adapter', () => {
     };
     const preview = {
       workspaceId,
-      workspaceName: 'Avalon Studio',
+      workspaceName: 'Rally Studio',
       region: 'global' as const,
       email: invitation.email,
       role: invitation.role,
       expiresAt: invitation.expiresAt,
     };
-    const inviteUrl = 'https://with-avalon.com/invite/#region=global&token=private-token-value-long-enough';
+    const inviteUrl = 'https://rallywith.ai/invite/#region=global&token=private-token-value-long-enough';
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json(preview))
       .mockResolvedValueOnce(json({ invitation, inviteUrl, emailDelivery: 'sent' }, { status: 201 }))
@@ -764,7 +764,7 @@ describe('Avalon API wire adapter', () => {
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=opaque' }));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.getInvitationPreview('private-token-value-long-enough')).resolves.toEqual(preview);
     await expect(api.createWorkspaceInvitation(invitation.email, 'member')).resolves.toEqual({ invitation, inviteUrl, emailDelivery: 'sent' });
@@ -775,7 +775,7 @@ describe('Avalon API wire adapter', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ email: invitation.email, role: 'member' });
     expect(fetchMock.mock.calls[3]?.[1]).toMatchObject({ method: 'DELETE' });
 
-    const login = new URL(await api.beginGoogleLogin('global', 'avalon://auth/complete', {
+    const login = new URL(await api.beginGoogleLogin('global', 'rallywithai://auth/complete', {
       invitationToken: 'private-token-value-long-enough',
       authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) },
     }));
@@ -783,7 +783,7 @@ describe('Avalon API wire adapter', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body))).toEqual({
       invitationToken: 'private-token-value-long-enough',
       region: 'global',
-      returnUri: 'avalon://auth/complete',
+      returnUri: 'rallywithai://auth/complete',
       desktopAttemptId: 'a'.repeat(43),
       desktopCodeChallenge: 'c'.repeat(43),
     });
@@ -794,7 +794,7 @@ describe('Avalon API wire adapter', () => {
     const pending = {
       id: '00000000-0000-7000-8000-000000000009',
       workspaceId,
-      workspaceName: 'Avalon Studio',
+      workspaceName: 'Rally Studio',
       region: 'global' as const,
       email: 'adam@example.com',
       role: 'member' as const,
@@ -807,7 +807,7 @@ describe('Avalon API wire adapter', () => {
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', identitySession);
+    const api = new RallyApi('https://api.rally.test', identitySession);
 
     await expect(api.getWorkspaceOnboarding()).resolves.toEqual({ invitations: [pending] });
     await expect(api.createWorkspace('Acme Research')).resolves.toBeUndefined();
@@ -815,10 +815,10 @@ describe('Avalon API wire adapter', () => {
     await expect(api.declinePendingWorkspaceInvitation(pending.id)).resolves.toBeUndefined();
 
     expect(fetchMock.mock.calls.map((call) => [String(call[0]), call[1]?.method])).toEqual([
-      ['https://api.avalon.test/onboarding', 'GET'],
-      ['https://api.avalon.test/onboarding/workspace', 'POST'],
-      [`https://api.avalon.test/onboarding/invitations/${pending.id}/accept`, 'POST'],
-      [`https://api.avalon.test/onboarding/invitations/${pending.id}`, 'DELETE'],
+      ['https://api.rally.test/onboarding', 'GET'],
+      ['https://api.rally.test/onboarding/workspace', 'POST'],
+      [`https://api.rally.test/onboarding/invitations/${pending.id}/accept`, 'POST'],
+      [`https://api.rally.test/onboarding/invitations/${pending.id}`, 'DELETE'],
     ]);
   });
 
@@ -832,7 +832,7 @@ describe('Avalon API wire adapter', () => {
         reused: true,
       }));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.runAutomation('automation-1')).rejects.toMatchObject({ code: 'network_error' });
     expect(reportJavascriptError).toHaveBeenCalledOnce();
@@ -851,14 +851,14 @@ describe('Avalon API wire adapter', () => {
   it('renames a work stream through the typed update endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(json({ ...detail, title: 'Launch planning' }));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.renameWorkstream(workstreamId, 'Launch planning')).resolves.toMatchObject({
       id: workstreamId,
       title: 'Launch planning',
     });
 
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.avalon.test/workstreams/${workstreamId}`);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.rally.test/workstreams/${workstreamId}`);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PATCH' });
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ title: 'Launch planning' });
   });
@@ -866,7 +866,7 @@ describe('Avalon API wire adapter', () => {
   it('changes who may read a work stream through the same update endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(json({ ...detail, scope: 'personal' }));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.setWorkstreamScope(workstreamId, 'personal')).resolves.toMatchObject({
       id: workstreamId,
@@ -885,7 +885,7 @@ describe('Avalon API wire adapter', () => {
       harnessRunId: null,
     }));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.createWorkstream({
       openingMessage: '',
@@ -918,7 +918,7 @@ describe('Avalon API wire adapter', () => {
         firstUnreadSequenceNumber: 4,
       }));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.acknowledgeWorkstreamRead(workstreamId, 4, 0)).resolves.toMatchObject({
       readThroughSequenceNumber: 4,
@@ -931,7 +931,7 @@ describe('Avalon API wire adapter', () => {
     });
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      `https://api.avalon.test/workstreams/${workstreamId}/read-state`,
+      `https://api.rally.test/workstreams/${workstreamId}/read-state`,
     );
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PATCH' });
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
@@ -939,7 +939,7 @@ describe('Avalon API wire adapter', () => {
       observedManualUnreadGeneration: 0,
     });
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
-      `https://api.avalon.test/workstreams/${workstreamId}/read-state/mark-unread`,
+      `https://api.rally.test/workstreams/${workstreamId}/read-state/mark-unread`,
     );
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
   });
@@ -950,14 +950,14 @@ describe('Avalon API wire adapter', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ visible: true, updatedAt: timestamp }));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.updateBlockDashboardPreference(workstreamId, true)).resolves.toEqual({
       visible: true,
       updatedAt: timestamp,
     });
 
-    const preferenceUrl = `https://api.avalon.test/workstreams/${workstreamId}/block-dashboard/preference`;
+    const preferenceUrl = `https://api.rally.test/workstreams/${workstreamId}/block-dashboard/preference`;
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(preferenceUrl);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PUT' });
@@ -971,7 +971,7 @@ describe('Avalon API wire adapter', () => {
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.shareAutomation('00000000-0000-7000-8000-000000000008')).resolves.toEqual({
       templateId: '00000000-0000-7000-8000-000000000007',
@@ -980,20 +980,20 @@ describe('Avalon API wire adapter', () => {
     await expect(api.setResourceWatch(workstreamId, resourceId, false)).resolves.toEqual({ enabled: false });
     await expect(api.detachResource(workstreamId, resourceId)).resolves.toBeUndefined();
 
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://api.avalon.test/automation-templates');
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://api.rally.test/automation-templates');
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       automationSubscriptionId: '00000000-0000-7000-8000-000000000008',
     });
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`https://api.avalon.test/resources/${resourceId}/watch`);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`https://api.rally.test/resources/${resourceId}/watch`);
     expect(String(fetchMock.mock.calls[2]?.[0])).toContain(`workstreamId=${workstreamId}`);
-    expect(String(fetchMock.mock.calls[3]?.[0])).toBe(`https://api.avalon.test/workstreams/${workstreamId}/resources/${resourceId}`);
+    expect(String(fetchMock.mock.calls[3]?.[0])).toBe(`https://api.rally.test/workstreams/${workstreamId}/resources/${resourceId}`);
   });
 
   it('previews a template update and adopts only the selected immutable version', async () => {
     const current = {
       id: automationId,
       name: 'Weekly brief',
-      emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
+      emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
       description: 'A concise weekly status brief.',
       scope: 'personal' as const,
       status: 'active' as const,
@@ -1048,10 +1048,10 @@ describe('Avalon API wire adapter', () => {
       .mockResolvedValueOnce(json(current))
       .mockResolvedValueOnce(json(adopted));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.getAutomation(automationId)).resolves.toMatchObject({
-      emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
+      emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
       versionNumber: 1,
       statusMessage: 'Update available',
       templateUpdate: {
@@ -1071,7 +1071,7 @@ describe('Avalon API wire adapter', () => {
     });
 
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
-      `https://api.avalon.test/automation-subscriptions/${automationId}/adopt-version`,
+      `https://api.rally.test/automation-subscriptions/${automationId}/adopt-version`,
     );
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ versionId: nextVersionId });
@@ -1120,7 +1120,7 @@ describe('Avalon API wire adapter', () => {
       return json({ error: { message: 'Unexpected request' } }, { status: 500 });
     });
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     const newest = await api.getMessagePage(workstreamId);
     const earlier = await api.getMessagePage(workstreamId, { before: newest.nextCursor ?? undefined });
@@ -1157,7 +1157,7 @@ describe('Avalon API wire adapter', () => {
         expiresAt: timestamp,
       }));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.startProviderConnection('linear', 'you', ['linear.read'])).resolves.toEqual({
       url: 'https://linear.app/oauth/authorize?state=opaque',
@@ -1165,23 +1165,23 @@ describe('Avalon API wire adapter', () => {
     });
     const startHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      'https://api.avalon.test/connections/linear/start?telemetryVersion=2',
+      'https://api.rally.test/connections/linear/start?telemetryVersion=2',
     );
-    expect(startHeaders.get('X-Avalon-Operation-Id')).toMatch(
+    expect(startHeaders.get('X-Rally-Operation-Id')).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
     );
-    expect(startHeaders.has('X-Avalon-Telemetry-Version')).toBe(false);
+    expect(startHeaders.has('X-Rally-Telemetry-Version')).toBe(false);
     expect(reportTelemetryProductIntent).toHaveBeenCalledOnce();
     expect(reportTelemetryProductIntent).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'connector_setup_requested_v2', connector: 'linear', scope: 'personal',
-      method: 'oauth', capabilityCount: 'one', operationId: startHeaders.get('X-Avalon-Operation-Id'),
+      method: 'oauth', capabilityCount: 'one', operationId: startHeaders.get('X-Rally-Operation-Id'),
     }));
     await expect(api.getConnectorOAuthAttempt(attemptId)).resolves.toMatchObject({
       status: 'succeeded',
       connectionId,
     });
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
-      `https://api.avalon.test/connections/oauth-attempts/${attemptId}`,
+      `https://api.rally.test/connections/oauth-attempts/${attemptId}`,
     );
   });
 
@@ -1203,7 +1203,7 @@ describe('message mention resolution', () => {
 
   it('resolves a typed member name and leaves a typed connection name alone', async () => {
     stubRoster();
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     const mentions = await api.messageMentionPayload('ask @Adam about @Google Drive');
 
@@ -1216,7 +1216,7 @@ describe('message mention resolution', () => {
 
   it('still carries a connector mention a caller selected deliberately', async () => {
     stubRoster();
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     const mentions = await api.messageMentionPayload(
       'ask @Google Drive for the brief',
@@ -1235,13 +1235,13 @@ describe('socket ticket transport', () => {
     // the subprotocol scheme. Nothing here may open a socket with it, because
     // Cloudflare records request URLs into stores this app cannot redact.
     vi.stubGlobal('fetch', vi.fn(async () => json({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}?ticket=socket-ticket`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}?ticket=socket-ticket`,
       ticket: 'socket-ticket',
     })));
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.getSocketTicket(workstreamId)).resolves.toEqual({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
       ticket: 'socket-ticket',
       protocols: socketTicketProtocols('socket-ticket'),
     });
@@ -1252,15 +1252,15 @@ describe('socket ticket transport', () => {
       void input;
       void init;
       return json({
-        url: 'wss://api.avalon.test/socket/workspaces/workspace-1?ticket=workspace-ticket',
+        url: 'wss://api.rally.test/socket/workspaces/workspace-1?ticket=workspace-ticket',
         ticket: 'workspace-ticket',
       });
     });
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.getWorkspaceSocketTicket()).resolves.toEqual({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     });
@@ -1271,15 +1271,15 @@ describe('socket ticket transport', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       void input;
       return json({
-        url: `wss://api.avalon.test/socket/workstreams/${workstreamId}?ticket=control-ticket`,
+        url: `wss://api.rally.test/socket/workstreams/${workstreamId}?ticket=control-ticket`,
         ticket: 'control-ticket',
       });
     });
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.getWorkstreamControlSocketTicket(workstreamId)).resolves.toEqual({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
       ticket: 'control-ticket',
       protocols: socketTicketProtocols('control-ticket'),
     });
@@ -1294,7 +1294,7 @@ describe('request correlation', () => {
       sent.push(init);
       return json(detail);
     }));
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await api.getWorkstream(workstreamId);
     await api.getWorkstream(workstreamId);
@@ -1314,7 +1314,7 @@ describe('request correlation', () => {
       sent.push(init);
       return json({ workstream: detail, messageId, harnessRunId: null });
     }));
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await api.createWorkstream({
       openingMessage: 'Prepare the launch brief',
@@ -1331,7 +1331,7 @@ describe('expired access-token recovery', () => {
   // What the endpoint sends, and what the client hands back after stripping the
   // query ticket and attaching the handshake subprotocols. Keeping them
   // separate stops the fixture from implying the server sends `protocols`.
-  const wireTicket = { url: 'wss://api.avalon.test/socket', ticket: 'socket-ticket' };
+  const wireTicket = { url: 'wss://api.rally.test/socket', ticket: 'socket-ticket' };
   const parsedTicket = { ...wireTicket, protocols: socketTicketProtocols('socket-ticket') };
 
   function unauthorizedUntilRenewed() {
@@ -1345,7 +1345,7 @@ describe('expired access-token recovery', () => {
   it('renews the credential and replays the rejected request', async () => {
     const fetchMock = unauthorizedUntilRenewed();
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
     const renew = vi.fn().mockResolvedValue(renewed);
     api.setCredentialRenewal(renew);
 
@@ -1358,7 +1358,7 @@ describe('expired access-token recovery', () => {
 
   it('renews once for a burst of concurrent rejections', async () => {
     vi.stubGlobal('fetch', unauthorizedUntilRenewed());
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
     let release!: (value: DesktopSession) => void;
     const renew = vi.fn(() => new Promise<DesktopSession>((resolve) => {
       release = resolve;
@@ -1380,7 +1380,7 @@ describe('expired access-token recovery', () => {
   it('surfaces the original rejection when no renewal is registered', async () => {
     const fetchMock = unauthorizedUntilRenewed();
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.getSocketTicket(workstreamId)).rejects.toMatchObject({
       status: 401,
@@ -1397,7 +1397,7 @@ describe('expired access-token recovery', () => {
       { status: 401 },
     ));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
     const renew = vi.fn().mockResolvedValue(renewed);
     api.setCredentialRenewal(renew);
 
@@ -1418,7 +1418,7 @@ describe('expired access-token recovery', () => {
           : json({ error: { code } }, { status: 401 }),
       ));
       vi.stubGlobal('fetch', fetchMock);
-      const api = new AvalonApi('https://api.avalon.test', session);
+      const api = new RallyApi('https://api.rally.test', session);
       api.setCredentialRenewal(vi.fn().mockResolvedValue(renewed));
 
       await expect(api.getSocketTicket(workstreamId)).resolves.toEqual(parsedTicket);
@@ -1431,7 +1431,7 @@ describe('expired access-token recovery', () => {
     // under the error the caller ultimately sees.
     const fetchMock = unauthorizedUntilRenewed();
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
     api.setCredentialRenewal(vi.fn().mockResolvedValue(session));
 
     await expect(api.getSocketTicket(workstreamId)).rejects.toMatchObject({
@@ -1444,7 +1444,7 @@ describe('expired access-token recovery', () => {
   it('does not replay unauthenticated when signing out clears the session mid-flight', async () => {
     const fetchMock = unauthorizedUntilRenewed();
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
     api.setCredentialRenewal(vi.fn().mockResolvedValue(renewed));
     // Sign-out lands between the request and its rejection.
     void Promise.resolve().then(() => api.setSession(null));
@@ -1456,7 +1456,7 @@ describe('expired access-token recovery', () => {
   it('does not retry when renewal fails', async () => {
     const fetchMock = unauthorizedUntilRenewed();
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
     api.setCredentialRenewal(vi.fn().mockRejectedValue(new Error('offline')));
 
     await expect(api.getSocketTicket(workstreamId)).rejects.toMatchObject({ status: 401 });
@@ -1484,7 +1484,7 @@ describe('expired access-token recovery', () => {
       }
     }
     vi.stubGlobal('XMLHttpRequest', StubUpload);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
     api.setCredentialRenewal(vi.fn().mockResolvedValue(renewed));
 
     await expect(api.uploadResource(new File(['body'], 'note.txt'), 'draft-1'))
@@ -1503,7 +1503,7 @@ describe('expired access-token recovery', () => {
       send(): void { queueMicrotask(() => this.listeners.get('error')?.()); }
     }
     vi.stubGlobal('XMLHttpRequest', FailedUpload);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.uploadResource(new File(['body'], 'note.txt'), 'draft-1'))
       .rejects.toMatchObject({ status: 0, code: 'network_error' });
@@ -1528,7 +1528,7 @@ describe('expired access-token recovery', () => {
       }
     }
     vi.stubGlobal('XMLHttpRequest', CancelledUpload);
-    const api = new AvalonApi('https://api.avalon.test', session);
+    const api = new RallyApi('https://api.rally.test', session);
     const controller = new AbortController();
     const upload = api.uploadResource(new File(['body'], 'note.txt'), 'draft-1', undefined, controller.signal);
 

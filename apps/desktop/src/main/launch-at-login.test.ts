@@ -129,13 +129,13 @@ describe('launch at login', () => {
     expect(subject.storedSettings().launchAtLoginDefaultApplied).toBe(true);
   });
 
-  it('follows the login item being changed in System Settings while Avalon runs', async () => {
+  it('follows the login item being changed in System Settings while Rally runs', async () => {
     const subject = harness({ stored: { launchAtLoginDefaultApplied: true }, openAtLogin: true });
     await subject.controller.initialize();
     expect(subject.controller.enabled()).toBe(true);
 
-    // Nothing tells Avalon this happened, so a cached answer would keep
-    // claiming Avalon opens at login until the next launch.
+    // Nothing tells Rally this happened, so a cached answer would keep
+    // claiming Rally opens at login until the next launch.
     subject.state.openAtLogin = false;
 
     expect(subject.controller.enabled()).toBe(false);
@@ -190,7 +190,7 @@ describe('detecting a login launch', () => {
   });
 
   it('honours an explicit --hidden launch', () => {
-    expect(launchedAtLogin({ platform: 'linux', loginItemState: loginItemState(false), argv: ['avalon', '--hidden'] }))
+    expect(launchedAtLogin({ platform: 'linux', loginItemState: loginItemState(false), argv: ['rally', '--hidden'] }))
       .toBe(true);
   });
 });

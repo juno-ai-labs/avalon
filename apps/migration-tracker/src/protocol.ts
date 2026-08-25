@@ -1,7 +1,7 @@
 /**
  * The shapes the registry Durable Object returns and the queries it accepts.
  *
- * These stay separate from `@avalon/contracts/durable-object-migrations`, which
+ * These stay separate from `@rally/contracts/durable-object-migrations`, which
  * owns the report contract crossing the Worker boundary. This file is internal
  * to the tracker: the app parses a query string into `ObjectQuery`, the registry
  * answers, and the views render it.

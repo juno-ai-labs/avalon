@@ -1,7 +1,7 @@
 import {
   ProductFeatureFlagFanoutMessageSchema,
   ProductFeatureFlagKeySchema,
-} from '@avalon/contracts';
+} from '@rally/contracts';
 import { z } from 'zod';
 import type { Env, FlagChangeMessage } from './env';
 

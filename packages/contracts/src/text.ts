@@ -6,7 +6,7 @@
  * surrogate that renders as U+FFFD.
  *
  * This lives beside the schemas that declare the bounds it enforces, because
- * both the API and `@avalon/db` have to apply the same bound to the same
+ * both the API and `@rally/db` have to apply the same bound to the same
  * column: a value written past a contract's `max()` is a row that fails its own
  * response schema on every subsequent read.
  */

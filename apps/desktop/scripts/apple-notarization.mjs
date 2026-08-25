@@ -1,7 +1,7 @@
 import { access, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-import { AVALON_APPLE_TEAM_ID } from './release-lib.mjs';
+import { RALLY_APPLE_TEAM_ID } from './release-lib.mjs';
 
 function present(environment, name) {
   return Boolean(environment[name]?.trim());
@@ -17,10 +17,10 @@ function requireComplete(environment, names, label) {
 export function notarizationCredentialMode(environment = process.env) {
   if (
     present(environment, 'APPLE_TEAM_ID')
-    && environment.APPLE_TEAM_ID.trim() !== AVALON_APPLE_TEAM_ID
+    && environment.APPLE_TEAM_ID.trim() !== RALLY_APPLE_TEAM_ID
   ) {
     throw new Error(
-      `APPLE_TEAM_ID is ${environment.APPLE_TEAM_ID.trim()}; Avalon releases require ${AVALON_APPLE_TEAM_ID}`,
+      `APPLE_TEAM_ID is ${environment.APPLE_TEAM_ID.trim()}; Rally releases require ${RALLY_APPLE_TEAM_ID}`,
     );
   }
 

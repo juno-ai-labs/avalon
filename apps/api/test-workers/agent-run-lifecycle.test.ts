@@ -28,7 +28,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 
-import { asSubstreamId } from "@avalon/contracts";
+import { asSubstreamId } from "@rally/contracts";
 
 import { substreamAgentName } from "../src/durable-objects/names";
 import {

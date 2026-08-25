@@ -10,7 +10,7 @@
  * fix when the schema moves.
  */
 
-import { asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 export const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000004a1");
 export const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000004a2");

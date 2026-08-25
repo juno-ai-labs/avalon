@@ -1,7 +1,7 @@
-import { asWorkspaceId } from "@avalon/contracts";
-import { asWorkstreamId } from "@avalon/contracts";
+import { asWorkspaceId } from "@rally/contracts";
+import { asWorkstreamId } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
-import { ServerSocketEventSchema } from "@avalon/contracts";
+import { ServerSocketEventSchema } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 
 import {

@@ -9,9 +9,9 @@ import {
   type WorkspaceId,
   type Session,
   type WorkspaceOnboardingState,
-} from "@avalon/contracts";
-import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
-import { newId, nowIso } from "@avalon/db";
+} from "@rally/contracts";
+import { HttpUrlSchema } from "@rally/contracts/url-schemas";
+import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -323,7 +323,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
 
     const existing = await this.firstMembership(user.id);
     if (existing && existing.workspace_id !== input.workspaceId) {
-      throw new ApiError(409, "workspace_membership_conflict", "This Avalon account already belongs to another organization");
+      throw new ApiError(409, "workspace_membership_conflict", "This Rally account already belongs to another organization");
     }
     if (!existing) {
       const at = nowIso();
@@ -683,7 +683,7 @@ export class D1PlatformBindingStore implements PlatformBindingStore {
     if (Number(result.meta.changes ?? 0) === 1) return;
     const row = await this.get(platformUserId);
     if (!row || row.status !== "active" || row.operation_id !== operationId) {
-      throw new ApiError(409, "workspace_binding_conflict", "This Avalon account is already bound to another organization");
+      throw new ApiError(409, "workspace_binding_conflict", "This Rally account is already bound to another organization");
     }
   }
 
@@ -766,7 +766,7 @@ export class PlatformOnboardingService {
     const identity = await this.loadPlatformIdentity();
     const discovery = await this.discover(identity);
     if (discovery.some((item) => item.workspaces.length > 0)) {
-      throw new ApiError(409, "workspace_membership_conflict", "This Avalon account already belongs to another organization");
+      throw new ApiError(409, "workspace_membership_conflict", "This Rally account already belongs to another organization");
     }
     const workspaceId = this.createId();
     const placement = deriveWorkspacePlacementAffinity(region, requestLocation);
@@ -790,7 +790,7 @@ export class PlatformOnboardingService {
     const identity = await this.loadPlatformIdentity();
     const discovery = await this.discover(identity);
     if (discovery.some((item) => item.workspaces.length > 0)) {
-      throw new ApiError(409, "workspace_membership_conflict", "This Avalon account already belongs to another organization");
+      throw new ApiError(409, "workspace_membership_conflict", "This Rally account already belongs to another organization");
     }
     const invitation = discovery.flatMap((item) => item.invitations)
       .find((item) => item.id === invitationId && item.region === region);
@@ -820,7 +820,7 @@ export class PlatformOnboardingService {
 
   private requireGlobalControlPlane(): void {
     if (this.env.AVALON_REGION !== "global" || this.auth.region !== "global") {
-      throw new ApiError(409, "global_identity_required", "Sign in through the Avalon platform before choosing an organization");
+      throw new ApiError(409, "global_identity_required", "Sign in through the Rally platform before choosing an organization");
     }
   }
 
@@ -884,7 +884,7 @@ export class PlatformOnboardingService {
     const workspaces = discovery.flatMap((item) => item.workspaces);
     const unique = new Map(workspaces.map((workspace) => [`${workspace.region}:${workspace.id}`, workspace]));
     if (unique.size > 1) {
-      throw new ApiError(409, "workspace_membership_conflict", "This Avalon account is linked to more than one organization");
+      throw new ApiError(409, "workspace_membership_conflict", "This Rally account is linked to more than one organization");
     }
     const workspace = unique.values().next().value as RegionalWorkspace | undefined;
     const binding = await this.bindings.get(platformUserId);
@@ -900,7 +900,7 @@ export class PlatformOnboardingService {
 
     if (binding) {
       if (!sameDestination({ region: binding.region, workspaceId: binding.workspace_id }, workspace.region, workspace.id)) {
-        throw new ApiError(409, "workspace_binding_conflict", "This Avalon account is already bound to another organization");
+        throw new ApiError(409, "workspace_binding_conflict", "This Rally account is already bound to another organization");
       }
       if (binding.placement_affinity !== workspace.placementAffinity) {
         throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
@@ -918,7 +918,7 @@ export class PlatformOnboardingService {
       operationId,
     );
     if (!sameDestination({ region: reserved.region, workspaceId: reserved.workspace_id }, workspace.region, workspace.id)) {
-      throw new ApiError(409, "workspace_binding_conflict", "This Avalon account is already bound to another organization");
+      throw new ApiError(409, "workspace_binding_conflict", "This Rally account is already bound to another organization");
     }
     if (reserved.placement_affinity !== workspace.placementAffinity) {
       throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
@@ -950,7 +950,7 @@ export class PlatformOnboardingService {
       operationId,
     );
     if (!sameDestination({ region: reservation.region, workspaceId: reservation.workspace_id }, region, workspaceId)) {
-      throw new ApiError(409, "workspace_binding_conflict", "This Avalon account is already bound to another organization");
+      throw new ApiError(409, "workspace_binding_conflict", "This Rally account is already bound to another organization");
     }
     if (reservation.placement_affinity !== placementAffinity) {
       throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");

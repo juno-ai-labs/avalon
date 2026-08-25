@@ -201,7 +201,7 @@ own thresholds; it is not built on this hook and
 ## Testing
 
 [`apps/desktop/src/renderer/lib/use-transcript-follow.test.tsx`](../apps/desktop/src/renderer/lib/use-transcript-follow.test.tsx),
-in the desktop suite (`pnpm --filter @avalon/desktop test`).
+in the desktop suite (`pnpm --filter @rally/desktop test`).
 
 jsdom performs no layout, so a scroll container reports a height of zero and an
 assignment to `scrollTop` is discarded. The test backs `scrollHeight`,

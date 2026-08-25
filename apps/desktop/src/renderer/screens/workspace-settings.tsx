@@ -34,7 +34,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ConnectorOAuthProvider, ConnectorOAuthStart } from '@avalon/contracts';
+import type { ConnectorOAuthProvider, ConnectorOAuthStart } from '@rally/contracts';
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings, DesktopTelemetryInspectorEntry } from '../../common/desktop';
@@ -174,7 +174,7 @@ const connectorProviders = [
     id: 'linear' as const,
     provider: 'linear' as const,
     name: 'Linear',
-    description: 'Connect personally to act as you, or install Avalon for shared workspace access and real-time activity.',
+    description: 'Connect personally to act as you, or install Rally for shared workspace access and real-time activity.',
     icon: Workflow,
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: [
@@ -195,7 +195,7 @@ const connectorProviders = [
     id: 'slack' as const,
     provider: 'slack' as const,
     name: 'Slack',
-    description: 'Messages, files, people, canvases, conversations, and the Avalon workspace Agent.',
+    description: 'Messages, files, people, canvases, conversations, and the Rally workspace Agent.',
     icon: MessageSquare,
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: SLACK_PERSONAL_CAPABILITIES,
@@ -205,7 +205,7 @@ const connectorProviders = [
     id: 'notion' as const,
     provider: 'notion' as const,
     name: 'Notion',
-    description: 'Your Notion through its live MCP tools, or selected pages and change notifications shared with your Avalon workspace.',
+    description: 'Your Notion through its live MCP tools, or selected pages and change notifications shared with your Rally workspace.',
     icon: FileText,
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: ['notion.personal.mcp'],
@@ -215,7 +215,7 @@ const connectorProviders = [
     id: 'generic-webhook' as const,
     provider: 'generic_webhook' as const,
     name: 'Inbound webhook',
-    description: 'Receive signed activity from systems that do not have a native Avalon connector.',
+    description: 'Receive signed activity from systems that do not have a native Rally connector.',
     icon: Webhook,
     scopes: ['you', 'workspace'] as const,
     capabilities: [],
@@ -224,7 +224,7 @@ const connectorProviders = [
     id: 'x' as const,
     provider: 'x' as const,
     name: 'Public X via TwitterAPI.io',
-    description: 'Read-only public X timelines, threads, replies, and Lists using an Avalon-managed third-party API key.',
+    description: 'Read-only public X timelines, threads, replies, and Lists using an Rally-managed third-party API key.',
     icon: AtSign,
     scopes: ['workspace'] as const,
     capabilities: ['x.read'],
@@ -945,7 +945,7 @@ export function WorkspaceSettingsScreen({
           <div className="settings-content-scroll">
             {activeSection === 'account' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>Profile</h2><p>Your Avalon identity and access in this workspace.</p></div>
+                <div className="settings-pane-heading"><h2>Profile</h2><p>Your Rally identity and access in this workspace.</p></div>
                 <div className="settings-profile-card">
                   <Avatar member={workspace.currentUser} size="large" />
                   <span><strong>{workspace.currentUser.name}</strong><small>{workspace.currentUser.email}</small></span>
@@ -974,7 +974,7 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
                     <span className="settings-row-icon"><LogOut aria-hidden="true" size={18} /></span>
-                    <span className="settings-row-copy"><strong>Sign out of Avalon</strong><small>Remove the local session from this Mac.</small></span>
+                    <span className="settings-row-copy"><strong>Sign out of Rally</strong><small>Remove the local session from this Mac.</small></span>
                     <Button onClick={() => void signOut()}>Sign out</Button>
                   </div>
                 </div>
@@ -1010,7 +1010,7 @@ export function WorkspaceSettingsScreen({
                     <span className="settings-row-icon"><Building2 aria-hidden="true" size={18} /></span>
                     <span className="settings-row-copy">
                       <strong>Organization</strong>
-                      <small>The shared Avalon workspace active in this desktop app.</small>
+                      <small>The shared Rally workspace active in this desktop app.</small>
                     </span>
                     <span className="settings-row-value"><strong>{workspace.name}</strong></span>
                   </div>
@@ -1033,7 +1033,7 @@ export function WorkspaceSettingsScreen({
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
                 <div className="settings-pane-heading settings-pane-heading-spaced">
                   <h2>Terminal network access</h2>
-                  <p>Choose where code running in Daytona may connect. Avalon-managed platform access is applied automatically.</p>
+                  <p>Choose where code running in Daytona may connect. Rally-managed platform access is applied automatically.</p>
                 </div>
                 {terminalSettings.isLoading ? (
                   <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading Terminal policy…</div>
@@ -1051,7 +1051,7 @@ export function WorkspaceSettingsScreen({
                       <legend>Outbound access</legend>
                       <label>
                         <input checked={terminalMode === 'trusted_only'} name="terminal-network-mode" onChange={() => { terminalPolicyDirty.current = true; setTerminalMode('trusted_only'); setTerminalPreview(null); }} type="radio" />
-                        <span><strong>Trusted only</strong><small>Avalon-managed platform access plus domains your workspace approves.</small></span>
+                        <span><strong>Trusted only</strong><small>Rally-managed platform access plus domains your workspace approves.</small></span>
                       </label>
                       <label>
                         <input checked={terminalMode === 'full_internet'} name="terminal-network-mode" onChange={() => { terminalPolicyDirty.current = true; setTerminalMode('full_internet'); setTerminalPreview(null); }} type="radio" />
@@ -1270,7 +1270,7 @@ export function WorkspaceSettingsScreen({
                       <button aria-label={`Disconnect ${connection.displayName}`} className="settings-icon-action" disabled={disconnectConnection.isPending} onClick={() => disconnectConnection.mutate(connection.id)} type="button"><Trash2 aria-hidden="true" size={14} /></button>
                     </div>
                   ))}
-                  {!connections.isLoading && installedConnections.length === 0 && <EmptyState title="No connections yet" description="Connect a provider below to make its tools available to Avalon." />}
+                  {!connections.isLoading && installedConnections.length === 0 && <EmptyState title="No connections yet" description="Connect a provider below to make its tools available to Rally." />}
                 </div>
                 <div className="settings-subsection">
                   <div className="settings-connection-toolbar">
@@ -1301,7 +1301,7 @@ export function WorkspaceSettingsScreen({
                       const personalConnectTitle = hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
                         : !providerAvailable && !connectorCatalog.isLoading
-                          ? `${provider.name} is not configured in this Avalon region.`
+                          ? `${provider.name} is not configured in this Rally region.`
                         : provider.provider === 'granola' && connections.isLoading
                           ? 'Checking installed personal connections…'
                           : provider.provider === 'granola' && connections.isError
@@ -1311,7 +1311,7 @@ export function WorkspaceSettingsScreen({
                       const workspaceConnectTitle = hasActiveWorkspaceConnection
                         ? `A ${provider.name} workspace connection is already installed. Manage it above.`
                         : !providerAvailable && !connectorCatalog.isLoading
-                          ? `${provider.name} is not configured in this Avalon region.`
+                          ? `${provider.name} is not configured in this Rally region.`
                         : connections.isLoading
                           ? 'Checking installed workspace connections…'
                           : connections.isError
@@ -1387,7 +1387,7 @@ export function WorkspaceSettingsScreen({
               <section aria-labelledby="settings-title" className="settings-pane settings-github-pane">
                 <div className="settings-pane-heading">
                   <h2>Repository access</h2>
-                  <p>Choose which GitHub repositories Avalon may use and whether it may change the remote repository.</p>
+                  <p>Choose which GitHub repositories Rally may use and whether it may change the remote repository.</p>
                 </div>
                 {githubSettingsConnections.length > 1 && (
                   <label className="settings-field settings-github-connection">
@@ -1440,7 +1440,7 @@ export function WorkspaceSettingsScreen({
                           <span className="settings-row-icon"><LockKeyhole aria-hidden="true" size={18} /></span>
                           <span className="settings-row-copy">
                             <strong>Default remote access</strong>
-                            <small>Read-only still allows Avalon to edit and commit locally. It blocks push, pull requests, issues, reviews, and other remote mutations.</small>
+                            <small>Read-only still allows Rally to edit and commit locally. It blocks push, pull requests, issues, reviews, and other remote mutations.</small>
                           </span>
                           <select
                             aria-label="Default remote access"
@@ -1536,7 +1536,7 @@ export function WorkspaceSettingsScreen({
 
             {activeSection === 'application' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>Security</h2><p>Choose how Avalon protects the saved authentication session on this Mac.</p></div>
+                <div className="settings-pane-heading"><h2>Security</h2><p>Choose how Rally protects the saved authentication session on this Mac.</p></div>
                 <div className="settings-list-card">
                   <label className="settings-preference-row">
                     <span className="settings-row-icon"><LockKeyhole aria-hidden="true" size={18} /></span>
@@ -1547,7 +1547,7 @@ export function WorkspaceSettingsScreen({
                           ? applicationSettings.lockdownMode
                             ? 'This Mac’s keystore is unavailable. Turn off Lockdown mode to keep using the loaded session.'
                             : 'Lockdown mode is off because this Mac’s keystore is unavailable.'
-                          : 'Protect the saved session with this Mac’s keystore instead of Avalon’s shared encryption key.'}
+                          : 'Protect the saved session with this Mac’s keystore instead of Rally’s shared encryption key.'}
                       </small>
                     </span>
                     <span className="settings-toggle">
@@ -1577,7 +1577,7 @@ export function WorkspaceSettingsScreen({
                     <span className="settings-row-copy">
                       <strong>Product analytics</strong>
                       <small>
-                        Share semantic product usage, sanitized errors and breadcrumbs, and native crash reports. Global telemetry can include your verified name and email so Avalon can contact you; EU telemetry stays in Avalon’s EU platform. Essential content-free reliability signals continue when this is off.
+                        Share semantic product usage, sanitized errors and breadcrumbs, and native crash reports. Global telemetry can include your verified name and email so Rally can contact you; EU telemetry stays in Rally’s EU platform. Essential content-free reliability signals continue when this is off.
                       </small>
                     </span>
                     <span className="settings-toggle">
@@ -1598,16 +1598,16 @@ export function WorkspaceSettingsScreen({
                   </label>
                 </div>
                 {applicationSettings?.productAnalyticsAvailable === false && (
-                  <p className="settings-oauth-status">Product analytics is managed in the Avalon desktop app.</p>
+                  <p className="settings-oauth-status">Product analytics is managed in the Rally desktop app.</p>
                 )}
                 {applicationSettings?.productAnalyticsPreferencePending && (
                   <p className="settings-oauth-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={14} />Waiting to sync this account preference.</p>
                 )}
                 {applicationSettings?.nativeCrashRestartRequired && (
-                  <p className="settings-oauth-status" role="status">Crash upload has stopped for this launch. Restart Avalon to remove local native crash dumps and apply the current setting.</p>
+                  <p className="settings-oauth-status" role="status">Crash upload has stopped for this launch. Restart Rally to remove local native crash dumps and apply the current setting.</p>
                 )}
                 {updateProductAnalytics.error && <InlineError>{updateProductAnalytics.error.message}</InlineError>}
-                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Avalon feel at home on this Mac.</p></div>
+                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Rally feel at home on this Mac.</p></div>
                 <ThemePicker />
                 {applicationSettings?.menuBarAvailable !== false && (
                   <>
@@ -1615,12 +1615,12 @@ export function WorkspaceSettingsScreen({
                       <label className="settings-preference-row">
                         <span className="settings-row-icon"><PanelTop aria-hidden="true" size={18} /></span>
                         <span className="settings-row-copy">
-                          <strong>Show Avalon in the menu bar</strong>
-                          <small>Keep the Avalon mark in the menu bar for a new meeting or note, a new automation, what Avalon suggests next, and your recent work streams.</small>
+                          <strong>Show Rally in the menu bar</strong>
+                          <small>Keep the Rally mark in the menu bar for a new meeting or note, a new automation, what Rally suggests next, and your recent work streams.</small>
                         </span>
                         <span className="settings-toggle">
                           <input
-                            aria-label="Show Avalon in the menu bar"
+                            aria-label="Show Rally in the menu bar"
                             checked={applicationSettings?.menuBarEnabled ?? true}
                             /* One preference file behind all three toggles, and
                              * a Lockdown transition holds it for as long as it
@@ -1649,7 +1649,7 @@ export function WorkspaceSettingsScreen({
                       && !updateMenuBarEnabled.isPending
                       && (
                         <InlineError>
-                          Avalon could not add itself to the menu bar. Turn this off and on to try again, or restart Avalon.
+                          Rally could not add itself to the menu bar. Turn this off and on to try again, or restart Rally.
                         </InlineError>
                       )}
                   </>
@@ -1657,18 +1657,18 @@ export function WorkspaceSettingsScreen({
                 <ApplicationIconPicker />
                 {applicationSettings?.launchAtLoginAvailable !== false && (
                   <>
-                    <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Startup</h2><p>Decide whether this Mac starts Avalon for you.</p></div>
+                    <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Startup</h2><p>Decide whether this Mac starts Rally for you.</p></div>
                     <div className="settings-list-card">
                       <label className="settings-preference-row">
                         <span className="settings-row-icon"><Power aria-hidden="true" size={18} /></span>
                         <span className="settings-row-copy">
-                          <strong>Open Avalon at login</strong>
-                          <small>Start Avalon when you log in. With Avalon in the menu bar it starts there quietly, with no window; without it, a window opens as usual.</small>
+                          <strong>Open Rally at login</strong>
+                          <small>Start Rally when you log in. With Rally in the menu bar it starts there quietly, with no window; without it, a window opens as usual.</small>
                         </span>
                         <span className="settings-toggle">
                           <input
-                            aria-label="Open Avalon at login"
-                            /* macOS owns this, not Avalon's preference file, so
+                            aria-label="Open Rally at login"
+                            /* macOS owns this, not Rally's preference file, so
                              * the checked state is what the system reports back
                              * after the write — which is how a registration it
                              * is still waiting to have approved shows honestly. */
@@ -1752,7 +1752,7 @@ export function WorkspaceSettingsScreen({
                     )}
                   </>
                 )}
-                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>About</h2><p>Build and service details for this Avalon installation.</p></div>
+                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>About</h2><p>Build and service details for this Rally installation.</p></div>
                 <dl className="settings-diagnostics settings-list-card">
                   <div><dt>Version</dt><dd>{runtime?.appVersion ?? 'Unknown'}</dd></div>
                   <div><dt>Build</dt><dd>{runtime?.isPackaged ? 'Installed app' : 'Development'}</dd></div>
@@ -1806,7 +1806,7 @@ export function WorkspaceSettingsScreen({
         >
           {webhookSecretResult ? (
             <div className="settings-list-card">
-              <p>Copy the endpoint and secret now. Avalon will not show this secret again.</p>
+              <p>Copy the endpoint and secret now. Rally will not show this secret again.</p>
               <label className="form-field">
                 <span>Endpoint</span>
                 <input aria-label="Webhook endpoint" readOnly spellCheck={false} value={webhookSecretResult.endpoint} />
@@ -1914,7 +1914,7 @@ export function WorkspaceSettingsScreen({
               type="password"
               value={granolaWorkspaceApiKey}
             />
-            <small>Avalon sends the key once to your regional API, encrypts it at rest, never returns it to the desktop, and registers a signed note-events webhook.</small>
+            <small>Rally sends the key once to your regional API, encrypts it at rest, never returns it to the desktop, and registers a signed note-events webhook.</small>
           </label>
           {createGranolaWorkspaceConnection.error && <InlineError>{createGranolaWorkspaceConnection.error.message}</InlineError>}
         </Modal>

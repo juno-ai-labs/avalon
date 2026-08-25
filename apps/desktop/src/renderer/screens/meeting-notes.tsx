@@ -12,7 +12,7 @@ import {
   WandSparkles,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CONTROL_TOWER_REFRESH_SECONDS, type UpdateNoteRequest } from '@avalon/contracts';
+import { CONTROL_TOWER_REFRESH_SECONDS, type UpdateNoteRequest } from '@rally/contracts';
 import type {
   DesktopMediaPermissionStatus,
   DesktopMeetingAudioPermissions,
@@ -268,7 +268,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
         });
       }
     }).catch((error: unknown) => {
-      if (active) setSaveError(error instanceof Error ? error.message : 'Avalon could not open this note.');
+      if (active) setSaveError(error instanceof Error ? error.message : 'Rally could not open this note.');
     }).finally(() => {
       if (active) setLoading(false);
     });
@@ -312,7 +312,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
       setSaveError(undefined);
       const patch = { title: nextTitle };
       void api.updateNote(noteId, patch).then((next) => applyNotePatch(next, patch)).catch((error: unknown) => {
-        setSaveError(error instanceof Error ? error.message : 'Avalon could not rename this note.');
+        setSaveError(error instanceof Error ? error.message : 'Rally could not rename this note.');
       }).finally(() => setSavePending(false));
     }, 500);
     return () => window.clearTimeout(timer);
@@ -387,7 +387,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
       setSegments(segmentsRef.current);
       setSaveError(undefined);
     }).catch((error: unknown) => {
-      setSaveError(error instanceof Error ? error.message : 'Avalon could not save part of this transcript.');
+      setSaveError(error instanceof Error ? error.message : 'Rally could not save part of this transcript.');
       throw error;
     }).finally(() => setSavePending(false));
     persistenceTailRef.current = operation;
@@ -439,8 +439,8 @@ export function MeetingNotesScreen(): React.JSX.Element {
         setNotesError(error instanceof Error
           ? error.message
           : mode === 'final'
-            ? 'Avalon could not create the final meeting summary.'
-            : 'Avalon could not update Control Tower.');
+            ? 'Rally could not create the final meeting summary.'
+            : 'Rally could not update Control Tower.');
         return false;
       }).finally(() => {
         if (generationTailRef.current === operation) setNotesPending(false);
@@ -504,7 +504,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
       setAudioPermissions(permissions);
       if (permissionIsBlocked(permissions.microphone) && permissionIsBlocked(permissions.systemAudio)) {
         throw new Error(
-          'Microphone and computer audio access are blocked. Open System Settings, allow Avalon, then retry recording.',
+          'Microphone and computer audio access are blocked. Open System Settings, allow Rally, then retry recording.',
         );
       }
       activeRecordingStartedAtRef.current = Date.now();
@@ -552,7 +552,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
       stopRecordingClock();
       setRecording(false);
       await dictation.stop().catch(() => undefined);
-      setSaveError(error instanceof Error ? error.message : 'Avalon could not start this recording.');
+      setSaveError(error instanceof Error ? error.message : 'Rally could not start this recording.');
       reportTelemetryProductIntent({
         kind: 'recording_start_completed',
         noteId,
@@ -619,7 +619,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
           // audio that the provider failed to finalize.
           complete = false;
           transcriptStatus = 'partial';
-          setSaveError(error instanceof Error ? error.message : 'Avalon could not finalize the transcript.');
+          setSaveError(error instanceof Error ? error.message : 'Rally could not finalize the transcript.');
         }
       }
       try {
@@ -669,7 +669,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
       }
       return complete;
     })().catch((error: unknown) => {
-      setSaveError(error instanceof Error ? error.message : 'Avalon could not finish saving this note.');
+      setSaveError(error instanceof Error ? error.message : 'Rally could not finish saving this note.');
       if (!terminalTelemetryReportedRef.current) {
         terminalTelemetryReportedRef.current = true;
         reportTelemetryProductIntent({
@@ -803,7 +803,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
         recordingState: updated.recordingStatus,
       });
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : 'Avalon could not update this note’s visibility.');
+      setSaveError(error instanceof Error ? error.message : 'Rally could not update this note’s visibility.');
     } finally {
       setVisibilityPending(false);
       setSavePending(false);
@@ -824,7 +824,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
     try {
       await desktopBridge().openMeetingAudioSettings(permissionRecoveryTarget);
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : 'Avalon could not open System Settings.');
+      setSaveError(error instanceof Error ? error.message : 'Rally could not open System Settings.');
     }
   };
   useEffect(() => {
@@ -865,7 +865,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
             Boolean(startedAt),
           )}</span>
         </div>
-        <p>{readOnly ? 'Shared read-only note' : savePending ? 'Saving…' : 'Saved to Avalon'}</p>
+        <p>{readOnly ? 'Shared read-only note' : savePending ? 'Saving…' : 'Saved to Rally'}</p>
       </header>
 
       <main className="meeting-layout">
@@ -947,7 +947,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
                 <div className="meeting-empty-state">
                   <Mic aria-hidden="true" size={24} />
                   <strong>Your transcript will appear live</strong>
-                  <p>Avalon starts with your default microphone and adds computer audio when the platform allows it.</p>
+                  <p>Rally starts with your default microphone and adds computer audio when the platform allows it.</p>
                 </div>
               )}
             </div>
@@ -998,7 +998,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
       </footer>}
 
       <Modal
-        description="Closing this window ends the meeting. Avalon saves the last of the transcript and writes the final summary before it goes."
+        description="Closing this window ends the meeting. Rally saves the last of the transcript and writes the final summary before it goes."
         footer={(
           <>
             <Button onClick={() => setCloseConfirmationOpen(false)}>Keep recording</Button>

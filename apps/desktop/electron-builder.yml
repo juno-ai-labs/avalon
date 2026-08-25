@@ -1,8 +1,8 @@
-appId: app.avalon.desktop
-productName: Avalon
-copyright: Copyright © 2026 Avalon
+appId: ai.rallywith.desktop
+productName: Rally
+copyright: Copyright © 2026 Rally
 asar: true
-artifactName: Avalon-${version}-${os}-${arch}.${ext}
+artifactName: Rally-${version}-${os}-${arch}.${ext}
 afterPack: ./scripts/sign-macos-dock-plugin.mjs
 afterAllArtifactBuild: ./scripts/finalize-macos-release.mjs
 directories:
@@ -14,7 +14,9 @@ files:
   - package.json
 # Both schemes are declared so a build that replaces an older install keeps
 # answering the `avalon://` links already circulating. `rallywithai` is the one
-# every surface mints; `avalon` is registered and never emitted.
+# every surface mints; `avalon` is registered and never emitted. The list has to
+# match LEGACY_DESKTOP_DEEP_LINK_PROTOCOLS in `@rally/contracts`: the operating
+# system only routes a scheme a build declared here.
 protocols:
   - name: Rally desktop authentication
     schemes:
@@ -28,8 +30,8 @@ publish:
 mac:
   icon: resources/icon.icon
   extraFiles:
-    - from: .native-build/AvalonDockTilePlugin.docktileplugin
-      to: PlugIns/AvalonDockTilePlugin.docktileplugin
+    - from: .native-build/RallyDockTilePlugin.docktileplugin
+      to: PlugIns/RallyDockTilePlugin.docktileplugin
   extraResources:
     - from: .native-build/app-icons
       to: app-icons
@@ -48,9 +50,9 @@ mac:
       to: native/system-audio-tap.node
   category: public.app-category.productivity
   extendInfo:
-    NSMicrophoneUsageDescription: Avalon uses the microphone only when you start dictation or meeting notes.
-    NSAudioCaptureUsageDescription: Avalon captures computer audio only when you record meeting notes.
-    NSDockTilePlugIn: AvalonDockTilePlugin.docktileplugin
+    NSMicrophoneUsageDescription: Rally uses the microphone only when you start dictation or meeting notes.
+    NSAudioCaptureUsageDescription: Rally captures computer audio only when you record meeting notes.
+    NSDockTilePlugIn: RallyDockTilePlugin.docktileplugin
   hardenedRuntime: true
   forceCodeSigning: true
   gatekeeperAssess: false
@@ -67,7 +69,7 @@ dmg:
   # Icon Composer supplies the app's adaptive asset catalog. Keep an ICNS
   # only for the disk-image volume, which still uses the legacy format.
   icon: resources/icon.icns
-  # electron-builder 26 notarizes Avalon.app, but not the disk image. The
+  # electron-builder 26 notarizes Rally.app, but not the disk image. The
   # afterAllArtifactBuild hook signs, notarizes, staples, and re-blockmaps it.
   sign: false
 win:

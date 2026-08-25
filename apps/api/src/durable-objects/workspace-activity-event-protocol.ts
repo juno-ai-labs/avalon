@@ -1,5 +1,5 @@
-import { IdSchema } from "@avalon/contracts";
-import { httpUrlSchema } from "@avalon/contracts/url-schemas";
+import { IdSchema } from "@rally/contracts";
+import { httpUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 
 export const WorkspaceActivityAudienceSchema = z.discriminatedUnion("kind", [

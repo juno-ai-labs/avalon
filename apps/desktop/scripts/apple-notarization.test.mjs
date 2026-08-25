@@ -29,7 +29,7 @@ test('notarization credential modes require complete, pinned credentials', () =>
       APPLE_APP_SPECIFIC_PASSWORD: 'secret',
       APPLE_TEAM_ID: 'WRONGTEAM1',
     }),
-    /Avalon releases require/u,
+    /Rally releases require/u,
   );
   assert.equal(
     notarizationCredentialMode({
@@ -39,17 +39,17 @@ test('notarization credential modes require complete, pinned credentials', () =>
     }),
     'api-key',
   );
-  assert.equal(notarizationCredentialMode({ APPLE_KEYCHAIN_PROFILE: 'avalon-notary' }), 'keychain-profile');
+  assert.equal(notarizationCredentialMode({ APPLE_KEYCHAIN_PROFILE: 'rally-notary' }), 'keychain-profile');
   assert.equal(
     notarizationCredentialMode({
-      APPLE_KEYCHAIN_PROFILE: 'avalon-notary',
+      APPLE_KEYCHAIN_PROFILE: 'rally-notary',
       APPLE_TEAM_ID: '7ZLT6A8W25',
     }),
     'keychain-profile',
   );
   assert.throws(
     () => notarizationCredentialMode({
-      APPLE_KEYCHAIN_PROFILE: 'avalon-notary',
+      APPLE_KEYCHAIN_PROFILE: 'rally-notary',
       APPLE_ID: 'release@example.com',
       APPLE_APP_SPECIFIC_PASSWORD: 'secret',
       APPLE_TEAM_ID: '7ZLT6A8W25',
@@ -77,15 +77,15 @@ test('notarytool arguments support Apple ID, API key, and keychain profile authe
   );
   assert.deepEqual(
     notarytoolCredentialArgs({
-      APPLE_KEYCHAIN_PROFILE: 'avalon-notary',
+      APPLE_KEYCHAIN_PROFILE: 'rally-notary',
       APPLE_KEYCHAIN: '/tmp/release.keychain-db',
     }),
-    ['--keychain-profile', 'avalon-notary', '--keychain', '/tmp/release.keychain-db'],
+    ['--keychain-profile', 'rally-notary', '--keychain', '/tmp/release.keychain-db'],
   );
 });
 
 test('base64 App Store Connect keys are materialized with owner-only permissions', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-notary-test-'));
+  const directory = await mkdtemp(join(tmpdir(), 'rally-notary-test-'));
   try {
     const pem = '-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----\n';
     const environment = await prepareNotarizationEnvironment(

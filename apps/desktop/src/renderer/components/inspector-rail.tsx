@@ -333,7 +333,7 @@ function InspectorDetail({ workstream, onDetachResource }: Pick<InspectorRailPro
           {resource.updatedAt && <div><dt>Last updated</dt><dd>{formatDateTime(resource.updatedAt)}</dd></div>}
         </dl>
         <div className="inspector-detail-actions">
-          {resource.canonicalUrl && <Button onClick={() => void window.avalon?.openExternal(resource.canonicalUrl!)}><ExternalLink size={14} /> Open source</Button>}
+          {resource.canonicalUrl && <Button onClick={() => void window.rally?.openExternal(resource.canonicalUrl!)}><ExternalLink size={14} /> Open source</Button>}
           {onDetachResource && <Button onClick={() => onDetachResource(resource)}><Trash2 size={14} /> Remove</Button>}
         </div>
       </div>

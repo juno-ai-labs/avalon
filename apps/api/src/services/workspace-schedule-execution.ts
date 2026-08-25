@@ -28,8 +28,8 @@ import {
   type ExecutionPrincipal,
   type Workstream,
   type WorkstreamWorkflowInput,
-} from "@avalon/contracts";
-import { newId } from "@avalon/db";
+} from "@rally/contracts";
+import { newId } from "@rally/db";
 
 import type { Env } from "../env";
 import type {

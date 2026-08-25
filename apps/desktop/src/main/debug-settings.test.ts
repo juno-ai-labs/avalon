@@ -13,7 +13,7 @@ import { DebugSettingsController } from './debug-settings';
 const temporaryDirectories: string[] = [];
 
 async function temporaryUserDataDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-debug-settings-'));
+  const directory = await mkdtemp(join(tmpdir(), 'rally-debug-settings-'));
   temporaryDirectories.push(directory);
   return directory;
 }

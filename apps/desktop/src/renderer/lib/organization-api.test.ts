@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../../common/desktop';
-import { AvalonApi } from './api';
+import { RallyApi } from './api';
 
 const timestamp = '2026-08-01T01:00:00.000Z';
 const workspaceId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0';
@@ -10,7 +10,7 @@ const invitationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2';
 const session: DesktopSession = {
   accessToken: 'access-token-longer-than-twenty-characters',
   expiresAt: timestamp,
-  apiBaseUrl: 'https://eu.api.with-avalon.com',
+  apiBaseUrl: 'https://eu.api.rallywith.ai',
   user: {
     id: userId,
     email: 'owner@example.com',
@@ -39,10 +39,10 @@ describe('organization and invitation API routing', () => {
       .mockResolvedValueOnce(json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=organization' }))
       .mockResolvedValueOnce(json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=invitation' }));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://eu.api.with-avalon.com', null);
+    const api = new RallyApi('https://eu.api.rallywith.ai', null);
     const organizationUrl = new URL(await api.beginGoogleLogin(
       'eu',
-      'avalon://auth/complete',
+      'rallywithai://auth/complete',
       {
         workspaceName: 'Europe Research',
         authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) },
@@ -53,7 +53,7 @@ describe('organization and invitation API routing', () => {
     expect(organizationUrl.searchParams.get('state')).toBe('organization');
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       region: 'eu',
-      returnUri: 'avalon://auth/complete',
+      returnUri: 'rallywithai://auth/complete',
       workspaceName: 'Europe Research',
       desktopAttemptId: 'a'.repeat(43),
       desktopCodeChallenge: 'c'.repeat(43),
@@ -61,7 +61,7 @@ describe('organization and invitation API routing', () => {
 
     const invitationUrl = new URL(await api.beginGoogleLogin(
       'eu',
-      'avalon://auth/complete',
+      'rallywithai://auth/complete',
       {
         invitationToken: 'invite-token-longer-than-twenty-characters',
         authAttempt: { attemptId: 'b'.repeat(43), codeChallenge: 'd'.repeat(43) },
@@ -72,7 +72,7 @@ describe('organization and invitation API routing', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
       invitationToken: 'invite-token-longer-than-twenty-characters',
       region: 'eu',
-      returnUri: 'avalon://auth/complete',
+      returnUri: 'rallywithai://auth/complete',
       desktopAttemptId: 'b'.repeat(43),
       desktopCodeChallenge: 'd'.repeat(43),
     });
@@ -90,7 +90,7 @@ describe('organization and invitation API routing', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const api = new AvalonApi('https://eu.api.with-avalon.com', null);
+    const api = new RallyApi('https://eu.api.rallywith.ai', null);
     await expect(api.getInvitationPreview(token)).resolves.toMatchObject({
       workspaceId,
       region: 'eu',
@@ -98,7 +98,7 @@ describe('organization and invitation API routing', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      `https://eu.api.with-avalon.com/auth/invitations/preview?token=${encodeURIComponent(token)}`,
+      `https://eu.api.rallywith.ai/auth/invitations/preview?token=${encodeURIComponent(token)}`,
       expect.objectContaining({ method: 'GET' }),
     );
   });
@@ -115,17 +115,17 @@ describe('organization and invitation API routing', () => {
         acceptedAt: null,
         createdAt: timestamp,
       },
-      inviteUrl: 'https://with-avalon.com/invite/#region=eu&token=invite-token',
+      inviteUrl: 'https://rallywith.ai/invite/#region=eu&token=invite-token',
       emailDelivery: 'sent',
     }, { status: 201 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const api = new AvalonApi('https://eu.api.with-avalon.com', session);
+    const api = new RallyApi('https://eu.api.rallywith.ai', session);
     await expect(api.createWorkspaceInvitation('admin@example.com', 'admin'))
       .resolves.toMatchObject({ invitation: { role: 'admin' } });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://eu.api.with-avalon.com/workspace/invitations',
+      'https://eu.api.rallywith.ai/workspace/invitations',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ email: 'admin@example.com', role: 'admin' }),
@@ -151,7 +151,7 @@ describe('organization and invitation API routing', () => {
       ...session,
       workspace: { ...session.workspace!, role: 'member' },
     };
-    const api = new AvalonApi('https://eu.api.with-avalon.com', staleSession);
+    const api = new RallyApi('https://eu.api.rallywith.ai', staleSession);
 
     await expect(api.getWorkspace()).resolves.toMatchObject({
       region: 'eu',

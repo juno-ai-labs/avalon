@@ -1,7 +1,7 @@
 # Slack permissions
 
-Every Slack OAuth scope Avalon configures, and the product behavior and model tool
-that uses it. Avalon has two independent authorization paths — an
+Every Slack OAuth scope Rally configures, and the product behavior and model tool
+that uses it. Rally has two independent authorization paths — an
 administrator-approved workspace bot installation and an optional per-person
 connection — and **neither ever stands in for the other**. This document is the
 inventory that keeps those two grants honest against the checked-in manifest.
@@ -34,18 +34,18 @@ contracts; activation acknowledgement follows
 
 ### The permission model
 
-- **Workspace bot installation** — a Slack administrator installs the Avalon app.
+- **Workspace bot installation** — a Slack administrator installs the Rally app.
   All workspace bot scopes below are required for the in-Slack Agent experience and
-  the fixed workspace model-tool bundle, and Avalon checks that the installation
+  the fixed workspace model-tool bundle, and Rally checks that the installation
   still has the complete set.
-- **Personal Slack connection** — an individual connects Slack to Avalon for
+- **Personal Slack connection** — an individual connects Slack to Rally for
   user-attributed tools. These scopes are optional. The **Connect for me** button
   and the Slack account link both request the full personal set, so a member who
   connects from either place grants the same capabilities; only a connection made
   before that convergence carries a narrower grant. A personal token does not
   necessarily contain every supported scope below.
 
-An OAuth scope is only the outer boundary. Avalon also applies workspace
+An OAuth scope is only the outer boundary. Rally also applies workspace
 membership, identity-linking, surface-policy, conversation-membership, session,
 confirmation, and audit checks.
 
@@ -70,7 +70,7 @@ example, `search_messages` is exposed as `slack_search_messages`.
 | `read_file` | `files.info` plus an authenticated private-file download | `files:read` | Returns metadata for an accessible file. Text files are downloaded only from trusted Slack HTTPS hosts and only up to 512 KiB; binary or larger content is omitted. |
 
 The workspace bot joins current and newly created public channels so mentions and
-bounded reads work there. Avalon does not poll channel history or mirror Slack
+bounded reads work there. Rally does not poll channel history or mirror Slack
 content. Private channels, DMs, MPIMs, and files remain limited by the bot's actual
 Slack membership and visibility.
 
@@ -78,40 +78,40 @@ Slack membership and visibility.
 
 | Tool | Slack API | Required bot scopes | Behavior |
 | --- | --- | --- | --- |
-| `send_message` | `chat.postMessage` | `chat:write` | Sends a bot-authored channel or thread message. Avalon supplies a stable `client_msg_id` for retry idempotency. |
+| `send_message` | `chat.postMessage` | `chat:write` | Sends a bot-authored channel or thread message. Rally supplies a stable `client_msg_id` for retry idempotency. |
 | `add_reaction` | `reactions.add` | `reactions:write` | Adds a bot reaction. Slack's `already_reacted` response is treated as a successful retry. |
 | `create_conversation` | `conversations.create` or `conversations.open` | `channels:manage`, `groups:write`, `im:write`, `mpim:write` | Creates a public/private channel by name or opens a DM/MPIM for one to eight user IDs. |
 
-These tools use Avalon's normal external-write confirmation, authorization, audit,
+These tools use Rally's normal external-write confirmation, authorization, audit,
 and durable-receipt policies. A workspace Slack task can use them without the
 initiating member creating a personal Slack connection, but only through the
-installation belonging to the same Slack team and Avalon workspace.
+installation belonging to the same Slack team and Rally workspace.
 
 ### Workspace bot scopes
 
 The production manifest requests these scopes as one administrator-approved bundle.
 
-| Permission | What Avalon uses it for |
+| Permission | What Rally uses it for |
 | --- | --- |
-| `app_mentions:read` | Receive `app_mention` events when someone invokes `@Avalon` in a channel. |
+| `app_mentions:read` | Receive `app_mention` events when someone invokes `@Rally` in a channel. |
 | `assistant:write` | Update Agent thread status and title and stream Agent output. |
-| `channels:history` | Receive public-channel follow-ups in existing Avalon threads, perform bounded explicit-retry recovery, and run authorized channel/thread/context reads. Unrelated public messages are discarded before durable queueing. |
-| `channels:join` | Join current and newly created public channels so `@Avalon` is consistently available. |
+| `channels:history` | Receive public-channel follow-ups in existing Rally threads, perform bounded explicit-retry recovery, and run authorized channel/thread/context reads. Unrelated public messages are discarded before durable queueing. |
+| `channels:join` | Join current and newly created public channels so `@Rally` is consistently available. |
 | `channels:manage` | Create a public channel with workspace `slack_create_conversation`. |
 | `channels:read` | Discover public channels, read conversation metadata, maintain bot membership, classify the Slack surface, list visible members, and detect a Slack Connect channel before an unfurl names a work stream. |
 | `chat:write` | Post and stream Agent replies, errors, controls, proactive notifications, automation results, and workspace `slack_send_message` output. |
 | `commands` | Receive `/avalon` slash commands and Slack global or message shortcuts. |
 | `files:read` | Read metadata and bounded textual content for files visible to the bot. |
-| `groups:history` | Receive private-channel follow-ups in existing Avalon threads, perform bounded explicit-retry recovery, and run authorized private-channel/thread/context reads. Unrelated private messages are discarded before durable queueing. |
+| `groups:history` | Receive private-channel follow-ups in existing Rally threads, perform bounded explicit-retry recovery, and run authorized private-channel/thread/context reads. Unrelated private messages are discarded before durable queueing. |
 | `groups:read` | Read invited private-channel metadata, list visible members, and detect an externally shared private channel before an unfurl names a work stream. It does not grant access to private channels the bot has not joined. |
 | `groups:write` | Create a private channel with workspace `slack_create_conversation`. |
 | `im:history` | Receive Agent DM prompts and read accessible DM history. |
 | `im:read` | Discover bot-visible direct-message conversations and membership, and read a DM's conversation metadata to tell an ordinary DM from a Slack Connect DM before an unfurl names a work stream. |
 | `im:write` | Open an Agent DM for account linking, notifications, automation delivery, or workspace `slack_create_conversation`. |
-| `links:read` | Receive `link_shared` events for supported Avalon URLs. Slack's own permalink for a thread Avalon was summoned in is read with `chat.getPermalink`, which needs no scope of its own beyond the bot's access to that conversation. |
-| `links:write` | Attach a work-stream preview — title, status, last activity, origin — to an eligible Avalon URL with `chat.unfurl`, or an anonymous card where the audience is not known to be internal. |
+| `links:read` | Receive `link_shared` events for supported Rally URLs. Slack's own permalink for a thread Rally was summoned in is read with `chat.getPermalink`, which needs no scope of its own beyond the bot's access to that conversation. |
+| `links:write` | Attach a work-stream preview — title, status, last activity, origin — to an eligible Rally URL with `chat.unfurl`, or an anonymous card where the audience is not known to be internal. |
 | `mpim:history` | Read accessible multi-person-DM history and threads. |
-| `mpim:read` | Discover accessible multi-person DMs and membership, and read their conversation metadata for the same unfurl audience check. Avalon does not subscribe to ordinary `message.mpim` traffic. |
+| `mpim:read` | Discover accessible multi-person DMs and membership, and read their conversation metadata for the same unfurl audience check. Rally does not subscribe to ordinary `message.mpim` traffic. |
 | `mpim:write` | Open a group DM with workspace `slack_create_conversation`. |
 | `reactions:read` | Receive bounded reaction-added and reaction-removed activity for explicitly configured automations. |
 | `reactions:write` | Add an emoji reaction with workspace `slack_add_reaction`, and add the host-owned `eyes` reaction to the exact triggering DM or mention after durable admission and authorization but before context gathering or workstream processing. Slack's `already_reacted` response makes retries idempotent; a provider-side acknowledgement failure is logged and does not discard the admitted request. |
@@ -122,7 +122,7 @@ The production manifest requests these scopes as one administrator-approved bund
 | `users:read` | Resolve Slack users, reject bots or deactivated accounts, read display names and avatars, and resolve notification recipients. |
 | `users:read.email` | Search or match user email data. Notification lookup never silently links or authenticates an account. |
 
-The corresponding workspace capability grant stored by Avalon is:
+The corresponding workspace capability grant stored by Rally is:
 
 ```text
 slack.search
@@ -139,12 +139,12 @@ slack.notifications.write
 ### Personal user scopes
 
 Personal scopes preserve the connected user's own Slack visibility and attribution.
-Avalon requests them as the provider scope set behind one
+Rally requests them as the provider scope set behind one
 `slack.personal.mcp` capability. Slack's hosted MCP server remains authoritative
 for which live tools exist and which of these scopes each operation needs;
-Avalon does not maintain a tool-to-scope snapshot for that server.
+Rally does not maintain a tool-to-scope snapshot for that server.
 
-| Permission | What Avalon uses it for |
+| Permission | What Rally uses it for |
 | --- | --- |
 | `canvases:read` | Permit the hosted user-tool plane to read visible canvases. |
 | `canvases:write` | Permit the hosted user-tool plane to create or update canvases. |
@@ -180,25 +180,25 @@ current visibility.
 
 Event subscriptions are not additional OAuth scopes. The manifest subscribes to:
 
-| Event | What Avalon uses it for |
+| Event | What Rally uses it for |
 | --- | --- |
 | `app_context_changed` | Store the user's bounded active-view entity metadata so the next Agent prompt can understand the channel, thread, canvas, or list the user is viewing. |
 | `app_home_opened` | Publish the linked, unlinked, or administrator App Home view. |
-| `app_mention` | Start or continue a channel task when a user explicitly mentions Avalon. |
+| `app_mention` | Start or continue a channel task when a user explicitly mentions Rally. |
 | `app_uninstalled` | Mark the workspace installation disconnected and stop routing work to it. |
 | `channel_created` | Join a newly created public channel. |
-| `link_shared` | Produce authorized previews for supported Avalon links. |
+| `link_shared` | Produce authorized previews for supported Rally links. |
 | `file_shared` | Offer bounded file-share activity to explicitly configured automations. |
 | `member_joined_channel` | Trigger explicitly configured channel-membership automations. |
 | `member_left_channel` | Trigger explicitly configured channel-membership automations. |
-| `message.channels` | Continue an Avalon-owned public thread or offer bounded message activity to an explicitly configured automation; unmatched messages are discarded before durable queueing. |
-| `message.groups` | Continue an Avalon-owned invited-private-channel thread or offer bounded activity to an authorized personal automation; unmatched messages are discarded before durable queueing. |
+| `message.channels` | Continue a Rally-owned public thread or offer bounded message activity to an explicitly configured automation; unmatched messages are discarded before durable queueing. |
+| `message.groups` | Continue a Rally-owned invited-private-channel thread or offer bounded activity to an authorized personal automation; unmatched messages are discarded before durable queueing. |
 | `message.im` | Receive Agent prompts and follow-ups, or offer bounded DM activity to an authorized personal automation. |
 | `reaction_added` | Offer bounded emoji-reaction activity to explicitly configured automations. |
 | `reaction_removed` | Offer bounded emoji-reaction removal activity to explicitly configured automations. |
 | `tokens_revoked` | Mark affected credentials unhealthy and require reconnection. |
 
-Avalon intentionally does not subscribe to `message.mpim` or broad file lifecycle
+Rally intentionally does not subscribe to `message.mpim` or broad file lifecycle
 events. `file_shared` carries only bounded trigger evidence; it does not import file
 content.
 
@@ -210,7 +210,7 @@ A Slack-originated task receives this source provenance in its system prompt:
 - channel ID and, when Slack provides it, channel name;
 - thread timestamp;
 - invocation type and channel type;
-- the matched Avalon member ID when a confirmed link exists;
+- the matched Rally member ID when a confirmed link exists;
 - bounded active-view entity metadata supplied by Slack; and
 - attachment metadata from the triggering interaction.
 
@@ -221,21 +221,21 @@ A Slack-originated task receives this source provenance in its system prompt:
   Agent events or delivering workspace-bot messages. These are two grants, not one
   with two sources.
 - **A workspace write goes only through the installation belonging to the same
-  Slack team and Avalon workspace.**
+  Slack team and Rally workspace.**
 - **A scope is the outer boundary, never the authorization.** Membership,
   identity-linking, surface policy, conversation membership, session, confirmation,
   and audit checks all still apply.
 - **The manifest and the runtime scope and capability declarations change
   together.** A scope requested but not declared is a permission nobody can explain;
   a scope declared but not requested is a tool that fails at Slack.
-- **Avalon does not durably copy surrounding Slack messages.** Reads are bounded and
+- **Rally does not durably copy surrounding Slack messages.** Reads are bounded and
   transient; there is no mirror.
 - **Active-view and attachment metadata are labeled as untrusted evidence, not
   system instructions.**
 - **Notification lookup never silently links or authenticates an account**, even
   though `users:read.email` makes the match possible.
 - **`groups:read` does not grant access to private channels the bot has not
-  joined.** Membership is Slack's to enforce and Avalon does not work around it.
+  joined.** Membership is Slack's to enforce and Rally does not work around it.
 
 ## Boundary
 
@@ -262,10 +262,10 @@ the Slack product surface, the ingress, or the registration:
 ## Failure modes and limits
 
 - **Existing workspace installations must reconnect after an expanded permission
-  set is deployed.** Until Slack returns all expected bot scopes, Avalon reports the
+  set is deployed.** Until Slack returns all expected bot scopes, Rally reports the
   installation as reconnect-required. **It still offers the tools**: the report is a
   diagnosis, not a gate, and a call that needs a missing scope fails on Slack's
-  answer rather than on Avalon's record of it.
+  answer rather than on Rally's record of it.
 - **A personal token may be missing scopes this document lists.** Connections made
   before **Connect for me** and the account link converged on the full set carry a
   narrower grant, and the tool fails at Slack rather than being hidden.
@@ -289,7 +289,7 @@ covers the capability mapping and each tool's declared scopes, and
 diagnosis and that it does not gate.
 
 Run one with
-`pnpm --filter @avalon/api exec vitest run test/slack-agent-ingress.test.ts` — the
+`pnpm --filter @rally/api exec vitest run test/slack-agent-ingress.test.ts` — the
 path is package-relative.
 
 `slack manifest validate` reads the same manifest through the checked-in `.slack`
@@ -318,7 +318,7 @@ of the document — was not recorded as dated entries and was not reconstructed.
 ### 2026-08-12 — Personal scopes authorize a live MCP plane, not guessed tools
 
 **What changed:** The full personal Slack scope set now maps to one
-`slack.personal.mcp` Avalon capability. The inventory describes the provider
+`slack.personal.mcp` Rally capability. The inventory describes the provider
 features each scope permits without claiming a fixed MCP tool name.
 
 **Why:** Slack owns and can change its hosted MCP tools independently. Mapping
@@ -330,9 +330,9 @@ tool mapping. OAuth and Marketplace review still need an exact justification
 for every requested permission even though the remote tool catalog is dynamic.
 
 **Consequences:** A scope addition still requires review here, in code, and at
-Slack. A tool addition on Slack's server does not require an Avalon change unless
-it needs a provider OAuth scope Avalon has not requested. Remote annotations do
+Slack. A tool addition on Slack's server does not require a Rally change unless
+it needs a provider OAuth scope Rally has not requested. Remote annotations do
 not relax confirmation or receipt policy; every live MCP operation is treated as
-a write until Avalon has an independent trusted classifier.
+a write until Rally has an independent trusted classifier.
 
 Shipped in the pull request for this change.

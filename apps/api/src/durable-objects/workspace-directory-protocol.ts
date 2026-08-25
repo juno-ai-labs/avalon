@@ -3,7 +3,7 @@ import {
   WorkspaceWorkstreamCursorSchema,
   WorkspaceWorkstreamStateVersionSchema,
   WorkstreamSchema,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { z } from "zod";
 
 import { WorkstreamRegionalEffectEnvelopeSchema } from "./workstream-regional-effect";

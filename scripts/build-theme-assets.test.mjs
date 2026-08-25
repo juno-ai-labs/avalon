@@ -314,7 +314,7 @@ test('a bundled face points at the file that ships, and a remote one never does'
   // The renderer asking the remote host directly would announce the reader to
   // whoever runs it, on every cold start, for as long as the theme is in use.
   assert.ok(!css.includes('https://fonts.example'), 'a remote URL reached the stylesheet');
-  assert.match(css, new RegExp(`url\\('avalon-font://cache/${fontCacheId(remote.src.url)}\\.woff2'\\)`, 'u'));
+  assert.match(css, new RegExp(`url\\('rally-font://cache/${fontCacheId(remote.src.url)}\\.woff2'\\)`, 'u'));
 });
 
 test('a bundled font that is not in the repository fails the build', () => {

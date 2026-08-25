@@ -1,10 +1,10 @@
 import {
   renderWorkOpportunityAdmissionMessages,
   renderWorkOpportunityRankingMessages,
-} from "@avalon/agent-harness";
+} from "@rally/agent-harness";
 import {
   ConnectorError,
-} from "@avalon/connectors";
+} from "@rally/connectors";
 import {
   AutomationPluginIconSchema,
   WorkOpportunityPageSchema,
@@ -14,8 +14,8 @@ import {
   type UserId,
   type WorkOpportunity,
   type WorkspaceId,
-} from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+} from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";

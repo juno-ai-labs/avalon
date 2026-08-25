@@ -1,5 +1,5 @@
-import { asUserId } from "@avalon/contracts";
-import { asWorkspaceId } from "@avalon/contracts";
+import { asUserId } from "@rally/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { __realtimeTranscriptionTesting } from "../src/services/realtime-transcription-service";

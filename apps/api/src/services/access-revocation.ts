@@ -1,4 +1,4 @@
-import { IdSchema, TimestampSchema, WorkspaceIdSchema } from "@avalon/contracts";
+import { IdSchema, TimestampSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { z } from "zod";
 
 import type { Env } from "../env";

@@ -51,7 +51,7 @@ cursor, retry/repair positions, validation issues, and counts remain JSON
 columns. The `request` and `attempt` rows join on `inference_request_id`;
 `event_id` adds the event type and is the stable deduplication key.
 
-`substream_id` is the canonical product substream inside a work stream. Avalon
+`substream_id` is the canonical product substream inside a work stream. Rally
 currently runs the main substream, so work-stream-linked inference that has no
 more specific identity is recorded as `"0"`; inference unrelated to a work
 stream leaves the column null. A root run and any inline children inherit the
@@ -204,8 +204,8 @@ consumer, and DLQ name.
 Run the focused suites with:
 
 ```text
-pnpm --filter @avalon/api exec vitest run test/inference-lakehouse.test.ts
-pnpm --filter @avalon/api test:workers -- queue-dispatch.test.ts
+pnpm --filter @rally/api exec vitest run test/inference-lakehouse.test.ts
+pnpm --filter @rally/api test:workers -- queue-dispatch.test.ts
 node --test scripts/ensure-cloudflare-inference-lakehouse.test.mjs
 ```
 
@@ -266,7 +266,7 @@ inference-pair interpretation, raw-object verification, and missing-row
 procedure in [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference). Do not
 improvise a D1 query or use the provisioning credential as a general-purpose
 reader. Cloudflare's R2 SQL surface is beta; its invocation syntax may move. The
-runbook links the current upstream query guide while keeping Avalon's table,
+runbook links the current upstream query guide while keeping Rally's table,
 bucket, event, privacy, and authority rules local and stable. If the workspace
 is EU, stop: absence is expected and the lakehouse cannot diagnose that run.
 

@@ -1,7 +1,8 @@
+import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { TelemetryBreadcrumbSidecarSchema } from '@avalon/contracts';
+import { TelemetryBreadcrumbSidecarSchema } from '@rally/contracts';
 import { uuidV7 } from './telemetry-identity';
 
 const ManifestSchema = z.object({
@@ -203,7 +204,7 @@ export class NativeCrashUploader {
         method: 'POST',
         headers: authenticated
           ? { Authorization: `Bearer ${authenticated.accessToken}` }
-          : { 'X-Avalon-Telemetry-Capability': anonymous!.capability },
+          : { [RALLY_HEADERS.TELEMETRY_CAPABILITY]: anonymous!.capability },
         body: form,
         signal: AbortSignal.timeout(30_000),
       });
@@ -242,7 +243,7 @@ export class NativeCrashUploader {
   }
 
   private async uploadId(path: string): Promise<string> {
-    const sidecarPath = `${path}.avalon.json`;
+    const sidecarPath = `${path}.rally.json`;
     try {
       const parsed = UploadSidecarSchema.safeParse(JSON.parse(await readFile(sidecarPath, 'utf8')) as unknown);
       if (parsed.success) return parsed.data.uploadId;
@@ -261,7 +262,7 @@ export class NativeCrashUploader {
   }
 
   private async removeDump(path: string): Promise<void> {
-    await Promise.all([rm(path, { force: true }), rm(`${path}.avalon.json`, { force: true })]);
+    await Promise.all([rm(path, { force: true }), rm(`${path}.rally.json`, { force: true })]);
   }
 
   private state(state: NativeCrashUploadState): void {

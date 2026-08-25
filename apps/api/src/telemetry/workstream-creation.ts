@@ -1,10 +1,10 @@
-import type { UserId, WorkspaceId } from "@avalon/contracts";
+import type { UserId, WorkspaceId } from "@rally/contracts";
 import {
   TELEMETRY_CONNECTOR_TYPES,
   TELEMETRY_WORKSTREAM_CREATION_SOURCES,
   type TelemetryConnectorType,
   type TelemetryWorkstreamCreationSource,
-} from "@avalon/contracts/telemetry";
+} from "@rally/contracts/telemetry";
 
 import type { Env, IdentityAuthContext } from "../env";
 import { logWarn } from "../observability/logger";

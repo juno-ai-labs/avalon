@@ -62,6 +62,6 @@ export function meetingAudioSettingsUrl(
   return permission === 'microphone'
     ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
     // macOS presents Screen Recording and System Audio Recording Only in one
-    // privacy pane even though Avalon's Core Audio tap never requests screen.
+    // privacy pane even though Rally's Core Audio tap never requests screen.
     : 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture';
 }

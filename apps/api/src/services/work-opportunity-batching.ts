@@ -1,4 +1,4 @@
-import { asWorkspaceId, type WorkspaceId } from "@avalon/contracts";
+import { asWorkspaceId, type WorkspaceId } from "@rally/contracts";
 import { workspaceDOName } from "../durable-objects/names";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";

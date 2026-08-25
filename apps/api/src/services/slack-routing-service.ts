@@ -1,4 +1,4 @@
-import type { Region } from "@avalon/contracts";
+import type { Region } from "@rally/contracts";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { SlackAgentService } from "./slack-agent-service";

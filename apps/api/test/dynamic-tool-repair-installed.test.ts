@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type * as AgentHarness from "@avalon/agent-harness";
+import type * as AgentHarness from "@rally/agent-harness";
 
 /**
  * That the host-side repair is still wired into `validateDynamicConnectorTools`.
@@ -21,7 +21,7 @@ const repairSpy = vi.hoisted(() => vi.fn(
   (schema: Record<string, unknown>) => ({ ...schema, "x-repaired": true }),
 ));
 
-vi.mock("@avalon/agent-harness", async (importOriginal) => ({
+vi.mock("@rally/agent-harness", async (importOriginal) => ({
   ...(await importOriginal<typeof AgentHarness>()),
   repairRootUnionForProviders: repairSpy,
 }));

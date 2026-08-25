@@ -1,4 +1,4 @@
-import type { HarnessTool, HarnessToolContext, ModelMessageContentPart } from "@avalon/agent-harness";
+import type { HarnessTool, HarnessToolContext, ModelMessageContentPart } from "@rally/agent-harness";
 import {
   ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
   AttachmentListResourcesArgumentsSchema,
@@ -16,7 +16,7 @@ import {
   type ContentMode,
   type SuggestedAttachmentToolCall,
   type WorkstreamWorkflowInput,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { z } from "zod";
 import { extractText, getDocumentProxy } from "unpdf";
 import type { Env } from "../env";

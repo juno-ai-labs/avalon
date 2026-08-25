@@ -1,4 +1,4 @@
-import { MessageAttachmentSchema, ResourceSchema, WorkstreamSchema } from "@avalon/contracts";
+import { MessageAttachmentSchema, ResourceSchema, WorkstreamSchema } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 
 import { StartedWorkOpportunityResponseSchema } from "../src/routes/work-opportunities";

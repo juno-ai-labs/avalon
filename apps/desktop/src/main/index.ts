@@ -1,3 +1,4 @@
+import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import {
   ActivateWorkspaceRequestSchema,
   ClientFeatureFlagsSchema,
@@ -9,14 +10,14 @@ import {
   WorkspaceOnboardingStateSchema,
   type Session as WireSession,
   type ClientFeatureFlags,
-} from '@avalon/contracts';
+} from '@rally/contracts';
 import {
   DESKTOP_DEEP_LINK_PROTOCOL,
   DESKTOP_DEEP_LINK_PROTOCOLS,
   isDesktopDeepLinkProtocol,
-} from '@avalon/contracts/desktop-deep-link';
+} from '@rally/contracts/desktop-deep-link';
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, renameSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, join, resolve, sep } from 'node:path';
@@ -43,7 +44,7 @@ import {
 } from 'electron';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import type {
-  AvalonRegion,
+  RallyRegion,
   DesktopApplicationSettings,
   DesktopDeepLinkEntrypoint,
   DesktopDeepLinkNavigation,
@@ -166,6 +167,7 @@ import {
 import {
   migrateLegacyUserDataStoredSessionFile,
   migrateLegacyStoredSessionFile,
+  migrateSupersededSessionDirectory,
   readStoredAuthFile,
   readStoredProfileFile,
   readStoredSessionFile,
@@ -200,7 +202,7 @@ import {
   type UpdateStatus,
 } from './updater';
 import {
-  legacyPackagedUserDataDirectory,
+  supersededUserDataDirectories,
   userDataDirectoryForLaunch,
 } from './user-data-path';
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
@@ -208,7 +210,7 @@ const requireNativeModule = createRequire(import.meta.url);
 const executeFile = promisify(execFile);
 // Never let inherited development environment variables choose the renderer
 // or API origins of an installed app. The preload bridge is privileged, so a
-// packaged build must remain pinned to its embedded renderer and Avalon hosts.
+// packaged build must remain pinned to its embedded renderer and Rally hosts.
 const rendererDevelopmentUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL'];
 const allowedExternalProtocols = new Set(['https:', 'http:']);
 /**
@@ -524,7 +526,7 @@ async function reportJavascriptErrorCandidate(
   await Promise.all(reports);
 }
 
-function avalonWindows(): BrowserWindow[] {
+function rallyWindows(): BrowserWindow[] {
   return [mainWindow, settingsWindow, ...meetingWindows]
     .filter((window): window is BrowserWindow => Boolean(window && !window.isDestroyed()));
 }
@@ -561,11 +563,19 @@ protocol.registerSchemesAsPrivileged([{
   },
 }, ...themeAssetSchemes]);
 
-// Keep development credentials and user data out of the production Avalon
+// Keep development credentials and user data out of the production Rally
 // namespace. Development Electron binaries are not signed with the stable
-// release identity, so sharing `Avalon Safe Storage` would make macOS re-prompt
+// release identity, so sharing `Rally Safe Storage` would make macOS re-prompt
 // whenever their ad-hoc code requirement changes.
-app.setName(app.isPackaged ? 'Avalon' : 'Avalon Development');
+//
+// The name is also what macOS derives the safeStorage keychain entry from, so
+// the rename from Rally leaves `Rally Safe Storage` unreadable. Only Lockdown
+// mode binds a session to that key; the default global mode does not, which is
+// why the directory below carries almost everyone across and Lockdown users
+// sign in once more. There is no Electron API that names the keychain entry
+// independently of the app, so this is a consequence of the rename rather than
+// a choice made here.
+app.setName(app.isPackaged ? 'Rally' : 'Rally Development');
 const appDataDirectory = app.getPath('appData');
 app.setPath(
   'userData',
@@ -573,6 +583,9 @@ app.setPath(
     appDataDirectory,
     app.isPackaged,
     app.commandLine.getSwitchValue('user-data-dir'),
+    // Synchronous on purpose: userData has to be settled before Chromium or any
+    // module that reads a path off it is allowed to observe it.
+    { exists: existsSync, rename: renameSync },
   ),
 );
 
@@ -584,19 +597,19 @@ function userDataDirectory(): string {
  * The theme choice the last renderer reported, resolved for `backgroundColor`
  * on every window this process opens. It is read from the preference file at
  * startup so the very first window of a launch is already the right colour;
- * before that read completes it is Terra following the Mac, what Avalon ships
+ * before that read completes it is Terra following the Mac, what Rally ships
  * with.
  *
  * The choice, not the appearance. `system` resolves against whatever the Mac is
  * set to *when it is read*, so storing the resolved value meant a Mac that
- * changed appearance while Avalon was closed opened the next launch's first
+ * changed appearance while Rally was closed opened the next launch's first
  * window in yesterday's colour — precisely the flash this exists to prevent.
  */
 let windowThemeChoice: ThemeChoice = defaultThemeChoice;
 
 /**
  * Resolved at the moment a window is constructed rather than cached, so it also
- * follows a Mac that changes appearance while Avalon is running.
+ * follows a Mac that changes appearance while Rally is running.
  */
 function windowBackgroundColor(): string {
   return themeWindowBackground[resolveTheme(windowThemeChoice, nativeTheme.shouldUseDarkColors)];
@@ -663,7 +676,7 @@ function flagSessionIdentity(userId: string, apiBaseUrl: string): string {
 
 function broadcastSessionChanged(value: WireSession | null): void {
   const exposed = value ? publicSession(value) : null;
-  for (const window of avalonWindows()) window.webContents.send('session:changed', exposed);
+  for (const window of rallyWindows()) window.webContents.send('session:changed', exposed);
   // Whether Developer may be offered belongs to the signed-in account, so a
   // sign-in asks again immediately rather than waiting out a poll interval, and
   // a sign-out closes the section on the way past. The identity is what makes
@@ -697,7 +710,7 @@ function broadcastSessionChanged(value: WireSession | null): void {
         flushTelemetryAndRetryLink();
       })
       .catch((error: unknown) => {
-        logWarn('avalon', 'could not synchronize the Product analytics preference', error);
+        logWarn('rally', 'could not synchronize the Product analytics preference', error);
       });
   }
   if (telemetryAccountBinding && telemetryAccountBinding !== nextBinding) {
@@ -720,7 +733,7 @@ function broadcastSessionChanged(value: WireSession | null): void {
         void invalidateActiveNativeCrashGeneration({
           rootDirectory: join(userDataDirectory(), 'telemetry', 'native-crashes'),
           invalidatedAt: new Date(),
-        }).catch((error: unknown) => logWarn('avalon', 'could not invalidate the native crash generation', error));
+        }).catch((error: unknown) => logWarn('rally', 'could not invalidate the native crash generation', error));
       }
       if (productAnalyticsSettingsController.state().effectiveEnabled && telemetryLaunchId) {
         // The old generation sidecar is route-bound with its invalidated dump.
@@ -739,7 +752,7 @@ async function rotateTelemetryEpochsAfterAccountChange(): Promise<void> {
   try {
     telemetryIdentity = await rotateTelemetryEpochs(userDataDirectory());
   } catch (error) {
-    logWarn('avalon', 'could not rotate telemetry identity epochs', error);
+    logWarn('rally', 'could not rotate telemetry identity epochs', error);
   }
 }
 
@@ -773,7 +786,7 @@ function linkCurrentAnonymousTelemetry(): Promise<void> {
       telemetryRoute = { ...telemetryRoute, anonymous: null };
     }
   })().catch((error: unknown) => {
-    logWarn('avalon', 'could not link the anonymous analytics epoch', error);
+    logWarn('rally', 'could not link the anonymous analytics epoch', error);
   }).finally(() => { telemetryLinkInFlight = null; });
   return telemetryLinkInFlight;
 }
@@ -821,7 +834,7 @@ function errorCode(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error ? String(error.code) : undefined;
 }
 
-function regionForStoredSession(value: WireSession): AvalonRegion {
+function regionForStoredSession(value: WireSession): RallyRegion {
   const region = value.workspace?.region ?? 'global';
   if (runtimeConfig().api[region] !== value.apiBaseUrl) {
     throw new Error('The session endpoint does not match its credential binding');
@@ -846,7 +859,7 @@ function decryptStoredSessionValue(value: Uint8Array): string {
 }
 
 function broadcastApplicationSettingsChanged(settings: DesktopApplicationSettings): void {
-  for (const window of avalonWindows()) window.webContents.send('application-settings:changed', settings);
+  for (const window of rallyWindows()) window.webContents.send('application-settings:changed', settings);
 }
 
 function storedSessionEncryptionValues() {
@@ -917,7 +930,7 @@ async function clearCredentialsForLockdownRelogin(): Promise<void> {
   let failure: unknown;
   const directories = [
     userDataDirectory(),
-    ...(app.isPackaged ? [legacyPackagedUserDataDirectory(appDataDirectory)] : []),
+    ...supersededUserDataDirectories(appDataDirectory, app.isPackaged),
   ];
   for (const directory of directories) {
     try {
@@ -1039,22 +1052,22 @@ const developerSettingsFlagController = new DeveloperSettingsFlagController({
   // is serving an answer it can no longer confirm, and then is not. A quieter
   // level for the recovery would leave the warning that opened it unclosed.
   onAvailabilityChange: (reachable, error) => {
-    if (reachable) logWarn('avalon', 'the developer settings flag is readable again');
-    else logWarn('avalon', 'could not read the developer settings flag', error);
+    if (reachable) logWarn('rally', 'the developer settings flag is readable again');
+    else logWarn('rally', 'could not read the developer settings flag', error);
   },
 });
 
 const menuBarContentStore = new MenuBarContentStore({
-  requestJson: avalonApiRequest,
+  requestJson: rallyApiRequest,
   onChange: () => menuBarController.refresh(),
-  logWarning: (message, error) => logWarn('avalon', message, error),
+  logWarning: (message, error) => logWarn('rally', message, error),
   suggestedWorkAvailable: () => suggestedWorkAvailable,
 });
 
 const launchAtLoginController = new LaunchAtLoginController({
   supported: process.platform === 'darwin',
   // A development run's executable is a shared Electron binary in
-  // `node_modules`, not an installed Avalon. Registering it would add a login
+  // `node_modules`, not an installed Rally. Registering it would add a login
   // item that outlives the checkout, so the enabled-by-default registration is
   // only made by a packaged build. The toggle itself still works.
   registersDefault: process.platform === 'darwin' && app.isPackaged,
@@ -1066,7 +1079,7 @@ const launchAtLoginController = new LaunchAtLoginController({
   readSettings: () => readStoredApplicationSettings(userDataDirectory()),
   writeSettings: (settings) => updateStoredApplicationSettings(userDataDirectory(), settings),
   onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
-  logWarning: (message, error) => logWarn('avalon', message, error),
+  logWarning: (message, error) => logWarn('rally', message, error),
 });
 
 /**
@@ -1083,7 +1096,7 @@ function menuBarItemIsLive(): boolean {
   return menuBarController.available() && menuBarController.enabled();
 }
 
-/** A status item click does not activate Avalon the way a Dock click does, so
+/** A status item click does not activate Rally the way a Dock click does, so
  * anything opened from the menu would appear behind the frontmost app. */
 function activateFromMenuBar(): void {
   applicationOpenObserver.opened('menu_bar');
@@ -1093,7 +1106,7 @@ function activateFromMenuBar(): void {
 function openMainWindowFromMenuBar(): void {
   activateFromMenuBar();
   void createMainWindow().catch((error: unknown) => {
-    logError('avalon', 'failed to open the main window from the menu bar', error);
+    logError('rally', 'failed to open the main window from the menu bar', error);
   });
 }
 
@@ -1104,10 +1117,10 @@ function startSuggestedWorkstreamFromMenuBar(suggestion: MenuBarSuggestion): voi
       emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'menu_bar');
     })
     .catch((error: unknown) => {
-      // The click has to land somewhere. Opening Avalon puts the person in
+      // The click has to land somewhere. Opening Rally puts the person in
       // front of the same suggestion on the home screen, where starting it
       // again reports its own failure.
-      logWarn('avalon', 'could not start a suggested work stream from the menu bar', error);
+      logWarn('rally', 'could not start a suggested work stream from the menu bar', error);
       openMainWindowFromMenuBar();
     });
 }
@@ -1143,7 +1156,7 @@ const menuBarController = new MenuBarController({
     newMeetingNote: () => {
       activateFromMenuBar();
       void createMeetingWindow(undefined, 'menu_bar').catch((error: unknown) => {
-        logError('avalon', 'failed to open meeting notes from the menu bar', error);
+        logError('rally', 'failed to open meeting notes from the menu bar', error);
       });
     },
     newWorkstream: () => {
@@ -1159,13 +1172,13 @@ const menuBarController = new MenuBarController({
       activateFromMenuBar();
       emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'menu_bar');
     },
-    openAvalon: openMainWindowFromMenuBar,
+    openRally: openMainWindowFromMenuBar,
     quit: () => app.quit(),
   },
   readSettings: () => readStoredApplicationSettings(userDataDirectory()),
   writeSettings: (settings) => updateStoredApplicationSettings(userDataDirectory(), settings),
   onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
-  logWarning: (message, error) => logWarn('avalon', message, error),
+  logWarning: (message, error) => logWarn('rally', message, error),
 });
 
 function desktopApplicationSettings(
@@ -1243,13 +1256,13 @@ async function readDeveloperSettingsFlag(): Promise<boolean> {
     const renewed = await withDeadline(
       coalescedRefreshSession(),
       DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS,
-      'Renewing the Avalon session for the feature flag poll timed out',
+      'Renewing the Rally session for the feature flag poll timed out',
     );
     response = await ask(renewed.accessToken);
   }
   if (!response.ok) throw await responseError(response);
   const parsed = ClientFeatureFlagsSchema.safeParse(await response.json());
-  if (!parsed.success) throw new Error('Avalon returned an unreadable feature flag response');
+  if (!parsed.success) throw new Error('Rally returned an unreadable feature flag response');
   observeClientFeatureFlags(parsed.data);
   return parsed.data.developerSettings;
 }
@@ -1264,12 +1277,12 @@ async function readDeveloperSettingsFlag(): Promise<boolean> {
  * 401, and it always settles: a connection that hangs would otherwise wedge the
  * status item's content for the life of the process.
  */
-async function avalonApiRequest(
+async function rallyApiRequest(
   path: string,
   init?: { method: 'POST'; body: unknown },
 ): Promise<unknown> {
   const stored = await loadStoredAuth();
-  if (!stored) throw new Error('No Avalon session is available');
+  if (!stored) throw new Error('No Rally session is available');
   const apiBaseUrl = apiBaseForAuth(stored);
   const ask = async (accessToken: string): Promise<Response> => net.fetch(`${apiBaseUrl}${path}`, {
     method: init?.method ?? 'GET',
@@ -1286,7 +1299,7 @@ async function avalonApiRequest(
     const renewed = await withDeadline(
       coalescedRefreshSession(),
       MENU_BAR_REQUEST_TIMEOUT_MS,
-      'Renewing the Avalon session for the menu bar timed out',
+      'Renewing the Rally session for the menu bar timed out',
     );
     response = await ask(renewed.accessToken);
   }
@@ -1331,7 +1344,7 @@ async function migrateLegacySessionToSplitStorage(): Promise<StoredAuth | null> 
     const parsed: unknown = JSON.parse(decryptStoredSessionValue(encrypted));
     const legacySession = parseLegacyStoredSession(parsed);
     if (!legacySession) {
-      logWarn('avalon', 'the legacy desktop session did not match its durable schema');
+      logWarn('rally', 'the legacy desktop session did not match its durable schema');
       return null;
     }
     const auth = await writeSplitSessionFiles(legacySession);
@@ -1340,7 +1353,7 @@ async function migrateLegacySessionToSplitStorage(): Promise<StoredAuth | null> 
     return auth;
   } catch (error) {
     if (errorCode(error) !== 'ENOENT') {
-      logWarn('avalon', 'could not migrate the encrypted desktop session', error);
+      logWarn('rally', 'could not migrate the encrypted desktop session', error);
     }
     return null;
   }
@@ -1353,14 +1366,14 @@ async function loadStoredAuth(): Promise<StoredAuth | null> {
     const parsed: unknown = JSON.parse(decryptStoredSessionValue(encrypted));
     const auth = parseStoredAuth(parsed);
     if (!auth) {
-      logWarn('avalon', 'the stored desktop credential did not match its durable schema');
+      logWarn('rally', 'the stored desktop credential did not match its durable schema');
       return null;
     }
     inMemoryAuth = auth;
     return auth;
   } catch (error) {
     if (errorCode(error) === 'ENOENT') return migrateLegacySessionToSplitStorage();
-    logWarn('avalon', 'could not restore the stored desktop credential', error);
+    logWarn('rally', 'could not restore the stored desktop credential', error);
     return null;
   }
 }
@@ -1375,19 +1388,19 @@ async function loadStoredSession(): Promise<WireSession | null> {
     const parsed: unknown = JSON.parse(decryptStoredSessionValue(encrypted));
     const profile = parseStoredProfile(parsed);
     if (!profile) {
-      logWarn('avalon', 'discarding an incompatible desktop profile cache');
+      logWarn('rally', 'discarding an incompatible desktop profile cache');
       return null;
     }
     const stored = sessionFromStoredState(auth, profile, apiBaseForAuth(auth));
     if (!stored) {
-      logWarn('avalon', 'discarding a desktop profile cache with a mismatched credential binding');
+      logWarn('rally', 'discarding a desktop profile cache with a mismatched credential binding');
       return null;
     }
     inMemorySession = stored;
     return stored;
   } catch (error) {
     if (errorCode(error) !== 'ENOENT') {
-      logWarn('avalon', 'could not restore the desktop profile cache', error);
+      logWarn('rally', 'could not restore the desktop profile cache', error);
     }
     return null;
   }
@@ -1399,7 +1412,7 @@ async function clearStoredSessionUnlocked(): Promise<void> {
   let failure: unknown;
   const directories = [
     userDataDirectory(),
-    ...(app.isPackaged ? [legacyPackagedUserDataDirectory(appDataDirectory)] : []),
+    ...supersededUserDataDirectories(appDataDirectory, app.isPackaged),
   ];
   for (const directory of directories) {
     try {
@@ -1425,13 +1438,13 @@ async function clearStoredSession(): Promise<void> {
   await withSessionMutation(clearStoredSessionUnlocked);
 }
 
-function parseAvalonBaseUrl(value: string | undefined, fallback: string): string {
+function parseRallyBaseUrl(value: string | undefined, fallback: string): string {
   const parsed = new URL(value ?? fallback);
   if (!allowedExternalProtocols.has(parsed.protocol)) {
-    throw new Error(`Unsupported Avalon endpoint protocol: ${parsed.protocol}`);
+    throw new Error(`Unsupported Rally endpoint protocol: ${parsed.protocol}`);
   }
   if (app.isPackaged && parsed.protocol !== 'https:') {
-    throw new Error('Packaged Avalon endpoints must use HTTPS');
+    throw new Error('Packaged Rally endpoints must use HTTPS');
   }
   return parsed.toString().replace(/\/$/u, '');
 }
@@ -1443,20 +1456,20 @@ function runtimeConfig(): RuntimeConfig {
     isPackaged: packaged,
     platform: process.platform,
     api: {
-      global: parseAvalonBaseUrl(
+      global: parseRallyBaseUrl(
         packaged ? undefined : process.env['VITE_API_GLOBAL_URL'],
         packaged ? 'https://api.rallywith.ai' : 'http://127.0.0.1:8787',
       ),
-      eu: parseAvalonBaseUrl(
+      eu: parseRallyBaseUrl(
         packaged ? undefined : process.env['VITE_API_EU_URL'],
         packaged ? 'https://eu.api.rallywith.ai' : 'http://127.0.0.1:8788',
       ),
     },
-    webBaseUrl: parseAvalonBaseUrl(
+    webBaseUrl: parseRallyBaseUrl(
       packaged ? undefined : process.env['PUBLIC_WEB_BASE_URL'],
       packaged ? 'https://rallywith.ai' : 'http://127.0.0.1:5174',
     ),
-    devAuthEnabled: process.env['AVALON_DEV_AUTH'] !== 'false' && !app.isPackaged,
+    devAuthEnabled: process.env['RALLY_DEV_AUTH'] !== 'false' && !app.isPackaged,
   };
 }
 
@@ -1528,14 +1541,14 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
     try {
       app.setPath('crashDumps', generation.activeCrashpadDirectory);
       crashReporter.start({
-        productName: 'Avalon',
+        productName: 'Rally',
         uploadToServer: false,
         ignoreSystemCrashHandler: true,
         rateLimit: false,
         compress: false,
         globalExtra: {
-          avalon_generation: generation.activeGenerationId ?? 'unknown',
-          avalon_region: crashRoute ?? 'unknown',
+          rally_generation: generation.activeGenerationId ?? 'unknown',
+          rally_region: crashRoute ?? 'unknown',
         },
       });
       nativeCrashGenerationActive = true;
@@ -1543,7 +1556,7 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
       telemetryContinuouslyEligible = false;
       nativeCrashGenerationInvalidated = true;
       await invalidateActiveNativeCrashGeneration({ rootDirectory: crashRoot, invalidatedAt: new Date() });
-      logWarn('avalon', 'could not start native crash reporting', error);
+      logWarn('rally', 'could not start native crash reporting', error);
     }
   }
 
@@ -1628,7 +1641,7 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
       const pending = await applicationVersionTransition({
         userDataDirectory: userDataDirectory(),
         version: runtime.appVersion,
-        // Avalon publishes one immutable desktop artifact for each semantic
+        // Rally publishes one immutable desktop artifact for each semantic
         // version today, so that version is also the packaged build identity.
         // Keep the fields separate for the native SDK contract and a future
         // independently versioned build without changing stored history.
@@ -1644,7 +1657,7 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
       });
     }
   } catch (error) {
-    logWarn('avalon', 'could not record the application version transition', error);
+    logWarn('rally', 'could not record the application version transition', error);
   }
   await telemetryReporter.applicationLifecycle('launch_started');
   await telemetryReporter.desktopSession('started', telemetryContinuouslyEligible);
@@ -1665,7 +1678,7 @@ function validatedApiBase(rawUrl: unknown): string {
   if (typeof rawUrl !== 'string') throw new Error('Invalid regional API endpoint');
   const normalized = new URL(rawUrl).toString().replace(/\/$/u, '');
   if (!Object.values(runtimeConfig().api).includes(normalized)) {
-    throw new Error('The requested endpoint does not match an Avalon region');
+    throw new Error('The requested endpoint does not match an Rally region');
   }
   return normalized;
 }
@@ -1687,7 +1700,7 @@ async function requestSession(
   });
   if (!response.ok) throw await responseError(response);
   const parsed = SessionSchema.safeParse(await response.json());
-  if (!parsed.success) throw new UnusableCredentialError('Avalon returned an invalid authentication session');
+  if (!parsed.success) throw new UnusableCredentialError('Rally returned an invalid authentication session');
   const returnedApiBaseUrl = new URL(parsed.data.apiBaseUrl).toString().replace(/\/$/u, '');
   if (returnedApiBaseUrl !== apiBaseUrl) {
     throw new UnusableCredentialError('The regional service returned a mismatched endpoint');
@@ -1697,7 +1710,7 @@ async function requestSession(
 
 async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
   const expectedLifecycleEpoch = sessionLifecycleEpoch;
-  if (loggingOut) throw new Error('Wait for Avalon to finish signing out before signing in again');
+  if (loggingOut) throw new Error('Wait for Rally to finish signing out before signing in again');
   if (!input || typeof input !== 'object') throw new Error('Invalid desktop sign-in payload');
   const candidate = input as { apiBaseUrl?: unknown; region?: unknown; ticket?: unknown; attemptId?: unknown };
   if (
@@ -1711,7 +1724,7 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
   }
   const apiBaseUrl = validatedApiBase(candidate.apiBaseUrl);
   if (apiBaseUrl !== runtimeConfig().api.global) {
-    throw new Error('Avalon sign-in must use the platform identity endpoint');
+    throw new Error('Rally sign-in must use the platform identity endpoint');
   }
   const attempt = desktopAuthAttempts.proof(candidate.attemptId);
   if (!attempt) throw new Error('This sign-in attempt expired. Start sign-in again.');
@@ -1726,13 +1739,13 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Los_Angeles',
   });
   if (session.workspace) {
-    throw new Error('Avalon sign-in returned a workspace before platform discovery');
+    throw new Error('Rally sign-in returned a workspace before platform discovery');
   }
   if (session.apiBaseUrl !== apiBaseUrl) throw new Error('The regional service returned a mismatched endpoint');
   return withSessionMutation(async () => {
     if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
       desktopAuthAttempts.discard(candidate.attemptId as string);
-      throw new Error('Avalon was signed out while sign-in was completing');
+      throw new Error('Rally was signed out while sign-in was completing');
     }
     const currentAttempt = desktopAuthAttempts.proof(candidate.attemptId as string);
     if (
@@ -1740,11 +1753,11 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
       || currentAttempt.apiBaseUrl !== apiBaseUrl
       || currentAttempt.region !== candidate.region
     ) {
-      throw new Error('A newer Avalon sign-in attempt replaced this callback');
+      throw new Error('A newer Rally sign-in attempt replaced this callback');
     }
     if (await loadStoredAuth()) {
       desktopAuthAttempts.discard(candidate.attemptId as string);
-      throw new Error('Another Avalon sign-in completed first');
+      throw new Error('Another Rally sign-in completed first');
     }
     // One successful PKCE attempt wins. Late callbacks from any other browser
     // tab must not replace the account that just signed in.
@@ -1758,11 +1771,11 @@ function createDesktopAuthAttempt(input: unknown): { attemptId: string; codeChal
   if (!input || typeof input !== 'object') throw new Error('Invalid desktop authentication request');
   const candidate = input as { apiBaseUrl?: unknown; region?: unknown };
   if (candidate.region !== 'global') {
-    throw new Error('Avalon uses one platform sign-in endpoint');
+    throw new Error('Rally uses one platform sign-in endpoint');
   }
   const apiBaseUrl = validatedApiBase(candidate.apiBaseUrl);
   if (apiBaseUrl !== runtimeConfig().api.global) {
-    throw new Error('The authentication endpoint does not match Avalon sign-in');
+    throw new Error('The authentication endpoint does not match Rally sign-in');
   }
   // Starting over makes the newest browser flow authoritative. An older
   // callback can no longer win merely because it returns first.
@@ -1799,10 +1812,10 @@ async function createDevelopmentSession(input: unknown): Promise<DesktopSession>
 
 async function requireOnboardingIdentitySession(): Promise<WireSession> {
   const stored = await loadStoredSession();
-  if (!stored) throw new Error('Sign in to Avalon before setting up a workspace');
-  if (stored.workspace) throw new Error('This Avalon account already has an active workspace');
+  if (!stored) throw new Error('Sign in to Rally before setting up a workspace');
+  if (stored.workspace) throw new Error('This Rally account already has an active workspace');
   if (stored.apiBaseUrl !== runtimeConfig().api.global) {
-    throw new Error('Workspace setup requires an Avalon platform identity session');
+    throw new Error('Workspace setup requires an Rally platform identity session');
   }
   return stored;
 }
@@ -1818,10 +1831,10 @@ async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
   });
   if (!response.ok) throw await responseError(response);
   const parsed = WorkspaceOnboardingStateSchema.safeParse(await response.json());
-  if (!parsed.success) throw new Error('Avalon returned an invalid workspace setup response');
+  if (!parsed.success) throw new Error('Rally returned an invalid workspace setup response');
   const accountEmail = identity.user.email.toLocaleLowerCase('en-US');
   if (parsed.data.invitations.some((invitation) => invitation.email.toLocaleLowerCase('en-US') !== accountEmail)) {
-    throw new Error('Avalon returned an invitation for another account');
+    throw new Error('Rally returned an invitation for another account');
   }
   return parsed.data;
 }
@@ -1829,14 +1842,14 @@ async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
 async function requestOnboardingSession(
   path: string,
   body: unknown,
-  expectedRegion: AvalonRegion,
+  expectedRegion: RallyRegion,
   expectedWorkspaceId?: string,
   operationId?: string,
 ): Promise<DesktopSession> {
   const expectedLifecycleEpoch = sessionLifecycleEpoch;
   const identity = await requireOnboardingIdentitySession();
   if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
-    throw new Error('Avalon was signed out while organization setup was running');
+    throw new Error('Rally was signed out while organization setup was running');
   }
   const response = await net.fetch(`${runtimeConfig().api.global}${path}`, {
     method: 'POST',
@@ -1844,14 +1857,14 @@ async function requestOnboardingSession(
       Accept: 'application/json',
       'Content-Type': 'application/json',
       Authorization: `Bearer ${identity.accessToken}`,
-      ...(operationId ? { 'X-Avalon-Operation-Id': operationId } : {}),
+      ...(operationId ? { [RALLY_HEADERS.OPERATION_ID]: operationId } : {}),
     },
     body: JSON.stringify(body),
   });
   if (!response.ok) throw await responseError(response);
   const parsed = SessionSchema.safeParse(await response.json());
   if (!parsed.success || !parsed.data.workspace) {
-    throw new Error('Avalon returned an invalid regional workspace session');
+    throw new Error('Rally returned an invalid regional workspace session');
   }
   const targetApiBaseUrl = validatedApiBase(parsed.data.apiBaseUrl);
   if (
@@ -1859,18 +1872,18 @@ async function requestOnboardingSession(
     || parsed.data.workspace.region !== expectedRegion
     || (expectedWorkspaceId !== undefined && parsed.data.workspace.id !== expectedWorkspaceId)
   ) {
-    throw new Error('Avalon returned a workspace session for the wrong region');
+    throw new Error('Rally returned a workspace session for the wrong region');
   }
   if (parsed.data.user.email.toLocaleLowerCase('en-US') !== identity.user.email.toLocaleLowerCase('en-US')) {
-    throw new Error('Avalon returned a workspace session for another account');
+    throw new Error('Rally returned a workspace session for another account');
   }
   const session = { ...parsed.data, apiBaseUrl: targetApiBaseUrl };
   return withSessionMutation(async () => {
     if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
-      throw new Error('Avalon was signed out while organization setup was running');
+      throw new Error('Rally was signed out while organization setup was running');
     }
     const current = await loadStoredSession();
-    if (!current) throw new Error('Avalon was signed out while organization setup was running');
+    if (!current) throw new Error('Rally was signed out while organization setup was running');
     if (current.workspace) {
       if (
         current.workspace.id === session.workspace!.id
@@ -1886,7 +1899,7 @@ async function requestOnboardingSession(
       current.apiBaseUrl !== runtimeConfig().api.global
       || current.user.email.toLocaleLowerCase('en-US') !== identity.user.email.toLocaleLowerCase('en-US')
     ) {
-      throw new Error('The signed-in Avalon account changed during organization setup');
+      throw new Error('The signed-in Rally account changed during organization setup');
     }
     await persistSessionUnlocked(session);
     return publicSession(session);
@@ -1933,7 +1946,7 @@ async function createWorkspace(input: unknown): Promise<DesktopSession> {
 
 function parseInvitationAction(input: unknown): {
   invitationId: string;
-  region: AvalonRegion;
+  region: RallyRegion;
   operationId?: string;
 } {
   if (!input || typeof input !== 'object') throw new Error('Invalid workspace invitation request');
@@ -1995,9 +2008,9 @@ function storedAuthMatches(left: StoredAuth, right: StoredAuth): boolean {
 async function refreshWireSession(): Promise<WireSession> {
   const expectedLifecycleEpoch = sessionLifecycleEpoch;
   const previousAuth = await loadStoredAuth();
-  if (!previousAuth) throw new Error('No Avalon session is available to refresh');
+  if (!previousAuth) throw new Error('No Rally session is available to refresh');
   if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
-    throw new Error('Avalon was signed out while the session was refreshing');
+    throw new Error('Rally was signed out while the session was refreshing');
   }
   const apiBaseUrl = apiBaseForAuth(previousAuth);
   let session: WireSession;
@@ -2032,21 +2045,21 @@ async function refreshWireSession(): Promise<WireSession> {
           await clearStoredSessionUnlocked();
         });
       } catch (cleanupError) {
-        logWarn('avalon', 'could not clear a rejected desktop credential', cleanupError);
+        logWarn('rally', 'could not clear a rejected desktop credential', cleanupError);
       }
     }
     throw error;
   }
   return withSessionMutation(async () => {
     if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
-      throw new Error('Avalon was signed out while the session was refreshing');
+      throw new Error('Rally was signed out while the session was refreshing');
     }
     const currentAuth = await loadStoredAuth();
-    if (!currentAuth) throw new Error('Avalon was signed out while the session was refreshing');
+    if (!currentAuth) throw new Error('Rally was signed out while the session was refreshing');
     if (!storedAuthMatches(currentAuth, previousAuth)) {
       const current = await loadStoredSession();
       if (current) return current;
-      throw new Error('A newer Avalon credential replaced this refresh request');
+      throw new Error('A newer Rally credential replaced this refresh request');
     }
     await persistSessionUnlocked(session);
     return session;
@@ -2060,7 +2073,7 @@ async function refreshSession(): Promise<DesktopSession> {
 function coalescedRefreshSession(): Promise<DesktopSession> {
   if (updateInstallationPending) {
     return loadStoredSession().then((stored) => {
-      if (!stored) throw new Error('No Avalon session is available while installing the update');
+      if (!stored) throw new Error('No Rally session is available while installing the update');
       return publicSession(stored);
     });
   }
@@ -2110,7 +2123,7 @@ async function logout(): Promise<void> {
     loggingOut = false;
   }
   if (failures.length > 0) {
-    throw new AggregateError(failures, 'Avalon signed out locally but could not finish every logout cleanup step');
+    throw new AggregateError(failures, 'Rally signed out locally but could not finish every logout cleanup step');
   }
 }
 
@@ -2303,10 +2316,10 @@ function observeAcceptedDeepLinkOpen(): void {
 
 function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const sender = event.sender;
-  const belongsToAvalonWindow = sender === mainWindow?.webContents
+  const belongsToRallyWindow = sender === mainWindow?.webContents
     || sender === settingsWindow?.webContents
     || isMeetingWindowContents(sender);
-  if (!belongsToAvalonWindow || !event.senderFrame || !rendererNavigationAllowed(event.senderFrame.url)) {
+  if (!belongsToRallyWindow || !event.senderFrame || !rendererNavigationAllowed(event.senderFrame.url)) {
     throw new Error('Blocked IPC request from untrusted content');
   }
 }
@@ -2445,7 +2458,7 @@ function registerIpc(): void {
     // the Mac was already dark resolved to the same appearance, returned here,
     // and left every other window still believing it was following the Mac —
     // no visible difference in that moment, and the wrong one at sunrise.
-    for (const window of avalonWindows()) {
+    for (const window of rallyWindows()) {
       if (window.webContents !== event.sender) window.webContents.send('theme:changed', parsed);
     }
     await updateStoredApplicationSettings(userDataDirectory(), { themeChoice: parsed });
@@ -2464,10 +2477,10 @@ function registerIpc(): void {
           try {
             await clearStoredSession();
           } catch (cleanupError) {
-            logWarn('avalon', 'could not clear an invalid desktop credential', cleanupError);
+            logWarn('rally', 'could not clear an invalid desktop credential', cleanupError);
           }
         }
-        logWarn('avalon', 'could not rebuild the desktop profile cache', error);
+        logWarn('rally', 'could not rebuild the desktop profile cache', error);
         return null;
       }
     }
@@ -2748,7 +2761,7 @@ const messageExporter = new MessageExporter({
     const options: Electron.SaveDialogOptions = {
       defaultPath: join(app.getPath('downloads'), defaultFileName),
       filters: [{ name: filterLabel, extensions: [extension] }],
-      title: 'Save from Avalon',
+      title: 'Save from Rally',
     };
     const result = parent && !parent.isDestroyed()
       ? await dialog.showSaveDialog(parent, options)
@@ -2756,7 +2769,7 @@ const messageExporter = new MessageExporter({
     return result.canceled || !result.filePath ? null : result.filePath;
   },
   writeFile: (path, data) => writeFile(path, data),
-  logWarning: (message, error) => logWarn('avalon', message, error),
+  logWarning: (message, error) => logWarn('rally', message, error),
   randomToken: () => crypto.randomUUID(),
   now: () => Date.now(),
   delay: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
@@ -2770,8 +2783,8 @@ function applicationWindowIconPath(): string {
 
 function menuBarIconPath(): string {
   return app.isPackaged
-    ? join(process.resourcesPath, 'menu-bar', 'avalonTemplate.png')
-    : resolve(currentDirectory, '../../resources/menu-bar/avalonTemplate.png');
+    ? join(process.resourcesPath, 'menu-bar', 'rallyTemplate.png')
+    : resolve(currentDirectory, '../../resources/menu-bar/rallyTemplate.png');
 }
 
 function createMenuBarTray(): MenuBarTray {
@@ -2847,7 +2860,7 @@ function applicationIconPreferenceDirectory(): string {
     appDataDirectory,
     userDataDirectory(),
     app.isPackaged,
-    process.argv.some((argument) => argument.startsWith('--avalon-package-smoke=')),
+    process.argv.some((argument) => argument.startsWith('--rally-package-smoke=')),
   );
 }
 
@@ -2874,7 +2887,7 @@ function desktopApplicationIconState(): DesktopApplicationIconState {
 
 function broadcastApplicationIconChanged(): void {
   const state = desktopApplicationIconState();
-  for (const window of avalonWindows()) window.webContents.send('application-icon:changed', state);
+  for (const window of rallyWindows()) window.webContents.send('application-icon:changed', state);
 }
 
 function loadDevelopmentApplicationIcon(iconId: ApplicationIconId): Electron.NativeImage {
@@ -2897,7 +2910,7 @@ async function applyApplicationIcon(iconId: ApplicationIconId): Promise<void> {
   }
   const iconPath = applicationIconPath(applicationIconResourceDirectory(), iconId);
   if (!app.isPackaged) {
-    // Development runs have no containing signed Avalon bundle or Dock tile
+    // Development runs have no containing signed Rally bundle or Dock tile
     // plugin. Keep the picker testable without changing Electron.app in place.
     app.dock.setIcon(loadDevelopmentApplicationIcon(iconId));
     developmentDockIconUsesAppearancePreview = true;
@@ -2969,7 +2982,7 @@ async function initializeApplicationIcon(): Promise<void> {
   nativeTheme.on('updated', () => {
     if (applicationIconController.state().isAutomatic && developmentDockIconUsesAppearancePreview) {
       void applyApplicationIcon(automaticApplicationIcon(nativeTheme.shouldUseDarkColors)).catch((error: unknown) => {
-        logWarn('avalon', 'could not refresh the development application icon', error);
+        logWarn('rally', 'could not refresh the development application icon', error);
       });
     }
     applicationIconController.appearanceChanged();
@@ -2977,19 +2990,19 @@ async function initializeApplicationIcon(): Promise<void> {
   try {
     await applicationIconController.restore();
   } catch (error) {
-    logWarn('avalon', 'could not restore the selected application icon', error);
+    logWarn('rally', 'could not restore the selected application icon', error);
   }
 }
 
 function preloadPath(): string {
   const path = join(currentDirectory, '../preload/index.cjs');
-  if (!existsSync(path)) throw new Error(`Avalon preload script is missing: ${path}`);
+  if (!existsSync(path)) throw new Error(`Rally preload script is missing: ${path}`);
   return path;
 }
 
 function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'settings' | 'meeting'): void {
   window.webContents.on('preload-error', (_event, _scriptPath, error) => {
-    logError('avalon', `${surface} preload failed to initialize`, {
+    logError('rally', `${surface} preload failed to initialize`, {
       errorCode: javascriptErrorCode(error, 'unknown'),
     });
     void telemetryReporter?.processHealth('preload', 'exception', 'launch_failure');
@@ -3006,7 +3019,7 @@ function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'sett
     'did-fail-load',
     (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
       if (!isMainFrame || errorCode === -3) return;
-      logError('avalon', `${surface} renderer failed to load`, {
+      logError('rally', `${surface} renderer failed to load`, {
         errorCode,
         errorDescription,
         validatedUrl,
@@ -3014,7 +3027,7 @@ function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'sett
     },
   );
   window.webContents.on('render-process-gone', (_event, details) => {
-    logError('avalon', `${surface} renderer process exited`, details);
+    logError('rally', `${surface} renderer process exited`, details);
     const reasonClass = details.reason === 'crashed'
       ? 'crashed'
       : details.reason === 'killed'
@@ -3027,14 +3040,14 @@ function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'sett
     void telemetryReporter?.processHealth('renderer', 'gone', reasonClass);
   });
   window.on('unresponsive', () => {
-    logError('avalon', `${surface} window became unresponsive`);
+    logError('rally', `${surface} window became unresponsive`);
     void telemetryReporter?.processHealth('renderer', 'unresponsive', 'unknown');
   });
   window.on('responsive', () => void telemetryReporter?.processHealth('renderer', 'responsive', 'unknown'));
   if (!app.isPackaged) {
     window.webContents.on('console-message', (details) => {
       if (details.level === 'error') {
-        logError('avalon', `${surface} renderer console error`, {
+        logError('rally', `${surface} renderer console error`, {
           message: details.message,
           lineNumber: details.lineNumber,
           sourceId: details.sourceId,
@@ -3049,7 +3062,7 @@ async function loadRenderer(window: BrowserWindow, url: string, surface: 'main' 
     await window.loadURL(url);
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ERR_ABORTED') return;
-    logError('avalon', `${surface} loadURL failed`, error);
+    logError('rally', `${surface} loadURL failed`, error);
     throw error;
   }
 }
@@ -3096,7 +3109,7 @@ async function createSettingsWindow(section?: DesktopSettingsSection): Promise<v
     minHeight: 560,
     show: false,
     backgroundColor: windowBackgroundColor(),
-    title: 'Avalon Settings',
+    title: 'Rally Settings',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 18, y: 17 },
     ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
@@ -3133,7 +3146,7 @@ async function createMeetingWindow(
     minHeight: 640,
     show: false,
     backgroundColor: windowBackgroundColor(),
-    title: 'Meeting notes — Avalon',
+    title: 'Meeting notes — Rally',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 18, y: 17 },
     ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
@@ -3172,7 +3185,7 @@ async function createMeetingWindow(
     meetingWindows.delete(meetingWindow);
     // A meeting window is the only thing that vetoes a quit, so while one is
     // still open the quit it abandoned is still the close every other meeting
-    // window is answering. Once the last has gone, Avalon is staying up, and
+    // window is answering. Once the last has gone, Rally is staying up, and
     // the next close is the person's again.
     if (meetingWindows.size === 0) quitting = false;
   });
@@ -3196,12 +3209,12 @@ function installApplicationMenu(): void {
     actions: {
       openSettings: () => {
         void createSettingsWindow().catch((error: unknown) => {
-          logError('avalon', 'failed to open settings', error);
+          logError('rally', 'failed to open settings', error);
         });
       },
       openWebsite: () => {
         void shell.openExternal('https://rallywith.ai/').catch((error: unknown) => {
-          logError('avalon', 'failed to open website', error);
+          logError('rally', 'failed to open website', error);
         });
       },
       checkForUpdates: () => autoUpdateController?.checkForUpdates(),
@@ -3226,7 +3239,7 @@ async function createMainWindow(): Promise<void> {
     minHeight: 640,
     show: false,
     backgroundColor: windowBackgroundColor(),
-    title: 'Avalon',
+    title: 'Rally',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     trafficLightPosition: { x: 18, y: 17 },
     ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
@@ -3343,37 +3356,51 @@ if (!singleInstanceLock) {
   });
 
   void app.whenReady().then(async () => {
-    app.setAppUserModelId('app.avalon.desktop');
+    app.setAppUserModelId('ai.rallywith.desktop');
     for (const scheme of deepLinkProtocols) app.setAsDefaultProtocolClient(scheme);
+    // Before every other recovery below: they all resolve paths through the
+    // current session directory, so it has to be the one holding the files.
     try {
-      if (app.isPackaged) {
-        await migrateLegacyUserDataStoredSessionFile(
-          userDataDirectory(),
-          legacyPackagedUserDataDirectory(appDataDirectory),
-        );
+      await migrateSupersededSessionDirectory(userDataDirectory());
+    } catch (error) {
+      logWarn('rally', 'could not adopt the superseded session directory', error);
+    }
+    // The directory adoption in `userDataDirectoryForLaunch` moves whichever
+    // superseded directory it found first. Any other one it left behind still
+    // holds a session file worth recovering, and holds it encrypted. Each is
+    // attempted independently: an absent directory is the ordinary case, and
+    // must not stop the next one from being read.
+    for (const superseded of supersededUserDataDirectories(appDataDirectory, app.isPackaged)) {
+      try {
+        await migrateLegacyUserDataStoredSessionFile(userDataDirectory(), superseded);
+      } catch (error) {
+        const code = error instanceof Error && 'code' in error ? error.code : undefined;
+        if (code !== 'ENOENT') logWarn('rally', 'could not migrate a superseded desktop session file', error);
       }
+    }
+    try {
       await migrateLegacyStoredSessionFile(userDataDirectory());
     } catch (error) {
       const code = error instanceof Error && 'code' in error ? error.code : undefined;
-      if (code !== 'ENOENT') logWarn('avalon', 'could not migrate the legacy desktop session file', error);
+      if (code !== 'ENOENT') logWarn('rally', 'could not migrate the legacy desktop session file', error);
     }
     try {
       await lockdownModeController.initialize();
     } catch (error) {
-      logWarn('avalon', 'could not initialize desktop session encryption', error);
+      logWarn('rally', 'could not initialize desktop session encryption', error);
     }
     try {
       // Read after Lockdown mode: its startup fallback can rewrite the file.
       await debugSettingsController.initialize();
     } catch (error) {
-      logWarn('avalon', 'could not read the Developer preference', error);
+      logWarn('rally', 'could not read the Developer preference', error);
     }
     try {
       // Before any window is constructed, so the first one of the launch opens
       // on the theme's own canvas rather than flashing the previous default.
       windowThemeChoice = (await readStoredApplicationSettings(userDataDirectory())).themeChoice;
     } catch (error) {
-      logWarn('avalon', 'could not read the stored window theme', error);
+      logWarn('rally', 'could not read the stored window theme', error);
     }
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.
@@ -3385,7 +3412,7 @@ if (!singleInstanceLock) {
         // verification keeps running in the background and must never become
         // an unhandled rejection after the first window is allowed through.
         const refresh = productAnalyticsSettingsController.refresh().catch((error: unknown) => {
-          logWarn('avalon', 'could not synchronize the Product analytics preference', error);
+          logWarn('rally', 'could not synchronize the Product analytics preference', error);
         });
         await withDeadline(
           refresh,
@@ -3394,14 +3421,14 @@ if (!singleInstanceLock) {
         ).catch(() => undefined);
       }
     } catch (error) {
-      logWarn('avalon', 'could not synchronize the Product analytics preference', error);
+      logWarn('rally', 'could not synchronize the Product analytics preference', error);
     }
     try {
       await initializeTelemetry(launchAuth);
     } catch (error) {
       // Telemetry is observational. A disk, Crashpad, or route-gate failure
       // cannot prevent the product from opening.
-      logWarn('avalon', 'could not initialize telemetry', error);
+      logWarn('rally', 'could not initialize telemetry', error);
     }
     // Launching with a credential already on disk broadcasts no session change,
     // so the first poll is asked for here. Developer stays closed until it
@@ -3442,12 +3469,12 @@ if (!singleInstanceLock) {
     try {
       await launchAtLoginController.initialize();
     } catch (error) {
-      logWarn('avalon', 'could not read whether Avalon opens at login', error);
+      logWarn('rally', 'could not read whether Rally opens at login', error);
     }
     // Read before the first window exists, because it decides whether there is
     // one. macOS sets this on a launch that came from the login item, and
-    // leaves it unset when a person opened Avalon from the Dock, Finder,
-    // Spotlight, or a deep link — so a login or restart starts Avalon in the
+    // leaves it unset when a person opened Rally from the Dock, Finder,
+    // Spotlight, or a deep link — so a login or restart starts Rally in the
     // menu bar with nothing on screen, and a click on the icon still opens it.
     const openedAtLogin = launchedAtLogin({
       platform: process.platform,
@@ -3464,13 +3491,13 @@ if (!singleInstanceLock) {
     try {
       await menuBarController.initialize();
     } catch (error) {
-      logWarn('avalon', 'could not add Avalon to the menu bar', error);
+      logWarn('rally', 'could not add Rally to the menu bar', error);
     }
     if (launchAuth && menuBarItemIsLive()) void menuBarContentStore.refresh();
     // Hidden only into somewhere. The menu bar item is what a login launch
     // leaves a person, and it is off whenever they turned it off and absent
     // whenever creating it failed — either way, opening no window would start
-    // Avalon with nothing on screen and nothing in the menu bar, reachable only
+    // Rally with nothing on screen and nothing in the menu bar, reachable only
     // by hunting for it in the Dock.
     const startsHidden = openedAtLogin && menuBarController.present();
     if (startsHidden) applicationLifecycleTelemetry.observeFocused(false);
@@ -3479,7 +3506,7 @@ if (!singleInstanceLock) {
     await telemetryBreadcrumbs?.add({ kind: 'lifecycle', phase: 'ready' }).catch(() => undefined);
     if (telemetryLaunchId) {
       await markTelemetryLaunchReady(userDataDirectory(), telemetryLaunchId, new Date()).catch((error: unknown) => {
-        logWarn('avalon', 'could not mark the telemetry launch ready', error);
+        logWarn('rally', 'could not mark the telemetry launch ready', error);
       });
     }
     flushTelemetryAndRetryLink();
@@ -3494,12 +3521,12 @@ if (!singleInstanceLock) {
       applicationOpenObserver.activated();
       if (!mainWindow || mainWindow.isDestroyed()) {
         void createMainWindow().catch((error: unknown) => {
-          logError('avalon', 'failed to recreate the main window', error);
+          logError('rally', 'failed to recreate the main window', error);
         });
       }
     });
   }).catch((error: unknown) => {
-    logError('avalon', 'failed to start', error);
+    logError('rally', 'failed to start', error);
     app.quit();
   });
 }
@@ -3526,8 +3553,8 @@ app.on('browser-window-focus', () => {
 });
 
 app.on('browser-window-blur', () => {
-  // Electron emits blur before focus while moving between Avalon windows. Wait
-  // one turn and observe the application as backgrounded only if no Avalon
+  // Electron emits blur before focus while moving between Rally windows. Wait
+  // one turn and observe the application as backgrounded only if no Rally
   // window acquired focus.
   setImmediate(() => {
     applicationLifecycleTelemetry.observeFocused(BrowserWindow.getFocusedWindow() !== null);

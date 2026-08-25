@@ -42,7 +42,7 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     plugins: {
-      avalon: {
+      rally: {
         rules: {
           "no-bare-zod-url": noBareZodUrlRule,
           "no-raw-entry-point-check": noRawEntryPointCheckRule,
@@ -68,16 +68,16 @@ export default tseslint.config(
       // Repository-wide rather than scoped to scripts/: the guard is wrong
       // wherever it is written, and the two folders that need it already keep
       // separate copies of the helper that replaces it.
-      "avalon/no-raw-entry-point-check": "error",
-      "avalon/provider-json-schema-complexity": "error",
+      "rally/no-raw-entry-point-check": "error",
+      "rally/provider-json-schema-complexity": "error",
     },
   },
   {
     files: ["apps/api/src/**/*.{ts,tsx}"],
     ignores: ["apps/api/src/lib/durable-object-namespace.ts"],
     rules: {
-      "avalon/durable-object-region-routing": "error",
-      "avalon/durable-object-native-rpc": "error",
+      "rally/durable-object-region-routing": "error",
+      "rally/durable-object-native-rpc": "error",
     },
   },
   {
@@ -87,7 +87,7 @@ export default tseslint.config(
       "apps/migration-tracker/src/registry.ts",
     ],
     rules: {
-      "avalon/durable-object-sql-storage": "error",
+      "rally/durable-object-sql-storage": "error",
     },
   },
   {
@@ -125,20 +125,20 @@ export default tseslint.config(
   {
     ignores: ["packages/contracts/src/url-schemas.ts"],
     rules: {
-      "avalon/no-bare-zod-url": "error",
+      "rally/no-bare-zod-url": "error",
     },
   },
   {
     files: ["apps/api/src/**/*.{ts,tsx}"],
     ignores: ["apps/api/src/services/structured-inference.ts"],
     rules: {
-      "avalon/no-direct-openrouter-client": "error",
+      "rally/no-direct-openrouter-client": "error",
     },
   },
   {
     files: ["apps/api/src/routes/**/*.ts"],
     rules: {
-      "avalon/require-validated-response": "error",
+      "rally/require-validated-response": "error",
     },
   },
   {
@@ -148,14 +148,14 @@ export default tseslint.config(
       "apps/api/src/services/agent-model-flags.ts",
     ],
     rules: {
-      "avalon/no-direct-model-env-read": "error",
+      "rally/no-direct-model-env-read": "error",
     },
   },
   {
     files: ["apps/api/src/services/structured-inference.ts"],
     rules: {
-      "avalon/require-inference-diagnostics": "error",
-      "avalon/require-inference-signal": "error",
+      "rally/require-inference-diagnostics": "error",
+      "rally/require-inference-signal": "error",
     },
   },
   {
@@ -173,7 +173,7 @@ export default tseslint.config(
         {
           paths: [
             {
-              name: "@avalon/connectors",
+              name: "@rally/connectors",
               importNames: ["authorizedConnection"],
               message: "Reach an adapter through withAuthorizedConnection; it is what refreshes the credentials this brand asserts are fresh.",
             },
@@ -185,21 +185,21 @@ export default tseslint.config(
   {
     files: ["packages/agent-harness/src/bind-runtime.ts"],
     rules: {
-      "avalon/require-inference-signal": "error",
+      "rally/require-inference-signal": "error",
     },
   },
   {
     files: ["apps/desktop/src/renderer/**/*.{ts,tsx}"],
     ignores: ["**/*.test.{ts,tsx}"],
     rules: {
-      "avalon/require-websocket-ticket": "error",
+      "rally/require-websocket-ticket": "error",
     },
   },
   {
     files: ["apps/desktop/src/renderer/**/*.{ts,tsx}"],
     ignores: ["apps/desktop/src/renderer/lib/workstreams-cache.ts"],
     rules: {
-      "avalon/no-direct-workstreams-cache-write": "error",
+      "rally/no-direct-workstreams-cache-write": "error",
     },
   },
   {
@@ -209,7 +209,7 @@ export default tseslint.config(
     ],
     ignores: ["**/*.test.{ts,tsx}"],
     rules: {
-      "avalon/no-production-double-assertion": "error",
+      "rally/no-production-double-assertion": "error",
     },
   },
   {
@@ -227,8 +227,8 @@ export default tseslint.config(
       "apps/release-retention/test/helpers/cloudflare-test.ts",
     ],
     rules: {
-      "avalon/no-application-contract-test-cast": "error",
-      "avalon/no-direct-cloudflare-test-cast": "error",
+      "rally/no-application-contract-test-cast": "error",
+      "rally/no-direct-cloudflare-test-cast": "error",
     },
   },
   {
@@ -266,7 +266,7 @@ export default tseslint.config(
     ],
     ignores: ["**/*.test.{ts,tsx}"],
     rules: {
-      "avalon/tool-input-number-boundary": "error",
+      "rally/tool-input-number-boundary": "error",
     },
   },
   {
@@ -277,7 +277,7 @@ export default tseslint.config(
         "error",
         {
           name: "process",
-          message: "@avalon/agent-harness is workerd-portable; configuration must arrive through explicit inputs.",
+          message: "@rally/agent-harness is workerd-portable; configuration must arrive through explicit inputs.",
         },
       ],
       "no-restricted-imports": [
@@ -285,12 +285,12 @@ export default tseslint.config(
         {
           patterns: [
             {
-              group: ["@avalon/db", "@avalon/connectors", "**/apps/api/**"],
-              message: "@avalon/agent-harness must remain independent of database and API implementations; inject a port instead.",
+              group: ["@rally/db", "@rally/connectors", "**/apps/api/**"],
+              message: "@rally/agent-harness must remain independent of database and API implementations; inject a port instead.",
             },
             {
               group: ["node:*", "fs", "fs/*", "path", "os", "child_process", "worker_threads"],
-              message: "@avalon/agent-harness must remain portable to Cloudflare workerd; inject runtime-specific capabilities.",
+              message: "@rally/agent-harness must remain portable to Cloudflare workerd; inject runtime-specific capabilities.",
             },
           ],
         },

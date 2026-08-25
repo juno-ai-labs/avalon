@@ -10,7 +10,7 @@ import {
 const roots: string[] = [];
 
 async function root(): Promise<string> {
-  const value = await mkdtemp(join(tmpdir(), 'avalon-application-version-'));
+  const value = await mkdtemp(join(tmpdir(), 'rally-application-version-'));
   roots.push(value);
   return value;
 }

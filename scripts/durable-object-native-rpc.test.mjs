@@ -11,8 +11,8 @@ const config = {
     parser: tseslint.parser,
     parserOptions: { sourceType: "module" },
   },
-  plugins: { avalon: { rules: { "durable-object-native-rpc": durableObjectNativeRpcRule } } },
-  rules: { "avalon/durable-object-native-rpc": "error" },
+  plugins: { rally: { rules: { "durable-object-native-rpc": durableObjectNativeRpcRule } } },
+  rules: { "rally/durable-object-native-rpc": "error" },
 };
 
 function lint(source) {

@@ -26,7 +26,7 @@ import {
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 

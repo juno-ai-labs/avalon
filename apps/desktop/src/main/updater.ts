@@ -13,7 +13,7 @@ const DOWNLOAD_RETRY_BASE_DELAY_MS = 3_000;
 const MAX_DOWNLOAD_RETRIES = 5;
 
 export const MANUAL_UPDATE_URL =
-  'https://downloads.rallywith.ai/stable/darwin/arm64/Avalon.dmg';
+  'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg';
 
 export type UpdateStatus =
   | { readonly kind: 'idle' }
@@ -117,20 +117,20 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   const policy = updatePolicy(deps);
   const showDialog = (options: MessageBoxOptions): Promise<MessageBoxReturnValue | null> => (
     deps.showMessageBox(options).catch((error: unknown) => {
-      log.error('[avalon] failed to show update dialog', error);
+      log.error('[rally] failed to show update dialog', error);
       return null;
     })
   );
 
   if (policy.kind === 'disabled') {
-    log.info(`[avalon] auto-update disabled: ${policy.reason}`);
+    log.info(`[rally] auto-update disabled: ${policy.reason}`);
     return {
       enabled: false,
       checkForUpdates: () => {
         void showDialog({
           type: 'info',
           message: 'Updates aren’t available in this build',
-          detail: 'Automatic updates work in the installed Apple-silicon Avalon app.',
+          detail: 'Automatic updates work in the installed Apple-silicon Rally app.',
           buttons: ['OK'],
         });
       },
@@ -169,26 +169,26 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     void showDialog({
       type: 'warning',
       message: 'Couldn’t check for updates',
-      detail: 'Avalon could not reach the update service. Please try again later.',
+      detail: 'Rally could not reach the update service. Please try again later.',
       buttons: ['OK'],
     });
   };
   const promptManualRecovery = (): void => {
     if (manualRecoveryPrompted) return;
     manualRecoveryPrompted = true;
-    log.warn('[avalon] automatic update retries exhausted; offering signed installer');
+    log.warn('[rally] automatic update retries exhausted; offering signed installer');
     void showDialog({
       type: 'warning',
       message: 'Couldn’t update automatically',
       detail:
-        'Avalon could not finish the update after several attempts. Download the latest signed Avalon installer and replace the current copy in Applications.',
+        'Rally could not finish the update after several attempts. Download the latest signed Rally installer and replace the current copy in Applications.',
       buttons: ['Download Latest', 'Later'],
       defaultId: 0,
       cancelId: 1,
     }).then((result) => {
       if (result?.response !== 0) return;
       void deps.openExternal(MANUAL_UPDATE_URL).catch((error: unknown) => {
-        log.error('[avalon] failed to open the manual update download', error);
+        log.error('[rally] failed to open the manual update download', error);
       });
     });
   };
@@ -202,21 +202,21 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       .catch(async (error: unknown) => {
         outcome('apply', 'failed', applyStartedAt);
         applyStartedAt = null;
-        log.error('[avalon] could not prepare the downloaded update for installation', error);
+        log.error('[rally] could not prepare the downloaded update for installation', error);
         const rollbackStartedAt = now();
         try {
           await deps.onInstallFailed?.();
           outcome('rollback', 'success', rollbackStartedAt);
         } catch (rollbackError) {
           outcome('rollback', 'failed', rollbackStartedAt);
-          log.error('[avalon] could not roll back failed update preparation', rollbackError);
+          log.error('[rally] could not roll back failed update preparation', rollbackError);
         } finally {
           installInFlight = false;
         }
         await showDialog({
           type: 'warning',
           message: 'Couldn’t restart to update',
-          detail: 'Avalon kept your current session and did not install the update. Please try again.',
+          detail: 'Rally kept your current session and did not install the update. Please try again.',
           buttons: ['OK'],
         });
       });
@@ -228,7 +228,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       return { unref: () => handle.unref() };
     });
   const handleDownloadFailure = (error: unknown): void => {
-    log.error('[avalon] update download failed', error);
+    log.error('[rally] update download failed', error);
     if (!downloadInFlight || downloadRetryScheduled) return;
     if (downloadRetryCount >= MAX_DOWNLOAD_RETRIES) {
       downloadInFlight = false;
@@ -244,7 +244,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     setStatus({ kind: 'downloading' });
     const delayMs = DOWNLOAD_RETRY_BASE_DELAY_MS * (2 ** (downloadRetryCount - 1));
     log.info(
-      `[avalon] retrying update download in ${delayMs}ms `
+      `[rally] retrying update download in ${delayMs}ms `
         + `(${downloadRetryCount}/${MAX_DOWNLOAD_RETRIES})`,
     );
     const retryTimer = scheduleTimeout(() => {
@@ -268,7 +268,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     checkInFlight = true;
     checkStartedAt ??= now();
     setStatus({ kind: 'checking' });
-    log.info('[avalon] checking for updates');
+    log.info('[rally] checking for updates');
   });
   updater.on('update-available', (info) => {
     outcome('check', 'available', checkStartedAt);
@@ -281,20 +281,20 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     manualRecoveryPrompted = false;
     downloadStartedAt = now();
     setStatus({ kind: 'downloading' });
-    log.info(`[avalon] update ${info.version} is available`);
+    log.info(`[rally] update ${info.version} is available`);
   });
   updater.on('update-not-available', () => {
     outcome('check', 'current', checkStartedAt);
     checkStartedAt = null;
     checkInFlight = false;
     setStatus({ kind: 'idle' });
-    log.info('[avalon] is up to date');
+    log.info('[rally] is up to date');
     if (!manualCheck) return;
     manualCheck = false;
     void showDialog({
       type: 'info',
       message: 'You are running the latest version',
-      detail: `Avalon ${deps.currentVersion} is the latest version.`,
+      detail: `Rally ${deps.currentVersion} is the latest version.`,
       buttons: ['OK'],
     });
   });
@@ -310,11 +310,11 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     downloadRetryCount = 0;
     downloadRetryScheduled = false;
     setStatus({ kind: 'downloaded', version: info.version });
-    log.info(`[avalon] update ${info.version} downloaded`);
+    log.info(`[rally] update ${info.version} downloaded`);
     void showDialog({
       type: 'info',
       message: 'Update ready',
-      detail: `Avalon ${info.version} has been downloaded. Restart now to finish updating?`,
+      detail: `Rally ${info.version} has been downloaded. Restart now to finish updating?`,
       buttons: ['Restart Now', 'Later'],
       defaultId: 0,
       cancelId: 1,
@@ -328,7 +328,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       handleDownloadFailure(error);
       return;
     }
-    log.error('[avalon] auto-update error', error);
+    log.error('[rally] auto-update error', error);
     outcome('check', 'failed', checkStartedAt);
     checkStartedAt = null;
     setStatus({ kind: 'idle' });
@@ -346,13 +346,13 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       outcome('check', 'failed', checkStartedAt);
       checkStartedAt = null;
       setStatus({ kind: 'idle' });
-      log.error('[avalon] update check failed', error);
+      log.error('[rally] update check failed', error);
       showCheckFailure();
     });
   };
 
   log.info(
-    `[avalon] auto-update initialized (current=${deps.currentVersion}, platform=${deps.platform}, `
+    `[rally] auto-update initialized (current=${deps.currentVersion}, platform=${deps.platform}, `
       + `arch=${deps.arch}, differentialDownload=enabled)`,
   );
   runCheck(false);

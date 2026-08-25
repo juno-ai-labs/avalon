@@ -2,17 +2,17 @@
 
 > Created 2026-08-12.
 >
-> An Avalon work stream can lazily acquire an isolated Daytona workspace in
+> An Rally work stream can lazily acquire an isolated Daytona workspace in
 > which the agent writes and runs code, creates artifacts, edits one repository
-> with real `git`, and publishes an authorized pull request through Avalon.
+> with real `git`, and publishes an authorized pull request through Rally.
 > Implementation plan: [`plan.md`](./plan.md). Companion design:
 > [`design.md`](./design.md). Research record:
 > [`research.md`](./research.md). Standing contract:
-> [the Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
+> [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
 ## Summary
 
-Avalon adds a Bind plugin with production-harness-shaped file and command tools
+Rally adds a Bind plugin with production-harness-shaped file and command tools
 backed by one isolated Daytona sandbox per work stream. Loading the plugin does
 not allocate a sandbox. The first file or command call creates or explicitly
 starts it; subsequent calls reuse it until retention expires.
@@ -23,18 +23,18 @@ files such as graphs, images, datasets, reports, and archives. It can clone,
 inspect, edit, validate, and commit one authorized GitHub repository using real
 `git` and `gh` commands. Connector `read_only` technically blocks remote writes;
 `full_access` mounts a short-lived, single-repository write token behind Daytona
-secret substitution. Avalon prepares and checks out a stable word-based branch
+secret substitution. Rally prepares and checks out a stable word-based branch
 before the model receives terminal control. Standard Git/GitHub CLI supports
 multiple commits and PR updates; the typed convergent publisher remains an
 optional tool.
 
 Workspace administrators choose **Trusted only** or **Full internet**. Trusted
 only uses Daytona's native domain allow-list, an immutable baseline, and optional
-workspace domains. It does not introduce an Avalon egress proxy in this release.
+workspace domains. It does not introduce an Rally egress proxy in this release.
 
 ## Motivation
 
-Avalon can call typed connector tools but cannot perform the repository loop
+Rally can call typed connector tools but cannot perform the repository loop
 behind “change this and open a PR”: clone, inspect, make a coherent edit, run the
 project's checks, review the diff, commit, publish a branch, and create a pull
 request. Nor can it use short programs to solve calculation, transformation,
@@ -42,12 +42,12 @@ analysis, or artifact-generation tasks.
 
 Reimplementing every shell, `git`, package-manager, and test-runner operation as a
 Bind tool would be incomplete and would discard command shapes coding models know
-well. Giving ordinary Avalon workers a shell would violate the current isolation
+well. Giving ordinary Rally workers a shell would violate the current isolation
 contract. A lazily started Daytona sandbox provides the required execution
 boundary while Bind keeps lifecycle, authorization, output, and external writes
 under host control.
 
-The evidence is the source-level harness comparison and the earlier Avalon
+The evidence is the source-level harness comparison and the earlier Rally
 session review recorded in [`research.md`](./research.md#example-avalon-plugins).
 That review found four workload shapes—short connector operations, bursty
 multi-minute code/data work, longer repository validation, and long idle gaps—
@@ -59,9 +59,9 @@ expiry so the example cost assumptions can be replaced with observed values.
 
 ## Goals
 
-1. A participant can ask Avalon to inspect, edit, validate, and locally commit a
+1. A participant can ask Rally to inspect, edit, validate, and locally commit a
    change to one authorized GitHub repository from an ordinary work stream.
-2. For a connector repository configured with full access, Avalon prepares and
+2. For a connector repository configured with full access, Rally prepares and
    switches to a stable work-stream branch, then the model can use ordinary
    `git` and `gh` commands for multiple commits and PR updates.
 3. The model receives familiar typed file tools, a bounded non-interactive shell,
@@ -106,11 +106,11 @@ expiry so the example cost assumptions can be replaced with observed values.
 5. Direct default-branch updates, arbitrary refs, force pushes, ref deletion,
    workflow-file changes, merges, releases, deployments, and GitHub
    administration are rejected.
-6. CIDR/IP allow-lists and a custom Avalon egress gateway are deferred. The launch
+6. CIDR/IP allow-lists and a custom Rally egress gateway are deferred. The launch
    policy is domain-based and uses Daytona's primitive.
 7. An expired sandbox is not transparently rebuilt from an R2 filesystem backup.
    Durable outputs survive, but unpublished local filesystem state may expire.
-8. Daytona persistence is not Avalon's receipt or audit system.
+8. Daytona persistence is not Rally's receipt or audit system.
 
 ## Product behavior
 
@@ -129,7 +129,7 @@ work-stream context.
 Repository choice is a model tool call, not a participant transcript gate.
 `checkout_repository` resolves the immutable provider repository ID and current
 remote access, then records the repository, canonical name, refs, and connection
-server-side. Before a different choice destroys an existing sandbox, Avalon
+server-side. Before a different choice destroys an existing sandbox, Rally
 creates a verified attached recovery archive of source, untracked files,
 databases, generated artifacts, and a portable Git bundle of local refs. The live
 `.git` directory, credentials, and regenerable dependencies are excluded. Backup failure, mutation during transfer, or a
@@ -165,7 +165,7 @@ tool subset a host selected.
 Visibility is not authorization. Repository-dependent calls require a currently
 authorized selected repository. Connector `read_only` supplies a technically
 read-only token; `full_access` supplies a single-repository contents/PR write
-token. The connector policy is the durable user authorization choice—Avalon does
+token. The connector policy is the durable user authorization choice—Rally does
 not parse request prose or add a one-publication gate. Existing publication
 grant rows are retained only as run/principal provenance for the optional typed
 publisher, not as a model workflow boundary.
@@ -175,7 +175,7 @@ publisher, not as a model workflow boundary.
 An owner or administrator manages **Settings → Workspace → Terminal workspace →
 Network access**:
 
-- **Trusted only** is the default. Avalon configures Daytona's native
+- **Trusted only** is the default. Rally configures Daytona's native
   `domainAllowList` with the immutable baseline plus workspace-approved domains.
 - **Full internet** removes the sandbox domain allow-list on a Daytona tier that
   supports public internet access. The confirmation warns that code, repository
@@ -183,8 +183,8 @@ Network access**:
 
 The launch release accepts exact domains such as `api.example.com` and wildcards
 such as `*.example.com`. Values contain no scheme, port, path, query, or
-credentials; Avalon normalizes internationalized names and rejects public-suffix
-wildcards. Daytona currently limits a domain allow-list to 20 entries, so Avalon
+credentials; Rally normalizes internationalized names and rejects public-suffix
+wildcards. Daytona currently limits a domain allow-list to 20 entries, so Rally
 reserves the entries required by its baseline and shows the remaining custom
 capacity instead of promising a separate product limit.
 
@@ -194,14 +194,14 @@ groups are:
 
 | Settings group | Purpose |
 | --- | --- |
-| GitHub and Avalon | Clone/fetch, policy-scoped GitHub CLI access, and required Avalon endpoints |
+| GitHub and Rally | Clone/fetch, policy-scoped GitHub CLI access, and required Rally endpoints |
 | System packages | Signed base-image `apt` repositories |
 | Python packages | PyPI package files and the reviewed `uv` distribution endpoints |
 | JavaScript packages | npm package files and the reviewed `pnpm` distribution endpoints |
 
 A reviewed server manifest expands these groups into exact domains. Settings
 shows only workspace-approved domains, their canonical before/after changes, and
-their download. Avalon-managed and Daytona-required destinations remain hidden.
+their download. Rally-managed and Daytona-required destinations remain hidden.
 Reachability does not imply package trust, credentials, publishing rights, or
 account administration.
 
@@ -222,7 +222,7 @@ private, carrier-grade NAT, multicast, documentation, metadata, and other
 special-use addresses even when an allowed hostname resolves to one. Acceptance
 uses a controlled hostname whose answer changes across TTLs to prove DNS
 rebinding cannot cross that boundary. If Daytona's native primitive cannot meet
-this test, custom-domain and Trusted-only launch remain unavailable; Avalon does
+this test, custom-domain and Trusted-only launch remain unavailable; Rally does
 not add a proxy in this release.
 
 Members can view the mode but cannot inspect or mutate the managed baseline. The
@@ -244,7 +244,7 @@ were stopped, leaves the last verified policy authoritative, and offers one
 retry. Members see the same status read-only.
 
 After confirmation, the change cancels active commands and stops affected
-sandboxes. Avalon applies and verifies the new native Daytona setting while each
+sandboxes. Rally applies and verifies the new native Daytona setting while each
 sandbox is stopped; the next sandbox-dependent call explicitly starts it under
 the current policy. The transcript records policy cancellation separately from
 command failure. There is no hot policy migration. An already running sandbox
@@ -254,7 +254,7 @@ start under the new configuration.
 ### Starting and restoring the workspace
 
 Loading the plugin does not contact Daytona. The first file, command, or resource
-transfer tool obtains a work-stream lease. Avalon atomically creates a sandbox from the
+transfer tool obtains a work-stream lease. Rally atomically creates a sandbox from the
 configured managed snapshot or explicitly starts the current stopped or archived sandbox,
 checks its workspace identity and network revision, and executes the call.
 Concurrent first calls converge on one sandbox.
@@ -265,7 +265,7 @@ stable reason; it is never represented as an empty successful workspace.
 
 Scratch mode begins with an empty task directory and host-owned resource output
 directory. Repository mode clones over HTTPS, records the requested base ref and
-SHA, and creates `avalon/adjective-adjective-adjective-noun` by reusing Avalon's
+SHA, and creates `avalon/adjective-adjective-adjective-noun` by reusing Rally's
 existing work-stream address vocabulary. The model may change the
 repository only through `checkout_repository`; the server fixes its immutable
 identity, base, and branch, and repository instructions cannot expand tools,
@@ -291,7 +291,7 @@ reconciliation, but those hashes are neither model arguments nor optimistic
 concurrency tokens.
 
 File operations appear as concise activity rows. Before retention can delete
-unpublished files, Avalon publishes a non-empty final diff as a generated text
+unpublished files, Rally publishes a non-empty final diff as a generated text
 resource owned by the existing resource lifecycle.
 
 ### Model-facing tool contracts
@@ -559,7 +559,7 @@ model tool accepts it.
 #### `checkout_repository`
 
 Use when repository work needs one exact GitHub `owner/name`. The model chooses
-from GitHub repository discovery; Avalon resolves the choice through the current
+from GitHub repository discovery; Rally resolves the choice through the current
 connector policy and records the immutable provider identity and fixed work-
 stream refs. `requiredRemoteAccess` defaults to the least authority and is stored
 as a durable ceiling even when connector policy permits more. The model sets
@@ -595,7 +595,7 @@ type CheckoutRepositoryOutput = {
 ```
 
 The sandbox is not acquired merely to select an empty scratch workspace. When
-another sandbox generation exists, Avalon refuses selection while commands are
+another sandbox generation exists, Rally refuses selection while commands are
 active, starts a retained stopped/archive only long enough to create the backup,
 verifies its bytes and digest through the host, attaches the generated recovery
 resource, removes sandbox-scoped credentials, and deletes the old sandbox before
@@ -609,7 +609,7 @@ the same backup resource. Stable failures include `repository_not_authorized`,
 
 Use to copy the original bytes of one currently authorized work-stream resource
 into the repository or scratch filesystem. When `destinationPath` is omitted,
-Avalon chooses a deterministic collision-resistant path beneath
+Rally chooses a deterministic collision-resistant path beneath
 `.avalon/resources/`; repository mode excludes that host-managed directory
 through `.git/info/exclude`. Automatic placement is create-or-reuse.
 
@@ -640,7 +640,7 @@ type ImportResourceOutput = {
 };
 ```
 
-Avalon reauthorizes the exact `workstream_resources` relationship and current-
+Rally reauthorizes the exact `workstream_resources` relationship and current-
 principal visibility before reading bytes. It streams the original from regional
 R2 through the host into Daytona, verifies byte count and hash, and never gives
 the sandbox an R2 credential, object key, or signed URL. Automatic placement
@@ -699,7 +699,7 @@ work stream, and returns the identity required by the existing
 `workstream_search_resource`, `workstream_view_resource`, and
 `workstream_summarize_resource` tools. Verified MIME bytes, not the supplied
 display name or extension, determine `attachmentKind`, `contentMode`, and the
-reusable derivative path. The optional URL is an authorized Avalon canonical
+reusable derivative path. The optional URL is an authorized Rally canonical
 address, never a raw R2 or Daytona URL.
 `sourceSha256` identifies the published original and is intentionally distinct
 from PR #144's later derivative-version hash.
@@ -801,7 +801,7 @@ File mutation and import failures:
 | `import_resource` | `resource_not_importable` | “The original bytes cannot be imported. Use an available resource read or view tool instead.” | `available` names `workstream_read_resource` or `workstream_view_resource`; reason explains which one to call with the same ID. |
 | `import_resource`, `publish_resource` | `resource_limit_exceeded` | “The resource exceeds the allowed size or count. Select, split, resize, or compress it before trying a new invocation.” | `field` and `expected`. |
 | `import_resource` | `destination_exists` | “The destination already contains different bytes. Choose another path, or use a new explicit import with `overwrite: true` only when replacement is intended.” | Bounded `reason` identifies whether the collision was at the automatic or explicit destination. |
-| `import_resource` | `destination_not_regular` | “The destination is not a regular file Avalon can safely replace. Choose another path.” | Reason requires an absent path or regular file beneath the workspace; links, directories, and devices are never overwritten. |
+| `import_resource` | `destination_not_regular` | “The destination is not a regular file Rally can safely replace. Choose another path.” | Reason requires an absent path or regular file beneath the workspace; links, directories, and devices are never overwritten. |
 
 An accepted command returns `RunCommandOutput`, even when the program does
 not finish successfully. The loop branches on this result rather than treating
@@ -830,7 +830,7 @@ Publication failures:
 | `publish_resource` | `resource_empty` | “The output file is empty. Inspect its producer, regenerate a non-empty result, and publish that file.” | Bounded `reason` may identify the producing invocation. |
 | `publish_resource` | `not_found` | “No output file exists there. Use a path relative to `AVALON_RESOURCE_DIR`, not a repository-relative or absolute path.” | `field` is `filePath`. |
 | `checkout_repository` | `repository_not_authorized` | “That repository is not available with the requested remote access. Search authorized GitHub repositories, choose an exact matching result, and retry.” | `field` is `repositoryFullName`; `expected` names the required access. |
-| `checkout_repository` | `workspace_backup_failed`, `workspace_backup_changed` | “Avalon could not verify the recovery backup, so the repository was not changed. Stop workspace writers and retry checkout.” | Bounded `reason`; the existing sandbox and selection remain intact. |
+| `checkout_repository` | `workspace_backup_failed`, `workspace_backup_changed` | “Rally could not verify the recovery backup, so the repository was not changed. Stop workspace writers and retry checkout.” | Bounded `reason`; the existing sandbox and selection remain intact. |
 | `checkout_repository` | `workspace_backup_too_large` | “The recoverable workspace state exceeds the 50 MiB compressed backup limit. Remove regenerable dependencies or publish large artifacts, then retry checkout.” | `expected` names the compressed byte limit. |
 | `publish_branch_and_pr` | `repository_not_configured` | “No authorized repository is selected for this work stream. Search GitHub, call `terminal_checkout_repository` with an exact `owner/name`, then retry publishing.” | Bounded `reason`; never retry publication until checkout succeeds. |
 | `publish_branch_and_pr` | `repository_remote_read_only` | “This repository has read-only remote access. Continue local edits and commits, but do not push or publish until connector settings grant full access.” | Bounded `reason`; never retry the remote mutation until policy changes. |
@@ -839,7 +839,7 @@ Publication failures:
 | `publish_branch_and_pr` | `nothing_to_publish` | “There is no committed change to publish. Stop, or make and commit the requested change without creating an empty commit.” | Bounded `reason` may state that `HEAD` equals the base. |
 | `publish_branch_and_pr` | `publication_policy_denied` | “The committed diff contains a forbidden change. Inspect the full base diff and stop unless the request can be satisfied without it.” | Bounded `reason` names the paths. |
 | `publish_branch_and_pr` | `publication_conflict` | “The remote branch or base changed. Fetch read-only state, rebase or resolve without force, rerun validation, commit, and publish again.” | Bounded `reason` describes the conflicting ref state without credentials. |
-| `publish_branch_and_pr` | `publication_target_closed` | “The pull request for this work-stream branch is already closed or merged. Stop and ask the participant whether to begin a new change; do not reopen it or invent another branch.” | `available` contains `closed` or `merged`; bounded `reason` may include the canonical Avalon-authorized PR URL. |
+| `publish_branch_and_pr` | `publication_target_closed` | “The pull request for this work-stream branch is already closed or merged. Stop and ask the participant whether to begin a new change; do not reopen it or invent another branch.” | `available` contains `closed` or `merged`; bounded `reason` may include the canonical Rally-authorized PR URL. |
 | `publish_branch_and_pr` | `connection_revoked` | “The GitHub connection no longer authorizes this repository. Stop and ask the participant to reconnect or restore App access.” | `reconnectRequired: true`. |
 | `publish_branch_and_pr` | `github_unavailable` | “GitHub is temporarily unavailable and publication was not confirmed. Retry once only after a provided delay.” | Optional `retryAfterMs`; reconciliation runs before the retry to prevent a duplicate PR. |
 
@@ -897,12 +897,12 @@ alongside the tool descriptions:
 > `remoteAccess` is the remote boundary: `read_only` allows local edits and
 > commits but its credential cannot push or mutate GitHub; `full_access`
 > provides a repository-scoped credential for ordinary `git` and `gh` commands.
-> Before initial repository access Avalon creates or restores
+> Before initial repository access Rally creates or restores
 > `$AVALON_GIT_BRANCH` and switches to it. Later tools attempt to restore that
 > branch; if an active Git operation prevents the switch, inspect and repair Git
 > state before pushing. Stay on the prepared branch, commit normally,
 > push only that branch, and create or update its pull request against
-> `$AVALON_GIT_BASE_BRANCH`; do not push the default branch or another ref. Avalon
+> `$AVALON_GIT_BASE_BRANCH`; do not push the default branch or another ref. Rally
 > creates a durable recovery backup, including a portable bundle of local Git
 > refs, before
 > replacing nonempty workspace state. For deliberate text changes, read first
@@ -926,7 +926,7 @@ scratch root, or a relative directory below it. The caller supplies the command,
 working directory, and a timeout up to the server cap. It cannot request a PTY,
 daemon, arbitrary environment secret, Daytona ID, or host path.
 
-Avalon records a stable task before starting one asynchronous Daytona session
+Rally records a stable task before starting one asynchronous Daytona session
 command. The host observes that command with bounded backoff until its wall-clock
 deadline, then persists bounded stdout/stderr before deleting the provider
 session. The model does not receive a poll-output tool and spends no turns
@@ -935,7 +935,7 @@ checking status.
 If the Worker is interrupted, the existing regional harness Workflow retries
 the same Bind call. The exact durable Terminal receipt, command hash, sandbox
 generation, and named Daytona session let the host reattach to the sole existing
-command. A mismatch fails as ambiguous; Avalon never blindly submits the command
+command. A mismatch fails as ambiguous; Rally never blindly submits the command
 again. Participant cancellation and the server deadline kill the provider
 session and resolve the same call once.
 
@@ -947,7 +947,7 @@ server**, **Reconnecting**, and **Checking command status** independently of the
 process state. After reconciliation, the row becomes the one terminal result and
 offers **Open complete log** when `outputResourceId` exists. When a
 participant-facing complete log is retained beyond the
-inline cap, Avalon registers it as a generated text resource and returns its
+inline cap, Rally registers it as a generated text resource and returns its
 `outputResourceId`; an internal receipt object is never presented as a download.
 Secrets and terminal controls are scrubbed before model or participant display.
 
@@ -980,7 +980,7 @@ therefore be safely downloadable even when its content mode is `unsupported` or
 its derivative fails; publication never claims that every file can enter model
 context.
 
-The write follows the existing regional object lifecycle. Avalon derives the
+The write follows the existing regional object lifecycle. Rally derives the
 resource ID from the durable tool invocation, pre-registers its generation-
 unique R2 object in `resource_object_deletion_outbox`, writes the bytes, and
 atomically publishes the `resources` and `workstream_resources` rows before
@@ -1004,7 +1004,7 @@ system message, authorization decision, object key, or executable command.
 Generated-resource provenance is intentionally modest: content hash, byte size,
 media type,
 originating command or file-write invocation, work-stream ID, creation time, and
-optional repository commit. Avalon does not claim full reproducibility from an
+optional repository commit. Rally does not claim full reproducibility from an
 exhaustive runtime, package, host, lockfile, and source-path graph.
 
 Published resources follow normal work-stream resource retention rather than the
@@ -1015,8 +1015,8 @@ tools when it later needs to read or view the result.
 ### Local Git and GitHub publication
 
 The model uses real `git status`, `git diff`, tests, `git add`, `git commit`,
-`git push`, and `gh pr` commands. Commits use the Avalon bot identity. Before the
-model receives terminal control, Avalon creates or restores the recorded
+`git push`, and `gh pr` commands. Commits use the Rally bot identity. Before the
+model receives terminal control, Rally creates or restores the recorded
 `avalon/adjective-adjective-adjective-noun` branch, switches to it, sets its
 upstream when the remote branch already exists, and exposes its exact name as `AVALON_GIT_BRANCH` and base as
 `AVALON_GIT_BASE_BRANCH`. Multiple commits and
@@ -1032,7 +1032,7 @@ for a clean committed branch. It is not required for standard Git/CLI use.
 
 The repository, base ref, deterministic head ref, and current committed `HEAD`
 come from recorded server state, not model arguments. The operation requires a
-clean working tree and rejects workflow-file changes. Avalon asks Daytona to
+clean working tree and rejects workflow-file changes. Rally asks Daytona to
 produce a bounded Git bundle for the committed branch, transfers it to the
 trusted regional publisher, validates repository identity, ancestry, expected
 old SHA, fixed ref, and diff policy, and then fast-forwards that one branch with
@@ -1046,7 +1046,7 @@ makes response-loss retries converge on the same remote commit and PR. The
 repository/head/base uniqueness rule prevents duplicate PRs, while a later
 authorized invocation with a new title or body may deliberately update that PR
 only while it remains open. A closed or merged PR returns
-`publication_target_closed`; Avalon neither reopens it nor silently creates a
+`publication_target_closed`; Rally neither reopens it nor silently creates a
 second branch or PR. If a response was lost after successful publication, the
 durable receipt still returns that original success even if the PR was later
 closed; a new invocation observes the current closed/merged state.
@@ -1059,17 +1059,17 @@ turn an unresolved external write into an apparent success.
 
 ### Stop, archive, expiry, cancellation, and offline behavior
 
-The model receives no lifecycle tools. Avalon holds a lease while a tool or
+The model receives no lifecycle tools. Rally holds a lease while a tool or
 command is active, keeps the sandbox warm for five minutes, then stops it.
 Daytona's 15-minute auto-stop is a backstop. A stopped sandbox is archived after
 60 minutes of work-stream inactivity to release active compute and disk.
 
 The Daytona archive is retained for 30 days from repository or scratch activity.
-Before expiry, Avalon preserves only durable product outputs: bounded inline
+Before expiry, Rally preserves only durable product outputs: bounded inline
 command output, generated log and final-diff resources, other published
 resources, final repository status, publication receipts, and user-visible
 activity. It then deletes the sandbox and its secrets.
-Avalon does not maintain a second restorable filesystem or Git-bundle archive in
+Rally does not maintain a second restorable filesystem or Git-bundle archive in
 R2. The UI warns that unpublished and unexported local files expire on the stated
 date.
 
@@ -1083,7 +1083,7 @@ and **Start fresh**; it never labels a fresh clone as a restore.
 A later sandbox-dependent call after expiry starts a fresh sandbox and reclones
 the authorized repository at current server-recorded state, or creates an empty
 scratch directory. It does not silently apply an old patch. The participant can
-download the preserved final diff and explicitly ask Avalon to apply it in a new
+download the preserved final diff and explicitly ask Rally to apply it in a new
 run.
 
 Cancellation stops new commands, kills the active task, captures available
@@ -1139,7 +1139,7 @@ None yet.
    cancellation complexity.
 9. **Use the native Git/GitHub CLI path.** Read-only is enforced by token
    permissions. Full access receives a short-lived single-repository token after
-   Avalon prepares the work-stream branch; prompt guidance replaces a custom
+   Rally prepares the work-stream branch; prompt guidance replaces a custom
    smart-HTTP/API proxy because GitHub has no branch-scoped installation token.
 10. **Keep file concurrency internal.** One Terminal run owns the work-stream
     mutation lease at a time. File writes use exact-match or patch-context checks
@@ -1237,13 +1237,13 @@ or command argument is created.
 With `full_access`, that scoped token includes contents-write and
 pull-request-write so the model can use standard CLI commands. GitHub App
 installation tokens can be narrowed to one repository and minimal permissions,
-but not to one branch. Avalon prepares and switches to the work-stream branch
+but not to one branch. Rally prepares and switches to the work-stream branch
 and guides the model through the plugin prompt rather than adding a Git/API
 proxy. The optional typed publisher still uses a separate fresh token and
 convergent receipt when selected.
 
 The sandbox runs non-root by default and receives no Docker socket, host mount,
-metadata access, inbound public port, or Avalon infrastructure credential. A
+metadata access, inbound public port, or Rally infrastructure credential. A
 narrow sandbox-local elevation path may run the pinned system manager. Repository
 content, package scripts, and command output are untrusted. Paths are root-
 confined, resources are bounded, output and placeholders are scrubbed, and
@@ -1276,7 +1276,7 @@ instead of silently substituting another environment.
 
 ## Provider configuration and operations
 
-1. Upgrade the Avalon GitHub App's repository `Contents` permission to write while
+1. Upgrade the Rally GitHub App's repository `Contents` permission to write while
    retaining Pull requests read/write. Do not add Workflows permission.
    Installations that have not approved the upgrade can still use every Terminal
    tool, but publication returns a reconnect/permission error.
@@ -1284,7 +1284,7 @@ instead of silently substituting another environment.
    supported region, on a tier supporting archive, native domain allow-lists, and
    Full internet.
 3. Configure Daytona's managed `daytona-small` container snapshot. On first
-   creation Avalon idempotently creates the owned workspace, installs only
+   creation Rally idempotently creates the owned workspace, installs only
    missing SQLite/`gh`/pnpm/`tsx` capabilities through Trusted-only apt/npm
    hosts, and executes the complete manifest before use. Record effective
    versions and smoke fixtures before marking a region supported. A breaking
@@ -1300,7 +1300,7 @@ instead of silently substituting another environment.
    provider-create, policy-read-back, compatibility-install, manifest-verify,
    stopped-warm, and archived-restore timings without tenant or operation IDs.
    Provide a sampling-aware human-readable report before deciding that an
-   Avalon-owned image is worth its build/activation/update lifecycle.
+   Rally-owned image is worth its build/activation/update lifecycle.
 
 Each regional Wrangler configuration declares the non-secret static capability
 `TERMINAL_REGION_CAPABILITY` as `supported` or `unsupported`; local development
@@ -1456,7 +1456,7 @@ work. A call blocked by the breaker returns the normal model-visible
 ## Open questions
 
 1. **Does Daytona provide a contractually acceptable EU compute and persistence
-   location for Avalon's selected-region promise?** This blocks EU availability,
+   location for Rally's selected-region promise?** This blocks EU availability,
    not Global implementation, and requires vendor evidence.
 2. **Do Daytona essential services and a custom `domainAllowList` compose exactly
    as the launch policy assumes?** The provider test is a release gate. If the

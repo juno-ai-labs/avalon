@@ -1,5 +1,5 @@
-import type { DigestDeliveryTargetType } from "@avalon/contracts";
-import { nowIso } from "@avalon/db";
+import type { DigestDeliveryTargetType } from "@rally/contracts";
+import { nowIso } from "@rally/db";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";

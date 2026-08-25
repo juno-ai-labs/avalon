@@ -27,15 +27,15 @@
  * The window, the throttle, and the guards live here; the judgment lives in
  * `renderWorkstreamDescriptionMessages`. See `docs/workstream-descriptions.md`.
  */
-import { normalizeModelText } from "@avalon/contracts/model-markdown";
+import { normalizeModelText } from "@rally/contracts/model-markdown";
 import {
   MAXIMUM_DESCRIPTION_MESSAGE_CHARACTERS,
   renderWorkstreamDescriptionMessages,
   type WorkstreamDescriptionMessageInput,
-} from "@avalon/agent-harness";
+} from "@rally/agent-harness";
 import { z } from "zod";
 
-import { WORKSTREAM_DESCRIPTION_MAX_CHARACTERS } from "@avalon/contracts";
+import { WORKSTREAM_DESCRIPTION_MAX_CHARACTERS } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { firstNonEmptyLine, truncateUtf16Safe } from "../lib/text";

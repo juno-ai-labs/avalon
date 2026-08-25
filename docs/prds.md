@@ -10,9 +10,9 @@ durable reference for the subsystem it created — that is the matching document
 in [the documentation index](README.md), which is updated alongside the code
 long after the PRD is finished.
 
-One PRD is the exception and stays current: [the Avalon implementation
+One PRD is the exception and stays current: [the Rally implementation
 brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md), the standing product
-contract for what Avalon *is*. Everything else under `docs/PRDs/` covers one
+contract for what Rally *is*. Everything else under `docs/PRDs/` covers one
 proposed change and stops being edited once it is complete. The brief predates
 this specification and keeps its own shape — it is the contract every later PRD
 is written *against*, not an instance of the form below.
@@ -156,7 +156,7 @@ prose:
 >
 > A participant can silence a busy work stream for a fixed period without
 > leaving it. Standing contract:
-> [the Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
+> [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 ```
 
 It carries the creation date, a one-line scope, and links to the companion files
@@ -216,7 +216,7 @@ PRD is `in progress`.
    words. Where behavior is conditional, give the condition. Where a mock or a
    screenshot settles it faster than prose, link the image.
 
-6. **Impact on the product contract** — How the change sits against [the Avalon
+6. **Impact on the product contract** — How the change sits against [the Rally
    implementation brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md).
    Most PRDs write "none — this refines behavior within the existing contract",
    and that one line is the point: it forces the author to check. If the change

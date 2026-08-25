@@ -9,7 +9,7 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 
 describe('TelemetryBreadcrumbRing', () => {
   it('persists only the newest 32 typed checkpoints in an atomic sidecar', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'avalon-breadcrumbs-'));
+    const root = await mkdtemp(join(tmpdir(), 'rally-breadcrumbs-'));
     roots.push(root);
     const sidecarPath = join(root, 'breadcrumbs.json');
     let now = Date.parse('2026-08-12T20:00:00Z');

@@ -1,3 +1,4 @@
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
 import {
@@ -21,7 +22,7 @@ import {
   WorkstreamBootSchema,
   WorkstreamSchema,
   WorkspaceWorkstreamCursorSchema,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { requestDeferral } from "../lib/defer";
@@ -68,7 +69,7 @@ const substreamSocketParam = idParam.extend({ substreamId: z.union([z.literal("0
 
 /**
  * Response contracts for the shapes this route composes itself. The single
- * entities come straight from `@avalon/contracts`; these are the envelopes
+ * entities come straight from `@rally/contracts`; these are the envelopes
  * around them, and they are what the desktop client parses on arrival.
  */
 const WorkstreamPageSchema = z.object({
@@ -180,7 +181,7 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
   zValidator("json", CreateWorkstreamRequestSchema), async (c) => {
   const body = c.req.valid("json");
   const auth = getAuth(c);
-  const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
+  const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
   return requestFlowSpan(c, "workstream.create", { flow: "workstream_create" }, async (span) => {
     // This is the one create path where a person is at a keyboard, so it is the
     // only one that can claim an objective was authored rather than derived.
@@ -325,7 +326,7 @@ workstreamRoutes.get("/:id/messages", zValidator("param", idParam), zValidator("
 });
 workstreamRoutes.post("/:id/messages", zValidator("param", idParam), requireSendableMessageLength("text"),
   zValidator("json", CreateMessageRequestSchema), async (c) => {
-  const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
+  const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
   const id = c.req.valid("param").id;
   const body = c.req.valid("json");
   return requestFlowSpan(c, "workstream.message.send", {

@@ -5,7 +5,7 @@ import {
   TelemetryBreadcrumbSchema,
   TelemetryBreadcrumbSidecarSchema,
   type TelemetryBreadcrumb,
-} from '@avalon/contracts';
+} from '@rally/contracts';
 
 export type NewTelemetryBreadcrumb =
   | { kind: 'screen_changed'; screen: Extract<TelemetryBreadcrumb, { kind: 'screen_changed' }>['screen'] }

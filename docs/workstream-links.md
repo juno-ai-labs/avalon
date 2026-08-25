@@ -3,7 +3,7 @@
 Every surface that points at a work stream from outside the desktop app emits one
 shape: `https://rallywith.ai/app/workstreams/<uuid>`. The `rallywithai://` deep link
 is still what actually opens a work stream, but it is now the last hop of that
-HTTPS page rather than the thing Avalon hands out — because a custom scheme cannot
+HTTPS page rather than the thing Rally hands out — because a custom scheme cannot
 be unfurled by Slack, is not linkified by mail clients, and is dead for anyone
 without the app installed.
 
@@ -17,7 +17,7 @@ changing the Slack unfurl card or the sweep that keeps it current.
 | Mint, parse, and validate both forms | `packages/contracts/src/workstream-links.ts` |
 | Serve `/app/workstreams/<uuid>` | `apps/site/app/workstreams/index.html`, `apps/site/src/workstream-link.ts` |
 | Make the dynamic path resolve | `apps/site/public/_redirects` |
-| Slack unfurl | `unfurlAvalonLinks` in `apps/api/src/services/slack-agent-service.ts` |
+| Slack unfurl | `unfurlRallyLinks` in `apps/api/src/services/slack-agent-service.ts` |
 | The card's blocks and its one status table | `slack-workstream-card.ts` |
 | The refresh sweep | `refreshSlackWorkstreamUnfurls`, wired into `scheduled` in `apps/api/src/index.ts` |
 | Authoritative title/status/recency lookup | `WorkspaceDO.lookupWorkstreamDirectory`, batched per workspace by the posting and refresh paths |
@@ -36,7 +36,7 @@ changing the Slack unfurl card or the sweep that keeps it current.
 | **Deep link** | `rallywithai://workstreams/<uuid>` | The canonical page, in the browser, as the last hop |
 
 `rallywithai://workstreams/<uuid>` is still the protocol the desktop client registers,
-and it is still what actually opens a work stream. It stopped being what Avalon
+and it is still what actually opens a work stream. It stopped being what Rally
 *hands out*, for three reasons:
 
 - **Slack cannot unfurl it.** Slack emits `link_shared` only for URLs whose domain
@@ -89,7 +89,7 @@ so they cannot drift apart, and the running and needs-input marks match App Home
 task rows.
 
 The card carries no work-stream *contents*: no objective, no messages, no
-resources. Those still need the reader to open Avalon and pass its own
+resources. Those still need the reader to open Rally and pass its own
 authorization.
 
 A Slack unfurl is one card per link per message, identical for everyone who can
@@ -111,7 +111,7 @@ existing one must not, because a five-second timeout would otherwise redact a
 correct card and persist that as the truth — so a failed lookup leaves the row
 completely untouched and the next sweep retries.
 
-The workspace check is the one that is not a matter of taste: naming another Avalon
+The workspace check is the one that is not a matter of taste: naming another Rally
 workspace's work stream inside this Slack team is a cross-tenant leak. The Slack
 Connect check is about people from other companies. Everything else inside the
 workspace sees the summary, on the same reasoning that lets any internal tool
@@ -186,7 +186,7 @@ with no version constant for a future change to remember to bump.
 
 ## Invariants
 
-- **The canonical HTTPS link is the only form Avalon hands out.** Never emit
+- **The canonical HTTPS link is the only form Rally hands out.** Never emit
   `rallywithai://` into anything a human can copy; it cannot be unfurled, linkified, or
   opened without the app.
 - **The work-stream id lives in the path, never in a fragment.** A server has to be
@@ -403,7 +403,7 @@ most 250 work streams per RPC, and still applies the existing 100-global and
 presented/automatic/manual handoff-attempt events after their existing local
 parsers classify the target.
 
-**Why:** Desktop activation can show that a deep link reached Avalon but cannot
+**Why:** Desktop activation can show that a deep link reached Rally but cannot
 show which browser shell presented it or whether a malformed target stopped
 before the application.
 

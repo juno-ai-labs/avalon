@@ -9,7 +9,7 @@ import {
 } from './menu-bar-menu';
 
 /**
- * Deliberately narrower than `@avalon/contracts` describes these responses. The
+ * Deliberately narrower than `@rally/contracts` describes these responses. The
  * status item needs three strings and a number, and parsing the full work-stream
  * contract here would let an unrelated field addition empty the menu on an older
  * client. Everything the menu does not read is ignored rather than rejected.
@@ -37,7 +37,7 @@ const StartedWorkstreamSchema = z.object({
   workstream: z.object({ id: z.string().min(1) }),
 });
 
-/** Shown for a work stream Avalon has not finished naming. The renderer draws a
+/** Shown for a work stream Rally has not finished naming. The renderer draws a
  * skeleton in that state; a menu row cannot, and the placeholder title on the
  * wire is not written to be read. */
 const UNNAMED_WORKSTREAM_LABEL = 'Untitled work stream';
@@ -56,7 +56,7 @@ export interface MenuBarContentDependencies {
 /**
  * The menu's data, cached in the main process rather than pushed from a window.
  *
- * Avalon can be launched hidden at login, and the status item is then the only
+ * Rally can be launched hidden at login, and the status item is then the only
  * surface there is — no renderer exists to hold a React Query cache or to answer
  * an IPC request. So this fetches for itself, against the same regional endpoint
  * and credential the rest of main uses.
@@ -194,7 +194,7 @@ export class MenuBarContentStore {
   ): Promise<T | null> {
     try {
       const parsed = schema.safeParse(await this.dependencies.requestJson(path));
-      if (!parsed.success) throw new Error(`Avalon returned an unreadable ${description} response`);
+      if (!parsed.success) throw new Error(`Rally returned an unreadable ${description} response`);
       return parsed.data;
     } catch (error) {
       this.dependencies.logWarning(`could not read ${description} for the menu bar`, error);
@@ -269,7 +269,7 @@ export class MenuBarContentStore {
       },
     );
     const parsed = StartedWorkstreamSchema.safeParse(response);
-    if (!parsed.success) throw new Error('Avalon returned an unreadable started work stream');
+    if (!parsed.success) throw new Error('Rally returned an unreadable started work stream');
     // Again, because the service consumed the suggestion only just now. The
     // bump before the POST covers the cache; it cannot cover a refresh issued
     // while the POST was in flight, which asked before the start had happened

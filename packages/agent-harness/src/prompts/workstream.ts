@@ -1,4 +1,4 @@
-import type { SlackOriginContext } from "@avalon/contracts";
+import type { SlackOriginContext } from "@rally/contracts";
 import type { PromptMessage } from "./types";
 import { ATTACHMENT_INSPECTION_POLICY } from "./attachment-policy";
 import { RESPONSE_FORMATTING_POLICY } from "./response-formatting";

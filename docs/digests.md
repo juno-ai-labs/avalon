@@ -1,7 +1,7 @@
 # Activity events and scheduled digests
 
 Two things live here because the second is the first's only consumer today. The
-**activity log** is Avalon's first-party record of what happened that someone
+**activity log** is Rally's first-party record of what happened that someone
 should hear about. The **digest** is a scheduled agent run that reads a person's
 slice of that log and writes them a summary.
 
@@ -37,8 +37,8 @@ Workflow. It answers *what did GitHub tell this workspace*. Legacy regional D1
 `activities` rows are maintenance import input and are scrubbed before cutover;
 live ingest writes no D1 event body.
 
-`WorkspaceDO.workspace_activity_events` answers a different question: *what happened in Avalon that
-this person should hear about*. An Avalon mention has no connection. A
+`WorkspaceDO.workspace_activity_events` answers a different question: *what happened in Rally that
+this person should hear about*. An Rally mention has no connection. A
 work-stream message has no provider event id. Neither has a dedupe key a
 provider controls. Widening `activities` to hold both would leave first-party
 rows carrying a column of synthetic nulls for every provider concept they do not
@@ -162,7 +162,7 @@ Producers today:
 
 | Producer | Event type | Audience | Digestible |
 | --- | --- | --- | --- |
-| `WorkstreamService.createMessage` | `workstream.message.posted` | the work stream; mentions become `mentioned` targets | always — everything Avalon records here is somebody addressing somebody |
+| `WorkstreamService.createMessage` | `workstream.message.posted` | the work stream; mentions become `mentioned` targets | always — everything Rally records here is somebody addressing somebody |
 | Authoritative `SubstreamAgent` regional-effect outbox | `workstream.message.posted` and later first-party work-stream events | the work stream; named targets travel in the same immutable effect | decided by the object mutation; messages are digestible |
 | `WorkstreamObjectProduct.addParticipant` | `workstream_participant_added` | the work stream; the person added is an `added` target | always — being put in a room is addressed at exactly one person |
 | `activity-consumer` after routing | `connector.<provider>.<manifest event type>` — so `connector.github.github.push`, and `connector.google.email.received`, because GitHub's manifest ids carry a provider prefix and Google's do not | the connection's own scope | whatever the connector's manifest declared for that activity type |
@@ -294,7 +294,7 @@ both.
 - **`scope` — who may read it.** `personal` means an active participant and
   nobody else; `workspace` means anyone in the workspace. This is the same
   column and the same vocabulary `notes.scope` uses, so "private" means one
-  thing in Avalon and is declared on the row rather than inferred by each
+  thing in Rally and is declared on the row rather than inferred by each
   caller. A digest's work stream has exactly one participant, its recipient,
   which is also what makes every tool the run reaches for resolve against their
   own access. Another member cannot open it knowing its id, because the brief
@@ -393,7 +393,7 @@ is never a delivery-state projection or fallback.
 
 `digest-email-content.ts` wraps the run's Markdown, rendered to email-safe HTML by the shared `email-markdown.ts`, in the digest's own shell.
 
-It is dark, and deliberately only dark: the email is a copy of an Avalon surface
+It is dark, and deliberately only dark: the email is a copy of a Rally surface
 and the app has one appearance. Every colour is the app's own token from
 `app.css`, written inline — a mail client will strip a `<style>` block, and
 several repaint a page that declares a light scheme, so the palette is stated on
@@ -463,7 +463,7 @@ For a remote workspace, export its D1 first — Wrangler holds those credentials
 this script does not:
 
 ```bash
-pnpm --filter @avalon/api exec wrangler d1 export DB --remote \
+pnpm --filter @rally/api exec wrangler d1 export DB --remote \
   --config wrangler.global.jsonc --output /tmp/global.sql
 sqlite3 /tmp/global.sqlite < /tmp/global.sql
 ```
@@ -611,7 +611,7 @@ entry point, and nothing else resolves audience correctly.
 | `apps/api/test/digest-delivery.test.ts` | Independent per-destination settlement, the skipped unknown target type, and `needs_input` on a permanent rejection. |
 
 Run one with
-`pnpm --filter @avalon/api exec vitest run test/digest-run-context.test.ts` — the
+`pnpm --filter @rally/api exec vitest run test/digest-run-context.test.ts` — the
 path is package-relative.
 
 **A test proves the markup contains a string, not that the hierarchy reads.** Every
@@ -679,7 +679,7 @@ whether one person is told now, `digestible` is whether the event is worth
 recalling in a summary of the day — and somebody who was added while away
 should still see it in the digest that covers that day. Also rejected: an event
 per participation change, including removals. Being removed is not something
-Avalon should announce to the person it happened to, and nobody asked for the
+Rally should announce to the person it happened to, and nobody asked for the
 audit trail.
 
 ### 2026-08-22 — The Markdown renderer moves out of the digest
@@ -1084,7 +1084,7 @@ type>`, and GitHub's manifest ids already carry a `github.` prefix while
 Google's do not. A manifest id alone matches no row. The default was chosen to leave pre-existing rows alone.
 For connector rows the migration's own backfill then overrode it — but not for
 first-party ones: `0063`'s `UPDATE` is `WHERE source_kind = 'activity'`, and
-work-stream messages and mentions keep `DEFAULT 1` deliberately, because Avalon
+work-stream messages and mentions keep `DEFAULT 1` deliberately, because Rally
 has always known those are worth telling somebody about. So the default was the
 real answer for a whole class of existing rows, and picking `0` instead would
 have cost a second backfill (`WHERE source_kind <> 'activity'`) rather than

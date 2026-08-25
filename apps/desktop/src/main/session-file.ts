@@ -1,7 +1,16 @@
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const SESSION_DATA_DIRECTORY = 'avalon-data';
+const SESSION_DATA_DIRECTORY = 'rally-data';
+/**
+ * The directory name written before the rename from Avalon.
+ *
+ * Unlike the userData directory above it, this one is not adopted by a launch
+ * that finds it — an install already carrying the current userData name keeps
+ * writing here — so it is renamed explicitly, once, by
+ * {@link migrateSupersededSessionDirectory}.
+ */
+const SUPERSEDED_SESSION_DATA_DIRECTORY = 'avalon-data';
 const AUTH_FILE_NAME = 'desktop-auth.bin';
 const AUTH_TEMP_FILE_NAME = 'desktop-auth.tmp';
 const PROFILE_FILE_NAME = 'desktop-profile.bin';
@@ -17,6 +26,40 @@ function errorCode(error: unknown): string | undefined {
 
 export function storedSessionDirectory(userDataDirectory: string): string {
   return join(userDataDirectory, SESSION_DATA_DIRECTORY);
+}
+
+export function supersededStoredSessionDirectory(userDataDirectory: string): string {
+  return join(userDataDirectory, SUPERSEDED_SESSION_DATA_DIRECTORY);
+}
+
+/**
+ * Move the pre-rename session directory into place, if one is still there.
+ *
+ * A rename rather than a per-file copy: the three encrypted files have to move
+ * together or a launch can read an authentication credential without the
+ * profile bound to it, and the rename is the only operation that cannot leave
+ * them half-moved. It is skipped once the current directory exists, so a
+ * failure costs one signed-out launch and is retried by the next one rather
+ * than overwriting a session that is already current.
+ */
+export async function migrateSupersededSessionDirectory(
+  userDataDirectory: string,
+): Promise<boolean> {
+  const current = storedSessionDirectory(userDataDirectory);
+  const superseded = supersededStoredSessionDirectory(userDataDirectory);
+  try {
+    await stat(current);
+    return false;
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') throw error;
+  }
+  try {
+    await rename(superseded, current);
+    return true;
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 export function storedSessionFilePath(userDataDirectory: string): string {

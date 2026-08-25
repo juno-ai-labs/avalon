@@ -12,7 +12,7 @@ function noopActions(): MenuBarActions {
     newAutomation: vi.fn(),
     startSuggestion: vi.fn(),
     openWorkstream: vi.fn(),
-    openAvalon: vi.fn(),
+    openRally: vi.fn(),
     quit: vi.fn(),
   };
 }
@@ -39,7 +39,7 @@ function harness(options: {
   const logWarning = vi.fn();
   const controller = new MenuBarController({
     supported: options.supported ?? true,
-    appName: 'Avalon',
+    appName: 'Rally',
     createTray,
     content: () => options.content ?? emptyMenuBarContent,
     signedIn: () => true,
@@ -59,7 +59,7 @@ function harness(options: {
 }
 
 describe('menu bar controller', () => {
-  it('puts Avalon in the menu bar by default', async () => {
+  it('puts Rally in the menu bar by default', async () => {
     const subject = harness();
     await subject.controller.initialize();
 
@@ -171,7 +171,7 @@ describe('menu bar controller', () => {
     }));
     const controller = new MenuBarController({
       supported: true,
-      appName: 'Avalon',
+      appName: 'Rally',
       createTray,
       content: () => emptyMenuBarContent,
       signedIn: () => true,

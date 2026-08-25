@@ -1,4 +1,4 @@
-import { ProductFeatureFlagKeySchema } from '@avalon/contracts';
+import { ProductFeatureFlagKeySchema } from '@rally/contracts';
 import { Hono } from 'hono';
 import { accessFailureMessage, readAccessConfiguration, verifyAccessRequest, type AccessPrincipal } from './access';
 import { searchUsers, searchWorkspaces } from './directory';

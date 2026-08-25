@@ -305,7 +305,7 @@ describe("Bind host durability boundaries", () => {
       messageId,
       error: {
         code: "ambiguous_external_write",
-        message: "An external action's outcome could not be confirmed, so Avalon stopped instead of repeating it",
+        message: "An external action's outcome could not be confirmed, so Rally stopped instead of repeating it",
       },
     });
   });

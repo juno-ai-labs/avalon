@@ -26,7 +26,7 @@ export interface MenuBarControllerDependencies {
 }
 
 /**
- * Owns the Avalon status item: whether it exists, and what its drop-down says.
+ * Owns the Rally status item: whether it exists, and what its drop-down says.
  *
  * The menu is rebuilt from whatever is cached rather than fetched on open, so a
  * click always produces a menu at once. Freshness is the caller's job — it asks
@@ -123,7 +123,7 @@ export class MenuBarController {
       } catch (error) {
         // A status item that cannot be created is a degraded menu bar, not a
         // failed launch: every action it offers exists in the app itself.
-        this.dependencies.logWarning('could not add Avalon to the menu bar', error);
+        this.dependencies.logWarning('could not add Rally to the menu bar', error);
         return;
       }
     }
@@ -137,7 +137,7 @@ export class MenuBarController {
     try {
       tray.destroy();
     } catch (error) {
-      this.dependencies.logWarning('could not remove Avalon from the menu bar', error);
+      this.dependencies.logWarning('could not remove Rally from the menu bar', error);
     }
   }
 }

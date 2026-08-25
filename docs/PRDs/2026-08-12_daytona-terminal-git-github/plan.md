@@ -42,7 +42,7 @@ contract.
 
 Acceptance gate: each new test is observed red before its matching minimum
 implementation, then the complete Phase 0 contract suite and existing
-`@avalon/agent-harness`, contracts, and API tests are green.
+`@rally/agent-harness`, contracts, and API tests are green.
 
 ## Phase 1 — Persist the regional control plane
 
@@ -79,7 +79,7 @@ repository race tests pass repeatedly.
   conflict, affected active sandboxes, cancel-before-stop, pending/verified/
   failed reconciliation, and no auto-restart after a policy change.
 - [x] Implement the compiler and owner/admin settings service using only
-  Daytona's `domainAllowList`; Full internet clears it. CIDR and an Avalon proxy
+  Daytona's `domainAllowList`; Full internet clears it. CIDR and an Rally proxy
   remain absent.
 - [x] Add production-provider probe hooks for effective-policy read-back, allowed
   targets, denied targets, redirects, direct IP, and private/special-use DNS

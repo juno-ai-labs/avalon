@@ -1,6 +1,6 @@
-import { asUserId } from "@avalon/contracts";
+import { asUserId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
-import { WorkspaceSchema, type Region, type Session, type Workspace } from "@avalon/contracts";
+import { WorkspaceSchema, type Region, type Session, type Workspace } from "@rally/contracts";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import type { Env, IdentityAuthContext } from "../src/env";

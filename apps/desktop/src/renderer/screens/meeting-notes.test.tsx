@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { CONTROL_TOWER_REFRESH_SECONDS } from '@avalon/contracts';
+import { CONTROL_TOWER_REFRESH_SECONDS } from '@rally/contracts';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MeetingCloseReason } from '../../common/desktop';
@@ -441,7 +441,7 @@ describe('MeetingNotesScreen', () => {
 
   it('keeps the window open on End when the final summary failed', async () => {
     state.dictationState = 'listening';
-    state.api.generateNoteNotes.mockRejectedValue(new Error('Avalon could not create the final meeting summary.'));
+    state.api.generateNoteNotes.mockRejectedValue(new Error('Rally could not create the final meeting summary.'));
 
     render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
     await screen.findByDisplayValue('Meeting notes');
@@ -456,7 +456,7 @@ describe('MeetingNotesScreen', () => {
       expect.any(String),
       expect.objectContaining({ recordingStatus: 'complete' }),
     ));
-    expect(await screen.findByText('Avalon could not create the final meeting summary.')).toBeVisible();
+    expect(await screen.findByText('Rally could not create the final meeting summary.')).toBeVisible();
     expect(state.closeMeetingNotes).not.toHaveBeenCalled();
   });
 

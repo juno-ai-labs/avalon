@@ -3,7 +3,7 @@ import {
   NormalizedActivitySchema,
   type NormalizedActivity,
   type Scope,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import {
   canGitHubPersonalConnectionAccessRepository,
   canPersonalLinearConnectionAccessWebhook,
@@ -25,8 +25,8 @@ import {
   type GitHubWebhookResourceHint,
   type VerifiedLinearWebhook,
   type VerifiedNotionWebhook,
-} from "@avalon/connectors";
-import { newId, nowIso } from "@avalon/db";
+} from "@rally/connectors";
+import { newId, nowIso } from "@rally/db";
 import type { Env } from "../env";
 import { linearNativeAgentEnabled, numericEnv } from "../env";
 import { encryptString, sha256, timingSafeEqualText } from "../lib/crypto";
