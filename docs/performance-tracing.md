@@ -254,11 +254,13 @@ socket-ticket route (`workstream.socket.ticket`), the edge upgrade
 (`workstream.room.socket.accept`), and the room's subscription
 (`workstream.room.socket.subscribe`). When the subscription's plan is a
 snapshot, `workstream.room.snapshot.detail`, `…transcript`, and `…encode` sit
-inside it. `rally.snapshot.trims` is worth reading beside the byte size: the
-trim loop re-serializes the whole frame per dropped message, and that count is
-the only place its cost appears. `GET /:id` and `GET /:id/messages` carry the
-same flow, because a resync fetches canonical state over HTTP and is part of the
-same wait.
+inside it. `rally.snapshot.trims` is worth reading beside the byte size. A
+subscription snapshot also records `rally.subscribe.snapshot_reason` as
+`initial` or `history_unavailable`, so hibernation recovery can be separated
+from a cold open. The trim loop re-serializes the whole frame per dropped
+message, and that count is the only place its cost appears. `GET /:id` and
+`GET /:id/messages` carry the same flow only for a `sequence_ahead` resync; lost
+replay history is repaired by the subscription snapshot itself.
 
 **`workstream_message_send`** — the desktop sends over the workspace command
 socket, so `workstream.message.send` on WorkspaceDO is the trace to read:
@@ -405,8 +407,10 @@ This module owns latency diagnosis for the three named flows and nothing else.
   if that becomes the question, and it costs a `perf_flow` row per repair.
 - **A `workstream_open` trace is not always a completed open.** The renderer
   closes the trace on the first valid server frame and records which one it was
-  as `outcome`. A `snapshot` means the screen filled; a `resync_required` means
-  the server sent the client to HTTP instead, closing the socket and deferring
+  as `outcome`. A `snapshot` means the screen filled, whether it was an initial
+  open or a replay-history repair; use `rally.subscribe.snapshot_reason` to
+  separate them. A `resync_required` means the client's cursor was ahead and
+  the server sent it to HTTP instead, closing the socket and deferring
   reconciliation to the next connect, which this trace does not cover. The
   durations are therefore only comparable within one outcome — **filter
   `outcome = snapshot` before reading a percentile.** Making the trace span the
@@ -523,6 +527,24 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-08-25 — Subscription snapshots name replay-loss recovery
+
+**What changed:** `workstream.room.socket.subscribe` records
+`rally.subscribe.snapshot_reason` as `initial` or `history_unavailable` whenever
+its replay plan is a snapshot.
+
+**Why:** Replay-cache loss now repairs the existing socket with canonical state
+instead of emitting `resync_required`. Without a reason attribute those expected
+post-hibernation snapshots would be indistinguishable from first opens in the
+same trace distribution.
+
+**Considered and rejected:** Inferring recovery from the prior client cursor
+would require joining application payloads that traces deliberately do not
+store. A dedicated outcome value would duplicate `replay_plan = snapshot`.
+
+**Consequences:** Snapshot latency can be compared by cause. HTTP reads under
+`workstream_open` now represent only the remaining `sequence_ahead` fallback.
 
 ### 2026-08-25 — Span attributes are namespaced rally.*
 

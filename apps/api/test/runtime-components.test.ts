@@ -409,7 +409,7 @@ describe("runtime component invariants", () => {
     )).toThrow("durable_object_jurisdiction_mismatch:us:eu");
   });
 
-  it("replays an available in-memory window and explicitly resyncs after hibernation", () => {
+  it("replays an available window and snapshots canonical state after hibernation", () => {
     const event = ServerSocketEventSchema.parse({
       type: "harness_status_changed",
       sequence: 12,
@@ -419,14 +419,18 @@ describe("runtime component invariants", () => {
 
     expect(planSocketReplay(11, 12, 11, [event])).toEqual({ type: "replay", events: [event] });
     expect(planSocketReplay(11, 12, null, [])).toEqual({
-      type: "resync_required",
+      type: "snapshot",
+      reason: "history_unavailable",
+    });
+    expect(planSocketReplay(11, 12, 11, [])).toEqual({
+      type: "snapshot",
       reason: "history_unavailable",
     });
     expect(planSocketReplay(13, 12, 11, [event])).toEqual({
       type: "resync_required",
       reason: "sequence_ahead",
     });
-    expect(planSocketReplay(0, 12, null, [])).toEqual({ type: "snapshot" });
+    expect(planSocketReplay(0, 12, null, [])).toEqual({ type: "snapshot", reason: "initial" });
     const firstEvent = { ...event, sequence: 1 };
     expect(planSocketReplay(0, 1, 0, [firstEvent], false)).toEqual({
       type: "replay",
