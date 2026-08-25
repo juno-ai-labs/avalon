@@ -221,12 +221,18 @@ re-evaluation that was already safe to repeat — and a conditional fan-out
 would be a second code path for every future flag to reason about, bought for
 a cost that shows up nowhere a person would notice it.
 
-**Consequences:** `ensureFlag` now takes a default-variation argument, and any
-future non-presentation flag that must not default off follows
-`digests-enabled`'s example rather than `ensureFlag`'s ordinary default.
-`deployment-contract.test.ts` pins that this flag's provisioning call passes
-`'on'` explicitly, since a silent regression back to `ensureFlag`'s default
-would stop every digest in production on the next deploy.
+**Consequences:** `ensureFlag` now takes a default-variation argument, and each
+`MANAGED_FLAGS` entry in `protocol.ts` carries its own `defaultVariation` —
+`'off'` for every presentation flag, `'on'` only for `digests-enabled` — so the
+client editor's skeleton state agrees with what `deploy.mjs` provisions before
+either has read a real value from Flagship. The two still cannot read one
+shared object: `deploy.mjs` runs under plain Node rather than through Vite, so
+it cannot import `protocol.ts` and resolve the extensionless relative imports
+elsewhere in the TypeScript graph. `deployment-contract.test.ts` closes that
+gap in a test instead, checking every managed flag's provisioning call against
+its catalog entry, so a silent regression back to `ensureFlag`'s ordinary
+default fails CI rather than stopping every digest in production on the next
+deploy.
 
 ### 2026-08-25 — Ace merge deployment follows its runtime boundary only
 
