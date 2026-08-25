@@ -36,6 +36,7 @@ import {
   workstreamObjectGet,
   workstreamObjectRun,
   type RecordedDispatch,
+  applyWorkstreamObjectRootFields,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
@@ -151,19 +152,18 @@ function fixture(): Fixture {
   // through the same compat port the harness uses.
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
-  seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+  seedWorkstreamObjectRoot(objectStore, {
+    workstreamId: WORKSTREAM_ID,
+    workspaceId: WORKSPACE_ID,
+    title: "Wake Up",
+    description: "Wake Up",
+    originType: "ad_hoc",
+    createdByUserId: USER_ID,
+    exactState: "running",
+    emailAddress: "wake-up@automation.with-avalon.com",
+    emailRouteStatus: "active",
+  });
   const objectStores = new Map<string, DatabaseSync>([[WORKSTREAM_ID, objectStore]]);
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstreams
-       (id, workspace_id, title, objective, origin_type, created_by_user_id,
-        harness_status, email_address, email_route_status, last_activity_at, created_at, updated_at)
-     VALUES (?, ?, 'Wake Up', 'Wake Up', 'ad_hoc', ?, 'running',
-             'wake-up@automation.with-avalon.com', 'active', '2026-01-01', '2026-01-01', '2026-01-01')`,
-    WORKSTREAM_ID,
-    WORKSPACE_ID,
-    USER_ID,
-  );
   // Settled, not running: the object enforces at most one mutating run per
   // substream (`runs_mutating_substream_uq`), so a fixture run left `running`
   // would block the very admission a fired wake-up performs. This run exists
@@ -1028,12 +1028,9 @@ describe("firing a due wake-up", () => {
     // and the object root the routed `archived_at` guard reads.
     database.prepare("UPDATE workstreams SET archived_at = ? WHERE id = ?")
       .run("2026-08-11T12:00:00.000Z", WORKSTREAM_ID);
-    workstreamObjectRun(
-      objectStore,
-      "UPDATE workstreams SET archived_at = ? WHERE id = ?",
-      "2026-08-11T12:00:00.000Z",
-      WORKSTREAM_ID,
-    );
+    applyWorkstreamObjectRootFields(objectStore, {
+      archivedAt: Date.parse("2026-08-11T12:00:00.000Z"),
+    });
 
     expect((await fireWorkstreamWakeup(
       executionEnvironment(env),
