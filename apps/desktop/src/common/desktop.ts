@@ -2,7 +2,7 @@ import type { DesktopSettingsSection } from './settings';
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
 import type { ThemeChoice } from './themes';
 import type { MessageExportRequest, MessageExportResult } from './message-export';
-import type { TelemetryEventProperties } from '@avalon/contracts';
+import type { ClientFeatureFlags, TelemetryEventProperties } from '@avalon/contracts';
 
 export type AvalonRegion = 'global' | 'eu';
 
@@ -61,6 +61,8 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
   /** Whether the service allows this account the Developer section at all.
    * Off until a poll says otherwise, and off again on sign-out. */
   developerSettingsAvailable: boolean;
+  /** Whether Electron shows meeting-recording entry points for this account. */
+  meetingRecordingAvailable?: boolean;
   /** Whether the Avalon status item is in the macOS menu bar. On by default. */
   menuBarEnabled: boolean;
   /** Whether this platform has a menu bar Avalon can live in at all. The
@@ -378,4 +380,6 @@ export interface AvalonDesktopBridge {
   consumePendingDeepLinks: () => Promise<DesktopDeepLinkNavigation[]>;
   onDeepLink: (listener: (navigation: DesktopDeepLinkNavigation) => void) => () => void;
   onSessionChanged: (listener: (session: DesktopSession | null) => void) => () => void;
+  /** Mirrors a signed server answer into main-process-only surfaces such as the menu bar. */
+  observeClientFeatureFlags: (flags: ClientFeatureFlags) => Promise<void>;
 }

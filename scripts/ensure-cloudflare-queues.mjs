@@ -46,6 +46,7 @@ const queueConfigs = [
     surface: 'migration-tracker',
     path: join(repositoryDirectory, 'apps/migration-tracker/wrangler.jsonc'),
   },
+  { surface: 'ace', path: join(repositoryDirectory, 'apps/ace/wrangler.jsonc') },
 ];
 
 function required(name, environment) {

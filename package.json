@@ -11,6 +11,7 @@
     "dev": "concurrently -k -n api,desktop -c blue,magenta \"pnpm dev:api\" \"pnpm dev:desktop\"",
     "dev:site": "pnpm --filter @avalon/site dev",
     "dev:migrations": "pnpm --filter @avalon/migration-tracker dev",
+    "dev:ace": "pnpm --filter @avalon/ace dev",
     "env:sync": "node scripts/sync-dev-env.mjs",
     "tokens:build": "node scripts/build-theme-assets.mjs",
     "tokens:check": "node scripts/build-theme-assets.mjs --check",
@@ -55,6 +56,7 @@
     "deploy:site": "dotenv -e .env.local -- pnpm --filter @avalon/site run deploy",
     "deploy:release-retention": "dotenv -e .env.local -- pnpm --filter @avalon/release-retention run deploy",
     "deploy:migration-tracker": "dotenv -e .env.local -- pnpm --filter @avalon/migration-tracker run deploy",
+    "deploy:ace": "dotenv -e .env.local -- pnpm --filter @avalon/ace run deploy",
     "deploy:global": "dotenv -e .env.local -- pnpm --filter @avalon/api run deploy:global",
     "deploy:eu": "dotenv -e .env.local -- pnpm --filter @avalon/api run deploy:eu"
   },

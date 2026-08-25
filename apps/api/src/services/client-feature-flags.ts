@@ -36,6 +36,15 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 
 /** Flagship flag key behind Application → Developer. Boolean; defaults to off. */
 export const DEVELOPER_SETTINGS_FLAG_KEY = "developer-settings";
+export const HYPERSIGHT_FLAG_KEY = "hypersight-enabled";
+export const MEETING_RECORDING_FLAG_KEY = "meeting-recording-enabled";
+export const SUGGESTED_WORK_FLAG_KEY = "suggested-work-enabled";
+export const AUTOMATION_WORKSPACE_TEMPLATES_FLAG_KEY = "automation-workspace-templates-enabled";
+
+interface ClientFeatureFlagSubject {
+  userId: string;
+  workspaceId?: string;
+}
 
 /**
  * Evaluate one boolean client flag. Off unless Flagship says otherwise, and
@@ -44,7 +53,7 @@ export const DEVELOPER_SETTINGS_FLAG_KEY = "developer-settings";
  */
 async function resolveBooleanClientFlag(
   env: Env,
-  auth: IdentityAuthContext,
+  subject: ClientFeatureFlagSubject,
   flagKey: string,
   context: FlagshipEvaluationContext,
 ): Promise<boolean> {
@@ -62,7 +71,7 @@ async function resolveBooleanClientFlag(
       env.APP_ENV === "development" || env.APP_ENV === "test" ? "debug" : "warn",
       "client_flag_unavailable",
       {
-        user_id: auth.userId,
+        user_id: subject.userId,
         flag_key: flagKey,
         error_name: error instanceof Error ? error.name : "UnknownError",
       },
@@ -74,7 +83,7 @@ async function resolveBooleanClientFlag(
   // mistyped key from a flag that is provisioned and off.
   if (details.errorCode) {
     logStructuredEvent(env, "warn", "client_flag_unresolved", {
-      user_id: auth.userId,
+      user_id: subject.userId,
       flag_key: flagKey,
       reason: details.reason,
       error_code: details.errorCode,
@@ -89,7 +98,7 @@ async function resolveBooleanClientFlag(
   // written against was even sent — a rule on a missing attribute silently
   // never matches — and the names carry none of the values.
   logStructuredEvent(env, "debug", "client_flag_resolved", {
-    user_id: auth.userId,
+    user_id: subject.userId,
     flag_key: flagKey,
     attributes: Object.keys(context).sort(),
     variant: details.variant,
@@ -114,28 +123,57 @@ export async function resolveClientFeatureFlags(
   env: Env,
   auth: IdentityAuthContext,
 ): Promise<ClientFeatureFlags> {
-  const attributes = await loadFlagTargetingAttributes(env, {
+  return resolveClientFeatureFlagsForSubject(env, {
     userId: auth.userId,
     ...(auth.workspaceId ? { workspaceId: auth.workspaceId } : {}),
+  });
+}
+
+/** Resolve the same client contract for a socket attachment inside WorkspaceDO. */
+export async function resolveClientFeatureFlagsForSubject(
+  env: Env,
+  subject: ClientFeatureFlagSubject,
+): Promise<ClientFeatureFlags> {
+  const attributes = await loadFlagTargetingAttributes(env, {
+    userId: subject.userId,
+    ...(subject.workspaceId ? { workspaceId: subject.workspaceId } : {}),
   });
   const context: FlagshipEvaluationContext = {
     ...attributes,
     region: env.AVALON_REGION,
     appEnv: env.APP_ENV,
-    userId: auth.userId,
-    ...(auth.workspaceId ? { workspaceId: auth.workspaceId } : {}),
+    userId: subject.userId,
+    ...(subject.workspaceId ? { workspaceId: subject.workspaceId } : {}),
   };
-  const [developerSettings, controlTowerRefreshSeconds] = await Promise.all([
-    resolveBooleanClientFlag(env, auth, DEVELOPER_SETTINGS_FLAG_KEY, context),
+  const [
+    developerSettings,
+    hypersightEnabled,
+    meetingRecordingEnabled,
+    suggestedWorkEnabled,
+    automationWorkspaceTemplatesEnabled,
+    controlTowerRefreshSeconds,
+  ] = await Promise.all([
+    resolveBooleanClientFlag(env, subject, DEVELOPER_SETTINGS_FLAG_KEY, context),
+    resolveBooleanClientFlag(env, subject, HYPERSIGHT_FLAG_KEY, context),
+    resolveBooleanClientFlag(env, subject, MEETING_RECORDING_FLAG_KEY, context),
+    resolveBooleanClientFlag(env, subject, SUGGESTED_WORK_FLAG_KEY, context),
+    resolveBooleanClientFlag(env, subject, AUTOMATION_WORKSPACE_TEMPLATES_FLAG_KEY, context),
     // Resolved through its own module: a cadence fails to a working default
     // rather than to off. It reuses this request's loaded attributes through
     // the loader's isolate cache rather than being handed `context`, so both
     // callers of that resolver — this route and the meeting-notes generator —
     // describe the subject identically.
     resolveControlTowerRefreshSeconds(env, {
-      userId: auth.userId,
-      ...(auth.workspaceId ? { workspaceId: auth.workspaceId } : {}),
+      userId: subject.userId,
+      ...(subject.workspaceId ? { workspaceId: subject.workspaceId } : {}),
     }),
   ]);
-  return { developerSettings, controlTowerRefreshSeconds };
+  return {
+    developerSettings,
+    hypersightEnabled,
+    meetingRecordingEnabled,
+    suggestedWorkEnabled,
+    automationWorkspaceTemplatesEnabled,
+    controlTowerRefreshSeconds,
+  };
 }

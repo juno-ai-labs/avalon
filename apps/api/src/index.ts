@@ -9,6 +9,10 @@ import {
   isInferenceLakehouseQueue,
 } from "./queues/inference-lakehouse-consumer";
 import { consumeMigrationCommandQueue } from "./queues/migration-command-consumer";
+import {
+  consumeProductFeatureFlagQueue,
+  isProductFeatureFlagQueue,
+} from "./queues/product-feature-flag-consumer";
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
 import { reconcileDigestDefaults } from "./services/digest-service";
@@ -160,6 +164,11 @@ export default {
     // accepted records into a regional dead-letter backlog.
     if (isInferenceLakehouseQueue(batch.queue)) {
       return consumeInferenceLakehouseQueue(batch, env);
+    }
+    // Flag changes describe configuration already committed in Flagship. They
+    // must still reach open sockets while product mutations are paused.
+    if (isProductFeatureFlagQueue(batch.queue)) {
+      return consumeProductFeatureFlagQueue(batch, env);
     }
     // Forced migrations dispatch before the gate too, and for a closely related
     // reason: a migration pass is schema work, not new work-stream work — it
