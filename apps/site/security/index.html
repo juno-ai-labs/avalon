@@ -1,21 +1,156 @@
-<!doctype html><html lang="en"><head>
-  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="theme-color" content="#111210" /><meta name="description" content="Avalon's security architecture, controls, and coordinated vulnerability reporting process." /><link rel="canonical" href="https://rallywith.ai/security" />
-  <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" /><link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" /><link rel="manifest" href="/site.webmanifest" /><link rel="stylesheet" href="/src/styles.css" /><title>Security Policy · Avalon</title>
-</head><body class="legal-page">
-  <a class="skip-link" href="#document">Skip to security policy</a><header class="legal-header"><div class="legal-header-inner"><a class="brand" href="/" aria-label="Avalon home"><img class="brand-mark" src="/brand/avalon-mark.png" width="24" height="24" alt="" /><span>Avalon</span></a><span class="legal-header-label">Trust center · Security</span><a class="button button-quiet" href="mailto:support@with-avalon.com?subject=Security%20report">Report an issue <span>↗</span></a></div></header>
-  <main class="legal-shell"><nav class="legal-nav" aria-label="Legal documents"><p>Trust center</p><ul><li><a href="/terms/">Terms of Service</a></li><li><a href="/privacy/">Privacy Policy</a></li><li><a href="/acceptable-use/">Acceptable Use</a></li><li><a href="/dpa/">Data Processing Addendum</a></li><li><a href="/subprocessors/">Sub-processors</a></li><li><a href="/cookies/">Cookie &amp; Tracking Notice</a></li><li><a href="/security/" aria-current="page">Security Policy</a></li></ul></nav>
-    <article class="legal-document" id="document"><header><p class="eyebrow">Updated August 7, 2026</p><h1>Security Policy</h1><p class="legal-lede">Avalon is designed for consequential work across people, AI, and connected tools. Security boundaries are part of the product architecture, not an afterthought.</p><div class="legal-meta"><span>Scope · Avalon services and desktop app</span><span>Version · 2026.08</span></div></header>
-      <section class="legal-section"><h2>1. Security program</h2><p>Juno AI Labs maintains technical and organizational safeguards proportionate to Avalon’s risks. This page is a public summary, not a guarantee that every threat can be prevented and not a claim of a certification we have not listed. Contractual security commitments in an Order or <a href="/dpa/">Data Processing Addendum</a> control if they conflict with this summary.</p></section>
-      <section class="legal-section"><h2>2. Regional service architecture</h2><p>Each workspace is provisioned in a selected Global or EU architecture. The regional API scopes database, object storage, durable coordination, queues, and workflows to that environment. Workspace identifiers are included in resource queries and authorization checks, and workspace role checks protect administrative actions.</p><p>Network and provider services can operate outside the selected data region as explained in the <a href="/privacy/">Privacy Policy</a> and <a href="/subprocessors/">Sub-processors</a> list.</p></section>
-      <section class="legal-section"><h2>3. Identity and access</h2><ul><li>Short-lived sessions and scoped handoffs limit reusable browser-to-desktop credentials.</li><li>Google authorization uses state validation and PKCE, with single-use exchange tickets.</li><li>WebSocket access requires exact allowed origins and one-time ticket handling.</li><li>Workspace membership and role checks are enforced at protected resource boundaries.</li><li>External actions run with the permissions of the connected user or workspace installation.</li></ul></section>
-      <section class="legal-section"><h2>4. Credentials, encryption, and secrets</h2><p>Provider tokens are encrypted using authenticated encryption with associated workspace and provider context and versioned keys. Global and EU environments use separate key material. Secrets are supplied to services through protected deployment bindings and are not committed to source control. Sensitive authentication material is redacted from logs and excluded from model prompts.</p><p>The desktop application uses the operating system’s protected storage for refresh material. Invitation tokens are stored as hashes; plaintext invitation material is fragment-protected during handoff and is not placed in server query strings or logs.</p></section>
-      <section class="legal-section"><h2>5. Desktop application hardening</h2><p>Avalon’s Electron renderer uses context isolation, disables Node.js integration, and runs in a sandbox. A narrow preload bridge mediates privileged operations. Content Security Policy restricts executable sources, and unexpected navigation and popup creation are denied. Deep links and OAuth handoffs are parsed against exact schemes, hosts, paths, and parameter shapes before launch.</p></section>
-      <section class="legal-section"><h2>6. Connected tools and automation safety</h2><ul><li>Tool proposals are validated before execution and bounded to the authorized principal and workspace.</li><li>Model context is limited to the resources needed for the task; connector tokens are never placed in prompts.</li><li>Webhook ingestion uses HMAC verification, timestamp windows, replay protection, deduplication, schema checks, and body-size limits.</li><li>Writes use idempotency and retry-safety controls. When a provider’s outcome is ambiguous, Avalon surfaces the uncertainty instead of blindly repeating a consequential write.</li><li>User-directed activity is recorded through tool receipts and audit events where supported.</li></ul></section>
-      <section class="legal-section"><h2>7. Logging, monitoring, and audit</h2><p>Operational logging is designed to exclude secrets, private content, and model context. Security and audit events cover sign-in and session activity, membership changes, connector authorization and revocation, external writes, and automation lifecycle events. We use logs and request identifiers to investigate errors and suspected misuse.</p></section>
-      <section class="legal-section"><h2>8. Provider and software risk</h2><p>We evaluate providers in light of the data and function they receive, restrict access by contract and configuration, and maintain a public <a href="/subprocessors/">Sub-processors</a> list. We review application dependencies and deploy updates as risks and product changes require. Customer administrators remain responsible for their user access, connected-service configuration, endpoints, and data-classification decisions.</p></section>
-      <section class="legal-section"><h2>9. Incident response</h2><p>We investigate suspected security incidents, contain affected systems, preserve relevant evidence, remediate confirmed issues, and notify affected customers or authorities as required. Processor breach notification obligations are described in the DPA. Do not send secrets or full Customer Content in an initial report.</p></section>
-      <section class="legal-section"><h2>10. Coordinated vulnerability reporting</h2><div class="legal-callout warm"><p>Email <a href="mailto:support@with-avalon.com?subject=Security%20report">support@with-avalon.com</a> with the subject <strong>Security report</strong>. Include the affected surface, impact, reproducible steps, and a safe proof of concept. We aim to acknowledge reports within two business days.</p></div><p>When researching Avalon:</p><ul><li>use accounts and workspaces you own or have explicit permission to test;</li><li>do not access, alter, retain, or disclose another person’s data;</li><li>do not use denial of service, social engineering, spam, destructive testing, automated high-volume scanning, or physical attacks;</li><li>stop and report if you encounter sensitive information or risk service availability; and</li><li>give us a reasonable opportunity to investigate and remediate before public disclosure.</li></ul><p>For good-faith research that follows these rules, we will not initiate legal action solely because you tested and reported a vulnerability. This statement does not authorize testing of third-party services or excuse violations unrelated to the research. We do not currently promise cash awards.</p></section>
-      <section class="legal-section"><h2>11. Customer security questions</h2><p>For architecture or procurement questions, contact <a href="mailto:support@with-avalon.com">support@with-avalon.com</a>. For personal-data questions, contact <a href="mailto:privacy@with-avalon.com">privacy@with-avalon.com</a>.</p></section>
-    </article></main>
-  <footer class="legal-footer"><div class="legal-footer-inner"><div class="legal-footer-brand"><a class="brand" href="/"><img class="brand-mark" src="/brand/avalon-mark.png" width="20" height="20" alt="" /><span>Avalon</span></a><p>Work, still in context.</p></div><div class="legal-footer-links"><a href="/terms/">Terms of Service</a><a href="/privacy/">Privacy Policy</a><a href="/acceptable-use/">Acceptable Use</a><a href="/dpa/">Data Processing Addendum</a><a href="/subprocessors/">Sub-processors</a><a href="/cookies/">Cookie &amp; Tracking Notice</a><a href="/security/">Security Policy</a><a href="/support/">Support</a></div><p class="legal-footer-meta">© 2026 Juno AI Labs · Avalon</p></div></footer>
-</body></html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#cedc00" />
+    <meta name="description" content="Rally's public Trust Center: implemented security controls, open policies, service providers, and vulnerability reporting." />
+    <link rel="canonical" href="https://rallywith.ai/security" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <title>Trust Center · Rally</title>
+  </head>
+  <body class="legal-page">
+    <a class="skip-link" href="#overview">Skip to Trust Center</a>
+
+    <header class="trust-header">
+      <div class="trust-header-inner">
+        <a class="rally-wordmark" href="/" aria-label="Rally home">
+          <img class="rally-symbol" src="/brand/rally-mark.png" width="30" height="30" alt="" />
+          <span>rally</span>
+        </a>
+        <span class="trust-header-title">Trust Center</span>
+        <a class="trust-report-link" href="mailto:support@rallywith.ai?subject=Security%20report">Report a security issue <span>↗</span></a>
+      </div>
+    </header>
+
+    <main class="trust-center">
+      <nav class="trust-tabs" aria-label="Trust Center sections">
+        <a href="#overview">Overview</a>
+        <a href="#controls">Controls</a>
+        <a href="#resources">Resources</a>
+        <a href="#subprocessors">Sub-processors</a>
+        <a href="#faq">FAQ</a>
+        <a href="#reporting">Reporting</a>
+      </nav>
+
+      <section class="trust-hero" id="overview" aria-labelledby="trust-title">
+        <div class="trust-hero-copy">
+          <p class="trust-kicker">Public by default · Reviewed August 25, 2026</p>
+          <h1 id="trust-title">Trust should be<br /><em>inspectable.</em></h1>
+          <p>Rally is a multiplayer AI workspace built by Juno AI Labs. This center describes the controls present in the product today, links every public policy directly, and names the providers used to deliver the service.</p>
+          <div class="trust-contact-row">
+            <a href="mailto:support@rallywith.ai?subject=Security%20question">support@rallywith.ai <span>↗</span></a>
+            <a href="/privacy/">Privacy Policy <span>→</span></a>
+          </div>
+        </div>
+        <div class="trust-hero-geometry" aria-hidden="true">
+          <span class="trust-circle trust-circle-blue"></span>
+          <span class="trust-square"></span>
+          <span class="trust-circle trust-circle-volt"></span>
+          <span class="trust-line"></span>
+        </div>
+      </section>
+
+      <section class="trust-section" id="controls" aria-labelledby="controls-title">
+        <header class="trust-section-heading">
+          <div><p>01 / Implemented controls</p><h2 id="controls-title">What the product<br />enforces today.</h2></div>
+          <p>These summaries were checked against the current API, Electron, deployment, logging, and CI paths. They are not certification claims.</p>
+        </header>
+
+        <div class="trust-control-grid">
+          <article class="trust-control-card">
+            <header><span>01</span><h3>Regional architecture</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
+            <ul><li>Separate Global and EU API deployments use separate regional databases, object storage, Durable Object namespaces, queues, and encryption keys.</li><li>Authenticated requests carry a region claim; a mismatch with the serving region is rejected.</li><li>EU product telemetry has no Global PostHog fallback.</li></ul>
+          </article>
+          <article class="trust-control-card">
+            <header><span>02</span><h3>Identity &amp; access</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
+            <ul><li>Protected API routes require a signed bearer session backed by an active, unrevoked server-side session.</li><li>Workspace access is rechecked against active membership; owner and administrator actions have explicit role checks.</li><li>Google sign-in uses state validation and PKCE; the browser-to-desktop handoff uses a single-use exchange ticket with a separate desktop proof.</li></ul>
+          </article>
+          <article class="trust-control-card">
+            <header><span>03</span><h3>Credential protection</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
+            <ul><li>Connector credentials use AES-GCM authenticated encryption with connection-bound additional data.</li><li>Credential rows record a key version so regional keys can rotate without losing old reads.</li><li>Connector secrets are kept out of model prompts and redacted from structured logs by sensitive field name.</li></ul>
+          </article>
+          <article class="trust-control-card">
+            <header><span>04</span><h3>Desktop boundary</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
+            <ul><li>Electron renderers run with context isolation and sandboxing enabled and Node.js integration disabled.</li><li>A narrow preload bridge mediates privileged operations; unexpected navigation and popup creation are denied.</li><li>Content Security Policy restricts executable and network sources, and media permission checks are limited to trusted Rally windows.</li></ul>
+          </article>
+          <article class="trust-control-card">
+            <header><span>05</span><h3>Realtime sessions</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
+            <ul><li>Realtime connections use short-lived, signed, scope-bound tickets and durable one-time replay receipts.</li><li>The current desktop removes the credential from the URL and presents it through the WebSocket subprotocol.</li><li>Legacy query-ticket transport remains accepted for older desktop compatibility and is documented rather than hidden.</li></ul>
+          </article>
+          <article class="trust-control-card">
+            <header><span>06</span><h3>Connected tools</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
+            <ul><li>Personal and workspace connections are authorized against the current principal, scope, and membership.</li><li>Generic webhook ingestion verifies signatures, timestamps, replay windows, event type, and deduplication receipts.</li><li>External tool writes use durable execution receipts; a write caught mid-flight is marked ambiguous and is not automatically repeated.</li></ul>
+          </article>
+          <article class="trust-control-card trust-control-wide">
+            <header><span>07</span><h3>Operational safeguards</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
+            <ul><li>API diagnostics use structured request identifiers and a shared redactor for tokens, secrets, credentials, prompts, message bodies, connector content, file content, and model context.</li><li>Repository CI runs Gitleaks against full history, and each allowlist exception has a test proving it still rejects real key material.</li><li>Public security reporting is open; an account, NDA, or document request is not required.</li></ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="trust-section trust-resources" id="resources" aria-labelledby="resources-title">
+        <header class="trust-section-heading">
+          <div><p>02 / Open resources</p><h2 id="resources-title">No lock icons.<br />No access request.</h2></div>
+          <p>These are the public documents that apply to Rally. Internal policies and certifications that are not publicly established are intentionally not represented here.</p>
+        </header>
+        <div class="trust-resource-list">
+          <a href="/privacy/"><span>Privacy &amp; data</span><strong>Privacy Policy</strong><i>↗</i></a>
+          <a href="/dpa/"><span>Contractual privacy</span><strong>Data Processing Addendum</strong><i>↗</i></a>
+          <a href="/subprocessors/"><span>Service providers</span><strong>Sub-processor List</strong><i>↗</i></a>
+          <a href="/terms/"><span>Service terms</span><strong>Terms of Service</strong><i>↗</i></a>
+          <a href="/acceptable-use/"><span>Product conduct</span><strong>Acceptable Use Policy</strong><i>↗</i></a>
+          <a href="/cookies/"><span>Website data</span><strong>Cookie &amp; Tracking Notice</strong><i>↗</i></a>
+        </div>
+      </section>
+
+      <section class="trust-section" id="subprocessors" aria-labelledby="subprocessors-title">
+        <header class="trust-section-heading">
+          <div><p>03 / Service providers</p><h2 id="subprocessors-title">The systems behind<br />the system.</h2></div>
+          <p>The repository currently configures these providers for hosting, inference, telemetry, email, transcription, or public-web retrieval. Customer-directed integrations are documented separately in the full list.</p>
+        </header>
+        <div class="trust-provider-grid" aria-label="Rally service providers">
+          <article><span>Infrastructure</span><h3>Cloudflare</h3><p>Regional compute, databases, storage, coordination, queues, delivery, and network security.</p></article>
+          <article><span>AI routing</span><h3>OpenRouter</h3><p>Routes bounded model requests to the configured inference providers.</p></article>
+          <article><span>Model inference</span><h3>xAI · Google · Anthropic</h3><p>Configured primary, structured, classification, and fallback inference paths.</p></article>
+          <article><span>Transcription</span><h3>Microsoft Azure</h3><p>Optional Azure OpenAI real-time dictation and transcription when enabled.</p></article>
+          <article><span>Global telemetry</span><h3>PostHog</h3><p>Global product analytics and operational delivery; EU workspaces are not exported to this path.</p></article>
+          <article><span>Email</span><h3>Resend</h3><p>Transactional messages, invitations, notifications, and inbound-email routing.</p></article>
+          <article><span>Public web</span><h3>Firecrawl</h3><p>User-requested public web search and retrieval when the capability is configured.</p></article>
+        </div>
+        <a class="trust-text-link" href="/subprocessors/">Read the complete Sub-processor List, processing purposes, and locations <span>→</span></a>
+      </section>
+
+      <section class="trust-section trust-faq" id="faq" aria-labelledby="trust-faq-title">
+        <header class="trust-section-heading">
+          <div><p>04 / FAQ</p><h2 id="trust-faq-title">The useful<br />fine print.</h2></div>
+        </header>
+        <div class="trust-faq-list">
+          <details><summary>Is this Trust Center gated?<span>＋</span></summary><p>No. Every resource linked here is public. Rally does not require an account, NDA, email submission, or access request to read this page.</p></details>
+          <details><summary>Does Rally claim a security certification?<span>＋</span></summary><p>No certification is claimed on this page. We list controls that can be tied to the current implementation and will add independent assurance only when it is complete and current.</p></details>
+          <details><summary>What does “Global or EU” mean?<span>＋</span></summary><p>Rally operates separate Global and EU application architectures with separate regional storage and keys. Network delivery and customer-selected service providers can process data outside the selected architecture, as explained in the Privacy Policy and Sub-processor List.</p></details>
+          <details><summary>How are desktop sessions stored?<span>＋</span></summary><p>The default desktop mode encrypts stored session material with an application-wide AES-GCM key. Optional Lockdown mode rewraps session material with Electron safeStorage and the operating-system keystore. We do not describe the default mode as device-bound storage.</p></details>
+          <details><summary>How do I report a vulnerability?<span>＋</span></summary><p>Email support@rallywith.ai with the subject “Security report.” Include the affected surface, impact, reproducible steps, and a safe proof of concept, but do not send credentials or full customer content.</p></details>
+        </div>
+      </section>
+
+      <section class="trust-reporting" id="reporting" aria-labelledby="reporting-title">
+        <p>05 / Coordinated reporting</p>
+        <h2 id="reporting-title">Found something?<br /><em>Tell us plainly.</em></h2>
+        <p>Use accounts and workspaces you own or have permission to test. Do not access another person’s data, disrupt service, use social engineering, or run destructive or high-volume testing. Stop if you encounter sensitive information.</p>
+        <a href="mailto:support@rallywith.ai?subject=Security%20report">Email a security report <span>↗</span></a>
+      </section>
+    </main>
+
+    <footer class="legal-footer">
+      <div class="legal-footer-inner">
+        <div class="legal-footer-brand"><a class="brand" href="/"><img class="brand-mark" src="/brand/rally-mark.png" width="20" height="20" alt="" /><span>rally</span></a><p>AI is multiplayer now.</p></div>
+        <div class="legal-footer-links"><a href="/security/">Trust Center</a><a href="/privacy/">Privacy Policy</a><a href="/terms/">Terms of Service</a><a href="/dpa/">Data Processing Addendum</a><a href="/subprocessors/">Sub-processors</a><a href="/cookies/">Cookie &amp; Tracking Notice</a><a href="/acceptable-use/">Acceptable Use</a><a href="/support/">Support</a></div>
+        <p class="legal-footer-meta">© 2026 Juno AI Labs · Rally</p>
+      </div>
+    </footer>
+  </body>
+</html>

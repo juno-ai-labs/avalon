@@ -271,6 +271,32 @@ rather than assertions.
 
 ## Changelog
 
+### 2026-08-25 — Public pages write Rally while compatibility routes keep reading Avalon
+
+**What changed:** Every public HTML surface, Trust Center contact, desktop
+handoff label, canonical tag, and social unfurl now emits Rally and
+`rallywith.ai`. The public mark path is `/brand/rally-mark.png`. The site still
+serves both zones, accepts both desktop schemes, permits both packaged renderer
+origins, and retains the already-published installer manifest exactly as issued.
+
+**Why:** The migration had already made Rally canonical at the routing layer,
+but the canonical page introduced itself as Avalon. The mismatch was visible in
+Slack unfurls and in the reinstall instruction for the new Rally desktop app:
+people followed a Rally URL and saw a different product name. Public content is
+a writer, not a compatibility reader, so continuing to emit the old name had no
+migration benefit and created fresh stale references on every share.
+
+**Considered and rejected:** Renaming the legacy routes, schemes, bucket, and
+published installer objects to make a repository-wide string search empty.
+Those values are held by shipped clients, third parties, or immutable release
+records. Changing them would turn a cosmetic cleanup into broken sign-in,
+downloads, CORS, and already-shared links.
+
+**Consequences:** New public content and metadata must use Rally exclusively.
+An Avalon string in the site package is acceptable only when a compatibility
+test or deployment record names the external value that still exists; it must
+not reach rendered HTML. The test suite checks the distinction.
+
 ### 2026-08-25 — The header prefix, the envelope schema, and the desktop's namespace
 
 **What changed:** The product HTTP header prefix moved from `x-avalon-` to

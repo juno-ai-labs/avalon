@@ -53,10 +53,10 @@ publicTelemetryRoutes.get("/route", async (c) => {
   if (c.env.AVALON_REGION !== "global") {
     throw new ApiError(404, "not_found", "The requested API route does not exist");
   }
-  const cf = c.req.raw.cf as { country?: string } | undefined;
+  const cf = c.req.raw.cf as { country?: string; isEUCountry?: string | boolean | null } | undefined;
   c.header("Cache-Control", "no-store");
   return c.json(TelemetryRouteResponseSchema.parse(
-    await new TelemetryBootstrapService(c.env).route(cf?.country),
+    await new TelemetryBootstrapService(c.env).route(cf?.country, cf?.isEUCountry),
   ));
 });
 
@@ -151,7 +151,7 @@ publicTelemetryRoutes.post(
     if (c.env.AVALON_REGION !== "global") {
       throw new ApiError(404, "not_found", "The requested API route does not exist");
     }
-    const cf = c.req.raw.cf as { country?: string } | undefined;
+    const cf = c.req.raw.cf as { country?: string; isEUCountry?: string | boolean | null } | undefined;
     const edgeAddress = c.req.header('cf-connecting-ip');
     if (edgeAddress && !await consumeTelemetryRateLimit(
       c.env,
@@ -165,6 +165,7 @@ publicTelemetryRoutes.post(
         c.req.valid("json").anonymousEpochId,
         cf?.country,
         c.req.valid("json").routeToken,
+        cf?.isEUCountry,
       );
     } catch (error) {
       const code = error instanceof Error ? error.message : 'telemetry_bootstrap_failed';

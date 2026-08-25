@@ -1,300 +1,96 @@
 <!doctype html>
-<html lang="en" data-theme="runway">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#111210" />
+    <meta name="theme-color" content="#cedc00" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
     <link rel="manifest" href="/site.webmanifest" />
-    <meta name="description" content="Avalon is the macOS workspace where people and an AI agent move real work forward in durable, inspectable work streams." />
+    <meta name="description" content="Rally is the multiplayer AI workspace where your team shares the context, sees the work, and moves outcomes forward together." />
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Avalon" />
-    <meta property="og:title" content="Avalon — a place for work to move" />
-    <meta property="og:description" content="People, context, agent work, and outcomes—together in one durable work stream." />
+    <meta property="og:site_name" content="Rally" />
+    <meta property="og:title" content="Rally — AI is multiplayer now" />
+    <meta property="og:description" content="Bring your team, context, and AI into one shared workstream. No screenshots. No prompt handoffs. No starting over." />
     <meta property="og:url" content="https://rallywith.ai/" />
-    <meta property="og:image" content="https://rallywith.ai/og-2026.jpg" />
-    <meta property="og:image:alt" content="Avalon — Give every outcome a place to run." />
+    <meta property="og:image" content="https://rallywith.ai/rally-social.jpg" />
+    <meta property="og:image:secure_url" content="https://rallywith.ai/rally-social.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:alt" content="Rally — AI is multiplayer now." />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Avalon — a place for work to move" />
-    <meta name="twitter:description" content="People, context, agent work, and outcomes—together in one durable work stream." />
-    <meta name="twitter:image" content="https://rallywith.ai/og-2026.jpg" />
-    <meta name="twitter:image:alt" content="Avalon — Give every outcome a place to run." />
+    <meta name="twitter:title" content="Rally — AI is multiplayer now" />
+    <meta name="twitter:description" content="Bring your team, context, and AI into one shared workstream." />
+    <meta name="twitter:image" content="https://rallywith.ai/rally-social.jpg" />
+    <meta name="twitter:image:alt" content="Rally — AI is multiplayer now." />
     <link rel="canonical" href="https://rallywith.ai/" />
     <script src="/landing-init.js"></script>
     <link rel="stylesheet" href="/src/styles.css" />
     <script type="module" src="/src/landing.ts"></script>
-    <title>Avalon — a place for work to move</title>
+    <title>Rally — AI is multiplayer now</title>
   </head>
-  <body>
+  <body class="rally-home">
     <a class="skip-link" href="#content">Skip to content</a>
 
-    <header class="site-header">
-      <div class="shell header-inner">
-        <a class="brand" href="/" aria-label="Avalon home">
-          <img class="brand-mark" src="/brand/avalon-mark.png" width="24" height="24" alt="" />
-          <span>Avalon</span>
-        </a>
-        <nav class="site-nav" aria-label="Primary navigation">
-          <a href="#how-it-works">How it works</a>
-          <a href="#features">Features</a>
-          <a href="#compare">Compare</a>
-          <a href="#integrations">Connections</a>
-        </nav>
-        <a class="header-download" href="#download">Download for macOS <span>↘</span></a>
-      </div>
+    <header class="rally-header">
+      <a class="rally-wordmark" href="/" aria-label="Rally home">
+        <img class="rally-symbol" src="/brand/rally-mark.png" width="30" height="30" alt="" />
+        <span>rally</span>
+      </a>
+      <nav aria-label="Primary navigation"><a href="#why-rally">Why Rally</a><a href="#how-it-works">How it works</a><a href="#connections">Connections</a></nav>
+      <a class="rally-header-cta" href="#download">Get Rally <span>↘</span></a>
     </header>
 
     <main id="content">
-      <section class="hero" aria-label="Avalon introduction">
-        <div class="hero-landscape" aria-hidden="true"></div>
-        <div class="hero-grain" aria-hidden="true"></div>
-
-        <article class="hero-story hero-runway" data-theme-panel="runway" data-active aria-hidden="false">
-          <div class="hero-copy">
-            <p class="eyebrow"><span>01</span> Warp · Desktop preview for macOS</p>
-            <h1>Give every outcome<br /><em>a place to run.</em></h1>
-            <p>Start with the work—not a blank chat. Avalon opens a shared work stream, gathers the context, and moves toward a visible result.</p>
-            <div class="hero-actions">
-              <a class="button button-primary" href="#download"><img src="/brand/apple-logo.svg" width="13" height="16" alt="" /> Download Avalon <span>↘</span></a>
-              <a class="button button-quiet" href="#how-it-works">Follow a work stream <span>→</span></a>
-            </div>
-          </div>
-          <aside class="hero-evidence progress-card" aria-label="Example work-stream progress">
-            <header><span>Prepare the launch review</span><b>Shared</b></header>
-            <ol>
-              <li class="complete"><i></i><span><strong>Outcome described</strong><small>Audience, evidence, decision</small></span><time>9:02</time></li>
-              <li class="active"><i></i><span><strong>Avalon is working</strong><small>Comparing three narratives</small></span><time>now</time></li>
-              <li><i></i><span><strong>Review the output</strong><small>Returns to this work stream</small></span><time>next</time></li>
-            </ol>
-          </aside>
-        </article>
-
-        <article class="hero-story hero-valley" data-theme-panel="valley" aria-hidden="true">
-          <div class="hero-copy">
-            <p class="eyebrow"><span>02</span> Mesh · Desktop preview for macOS</p>
-            <h1>Talk with people.<br /><em>Hand work to Avalon.</em></h1>
-            <p>The conversation, assignment, and result stay together. Avalon acts when it has work to do—and asks when a real decision is missing.</p>
-            <div class="hero-actions">
-              <a class="button button-primary" href="#download"><img src="/brand/apple-logo.svg" width="13" height="16" alt="" /> Download Avalon <span>↘</span></a>
-              <a class="button button-quiet" href="#how-it-works">See how it works <span>→</span></a>
-            </div>
-          </div>
-          <div class="people-map hero-evidence" aria-label="Two participants working with Avalon">
-            <span class="people-count">2 participants · Avalon inherent</span>
-            <article><i>AJ</i><span><strong>Adam</strong><small>Sets the outcome</small></span></article>
-            <article class="avalon-node"><i><img src="/brand/avalon-mark.png" width="17" height="17" alt="" /></i><span><strong>Avalon</strong><small>Works in the stream</small></span></article>
-            <article><i>ML</i><span><strong>Maya</strong><small>Reviews the result</small></span></article>
-            <div class="people-line" aria-hidden="true"></div>
-          </div>
-        </article>
-
-        <article class="hero-story hero-proof" data-theme-panel="proof" aria-hidden="true">
-          <div class="hero-copy">
-            <p class="eyebrow"><span>03</span> Trace · Desktop preview for macOS</p>
-            <h1>See the work.<br /><em>Not just the answer.</em></h1>
-            <p>Sources, tool activity, questions, outputs, failures, and retries remain inspectable in the same work stream as the request.</p>
-            <div class="hero-actions">
-              <a class="button button-primary" href="#download"><img src="/brand/apple-logo.svg" width="13" height="16" alt="" /> Download Avalon <span>↘</span></a>
-              <a class="button button-quiet" href="#product-tour">Open the work <span>→</span></a>
-            </div>
-          </div>
-          <aside class="hero-evidence activity-card" aria-label="Inspectable Avalon work">
-            <header><span>Work-stream activity</span><b><i></i> Live</b></header>
-            <div><code>01</code><i>↗</i><span><strong>Read 12 customer interviews</strong><small>Sources · Connected Drive</small></span><time>16s</time></div>
-            <div><code>02</code><i>⌁</i><span><strong>Compare repeated objections</strong><small>Agent work · Completed</small></span><time>42s</time></div>
-            <div class="needs-input"><code>03</code><i>?</i><span><strong>Choose the target audience</strong><small>Needs input · One decision</small></span><time>now</time></div>
-            <footer><span>Output</span><strong>Launch narrative.md</strong><b>Ready after input</b></footer>
-          </aside>
-        </article>
-
-        <article class="hero-story hero-afterlight" data-theme-panel="afterlight" aria-hidden="true">
-          <div class="hero-copy">
-            <p class="eyebrow"><span>04</span> Orbit · Desktop preview for macOS</p>
-            <h1>Set the work in motion.<br /><em>Every run leaves a trail.</em></h1>
-            <p>Describe the repeatable outcome once. Run it now, on a schedule, from connected activity, or by email—and open every result as a work stream.</p>
-            <div class="hero-actions">
-              <a class="button button-primary" href="#download"><img src="/brand/apple-logo.svg" width="13" height="16" alt="" /> Download Avalon <span>↘</span></a>
-              <a class="button button-quiet" href="#automations">Explore automations <span>→</span></a>
-            </div>
-          </div>
-          <div class="hero-evidence run-stack" aria-label="Recent automation runs">
-            <article><span>Friday · 09:00</span><strong>Weekly customer pulse</strong><p><i></i> Latest run completed</p></article>
-            <article><span>Today · 11:42</span><strong>Watch launch feedback</strong><p><i></i> Needs input</p></article>
-            <article><span>Now</span><strong>Prepare follow-up</strong><p><i></i> Running</p></article>
-          </div>
-        </article>
-
-        <div class="theme-picker" aria-label="Landing page art direction">
-          <span>Design</span>
-          <button type="button" data-theme-select="runway" aria-label="Use Warp design" aria-pressed="true"><b>Warp</b></button>
-          <button type="button" data-theme-select="valley" aria-label="Use Mesh design" aria-pressed="false"><b>Mesh</b></button>
-          <button type="button" data-theme-select="proof" aria-label="Use Trace design" aria-pressed="false"><b>Trace</b></button>
-          <button type="button" data-theme-select="afterlight" aria-label="Use Orbit design" aria-pressed="false"><b>Orbit</b></button>
-          <button class="shuffle-button" type="button" data-shuffle-theme aria-label="Shuffle art direction">↻</button>
+      <section class="rally-hero" aria-labelledby="hero-title">
+        <div class="hero-orbit hero-orbit-blue" aria-hidden="true"></div><div class="hero-orbit hero-orbit-orange" aria-hidden="true"></div>
+        <div class="rally-hero-copy reveal">
+          <p class="rally-index">01 / Multiplayer AI workspace</p>
+          <h1 id="hero-title">AI is<br /><em>multiplayer</em><br />now.</h1>
+          <p class="rally-lede">Your best AI setup should not stop at you. Rally gives people and AI one shared workstream—so the context, the conversation, and the work move together.</p>
+          <div class="rally-actions"><a class="rally-button rally-button-dark button-primary" href="#download"><img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a><a class="rally-button rally-button-line button-quiet" href="#product">See Rally in play <span>→</span></a></div>
+          <p class="rally-availability"><i></i> Live private preview · Apple silicon</p>
         </div>
-        <div class="hero-foot"><span><i></i> Private preview · Apple silicon</span><span>Scroll to follow the work ↓</span></div>
-      </section>
 
-      <section class="signal-strip" aria-label="Avalon product summary">
-        <div class="signal-track">
-          <span>One durable work stream</span><i></i><span>People + Avalon</span><i></i><span>Inspectable agent work</span><i></i><span>Connected context</span><i></i><span>Repeatable automations</span><i></i><span>Visible outcomes</span>
+        <div class="rally-hero-board reveal" aria-label="A shared Rally workstream">
+          <div class="court-line court-line-a" aria-hidden="true"></div><div class="court-line court-line-b" aria-hidden="true"></div>
+          <div class="hero-board-label"><span>Shared workstream</span><b>2 people · Rally included</b></div>
+          <article class="rally-note rally-note-one"><span>KB</span><div><b>Katherine</b><p>Let’s turn the interview notes into the launch story.</p></div></article>
+          <article class="rally-note rally-note-two"><span>AT</span><div><b>Alex</b><p>I added the brand references and product screenshots.</p></div></article>
+          <article class="rally-work-card"><header><img class="rally-symbol small" src="/brand/rally-mark.png" width="23" height="23" alt="" /><b>Rally is working</b><time>now</time></header><ol><li class="done"><i></i><span>Read 12 customer interviews</span><b>done</b></li><li class="active"><i></i><span>Compare the repeated language</span><b>working</b></li><li><i></i><span>Draft the shared launch narrative</span><b>next</b></li></ol></article>
+          <div class="rally-seam" aria-hidden="true"><i></i><i></i></div>
         </div>
       </section>
 
-      <section class="section how-section shell" id="how-it-works" aria-labelledby="how-title">
-        <div class="section-intro reveal">
-          <p class="kicker">The operating model</p>
-          <h2 id="how-title">Describe the outcome.<br /><em>Keep the work together.</em></h2>
-          <p>Avalon gives each piece of work a durable home. The people, instructions, resources, agent activity, decisions, and final artifact remain attached to the outcome.</p>
-        </div>
+      <section class="rally-ticker" aria-label="Rally product principles"><div><span>Shared context</span><i></i><span>Human conversation</span><i></i><span>Visible work</span><i></i><span>Connected tools</span><i></i><span>Durable outcomes</span><i></i><span>No copy + paste</span></div></section>
 
-        <ol class="steps-grid">
-          <li class="reveal"><span>01</span><div><h3>Open a work stream</h3><p>Start with the outcome in plain language. Add the people and resources that belong to it.</p></div></li>
-          <li class="reveal"><span>02</span><div><h3>Avalon moves it forward</h3><p>Avalon reads connected context, uses tools, and works in the background without hiding the process.</p></div></li>
-          <li class="reveal"><span>03</span><div><h3>Review what matters</h3><p>Questions surface when judgment is needed. Outputs, sources, and decisions return to the same stream.</p></div></li>
-        </ol>
+      <section class="rally-problem" id="why-rally" aria-labelledby="problem-title">
+        <div class="rally-problem-copy reveal"><p class="rally-index">02 / The leverage gap</p><h2 id="problem-title">Your AI setup is powerful.<br /><em>Why is it locked to you?</em></h2></div>
+        <div class="rally-problem-grid"><article class="reveal"><span>Before</span><h3>Prompt forwarding</h3><p>Your team sends screenshots, copy-pastes prompts, and asks the power user to run one more thing.</p><b>Private leverage</b></article><article class="reveal"><span>With Rally</span><h3>Work together</h3><p>Invite a teammate into the workstream. They inherit the context, see what happened, and shape what comes next.</p><b>Shared leverage</b></article></div>
       </section>
 
-      <section class="product-tour section" id="product-tour" aria-labelledby="tour-title">
-        <div class="shell">
-          <div class="section-intro compact reveal">
-            <p class="kicker">One quiet work surface</p>
-            <h2 id="tour-title">See what needs you.<br /><em>Let the rest keep moving.</em></h2>
-          </div>
-
-          <figure class="workspace-demo reveal">
-            <div class="window-bar">
-              <div class="traffic-lights"><i></i><i></i><i></i></div>
-              <span><img src="/brand/avalon-mark.png" width="14" height="14" alt="" /> Avalon</span>
-              <small>Desktop preview</small>
-            </div>
-            <div class="workspace-grid" aria-hidden="true" inert>
-              <aside class="workspace-nav" aria-hidden="true">
-                <div class="workspace-brand"><img src="/brand/avalon-mark.png" width="18" height="18" alt="" /><strong>Avalon</strong></div>
-                <button type="button" tabindex="-1">＋ New work stream</button>
-                <div class="nav-group"><p>Automations</p><span>◌ Weekly changelog</span><span>◌ Customer signal watch</span></div>
-                <div class="nav-group"><p>Last hour</p><span>● Research onboarding gaps</span><span class="selected">● Plan the August launch</span><span>● Update pricing narrative</span><span>◌ Partner follow-up</span></div>
-                <div class="workspace-account"><i>AJ</i><strong>Adam</strong><span>⌄</span></div>
-              </aside>
-
-              <div class="workspace-main" aria-hidden="true">
-                <header><span><i></i> Plan the August launch</span><b>Marketing</b></header>
-                <div class="workspace-welcome">
-                  <p><img src="/brand/avalon-mark.png" width="22" height="22" alt="" /> Welcome back</p>
-                  <small>Waiting for you</small>
-                  <div class="waiting-card"><i class="status-lime"></i><span><strong>Needs input</strong><b>Plan the August launch</b><small>Choose the final story and audience</small></span><time>4m</time></div>
-                  <div class="waiting-card"><i class="status-blue"></i><span><strong>Ready</strong><b>Update pricing narrative</b><small>Draft is ready for review</small></span><time>18m</time></div>
-                  <div class="waiting-card quiet"><i></i><span><strong>Waiting</strong><b>Research onboarding gaps</b><small>Maya is adding interview notes</small></span><time>1h</time></div>
-                </div>
-                <div class="composer"><div class="participants"><span><i>AJ</i> Adam ×</span><span><i>ML</i> Maya ×</span><button type="button" tabindex="-1" aria-label="Add participant">＋</button></div><p>Ask Avalon or update the work stream <b>↵</b></p></div>
-              </div>
-
-              <aside class="task-rail" aria-hidden="true">
-                <header><span>Background work</span><i>×</i></header>
-                <p>In progress 2 <b>Clear</b></p>
-                <article class="working"><strong><i></i> Compare launch narratives</strong><span>Avalon · Working</span><div><i></i></div></article>
-                <article><strong>Summarize customer interviews</strong><span>Avalon · Completed · 2m 14s</span><a>View transcript</a></article>
-                <article><strong>Collect linked resources</strong><span>Automation · Completed</span></article>
-              </aside>
-            </div>
-            <figcaption>Waiting work comes forward without becoming another inbox. Open a stream and its people, history, resources, and background work are already there.</figcaption>
-          </figure>
-        </div>
+      <section class="rally-method" id="how-it-works" aria-labelledby="method-title">
+        <header class="reveal"><p class="rally-index">03 / One workstream</p><h2 id="method-title">Invite people into the work.<br /><em>Not another empty chat.</em></h2><p>A workstream is a durable room for one outcome. Everyone can talk, add context, hand work to Rally, and review the same trail.</p></header>
+        <ol><li class="reveal"><span>01</span><div><h3>Start with an outcome</h3><p>Open a workstream for the role, client, launch, document, or decision in front of you.</p></div></li><li class="reveal"><span>02</span><div><h3>Bring the whole context</h3><p>Add teammates, messages, notes, docs, projects, repositories, and the setup you already trust.</p></div></li><li class="reveal"><span>03</span><div><h3>Watch the work happen</h3><p>Sources, questions, actions, failures, and outputs remain visible instead of disappearing behind an answer.</p></div></li><li class="reveal"><span>04</span><div><h3>Move it over the line</h3><p>Review together, make the human decisions, and send the result where it needs to go.</p></div></li></ol>
       </section>
 
-      <section class="section features-section shell" id="features" aria-labelledby="features-title">
-        <div class="section-intro split reveal">
-          <div><p class="kicker">Built for consequential work</p><h2 id="features-title">Everything around the answer<br /><em>is part of the product.</em></h2></div>
-          <p>Avalon keeps the path to an outcome visible: who is involved, what context was used, which decisions are open, and what the agent actually did.</p>
-        </div>
-
-        <div class="feature-grid">
-          <article class="feature-card feature-large reveal"><span>01 · Work streams</span><h3>A durable home for the outcome</h3><p>Messages, files, people, questions, tool activity, and outputs stay attached to the work they support.</p><div class="stream-mini" aria-hidden="true"><i></i><span>Brief</span><b>→</b><i></i><span>Work</span><b>→</b><i></i><span>Review</span></div></article>
-          <article class="feature-card reveal"><span>02 · Collaboration</span><h3>Human conversation stays human</h3><p>In shared streams, people can talk to one another. Avalon acts when addressed or when assigned work.</p><div class="mini-avatars" aria-hidden="true"><i>AJ</i><i>ML</i><b>+</b><img src="/brand/avalon-mark.png" width="22" height="22" alt="" /></div></article>
-          <article class="feature-card reveal"><span>03 · Inspectability</span><h3>Open the work, not a magic box</h3><p>See sources, tool calls, retries, blockers, decisions, and artifacts in the stream where they happened.</p><div class="mini-ledger" aria-hidden="true"><span><i></i>Read sources <b>done</b></span><span><i></i>Compare evidence <b>42s</b></span><span><i></i>Ask for input <b>now</b></span></div></article>
-          <article class="feature-card reveal"><span>04 · Connections</span><h3>Context from tools you already use</h3><p>Bring in mail, calendars, documents, projects, and repositories with permission-scoped connections.</p><div class="connection-cloud" aria-hidden="true"><i>Gmail</i><i>Drive</i><i>GitHub</i><i>Linear</i></div></article>
-          <article class="feature-card feature-wide reveal"><span>05 · Automations</span><h3>Repeat the outcome, not the setup</h3><p>Describe recurring work conversationally. Run it manually, on a schedule, from connected activity, by resource change, webhook, or email.</p><div class="trigger-row" aria-hidden="true"><i>Manual</i><i>Calendar</i><i>Activity</i><i>Watch</i><i>Email</i></div></article>
-          <article class="feature-card reveal"><span>06 · Native workspace</span><h3>At home on your Mac</h3><p>A focused desktop workspace for long-running work, designed around review and continuity instead of browser-tab churn.</p><div class="desktop-badge"><img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> macOS · Apple silicon</div></article>
-        </div>
+      <section class="rally-product" id="product" aria-labelledby="product-title">
+        <div class="rally-product-heading reveal"><p class="rally-index">04 / Rally in play</p><h2 id="product-title">See what needs you.<br /><em>Let the rest keep moving.</em></h2></div>
+        <figure class="rally-app reveal">
+          <div class="rally-app-top"><i></i><i></i><i></i><span><img class="rally-symbol tiny" src="/brand/rally-mark.png" width="17" height="17" alt="" /> rally</span><b>Desktop preview</b></div>
+          <div class="rally-app-body" aria-hidden="true" inert><aside><strong><img class="rally-symbol tiny" src="/brand/rally-mark.png" width="17" height="17" alt="" /> rally</strong><button type="button" tabindex="-1">＋ New workstream</button><p>Waiting for you</p><a class="selected">● Plan the launch</a><a>● Research onboarding gaps</a><a>● Update pricing story</a><p>Background</p><a>◌ Weekly customer pulse</a><a>◌ Social signal watch</a></aside><section><header><span>Plan the launch</span><b>Shared · 3</b></header><div class="rally-app-feed"><article><span>KB</span><p><b>Katherine</b> The strongest idea is that AI is still single-player.</p></article><article><span>AJ</span><p><b>Adam</b> Use the team’s own setup, without the copy-paste tax.</p></article><article class="rally-app-system"><img class="rally-symbol tiny" src="/brand/rally-mark.png" width="17" height="17" alt="" /><p><b>Rally</b> I compared the meeting notes with the brand thread. The recurring promise is shared leverage.</p></article></div><div class="rally-composer"><span>KB</span><span>AJ</span><span>AT</span><p>Talk with your team or hand work to Rally</p><b>↵</b></div></section><aside class="rally-app-rail"><header>Work in motion</header><article><i></i><b>Compare positioning notes</b><span>Working · 32s</span></article><article><i></i><b>Build launch narrative</b><span>Ready to review</span></article><article><i></i><b>Collect source links</b><span>Completed</span></article></aside></div>
+          <figcaption>The room keeps the people, source material, conversation, actions, and outcome together. Share the workstream and the full trail comes with it.</figcaption>
+        </figure>
       </section>
 
-      <section class="automation-section section" id="automations" aria-labelledby="automation-title">
-        <div class="automation-landscape" aria-hidden="true"></div>
-        <div class="shell automation-inner">
-          <div class="automation-copy reveal">
-            <p class="kicker">Automations with a memory</p>
-            <h2 id="automation-title">Set the work in motion.<br /><em>Keep every run.</em></h2>
-            <p>Each automation run opens as a work stream. You can inspect what happened, answer a question, review the result, and continue the conversation without losing the trail.</p>
-            <a class="button button-primary" href="#download">Build your first automation <span>↘</span></a>
-          </div>
-          <div class="automation-runs reveal" aria-label="Example automation history">
-            <article><header><span>Weekly customer pulse</span><b>Scheduled</b></header><p><i></i>Friday · 09:00</p><strong>Completed with 3 signals</strong><a href="#download">Open work stream →</a></article>
-            <article><header><span>Watch launch feedback</span><b>Activity</b></header><p><i></i>Today · 11:42</p><strong>One decision needs you</strong><a href="#download">Review question →</a></article>
-            <article><header><span>Prepare partner follow-up</span><b>Email</b></header><p><i></i>Running now</p><strong>Reading the latest thread</strong><a href="#download">View activity →</a></article>
-          </div>
-        </div>
-      </section>
+      <section class="rally-connections" id="connections" aria-labelledby="connections-title"><div class="reveal"><p class="rally-index">05 / Your team’s setup</p><h2 id="connections-title">Context comes with you.</h2><p>Connect the tools where work already lives. Rally uses only the permissions granted to each person or workspace.</p></div><div class="rally-connection-grid reveal"><span>Slack</span><span>Google Drive</span><span>Gmail</span><a href="/support/#granola-key-title">Granola</a><span>Notion</span><span>GitHub</span><span>Linear</span><span>Google Calendar</span></div></section>
 
-      <section class="section compare-section shell" id="compare" aria-labelledby="compare-title">
-        <div class="section-intro reveal">
-          <p class="kicker">A different center of gravity</p>
-          <h2 id="compare-title">From isolated answers<br /><em>to durable work.</em></h2>
-          <p>Avalon is designed for outcomes that span people, context, tools, decisions, and time—not just the next reply.</p>
-        </div>
-        <div class="comparison-table reveal" role="table" aria-label="Avalon compared with chat-only AI and task automation">
-          <div class="comparison-row comparison-head" role="row"><span role="columnheader">What the work needs</span><strong role="columnheader">Avalon</strong><span role="columnheader">Chat-only AI</span><span role="columnheader">Task automation</span></div>
-          <div class="comparison-row" role="row"><span role="cell">A durable home for context</span><strong role="cell" data-label="Avalon">One work stream</strong><span role="cell" data-label="Chat-only AI">Conversation history</span><span role="cell" data-label="Task automation">Run log</span></div>
-          <div class="comparison-row" role="row"><span role="cell">People collaborating together</span><strong role="cell" data-label="Avalon">Native to the work</strong><span role="cell" data-label="Chat-only AI">Usually individual</span><span role="cell" data-label="Task automation">Outside the workflow</span></div>
-          <div class="comparison-row" role="row"><span role="cell">Agent activity and sources</span><strong role="cell" data-label="Avalon">Inspectable in context</strong><span role="cell" data-label="Chat-only AI">Varies by response</span><span role="cell" data-label="Task automation">Technical execution log</span></div>
-          <div class="comparison-row" role="row"><span role="cell">Judgment during execution</span><strong role="cell" data-label="Avalon">Questions return to people</strong><span role="cell" data-label="Chat-only AI">New prompt required</span><span role="cell" data-label="Task automation">Often exits or fails</span></div>
-          <div class="comparison-row" role="row"><span role="cell">Recurring outcomes</span><strong role="cell" data-label="Avalon">Every run becomes a stream</strong><span role="cell" data-label="Chat-only AI">Manual restart</span><span role="cell" data-label="Task automation">Repeatable but detached</span></div>
-        </div>
-      </section>
+      <section class="rally-faq" aria-labelledby="faq-title"><div><p class="rally-index">06 / Questions</p><h2 id="faq-title">A few things<br /><em>worth knowing.</em></h2></div><div class="faq-list"><details><summary>Is Rally another chat client?<span>＋</span></summary><p>No. Conversation is one part of a workstream. People, connected sources, AI activity, questions, and outputs stay attached to the outcome.</p></details><details><summary>Does everyone need the same setup?<span>＋</span></summary><p>No. Rally is designed to make a strong setup shareable. Invite someone into the workstream and the relevant context and work trail are already there.</p></details><details><summary>Can I see what Rally did?<span>＋</span></summary><p>Yes. Tool activity, sources, questions, outputs, failures, and retries remain inspectable in the workstream.</p></details><details><summary>Where can I use Rally today?<span>＋</span></summary><p>Rally currently ships as a macOS desktop product for Apple silicon. This site is a product tour, not a browser version of the workspace.</p></details></div></section>
 
-      <section class="section integrations-section" id="integrations" aria-labelledby="integrations-title">
-        <div class="shell integrations-inner">
-          <div class="section-intro compact reveal">
-            <p class="kicker">Connected, with permission</p>
-            <h2 id="integrations-title">Bring the right context.<br /><em>Leave the sprawl behind.</em></h2>
-            <p>Connect only what a work stream needs. Avalon can work with your communication, documents, planning, and development context while keeping the outcome in one place.</p>
-          </div>
-          <div class="integration-grid reveal" aria-label="Available connections">
-            <span>Gmail</span><span>Google Calendar</span><span>Google Drive</span><span>Google Docs</span><span>Google Sheets</span><span>GitHub</span><span>Linear</span><span>Notion</span><a href="/support/#granola-key-title">Granola</a>
-          </div>
-        </div>
-      </section>
-
-      <section class="section faq-section shell" aria-labelledby="faq-title">
-        <div class="section-intro compact reveal"><p class="kicker">Questions, answered</p><h2 id="faq-title">What Avalon is—and isn’t.</h2></div>
-        <div class="faq-list reveal">
-          <details><summary>Is Avalon another chat client?<span>＋</span></summary><p>No. Conversation is one part of a work stream. Participants, connected resources, agent activity, questions, and outputs remain attached to the outcome.</p></details>
-          <details><summary>Does Avalon work without people involved?<span>＋</span></summary><p>Avalon can continue assigned background work, but it brings decisions back to people when judgment or missing context matters.</p></details>
-          <details><summary>What can trigger an automation?<span>＋</span></summary><p>Automations can run manually, by calendar or interval, from connected activity, by watching a resource, through a webhook, or from email.</p></details>
-          <details><summary>Where can I use Avalon today?<span>＋</span></summary><p>Avalon currently ships as a macOS desktop product for Apple silicon. This landing page is a product tour, not a browser version of the workspace.</p></details>
-        </div>
-      </section>
-
-      <section class="download-section section shell" id="download" aria-labelledby="download-title">
-        <div class="download-panel reveal">
-          <div class="download-mark"><img src="/brand/avalon-mark.png" width="66" height="66" alt="" /><i></i></div>
-          <div class="download-copy"><p class="kicker">Avalon desktop preview</p><h2 id="download-title">Make a place<br /><em>for the work.</em></h2><p>Start an outcome, invite the right people, and let Avalon keep the context and the work moving together.</p></div>
-          <div class="download-actions">
-            <!-- avalon-desktop-release:start -->
-            <span class="button button-disabled" aria-disabled="true">Downloads opening soon</span>
-            <span class="release-note">macOS · Apple silicon · Private preview</span>
-            <!-- avalon-desktop-release:end -->
-          </div>
-        </div>
-      </section>
+      <section class="rally-download" id="download" aria-labelledby="download-title"><div class="download-court" aria-hidden="true"><i></i><i></i></div><p class="rally-index">07 / Ready to rally?</p><h2 id="download-title">Bring your team<br /><em>into the work.</em></h2><p>Download Rally for macOS. Start an outcome, invite the right people, and carry the whole context forward together.</p><!-- rally-desktop-release:start --><span class="rally-button rally-button-dark button-disabled" aria-disabled="true"><img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Downloads opening soon</span><small>Private preview · Apple silicon · macOS</small><!-- rally-desktop-release:end --></section>
     </main>
 
-    <footer class="site-footer shell">
-      <a class="brand" href="/" aria-label="Avalon home"><img class="brand-mark" src="/brand/avalon-mark.png" width="20" height="20" alt="" /><span>Avalon</span></a>
-      <p>Work, still in context.</p>
-      <div><a href="#how-it-works">How it works</a><a href="#features">Features</a><a href="#compare">Compare</a><a href="/slack">Slack</a><a href="/support/#granola-key-title">Granola setup</a><a href="/terms/">Terms</a><a href="/privacy/">Privacy</a><a href="/acceptable-use/">Acceptable Use</a><a href="/dpa/">DPA</a><a href="/subprocessors/">Sub-processors</a><a href="/cookies/">Cookies</a><a href="/security/">Security</a><a href="/support/">Support</a><span>© 2026 Juno AI Labs</span></div>
-    </footer>
+    <footer class="rally-footer"><a class="rally-wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark.png" width="30" height="30" alt="" /><span>rally</span></a><p>AI is multiplayer now.</p><nav aria-label="Trust Center and company links"><a href="/security/">Trust Center</a><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a><a href="/dpa/">DPA</a><a href="/subprocessors/">Sub-processors</a><a href="/cookies/">Cookies</a><a href="/acceptable-use/">Acceptable Use</a><a href="/support/">Support</a></nav><small>© 2026 Juno AI Labs · Rally</small></footer>
   </body>
 </html>

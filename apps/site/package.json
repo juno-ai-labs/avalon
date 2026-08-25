@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "deploy": "AVALON_RELEASE_DISCOVERY=1 pnpm build && wrangler deploy --config wrangler.jsonc"
+    "deploy": "RALLY_RELEASE_DISCOVERY=1 pnpm build && wrangler deploy --config wrangler.jsonc"
   },
   "dependencies": {
     "@rally/contracts": "workspace:*"

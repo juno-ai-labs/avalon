@@ -113,10 +113,19 @@ async function verifyRouteDecision(secret: string, token: string): Promise<Route
   return claims;
 }
 
-export function coarseTelemetryRoute(country: string | undefined): {
+export function coarseTelemetryRoute(
+  country: string | undefined,
+  isEUCountry?: string | boolean | null,
+): {
   route: "global" | "eu";
   routingBasis: "ip_geolocation" | "geolocation_fallback";
 } {
+  // Prefer Cloudflare's maintained EU classification when it is affirmative.
+  // The country-code set remains a conservative fallback for local tests,
+  // older request objects, and any edge request where the boolean is omitted.
+  if (isEUCountry === "1" || isEUCountry === true) {
+    return { route: "eu", routingBasis: "ip_geolocation" };
+  }
   const normalized = country?.toUpperCase();
   if (normalized && /^[A-Z]{2}$/u.test(normalized) && normalized !== "XX") {
     return {
@@ -151,9 +160,12 @@ export class TelemetryBootstrapService {
     return this.env.TELEMETRY_CAPABILITY_SIGNING_KEY ?? this.env.SESSION_SIGNING_KEY;
   }
 
-  async route(country: string | undefined): Promise<TelemetryRouteResponse> {
+  async route(
+    country: string | undefined,
+    isEUCountry?: string | boolean | null,
+  ): Promise<TelemetryRouteResponse> {
     if (this.env.AVALON_REGION !== "global") throw new Error("telemetry_bootstrap_global_only");
-    const route = coarseTelemetryRoute(country);
+    const route = coarseTelemetryRoute(country, isEUCountry);
     const claims: RouteDecisionClaims = {
       version: 1,
       purpose: "telemetry_route",
@@ -170,12 +182,13 @@ export class TelemetryBootstrapService {
     anonymousEpochId: string,
     country: string | undefined,
     routeToken?: string,
+    isEUCountry?: string | boolean | null,
   ): Promise<TelemetryBootstrapResponse> {
     if (this.env.AVALON_REGION !== "global") throw new Error("telemetry_bootstrap_global_only");
     const now = new Date();
     const verifiedRoute = routeToken
       ? await verifyRouteDecision(this.signingKey(), routeToken)
-      : coarseTelemetryRoute(country);
+      : coarseTelemetryRoute(country, isEUCountry);
     const requestedRoute = {
       route: verifiedRoute.route,
       routingBasis: verifiedRoute.routingBasis,
@@ -247,7 +260,7 @@ export class TelemetryBootstrapService {
       // A concurrent bootstrap won the anonymous-epoch uniqueness race. Reuse
       // its fixed route rather than returning a capability for an unpersisted
       // journey or replacing its coarse-location decision.
-      return this.bootstrap(anonymousEpochId, country, routeToken);
+      return this.bootstrap(anonymousEpochId, country, routeToken, isEUCountry);
     }
     const claims: CapabilityClaims = {
       version: 1,
