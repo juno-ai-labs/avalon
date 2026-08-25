@@ -1,10 +1,12 @@
 # Ace internal administration
 
 Ace is Avalon's internal administration Worker at
-`https://ace.internal.rallywith.ai`. Its first surface manages the four
-user-facing Boolean product flags in Cloudflare Flagship. It is intentionally a
-skeleton: new internal tools extend the same Hono application and Ace-owned
-component library instead of creating another operator site or visual language.
+`https://ace.internal.rallywith.ai`. Its first surface manages five Boolean
+product flags in Cloudflare Flagship: four presentation controls for Electron
+and one operational kill switch for scheduled digest delivery. It is
+intentionally a skeleton: new internal tools extend the same Hono application
+and Ace-owned component library instead of creating another operator site or
+visual language.
 
 ## Where the code lives
 
@@ -30,9 +32,9 @@ Ace-specific Access application by copying the migration site's policies and
 identity-provider settings. Ace therefore follows the same employee rule while
 keeping a distinct audience.
 
-`GET /api/flags` reads only `hypersight-enabled`,
-`meeting-recording-enabled`, `suggested-work-enabled`, and
-`automation-workspace-templates-enabled`. The editor exposes enabled/paused state, default
+`GET /api/flags` reads `hypersight-enabled`, `meeting-recording-enabled`,
+`suggested-work-enabled`, `automation-workspace-templates-enabled`, and
+`digests-enabled`. The editor exposes enabled/paused state, default
 Boolean value, ordered first-match rules, all eleven operators, nested AND/OR
 groups, and sticky percentage rollouts. A person search accepts name or full
 email but writes the stable `userPlatformId`; a workspace search accepts name or
@@ -58,6 +60,10 @@ reconnect is the reconciliation path.
   `true` has one unambiguous meaning in Flagship, Ace, logs, and client code.
 - The product features default to false in the shared client schema. No network
   response, stale cache, missing field, Flagship error, or older API enables one.
+  `digests-enabled` is the one managed flag outside that schema: no client ever
+  reads it, and it is provisioned **on**, because a digest already sends by
+  default for every existing person — see
+  [`digests.md`](digests.md#the-run).
 - The account-wide and regional Queue messages never carry a flag value. Values
   are user-specific and are evaluated in the owning WorkspaceDO after Flagship
   propagation; carrying one value would leak one audience's answer to another.
@@ -80,8 +86,9 @@ changelog. Regional D1 owns identity, membership, and workspace lookup data;
 Ace reads it directly and writes none of it. Regional API Workers own their
 Durable Object namespaces and the socket protocol.
 
-Ace does not manage agent-model flags or the Control Tower cadence. Those retain
-their existing operational paths in [`feature-flags.md`](feature-flags.md).
+Ace does not manage agent-model flags or the Control Tower cadence. Those
+retain their existing operational paths in
+[`feature-flags.md`](feature-flags.md).
 Adding a new Ace page does not automatically grant it a new Cloudflare API
 capability; its route, environment type, credential, and component reuse must be
 reviewed as a new boundary.
@@ -187,6 +194,39 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-08-25 — Ace manages a fifth flag, its first that is not presentation-only
+
+**What changed:** Ace's catalog gained `digests-enabled`, a kill switch for
+scheduled digest delivery. Unlike every flag before it, Electron never reads
+it — `apps/api/src/services/digest-flags.ts` reads it directly at the moment a
+digest is about to fire — and `apps/ace/scripts/deploy.mjs` provisions it with
+`default_variation: 'on'` rather than `ensureFlag`'s ordinary `'off'`, because
+a digest already sends by default for every existing person.
+
+**Why:** An operator needed a real stop for digest delivery, not a hidden
+settings screen: digests run from a cron reconciler nobody visits a UI to
+trigger, so a presentation-only flag in the existing pattern would have hidden
+nothing that controls delivery. Reusing Ace's existing editor, write path, and
+Queue fan-out — rather than building a second flag-editing surface — keeps one
+place an operator looks for every Boolean flag they might need to change by
+hand.
+
+**Considered and rejected:** A bespoke write path that skips the Queue
+notification for flags outside `ClientFeatureFlagsSchema`, to avoid triggering
+a client re-evaluation nothing needs. Rejected because the fan-out is harmless
+idempotent work — it always re-sends the complete client contract regardless
+of which key changed, so a `digests-enabled` save just repeats a
+re-evaluation that was already safe to repeat — and a conditional fan-out
+would be a second code path for every future flag to reason about, bought for
+a cost that shows up nowhere a person would notice it.
+
+**Consequences:** `ensureFlag` now takes a default-variation argument, and any
+future non-presentation flag that must not default off follows
+`digests-enabled`'s example rather than `ensureFlag`'s ordinary default.
+`deployment-contract.test.ts` pins that this flag's provisioning call passes
+`'on'` explicitly, since a silent regression back to `ensureFlag`'s default
+would stop every digest in production on the next deploy.
 
 ### 2026-08-25 — Ace merge deployment follows its runtime boundary only
 

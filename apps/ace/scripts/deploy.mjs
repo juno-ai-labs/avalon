@@ -72,7 +72,7 @@ async function ensureAccessApplication() {
   return result.aud;
 }
 
-async function ensureFlag(key, description) {
+async function ensureFlag(key, description, defaultVariation = 'off') {
   const flags = await cloudflare(`/flagship/apps/${flagshipAppId}/flags`, {}, flagshipToken);
   const existing = Array.isArray(flags) ? flags.find((flag) => flag.key === key) : undefined;
   if (existing) return;
@@ -82,7 +82,7 @@ async function ensureFlag(key, description) {
       key,
       description,
       enabled: true,
-      default_variation: 'off',
+      default_variation: defaultVariation,
       variations: { off: false, on: true },
       rules: [],
     }),
@@ -99,6 +99,10 @@ await Promise.all([
   ensureFlag('meeting-recording-enabled', 'True shows meeting-recording actions in Electron; false hides them without changing API availability.'),
   ensureFlag('suggested-work-enabled', 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.'),
   ensureFlag('automation-workspace-templates-enabled', 'True shows workspace-template surfaces in Electron; false hides them without changing API availability.'),
+  // Defaults ON, not off like every other managed flag: a digest already
+  // sends by default for every existing person, so provisioning this flag
+  // must not be the thing that silently stops delivery. See docs/digests.md#the-run.
+  ensureFlag('digests-enabled', 'True sends scheduled digests as configured; false stops delivery for whoever the rule reaches, without touching their saved schedule, destinations, or cursor.', 'on'),
 ]);
 
 const source = await readFile(join(appDirectory, 'wrangler.jsonc'), 'utf8');
