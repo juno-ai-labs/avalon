@@ -2165,13 +2165,6 @@ export class RallyApi {
     });
   }
 
-  async testConnection(id: string): Promise<{ ok: boolean; message: string }> {
-    return this.request(`/connections/${encodeURIComponent(id)}/test`, {
-      method: 'POST',
-      schema: z.object({ ok: z.boolean(), message: z.string() }),
-    });
-  }
-
   async disconnectConnection(id: string): Promise<void> {
     await this.requestVoid(`/connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
