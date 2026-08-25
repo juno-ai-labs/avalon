@@ -1,5 +1,5 @@
-import { asWorkspaceId } from "@avalon/contracts";
-import { asHarnessRunId, asWorkstreamId } from "@avalon/contracts";
+import { asWorkspaceId } from "@rally/contracts";
+import { asHarnessRunId, asWorkstreamId } from "@rally/contracts";
 import {
   ConnectorError,
   authorizedConnection,
@@ -9,7 +9,7 @@ import {
   providerJson,
   withProviderReauthorization,
   type ConnectorConnectionContext,
-} from "@avalon/connectors";
+} from "@rally/connectors";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { encryptString } from "../src/lib/crypto";

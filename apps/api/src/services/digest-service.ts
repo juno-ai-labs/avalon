@@ -4,8 +4,8 @@ import {
   type DigestDeliveryTargetType,
   type DigestSchedule,
   type UpdateDigestScheduleRequest,
-} from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+} from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";

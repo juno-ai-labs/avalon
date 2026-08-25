@@ -1,4 +1,4 @@
-import { asWorkspaceId, asWorkstreamId, type WorkstreamId } from "@avalon/contracts";
+import { asWorkspaceId, asWorkstreamId, type WorkstreamId } from "@rally/contracts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

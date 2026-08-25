@@ -1,13 +1,13 @@
-# Saving one of Avalon's messages
+# Saving one of Rally's messages
 
-Under every finished turn from Avalon, beside **Copy**, are **Image** and **PDF**.
+Under every finished turn from Rally, beside **Copy**, are **Image** and **PDF**.
 Each renders that turn onto a card — a splash of colour, a rounded white sheet,
-the message set as a document, and the Avalon mark over *Saved from Avalon* — and
+the message set as a document, and the Rally mark over *Saved from Rally* — and
 offers to save it wherever the person points the dialog. A picture is one tall
 JPEG; a PDF is paginated, with that signature repeated in the footer of every
 page.
 
-The point is a message that leaves Avalon intact: pasted into a deck, mailed to
+The point is a message that leaves Rally intact: pasted into a deck, mailed to
 someone without a seat, or kept. Everything here is about making the saved file
 look like the turn the person was reading, which is why the markdown is rendered
 by the feed's own component and only the surroundings are new.
@@ -17,7 +17,7 @@ by the feed's own component and only the surroundings are new.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/common/message-export.ts` | The request and result contract both processes share, the file-type table, and `messageExportFileName` — the one place a message's text becomes a file name. |
-| `apps/desktop/src/renderer/lib/message-export.ts` | The renderer's half: serializes a `MarkdownBody` element to HTML in a detached root, reads the Avalon mark out of the bundle once, calls the bridge. |
+| `apps/desktop/src/renderer/lib/message-export.ts` | The renderer's half: serializes a `MarkdownBody` element to HTML in a detached root, reads the Rally mark out of the bundle once, calls the bridge. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `AssistantMessageActions` — the hover row under a turn, its in-flight and failed states. |
 | `apps/desktop/src/main/message-export.ts` | Everything about the card: the document, its stylesheet, the splash, the page footer, request validation, and `MessageExporter`, which drives one render at a time and writes the file. |
 | `apps/desktop/src/main/index.ts` | The Electron adapter — the hidden `BrowserWindow`, the `rallywithai-export` protocol handler, the save dialog, and the `message-export:save` IPC handler. |
@@ -38,7 +38,7 @@ A click on **Image** or **PDF** starts one pass:
    not UTC, or an evening's saves west of Greenwich would all be filed under
    tomorrow: `acme-follow-up-2026-08-13`.
 3. **It sends the request over the bridge.** HTML, file name, format, and the
-   Avalon mark as a PNG data URL. The main process re-validates all four; the file
+   Rally mark as a PNG data URL. The main process re-validates all four; the file
    name in particular must match `^[a-z0-9][a-z0-9-]{0,79}$`, so a name is
    *rejected* rather than sanitized.
 4. **The main process builds the document** — `messageExportDocument` — and files
@@ -195,7 +195,7 @@ main-process capabilities and a browser has neither.
   finished turn that has some.
 - **A payload past its bounds** — HTML over 600,000 characters, a mark over
   400,000 — is rejected as an invalid request rather than rendered.
-- **The Avalon mark failing to load** fails that export and is retried on the
+- **The Rally mark failing to load** fails that export and is retried on the
   next, rather than being cached as a rejection.
 
 ## Security and trust model
@@ -217,9 +217,9 @@ The document is written from text a model produced, so it is treated the way
 ## Testing
 
 ```bash
-pnpm --filter @avalon/desktop exec vitest run src/main/message-export.test.ts
-pnpm --filter @avalon/desktop exec vitest run src/common/message-export.test.ts
-pnpm --filter @avalon/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
+pnpm --filter @rally/desktop exec vitest run src/main/message-export.test.ts
+pnpm --filter @rally/desktop exec vitest run src/common/message-export.test.ts
+pnpm --filter @rally/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
 ```
 
 `src/main/message-export.test.ts` drives `MessageExporter` against a fake window,
@@ -267,14 +267,14 @@ scheme exists at all — an export document must never share an origin with the
 application, so it must not be moved onto `app://rallywithai` no matter how convenient
 the existing handler looks. See [`domain-migration.md`](domain-migration.md) for
 why the schemes were treated differently from each other.
-### 2026-08-13 — Avalon's messages can be saved as a picture or a PDF
+### 2026-08-13 — Rally's messages can be saved as a picture or a PDF
 
 **What changed:** Two buttons joined **Copy** under a finished turn. Both render
 the turn's own `MarkdownBody` DOM onto a card in a hidden Chromium window in the
-main process — captured as one tall JPEG, or paginated to PDF with the Avalon
+main process — captured as one tall JPEG, or paginated to PDF with the Rally
 mark in every page footer — and save it through a native dialog.
 
-**Why:** Messages worth keeping had only one way out of Avalon: copying markdown
+**Why:** Messages worth keeping had only one way out of Rally: copying markdown
 into something that renders it. The card exists so the file looks like the thing
 the person was reading, which is why the markdown is the feed's own component and
 only the surroundings are new.

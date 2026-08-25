@@ -8,12 +8,12 @@ import type {
   HarnessFailureCode,
   StructuredFailureDetail,
   ToolDefinition
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import {
   AddressingClassificationSchema,
   AutomationDraftSchema,
   asUserId
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import { createStreamWatchdog } from "@juno-ai/bind/completion";
 import { z } from "zod";
@@ -2809,12 +2809,12 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   run_iteration_limit_exceeded: "This run reached its model-turn limit",
   run_tool_call_limit_exceeded: "This run reached its tool-call limit",
   run_cost_limit_exceeded: "This run reached its cost limit",
-  harness_execution_failed: "Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support",
-  tool_receipt_persistence_failed: "Avalon could not record this tool's durable outcome. Check its card before retrying a write — if it is unresolved, copy the request ID for support",
-  run_state_persistence_failed: "Avalon could not save this run's progress. Retrying is unlikely to help — copy the request ID for support",
+  harness_execution_failed: "Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support",
+  tool_receipt_persistence_failed: "Rally could not record this tool's durable outcome. Check its card before retrying a write — if it is unresolved, copy the request ID for support",
+  run_state_persistence_failed: "Rally could not save this run's progress. Retrying is unlikely to help — copy the request ID for support",
   context_limit_exceeded: "This run could not fit safely in the selected model context",
   tool_surface_too_large: "The authorized tool surface is too large for one run",
-  ambiguous_external_write: "An external write may have completed, so Avalon did not retry it",
+  ambiguous_external_write: "An external write may have completed, so Rally did not retry it",
   // Not "did not respond": this code also covers a 429 and a 5xx, where the
   // service answered and the answer was an error. Naming the symptom it does not
   // have would hand a member a diagnosis that contradicts the logs.

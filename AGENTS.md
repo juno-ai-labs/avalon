@@ -6,7 +6,7 @@ session, so detail belongs in `docs/` behind a pointer.
 
 ## Where we are
 
-**Avalon is a seed-stage startup iterating quickly, and the right engineering
+**Rally is a seed-stage startup iterating quickly, and the right engineering
 decision here is often not the one that would be right at scale.** There is no
 load history, no metrics stack, and no capacity model. Treat that as a constraint
 on how a decision is made, not as something to engineer around:
@@ -74,7 +74,7 @@ history.
 
 `pnpm test:scripts` covers only the repository's own `scripts/`. The release
 tooling under `apps/desktop/scripts/` — the planner and the workflow invariants —
-is a separate suite that CI runs as `pnpm --filter @avalon/desktop test:release`.
+is a separate suite that CI runs as `pnpm --filter @rally/desktop test:release`.
 Run that one too when touching a release script, or its tests will not execute
 locally and the name of the other gate will suggest they did.
 
@@ -92,7 +92,7 @@ suites to what each one can prove, and holds the two rules below.
 - **Default to the real Cloudflare pipeline.** Anything that depends on the
   runtime — Durable Object storage, alarms, hibernation, WebSocket upgrades, D1
   semantics — belongs in `apps/api/test-workers/`, which runs on real workerd
-  (`pnpm --filter @avalon/api test:workers`). That suite's D1 starts with no
+  (`pnpm --filter @rally/api test:workers`). That suite's D1 starts with no
   schema, so a test there declares the tables it needs; a query or a constraint
   is proved in the Node suite instead, which applies the checked-in migrations
   rather than stubbing a database. A double stands in for something that
@@ -120,7 +120,7 @@ resolution here.
 
   ```bash
   (for i in $(seq 20); do
-     pnpm --filter @avalon/<pkg> exec vitest run <path-within-the-package> \
+     pnpm --filter @rally/<pkg> exec vitest run <path-within-the-package> \
        || { echo "failed on run $i"; exit 1; }
    done) &> /tmp/flake.log
   ```

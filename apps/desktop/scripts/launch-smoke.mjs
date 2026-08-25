@@ -22,7 +22,7 @@ function runningSmokePids(marker) {
     run('/bin/ps', ['-axo', 'pid=,command='])
       .split('\n')
       .map((line) => line.trim())
-      .filter((line) => line.includes('Contents/MacOS/Avalon') && line.includes(marker))
+      .filter((line) => line.includes('Contents/MacOS/Rally') && line.includes(marker))
       .map((line) => Number(line.match(/^(\d+)/u)?.[1]))
       .filter(Number.isSafeInteger),
   );
@@ -31,7 +31,7 @@ function runningSmokePids(marker) {
 function runningRendererPids(appPath, userDataDirectory) {
   const rendererExecutable = join(
     appPath,
-    'Contents/Frameworks/Avalon Helper (Renderer).app/Contents/MacOS/Avalon Helper (Renderer)',
+    'Contents/Frameworks/Rally Helper (Renderer).app/Contents/MacOS/Rally Helper (Renderer)',
   );
   return new Set(
     run('/bin/ps', ['-axo', 'pid=,command='])
@@ -61,7 +61,7 @@ export async function smokeLaunch(appPath, userDataDirectory) {
   // arguments. Pass the canonical path ourselves so renderer detection compares
   // like with like (`/private/tmp/...` instead of `/tmp/...`).
   const canonicalUserDataDirectory = await realpath(userDataDirectory);
-  const marker = `--avalon-package-smoke=${randomUUID()}`;
+  const marker = `--rally-package-smoke=${randomUUID()}`;
   run('/usr/bin/open', [
     '-na',
     appPath,
@@ -78,9 +78,9 @@ export async function smokeLaunch(appPath, userDataDirectory) {
       rendererPids = runningRendererPids(appPath, canonicalUserDataDirectory);
       if (launchedPid && rendererPids.size > 0) break;
     }
-    if (!launchedPid) throw new Error('Packaged Avalon did not start through LaunchServices');
+    if (!launchedPid) throw new Error('Packaged Rally did not start through LaunchServices');
     if (rendererPids.size === 0) {
-      throw new Error('Packaged Avalon did not start a signed Renderer helper');
+      throw new Error('Packaged Rally did not start a signed Renderer helper');
     }
 
     for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -88,12 +88,12 @@ export async function smokeLaunch(appPath, userDataDirectory) {
       process.kill(launchedPid, 0);
       rendererPids = runningRendererPids(appPath, canonicalUserDataDirectory);
       if (rendererPids.size === 0) {
-        throw new Error('Packaged Avalon Renderer helper exited during launch smoke');
+        throw new Error('Packaged Rally Renderer helper exited during launch smoke');
       }
     }
   } catch (error) {
     if (launchedPid && error?.message?.includes('Renderer helper')) throw error;
-    throw new Error(`Packaged Avalon process ${launchedPid ?? '(missing)'} exited during launch smoke`, {
+    throw new Error(`Packaged Rally process ${launchedPid ?? '(missing)'} exited during launch smoke`, {
       cause: error,
     });
   } finally {

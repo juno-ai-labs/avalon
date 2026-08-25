@@ -1,11 +1,11 @@
-import type { HarnessToolContext } from "@avalon/agent-harness";
+import type { HarnessToolContext } from "@rally/agent-harness";
 import { createTerminalPortFactory, type TerminalPortFactory } from "./object-port";
-import { asWorkspaceId } from "@avalon/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import {
   githubRepositoryAuthorization,
   type GitHubRepositoryAccessLevel,
-} from "@avalon/connectors";
-import { newId } from "@avalon/db";
+} from "@rally/connectors";
+import { newId } from "@rally/db";
 
 import type { Env } from "../../env";
 import { sha256 } from "../../lib/crypto";

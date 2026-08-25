@@ -1,4 +1,4 @@
-import { IdSchema, NormalizedActivitySchema, RegionSchema, WorkspaceIdSchema } from "@avalon/contracts";
+import { IdSchema, NormalizedActivitySchema, RegionSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { z } from "zod";
 
 export const WorkspaceConnectorEventSchema = z.object({

@@ -83,7 +83,7 @@ describe('menu bar content', () => {
       .resolves.toBe('created');
   });
 
-  it('reads the five most recent work streams and everything Avalon suggests', async () => {
+  it('reads the five most recent work streams and everything Rally suggests', async () => {
     respond(subject.requestJson, {
       '/workstreams': workstreamPage([
         { id: 'a', title: 'Acme renewal' },
@@ -151,7 +151,7 @@ describe('menu bar content', () => {
     expect(subject.store.content().recents).toEqual([]);
   });
 
-  it('names a work stream Avalon has not finished titling', async () => {
+  it('names a work stream Rally has not finished titling', async () => {
     respond(subject.requestJson, {
       '/workstreams': workstreamPage([{ id: 'a', title: 'placeholder', titleStatus: 'naming' }]),
       '/work-opportunities': { items: [] },

@@ -1,4 +1,4 @@
-import type { TelemetryRealtimeSocket, TelemetryRealtimeSocketCause } from '@avalon/contracts/telemetry';
+import type { TelemetryRealtimeSocket, TelemetryRealtimeSocketCause } from '@rally/contracts/telemetry';
 
 import { reportTelemetryProductIntent, telemetryCountBucket } from './telemetry';
 

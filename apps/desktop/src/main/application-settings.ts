@@ -9,11 +9,11 @@ const APPLICATION_SETTINGS_FILE_NAME = 'application-settings.json';
 export interface StoredApplicationSettings {
   lockdownMode: boolean;
   debugEnabled: boolean;
-  /** Whether the Avalon status item is in the macOS menu bar. */
+  /** Whether the Rally status item is in the macOS menu bar. */
   menuBarEnabled: boolean;
   /**
    * Whether the enabled-by-default login item has been registered once. The
-   * operating system, not this file, remembers whether Avalon opens at login;
+   * operating system, not this file, remembers whether Rally opens at login;
    * this only records that the default was applied, so a person who turns the
    * login item off does not get it switched back on by the next launch.
    */
@@ -94,7 +94,7 @@ export function parseStoredApplicationSettings(value: unknown): StoredApplicatio
       : 0,
     productAnalyticsPreferencePending: candidate.productAnalyticsPreferencePending === true,
     // A file written before themes existed, or naming one this build removed,
-    // means the design Avalon shipped with, following the Mac.
+    // means the design Rally shipped with, following the Mac.
     themeChoice: parseThemeChoice(candidate.themeChoice) ?? defaultThemeChoice,
   };
 }

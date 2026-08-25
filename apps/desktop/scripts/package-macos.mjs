@@ -77,10 +77,10 @@ async function publishVerifiedBuild() {
 
 await mkdir(releaseDirectory, { recursive: true });
 const notarizationSecretDirectory = mode === 'release'
-  ? await mkdtemp(join(tmpdir(), 'avalon-notarization-'))
+  ? await mkdtemp(join(tmpdir(), 'rally-notarization-'))
   : undefined;
 const smokeUserDataDirectory = mode === 'local'
-  ? await mkdtemp(join(tmpdir(), 'avalon-local-smoke-user-data-'))
+  ? await mkdtemp(join(tmpdir(), 'rally-local-smoke-user-data-'))
   : undefined;
 try {
   await run(process.execPath, [join(desktopDirectory, 'scripts', 'build-macos-native-components.mjs')]);
@@ -105,7 +105,7 @@ try {
     : process.env;
   await run('pnpm', builderArgs, environment);
 
-  const appPath = join(stagingDirectory, 'mac-arm64', 'Avalon.app');
+  const appPath = join(stagingDirectory, 'mac-arm64', 'Rally.app');
   if (mode === 'release') {
     // electron-builder writes update info after afterAllArtifactBuild. Rewrite
     // it now so every manifest entry describes the signed and stapled bytes.

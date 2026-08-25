@@ -1,11 +1,11 @@
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import {
   ConnectorError,
   createGoogleConnector,
   type ConnectorConnectionContext,
   type ResolvedConnectorAdapter,
-} from "@avalon/connectors";
+} from "@rally/connectors";
 import { createApp } from "../src/app";
 import { numericEnv } from "../src/env";
 import { decryptString, encryptString, hmacSha256, randomToken, timingSafeEqualText } from "../src/lib/crypto";
@@ -100,7 +100,7 @@ describe("API security utilities", () => {
     ]) {
       expect(__workstreamServiceTesting.memberSafeHarnessError(unsafeValue)).toEqual({
         code: "harness_execution_failed",
-        message: "Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support",
+        message: "Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support",
       });
     }
     expect(__workstreamServiceTesting.memberSafeHarnessError(null)).toBeNull();
@@ -123,7 +123,7 @@ describe("API security utilities", () => {
       message: "upstream body that must never be shown",
     }))).toEqual({
       code: "provider_circuit_open",
-      message: "Avalon has paused requests to this model. Try again shortly — if it keeps happening, copy the request ID for support",
+      message: "Rally has paused requests to this model. Try again shortly — if it keeps happening, copy the request ID for support",
     });
   });
 
@@ -574,7 +574,7 @@ describe("environment guardrails", () => {
         headers: {
           origin: "app://avalon",
           "access-control-request-method": "POST",
-          "access-control-request-headers": "authorization,content-type,idempotency-key,x-avalon-draft-id",
+          "access-control-request-headers": "authorization,content-type,idempotency-key,x-rally-draft-id,x-avalon-draft-id",
         },
       },
       createTestEnv({
@@ -588,6 +588,10 @@ describe("environment guardrails", () => {
     expect(response.headers.get("access-control-allow-origin")).toBe("app://avalon");
     const allowedHeaders = response.headers.get("access-control-allow-headers")?.toLowerCase();
     expect(allowedHeaders).toContain("idempotency-key");
+    expect(allowedHeaders).toContain("x-rally-draft-id");
+    // A build shipped before the rename sends the superseded spelling and
+    // cannot be made to send anything else. Chromium matches this list
+    // literally, so dropping it rejects that build at the preflight.
     expect(allowedHeaders).toContain("x-avalon-draft-id");
   });
 
@@ -601,7 +605,7 @@ describe("environment guardrails", () => {
           headers: {
             origin: "app://avalon",
             "access-control-request-method": "POST",
-            "access-control-request-headers": "authorization,content-type,x-avalon-operation-id,x-request-id",
+            "access-control-request-headers": "authorization,content-type,x-rally-operation-id,x-avalon-operation-id,x-request-id",
           },
         },
         createTestEnv({
@@ -614,6 +618,7 @@ describe("environment guardrails", () => {
       expect(response.status).toBe(204);
       expect(response.headers.get("access-control-allow-origin")).toBe("app://avalon");
       const allowedHeaders = response.headers.get("access-control-allow-headers")?.toLowerCase();
+      expect(allowedHeaders).toContain("x-rally-operation-id");
       expect(allowedHeaders).toContain("x-avalon-operation-id");
       // The desktop stamps `x-request-id` on every call so its performance
       // traces name the same id the Worker's rows carry. A missing entry here
@@ -656,7 +661,7 @@ describe("environment guardrails", () => {
   });
 
   it("does not expose development session creation outside the explicit dev guard", async () => {
-    const env = createTestEnv({ APP_ENV: "production", AVALON_DEV_AUTH: "false" });
+    const env = createTestEnv({ APP_ENV: "production", RALLY_DEV_AUTH: "false" });
     await expect(new AuthService(env).createDevelopmentSession()).rejects.toMatchObject({
       status: 404,
       code: "not_found",

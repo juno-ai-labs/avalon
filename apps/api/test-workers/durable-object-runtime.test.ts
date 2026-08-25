@@ -10,7 +10,7 @@ import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   type BlockDashboardBlockRun,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import {
   evictDurableObject,
   listDurableObjectIds,
@@ -1500,14 +1500,14 @@ describe("Durable Objects in the Workers runtime", () => {
     const blockSocketResponse = await blockStub.fetch("https://block-dashboard.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-region": "global",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-workstream-id": WORKSTREAM_ID,
-        "x-avalon-block-dashboard-block-id": BLOCK_DASHBOARD_BLOCK_ID,
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000117",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-region": "global",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-block-dashboard-block-id": BLOCK_DASHBOARD_BLOCK_ID,
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000117",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     if (blockSocketResponse.status !== 101) {
@@ -1518,28 +1518,28 @@ describe("Durable Objects in the Workers runtime", () => {
     const replayed = await fetchAndDrain(blockStub, "https://block-dashboard.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-region": "global",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-workstream-id": WORKSTREAM_ID,
-        "x-avalon-block-dashboard-block-id": BLOCK_DASHBOARD_BLOCK_ID,
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000117",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-region": "global",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-block-dashboard-block-id": BLOCK_DASHBOARD_BLOCK_ID,
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000117",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     expect(replayed.status).toBe(401);
     const expired = await fetchAndDrain(blockStub, "https://block-dashboard.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-region": "global",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-workstream-id": WORKSTREAM_ID,
-        "x-avalon-block-dashboard-block-id": BLOCK_DASHBOARD_BLOCK_ID,
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000118",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) - 1),
+        "x-rally-region": "global",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-block-dashboard-block-id": BLOCK_DASHBOARD_BLOCK_ID,
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000118",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) - 1),
       },
     });
     expect(expired.status).toBe(401);
@@ -1882,12 +1882,12 @@ describe("Durable Objects in the Workers runtime", () => {
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-placement-affinity": "wnam",
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": ticketId,
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": ticketId,
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     if (response.status !== 101) {
@@ -1902,12 +1902,12 @@ describe("Durable Objects in the Workers runtime", () => {
     const replay = await stub.fetch("https://workspace.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-placement-affinity": "wnam",
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": ticketId,
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": ticketId,
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     expect(replay.status).toBe(401);
@@ -1939,12 +1939,12 @@ describe("Durable Objects in the Workers runtime", () => {
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-placement-affinity": "wnam",
-        "x-avalon-user-id": userId,
-        "x-avalon-session-id": sessionId,
-        "x-avalon-socket-ticket-id": ticketId,
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": userId,
+        "x-rally-session-id": sessionId,
+        "x-rally-socket-ticket-id": ticketId,
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     if (response.status !== 101) {
@@ -2166,12 +2166,12 @@ describe("Durable Objects in the Workers runtime", () => {
       const response = await workspaceStub.fetch("https://workspace.test/socket", {
         headers: {
           Upgrade: "websocket",
-          "x-avalon-workspace-id": WORKSPACE_ID,
-          "x-avalon-placement-affinity": "wnam",
-          "x-avalon-user-id": userId,
-          "x-avalon-session-id": `${SESSION_ID}-${userId}`,
-          "x-avalon-socket-ticket-id": ticketId,
-          "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+          "x-rally-workspace-id": WORKSPACE_ID,
+          "x-rally-placement-affinity": "wnam",
+          "x-rally-user-id": userId,
+          "x-rally-session-id": `${SESSION_ID}-${userId}`,
+          "x-rally-socket-ticket-id": ticketId,
+          "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
         },
       });
       if (response.status !== 101) {
@@ -2330,12 +2330,12 @@ describe("Durable Objects in the Workers runtime", () => {
     const response = await workspace.fetch("https://workspace.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-placement-affinity": "wnam",
-        "x-avalon-user-id": participantId,
-        "x-avalon-session-id": `${SESSION_ID}-${participantId}`,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000407",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": participantId,
+        "x-rally-session-id": `${SESSION_ID}-${participantId}`,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000407",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     expect(response.status).toBe(101);
@@ -2658,12 +2658,12 @@ describe("Durable Objects in the Workers runtime", () => {
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-placement-affinity": "wnam",
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000708",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000708",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     expect(response.status).toBe(101);
@@ -2759,12 +2759,12 @@ describe("Durable Objects in the Workers runtime", () => {
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-placement-affinity": "wnam",
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000805",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000805",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     expect(response.status).toBe(101);
@@ -2847,12 +2847,12 @@ describe("Durable Objects in the Workers runtime", () => {
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-placement-affinity": "wnam",
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000813",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000813",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     expect(response.status).toBe(101);
@@ -4026,12 +4026,12 @@ describe("Durable Objects in the Workers runtime", () => {
     const response = await stub.fetch("https://workstream.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-workstream-id": WORKSTREAM_ID,
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000703",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000703",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     expect(response.status).toBe(101);
@@ -4145,12 +4145,12 @@ describe("Durable Objects in the Workers runtime", () => {
     const response = await stub.fetch("https://workstream.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-workstream-id": WORKSTREAM_ID,
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": ticketId,
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": ticketId,
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     if (response.status !== 101) {
@@ -4291,13 +4291,13 @@ describe("Durable Objects in the Workers runtime", () => {
     const response = await stub.fetch("https://substream.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-workstream-id": WORKSTREAM_ID,
-        "x-avalon-substream-id": "0",
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000801",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000801",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     expect(response.status).toBe(101);
@@ -4380,13 +4380,13 @@ describe("Durable Objects in the Workers runtime", () => {
     const response = await stub.fetch("https://substream.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-workstream-id": WORKSTREAM_ID,
-        "x-avalon-substream-id": "0",
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000601",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000601",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     expect(response.status).toBe(101);
@@ -4482,13 +4482,13 @@ describe("Durable Objects in the Workers runtime", () => {
     const response = await stub.fetch("https://substream.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-workstream-id": WORKSTREAM_ID,
-        "x-avalon-substream-id": "0",
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000131",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000131",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     expect(response.status).toBe(101);
@@ -4564,13 +4564,13 @@ describe("Durable Objects in the Workers runtime", () => {
     const response = await stub.fetch("https://substream.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-workstream-id": WORKSTREAM_ID,
-        "x-avalon-substream-id": "0",
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000121",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000121",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     expect(response.status).toBe(101);
@@ -4815,13 +4815,13 @@ describe("Durable Objects in the Workers runtime", () => {
       const response = await stub.fetch("https://substream.test/socket", {
         headers: {
           Upgrade: "websocket",
-          "x-avalon-workspace-id": WORKSPACE_ID,
-          "x-avalon-workstream-id": WORKSTREAM_ID,
-          "x-avalon-substream-id": "0",
-          "x-avalon-user-id": USER_ID,
-          "x-avalon-session-id": SESSION_ID,
-          "x-avalon-socket-ticket-id": ticketId,
-          "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+          "x-rally-workspace-id": WORKSPACE_ID,
+          "x-rally-workstream-id": WORKSTREAM_ID,
+          "x-rally-substream-id": "0",
+          "x-rally-user-id": USER_ID,
+          "x-rally-session-id": SESSION_ID,
+          "x-rally-socket-ticket-id": ticketId,
+          "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
         },
       });
       expect(response.status).toBe(101);
@@ -4931,13 +4931,13 @@ describe("Durable Objects in the Workers runtime", () => {
     const response = await stub.fetch("https://substream.test/socket", {
       headers: {
         Upgrade: "websocket",
-        "x-avalon-workspace-id": WORKSPACE_ID,
-        "x-avalon-workstream-id": WORKSTREAM_ID,
-        "x-avalon-substream-id": "0",
-        "x-avalon-user-id": USER_ID,
-        "x-avalon-session-id": SESSION_ID,
-        "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000106",
-        "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000106",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
       },
     });
     if (response.status !== 101) {

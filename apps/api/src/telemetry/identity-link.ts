@@ -1,5 +1,5 @@
-import { newId } from '@avalon/db';
-import type { LinkAnonymousTelemetryResponse } from '@avalon/contracts/telemetry';
+import { newId } from '@rally/db';
+import type { LinkAnonymousTelemetryResponse } from '@rally/contracts/telemetry';
 import type { Env, IdentityAuthContext } from '../env';
 import { TelemetryBootstrapService } from './bootstrap';
 

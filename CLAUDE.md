@@ -1,1 +1,198 @@
-AGENTS.md
+# Agent instructions
+
+This is the project-wide rule sheet for AI coding agents, exposed as `CLAUDE.md`
+through a symlink. Keep it short: it is read in full at the start of every
+session, so detail belongs in `docs/` behind a pointer.
+
+## Where we are
+
+**Rally is a seed-stage startup iterating quickly, and the right engineering
+decision here is often not the one that would be right at scale.** There is no
+load history, no metrics stack, and no capacity model. Treat that as a constraint
+on how a decision is made, not as something to engineer around:
+
+- **Build for the product that exists.** No sharding, caching layer, priority
+  queue, or abstraction for a second implementation nobody has asked for.
+- **Never gate a decision on measurement nobody here can produce.** Reason from
+  the platform's published limits and arithmetic, prefer the option that is
+  cheapest to reverse, and let the platform's own failures — a non-empty
+  dead-letter queue, an overloaded error — be the monitoring.
+  [`docs/choosing-queues-or-rpc.md`](docs/choosing-queues-or-rpc.md#deciding-without-measurement)
+  works this through in full.
+- **Prefer the failure you will notice** over the one that needs tooling we do
+  not have in order to find.
+- **A defensive limit is a decision, not a detail.** Adding a cap, a ceiling, a
+  timeout, or a cooldown needs a justification, and its *number* is the team's to
+  set rather than yours to guess — write the guard open and hand the number back.
+  [`docs/adding-security-defensive-and-other-limits.md`](docs/adding-security-defensive-and-other-limits.md)
+  is the rule, and it applies to any limit you are about to type.
+
+**None of this is licence to skip the rules below.** Speed at this size comes
+from not paying for the same thing twice: the quality gates take minutes, a flaky
+test left alone costs somebody a day, and a change whose *why* was never written
+down gets relitigated by whoever touches it next — which, on a team this small,
+is soon, and is probably you. Move fast on *what* gets built. Do not move fast on
+whether it works, or on whether the next person can follow it.
+
+## Environment
+
+**Read [`docs/dev-environment.md`](docs/dev-environment.md) at the start of every
+session, before running a setup, server, or browser-automation command.** It
+covers dependency installation, the local D1 database, starting both regional
+Workers, and running the Electron client headlessly. The container it assumes is
+defined in [`docs/sandbox.md`](docs/sandbox.md).
+
+- **Node.js 22 and pnpm 11.13.0.** The pnpm version is pinned by
+  `packageManager`; run `corepack enable` rather than using whatever pnpm the
+  image ships.
+- **In a sandbox, start the API with `pnpm dev:api:local`, not `pnpm dev:api`.**
+  The `ai` binding forces a remote proxy session that cannot be established
+  without Cloudflare credentials, and its failure takes both regions down.
+- When an outbound HTTPS request fails in a way that does not look like a
+  network error, read [`docs/sandbox-proxy.md`](docs/sandbox-proxy.md) before
+  retrying. Never disable TLS verification or unset `HTTPS_PROXY`.
+- **Debugging a production model run?** Start with
+  [`docs/runbook.md`](docs/runbook.md#inspecting-a-runs-raw-inference). Raw
+  inference for Global workspaces is in the Global lakehouse, not D1 or Workers
+  Logs; use the R2 SQL and Object HTTP APIs (not the web dashboard), filter by
+  canonical work-stream and substream IDs (`"0"` is the main feed), and keep
+  retrieved user content out of logs, tickets, commits, and agent responses.
+  EU inference is intentionally not archived, so stop after resolving an EU
+  workspace rather than falling back to D1, logs, or a cross-region query.
+
+## Quality gates
+
+Every change must leave `pnpm lint` (zero warnings), `pnpm typecheck`, and
+`pnpm test` green. CI additionally runs `pnpm test:scripts`, both Wrangler
+dry-run builds, the desktop release invariants, and a Gitleaks scan over the full
+history.
+
+`pnpm test:scripts` covers only the repository's own `scripts/`. The release
+tooling under `apps/desktop/scripts/` — the planner and the workflow invariants —
+is a separate suite that CI runs as `pnpm --filter @rally/desktop test:release`.
+Run that one too when touching a release script, or its tests will not execute
+locally and the name of the other gate will suggest they did.
+
+Both gates cache; warm runs take seconds. **After changing a rule in
+`scripts/eslint-rules/`, run `pnpm lint:fresh`** — ESLint's cache keys on file
+contents alone, so it clears the rest of the tree against the *old* rule. CI
+runs cold; limits in
+[`docs/dev-environment.md`](docs/dev-environment.md#quality-gate-caches).
+
+## Writing tests
+
+**Read [`docs/testing.md`](docs/testing.md) before adding a test.** It maps the
+suites to what each one can prove, and holds the two rules below.
+
+- **Default to the real Cloudflare pipeline.** Anything that depends on the
+  runtime — Durable Object storage, alarms, hibernation, WebSocket upgrades, D1
+  semantics — belongs in `apps/api/test-workers/`, which runs on real workerd
+  (`pnpm --filter @rally/api test:workers`). That suite's D1 starts with no
+  schema, so a test there declares the tables it needs; a query or a constraint
+  is proved in the Node suite instead, which applies the checked-in migrations
+  rather than stubbing a database. A double stands in for something that
+  *cannot* run here — Workers AI, Vectorize, Flagship, a provider's API — never
+  for setup that was inconvenient.
+- **Prove every test can fail.** Break the code it covers, watch that test fail
+  for the reason its name claims, then revert. An assertion that survives the
+  break is asserting on a fixture, a mock's own configuration, or a value the
+  subject computed — none of which is coverage.
+
+## Flaky tests
+
+**A test that fails once and passes on a rerun is a defect in the test or the
+code under it — fix it in the change that encountered it, whoever wrote it.**
+Rerunning until green, skipping it, or setting `retry` in a Vitest config hides
+a real race that will fail for someone else; none of those are an accepted
+resolution here.
+
+- Reproduce it first, in isolation and in bulk, capturing the output to a file
+  as the section below requires — the failing iteration is the evidence, and it
+  is the one that gets truncated away. `--filter … exec` runs in the package
+  directory, so the path is package-relative; pasting the repo-relative path a
+  failure reports fails as `No test files found`, naming the file rather than
+  the working directory:
+
+  ```bash
+  (for i in $(seq 20); do
+     pnpm --filter @rally/<pkg> exec vitest run <path-within-the-package> \
+       || { echo "failed on run $i"; exit 1; }
+   done) &> /tmp/flake.log
+  ```
+
+  The subshell makes the loop exit nonzero on the first failing run rather than
+  reporting the success of `break`, and the iteration number characterizes how
+  often the flake fires. Add `--sequence.shuffle` to catch a test that depends
+  on another in the same file having run first; cross-file interference only
+  appears in a suite-wide rerun, where `--no-file-parallelism` isolates it.
+- Confirm the fix by looping the test again, then run the full `pnpm test` once
+  more before calling the change done.
+- Fix the cause. A flake rooted in code the change does not touch may be left
+  unfixed — only then, and only if it is named in the report and the pull
+  request description. Never leave an intermittent failure unmentioned.
+
+## Capturing command output
+
+For any command with non-trivial output — tests, typecheck, lint, migrations,
+Worker or Electron startup — write the full output to a file rather than reading
+it through a truncating pipe:
+
+```bash
+pnpm test 2>&1 | tee /tmp/test.log   # inline preview plus the full file
+pnpm test &> /tmp/test.log           # silent; read or grep the file afterwards
+```
+
+`2>&1` must come before the pipe, or stderr bypasses `tee`. A pipeline reports
+the last command's exit code, so keep `tee` last. Delete the logs when done.
+
+## Verifying visible changes
+
+**Every change a user can see must be looked at in a real window before it is
+called done.** A passing component test asserts on the DOM, which says nothing
+about whether an element is visible, positioned, legible, or covered. Run the
+desktop client under Xvfb, attach Playwright over the DevTools protocol, capture
+the screens you changed, and read the images — the procedure is in
+[`docs/dev-environment.md`](docs/dev-environment.md#driving-and-screenshotting-it).
+Playwright is already installed globally on the sandbox image; do not add a
+browser driver to the repository.
+
+## Documentation
+
+**Before planning or making a change, read [`docs/README.md`](docs/README.md)** —
+it indexes every document and says which one owns which area. Find the ones whose
+scope matches what you are touching, read them first, and update them in the same
+change. When a change introduces a subsystem no existing document covers, add
+`docs/<lower-kebab-name>.md` and register it in that index — the index is the one
+registry that has to stay complete. Product requirement documents are the exception: they
+live in dated folders under `docs/PRDs/` and are not registered, per
+[`docs/prds.md`](docs/prds.md). The root [`README.md`](README.md) links only to
+that index and lists no documents of its own; do not add a second list there.
+
+**Every architecture or large module you create or substantially change gets its
+own document in `docs/`, written to the shape in
+[`docs/module-documents.md`](docs/module-documents.md)** — read it before writing
+or editing one. It defines the threshold for what needs a document, the required
+sections, and the one thing that is non-negotiable: each such document ends with
+a **running changelog**, newest entry first, appended **in the same change as the
+code**. An entry records what changed *and why it changed* — the pressure that
+forced it, the alternative that was rejected, and what a future change has to
+respect. The code says what the module does and the diff says what moved; only
+that section says why, and it is written for whoever changes this module a year
+from now without you to ask. "Refactor" and "cleanup" are not a why. Never invent
+one you do not know — say the earlier reasoning was not recorded.
+
+## Pull requests
+
+**Before opening a pull request, read
+[`docs/pull-requests.md`](docs/pull-requests.md)** — it defines the required
+description sections, the repository's merge style, and its rule that pull
+requests are opened ready for review, never as drafts. Do not open a PR unless
+you were asked to.
+
+## Security
+
+Never commit secrets. `.env.local` and `apps/api/.dev.vars.*` are ignored and
+must stay that way, server secrets must never sit behind a `VITE_` name, and
+Cloudflare administration credentials belong only to the local deployment
+environment — never as Worker variables. [`docs/security.md`](docs/security.md)
+owns the desktop client's isolation model.

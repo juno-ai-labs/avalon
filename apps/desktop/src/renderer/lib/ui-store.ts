@@ -49,9 +49,9 @@ export const DEFAULT_RAIL_WIDTH = 360;
 export const MIN_SIDEBAR_WIDTH = 260;
 export const MAX_SIDEBAR_WIDTH = 480;
 export const DEFAULT_SIDEBAR_WIDTH = 300;
-const SIDEBAR_WIDTH_STORAGE_KEY = 'avalon.sidebar-width';
-const RAIL_WIDTH_STORAGE_PREFIX = 'avalon.rail-width';
-const BLOCK_DASHBOARD_WIDTH_STORAGE_PREFIX = 'avalon.block-dashboard-width';
+const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
+const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
+const BLOCK_DASHBOARD_WIDTH_STORAGE_PREFIX = 'rally.block-dashboard-width';
 
 function clampSidebarWidth(width: number): number {
   return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));

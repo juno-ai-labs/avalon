@@ -1,5 +1,5 @@
-import type { HarnessTool } from "@avalon/agent-harness";
-import { asHarnessRunId, asWorkstreamId, type UserId, type WorkspaceId, type WorkstreamWorkflowInput } from "@avalon/contracts";
+import type { HarnessTool } from "@rally/agent-harness";
+import { asHarnessRunId, asWorkstreamId, type UserId, type WorkspaceId, type WorkstreamWorkflowInput } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";

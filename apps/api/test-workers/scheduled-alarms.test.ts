@@ -9,7 +9,7 @@
  * was called. `docs/durable-object-alarms.md` is the module document.
  */
 import { env } from "cloudflare:workers";
-import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 

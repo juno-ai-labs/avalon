@@ -1,4 +1,4 @@
-import { IdSchema, RegionSchema } from "@avalon/contracts";
+import { IdSchema, RegionSchema } from "@rally/contracts";
 import { z } from "zod";
 
 import { ApiError } from "./api-error";

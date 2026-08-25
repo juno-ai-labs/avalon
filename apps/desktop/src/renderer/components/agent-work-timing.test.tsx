@@ -22,7 +22,7 @@ describe('AgentWorkTiming', () => {
 
     expect(screen.getByText('Compacting conversation context…')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveAccessibleName(
-      'Avalon is compacting the conversation context',
+      'Rally is compacting the conversation context',
     );
     expect(container.querySelector('.agent-work-timing')).toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-speed', '1');
@@ -37,7 +37,7 @@ describe('AgentWorkTiming', () => {
     );
 
     expect(screen.getByText('working for 1m 22s')).toBeInTheDocument();
-    expect(screen.getByRole('status', { name: 'Avalon is working' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Rally is working' })).toBeInTheDocument();
     expect(container.querySelector('.agent-work-timing')).toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-state', 'solving');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-size', '20');
@@ -46,7 +46,7 @@ describe('AgentWorkTiming', () => {
 
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
     expect(screen.getByText('working for 1m 23s')).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveAccessibleName('Avalon is working');
+    expect(screen.getByRole('status')).toHaveAccessibleName('Rally is working');
 
     rerender(<AgentWorkTiming active={false} durationMs={83_000} />);
     expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();

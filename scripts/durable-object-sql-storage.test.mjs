@@ -11,8 +11,8 @@ const config = {
     parser: tseslint.parser,
     parserOptions: { sourceType: "module" },
   },
-  plugins: { avalon: { rules: { "durable-object-sql-storage": durableObjectSqlStorageRule } } },
-  rules: { "avalon/durable-object-sql-storage": "error" },
+  plugins: { rally: { rules: { "durable-object-sql-storage": durableObjectSqlStorageRule } } },
+  rules: { "rally/durable-object-sql-storage": "error" },
 };
 
 function lint(source) {

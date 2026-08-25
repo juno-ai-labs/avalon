@@ -23,6 +23,11 @@ deep-link scheme, and the work-stream email domain.
 | `apps/api/src/services/terminal/network-policy.ts` | The sandbox baseline allowlist, which holds the canonical API hosts only. |
 | `apps/desktop/src/main/index.ts` | `rendererHost` — the `app://rallywithai` origin the Workers' `ALLOWED_ORIGINS` must admit. |
 | `apps/desktop/src/main/message-export.ts` | `MESSAGE_EXPORT_SCHEME` — `rallywithai-export`, in-process only and renamed outright. |
+| `packages/contracts/src/http-headers.ts` | The product header prefix, the superseded prefixes, and `readRallyHeader` — the one way a product header is read. |
+| `packages/contracts/src/telemetry.ts` | `TELEMETRY_ENVELOPE_SCHEMA` and the superseded identifiers the envelope parser still accepts. |
+| `apps/desktop/src/main/user-data-path.ts` | The canonical userData directory, the superseded ones, and the launch-time adoption that moves them. |
+| `apps/desktop/src/main/session-file.ts` | `rally-data`, and the one-shot rename of the superseded session directory. |
+| `apps/desktop/src/main/session-encryption.ts` | The minted session envelope headers and the superseded ones, which are also the AES-GCM AAD. |
 | `apps/api/test/domain-migration-config.test.ts` | Asserts the deployed configs list both renderer origins, all four site origins, both route sets, and no superseded host in any minted URL. |
 | `apps/api/src/lib/desktop-handoff.ts` | `compatibleDesktopDeepLink` — the one place a deep link is minted in its superseded scheme, for targets the server cannot attribute to a calling build. |
 | `apps/api/src/services/auth-service.ts` | `allowedReturnUri` — pins the sign-in destination's host and path, deliberately not its scheme. |
@@ -207,11 +212,24 @@ address format and allocator, [`workstream-links.md`](workstream-links.md) owns
 the canonical link shape, and [`security.md`](security.md) owns the origin
 policy. Certificate and DNS procedure is in [`runbook.md`](runbook.md).
 
-It also does not cover the rest of the rebrand. Worker names
-(`avalon-api-global`, `avalon-site`), the R2 bucket `avalon-desktop-releases`,
-Vectorize index names, the `@avalon/*` package names, and the `Avalon` product
-string are deliberately untouched: none of them is addressable from outside, so
-none of them carries the constraint that makes a hostname hard to move.
+It also does not own the rest of the rebrand, but three things that were listed
+here as untouched have since moved and are covered above because they carry the
+same constraint a hostname does: the product HTTP header prefix, the telemetry
+envelope schema identifier, and the desktop's stored-data namespace. The package
+scope (`@rally/*`) and the `Rally` product string moved too, and neither needed a
+compatibility window — nothing outside a build reads either.
+
+What remains deliberately Avalon-named is the infrastructure whose name is a
+Cloudflare resource identifier rather than anything a caller sends: Worker names
+(`avalon-api-global`, `avalon-site`), R2 buckets (`avalon-desktop-releases`,
+`avalon-global-telemetry`, `avalon-eu-telemetry`), queue names, Vectorize index
+names, and the Worker variables `AVALON_REGION` and `AVALON_*` bindings. Renaming
+one of those is a create-and-migrate operation against live state, not an edit —
+a bucket cannot be renamed at all — and none of them is addressable from outside,
+so none carries the constraint that makes a hostname hard to move. The PostHog
+event and property names (`avalon_*`) are a third case: renaming them is a single
+edit, but it splits every dashboard and funnel at the rename date, which is a
+product-analytics decision rather than an engineering one.
 
 ## Failure modes and limits
 
@@ -252,6 +270,67 @@ only in production, which is why they are runbook steps with an explicit order
 rather than assertions.
 
 ## Changelog
+
+### 2026-08-25 — The header prefix, the envelope schema, and the desktop's namespace
+
+**What changed:** The product HTTP header prefix moved from `x-avalon-` to
+`x-rally-`, with every reader going through `readRallyHeader` in
+`packages/contracts/src/http-headers.ts` and both spellings listed in the CORS
+`allowHeaders`. The telemetry envelope's `schema` identifier moved to
+`com.rally.telemetry.event`, with `com.avalon.telemetry.event` still parsed. The
+desktop app renamed itself: `Rally`/`Rally Development` userData directories,
+`rally-data` for the encrypted session files, `rally-session/*` envelope headers,
+the bundle identifier `ai.rallywith.desktop`, and the `@rally/*` package scope
+across the workspace.
+
+**Why:** The rebrand had reached the hostnames and stopped. Everything left was
+described here as un-addressable and therefore free to rename, and for the
+package scope and the product string that was true. For three of them it was
+not, and each fails in the way this document already describes:
+
+- A **header name** is written by a build and read by a deployment, and a desktop
+  build carries its header names compiled in. Renaming only the reader drops the
+  operation ID, the draft ID, and the region assertion from every installed
+  client — and the region assertion is the one that matters, because losing it
+  means a pre-rename client's request is no longer checked against the region it
+  meant to reach. `x-avalon-signature` is worse still: it is set by a third party
+  from their own webhook console, so nothing here can make it change.
+- The **envelope schema identifier** is validated with a literal, and the desktop
+  spools envelopes to disk before sending. A spool written by the previous build
+  and drained by the next one would have failed validation and been discarded, so
+  the rename would have silently eaten telemetry across every update.
+- The desktop's **stored-data namespace** is not a wire value but behaves like
+  one: it is written by the previous build and read by the next. Everything a
+  launch needs lives in that directory — Chromium profile, IndexedDB, settings,
+  drafts, the encrypted session — so renaming it without moving it signs everyone
+  out and loses their local state.
+
+**Considered and rejected:** A per-file migration of the userData directory
+instead of one rename. It has to enumerate every file correctly to avoid losing
+something, and the list is not knowable from this repository — Chromium writes
+into that directory too. The rename is atomic, carries what nobody thought to
+list, and is idempotent.
+
+Also rejected: rewriting stored session envelopes to the current header in a
+migration pass. Every session write already re-seals under the current header, so
+stored values converge as people use the app, and a migration pass is a chance to
+fail with a credential half-moved for no gain.
+
+Also rejected: renaming the Worker names, R2 buckets, and PostHog event names in
+the same change — see the Boundary section for why each is a different kind of
+decision.
+
+**Consequences:** `readRallyHeader` is the only way a product header is read; a
+new one is added to `RALLY_HEADERS` and reaches both spellings for free, and
+retiring the superseded prefix is one edit to `LEGACY_RALLY_HEADER_PREFIXES`. The
+CORS allowlist must keep listing both, because Chromium matches the preflight
+list literally and rejects before any route code runs. One consequence cannot be
+mitigated: macOS derives the safeStorage keychain entry from the application
+name, so `Avalon Safe Storage` is unreadable to a build named Rally and there is
+no Electron API that names it independently. Lockdown mode is the only mode that
+binds a session to that key, so Lockdown users sign in once more after updating;
+the default global mode uses a compiled key and is carried across by the
+directory rename. `docs/security.md` owns that boundary.
 
 ### 2026-08-25 — Accepting a scheme and answering in it are separated
 

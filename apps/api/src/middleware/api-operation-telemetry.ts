@@ -1,4 +1,5 @@
-import { newId } from '@avalon/db';
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import { newId } from '@rally/db';
 import type { MiddlewareHandler } from 'hono';
 import type { Env, HonoAppEnv, IdentityAuthContext } from '../env';
 import { requestDeferral } from '../lib/defer';
@@ -36,7 +37,7 @@ export function apiOperationTelemetry(options: {
       return;
     }
     const startedAt = now();
-    const correlationOperationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
+    const correlationOperationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
     try {
       await next();
       deferSafely(c, () => emit(c.env, requiredAuth(c.get('auth')), {

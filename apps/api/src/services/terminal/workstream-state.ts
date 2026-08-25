@@ -2,8 +2,8 @@ import {
   createGitHubAppJwt,
   discoverGitHubConnectionRepositories,
   type ConnectorConnectionContext,
-} from "@avalon/connectors";
-import { newId } from "@avalon/db";
+} from "@rally/connectors";
+import { newId } from "@rally/db";
 import { createTerminalPortFactory } from "./object-port";
 
 import type { AuthContext, Env } from "../../env";

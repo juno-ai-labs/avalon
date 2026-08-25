@@ -6,11 +6,11 @@ export function regionalApiCommands({ local }) {
   return [
     {
       name: 'global',
-      arguments: ['--filter', '@avalon/api', local ? 'dev:local' : 'dev'],
+      arguments: ['--filter', '@rally/api', local ? 'dev:local' : 'dev'],
     },
     {
       name: 'eu',
-      arguments: ['--filter', '@avalon/api', local ? 'dev:local:eu' : 'dev:eu'],
+      arguments: ['--filter', '@rally/api', local ? 'dev:local:eu' : 'dev:eu'],
     },
   ];
 }

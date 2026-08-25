@@ -7,7 +7,7 @@
 
 ## Scope and evidence
 
-This research began with a broad question: what could Daytona add to Avalon's
+This research began with a broad question: what could Daytona add to Rally's
 Bind agent loop? It then narrowed through comparisons with Cloudflare Code Mode,
 Dynamic Workers, Workers for Platforms, Codex, Claude Code, OpenCode, and Grok
 Build. Later rounds examined file mutation, Git and GitHub authorization,
@@ -28,7 +28,7 @@ Three kinds of evidence are deliberately separated:
 
 Source snapshots used for source-level comparisons were:
 
-- Avalon `origin/main` at `a1e1c376c8a01b1df56d7e88e8f2da0e17a12459`,
+- Rally `origin/main` at `a1e1c376c8a01b1df56d7e88e8f2da0e17a12459`,
   including merged PR
   [#144](https://github.com/juno-ai-labs/avalon/pull/144);
 - Grok Build at
@@ -71,9 +71,9 @@ Daytona and Cloudflare solve different problems:
   durable user Worker scripts at large scale. It is not a Linux development
   environment.
 
-They can coexist. Avalon can use Dynamic Workers for connector composition and
+They can coexist. Rally can use Dynamic Workers for connector composition and
 Daytona for stateful code or repository work. Workers for Platforms becomes
-relevant if Avalon offers deployed, addressable user applications rather than
+relevant if Rally offers deployed, addressable user applications rather than
 one-shot agent computation.
 
 The launch PRD therefore uses one lazy Daytona sandbox per work stream, familiar
@@ -87,27 +87,27 @@ Daytona's current snapshot documentation distinguishes reusable container
 snapshots from VM snapshots, permits snapshots built from a Dockerfile, requires
 tagged or digest-pinned base images, and automatically deactivates an unused
 snapshot after two weeks. Container snapshots preserve the filesystem and are
-the correct class for Avalon's command/file/Git workload; VM-only hot memory
+the correct class for Rally's command/file/Git workload; VM-only hot memory
 snapshots, nested Docker/Kubernetes, and a separate kernel do not justify their
 cost here ([snapshot documentation](https://www.daytona.io/docs/en/snapshots.md)).
 
 Registry manifests and a live `us` account probe on 2026-08-13 produced this
 comparison:
 
-| Candidate | Manifest-layer total (amd64) | Runtimes and useful contents | Avalon gaps | Decision |
+| Candidate | Manifest-layer total (amd64) | Runtimes and useful contents | Rally gaps | Decision |
 | --- | ---: | --- | --- | --- |
 | Managed `daytona-small` snapshot (0.9.0 when observed) | 6.85 GiB compressed underlying image | Daytona's best-supported default: Node, Python, TypeScript, uv, Git, `rg`, GUI tooling, ML/data/image libraries, and coding harness CLIs | No `/workspace`, SQLite CLI, pnpm, or `gh` in the observed revision | **Use with an idempotent compatibility bootstrap** |
-| `daytonaio/sandbox:0.10.0` image | 6.91 GiB compressed | Same architecture as 0.9.0 with refreshed Daytona, Claude Code, Codex, OpenCode, and Python agent-package versions | Direct image use makes Avalon own snapshot refresh and activation | Reject direct pinning; accept when Daytona promotes it behind the managed snapshot and probes pass |
-| `daytonaio/sandbox:v0.185.0-slim-amd64` | 457 MiB compressed | Node 22.14, Python 3.14, TypeScript, uv, `rg`, sudo, NumPy, pandas, and matplotlib | Needs Git, `gh`, SQLite CLI, pnpm, `tsx`, common archive/build utilities, and an Avalon-owned snapshot lifecycle | Reject in favor of the managed default |
+| `daytonaio/sandbox:0.10.0` image | 6.91 GiB compressed | Same architecture as 0.9.0 with refreshed Daytona, Claude Code, Codex, OpenCode, and Python agent-package versions | Direct image use makes Rally own snapshot refresh and activation | Reject direct pinning; accept when Daytona promotes it behind the managed snapshot and probes pass |
+| `daytonaio/sandbox:v0.185.0-slim-amd64` | 457 MiB compressed | Node 22.14, Python 3.14, TypeScript, uv, `rg`, sudo, NumPy, pandas, and matplotlib | Needs Git, `gh`, SQLite CLI, pnpm, `tsx`, common archive/build utilities, and an Rally-owned snapshot lifecycle | Reject in favor of the managed default |
 | Generic `node:22-*-bookworm-slim` | Smallest base | Node 22 and apt | Rebuilds Daytona's user/sudo/Python/data-tool conventions and loses its curated agent baseline | Reject |
 
-The slim image minimizes storage and cold-start weight, but it also makes Avalon
+The slim image minimizes storage and cold-start weight, but it also makes Rally
 own image builds, snapshot activation, and refresh compatibility. The managed
 `daytona-small` snapshot is more common, exercises Daytona's standard path, and
-is more likely to receive coordinated SDK/toolbox updates. Avalon therefore
+is more likely to receive coordinated SDK/toolbox updates. Rally therefore
 accepts its broader contents and adapts only the missing launch contract at
 first creation. The separate executable manifest remains the authority for what
-Avalon advertises, so a managed update cannot silently change the prompt
+Rally advertises, so a managed update cannot silently change the prompt
 contract.
 
 The live `daytona-small` image was `0.9.0`; its toolbox ran
@@ -117,7 +117,7 @@ owned runtime workspace, passwordless-sudo bootstrap verification, and a
 shell-neutral `avalon_status` command envelope.
 
 Image size alone does not establish user-visible startup cost, and one live
-probe does not establish a tail distribution. Avalon therefore measures
+probe does not establish a tail distribution. Rally therefore measures
 provider allocation, policy read-back, compatibility installation, full
 manifest verification, stopped warming, and archived restore separately in the
 dedicated `avalon_terminal_operations` Analytics Engine dataset. The
@@ -129,13 +129,13 @@ plus snapshot maintenance.
 
 ## Harness comparison
 
-| Harness | Command surface | File mutation surface | Long-running work | Git/GitHub posture | Main lesson for Avalon |
+| Harness | Command surface | File mutation surface | Long-running work | Git/GitHub posture | Main lesson for Rally |
 | --- | --- | --- | --- | --- | --- |
 | Codex host observed during this research | `exec_command` with `cmd`, `workdir`, output budget, wait budget, and optional TTY; `write_stdin` continues a live session | Distinct `apply_patch`; file inspection is normally done with fast CLI search/read operations | A running command yields a session identifier; later calls write or poll that session | Uses ordinary `git` and `gh` in the shell | Keep the command envelope small, make `workdir` explicit, and keep patching distinct |
 | Claude Code | `Bash` with `command`, optional `timeout`, `description`, and `run_in_background` | `Read`, `Edit`, `Write`, `Glob`, and `Grep`; edit is exact and read-before-edit guarded | Background shell IDs and task controls; full oversized output is written to a file | Shell is the normal Git surface; permissions can gate command patterns | Exact edit and visible truncation rules prevent common recovery loops |
 | OpenCode | `bash`/shell with `command`, optional `timeout`, and `workdir` in current source | `read`, `edit`, `write`, `glob`, `grep`, `list`, and `apply_patch` | Current shell is bounded and stores full truncated output for later read/search | Per-command permission patterns can distinguish `git diff` from `git push` | Schema/runtime agreement and recoverable truncation are production concerns, not polish |
 | Grok Build | `run_terminal_cmd` with `command`, `timeout`, required `description`, and `is_background` | `read_file`, exact `search_replace`, `list_dir`, `grep`, Codex-style `apply_patch`, plus newer hash-line editing experiments | Background task ID, task output, kill, completion reminders, and streamed deltas | Ordinary CLI in an isolated workspace; worktree and checkpoint support live above tools | Tool names and shapes can stay familiar while the runtime behind them becomes sophisticated |
-| Avalon/Bind | No general shell before this PRD; strict typed plugin tools with capability, mode, idempotency, and timeout policy | The PRD adds bounded reads and exact mutation primitives while leaving discovery/search to familiar shell commands | Cloudflare Workflow, leases, receipts, checkpoints, and continuation already provide durable suspension | Existing GitHub App is host-owned; PRD gives the sandbox read access and keeps writes host-side | Use Bind's durable authority and Daytona's computer; do not put a second agent loop inside either |
+| Rally/Bind | No general shell before this PRD; strict typed plugin tools with capability, mode, idempotency, and timeout policy | The PRD adds bounded reads and exact mutation primitives while leaving discovery/search to familiar shell commands | Cloudflare Workflow, leases, receipts, checkpoints, and continuation already provide durable suspension | Existing GitHub App is host-owned; PRD gives the sandbox read access and keeps writes host-side | Use Bind's durable authority and Daytona's computer; do not put a second agent loop inside either |
 
 ### Codex
 
@@ -182,7 +182,7 @@ The useful design properties are:
 - PTY allocation is an explicit choice rather than an accidental default;
 - file patches are structured and reviewable.
 
-Avalon adopts the first, second, fourth, and sixth properties. It intentionally
+Rally adopts the first, second, fourth, and sixth properties. It intentionally
 does not expose a Codex-style session handle or `write_stdin` at launch. A
 shared, asynchronous work stream has no reliable person continuously attached
 to an interactive prompt, and Bind already has a durable suspend/resume path.
@@ -267,7 +267,7 @@ the saved path
 
 OpenCode permissions can be specified per command pattern. A review agent can,
 for example, allow `git diff` and `git log` while asking before `git push`
-([agent permissions](https://opencode.ai/docs/agents/)). Avalon should not copy
+([agent permissions](https://opencode.ai/docs/agents/)). Rally should not copy
 shell-string permissions as its primary authorization system: quoting, wrappers,
 and nested shells make that insufficient. The useful part is the separation
 between broad local execution and a distinct external-write decision.
@@ -279,7 +279,7 @@ describes models rerunning commands after truncation instead of reading the save
 output
 ([schema mismatch](https://github.com/anomalyco/opencode/issues/13146),
 [truncation retry loop](https://github.com/anomalyco/opencode/issues/11313)).
-Avalon must test the exact schema rendered to the model against the strict
+Rally must test the exact schema rendered to the model against the strict
 executor schema and return an explicit continuation path for truncated output.
 
 ### Grok Build
@@ -288,7 +288,7 @@ Grok Build is now a public, first-party Rust harness. Its repository separates
 the agent runtime, tools, workspace/VCS layer, and terminal UI
 ([repository](https://github.com/xai-org/grok-build),
 [product documentation](https://docs.x.ai/build/overview)). That separation is
-directly relevant to Avalon: a terminal UI is not required to expose a terminal
+directly relevant to Rally: a terminal UI is not required to expose a terminal
 command tool.
 
 Its primary command is literally named `run_terminal_cmd`:
@@ -325,21 +325,21 @@ The file surface contains several generations of production learning:
   explicit attributions are useful evidence that production harnesses borrow
   familiar shapes rather than forcing a unique tool language.
 
-Avalon's `run_command` core fields align closely with Grok Build, while the
+Rally's `run_command` core fields align closely with Grok Build, while the
 shorter canonical name avoids `terminal_run_terminal_cmd` after Bind adds its
 plugin prefix. The deliberate divergence is backgrounding: Grok Build has a continuously
-present local harness and task UI, while Avalon has a durable Bind workflow and
-shared transcript. Avalon returns one final result after a host continuation;
+present local harness and task UI, while Rally has a durable Bind workflow and
+shared transcript. Rally returns one final result after a host continuation;
 the model does not receive a task ID to poll.
 
-### Avalon and Bind after PR #144
+### Rally and Bind after PR #144
 
 Bind owns model/tool iteration, plugin activation, deterministic routing, and
-tool scheduling. Avalon owns admission, authorization, leases, receipts,
+tool scheduling. Rally owns admission, authorization, leases, receipts,
 regional stores, cancellation, and terminal state. The current architecture is
 documented in [the agent harness](../../agent-harness.md).
 
-Every Avalon tool is a model-visible schema plus host policy:
+Every Rally tool is a model-visible schema plus host policy:
 
 ```ts
 type ToolDefinition = {
@@ -356,7 +356,7 @@ type ToolDefinition = {
 The executor must strictly parse its own arguments. JSON Schema's
 `additionalProperties: false` tells the model what to send, but is not the
 runtime enforcement point. Bind may overlap independent reads, serializes
-writes, preserves model call order, and relies on Avalon's durable receipts to
+writes, preserves model call order, and relies on Rally's durable receipts to
 prevent unsafe replay. These rules are documented in
 [Creating agent tools](../../agent-tools.md).
 
@@ -390,7 +390,7 @@ network access is blocked; authenticated calls cross a host callback that owns
 authorization
 ([MCP patterns](https://developers.cloudflare.com/agents/model-context-protocol/codemode/)).
 
-Avalon can recreate this pattern on Daytona later:
+Rally can recreate this pattern on Daytona later:
 
 ```ts
 type ExecuteCodeArguments = {
@@ -409,11 +409,11 @@ type ExecuteCodeOutput = {
 
 The important part would not be the outer schema. Generated code would receive
 typed proxies for already-authorized Bind tools, not provider credentials. Each
-side-effecting proxy call would still need Avalon's capability check, approval
+side-effecting proxy call would still need Rally's capability check, approval
 policy, durable receipt, replay result, and audit record. Completed internal
 calls must replay when an approval or Workflow suspension resumes the same
 program. Cloudflare's durable Code Mode runtime already implements this
-abort-and-replay idea; Avalon would have to implement the equivalent across
+abort-and-replay idea; Rally would have to implement the equivalent across
 Bind and Daytona.
 
 This is a credible second plugin, but it is not the launch terminal plugin. The
@@ -500,7 +500,7 @@ wait, kill, and disconnect
 and Grok Build show that a PTY or live task channel can be useful for development
 servers, REPLs, debuggers, and interactive installers.
 
-Avalon should not expose it at launch:
+Rally should not expose it at launch:
 
 - interactive programs can wait forever for invisible input;
 - prompts can display secrets or terminal control sequences;
@@ -522,7 +522,7 @@ the work stream. Concurrent first calls converge on the same generation.
 
 After the last activity:
 
-- Avalon stops the sandbox after five warm minutes;
+- Rally stops the sandbox after five warm minutes;
 - Daytona's 15-minute auto-stop remains a provider backstop;
 - a stopped container is archived after 60 minutes;
 - the archive expires 30 days after repository or scratch activity;
@@ -536,11 +536,11 @@ calls `sandbox_start`, `sandbox_status`, or `sandbox_stop`.
 
 The harnesses demonstrate two viable discovery styles: Claude Code, OpenCode,
 and Grok Build add list/glob/grep tools, while Codex commonly uses `ls`, `find`,
-`rg --files`, and `rg` through its command tool. Avalon chooses the latter for
+`rg --files`, and `rg` through its command tool. Rally chooses the latter for
 discovery and search, then retains typed tools where they materially constrain a
 mutation:
 
-| Operation | Mature-harness shape | Failure it contains | Avalon addition |
+| Operation | Mature-harness shape | Failure it contains | Rally addition |
 | --- | --- | --- | --- |
 | List/glob/grep | shell-native `ls`, `find`, and `rg` | extra schemas duplicate commands models already know | bounded `run_command` output and prompt guidance |
 | Read | path, offset, limit | entire-file context blowup | exact raw text with separate line metadata |
@@ -599,7 +599,7 @@ languages technically possible
 ([network policy documentation](https://www.daytona.io/docs/en/network-limits/)).
 
 Technical reach is not a support promise. The first version should pin only the
-languages models use consistently for general problem solving and that Avalon
+languages models use consistently for general problem solving and that Rally
 can test as a small snapshot:
 
 | Language | Launch runtime | Managers and hosts |
@@ -625,17 +625,17 @@ validation, graphs, images, datasets, reports, and archives. Discoverability is
 part of the capability; a sandbox that exists only in a tool catalog will be
 underused.
 
-## Daytona primitives and the Avalon mapping
+## Daytona primitives and the Rally mapping
 
-Daytona supplies the needed computer substrate without requiring Avalon to
+Daytona supplies the needed computer substrate without requiring Rally to
 expose Daytona's API to the model:
 
-| Daytona primitive | Avalon use | Model-visible? |
+| Daytona primitive | Rally use | Model-visible? |
 | --- | --- | --- |
 | isolated sandbox with filesystem, network stack, CPU, RAM, and disk | one workspace generation per work stream | no |
 | start, stop, archive, delete | lazy lifecycle and retention | no |
 | session command and WebSocket log stream | one bounded terminal call with durable continuation | only final result |
-| filesystem list/search/upload/download/stream | typed file tools, resource import, resource publication | through Avalon schemas |
+| filesystem list/search/upload/download/stream | typed file tools, resource import, resource publication | through Rally schemas |
 | native domain allow-list | Trusted-only workspace policy | mode and denials only |
 | HTTPS secret placeholder proxy | read-scoped Git and `gh` auth | placeholder is not returned |
 | PTY | possible later interactive capability | no at launch |
@@ -648,7 +648,7 @@ containers free quota and are not billed
 [billing](https://www.daytona.io/docs/billing)).
 
 Daytona log streaming provides both a WebSocket follow mode and a snapshot of
-existing command logs. Avalon should use follow for normal completion and the
+existing command logs. Rally should use follow for normal completion and the
 snapshot/status APIs for reconciliation
 ([log streaming](https://www.daytona.io/docs/en/log-streaming/)).
 
@@ -656,7 +656,7 @@ snapshot/status APIs for reconciliation
 
 The workspace-level product choice is:
 
-- **Trusted only**: Daytona's native `domainAllowList`, an immutable Avalon
+- **Trusted only**: Daytona's native `domainAllowList`, an immutable Rally
   baseline, and optional workspace-added domains.
 - **Full internet**: clear the per-sandbox allow-list on a Daytona organization
   tier that permits unrestricted access.
@@ -755,7 +755,7 @@ type PublishBranchAndPrArguments = {
 ```
 
 The model does not choose the repository, remote, base branch, head branch, or
-credential. Avalon derives those from current authorized host state and the
+credential. Rally derives those from current authorized host state and the
 durable receipt. It
 asks Daytona to create a Git bundle, downloads the bundle through the file API,
 validates repository identity, commit ancestry, tree policy, clean status, size,
@@ -777,14 +777,14 @@ write idempotent, auditable, capability-gated, and revocable.
 ### Publishing a resource
 
 `publish_resource` takes one completed regular file below the sandbox resource
-directory, verifies its bytes and MIME type, streams it into Avalon's resource
+directory, verifies its bytes and MIME type, streams it into Rally's resource
 storage, creates a normal `resources` row, attaches it to the current work
 stream, and returns the resource identity. It is the bridge from disposable
 sandbox state to durable product state.
 
 Examples include a chart image, PDF, CSV, SQLite database, archive, generated
 report, or converted document. Publication does not mean public internet
-hosting. The returned URL, when present, is an authorized Avalon address; the
+hosting. The returned URL, when present, is an authorized Rally address; the
 model never receives a raw R2 object key or Daytona download URL.
 
 ### Pulling a work-stream resource into Daytona
@@ -819,7 +819,7 @@ type ImportResourceOutput = {
 };
 ```
 
-When Avalon chooses the destination, it creates or reuses a deterministic
+When Rally chooses the destination, it creates or reuses a deterministic
 collision-resistant path beneath `.avalon/resources/`; the caller must omit
 `overwrite`. When the caller supplies `destinationPath`, the operation is
 create-only by default; `overwrite: true` requests deliberate replacement of an
@@ -853,7 +853,7 @@ program needs the original bytes.
 | --- | --- | --- | --- |
 | Primary unit | persistent work-stream computer | code loaded at runtime for one or repeated executions | deployed tenant/user script in a dispatch namespace |
 | Environment | Linux container or VM with filesystem and processes | Cloudflare Worker isolate | Cloudflare Worker isolate |
-| Languages | anything installed; Avalon launch pins five | JavaScript and Python; TypeScript must be compiled | Worker-supported languages/modules |
+| Languages | anything installed; Rally launch pins five | JavaScript and Python; TypeScript must be compiled | Worker-supported languages/modules |
 | CLI and Git | full Bash, package managers, `git`, `gh` | no general Linux shell or Git workspace | no general Linux shell or Git workspace |
 | State | mutable disk across stop/start/archive | external bindings or cached Worker identity | external bindings such as R2, D1, KV, Durable Objects |
 | Startup model | create/start/restore sandbox | `load()` one-shot or `get()` cached by ID | deploy script, then dispatch requests |
@@ -953,7 +953,7 @@ per million requests, `$0.02` per million CPU milliseconds, and `$0.02` per
 script
 ([Workers for Platforms pricing](https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/reference/pricing/)).
 
-### Example Avalon plugins
+### Example Rally plugins
 
 These examples price only execution and use simple assumptions. They exclude
 model tokens, Bind/Workflow/D1 operations, R2 operations, network egress,
@@ -968,7 +968,7 @@ enterprise contracts, taxes, and human support.
 | Connector Code Mode | 1 million calls, 50 ms CPU each, one/few reusable programs | Daytona would be at least $18.50 even at an unrealistic one active second per call | about $5.40: base plus 20 million CPU-ms overage | $25: 50 million CPU-ms fits the included amount |
 | 10,000 deployed customer scripts | low traffic and CPU | poor fit and persistent fleet overhead | about $23 if each script is created only once in the month; much more if recreated daily | about $205: base plus 9,000 script overage |
 
-The earlier Avalon session review led to workload **archetypes**, not a precise
+The earlier Rally session review led to workload **archetypes**, not a precise
 traffic forecast: short connector operations, bursty multi-minute code/data
 work, longer repository validation, and long idle gaps between work-stream
 messages. The table intentionally exposes the variables so production telemetry
@@ -1012,7 +1012,7 @@ Exporting the whole workspace to R2 would require packaging, transfer, integrity
 metadata, reconstruction, snapshot compatibility, and another deletion path.
 
 The launch recommendation is therefore: stop quickly, archive natively after
-60 minutes, and delete after 30 days. Use R2 for durable Avalon resources,
+60 minutes, and delete after 30 days. Use R2 for durable Rally resources,
 receipts, command overflow, and published artifacts—not as a duplicate cold copy
 of every sandbox. Reconsider an R2 workspace export only for provider
 portability, contractual retention, legal hold, or restore objectives Daytona
@@ -1020,7 +1020,7 @@ cannot meet.
 
 ## Production failure modes to design out
 
-The cross-harness research and Avalon's distributed runtime imply the following
+The cross-harness research and Rally's distributed runtime imply the following
 test matrix:
 
 ### Tool schema and model behavior
@@ -1127,7 +1127,7 @@ The research directly supports these choices:
 - real `git` and `gh` CLIs, read-scoped GitHub App credentials behind Daytona's
   HTTPS placeholder proxy, and no sandbox write token;
 - a typed `publish_branch_and_pr` with durable receipt and deterministic branch;
-- symmetrical `import_resource` and `publish_resource` tools around Avalon's
+- symmetrical `import_resource` and `publish_resource` tools around Rally's
   normal resource system;
 - Trusted-only native domain policy plus a Full-internet workspace option;
 - five-minute host stop, 15-minute provider backstop, 60-minute native archive,
@@ -1163,9 +1163,9 @@ Neither direction exposes an R2 or Daytona credential to the model.
 - [Grok Build background tasks](https://docs.x.ai/build/features/background-tasks)
 - [Grok Build public source](https://github.com/xai-org/grok-build)
 - [Grok Build terminal tool](https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230c/crates/codegen/xai-grok-tools/src/implementations/grok_build/bash/mod.rs)
-- [Avalon agent-tool design](../../agent-tools.md)
-- [Avalon Bind harness](../../agent-harness.md)
-- [Avalon agent attachments and resources](../../agent-attachments.md)
+- [Rally agent-tool design](../../agent-tools.md)
+- [Rally Bind harness](../../agent-harness.md)
+- [Rally agent attachments and resources](../../agent-attachments.md)
 
 ### Daytona
 

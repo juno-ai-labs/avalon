@@ -3,8 +3,8 @@ import {
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSPACE_SYNC_TOPICS,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
-} from '@avalon/contracts';
-import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
+} from '@rally/contracts';
+import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render } from '@testing-library/react';
 import { useEffect } from 'react';
@@ -114,7 +114,7 @@ describe('WorkspaceSocketProvider', () => {
       closeCode: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
       status: 400,
       code: 'workspace_socket_invalid_message',
-      message: 'Avalon could not complete this action because its realtime command was invalid. Restart the app and try again.',
+      message: 'Rally could not complete this action because its realtime command was invalid. Restart the app and try again.',
       telemetryCause: 'server_closed',
     },
   ])('reports close code $closeCode truthfully and does not reconnect', async ({
@@ -128,7 +128,7 @@ describe('WorkspaceSocketProvider', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
@@ -191,7 +191,7 @@ describe('WorkspaceSocketProvider', () => {
     const queryClient = new QueryClient();
     const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
     const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
@@ -281,7 +281,7 @@ describe('WorkspaceSocketProvider', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
@@ -376,7 +376,7 @@ describe('WorkspaceSocketProvider', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
@@ -421,7 +421,7 @@ describe('WorkspaceSocketProvider', () => {
     const getWorkspaceSocketTicket = vi.fn(async () => {
       await new Promise<void>((resolve) => { releaseTicket = resolve; });
       return {
-        url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+        url: 'wss://api.rally.test/socket/workspaces/workspace-1',
         ticket: 'workspace-ticket',
         protocols: socketTicketProtocols('workspace-ticket'),
       };
@@ -462,7 +462,7 @@ describe('WorkspaceSocketProvider', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
@@ -500,7 +500,7 @@ describe('WorkspaceSocketProvider', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
@@ -589,7 +589,7 @@ describe('WorkspaceSocketProvider', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
@@ -717,7 +717,7 @@ describe('WorkspaceSocketProvider', () => {
     const queryClient = new QueryClient();
     const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
     const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
@@ -774,7 +774,7 @@ describe('WorkspaceSocketProvider', () => {
     })]);
     const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
     const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
@@ -827,7 +827,7 @@ describe('WorkspaceSocketProvider', () => {
     })]);
     const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
     const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
@@ -872,7 +872,7 @@ describe('WorkspaceSocketProvider', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
@@ -940,7 +940,7 @@ describe('WorkspaceSocketProvider', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
@@ -1002,7 +1002,7 @@ describe('WorkspaceSocketProvider', () => {
     vi.spyOn(navigator, 'onLine', 'get').mockImplementation(() => online);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
@@ -1149,12 +1149,12 @@ describe('the workspace and work-stream sockets over one store', () => {
   }> {
     const api = {
       getWorkspaceSocketTicket: vi.fn(async () => ({
-        url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+        url: 'wss://api.rally.test/socket/workspaces/workspace-1',
         ticket: 'workspace-ticket',
         protocols: socketTicketProtocols('workspace-ticket'),
       })),
       getWorkstreamControlSocketTicket: vi.fn(async () => ({
-        url: 'wss://api.avalon.test/socket/workstreams/control',
+        url: 'wss://api.rally.test/socket/workstreams/control',
         ticket: 'control-ticket',
         protocols: socketTicketProtocols('control-ticket'),
       })),

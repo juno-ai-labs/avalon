@@ -4,7 +4,7 @@ import type {
   TelemetryEventName,
   TelemetryEventProperties,
   TelemetryRouteResponse,
-} from '@avalon/contracts/telemetry';
+} from '@rally/contracts/telemetry';
 
 type SitePage = TelemetryEventProperties<'site_page_viewed'>['page'];
 type SiteAction = TelemetryEventProperties<'site_action_selected'>['action'];

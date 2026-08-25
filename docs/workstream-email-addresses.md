@@ -21,7 +21,7 @@ reservation path, or what inbound mail is allowed to do when it arrives.
 | `apps/api/src/routes/resend.ts` | The Global receiving webhook. |
 | `apps/api/src/services/automation-email-service.ts` | Outbound automation results by email. |
 | `apps/api/src/services/automation-email-content.ts` | The result email's shell, importable without the Worker's bindings. |
-| `apps/api/src/services/email-markdown.ts` | The Markdown renderer both Avalon emails share; owned by [`digests.md`](digests.md). |
+| `apps/api/src/services/email-markdown.ts` | The Markdown renderer both Rally emails share; owned by [`digests.md`](digests.md). |
 | `scripts/preview-automation-email.mjs` | Rendering the result email for somebody to look at. |
 | `apps/api/src/services/user-delivery.ts` | The connector-declared personal delivery surfaces beside it. |
 
@@ -72,7 +72,7 @@ owner ID, collision attempt, and expansion block. It consumes three distinct
 ordered 7-bit adjective indexes and one 9-bit noun index. The server reserves each
 candidate atomically; a collision advances the attempt.
 
-There is exactly one authoritative reservation namespace for every Avalon region
+There is exactly one authoritative reservation namespace for every Rally region
 and both owner kinds. The Global control plane owns the historical
 `workstream_email_routes` registry; Global work streams and automations reserve
 there directly, and every non-Global data plane reserves through the named
@@ -126,7 +126,7 @@ workspace automation, it must match an active workspace member. This check is
 defense in depth because email From headers can be spoofed, so inbound-email runs
 also omit every external connector tool declared as a write operation, and omit
 outbound web search and fetch tools so untrusted mail cannot use them as an
-exfiltration channel. Connector reads and Avalon's internal work-stream tools
+exfiltration channel. Connector reads and Rally's internal work-stream tools
 remain available.
 
 Pausing an automation changes nothing in Global: the claim stands and the
@@ -139,7 +139,7 @@ the row is the tombstone.
 The addresses above are inbound. Separately, a personal automation may copy each
 run's result outward, and may change that afterwards from the automation itself:
 `PATCH /automations/:id` takes the whole destination set, and only the owner's own
-request is accepted. Every run always lands in its own Avalon work stream — that
+request is accepted. Every run always lands in its own Rally work stream — that
 is the canonical record and is not a destination the creator can turn off. On top
 of it the creator may freeze email to their own account address and one
 connector-provided personal surface, chosen on the create screen, changed afterwards
@@ -160,11 +160,11 @@ the run's work stream, and the target records the work stream it last received s
 workflow retry cannot mail the same result twice. Empty results and the "nothing
 qualified" phrasings suppressed for Slack are suppressed for email too.
 
-**The run itself is told where Avalon will send its result.** The active targets
+**The run itself is told where Rally will send its result.** The active targets
 are loaded into the automation's prompt context as `resultDelivery`, and the
 platform policy forbids sending, drafting, or posting a copy of the result to any
 destination listed there. Without it a run whose instructions say "email me the
-briefing" reads that as a step, sends it through the mail connector, and Avalon
+briefing" reads that as a step, sends it through the mail connector, and Rally
 then mails the same result to the frozen target — two copies from two senders. The
 compiler is the other half: it writes a destination into `expectedOutputs` rather
 than a provider send into `instructions`.
@@ -304,7 +304,7 @@ sunbird, terrapin, waxbill
 - **An inbound address is a routing identifier, never an authenticator.** The From
   match is defense in depth; the actual protection is that inbound-email runs get no
   external connector writes and no outbound web tools.
-- **A run never delivers a result Avalon is delivering.** The active destinations
+- **A run never delivers a result Rally is delivering.** The active destinations
   travel in the automation prompt context as `resultDelivery`, and the platform
   policy renders a `# Result delivery` section telling the run to drop every
   recipient matching one before it sends anything. Removing either half puts the
@@ -319,7 +319,7 @@ sunbird, terrapin, waxbill
 - **Outside production, an automation's result is not emailed at all** —
   `sendResendEmail` refuses to send transactional mail from a developer's machine
   or a staging Worker. That is why `resultDelivery` names no email destination
-  there: a run told Avalon has the email covered suppresses its own send, and
+  there: a run told Rally has the email covered suppresses its own send, and
   since the compiler no longer writes a provider send either, a staging
   automation that used to mail through the connector would otherwise go quiet
   with nothing to explain it. If a staging automation stops emailing, this is the
@@ -342,7 +342,7 @@ sunbird, terrapin, waxbill
   *set* of destinations is not frozen — an owner may turn one on or off from the
   automation — but a destination that survives an edit keeps its row, and with it
   the per-run fence that stops a workflow retry mailing the same result twice.
-- **Every run lands in its own Avalon work stream**, and that destination cannot be
+- **Every run lands in its own Rally work stream**, and that destination cannot be
   turned off — the copies are additions to the canonical record, never replacements.
 
 ## Boundary
@@ -388,13 +388,13 @@ registry, and what happens to mail addressed to one. It does not own:
 | `apps/api/test/resend-inbound-email.test.ts` | Idempotency by Resend email ID, the lease, the sender check, the tool omissions, and the hourly budget. |
 | `apps/api/test/automation-result-email.test.ts` | The frozen destination, per-run idempotency, the suppressed-empty rule, and that the result's Markdown is rendered rather than mailed as markup. |
 | `apps/api/test/email-markdown.test.ts` | The shared renderer: the structure these emails use, escaping, refused link targets, and the plain-text preview line. |
-| `apps/api/test/automation-run-context.test.ts` | That a run is told its frozen destinations — email, Slack by id, a `needs_input` Slack target Avalon still delivers to — told nothing when a target cannot deliver, and told them in a fixed order. |
+| `apps/api/test/automation-run-context.test.ts` | That a run is told its frozen destinations — email, Slack by id, a `needs_input` Slack target Rally still delivers to — told nothing when a target cannot deliver, and told them in a fixed order. |
 | `apps/api/test/health-env-contract.test.ts` | That the probe says when notification mail is falling back to the transactional sender. |
 | `apps/api/test/automation-delivery-target-edit.test.ts` | Turning a destination off, keeping a surviving row's per-run fence, and leaving delivery alone when an edit does not mention it. |
 | `scripts/preview-automation-email.test.mjs` | The preview's flags, and that its sample still carries the constructs this email has rendered wrong. |
 
 Run one with
-`pnpm --filter @avalon/api exec vitest run test/workstream-email-address.test.ts`
+`pnpm --filter @rally/api exec vitest run test/workstream-email-address.test.ts`
 — the path is package-relative.
 
 Two traps. The allocator is deterministic over a fixed vocabulary, so a test
@@ -555,7 +555,7 @@ between lines, and `RESEND_NOTIFICATION_FROM_EMAIL` is now actually configured i
 both Workers.
 
 **Why:** A daily briefing automation delivered two emails — one the run sent
-through the owner's own Gmail because its instructions told it to, and one Avalon
+through the owner's own Gmail because its instructions told it to, and one Rally
 sent to the frozen target — and both were unreadable: the first was Markdown in a
 `text/plain` body, the second was Markdown escaped into HTML. The sender of the
 second read `invites@`, because the notification sender this document already
@@ -569,7 +569,7 @@ per-run record of every outbound provider write and still only suppresses the
 second copy after the first has left the mailbox. Telling the model is what stops
 the work happening at all. Also rejected: rendering the connector's outbound mail
 as HTML. `gmail.send` builds a `text/plain` body, that mail is sent as the person
-rather than as Avalon, and the tool guidance now says to write plain text; giving
+rather than as Rally, and the tool guidance now says to write plain text; giving
 it a second MIME part is a separate change with its own reasons.
 
 **Consequences:** `resultDelivery` lists what each channel's sender will actually

@@ -28,8 +28,8 @@ export type MenuBarAction =
   | 'suggested_work'
   | 'recent_workstream'
   | 'pinned_workstream'
-  | 'open_avalon'
-  | 'quit_avalon';
+  | 'open_rally'
+  | 'quit_rally';
 
 export interface MenuBarActions {
   /** Observational only: a reporting failure must not block the selected row. */
@@ -39,7 +39,7 @@ export interface MenuBarActions {
   readonly newAutomation: () => void;
   readonly startSuggestion: (suggestion: MenuBarSuggestion) => void;
   readonly openWorkstream: (workstreamId: string) => void;
-  readonly openAvalon: () => void;
+  readonly openRally: () => void;
   readonly quit: () => void;
 }
 
@@ -75,7 +75,7 @@ function sectionHeader(label: string, supported: boolean): MenuItemConstructorOp
 }
 
 /**
- * Names the thing that has to happen for Avalon to have anything to suggest,
+ * Names the thing that has to happen for Rally to have anything to suggest,
  * because with no connector there is nothing to suggest *from* and the section
  * would otherwise look broken rather than unstarted.
  *
@@ -100,7 +100,7 @@ export const MENU_BAR_PINNED_LIMIT = 5;
  * A macOS menu is as wide as its widest row, so one long label stretches every
  * other one. Both things this menu lists are model-written and allowed 180
  * characters by their contracts — a suggested prompt is a sentence, and a work
- * stream Avalon named itself can be nearly as long — so the limit is set by
+ * stream Rally named itself can be nearly as long — so the limit is set by
  * what stays readable rather than by what arrives.
  */
 const MENU_BAR_LABEL_MAX_LENGTH = 60;
@@ -153,12 +153,12 @@ export function menuBarLabel(rawLabel: string): string {
  * mapping from content to menu is testable without a display server.
  *
  * The order is the product contract: the three things a person can always
- * start, then a rule, then **Suggestions** with whatever Avalon is currently
+ * start, then a rule, then **Suggestions** with whatever Rally is currently
  * suggesting, then a rule and **Recent** with the five most recent work streams,
  * then a rule and **Pinned** with the top five of the reader's own arrangement.
  * Each of the three renders whether or not it has anything in it; an empty one
  * says how it fills. The trailing group is not part of that contract but is what
- * makes the item usable at all — Avalon can be launched hidden at login, and
+ * makes the item usable at all — Rally can be launched hidden at login, and
  * then this menu is the only way to open a window or quit.
  */
 export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstructorOptions[] {
@@ -216,7 +216,7 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     'Recent',
     // A menu that silently loses its lower half reads as broken. Say which of
     // the two reasons it is: nothing to show, or nobody to show it to.
-    options.signedIn ? 'No recent work streams' : 'Sign in to Avalon',
+    options.signedIn ? 'No recent work streams' : 'Sign in to Rally',
     content.recents.slice(0, MENU_BAR_RECENT_LIMIT)
       .map((workstream) => openWorkstreamRow(workstream, 'recent_workstream')),
   );
@@ -235,8 +235,8 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
 
   template.push(
     { type: 'separator' },
-    { label: `Open ${options.appName}`, click: tracked('open_avalon', actions.openAvalon) },
-    { label: `Quit ${options.appName}`, click: tracked('quit_avalon', actions.quit) },
+    { label: `Open ${options.appName}`, click: tracked('open_rally', actions.openRally) },
+    { label: `Quit ${options.appName}`, click: tracked('quit_rally', actions.quit) },
   );
 
   return template;

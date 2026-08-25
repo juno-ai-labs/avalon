@@ -17,8 +17,8 @@ import { statusDescription, statusLabel, type WorkstreamMarkerStatus } from '../
 import type { WorkspaceMember } from '../lib/types';
 import type { SocketState } from '../lib/use-workstream-socket';
 
-export function AvalonMark({ className }: { className?: string }): React.JSX.Element {
-  return <span aria-hidden="true" className={clsx('avalon-mark', className)} />;
+export function RallyMark({ className }: { className?: string }): React.JSX.Element {
+  return <span aria-hidden="true" className={clsx('rally-mark', className)} />;
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement>>(
@@ -89,7 +89,7 @@ const socketStateCopy: Record<SocketState, { label: string; description: string 
   },
   connecting: {
     label: 'Connecting to live updates',
-    description: 'Avalon is connecting to live work-stream updates.',
+    description: 'Rally is connecting to live work-stream updates.',
   },
   connected: {
     label: 'Live updates connected',
@@ -97,11 +97,11 @@ const socketStateCopy: Record<SocketState, { label: string; description: string 
   },
   reconnecting: {
     label: 'Reconnecting live updates',
-    description: 'The connection was interrupted. Avalon is reconnecting live updates.',
+    description: 'The connection was interrupted. Rally is reconnecting live updates.',
   },
   unavailable: {
     label: 'Live updates unavailable',
-    description: 'Live updates are unavailable. Avalon will keep trying to reconnect.',
+    description: 'Live updates are unavailable. Rally will keep trying to reconnect.',
   },
 };
 
@@ -169,7 +169,7 @@ export function Badge({ children, className, ...props }: PropsWithChildren<HTMLA
 }
 
 /**
- * Stands in for a work stream's title while Avalon is choosing one.
+ * Stands in for a work stream's title while Rally is choosing one.
  *
  * The title a work stream is created with is the first line of the request,
  * which is a placeholder rather than a name — showing it and swapping it a
@@ -186,7 +186,7 @@ export function Badge({ children, className, ...props }: PropsWithChildren<HTMLA
 export function TitleSkeleton({ className }: { className?: string }): React.JSX.Element {
   return (
     <span className={clsx('title-skeleton', className)}>
-      <span className="sr-only">Avalon is naming this work stream</span>
+      <span className="sr-only">Rally is naming this work stream</span>
     </span>
   );
 }

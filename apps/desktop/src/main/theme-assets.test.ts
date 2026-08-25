@@ -20,7 +20,7 @@ import {
 const DOCUMENTS = { air: '<!doctype html><html><body>orbs</body></html>' };
 
 async function directory(): Promise<string> {
-  return mkdtemp(join(tmpdir(), 'avalon-theme-fonts-'));
+  return mkdtemp(join(tmpdir(), 'rally-theme-fonts-'));
 }
 
 function bytes(length: number): ArrayBuffer {

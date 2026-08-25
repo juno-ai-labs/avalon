@@ -113,4 +113,4 @@ class Pcm16CaptureProcessor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor('avalon-pcm16-capture', Pcm16CaptureProcessor);
+registerProcessor('rally-pcm16-capture', Pcm16CaptureProcessor);

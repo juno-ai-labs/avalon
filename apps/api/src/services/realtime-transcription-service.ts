@@ -36,7 +36,7 @@ function configuredAzureRealtime(env: Env): {
     throw new ApiError(
       503,
       "dictation_not_configured",
-      "Dictation is not configured for this Avalon region",
+      "Dictation is not configured for this Rally region",
     );
   }
   return { endpoint, apiKey, deployment };
@@ -47,7 +47,7 @@ export function azureRealtimeWebSocketUrl(
 ): string {
   const endpoint = env.AZURE_OPENAI_ENDPOINT?.trim();
   if (!endpoint) {
-    throw new ApiError(503, "dictation_not_configured", "Dictation is not configured for this Avalon region");
+    throw new ApiError(503, "dictation_not_configured", "Dictation is not configured for this Rally region");
   }
   let url: URL;
   try {
@@ -298,8 +298,8 @@ export class RealtimeTranscriptionService {
       const client = pair[0];
       const server = pair[1];
       if (!client || !server) {
-        closeSocket(upstream, 1011, "Avalon realtime is unavailable");
-        throw new ApiError(503, "websocket_unavailable", "Avalon realtime is unavailable");
+        closeSocket(upstream, 1011, "Rally realtime is unavailable");
+        throw new ApiError(503, "websocket_unavailable", "Rally realtime is unavailable");
       }
 
       upstream.accept({ allowHalfOpen: true });

@@ -6,7 +6,7 @@
 > `D1Database` wrappers and the 25 `_runtime_*` views behind one of them — by
 > converting each subsystem to a typed object port, in fifteen slices.
 > Standing contract:
-> [the Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
+> [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Subsystem references: [`agent-harness.md`](../../agent-harness.md),
 > [`terminal-workspaces.md`](../../terminal-workspaces.md),
 > [`workstream-durable-object.md`](../../workstream-durable-object.md),
@@ -14,7 +14,7 @@
 
 ## Summary
 
-Avalon's product data moved from D1 into Durable Object SQLite during the
+Rally's product data moved from D1 into Durable Object SQLite during the
 regional cutover. The service code did not move with it. Instead, two wrappers
 intercept `env.DB`, inspect each SQL string, and forward statements naming a
 migrated table to the owning object — and on the work-stream side, rewrite the

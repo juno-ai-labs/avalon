@@ -2,11 +2,11 @@
 
 A Notion public connection accepts exactly one OAuth redirect URI and delivers
 its webhook subscription to exactly one URL, for every Notion workspace that
-installs it. Avalon's personal connection to Notion's official hosted MCP server
-also uses the connector's registered redirect. Avalon runs two regional Workers.
+installs it. Rally's personal connection to Notion's official hosted MCP server
+also uses the connector's registered redirect. Rally runs two regional Workers.
 This module is how both authorization modes, and the workspace mode's webhook,
 serve both: `notion.rallywith.ai` is bound to the Global Worker, answers the
-callback and webhook, and hands each to the region that owns the Avalon
+callback and webhook, and hands each to the region that owns the Rally
 workspace involved. Read it before changing Notion authorization, Notion webhook
 ingestion, or anything that assumes a connector's callback is regional —
 Notion's is not.
@@ -43,11 +43,11 @@ belong to.
 
 The connection scope chooses the provider protocol after that shared routing.
 Any member may start a personal authorization: the adapter discovers the hosted
-MCP authorization server, dynamically registers Avalon, and uses authorization
-code plus PKCE. An Avalon owner or administrator may start the workspace public
+MCP authorization server, dynamically registers Rally, and uses authorization
+code plus PKCE. An Rally owner or administrator may start the workspace public
 integration authorization. Notion's required `owner=user` parameter on that
 public flow identifies the approver, while the installed bot and selected pages
-are the shared grant; the provider parameter never changes Avalon's workspace
+are the shared grant; the provider parameter never changes Rally's workspace
 scope.
 
 The callback route reads the region from the state prefix and calls
@@ -140,10 +140,10 @@ audience.
   happened in. The bot ID is what the *regional* service matches connections on,
   through `accessible_by`.
 - **The workspace OAuth approver is not the execution principal.** Notion's public flow is
-  user-authorized, but the returned bot performs API actions and Avalon stores
-  the grant as a workspace connection. Deriving Avalon scope from the provider's
+  user-authorized, but the returned bot performs API actions and Rally stores
+  the grant as a workspace connection. Deriving Rally scope from the provider's
   `owner=user` field would turn an approval record into an authorization rule.
-  The personal MCP flow is deliberately different: its Avalon owner is the
+  The personal MCP flow is deliberately different: its Rally owner is the
   member who completed that personal authorization.
 - **The shared host serves only its three routes.** It is a public name that
   exists because a third party demanded a single URL; the rest of the Global API
@@ -183,7 +183,7 @@ otherwise.
 | State carries no region prefix | `401 invalid_oauth_state`; the callback still redirects to the hosted desktop handoff with `status=failed`. |
 | `EU_NOTION_BRIDGE` unbound or EU unavailable | `503 notion_region_unavailable`. The authorization fails closed; the user retries. |
 | Delivery for a Notion workspace that has never been routed | `503 notion_route_pending`. Notion retries, by which time the OAuth callback has normally registered the route. |
-| Delivery for a Notion workspace whose every route is disabled | `{accepted, activityCount: 0}`. Disabling an Avalon connection does not uninstall the integration at Notion, so a retired workspace keeps delivering forever; retrying it would spend the full retry budget on every delivery, against the subscription every customer shares. |
+| Delivery for a Notion workspace whose every route is disabled | `{accepted, activityCount: 0}`. Disabling a Rally connection does not uninstall the integration at Notion, so a retired workspace keeps delivering forever; retrying it would spend the full retry budget on every delivery, against the subscription every customer shares. |
 | Setup challenge posted to a regional host instead of the ingress | `400 notion_setup_wrong_host`, naming the right URL. Only the ingress replicates the token, so accepting it elsewhere would answer 200 and leave the other region unable to verify anything. |
 | Setup nonce missing, expired, already bound to another token, or superseded | `unauthorized`; no challenge row is inserted or replaced. Preparing another URL invalidates any earlier unconsumed one. |
 | Token copy attempted before the current challenge finishes storage | The command refuses to copy. It joins the challenge to the one current consumed nonce and verifies the decrypted token against that nonce's token hash, so neither the previous subscription secret nor a partially stored replacement reaches the clipboard. |
@@ -196,7 +196,7 @@ otherwise.
 ## Testing
 
 `apps/api/test/notion-routing.test.ts` is the suite for this module —
-`pnpm --filter @avalon/api exec vitest run test/notion-routing.test.ts`. It uses
+`pnpm --filter @rally/api exec vitest run test/notion-routing.test.ts`. It uses
 a hand-written D1 fake holding only `notion_workspace_routes`, and the service's
 constructor seams (`completeInRegion`, `ingestInRegion`, `storeChallengeInRegion`,
 `captureChallenge`, `verificationToken`) to keep credential decryption out of the
@@ -320,7 +320,7 @@ personal official-MCP authorization or a workspace public-integration install.
 Only the workspace branch creates, tests, or retires a webhook route.
 
 **Why:** The two connections need different provider identities but Notion is
-still one Avalon connector with one registered callback. Treating every Notion
+still one Rally connector with one registered callback. Treating every Notion
 success as a bot install would put a personal MCP workspace ID into the Global
 webhook directory and make route health part of a connection that receives no
 webhooks.
@@ -339,15 +339,15 @@ Shipped in the pull request for this change.
 ### 2026-08-12 — User-approved OAuth installs one workspace bot grant
 
 **What changed:** The regional connection created after a routed Notion callback
-is now workspace-scoped with no Avalon user owner. The approving Notion identity
+is now workspace-scoped with no Rally user owner. The approving Notion identity
 remains encrypted credential metadata, webhook activity has no personal target,
-and only an Avalon owner or administrator may start or complete the flow.
+and only a Rally owner or administrator may start or complete the flow.
 
 **Why:** Notion requires a user to approve public OAuth but returns an installed
 bot that authors later API mutations. The ingress previously carried that grant
 into a personal row and therefore routed shared workspace events to the approver.
-Making `owner=user` an Avalon scope decision was rejected: it is provider
-protocol metadata, while Avalon's workspace principal is the authority boundary.
+Making `owner=user` a Rally scope decision was rejected: it is provider
+protocol metadata, while Rally's workspace principal is the authority boundary.
 
 ### 2026-08-12 — Subscription setup becomes one-time and locally retrievable
 
@@ -362,7 +362,7 @@ ciphertext belongs to the current consumed nonce. The generation is replicated t
 EU so an older cross-region call cannot arrive last and restore the old token there.
 
 **Why:** Notion requires a manual paste of the token it posts to the endpoint,
-while Avalon's handler correctly refused to log or return that signing secret.
+while Rally's handler correctly refused to log or return that signing secret.
 That left no way to finish verification. Logging it was rejected because the
 token authenticates every future event and the repository retains Cloudflare
 logs for 90 days. The old query guard was also reusable and therefore leaked as
@@ -383,7 +383,7 @@ there. The four `default*InRegion` helpers regained the
 
 **Why:** Both are consequences of one subscription serving every customer, which
 is what makes this module different from the per-tenant webhooks it was modelled
-on. Disabling an Avalon connection does not uninstall the integration at Notion,
+on. Disabling a Rally connection does not uninstall the integration at Notion,
 so a retired workspace keeps delivering with nothing that will ever make its
 route active again; answering those with a 503 spends the full retry budget on
 each one and risks Notion disabling the subscription that every other customer

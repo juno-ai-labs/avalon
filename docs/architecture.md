@@ -1,6 +1,6 @@
 # Architecture
 
-Avalon is a pnpm TypeScript monorepo with an Electron desktop client, a Hono API
+Rally is a pnpm TypeScript monorepo with an Electron desktop client, a Hono API
 Worker deployed twice as Global and EU, internal operator Workers, and shared
 packages that hold every contract and rule the surfaces agree on. This document
 is the map of how those surfaces fit together: what runs where, what crosses
@@ -61,12 +61,12 @@ docs/                      Product, architecture, security, setup, runbooks
    React surfaces use a packaged CommonJS preload and talk only to the configured
    regional API. The macOS application menu opens the singleton Settings window
    with **Command-,** and closes the focused window with **Command-W**, which on
-   darwin has to come from a File menu of Avalon's own — Electron's `windowMenu`
+   darwin has to come from a File menu of Rally's own — Electron's `windowMenu`
    role omits it there. Settings also closes on **Escape**, a convenience rather
    than the platform gesture, and only when no dialog, select menu, or unsaved
    text field has a nearer claim on the keystroke. The main process also owns the
    macOS menu bar status item, which is the one surface that exists with no
-   window open — Avalon opens at login by default and starts hidden — and which
+   window open — Rally opens at login by default and starts hidden — and which
    therefore reads the regional API for itself rather than through a renderer;
    [`menu-bar.md`](menu-bar.md) owns it. Main also owns the typed telemetry
    reporter, route and identity epochs, local spool, Crashpad generations, and
@@ -113,7 +113,7 @@ flowchart LR
   C --> D
   C --> S["WorkspaceDO alarm"]
   S --> SA
-  SA --> A["Avalon Bind 13 adapter"]
+  SA --> A["Rally Bind 13 adapter"]
   A --> O["OpenRouter"]
   A --> T["Authorized connection plugins"]
   A --> X["Deferred Terminal plugin"]
@@ -213,14 +213,14 @@ identity, crash, and restricted operator flow.
   `userData/application-settings.json` preference is not authority to unwrap a
   Lockdown envelope by itself: an off preference paired with a new Lockdown
   envelope at startup removes only credential-bearing files and forces sign-in. If
-  the keystore becomes unavailable, Avalon automatically applies the same
+  the keystore becomes unavailable, Rally automatically applies the same
   off-and-relogin fallback. Access tokens remain in memory where practical.
 - Connector refresh tokens are AES-GCM encrypted with a regional Worker secret.
 - OpenRouter, Google, session-signing, webhook, and encryption keys are
   server-only values loaded from local `.env.local` during development and
   Cloudflare secrets in hosted environments.
 - Azure OpenAI realtime dictation also keeps its endpoint and API key in the
-  regional Worker. The desktop receives a one-minute, single-use Avalon socket
+  regional Worker. The desktop receives a one-minute, single-use Rally socket
   ticket, presented through the handshake's `Sec-WebSocket-Protocol` header rather
   than the query string; Cloudflare consumes its JTI, reserves a bounded regional
   session, opens the authenticated Azure WebSocket, and admits only rate- and
@@ -426,13 +426,13 @@ one private Daytona sandbox for that work stream. The owning `SubstreamAgent` is
 authority for generation, mutation leases, tasks, retention, resource links,
 and GitHub publication receipts; WorkspaceDO owns workspace egress policy,
 connector authority, and resource metadata. The provider supplies isolation and process/
-filesystem/lifecycle primitives, not Avalon's receipts or authorization. See
+filesystem/lifecycle primitives, not Rally's receipts or authorization. See
 [`terminal-workspaces.md`](terminal-workspaces.md).
 
-The production entry point adapts `@juno-ai/bind` 13.0.0 to Avalon's OpenRouter
+The production entry point adapts `@juno-ai/bind` 13.0.0 to Rally's OpenRouter
 transport and durable ports. Bind owns transcript healing, plugin and skill
 activation, turn/tool iteration, completion-defect recovery, epoch-aware
-streaming, and classified route traversal. Avalon owns authorization, regional
+streaming, and classified route traversal. Rally owns authorization, regional
 persistence, admission, accounting, and terminal state.
 
 Each durable agent attempt holds a renewable SQL lease; run-scope, plugin-activation,
@@ -476,7 +476,7 @@ Log and one aggregate Workers Analytics Engine datapoint. The datapoint carries
 the already-computed run totals—duration, turns, routed model attempts, tool
 calls, model/tool time, tokens, cost, and outcome—and no member content or run
 identifier. Analytics Engine is sampled and optimized for distributions and
-time series, not exact event recovery, so Avalon never reconstructs a run from
+time series, not exact event recovery, so Rally never reconstructs a run from
 loop-churn datapoints. D1 remains canonical; Workers Logs and Traces provide
 correlated diagnosis. [`runbook.md`](runbook.md#root-run-analytics) owns the
 positional dataset schema and sampling-aware queries.
@@ -571,7 +571,7 @@ IDs, Calendar sync/completion cursors, and Drive change page tokens. Drive chang
 are MIME-classified into Drive, Docs, or Sheets resources, so the same Drive poll
 produces `drive.file_changed`, `docs.document_changed`, or
 `sheets.spreadsheet_changed`. There is no Google webhook or push-channel
-implementation; Avalon watches operate after a polled activity has been
+implementation; Rally watches operate after a polled activity has been
 normalized.
 
 Normalized events are committed to their one owning WorkspaceDO before a
@@ -619,7 +619,7 @@ precede any LLM classification.
     `slack-agent-service.ts` and `resource-service.ts` still hand-coerce and are
     the remaining work.
   - **Route responses** pass their contract before serializing, enforced by the
-    `avalon/require-validated-response` lint rule. Without it the strict side of
+    `rally/require-validated-response` lint rule. Without it the strict side of
     the contract was the far side of the network: the desktop client parses every
     response it receives, so a malformed body left the Worker with a 200 and
     became a client-side `invalid_response` with nothing on the server naming the
@@ -724,12 +724,12 @@ There is no suite for "the architecture" — the invariants above are enforced b
 the gates every change runs, and by the suites of the documents in the boundary
 table.
 
-- `pnpm lint` (zero warnings) carries `avalon/require-validated-response`, which
+- `pnpm lint` (zero warnings) carries `rally/require-validated-response`, which
   is the enforcement for the route-response invariant.
 - `pnpm typecheck` and `pnpm test` run across every package.
 - CI additionally runs `pnpm test:scripts`, both Wrangler dry-run builds, the
   desktop release invariants
-  (`pnpm --filter @avalon/desktop test:release`), and a Gitleaks scan over the
+  (`pnpm --filter @rally/desktop test:release`), and a Gitleaks scan over the
   full history.
 - `pnpm smoke:local` and the manual desktop acceptance flows are in
   [`e2e.md`](e2e.md); running both Workers and the Electron client locally is in
@@ -759,7 +759,7 @@ opaque EU workspace locator; EU workspace content remains in the EU deployment.
 
 The Electron renderer never receives provider credentials, native PKCE verifiers,
 OpenRouter keys, Cloudflare administration keys, raw IPC, Node integration, or
-arbitrary navigation. Main validates every exposed IPC call against a live Avalon
+arbitrary navigation. Main validates every exposed IPC call against a live Rally
 window and its pinned renderer origin. API logs redact tokens, codes, bodies, file
 contents, model context, and unnecessary personal information. External actions
 and authorization decisions create audit records with structured correlation IDs.
@@ -1330,7 +1330,7 @@ process rotates or purges that whole generation before starting another handler.
 The detailed lifecycle and future regional pipeline live in
 [`telemetry.md`](telemetry.md).
 
-**Why:** Crashpad cannot be stopped after startup and cannot use Avalon's required
+**Why:** Crashpad cannot be stopped after startup and cannot use Rally's required
 authenticated-header uploader. Giving main ownership of the directory above the
 live database preserves Electron's supported boundary while allowing policy,
 region, and absolute retention to be enforced between launches.
@@ -1350,7 +1350,7 @@ content-free point for each create, bootstrap, or start operation, with separate
 phase durations and no tenant or provider-operation identifier.
 
 **Why:** An owned snapshot can remove recurring package installation but cannot
-remove Daytona allocation, policy read-back, or Avalon's verification. Mixing
+remove Daytona allocation, policy read-back, or Rally's verification. Mixing
 those provider phases into root-run summaries would hide which latency is
 actually removable and make both datasets ambiguous.
 
@@ -1364,16 +1364,16 @@ query the dedicated dataset through the checked-in human-readable report and
 retain D1/Workers Logs for exact diagnosis; Cloudflare's account-level retention
 and regional caveat apply.
 
-### 2026-08-13 — Daytona is an external execution substrate, not a fourth Avalon surface
+### 2026-08-13 — Daytona is an external execution substrate, not a fourth Rally surface
 
 **What changed:** The regional API composes a deferred Terminal plugin whose
-first tool call reaches a private Daytona sandbox. Avalon D1/R2, Bind receipts,
+first tool call reaches a private Daytona sandbox. Rally D1/R2, Bind receipts,
 the workspace scheduler, resource subsystem, and GitHub App publisher retain
 their existing ownership.
 
 **Why:** Code execution needs an isolation substrate, but making Daytona a
 canonical application surface would move authorization, retry state, resources,
-and regional lifecycle outside Avalon's existing owners.
+and regional lifecycle outside Rally's existing owners.
 
 **Considered and rejected:** Treating provider labels/state as the control
 plane, exposing Daytona directly to Electron, and introducing a separate

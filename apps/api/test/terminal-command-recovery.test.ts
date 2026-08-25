@@ -1,5 +1,5 @@
-import { asWorkspaceId } from "@avalon/contracts";
-import type { HarnessPlugin, HarnessToolContext } from "@avalon/agent-harness";
+import { asWorkspaceId } from "@rally/contracts";
+import type { HarnessPlugin, HarnessToolContext } from "@rally/agent-harness";
 import { describe, expect, it, vi } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";

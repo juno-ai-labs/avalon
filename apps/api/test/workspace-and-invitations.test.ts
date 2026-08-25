@@ -1,5 +1,5 @@
-import { asWorkspaceId } from "@avalon/contracts";
-import { asUserId } from "@avalon/contracts";
+import { asWorkspaceId } from "@rally/contracts";
+import { asUserId } from "@rally/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env, IdentityAuthContext } from "../src/env";
 import { sha256 } from "../src/lib/crypto";

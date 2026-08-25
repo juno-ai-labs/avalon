@@ -336,7 +336,7 @@ spending that budget again.
 | --- | --- |
 | `scripts/d1-baseline.test.mjs` (`pnpm test:scripts`) | Boundary and naming rules, the staleness digest, volatile-column detection, SQL literals, rendering order, the internal-table rule, wrangler output parsing, and parity with the recorded production fingerprint. |
 | `scripts/migrate-d1.test.mjs` (`pnpm test:scripts`) | Selection, planning, region discovery, and the CLI — but mostly **behaviour**: it builds real migration chains, generates real baselines from them, applies the resulting plan to real SQLite, and asserts the database matches a full replay. |
-| `packages/db/test/baseline-migration.test.ts` (`pnpm --filter @avalon/db test`) | What the file does when executed: equivalence against a real chain replay, the guard, the ledger, volatile stamping, and a migration applied on top. |
+| `packages/db/test/baseline-migration.test.ts` (`pnpm --filter @rally/db test`) | What the file does when executed: equivalence against a real chain replay, the guard, the ledger, volatile stamping, and a migration applied on top. |
 
 The two levels are deliberately independent. The `packages/db` suite does **not**
 import `scripts/d1-baseline.mjs`; it re-derives its expectations through `PRAGMA`
@@ -365,7 +365,7 @@ Moving the baseline forward, after a batch of migrations is deployed everywhere:
 pnpm db:baseline:verify                  # the chain still describes production
 pnpm db:baseline:create <through.sql>    # regenerate at the new boundary
 pnpm db:baseline:verify -- --record      # re-record the fingerprint
-pnpm test:scripts && pnpm --filter @avalon/db test
+pnpm test:scripts && pnpm --filter @rally/db test
 ```
 
 Delete the previous baseline file in the same change — there is one at a time,

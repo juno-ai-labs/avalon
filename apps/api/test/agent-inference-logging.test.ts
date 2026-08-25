@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { InferenceRequestEvent } from "@avalon/agent-harness";
+import type { InferenceRequestEvent } from "@rally/agent-harness";
 import { createAgentInferenceLogger } from "../src/services/agent-inference-logging";
 import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 

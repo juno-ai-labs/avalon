@@ -1,4 +1,4 @@
-import type { TelemetryEnvelope } from "@avalon/contracts/telemetry";
+import type { TelemetryEnvelope } from "@rally/contracts/telemetry";
 import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { consumeAnalyticsLakehouseQueue } from "../src/queues/analytics-lakehouse-consumer";

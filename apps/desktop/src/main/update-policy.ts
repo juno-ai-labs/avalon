@@ -15,7 +15,7 @@ export interface UpdatePolicyInput {
 }
 
 /** Set to any non-empty value when updates are managed out of band. */
-export const DISABLE_AUTO_UPDATE_ENV = 'AVALON_DISABLE_AUTO_UPDATE';
+export const DISABLE_AUTO_UPDATE_ENV = 'RALLY_DISABLE_AUTO_UPDATE';
 
 export function updatePolicy(input: UpdatePolicyInput): UpdatePolicy {
   if (!input.isPackaged) {

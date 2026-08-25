@@ -1,5 +1,5 @@
-import { IdSchema } from '@avalon/contracts';
-import { TelemetryEnvelopeSchema, type TelemetryEnvelope } from "@avalon/contracts/telemetry";
+import { IdSchema } from '@rally/contracts';
+import { TelemetryEnvelopeSchema, type TelemetryEnvelope } from "@rally/contracts/telemetry";
 import { z } from "zod";
 import { TelemetryCollector, type TelemetryAcceptanceResult } from "./collector";
 import type { Env } from "../env";

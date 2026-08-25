@@ -4,11 +4,11 @@
  * Both exist so that a theme can bring something richer than a CSS value without
  * that thing gaining the application's origin:
  *
- * - `avalon-backdrop://theme/<id>` is a whole document a theme paints behind the
+ * - `rally-backdrop://theme/<id>` is a whole document a theme paints behind the
  *   window. It may run scripts — an orbiting field of light is not expressible
  *   as a `background-image` — so it is served to a browsing context of its own
  *   under a policy that permits painting and nothing else.
- * - `avalon-font://cache/<id>.woff2` is a font file a theme named by URL. The
+ * - `rally-font://cache/<id>.woff2` is a font file a theme named by URL. The
  *   main process fetches it once and keeps it; the renderer only ever asks for
  *   this scheme, so a theme cannot make the reader's machine call a remote host
  *   on every launch.
@@ -185,16 +185,16 @@ export class ThemeFontCache {
     try {
       const response = await this.fetch(font.url);
       if (!response.ok) {
-        logWarn('avalon', 'theme font fetch failed', { id, status: response.status });
+        logWarn('rally', 'theme font fetch failed', { id, status: response.status });
         return null;
       }
       const bytes = await response.arrayBuffer();
       if (bytes.byteLength === 0 || bytes.byteLength > FONT_SIZE_LIMIT) {
-        logWarn('avalon', 'theme font rejected for size', { id, bytes: bytes.byteLength });
+        logWarn('rally', 'theme font rejected for size', { id, bytes: bytes.byteLength });
         return null;
       }
       if (font.integrity && integrityOf(bytes) !== font.integrity) {
-        logWarn('avalon', 'theme font failed its integrity check', { id });
+        logWarn('rally', 'theme font failed its integrity check', { id });
         return null;
       }
 
@@ -206,7 +206,7 @@ export class ThemeFontCache {
       await rename(staging, this.path(id));
       return bytes;
     } catch (error) {
-      logWarn('avalon', 'theme font could not be fetched', { id, error: String(error) });
+      logWarn('rally', 'theme font could not be fetched', { id, error: String(error) });
       return null;
     }
   }

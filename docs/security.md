@@ -1,6 +1,6 @@
 # Security model
 
-This document owns Avalon's trust boundaries: what is treated as untrusted, what
+This document owns Rally's trust boundaries: what is treated as untrusted, what
 each trusted component is trusted *for*, and the mechanisms that keep the two
 apart — renderer isolation, OAuth and session handling, connector credential
 encryption, webhook verification, the model boundary, audit logging, and secret
@@ -61,7 +61,7 @@ are canonical storage services, not authorization layers.
   component before committing the new preference. The plaintext preference lives
   in owner-readable `application-settings.json` under Electron's `userData`
   directory. If that file is edited to turn Lockdown off while a Lockdown
-  credential envelope remains, Avalon removes only local credential-bearing files
+  credential envelope remains, Rally removes only local credential-bearing files
   and requires sign-in instead of exporting the protected session. An unavailable
   keystore also turns Lockdown off and requires sign-in automatically. The
   renderer receives short-lived access only through the narrow session bridge.
@@ -83,18 +83,18 @@ are canonical storage services, not authorization layers.
   `application-settings:set-menu-bar-enabled` and
   `application-settings:set-launch-at-login`, each of which accepts a boolean and
   nothing else. The menu itself holds no control for state the operating system
-  owns independently — whether Avalon opens at login is a Settings toggle, read
-  back from macOS on every read rather than from Avalon's preference file. Its
+  owns independently — whether Rally opens at login is a Settings toggle, read
+  back from macOS on every read rather than from Rally's preference file. Its
   content requests reuse the stored access token and regional endpoint through the
   same coalescing refresh as the feature-flag poll, add no credential storage, and
   reach only `/workstreams` and `/work-opportunities`. The work-stream titles they
   return are workspace content held in main-process memory only, never written to
-  disk, and dropped on sign-out. Because Avalon registers itself to open at login
+  disk, and dropped on sign-out. Because Rally registers itself to open at login
   and starts hidden there, this runs with no window and no renderer;
   [`menu-bar.md`](menu-bar.md) owns the mechanism. Its preference shares
   `application-settings.json` with Lockdown mode and therefore the same shared
   write queue described below.
-- Saving one of Avalon's messages as a picture or a PDF renders it in a hidden
+- Saving one of Rally's messages as a picture or a PDF renders it in a hidden
   window that is deliberately *less* privileged than any other: no preload and
   therefore no bridge, no Node, no devtools, sandboxed, and served a document
   under `default-src 'none'; img-src data: https:; style-src 'unsafe-inline'`.
@@ -148,7 +148,7 @@ are canonical storage services, not authorization layers.
 
 ### macOS distribution and updates
 
-Avalon's production identity is pinned to bundle ID `app.avalon.desktop` and Apple
+Rally's production identity is pinned to bundle ID `app.avalon.desktop` and Apple
 team `7ZLT6A8W25`. Squirrel.Mac cannot safely update across either boundary, so
 changing them requires a deliberate manual-reinstall migration. Release packaging
 never auto-selects a certificate.
@@ -164,7 +164,7 @@ the final signed entitlements, requires the pinned Developer ID team and an arm6
 slice for every one of those executables, and then proves a renderer remains alive
 under a clean user-data profile.
 
-Both `Avalon.app` and the DMG container are signed, submitted to Apple's notary
+Both `Rally.app` and the DMG container are signed, submitted to Apple's notary
 service, and stapled. The DMG is blockmapped only after signing and stapling
 mutate its bytes; `latest-mac.yml` is generated from the final ZIP. Before R2
 promotion, Gatekeeper, stapler, bundle ID/version, updater URL, final blockmaps,
@@ -220,7 +220,7 @@ Renderer WebSockets may be constructed only from a URL returned by the
 authenticated work-stream or transcription ticket endpoints; ESLint enforces that
 provenance at each production constructor. Runtime URL schemas likewise name their
 accepted scheme contract explicitly — HTTP(S), HTTPS-only, `avalon:`, or the
-intentional HTTP(S)/Avalon handoff union. Bare Zod URL validation is forbidden
+intentional HTTP(S)/Rally handoff union. Bare Zod URL validation is forbidden
 because it accepts non-web schemes such as `javascript:` and `data:` while hiding
 the product boundary being enforced.
 
@@ -288,7 +288,7 @@ receipt creation, or queueing.
 
 Notion's initial subscription challenge is unsigned and its dashboard requires
 an operator to paste the delivered `verification_token` back into the setup
-form. Avalon authorizes that one request with a 30-minute nonce stored only as a
+form. Rally authorizes that one request with a 30-minute nonce stored only as a
 SHA-256 hash and atomically bound to the first token it receives. Cloudflare
 captures the full webhook URL independently of application redaction, so the
 nonce is single-use and a later setup supersedes it; a reusable query secret
@@ -306,7 +306,7 @@ and implementation checklist live in
 
 OpenRouter credentials and model context are server-only. The harness receives
 only context authorized for the execution principal. Tool calls are proposals:
-Avalon validates the name, schema, principal, capability, limits, and idempotency
+Rally validates the name, schema, principal, capability, limits, and idempotency
 state before execution. Reasoning fields are ignored; private chain-of-thought is
 neither persisted nor broadcast.
 
@@ -340,7 +340,7 @@ than replaying stale content.
 
 The model may run bounded code only inside the private Daytona sandbox described
 in [`terminal-workspaces.md`](terminal-workspaces.md). Loading the plugin performs
-no provider operation. On first execution Avalon freezes the execution principal,
+no provider operation. On first execution Rally freezes the execution principal,
 visible-resource authority, selected immutable GitHub repository identity, and
 connection into a sandbox-generation fingerprint; narrowing or revocation
 destroys that generation before another tool can observe its filesystem.
@@ -358,7 +358,7 @@ never carry commands or output. Trusted-only egress is a host-compiled Daytona
 `domainAllowList` with an immutable baseline and read-back verification; the
 model cannot add a domain. Full internet is an explicit workspace-admin choice.
 Before a model-selected repository change destroys a retained generation,
-Avalon transfers a bounded recovery archive through the trusted Worker, verifies
+Rally transfers a bounded recovery archive through the trusted Worker, verifies
 its size and digest, and attaches it as a regional resource. Git metadata,
 credentials, host state, and regenerable dependency trees are excluded; any
 backup ambiguity leaves the old sandbox in place.
@@ -369,7 +369,7 @@ ownership. The work-stream sandbox receives a one-hour, single-repository GitHub
 App credential through host-scoped Daytona secret placeholders. Connector
 `read_only` maps to read permissions and technically rejects remote mutation;
 `full_access` maps to contents-write and pull-request-write so the model can use
-standard `git` and `gh`. Avalon prepares and switches to a persisted word-based
+standard `git` and `gh`. Rally prepares and switches to a persisted word-based
 work-stream branch before each model-facing operation. GitHub cannot scope an
 installation token to one branch, so branch discipline is explicit model
 guidance rather than a custom proxy or claimed technical boundary. Policy
@@ -423,7 +423,7 @@ opaque IDs only. Verified Global name/email and current workspace name are sent 
 explicit profile jobs so staff can identify and contact users; they are never
 copied onto each event or crash. A sanitized JavaScript/native report may reach
 Global PostHog, but raw minidumps, memory fragments, source excerpts, absolute
-paths, symbols, and source maps stay in Avalon's dedicated regional bucket. EU
+paths, symbols, and source maps stay in Rally's dedicated regional bucket. EU
 telemetry never reaches PostHog or Analytics Engine.
 
 ### Secrets
@@ -453,7 +453,7 @@ secrets in each region: the bot token of a small internal Slack app with
 token is sent in an `Authorization` header to a fixed Slack endpoint — never in
 a URL, because the platform's automatic tracing records outbound URLs and
 Global exports them — and the notifier sends only codes, counts, and opaque
-ids, escaped for Slack markup: the channel is outside Avalon's trust boundary
+ids, escaped for Slack markup: the channel is outside Rally's trust boundary
 ([`ops-alerting.md`](ops-alerting.md)).
 
 Exceptions to the Gitleaks scan live in `.gitleaks.toml` as narrowly bounded
@@ -481,7 +481,7 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   bridge is a capability added to every page the renderer could ever be tricked
   into loading.
 - **Every IPC argument is parsed before use**, and every exposed handler is
-  validated against a live Avalon window and its pinned renderer origin.
+  validated against a live Rally window and its pinned renderer origin.
 - **A plaintext preference is never authority to unwrap a protected envelope.** An
   off Lockdown preference beside a Lockdown envelope deletes the local credentials
   and forces sign-in; it does not export the session.
@@ -537,7 +537,7 @@ bound it on the thing a placeholder cannot fake, and add the bound to
 - **Opt-out is enforced at creation, regional acceptance, and destination
   delivery.** Attributable undelivered product, diagnostic, identify, profile, and
   crash work is suppressed or deleted; already delivered destination data is
-  outside Avalon's internal lifecycle.
+  outside Rally's internal lifecycle.
 - **EU telemetry has no cross-region fallback.** A routing, storage, processing,
   or support-access failure is handled inside EU and never by copying the payload
   to Global.
@@ -581,6 +581,15 @@ does not own the subsystems on either side of them:
   Worker request logs because the browser never sent it.
 - **An unavailable keystore turns Lockdown mode off and requires sign-in**, rather
   than leaving an unreadable envelope in place.
+- **Renaming the application invalidates every Lockdown session on the machine.**
+  macOS derives the `safeStorage` keychain entry from the application name, and
+  Electron exposes no way to name it independently, so a build named Rally cannot
+  read what `Avalon Safe Storage` holds. The rename from Avalon therefore costs
+  every Lockdown user one sign-in. It costs the default global mode nothing: that
+  mode encrypts with a compiled key, and the launch-time directory adoption in
+  `user-data-path.ts` carries the envelope across. The failure is graceful by
+  construction — an undecryptable envelope is logged and treated as no session,
+  which is the sign-in screen rather than a crash.
 - **Composer drafts are workspace content stored unencrypted** under `userData`,
   bounded by a 12-hour expiry and deleted on sign-out. No credential is ever
   written there.
@@ -598,7 +607,7 @@ does not own the subsystems on either side of them:
   audit still reports
   [GHSA-qwww-vcr4-c8h2](https://github.com/advisories/GHSA-qwww-vcr4-c8h2) against
   React Router 7.18.2. The vulnerable path is React Server Components action
-  handling; Avalon is a bundled Electron client using `HashRouter` and has no RSC
+  handling; Rally is a bundled Electron client using `HashRouter` and has no RSC
   server, action decoder, or React server endpoint, so that path is not present.
   The release gate's rule is to upgrade patched transitive dependencies rather than
   suppress advisories — remove this exception as soon as React Router publishes a
@@ -620,7 +629,7 @@ no unit test standing in for them.
 | `apps/desktop/src/main/telemetry-*.test.ts`, `native-crash-*.test.ts` | Sender/schema boundaries, redacted inspection, owner-only bounded spools, route-final generations, opt-out invalidation, and authenticated next-launch upload. |
 | `apps/api/test/telemetry-*.test.ts`, `crash-*.test.ts`, `posthog-adapter.test.ts` | Regional acceptance, capabilities, preference/identity ordering, immutable deadlines, raw-object access, sanitization, and exact destination negative space. |
 | `apps/site/test/site.test.ts` | Every public entry, route-before-identity behavior, storage failure isolation, and tracking disclosure. |
-| `pnpm --filter @avalon/desktop test:release` | The entitlement rules, notarization, blockmap ordering, and the final verifier. CI runs this as a separate job — `pnpm test:scripts` does **not** cover `apps/desktop/scripts/`. |
+| `pnpm --filter @rally/desktop test:release` | The entitlement rules, notarization, blockmap ordering, and the final verifier. CI runs this as a separate job — `pnpm test:scripts` does **not** cover `apps/desktop/scripts/`. |
 | `scripts/gitleaks-allowlist.test.mjs` (`pnpm test:scripts`) | That every `.gitleaks.toml` pattern still rejects real key material. It fails when an exception is added without a case, because the scan itself only reports what it finds today and would not notice an exception that had been widened. |
 | The `secrets` CI job | Gitleaks over the full history, all branches. |
 
@@ -642,6 +651,40 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-25 — The desktop's stored-data namespace follows the rename
+
+**What changed:** The application name became `Rally`/`Rally Development`, its
+userData directory moved to a matching name, the encrypted session files moved
+from `avalon-data` to `rally-data`, and the session envelope headers are minted
+as `rally-session/*`. Each superseded location is still read: the userData
+directory is adopted by an atomic rename on the first launch that finds it, the
+session directory by a one-shot rename, and the superseded envelope headers by
+carrying the header a value was sealed with into the AES-GCM AAD. The bundle
+identifier became `ai.rallywith.desktop`.
+
+**Why:** These are values the previous build wrote and the next build reads,
+which is the same shape as a hostname and is governed by
+[`domain-migration.md`](domain-migration.md). Renaming them without reading the
+old ones signs everyone out and abandons their local state — settings, drafts,
+the Chromium profile — in a directory nothing looks at again. A directory rename
+rather than a per-file migration because the file list is not knowable from this
+repository: Chromium writes into that directory too.
+
+**Considered and rejected:** Keeping the application name at `Avalon` to preserve
+the `safeStorage` keychain entry. That is the one thing the rename genuinely
+breaks and cannot repair, but it costs only Lockdown users one sign-in, and the
+alternative is an application whose name in the keychain, the crash reporter, and
+the Dock disagrees with the product forever.
+
+**Consequences:** Lockdown users sign in once after updating; the failure mode is
+the sign-in screen, not a crash, because an undecryptable envelope is already
+caught and treated as no session. The bundle identifier change means macOS treats
+the update as a different application: microphone and system-audio (TCC) grants
+re-prompt once and the login item re-registers. Signing is unaffected — a
+Developer ID Application certificate is issued to the team, not to a bundle
+identifier, and none of the entitlements in `resources/entitlements.mac.plist`
+requires a provisioning profile.
 
 ### 2026-08-25 — The renderer origin is app://rallywithai, and both are admitted
 
@@ -675,7 +718,7 @@ authorization. See [`domain-migration.md`](domain-migration.md).
 ### 2026-08-25 — The origin allowlist admits both site zones
 
 **What changed:** `ALLOWED_ORIGINS` on the Global Worker admits
-`https://rallywith.ai` and `https://www.rallywith.ai` alongside the two Avalon
+`https://rallywith.ai` and `https://www.rallywith.ai` alongside the two Rally
 origins. The site's CSP `connect-src` permits both API origins.
 
 **Why:** The rebrand to Rally put the public site on two zones at once. CORS is an
@@ -695,7 +738,7 @@ authorization, and the site still receives no session, token, or signing key. Se
 [`domain-migration.md`](domain-migration.md).
 ### 2026-08-24 — Input validation keeps body shape without keeping content
 
-**What changed:** Avalon's Hono validator now throws a typed internal validation
+**What changed:** Rally's Hono validator now throws a typed internal validation
 error carrying the request target, bounded Zod issue paths/codes, and a parsed
 JSON body whose terminal values have already been replaced with `"***"` or
 `-1`. The error middleware adds those fields plus method and route to
@@ -746,7 +789,7 @@ bridge. Any two of the three leaves a hole the third was covering: the policy
 without the sandbox is a document reading the application's DOM; the sandbox
 without the policy is a document calling out. Verified in a running window, not
 argued: `parent.location`, `fetch`, and `localStorage` all throw, and nothing
-Avalon-shaped is on `window`.
+Rally-shaped is on `window`.
 
 The remote-font scheme exists for the same class of reason. A theme could have
 put `https://…` in a `@font-face` and the CSP would have permitted it, but then
@@ -763,7 +806,7 @@ document from decoration into a participant.
 
 ### 2026-08-13 — A saved message is rendered outside the application's origin
 
-**What changed:** Exporting one of Avalon's messages as a picture or a PDF renders
+**What changed:** Exporting one of Rally's messages as a picture or a PDF renders
 it in a hidden, preload-free window on a scheme of its own, `avalon-export://`,
 serving one in-memory document per single-use token under a `default-src 'none'`
 policy. The request's four fields are parsed in main, and its proposed file name
@@ -815,7 +858,7 @@ Terminal tools.
 
 **What changed:** A connector's `full_access` setting now gives the Daytona
 sandbox a short-lived single-repository GitHub App credential for standard Git
-and GitHub CLI writes. Avalon creates/restores and checks out the persisted
+and GitHub CLI writes. Rally creates/restores and checks out the persisted
 word-based work-stream branch first; read-only continues to be enforced by
 token permissions.
 
@@ -837,7 +880,7 @@ changes and must not expose token plaintext in commands, output, or logs.
 
 **What changed:** The model may select an exact GitHub repository through a
 typed Terminal tool. Connector settings bind repository IDs to read-only or full
-remote access, every read/publish boundary rechecks that policy, and Avalon must
+remote access, every read/publish boundary rechecks that policy, and Rally must
 store a verified recovery resource before destroying sandbox state for another
 selection.
 
@@ -858,7 +901,7 @@ limit.
 
 ### 2026-08-13 — Public-site telemetry gains no provider or handoff authority
 
-**What changed:** The exact API origin allowlist now includes Avalon's two
+**What changed:** The exact API origin allowlist now includes Rally's two
 production site origins. The site can obtain a content-free route and a signed
 anonymous capability, then send only registered site events. EU identity remains
 in memory; Global may retain a first-party random epoch.
@@ -895,7 +938,7 @@ uses a closed setting enum, and cannot influence migration, rollback, or session
 recovery.
 ### 2026-08-13 — Desktop mutation headers are proven at the CORS boundary
 
-**What changed:** The regional API admits `X-Avalon-Operation-Id` in its explicit
+**What changed:** The regional API admits `X-Rally-Operation-Id` in its explicit
 CORS header allowlist, and app-origin preflight tests cover the desktop mutation
 header in both Global and EU. Connector telemetry-version negotiation
 deliberately uses a query marker rather than another header. Caught renderer
@@ -946,9 +989,9 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 ### 2026-08-13 — Code execution and GitHub publication use separate trust zones
 
-**What changed:** Avalon can execute model-authored code in an
+**What changed:** Rally can execute model-authored code in an
 authority-fenced private Daytona sandbox with host-controlled egress and
-read-only GitHub access. Generated resources cross through regional Avalon
+read-only GitHub access. Generated resources cross through regional Rally
 services. Remote branch/PR writes use a participant-intent grant and a fresh
 isolated publisher rather than the work-stream sandbox credential.
 
@@ -960,7 +1003,7 @@ alone is insufficient.
 
 **Considered and rejected:** Supplying the sandbox a reusable GitHub App write
 token, signed R2 URLs, model-managed network rules, and trusting Daytona labels
-as Avalon's authorization ledger. Those collapse storage, egress, and external
+as Rally's authorization ledger. Those collapse storage, egress, and external
 write boundaries into an untrusted process.
 
 **Consequences:** Revocation changes the sandbox generation; publication is
@@ -1068,7 +1111,7 @@ untrusted boundary or makes region/opt-out/deletion unenforceable.
 
 **Consequences:** Main and the regional Worker are the only telemetry authorities;
 raw bytes require audited regional access and never reach logs or PostHog.
-PostHog-side governance remains operational configuration outside Avalon's
+PostHog-side governance remains operational configuration outside Rally's
 internal retention lifecycle.
 
 Shipped in the pull request for this change. Design: [regional telemetry

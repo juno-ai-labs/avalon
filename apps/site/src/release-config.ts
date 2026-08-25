@@ -277,7 +277,7 @@ export function renderDesktopRelease(
   const href = desktopDmgUrl(config, publication);
   const version = publication?.published === true ? publication.version : config.version;
   const markup = href
-    ? `${releaseStartMarker}\n            <a class="button button-primary" href="${escapeHtml(href)}">Download Avalon for macOS</a>\n            <span class="release-note">${escapeHtml(config.platform)} · ${escapeHtml(config.architecture)} · ${escapeHtml(version)}</span>\n            ${releaseEndMarker}`
+    ? `${releaseStartMarker}\n            <a class="button button-primary" href="${escapeHtml(href)}">Download Rally for macOS</a>\n            <span class="release-note">${escapeHtml(config.platform)} · ${escapeHtml(config.architecture)} · ${escapeHtml(version)}</span>\n            ${releaseEndMarker}`
     : `${releaseStartMarker}\n            <span class="button button-disabled" aria-disabled="true">Downloads opening soon</span>\n            <span class="release-note">${escapeHtml(config.platform)} · ${escapeHtml(config.architecture)} · Private preview</span>\n            ${releaseEndMarker}`;
   return `${html.slice(0, start)}${markup}${html.slice(end + releaseEndMarker.length)}`;
 }

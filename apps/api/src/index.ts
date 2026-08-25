@@ -1,4 +1,4 @@
-import { isDurableObjectMigrationCommandQueue } from "@avalon/contracts/durable-object-migrations";
+import { isDurableObjectMigrationCommandQueue } from "@rally/contracts/durable-object-migrations";
 import { app } from "./app";
 import { assertEnvContract, EnvContractError, type Env } from "./env";
 import { misconfiguredResponse } from "./lib/misconfigured-response";

@@ -94,12 +94,12 @@ describe('native system audio controller', () => {
     expect(nativeSystemAudioAddonPath({
       currentDirectory: '/repo/apps/desktop/out/main',
       isPackaged: false,
-      resourcesPath: '/Applications/Avalon.app/Contents/Resources',
+      resourcesPath: '/Applications/Rally.app/Contents/Resources',
     })).toBe('/repo/apps/desktop/.native-build/system-audio-tap.node');
     expect(nativeSystemAudioAddonPath({
       currentDirectory: '/ignored',
       isPackaged: true,
-      resourcesPath: '/Applications/Avalon.app/Contents/Resources',
-    })).toBe('/Applications/Avalon.app/Contents/Resources/native/system-audio-tap.node');
+      resourcesPath: '/Applications/Rally.app/Contents/Resources',
+    })).toBe('/Applications/Rally.app/Contents/Resources/native/system-audio-tap.node');
   });
 });

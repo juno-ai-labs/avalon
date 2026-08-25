@@ -10,7 +10,7 @@ ends, a second, different pass replaces the live briefing with a durable
 whole-meeting summary.
 
 Read this before changing the recording cadence, either prompt, the transcript
-segment protocol, or the note resource that the rest of Avalon reads. The
+segment protocol, or the note resource that the rest of Rally reads. The
 realtime dictation transport that feeds it belongs to
 [`security.md`](security.md) and [`runbook.md`](runbook.md); this document starts
 at the transcript text the client already holds.
@@ -73,7 +73,7 @@ spends is bounded by how often the client asks, which it already controls — se
 [Open questions](#should-generation-move-to-the-server).
 
 Every reader agrees on the fallback because the default and its bounds are
-declared once as `CONTROL_TOWER_REFRESH_SECONDS` in `@avalon/contracts`: the
+declared once as `CONTROL_TOWER_REFRESH_SECONDS` in `@rally/contracts`: the
 desktop's fallback, both request schemas, and the clamp the resolver applies. A
 device that cannot reach the service, an older service that does not know the
 field, and an unreachable Flagship all land on the same sixty seconds.
@@ -145,7 +145,7 @@ still buffered in it, the final summary has not been written, and the note is no
 marked complete. **End and close** takes the native path from there; **Keep
 recording** leaves the window and the capture exactly as they were. A `quit`
 close is never asked, and this is the load-bearing half: a meeting window that
-stopped to confirm would veto the quit and leave Avalon running with a dialog
+stopped to confirm would veto the quit and leave Rally running with a dialog
 nobody went looking for. `before-quit` raises the flag and the last meeting
 window to close lowers it, so it says *a quit was requested and has not
 finished* rather than *a quit was requested just now* — the close it describes
@@ -222,7 +222,7 @@ resource separately.
 - **The meeting window closes only when the meeting finished cleanly.** Anything
   that closes it on a failure discards the only report of that failure.
 - **Only a `user` close may stop to ask.** A quit that a window can answer with a
-  dialog is a quit that can be vetoed by one, and the veto is silent — Avalon
+  dialog is a quit that can be vetoed by one, and the veto is silent — Rally
   stays up with no window in front of anyone. A close whose reason cannot be read
   is a quit.
 - **Only the owner may record, append, or generate.** Every statement binds
@@ -232,7 +232,7 @@ resource separately.
 
 This module owns the recording screen, the transcript segment protocol, both
 prompts, and the note resource it materializes. It exposes notes to the rest of
-Avalon only as that resource — nothing else reads `note_transcript_segments`.
+Rally only as that resource — nothing else reads `note_transcript_segments`.
 Its one outward gesture is the `avalon://notes/<id>` deep link it asks the main
 process to deliver when a meeting ends; the main window's router owns what
 happens next.
@@ -256,7 +256,7 @@ what happens when a note's scope changes, which is
 | Cost ceiling | 100¢ live, 200¢ final | `meeting-notes-service.ts` |
 | Transport retries | 0 live; `HARNESS_TRANSPORT_RETRIES` (default 1) final | `meeting-notes-service.ts` |
 
-- **Inference fails or times out.** The screen shows "Avalon could not update
+- **Inference fails or times out.** The screen shows "Rally could not update
   Control Tower" and keeps the previous briefing. The live pass does not wait
   and re-ask even when the harness would otherwise retry a provider fault: it
   has a successor a minute away that reads the same transcript window, so a
@@ -297,13 +297,13 @@ workspace note is an explicit, notified transition rather than a silent widening
 
 ## Testing
 
-- `pnpm --filter @avalon/api exec vitest run test/meeting-notes-service.test.ts`
+- `pnpm --filter @rally/api exec vitest run test/meeting-notes-service.test.ts`
   — prompt selection, the shape of each request, and the safe error on failure.
-- `pnpm --filter @avalon/api exec vitest run test/note-service.test.ts` — segment
+- `pnpm --filter @rally/api exec vitest run test/note-service.test.ts` — segment
   sequencing, the recent-window slice, and the final-summary race retry.
-- `pnpm --filter @avalon/api exec vitest run test/client-feature-flags.test.ts` —
+- `pnpm --filter @rally/api exec vitest run test/client-feature-flags.test.ts` —
   the served cadence, its clamp, and the fallback shared with every other reader.
-- `pnpm --filter @avalon/desktop exec vitest run src/renderer/screens/meeting-notes.test.tsx`
+- `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/meeting-notes.test.tsx`
   — that a served cadence actually drives the timer, elapsed-time accounting
   across segment boundaries, and the finalization order (append, then generate,
   then mark complete).
@@ -401,7 +401,7 @@ OUTPUT section rather than appended to a sentence.
 several routed models write `$\rightarrow$` when they mean an arrow. The
 renderer repairs it either way — [`model-text-normalization.md`](model-text-normalization.md)
 owns that — but the prompt is the half that keeps it out of the note resource the
-rest of Avalon reads back.
+rest of Rally reads back.
 
 **Consequences:** The live prompt is written for latency, and this adds under
 800 bytes to a system prompt whose cost is dominated by the transcript windows
@@ -480,7 +480,7 @@ confirmation instead of finalizing immediately; **End and close** runs the path
 that was already there, **Keep recording** does nothing at all. A `quit` close
 behaves exactly as before. The same change added `File → Close Window` to the
 macOS application menu, which is what made this urgent: Command-W was unbound in
-every Avalon window, so the only ways to close a meeting were the traffic light
+every Rally window, so the only ways to close a meeting were the traffic light
 and **End**.
 
 **Why:** Command-W is the gesture macOS names first for closing a window, and it
@@ -495,7 +495,7 @@ a dialog when it took a deliberate mouse trip to reach.
 
 **Considered and rejected:** Prompting on every native close, which is the
 smaller diff and the wrong behavior — during a quit, a window waiting on an
-answer is a window that vetoes the quit, and Avalon would be left running with
+answer is a window that vetoes the quit, and Rally would be left running with
 its status item alive and a dialog nobody went looking for. That is the same
 hazard the `will-quit` comment in `main/index.ts` already guards, from the other
 direction. So the reason is decided in the main process, where the quit cascade
@@ -671,7 +671,7 @@ a module constant the harness re-renders every turn — run data belongs in the
 request, and a prefix that varies per call is a cache that stops working.
 
 **Consequences:** Three readers now have to agree on one number, and they do only
-because the default and its bounds are declared once in `@avalon/contracts`;
+because the default and its bounds are declared once in `@rally/contracts`;
 adding a fourth reader means reading that declaration, not copying 60. The
 resolver clamps to 15–600 seconds before serving, so a flag typed in
 milliseconds costs a warning rather than a meeting's worth of inference — but

@@ -4,17 +4,17 @@ import {
   type BlockDashboard,
   type BlockDashboardPreference,
   type WorkstreamControlMetadata,
-} from '@avalon/contracts';
+} from '@rally/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { logWarn } from '../../common/logger';
-import { normalizeHarnessStatus, type AvalonApi } from './api';
+import { normalizeHarnessStatus, type RallyApi } from './api';
 import type { WorkstreamSummary } from './types';
 import { applyVersionedWorkstreamState } from './workstream-state-store';
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { setCachedWorkstreams } from './workstreams-cache';
 
-type WorkstreamControlSocketApi = Pick<AvalonApi, 'getWorkstreamControlSocketTicket'>;
+type WorkstreamControlSocketApi = Pick<RallyApi, 'getWorkstreamControlSocketTicket'>;
 const HEARTBEAT_MS = 50_000;
 const PONG_TIMEOUT_MS = 15_000;
 
@@ -218,7 +218,7 @@ export function useWorkstreamControlSocket(
             if (!event.success) {
               if (!protocolWarningReported) {
                 protocolWarningReported = true;
-                logWarn('avalon', 'Ignored invalid WorkstreamDO socket event', event.error.issues);
+                logWarn('rally', 'Ignored invalid WorkstreamDO socket event', event.error.issues);
               }
               return;
             }
@@ -237,7 +237,7 @@ export function useWorkstreamControlSocket(
             if (!protocolWarningReported) {
               protocolWarningReported = true;
               logWarn(
-                'avalon',
+                'rally',
                 'Ignored unreadable WorkstreamDO socket event',
                 error instanceof Error ? error.message : 'unknown',
               );

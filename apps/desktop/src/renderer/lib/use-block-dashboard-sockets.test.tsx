@@ -1,5 +1,5 @@
-import type { BlockDashboard } from '@avalon/contracts';
-import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
+import type { BlockDashboard } from '@rally/contracts';
+import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
@@ -112,7 +112,7 @@ describe('useBlockDashboardSockets', () => {
       blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
     });
     const getBlockDashboardBlockSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
       ticket: 'block-ticket',
       protocols: socketTicketProtocols('block-ticket'),
     }));
@@ -177,7 +177,7 @@ describe('useBlockDashboardSockets', () => {
       blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
     });
     const ticket = {
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
       ticket: 'block-ticket',
       protocols: socketTicketProtocols('block-ticket'),
     };
@@ -237,7 +237,7 @@ describe('useBlockDashboardSockets', () => {
       blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
     });
     const ticket = {
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
       ticket: 'block-ticket',
       protocols: socketTicketProtocols('block-ticket'),
     };
@@ -288,7 +288,7 @@ describe('useBlockDashboardSockets', () => {
       blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
     });
     const getBlockDashboardBlockSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
       ticket: 'block-ticket',
       protocols: socketTicketProtocols('block-ticket'),
     }));
@@ -348,7 +348,7 @@ describe('useBlockDashboardSockets', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getBlockDashboardBlockSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
       ticket: 'block-ticket',
       protocols: socketTicketProtocols('block-ticket'),
     }));
@@ -384,7 +384,7 @@ describe('useBlockDashboardSockets', () => {
     vi.spyOn(window.navigator, 'onLine', 'get').mockImplementation(() => online);
     const queryClient = new QueryClient();
     const getBlockDashboardBlockSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
       ticket: 'block-ticket',
       protocols: socketTicketProtocols('block-ticket'),
     }));
@@ -417,7 +417,7 @@ describe('useBlockDashboardSockets', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getBlockDashboardBlockSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
       ticket: 'block-ticket',
       protocols: socketTicketProtocols('block-ticket'),
     }));
@@ -445,7 +445,7 @@ describe('useBlockDashboardSockets', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const getBlockDashboardBlockSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
       ticket: 'block-ticket',
       protocols: socketTicketProtocols('block-ticket'),
     }));

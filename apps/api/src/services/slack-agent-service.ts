@@ -23,7 +23,7 @@ import {
   type SlackAgentInvocation,
   type SlackAgentSessionOrigin,
   type SlackIngressEnvelope,
-} from "@avalon/connectors";
+} from "@rally/connectors";
 import {
   ExternalActorSchema,
   SlackIngressQueueMessageSchema,
@@ -41,9 +41,9 @@ import {
   type SlackOriginContext,
   type SlackOriginNearbyMessage,
   type SlackSearchAuthorization,
-} from "@avalon/contracts";
-import { HttpsUrlSchema, httpsUrlSchema } from "@avalon/contracts/url-schemas";
-import { newId, nowIso } from "@avalon/db";
+} from "@rally/contracts";
+import { HttpsUrlSchema, httpsUrlSchema } from "@rally/contracts/url-schemas";
+import { newId, nowIso } from "@rally/db";
 import {
   SLACK_UNFURL_MAX_LINKS,
   TERMINAL_UNFURL_REASONS,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AvalonApi } from './api';
+import type { RallyApi } from './api';
 import { readDevicePreferences, setDeviceMicrophoneId } from './device-preferences';
 import { desktopBridge } from './platform';
 
@@ -229,7 +229,7 @@ async function createAudioCapture(
       source.connect(inputGain);
       sources.push(source);
     }
-    node = new AudioWorkletNode(context, 'avalon-pcm16-capture', {
+    node = new AudioWorkletNode(context, 'rally-pcm16-capture', {
       channelCount: 1,
       channelCountMode: 'explicit',
       channelInterpretation: 'speakers',
@@ -373,7 +373,7 @@ async function cleanupAttempt(attempt: DictationAttempt): Promise<void> {
 }
 
 export function useRealtimeDictation(
-  api: Pick<AvalonApi, 'getTranscriptionSocketTicket'> | undefined,
+  api: Pick<RallyApi, 'getTranscriptionSocketTicket'> | undefined,
   onTranscript: (transcript: string) => void,
   options: RealtimeDictationOptions = {},
 ): {

@@ -1,7 +1,7 @@
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GenerateMeetingNotesRequest } from "@avalon/contracts";
+import type { GenerateMeetingNotesRequest } from "@rally/contracts";
 import type { AuthContext, Env } from "../src/env";
 import { AutomationService } from "../src/services/automation-service";
 import { processPendingNotePrivacyNotifications } from "../src/services/note-privacy-notification-service";

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { substreamAgentName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { WorkstreamRuntimeSqlResult } from "../durable-objects/workstream-runtime-sql";
-import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { splitSqlStatements } from "../lib/sql-statements";

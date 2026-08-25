@@ -1,7 +1,7 @@
-import { DesktopDeepLinkUrlSchema, HttpUrlSchema } from "@avalon/contracts/url-schemas";
+import { DesktopDeepLinkUrlSchema, HttpUrlSchema } from "@rally/contracts/url-schemas";
 import type { Pipeline } from "cloudflare:pipelines";
 import { z } from "zod";
-import type { Region, UserId, WorkspaceId } from "@avalon/contracts";
+import type { Region, UserId, WorkspaceId } from "@rally/contracts";
 import type { RegionalIdentityBridgeRpcBinding } from "./services/platform-onboarding-service";
 import type { GitHubRegionalBridgeRpcBinding, GlobalGitHubRouterRpcBinding } from "./services/github-routing-service";
 import type { GlobalWorkstreamEmailRouterRpcBinding } from "./services/workstream-email-routing-service";
@@ -25,7 +25,7 @@ import type { SubstreamAgent } from "./durable-objects/substream-agent";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
 import type { WorkstreamDO } from "./durable-objects/workstream-do";
 import type { BlockDashboardAgent } from "./durable-objects/block-dashboard-agent";
-import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-object-migrations";
+import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 
 export const BLOCK_DASHBOARD_MODEL = "x-ai/grok-4.3";
@@ -90,7 +90,7 @@ export interface Env {
   APP_VERSION?: string;
   BUILD_SHA?: string;
   AVALON_REGION: Region;
-  AVALON_DEV_AUTH?: string;
+  RALLY_DEV_AUTH?: string;
   PUBLIC_API_BASE_URL: string;
   EU_PUBLIC_API_BASE_URL?: string;
   PUBLIC_WEB_BASE_URL: string;

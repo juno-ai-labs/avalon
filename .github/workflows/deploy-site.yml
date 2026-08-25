@@ -82,7 +82,7 @@ jobs:
         run: pnpm typecheck
 
       - name: Test the site
-        run: pnpm --filter @avalon/site test
+        run: pnpm --filter @rally/site test
 
       # The site advertises the version in apps/site/release.config.json. A
       # release rewrites that file on its own runner, so a site deploy from an
@@ -91,4 +91,4 @@ jobs:
         run: node scripts/check-site-release-config.mjs
 
       - name: Deploy the site
-        run: pnpm --filter @avalon/site run deploy
+        run: pnpm --filter @rally/site run deploy

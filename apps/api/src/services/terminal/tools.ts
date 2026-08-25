@@ -1,5 +1,5 @@
-import type { HarnessToolContext, HarnessToolResult } from "@avalon/agent-harness";
-import type { AttachmentKind } from "@avalon/contracts";
+import type { HarnessToolContext, HarnessToolResult } from "@rally/agent-harness";
+import type { AttachmentKind } from "@rally/contracts";
 import type { z } from "zod";
 
 import { TerminalArgumentSchemas, type TerminalToolExecutors } from "./contract";

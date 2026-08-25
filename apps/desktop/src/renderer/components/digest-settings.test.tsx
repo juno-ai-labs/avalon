@@ -170,16 +170,16 @@ describe('DigestSettings', () => {
       id: '00000000-0000-4000-8000-0000000000c1',
       modelPluginId: 'plugin_slack',
       connectorType: 'slack',
-      displayName: 'Avalon Studio',
+      displayName: 'Rally Studio',
       scope: 'workspace',
       status: 'healthy',
-      userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM.' },
+      userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Rally Agent DM.' },
     } as WorkstreamConnection;
     const unreachable = { ...reachable, id: '00000000-0000-4000-8000-0000000000c2', userDelivery: undefined };
     const { api, updateDigestSchedule } = apiWith();
     renderSettings(api, [reachable, unreachable]);
 
-    const slack = await screen.findByText('Slack DM · Avalon Studio');
+    const slack = await screen.findByText('Slack DM · Rally Studio');
     expect(screen.getAllByText(/Slack DM/u)).toHaveLength(1);
 
     fireEvent.click(slack.closest('label')!.querySelector('input')!);
@@ -200,7 +200,7 @@ describe('DigestSettings', () => {
       displayName: 'Studio',
       scope: 'workspace',
       status: 'healthy',
-      userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM.' },
+      userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Rally Agent DM.' },
     } as WorkstreamConnection;
     const slackB = { ...slackA, id: '00000000-0000-4000-8000-0000000000c2', displayName: 'Side project' };
     const { api, updateDigestSchedule } = apiWith();

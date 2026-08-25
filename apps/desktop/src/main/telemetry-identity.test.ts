@@ -7,7 +7,7 @@ import { readTelemetryIdentity, readTelemetryIdentityState, rotateTelemetryEpoch
 const roots: string[] = [];
 
 async function root(): Promise<string> {
-  const value = await mkdtemp(join(tmpdir(), 'avalon-telemetry-identity-'));
+  const value = await mkdtemp(join(tmpdir(), 'rally-telemetry-identity-'));
   roots.push(value);
   return value;
 }

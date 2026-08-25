@@ -24,24 +24,24 @@ jobs:
           - name: typecheck-and-build-invariants
             command: >-
               pnpm typecheck &&
-              pnpm --filter @avalon/api build &&
-              pnpm --filter @avalon/api build:eu &&
-              pnpm --filter @avalon/desktop test:release
+              pnpm --filter @rally/api build &&
+              pnpm --filter @rally/api build:eu &&
+              pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-2
-            command: pnpm --filter @avalon/desktop exec vitest run --shard=1/2
+            command: pnpm --filter @rally/desktop exec vitest run --shard=1/2
           - name: desktop-tests-2-of-2
-            command: pnpm --filter @avalon/desktop exec vitest run --shard=2/2
+            command: pnpm --filter @rally/desktop exec vitest run --shard=2/2
           - name: api-tests-1-of-2
-            command: pnpm --filter @avalon/api exec vitest run --shard=1/2
+            command: pnpm --filter @rally/api exec vitest run --shard=1/2
           - name: api-tests-2-of-2
             command: >-
-              pnpm --filter @avalon/api exec vitest run --shard=2/2 &&
-              pnpm --filter @avalon/api test:workers
+              pnpm --filter @rally/api exec vitest run --shard=2/2 &&
+              pnpm --filter @rally/api test:workers
           - name: crash-symbolicator-container
-            command: pnpm --filter @avalon/api test:crash-symbolicator-container
+            command: pnpm --filter @rally/api test:crash-symbolicator-container
           - name: remaining-tests
             command: >-
-              pnpm --filter '!@avalon/desktop' --filter '!@avalon/api' --recursive --if-present test &&
+              pnpm --filter '!@rally/desktop' --filter '!@rally/api' --recursive --if-present test &&
               pnpm test:scripts
     steps:
       - name: Check out the revision

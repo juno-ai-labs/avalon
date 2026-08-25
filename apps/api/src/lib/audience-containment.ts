@@ -1,4 +1,4 @@
-import { IdSchema } from "@avalon/contracts";
+import { IdSchema } from "@rally/contracts";
 import { z } from "zod";
 
 export const ContentAudienceSchema = z.discriminatedUnion("scope", [

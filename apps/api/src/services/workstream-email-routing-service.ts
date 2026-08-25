@@ -1,5 +1,5 @@
-import type { Region } from "@avalon/contracts";
-import { nowIso } from "@avalon/db";
+import type { Region } from "@rally/contracts";
+import { nowIso } from "@rally/db";
 import type { Env } from "../env";
 import {
   WORKSTREAM_EMAIL_DOMAIN,

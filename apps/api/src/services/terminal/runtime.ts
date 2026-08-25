@@ -1,5 +1,5 @@
-import type { HarnessToolContext } from "@avalon/agent-harness";
-import { newId } from "@avalon/db";
+import type { HarnessToolContext } from "@rally/agent-harness";
+import { newId } from "@rally/db";
 
 import { sha256Hex } from "../../lib/crypto";
 import type { AcquiredTerminalSandbox, TerminalSandboxCoordinator } from "./coordinator";

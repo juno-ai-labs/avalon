@@ -1,5 +1,5 @@
-import { asUserId } from "@avalon/contracts";
-import { asWorkspaceId } from "@avalon/contracts";
+import { asUserId } from "@rally/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";

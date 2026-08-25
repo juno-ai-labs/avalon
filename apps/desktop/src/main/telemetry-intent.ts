@@ -1,4 +1,4 @@
-import { TELEMETRY_EVENTS } from '@avalon/contracts/telemetry';
+import { TELEMETRY_EVENTS } from '@rally/contracts/telemetry';
 
 import type { DesktopTelemetryProductIntent } from '../common/desktop';
 

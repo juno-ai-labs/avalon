@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { assertBlockmapMatches } from './blockmap.mjs';
 import { smokeLaunch } from './launch-smoke.mjs';
 import {
-  AVALON_APP_ID,
-  AVALON_APPLE_TEAM_ID,
+  RALLY_APP_ID,
+  RALLY_APPLE_TEAM_ID,
   loadReleaseDirectory,
   verifyFeedArtifact,
 } from './release-lib.mjs';
@@ -57,7 +57,7 @@ function run(command, args, options = {}) {
 
 async function findApp(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
-  const app = entries.find((entry) => entry.isDirectory() && entry.name === 'Avalon.app');
+  const app = entries.find((entry) => entry.isDirectory() && entry.name === 'Rally.app');
   if (app) return join(directory, app.name);
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.endsWith('.app')) continue;
@@ -74,7 +74,7 @@ function verifyBundle(appPath, source) {
   const plist = join(appPath, 'Contents/Info.plist');
   const identifier = run('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', plist]);
   const version = run('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleShortVersionString', plist]);
-  if (identifier !== AVALON_APP_ID) throw new Error(`${source} has bundle identifier ${identifier}`);
+  if (identifier !== RALLY_APP_ID) throw new Error(`${source} has bundle identifier ${identifier}`);
   if (version !== desktopPackage.version) {
     throw new Error(`${source} has version ${version}; expected ${desktopPackage.version}`);
   }
@@ -94,8 +94,8 @@ function verifyDmgSignature(dmgPath) {
     throw new Error('DMG is not signed with a Developer ID Application certificate');
   }
   const team = details.match(/^TeamIdentifier=(.+)$/mu)?.[1]?.trim();
-  if (team !== AVALON_APPLE_TEAM_ID) {
-    throw new Error(`DMG is signed by Apple team ${team ?? '(missing)'}; expected ${AVALON_APPLE_TEAM_ID}`);
+  if (team !== RALLY_APPLE_TEAM_ID) {
+    throw new Error(`DMG is signed by Apple team ${team ?? '(missing)'}; expected ${RALLY_APPLE_TEAM_ID}`);
   }
   run('/usr/bin/xcrun', ['stapler', 'validate', dmgPath]);
   run('/usr/sbin/spctl', [
@@ -109,9 +109,9 @@ function verifyDmgSignature(dmgPath) {
   ]);
 }
 
-const zipDirectory = await mkdtemp(join(tmpdir(), 'avalon-release-zip-'));
-const dmgMount = await mkdtemp(join(tmpdir(), 'avalon-release-dmg-'));
-const smokeUserData = await mkdtemp(join(tmpdir(), 'avalon-release-user-data-'));
+const zipDirectory = await mkdtemp(join(tmpdir(), 'rally-release-zip-'));
+const dmgMount = await mkdtemp(join(tmpdir(), 'rally-release-dmg-'));
+const smokeUserData = await mkdtemp(join(tmpdir(), 'rally-release-user-data-'));
 let dmgAttached = false;
 try {
   await Promise.all([
@@ -129,7 +129,7 @@ try {
 
   run('/usr/bin/ditto', ['-x', '-k', release.zipPath, zipDirectory]);
   const zipApp = await findApp(zipDirectory);
-  if (!zipApp) throw new Error('The update ZIP does not contain Avalon.app');
+  if (!zipApp) throw new Error('The update ZIP does not contain Rally.app');
   verifyBundle(zipApp, 'Update ZIP');
   await smokeLaunch(zipApp, smokeUserData);
 
@@ -137,7 +137,7 @@ try {
   run('/usr/bin/hdiutil', ['attach', '-readonly', '-nobrowse', '-mountpoint', dmgMount, release.dmgPath]);
   dmgAttached = true;
   const dmgApp = await findApp(dmgMount);
-  if (!dmgApp) throw new Error('The DMG does not contain Avalon.app');
+  if (!dmgApp) throw new Error('The DMG does not contain Rally.app');
   verifyBundle(dmgApp, 'DMG');
 } finally {
   if (dmgAttached) {
@@ -155,5 +155,5 @@ try {
 }
 
 console.log(
-  `Verified Avalon ${desktopPackage.version} release: signed/notarized DMG, signed/notarized ZIP, clean-profile launch, and matching latest-mac.yml`,
+  `Verified Rally ${desktopPackage.version} release: signed/notarized DMG, signed/notarized ZIP, clean-profile launch, and matching latest-mac.yml`,
 );

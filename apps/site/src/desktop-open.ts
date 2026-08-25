@@ -1,4 +1,4 @@
-import { isDesktopDeepLinkProtocol } from '@avalon/contracts/desktop-deep-link';
+import { isDesktopDeepLinkProtocol } from '@rally/contracts/desktop-deep-link';
 import { reportDesktopHandoff } from './telemetry';
 
 type DesktopHandoffType = Parameters<typeof reportDesktopHandoff>[0];

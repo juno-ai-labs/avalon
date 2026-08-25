@@ -117,7 +117,7 @@ export function useMentionNavigation(
       if (optionKeys.length === 0) return false;
       // An IME is mid-word: this same Enter commits the composition and these
       // same arrows move through its candidate window. Taking them would
-      // replace what is being composed with an Avalon name and swallow the
+      // replace what is being composed with an Rally name and swallow the
       // keystroke that was going to finish it, which is how a mention query
       // typed in Japanese, Chinese, or Korean would be lost.
       if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return false;

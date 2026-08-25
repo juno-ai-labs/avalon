@@ -13,10 +13,10 @@ import {
 
 const sha256 = (character) => character.repeat(64);
 const artifacts = [
-  'Avalon-0.1.0-arm64.dmg',
-  'Avalon-0.1.0-arm64.dmg.blockmap',
-  'Avalon-0.1.0-arm64-mac.zip',
-  'Avalon-0.1.0-arm64-mac.zip.blockmap',
+  'Rally-0.1.0-arm64.dmg',
+  'Rally-0.1.0-arm64.dmg.blockmap',
+  'Rally-0.1.0-arm64-mac.zip',
+  'Rally-0.1.0-arm64-mac.zip.blockmap',
 ];
 
 test('checksum manifest is deterministic and contains only plain artifact names', () => {
@@ -33,7 +33,7 @@ test('checksum manifest is deterministic and contains only plain artifact names'
 test('published site configuration points to the exact promoted release channel', () => {
   const hashes = Object.fromEntries([
     ...artifacts.map((name, index) => [name, sha256(String(index + 1))]),
-    ['Avalon.dmg', sha256('1')],
+    ['Rally.dmg', sha256('1')],
     ['SHA256SUMS', sha256('f')],
   ]);
   const config = createPublishedSiteReleaseConfig({
@@ -45,22 +45,22 @@ test('published site configuration points to the exact promoted release channel'
     version: '0.1.0',
     artifactNames: artifacts,
     checksumsFile: 'SHA256SUMS',
-    bucket: 'avalon-desktop-releases',
+    bucket: 'rally-desktop-releases',
     prefix: '/stable/darwin/arm64/',
-    downloadBaseUrl: 'https://downloads.with-avalon.com',
+    downloadBaseUrl: 'https://downloads.rallywith.ai',
     sha256: hashes,
     publishedAt: '2026-08-02T12:00:00.000Z',
   });
 
   assert.equal(config.published, true);
   assert.equal(config.version, '0.1.0');
-  assert.equal(config.objects.dmg, 'stable/darwin/arm64/Avalon-0.1.0-arm64.dmg');
-  assert.equal(config.objects.canonicalDmg, 'stable/darwin/arm64/Avalon.dmg');
+  assert.equal(config.objects.dmg, 'stable/darwin/arm64/Rally-0.1.0-arm64.dmg');
+  assert.equal(config.objects.canonicalDmg, 'stable/darwin/arm64/Rally.dmg');
   assert.equal(config.objects.checksums, 'stable/darwin/arm64/0.1.0/SHA256SUMS');
   assert.equal(config.objects.latest, 'stable/darwin/arm64/latest-mac.yml');
   assert.deepEqual(config.files.blockmaps, [
-    'Avalon-0.1.0-arm64-mac.zip.blockmap',
-    'Avalon-0.1.0-arm64.dmg.blockmap',
+    'Rally-0.1.0-arm64-mac.zip.blockmap',
+    'Rally-0.1.0-arm64.dmg.blockmap',
   ]);
 });
 
@@ -69,15 +69,15 @@ test('the published config records the commit the release was built from', () =>
   // it is the difference between the next merge releasing and skipping.
   const hashes = Object.fromEntries([
     ...artifacts.map((name, index) => [name, sha256(String(index + 1))]),
-    ['Avalon.dmg', sha256('1')],
+    ['Rally.dmg', sha256('1')],
     ['SHA256SUMS', sha256('f')],
   ]);
   const options = {
     version: '0.1.0',
     artifactNames: artifacts,
-    bucket: 'avalon-desktop-releases',
+    bucket: 'rally-desktop-releases',
     prefix: 'stable/darwin/arm64',
-    downloadBaseUrl: 'https://downloads.with-avalon.com',
+    downloadBaseUrl: 'https://downloads.rallywith.ai',
     sha256: hashes,
     publishedAt: '2026-08-02T12:00:00.000Z',
   };
@@ -105,10 +105,10 @@ test('the published config records the commit the release was built from', () =>
 test('site activation requires both differential blockmaps and refuses downgrades', () => {
   const options = {
     version: '0.1.0',
-    artifactNames: artifacts.filter((name) => name !== 'Avalon-0.1.0-arm64.dmg.blockmap'),
-    bucket: 'avalon-desktop-releases',
+    artifactNames: artifacts.filter((name) => name !== 'Rally-0.1.0-arm64.dmg.blockmap'),
+    bucket: 'rally-desktop-releases',
     prefix: 'stable/darwin/arm64',
-    downloadBaseUrl: 'https://downloads.with-avalon.com',
+    downloadBaseUrl: 'https://downloads.rallywith.ai',
     sha256: {},
     publishedAt: '2026-08-02T12:00:00.000Z',
   };
@@ -123,7 +123,7 @@ test('site activation requires both differential blockmaps and refuses downgrade
 });
 
 test('site release configuration replacement is atomic and leaves no temporary file', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-site-release-test-'));
+  const directory = await mkdtemp(join(tmpdir(), 'rally-site-release-test-'));
   const path = join(directory, 'release.config.json');
   try {
     await writeFile(path, '{"published":false}\n', 'utf8');

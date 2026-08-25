@@ -4,7 +4,7 @@ export const NESTED_COMPONENT_ENTITLEMENTS = Object.freeze([
   'com.apple.security.network.client',
 ]);
 
-export const AVALON_UPDATE_URL = 'https://downloads.rallywith.ai/stable/darwin/arm64';
+export const RALLY_UPDATE_URL = 'https://downloads.rallywith.ai/stable/darwin/arm64';
 
 export function assertExactNestedEntitlements(keys, label) {
   const actual = [...new Set(keys)].sort();
@@ -47,7 +47,7 @@ export function assertEmbeddedUpdateConfig(contents) {
   if (providerLines.length !== 1 || yamlScalar(providerLines[0]) !== 'generic') {
     throw new Error('Embedded app-update.yml must contain exactly one generic update provider');
   }
-  if (urlLines.length !== 1 || yamlScalar(urlLines[0]) !== AVALON_UPDATE_URL) {
-    throw new Error(`Embedded app-update.yml URL must be exactly ${AVALON_UPDATE_URL}`);
+  if (urlLines.length !== 1 || yamlScalar(urlLines[0]) !== RALLY_UPDATE_URL) {
+    throw new Error(`Embedded app-update.yml URL must be exactly ${RALLY_UPDATE_URL}`);
   }
 }

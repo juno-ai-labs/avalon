@@ -1,3 +1,4 @@
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   asWorkspaceId,
   IdSchema,
@@ -29,8 +30,8 @@ import {
   type WorkspaceSyncTopic,
   ProductFeatureFlagKeySchema,
   type ProductFeatureFlagKey,
-} from "@avalon/contracts";
-import { truncateUtf16Safe } from "@avalon/contracts/text";
+} from "@rally/contracts";
+import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
@@ -3100,11 +3101,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return json({ error: "websocket_upgrade_required" }, 426);
     }
     const identity = SocketIdentitySchema.safeParse({
-      workspaceId: request.headers.get("x-avalon-workspace-id"),
-      userId: request.headers.get("x-avalon-user-id"),
-      sessionId: request.headers.get("x-avalon-session-id"),
-      ticketId: request.headers.get("x-avalon-socket-ticket-id"),
-      ticketExpiresAt: request.headers.get("x-avalon-socket-ticket-expires-at"),
+      workspaceId: readRallyHeader(request.headers, RALLY_HEADERS.WORKSPACE_ID) ?? null,
+      userId: readRallyHeader(request.headers, RALLY_HEADERS.USER_ID) ?? null,
+      sessionId: readRallyHeader(request.headers, RALLY_HEADERS.SESSION_ID) ?? null,
+      ticketId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_ID) ?? null,
+      ticketExpiresAt: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT) ?? null,
     });
     if (!identity.success) return json({ error: "invalid_socket_identity" }, 400);
 
@@ -3112,7 +3113,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!acceptsNewWorkstreamWork(authority) || authority.phase !== "durable_object_open") {
       return json({ error: "workstream_maintenance", phase: authority.phase }, 503);
     }
-    const placementAffinity = request.headers.get("x-avalon-placement-affinity");
+    const placementAffinity = readRallyHeader(request.headers, RALLY_HEADERS.PLACEMENT_AFFINITY) ?? null;
     if (!isWorkspacePlacementAffinityForRegion(this.env.AVALON_REGION, placementAffinity)) {
       return json({ error: "invalid_workspace_placement_affinity" }, 400);
     }
@@ -3999,7 +4000,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private async sessionAuth(identity: Pick<SocketIdentity, "sessionId" | "userId" | "workspaceId">): Promise<AuthContext | null> {
     const role = this.env.APP_ENV === "development"
-      && this.env.AVALON_DEV_AUTH === "true"
+      && this.env.RALLY_DEV_AUTH === "true"
       && identity.sessionId === "development"
       ? await this.env.DB.prepare(
         `SELECT member.role

@@ -8,7 +8,7 @@ its author creates it, which promotes the same row to `active`, or its author
 archives it, which hides it for good.
 
 The promise this makes is that setting an automation up is visible work.
-Describing one to Avalon takes several turns and can be interrupted; a
+Describing one to Rally takes several turns and can be interrupted; a
 conversation that lived only in the window it was typed in was work that
 disappeared the moment the window went somewhere else. Read this before changing
 the automation compiler, `POST /automations`, the sidebar's automation section,
@@ -145,7 +145,7 @@ may not write through to, inserts a new automation exactly as it always did.
   now, and led away from the automations that run.
 - **The result is Markdown, not an email.** The compiler asks for headings,
   bullets, numbered lists, bold, italic, inline code, and links — never for a
-  wrapper, an HTML document, or a subject line. Avalon renders the email around
+  wrapper, an HTML document, or a subject line. Rally renders the email around
   the result; a model asked for an email-shaped artifact produces one nested
   inside another, and asked for a table produces the one structure the renderer
   keeps verbatim rather than laying out.
@@ -155,7 +155,7 @@ may not write through to, inserts a new automation exactly as it always did.
   draft's prose is guessing at something the compiler already knew, and the guess
   ticks a destination for a briefing that merely *mentions* email. It stays a
   request: what delivers is the set of rows on the created automation.
-- **A destination is not a step.** Avalon sends each run's final message to the
+- **A destination is not a step.** Rally sends each run's final message to the
   destinations chosen on the automation, so the compiler writes "email me the
   briefing" into `expectedOutputs` and never into `instructions` as a
   `gmail.send` call. An automation whose instructions do the sending delivers
@@ -246,8 +246,8 @@ from the API, not a second renderer completion.
 | `apps/desktop/src/renderer/screens/new-automation.test.tsx` | Resuming `?draft=`, the screen naming the draft it wrote, and the delivery choice a draft's `requestedDelivery` pre-selects. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | Draft ordering, the row's link, and the archive menu item. |
 
-Run them with `pnpm --filter @avalon/api exec vitest run test/automation-draft-persistence.test.ts`
-and `pnpm --filter @avalon/desktop exec vitest run src/renderer/screens/new-automation.test.tsx`.
+Run them with `pnpm --filter @rally/api exec vitest run test/automation-draft-persistence.test.ts`
+and `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/new-automation.test.tsx`.
 
 Three traps in the renderer suite. `api.resumeAutomationDraft` is stubbed to
 **reject** in `beforeEach`: a resolved fixture left over from another test
@@ -312,7 +312,7 @@ compiler cannot name it.
 ### 2026-08-22 — The compiler stops writing the delivery it is given
 
 **What changed:** The compiler prompt's Slack-only rule — describe the delivery,
-do not model the Avalon bot as a tool — now covers every destination Avalon
+do not model the Rally bot as a tool — now covers every destination Rally
 delivers to, email included, and says outright not to instruct a provider send
 for one. It also asks for a result in ordinary Markdown, with no wrapper,
 envelope, HTML document, or subject line around it.
@@ -320,7 +320,7 @@ envelope, HTML document, or subject line around it.
 **Why:** Only Slack was named, so a briefing automation whose owner asked to be
 emailed got `gmail.send` written into its instructions *and* an email delivery
 target frozen on it: the same briefing arrived twice, from the owner's own
-address and from Avalon's. The Markdown line is for the other half of that
+address and from Rally's. The Markdown line is for the other half of that
 report — the result is rendered into an email, so a model asked for an
 email-shaped artifact produces one wrapped in another.
 

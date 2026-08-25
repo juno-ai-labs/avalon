@@ -1,6 +1,6 @@
 # Provider app registrations
 
-Avalon registers **one public app per provider** and routes each account to its
+Rally registers **one public app per provider** and routes each account to its
 own region, rather than registering a Global app and an EU app. Providers whose
 callback model cannot be smart-routed are the exception and use distinct
 registrations. Provider payloads are persisted and processed only in each
@@ -29,17 +29,17 @@ client secrets, signing secrets, and GitHub private keys are never committed.
 
 ### The zero-copy connector boundary
 
-In Avalon, **zero-copy means we do not recreate a connected product inside
-Avalon**. A connector must not turn the provider into a parallel inbox, channel
+In Rally, **zero-copy means we do not recreate a connected product inside
+Rally**. A connector must not turn the provider into a parallel inbox, channel
 browser, document store, source-of-truth database, or generally searchable
 replica.
 
-Zero-copy does not mean that no provider data may cross the boundary, that Avalon
-cannot subscribe to activity, or that every byte must remain transient. Avalon may
+Zero-copy does not mean that no provider data may cross the boundary, that Rally
+cannot subscribe to activity, or that every byte must remain transient. Rally may
 receive webhooks, poll incremental changes, retain bounded normalized trigger
 evidence and provenance, fetch authorized task-specific context on demand, and
 persist the prompts, work history, outputs, and receipts needed to perform
-user-requested work. Those copies must serve an Avalon task, automation, audit, or
+user-requested work. Those copies must serve a Rally task, automation, audit, or
 reliability function; they must not accumulate into a replacement for the connected
 product.
 
@@ -52,9 +52,9 @@ implementation literally stores zero copies.
 Google platform identity and Google connector consent use **two separate** Google
 Cloud OAuth 2.0 *Web application* clients in the same Google Cloud project:
 
-1. **Avalon Login** is used only for platform identity and requests
+1. **Rally Login** is used only for platform identity and requests
    `openid email profile`.
-2. **Avalon Google Connectors** is used only for Gmail, Calendar, Drive, Docs, and
+2. **Rally Google Connectors** is used only for Gmail, Calendar, Drive, Docs, and
    Sheets connections.
 
 Enable these APIs in the project that owns the connector client: Gmail API, Google
@@ -64,18 +64,18 @@ Register these exact hosted authorized redirect URIs:
 
 | OAuth client | Authorized redirect URI |
 | --- | --- |
-| Avalon Login | `https://api.rallywith.ai/auth/google/callback` |
-| Avalon Google Connectors | `https://api.rallywith.ai/connections/google/callback` |
-| Avalon Google Connectors | `https://eu.api.rallywith.ai/connections/google/callback` |
+| Rally Login | `https://api.rallywith.ai/auth/google/callback` |
+| Rally Google Connectors | `https://api.rallywith.ai/connections/google/callback` |
+| Rally Google Connectors | `https://eu.api.rallywith.ai/connections/google/callback` |
 
-`https://rallywith.ai/auth/desktop/` is Avalon's post-callback browser handoff
+`https://rallywith.ai/auth/desktop/` is Rally's post-callback browser handoff
 for login and every connector, and `rallywithai://auth/complete` is its allowlisted
 desktop return URI. Provider codes always terminate at the owning API callback
 first; **neither handoff URI is a Google OAuth redirect URI.** Add the
 corresponding `http://127.0.0.1:<port>` API callbacks only to a development client
 used for local provider testing.
 
-Configure the consent screen for the exact scopes Avalon requests:
+Configure the consent screen for the exact scopes Rally requests:
 
 | Purpose or capability | Google OAuth scope |
 | --- | --- |
@@ -88,18 +88,18 @@ Configure the consent screen for the exact scopes Avalon requests:
 
 Settings groups those capabilities into **Google Mail + Calendar** and **Google
 Drive + Docs + Sheets**, but there is only one `google` provider implementation.
-Drive change-token polling supplies Drive, Docs, and Sheets change activity; Avalon
+Drive change-token polling supplies Drive, Docs, and Sheets change activity; Rally
 does not currently configure Gmail Pub/Sub watches, Calendar notification channels,
 Drive push notifications, or a Google webhook endpoint.
 
 The capability-to-scope mapping deliberately matches the scopes approved for the
-production connector client. `gmail.modify` covers Avalon's Gmail reads, drafts,
-and sends; Avalon does not expose its additional mailbox-mutation authority.
+production connector client. `gmail.modify` covers Rally's Gmail reads, drafts,
+and sends; Rally does not expose its additional mailbox-mutation authority.
 `drive.readonly` covers Drive discovery and native Docs/Sheets reads. `drive.file`
-covers Docs/Sheets creation and edits only for files created by Avalon or
-explicitly opened or shared with Avalon; arbitrary existing files discovered
+covers Docs/Sheets creation and edits only for files created by Rally or
+explicitly opened or shared with Rally; arbitrary existing files discovered
 through Drive remain read-only. Google granular consent is checked at callback
-time, and Avalon refuses to mark a connection healthy when any selected capability
+time, and Rally refuses to mark a connection healthy when any selected capability
 was not actually granted.
 
 ### GitHub App
@@ -108,13 +108,13 @@ Register `github.json` as one public GitHub App installable on any account. Uplo
 `assets/brand/avalon-mark.png`, enable expiring user-to-server tokens, keep SSL
 verification enabled, and leave device flow and OAuth-during-installation disabled.
 Keep **Redirect on update** disabled: repository-selection changes arrive through
-`installation_repositories`, while the setup URL accepts only one-use Avalon
+`installation_repositories`, while the setup URL accepts only one-use Rally
 install state.
 
 | Setting | Value |
 | --- | --- |
-| Name | `Avalon Workstreams` |
-| Description | `Connect GitHub repositories to Avalon work streams and automations.` |
+| Name | `Rally Workstreams` |
+| Description | `Connect GitHub repositories to Rally work streams and automations.` |
 | Homepage URL | `https://rallywith.ai` |
 | Callback URLs | `https://api.rallywith.ai/connections/github/callback` and `https://eu.api.rallywith.ai/connections/github/callback` |
 | Setup URL | `https://github.rallywith.ai/connections/github/setup` |
@@ -135,14 +135,14 @@ the existing Contents read permission, while issue dependencies and sub-issues
 require the existing Issues permission, so these subscriptions do not broaden App
 access.
 
-The shared setup and webhook host, `github.rallywith.ai`, runs on Avalon's
+The shared setup and webhook host, `github.rallywith.ai`, runs on Rally's
 Global ingress Worker. It verifies GitHub's signature before parsing, maps an
-installation to every Avalon region where it is connected, and forwards the exact
+installation to every Rally region where it is connected, and forwards the exact
 signed bytes over a Worker service binding. Each regional Worker verifies the
 delivery again before regional persistence and processing. OAuth callbacks remain
 regional so user tokens never cross the selected boundary.
 
-The setup URL is deliberately separate from the OAuth callback: Avalon first
+The setup URL is deliberately separate from the OAuth callback: Rally first
 validates the installation with an app JWT, then starts a one-use PKCE user
 authorization and proves that the authorizing user can access that installation.
 
@@ -150,7 +150,7 @@ Capture the app ID, client ID, client secret, slug, webhook secret, and PEM priv
 key, then install the same App configuration in both regional Workers. The webhook
 secret must be byte-identical in both. GitHub supports multiple App private keys, so
 production may use a separate key per regional Worker without creating another App.
-The registered production App is `Avalon Workstreams` with slug
+The registered production App is `Rally Workstreams` with slug
 `avalon-workstreams`.
 
 ### Linear OAuth app
@@ -162,11 +162,11 @@ webhook URL `https://linear.rallywith.ai/ingest/linear`. It is the
 production-safe resource configuration and intentionally does not subscribe to
 `AgentSessionEvent` or `AppUserNotification`.
 
-Avalon uses Authorization Code with PKCE S256. The same public app requests
+Rally uses Authorization Code with PKCE S256. The same public app requests
 `actor=user` for a personal, owner-only connection and `actor=app` for a workspace
-connection whose capabilities roll down to every Avalon workspace member. The
+connection whose capabilities roll down to every Rally workspace member. The
 selected, workspace-only `linear.agent` capability requests `app:assignable` and
-`app:mentionable`, making Avalon a delegatable and mentionable app user, plus
+`app:mentionable`, making Rally a delegatable and mentionable app user, plus
 `write` so the host can immediately acknowledge activation with a reaction.
 Resource tools request only their corresponding `read`, `issues:create`,
 `comments:create`, or `write` scopes. The callback verifies the returned actor,
@@ -192,7 +192,7 @@ surface model, event matrix, and that gate.
 
 The personal Notion connection uses the official hosted MCP server at
 `https://mcp.notion.com/mcp`. It requires no second Notion Developer portal app,
-client ID, client secret, webhook, or checked-in provider manifest. Avalon uses
+client ID, client secret, webhook, or checked-in provider manifest. Rally uses
 MCP OAuth discovery and dynamic client registration for each authorization,
 with PKCE and the shared
 `https://notion.rallywith.ai/connections/notion/callback` redirect. The DCR
@@ -207,17 +207,17 @@ both regions:
 
 | Setting | Value |
 | --- | --- |
-| Name | Avalon |
+| Name | Rally |
 | Installation scope | Any workspace |
 | Redirect URI | `https://notion.rallywith.ai/connections/notion/callback` |
 | Webhook URL | Run `pnpm notion:webhook:prepare` and paste the URL it copies |
 
-An Avalon workspace owner or administrator initiates installation. The authorize
+An Rally workspace owner or administrator initiates installation. The authorize
 URL deliberately uses Notion's `owner=user`, because public OAuth needs a human
-approver and page picker; do not change that parameter to model Avalon scope.
-Avalon stores the resulting bot grant as a workspace connection with no user
+approver and page picker; do not change that parameter to model Rally scope.
+Rally stores the resulting bot grant as a workspace connection with no user
 owner. The approver's Notion identity remains encrypted metadata, while edits and
-comments made through the API appear as the Avalon integration bot.
+comments made through the API appear as the Rally integration bot.
 
 A Notion connection accepts one redirect URI and delivers to one webhook URL, and
 it has no way to know which region a Notion workspace belongs to — so unlike Linear
@@ -251,7 +251,7 @@ binding. The token then signs every later `X-Notion-Signature`.
 
 One public Slack Marketplace app serves both regions. OAuth callbacks are regional;
 events, interactivity, commands, and unfurls use `https://slack.rallywith.ai`
-and the opaque team router. Enable Slack's **Delayed Events** retry option: Avalon
+and the opaque team router. Enable Slack's **Delayed Events** retry option: Rally
 verifies requests immediately, admits work through an idempotent regional ingress
 job, and enforces a 2.6-second end-to-end response budget.
 [`slack-permissions.md`](slack-permissions.md) owns the scope-to-tool mapping and
@@ -306,7 +306,7 @@ Both regions need `TWITTER_API_IO_API_KEY` to expose the read-only X connector, 
   authentication independent of sensitive and restricted Google Workspace scopes
   and their verification lifecycle.
 - **A provider code always terminates at the owning regional API callback first.**
-  `https://rallywith.ai/auth/desktop/` and `rallywithai://auth/complete` are Avalon's
+  `https://rallywith.ai/auth/desktop/` and `rallywithai://auth/complete` are Rally's
   own handoff, never a provider redirect URI.
 - **The webhook secret is byte-identical in both regions**, for every provider whose
   ingress is shared. The signature is verified at the ingress *and again* in the
@@ -384,7 +384,7 @@ repository. What can be:
   checked-in `.slack` hook — run it after editing that manifest.
 - `packages/connectors/src/*.test.ts` cover the scope derivation, callback
   verification, and webhook normalization each registration is paired with; run one
-  with `pnpm --filter @avalon/connectors exec vitest run src/<name>.test.ts`.
+  with `pnpm --filter @rally/connectors exec vitest run src/<name>.test.ts`.
 - `apps/api/test/*-routing.test.ts` cover the account-to-region directories the
   shared ingresses consult.
 - The manual provider acceptance flows in [`e2e.md`](e2e.md) are the only check
@@ -437,19 +437,19 @@ the hosted server boundary, not by editing the public connection dashboard.
 
 Shipped in the pull request for this change.
 
-### 2026-08-12 — Notion's user approver installs an Avalon workspace bot
+### 2026-08-12 — Notion's user approver installs a Rally workspace bot
 
 **What changed:** The registration guide now distinguishes Notion's required
-`owner=user` OAuth parameter from Avalon's workspace-only connection scope. An
-Avalon owner or administrator authorizes the selected pages, the regional row has
+`owner=user` OAuth parameter from Rally's workspace-only connection scope. An
+Rally owner or administrator authorizes the selected pages, the regional row has
 no user owner, and the installed bot is the provider actor.
 
 **Why:** The provider dashboard and token response name the approving user, which
 made it tempting to classify the connection as personal. That classification was
 wrong for the product surface: the integration bot authors mutations and the
-selected pages are intended as a shared Avalon workspace capability. Changing the
+selected pages are intended as a shared Rally workspace capability. Changing the
 provider parameter was rejected because it would break the public OAuth contract
-rather than change Avalon's authorization model.
+rather than change Rally's authorization model.
 
 ### 2026-08-12 — Notion setup secrets leave the webhook URL and Cloudflare logs
 
@@ -461,7 +461,7 @@ current generation in one D1 transaction; its first challenge supersedes every
 older nonce, and an older in-flight request cannot win the ciphertext write in
 Global or arrive late and overwrite a newer EU replica.
 
-**Why:** Cloudflare records full request URLs independently of Avalon's logger,
+**Why:** Cloudflare records full request URLs independently of Rally's logger,
 so a reusable query-string guard became a 90-day credential in Workers Logs and
 Logpush. Logging the verification token instead would be worse: it is the HMAC
 secret for every later delivery. A public reveal endpoint was rejected because

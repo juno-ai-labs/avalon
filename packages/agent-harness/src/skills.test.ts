@@ -1,4 +1,4 @@
-import { asUserId } from "@avalon/contracts";
+import { asUserId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
   BUILT_IN_SKILLS,

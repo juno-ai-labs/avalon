@@ -1,5 +1,5 @@
 {
-  "name": "@avalon/migration-tracker",
+  "name": "@rally/migration-tracker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@avalon/contracts": "workspace:*",
+    "@rally/contracts": "workspace:*",
     "hono": "latest",
     "jose": "latest",
     "zod": "catalog:"

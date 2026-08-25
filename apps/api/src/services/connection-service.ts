@@ -1,3 +1,4 @@
+import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 import {
   ConnectorError,
   GoogleCapabilityScopes,
@@ -19,7 +20,7 @@ import {
   type GitHubWebhookResourceHint,
   type ResolvedConnectorAdapter,
   type VerifiedGranolaWebhook,
-} from "@avalon/connectors";
+} from "@rally/connectors";
 import type {
   Connection,
   ConnectorOAuthAttempt,
@@ -29,9 +30,9 @@ import type {
   GitHubRepositoryAccessSettings,
   UpdateGitHubRepositoryAccessSettings,
   Scope,
-} from "@avalon/contracts";
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+} from "@rally/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 import type { z } from "zod";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from "../telemetry/api-emitter";
@@ -2140,7 +2141,7 @@ export class ConnectionService {
     const source = this.registry().get("generic_webhook").webhookActivity;
     if (!source) throw new ApiError(500, "webhook_source_unavailable", "Webhook ingestion is unavailable");
     const webhookHeaders = new Headers();
-    if (signatureHeader) webhookHeaders.set("x-avalon-signature", signatureHeader);
+    if (signatureHeader) webhookHeaders.set(RALLY_HEADERS.SIGNATURE, signatureHeader);
     const envelope = await source.verify({
       rawBody: rawBodyText,
       rawBodyBytes: rawBody,

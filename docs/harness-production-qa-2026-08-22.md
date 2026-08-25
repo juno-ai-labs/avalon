@@ -11,7 +11,7 @@ was blocked. Read-only Worker tailing correlated the visible results with
 durable runs. Local library, API, script, desktop-release, type, lint, and both
 regional build gates supplied the lower-level matrix.
 
-The original pass found five Avalon defects:
+The original pass found five Rally defects:
 
 1. deterministic plugin, skill, and wake-up refusals were returned as successful
    tool results, so the model, durable receipt, audit, activity icon, and prose
@@ -29,7 +29,7 @@ The original pass found five Avalon defects:
    R2 object and discard the entire opt-in capture while leaving the visible
    inference successful.
 
-The post-deployment pass found a sixth Avalon defect: a
+The post-deployment pass found a sixth Rally defect: a
 `command_outcome_unknown` run terminalized as `needs_input` but retained
 Terminal's exclusive operation lease for sixteen minutes, blocking every linked
 recovery run.
@@ -47,7 +47,7 @@ repair. A fresh strict Global Computer Use sequence stopped an accepted
 120-second command, completed immediate linked reads without `sandbox_busy`,
 and still found the late marker absent after the original deadline. Granola also
 failed a second fresh activation because its hosted MCP authorization could not
-be verified. The evidence still does not isolate Avalon code from
+be verified. The evidence still does not isolate Rally code from
 provider/session/transport state, so Granola remains an unresolved live
 acceptance blocker rather than a confirmed code defect.
 
@@ -62,7 +62,7 @@ identity, migrations, and regional health prove the repaired code is live.
 ## Environment and safety boundary
 
 - Date: 2026-08-22–23 PDT / 2026-08-23 UTC.
-- Desktop: production `/Applications/Avalon.app`; original pass 1.132.0,
+- Desktop: production `/Applications/Rally.app`; original pass 1.132.0,
   PR #247 post-deployment pass 1.133.0, and PR #249 reproduction plus PR #251
   HQA-07 acceptance pass 1.135.0.
 - Region: Global production API, application version 0.24.0 in the correlated
@@ -439,7 +439,7 @@ stop is not confirmed and prove a late command cannot clean up the successor. Th
 unit suite pins exact named-session deletion, idempotent already-missing
 sessions, cancellation checks after in-flight session creation, and
 non-destructive ordinary cleanup failure. These tests prove
-Avalon orders admission after the provider lifecycle boundary; the required fresh
+Rally orders admission after the provider lifecycle boundary; the required fresh
 production pass remains the evidence for a live Daytona process. The lifecycle
 regressions prove expired tasks are cleaned before sandbox stop and a contender
 cannot enter during a provider-await claim. Claim expiry does not turn
@@ -475,7 +475,7 @@ remains unresolved and is never replayed.
 
 ### Reproduction and root cause
 
-Confidence: high; reproduced twice through signed-in Avalon 1.135.0 Computer
+Confidence: high; reproduced twice through signed-in Rally 1.135.0 Computer
 Use, then isolated to the provider-lifecycle proof in foreground and scheduled
 recovery.
 
@@ -496,7 +496,7 @@ then treated either deletion or a later 404 as process quiescence. The durable
 cleanup token and lease handoff were correct, but the provider evidence was not:
 production removed the named observation handle while the accepted shell kept
 running in the same sandbox. The linked run therefore overlapped the old process
-even though Avalon had safely cancelled the task and never replayed its command.
+even though Rally had safely cancelled the task and never replayed its command.
 The first shorter probe found its late marker too, but stop occurred too close to
 natural completion to isolate causality; the 120-second probe and post-deadline
 read are the acceptance evidence.
@@ -647,7 +647,7 @@ called.
 
 This evidence proves the live Granola acceptance gate failed. It does not prove
 whether the cause is provider availability, session/credential state, or
-Avalon's hosted-MCP transport. No code change follows without a provider-aware
+Rally's hosted-MCP transport. No code change follows without a provider-aware
 reproduction or a more specific private diagnostic.
 
 ## Local library and build matrix
@@ -657,8 +657,8 @@ defects were coverage gaps rather than already-failing gates.
 
 | Gate | Result |
 | --- | --- |
-| `@avalon/agent-harness` library | 180 tests passed before the new regressions. |
-| `@avalon/connectors` library | 218 tests passed across 13 files. |
+| `@rally/agent-harness` library | 180 tests passed before the new regressions. |
+| `@rally/connectors` library | 218 tests passed across 13 files. |
 | Targeted API harness matrix | 189 tests passed across 14 files. |
 | Root production build | PASS. |
 | EU Wrangler dry-run build | PASS. |

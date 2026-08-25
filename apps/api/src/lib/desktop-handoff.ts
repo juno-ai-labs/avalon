@@ -1,5 +1,5 @@
-import type { ConnectorOAuthProvider } from "@avalon/contracts";
-import { COMPATIBLE_DESKTOP_DEEP_LINK_PROTOCOL } from "@avalon/contracts/desktop-deep-link";
+import type { ConnectorOAuthProvider } from "@rally/contracts";
+import { COMPATIBLE_DESKTOP_DEEP_LINK_PROTOCOL } from "@rally/contracts/desktop-deep-link";
 import type { Env } from "../env";
 
 /**

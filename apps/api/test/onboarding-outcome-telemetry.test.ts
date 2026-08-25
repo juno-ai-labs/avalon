@@ -1,4 +1,4 @@
-import { asUserId } from "@avalon/contracts";
+import { asUserId } from "@rally/contracts";
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 import type { HonoAppEnv, IdentityAuthContext } from '../src/env';
@@ -58,7 +58,7 @@ describe('authoritative onboarding outcome telemetry', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-avalon-operation-id': operationId,
+        'x-rally-operation-id': operationId,
       },
       body: JSON.stringify({ name: 'Research', region: 'global' }),
     }, env);

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ModelMessage } from "@avalon/agent-harness";
+import type { ModelMessage } from "@rally/agent-harness";
 import {
   summarizeAttachmentWithClient,
   type AttachmentSummaryInference,

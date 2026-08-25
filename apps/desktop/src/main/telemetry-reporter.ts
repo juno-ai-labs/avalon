@@ -6,7 +6,8 @@ import {
   type TelemetryEventName,
   type TelemetryIdentityScope,
   type TelemetrySource,
-} from '@avalon/contracts';
+  TELEMETRY_ENVELOPE_SCHEMA,
+} from '@rally/contracts';
 import type { ApplicationIconId } from '../common/application-icons';
 import type {
   DesktopTelemetryConnectorSetupIntent,
@@ -206,7 +207,7 @@ export class TelemetryReporter {
 
   menuBarActionSelected(
     action: 'new_meeting_note' | 'new_workstream' | 'new_automation' | 'suggested_work'
-      | 'recent_workstream' | 'pinned_workstream' | 'open_avalon' | 'quit_avalon',
+      | 'recent_workstream' | 'pinned_workstream' | 'open_rally' | 'quit_rally',
   ): Promise<void> {
     return this.captureProduct('menu_bar_action_selected', 'desktop-main', { action });
   }
@@ -467,7 +468,7 @@ export class TelemetryReporter {
       const now = this.options.now();
       const identity = this.options.identity();
       const event = TelemetryEnvelopeSchema.parse({
-        schema: 'com.avalon.telemetry.event',
+        schema: TELEMETRY_ENVELOPE_SCHEMA,
         schemaVersion: 1,
         contextSchemaVersion: 2,
         eventId: eventId ?? (this.options.eventId ?? uuidV7)(now),

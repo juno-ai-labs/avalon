@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 import { describe, expect, it } from "vitest";
-import { socketTicketProtocols, SOCKET_TICKET_SUBPROTOCOL } from "@avalon/contracts/socket-tickets";
+import { socketTicketProtocols, SOCKET_TICKET_SUBPROTOCOL } from "@rally/contracts/socket-tickets";
 import { withNegotiatedSubprotocol } from "../src/services/socket-service";
 
 // Shaped like the compact JWS a ticket really is — dot-separated base64url —

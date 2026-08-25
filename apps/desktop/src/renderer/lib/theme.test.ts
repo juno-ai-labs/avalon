@@ -221,7 +221,7 @@ describe('theme', () => {
         listeners: 0,
         reported: [] as unknown[],
       };
-      vi.stubGlobal('avalon', {
+      vi.stubGlobal('rally', {
         setWindowTheme: (choice: unknown) => {
           state.reported.push(choice);
           return Promise.resolve();
@@ -310,7 +310,7 @@ describe('theme', () => {
       watchThemeBroadcast()();
       expect(bridge.listeners).toBe(0);
 
-      vi.stubGlobal('avalon', undefined);
+      vi.stubGlobal('rally', undefined);
       expect(() => watchThemeBroadcast()()).not.toThrow();
     });
   });
@@ -318,14 +318,14 @@ describe('theme', () => {
   /**
    * The *choice* travels to main, not the appearance it resolves to. Main
    * re-resolves it when it builds a window, which is the only way `system`
-   * survives Avalon being closed while the Mac changes appearance — and the
+   * survives Rally being closed while the Mac changes appearance — and the
    * only way main can tell that a preference changed at all, since two choices
    * can resolve to the same appearance.
    */
   it('tells the main process which choice to construct the next window from', async () => {
     installMatchMedia(false);
     const setWindowTheme = vi.fn(() => Promise.resolve());
-    vi.stubGlobal('avalon', { setWindowTheme });
+    vi.stubGlobal('rally', { setWindowTheme });
 
     persistThemeChoice({ family: 'air', mode: 'dark' });
     await Promise.resolve();
@@ -341,7 +341,7 @@ describe('theme', () => {
   it('reports a mode change that does not change the appearance', async () => {
     installMatchMedia(true);
     const setWindowTheme = vi.fn(() => Promise.resolve());
-    vi.stubGlobal('avalon', { setWindowTheme });
+    vi.stubGlobal('rally', { setWindowTheme });
 
     expect(persistThemeChoice({ family: 'terra', mode: 'system' }).resolved).toBe('terra');
     expect(persistThemeChoice({ family: 'terra', mode: 'dark' }).resolved).toBe('terra');

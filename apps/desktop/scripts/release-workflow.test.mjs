@@ -62,7 +62,7 @@ test('the app is health-gated against the regional APIs before it is distributed
 
 test('a real packaged Crashpad fixture gates every desktop release', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const fixture = workflow.indexOf('pnpm --filter @avalon/desktop test:crashpad');
+  const fixture = workflow.indexOf('pnpm --filter @rally/desktop test:crashpad');
   const signingIdentity = workflow.indexOf('- name: Import the Developer ID identity');
   const packagedRelease = workflow.indexOf('- name: Build, sign, notarize, staple, and verify');
 
@@ -88,7 +88,7 @@ test('the packaged Crashpad fixture owns its clean-runner bundler dependency', a
   );
   assert.match(
     fixture,
-    /await run\('pnpm',\s*\[\s*'--filter',\s*'@avalon\/desktop',\s*'exec',\s*'esbuild',/u,
+    /await run\('pnpm',\s*\[\s*'--filter',\s*'@rally\/desktop',\s*'exec',\s*'esbuild',/u,
     'The fixture must resolve esbuild from the desktop package',
   );
   assert.match(
@@ -106,11 +106,11 @@ test('private telemetry artifacts are published to both isolated regional teleme
   const distributed = workflow.indexOf('- name: Publish immutable payloads and promote the release manifest');
 
   assert.match(builder, /- "!out\/\*\*\/\*\.map"/u);
-  assert.match(workflow, /AVALON_GLOBAL_TELEMETRY_R2_BUCKET:/u);
-  assert.match(workflow, /AVALON_EU_TELEMETRY_R2_BUCKET:/u);
-  assert.doesNotMatch(workflow, /AVALON_(?:GLOBAL|EU)_PAYLOADS_R2_BUCKET:/u);
+  assert.match(workflow, /RALLY_GLOBAL_TELEMETRY_R2_BUCKET:/u);
+  assert.match(workflow, /RALLY_EU_TELEMETRY_R2_BUCKET:/u);
+  assert.doesNotMatch(workflow, /RALLY_(?:GLOBAL|EU)_PAYLOADS_R2_BUCKET:/u);
   assert.match(workflow, /cargo install dump_syms --version 2\.3\.7 --locked/u);
-  assert.match(workflow, /pnpm --filter @avalon\/desktop telemetry:publish-artifacts/u);
+  assert.match(workflow, /pnpm --filter @rally\/desktop telemetry:publish-artifacts/u);
   assert.ok(built < symbols, 'symbols must be extracted from the exact packaged application');
   assert.ok(symbols < distributed, 'a release must not distribute before both regional artifacts exist');
 });
@@ -271,7 +271,7 @@ test('the pipeline bumps the version itself, before the commit it tags', async (
   // The recorded watermark must name the bumped commit, not the one that
   // triggered the run.
   assert.ok(bumped < resolved, 'The release commit must be resolved after the bump');
-  assert.match(workflow.slice(resolved), /AVALON_RELEASE_COMMIT=\$\(git rev-parse HEAD\)/u);
+  assert.match(workflow.slice(resolved), /RALLY_RELEASE_COMMIT=\$\(git rev-parse HEAD\)/u);
 });
 
 test('the bump is skipped on a dispatch, which replays an already-tagged version', async () => {

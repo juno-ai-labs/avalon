@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 
@@ -143,7 +143,7 @@ export const devRoutes = new Hono<{ Bindings: Env }>();
  * id, the rest upsert or ignore — so a re-run repairs a partial seed.
  */
 devRoutes.post("/seed-product", zValidator("json", seedBody), async (c) => {
-  if (c.env.APP_ENV !== "development" || c.env.AVALON_DEV_AUTH !== "true") {
+  if (c.env.APP_ENV !== "development" || c.env.RALLY_DEV_AUTH !== "true") {
     throw new ApiError(404, "not_found", "Development tooling is unavailable");
   }
   const body = c.req.valid("json");

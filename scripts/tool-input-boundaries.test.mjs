@@ -6,8 +6,8 @@ import { toolInputNumberBoundaryRule } from "./eslint-rules/tool-input-boundarie
 
 const config = {
   languageOptions: { ecmaVersion: 2024, sourceType: "module" },
-  plugins: { avalon: { rules: { "tool-input-number-boundary": toolInputNumberBoundaryRule } } },
-  rules: { "avalon/tool-input-number-boundary": "error" },
+  plugins: { rally: { rules: { "tool-input-number-boundary": toolInputNumberBoundaryRule } } },
+  rules: { "rally/tool-input-number-boundary": "error" },
 };
 
 function lint(source) {

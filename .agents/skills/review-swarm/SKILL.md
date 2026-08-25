@@ -18,9 +18,9 @@ Give each persona this orientation, then its own section below.
 Avalon is a pnpm/TypeScript monorepo with three deployment surfaces: `apps/desktop`
 (Electron main + preload + sandboxed React renderers), `apps/api` (one Hono
 Cloudflare Worker deployed twice, as the Global and EU regions), and the shared
-packages `@avalon/contracts` (Zod wire contracts), `@avalon/db` (D1 migrations and
-repositories), `@avalon/agent-harness` (the Bind/OpenRouter adapter, prompts, and
-skills), and `@avalon/connectors`. Canonical state is regional D1; R2 holds large
+packages `@rally/contracts` (Zod wire contracts), `@rally/db` (D1 migrations and
+repositories), `@rally/agent-harness` (the Bind/OpenRouter adapter, prompts, and
+skills), and `@rally/connectors`. Canonical state is regional D1; R2 holds large
 payloads; Durable Objects, Queues, and Workflows coordinate but are not canonical
 stores. `apps/site` and `apps/release-retention` are the smaller Workers.
 
@@ -108,7 +108,7 @@ process is parsed:
   `apps/api/src/middleware/validation.ts` — never `@hono/zod-validator` directly,
   which returns the raw Zod failure and leaks schema paths and regexes into the
   public API.
-- Wire shapes live in `@avalon/contracts` and are referenced by both the route and
+- Wire shapes live in `@rally/contracts` and are referenced by both the route and
   the desktop client. Flag a response shape defined ad hoc in a route when the client
   parses a second, parallel definition of it.
 - A payload that crossed a durable boundary — a Queue message, a Workflow step's
@@ -116,7 +116,7 @@ process is parsed:
   webhook body — is re-parsed on arrival. It may have been written by an older
   deployment.
 - Any `as` cast standing in for a parse on boundary data is a finding. So is a bare
-  Zod URL: use the schemas in `@avalon/contracts/url-schemas`, which name the accepted
+  Zod URL: use the schemas in `@rally/contracts/url-schemas`, which name the accepted
   scheme contract (`docs/security.md` — bare URL validation accepts `javascript:` and
   `data:`).
 
@@ -155,7 +155,7 @@ actually pays for itself, accessibility of custom controls) plus the following.
   any IPC argument that is not parsed on both sides (`docs/security.md`).
 - **All server data flows through the API client** in
   `apps/desktop/src/renderer/lib/api.ts`, whose `request` parses every response with a
-  `@avalon/contracts` schema and raises `ApiError` with `invalid_response` on
+  `@rally/contracts` schema and raises `ApiError` with `invalid_response` on
   mismatch. Flag a bare `fetch` in a component, a response typed with `as`, and a
   locally redeclared wire shape.
 - **Socket frames are parsed too**, and the caches they write must not disagree: a
@@ -361,7 +361,7 @@ all run the same way:
   coverage their blast radius earns.
 - `pnpm test:scripts` covers only the repository's own `scripts/`. The desktop release
   tooling under `apps/desktop/scripts/` is a separate gate,
-  `pnpm --filter @avalon/desktop test:release` — flag a release-script change with no
+  `pnpm --filter @rally/desktop test:release` — flag a release-script change with no
   test there, because the other gate's name will suggest it ran when it did not.
 
 **3. Test quality & rigor.** A passing test that asserts nothing meaningful is worse
@@ -388,7 +388,7 @@ and the injection and load-bearing-line checks around it are deliberately substr
 assertions — so review whether a changed hash was updated *deliberately* (the diff
 shows the author read what moved), not whether a fixture file exists. (This overlaps
 the Prompt Engineer persona; review it anyway and note the overlap rather than assuming
-the other persona caught it.) Contract changes in `@avalon/contracts` must be tested
+the other persona caught it.) Contract changes in `@rally/contracts` must be tested
 from both sides, since the same schema is the server's validator and the client's
 parser.
 

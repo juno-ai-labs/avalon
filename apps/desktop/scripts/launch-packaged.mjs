@@ -10,7 +10,7 @@ const mode = modeIndex === -1 ? 'local' : 'release';
 if (modeIndex !== -1) argumentsAfterSeparator.splice(modeIndex, 1);
 
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const appPath = join(desktopDirectory, 'release', mode, 'mac-arm64', 'Avalon.app');
+const appPath = join(desktopDirectory, 'release', mode, 'mac-arm64', 'Rally.app');
 await access(appPath);
 execFileSync(process.execPath, [
   join(desktopDirectory, 'scripts', 'verify-macos-app.mjs'),
@@ -19,7 +19,7 @@ execFileSync(process.execPath, [
 ], { stdio: 'inherit' });
 
 // LaunchServices establishes the macOS application identity. Never invoke the
-// inner Contents/MacOS/Avalon executable from a sandboxed terminal or runner.
+// inner Contents/MacOS/Rally executable from a sandboxed terminal or runner.
 const child = spawn('/usr/bin/open', ['-na', appPath, '--args', ...argumentsAfterSeparator], {
   detached: true,
   stdio: 'ignore',

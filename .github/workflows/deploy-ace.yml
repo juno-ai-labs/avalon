@@ -63,8 +63,8 @@ jobs:
         run: |
           pnpm lint
           pnpm typecheck
-          pnpm --filter @avalon/ace test
-          pnpm --filter @avalon/ace build
+          pnpm --filter @rally/ace test
+          pnpm --filter @rally/ace build
           pnpm test:scripts
 
       - name: Ensure every declared Queue exists
@@ -76,7 +76,7 @@ jobs:
       # audience, deploys the Worker/assets/consumer, and installs the dedicated
       # Flagship-only runtime token as an encrypted Worker secret.
       - name: Provision and deploy Ace
-        run: pnpm --filter @avalon/ace run deploy
+        run: pnpm --filter @rally/ace run deploy
 
       - name: Verify Cloudflare Access protects Ace
         run: |

@@ -91,7 +91,7 @@ export function NoteDetailScreen(): React.JSX.Element {
                 <strong>{note.data.recordingStatus === 'recording' ? 'Control Tower is preparing your briefing' : 'No summary yet'}</strong>
                 <p>{note.data.recordingStatus === 'recording'
                   ? 'Control Tower updates as the conversation develops.'
-                  : 'Avalon’s final meeting summary will appear here.'}</p>
+                  : 'Rally’s final meeting summary will appear here.'}</p>
               </div>
             )}
           </article>

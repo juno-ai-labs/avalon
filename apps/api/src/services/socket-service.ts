@@ -1,3 +1,4 @@
+import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 import { jwtVerify, SignJWT } from "jose";
 import {
   asBlockId,
@@ -10,12 +11,12 @@ import {
   type UserId,
   type WorkspaceId,
   type WorkstreamId,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import {
   offersSocketTicketSubprotocol,
   socketTicketFromProtocols,
   SOCKET_TICKET_SUBPROTOCOL,
-} from "@avalon/contracts/socket-tickets";
+} from "@rally/contracts/socket-tickets";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { inFlowSpan } from "../observability/tracing";
@@ -71,7 +72,7 @@ export interface TranscriptionSocketClaims {
 
 function signingKey(env: Env): Uint8Array {
   if (env.SESSION_SIGNING_KEY) return encoder.encode(env.SESSION_SIGNING_KEY);
-  if (env.APP_ENV === "development" && env.AVALON_DEV_AUTH === "true") {
+  if (env.APP_ENV === "development" && env.RALLY_DEV_AUTH === "true") {
     return encoder.encode("avalon-development-session-key-not-for-production");
   }
   throw new ApiError(503, "socket_auth_not_configured", "Realtime authentication is not configured");
@@ -458,13 +459,13 @@ export class SocketService {
       // The ticket has been verified; the room has no use for it and should not
       // receive a live credential on a subrequest it does not authenticate with.
       headers.delete("sec-websocket-protocol");
-      headers.set("x-avalon-workspace-id", claims.workspaceId);
-      headers.set("x-avalon-workstream-id", claims.workstreamId);
-      headers.set("x-avalon-substream-id", claims.substreamId);
-      headers.set("x-avalon-session-id", claims.sessionId);
-      headers.set("x-avalon-user-id", claims.userId);
-      headers.set("x-avalon-socket-ticket-id", claims.ticketId);
-      headers.set("x-avalon-socket-ticket-expires-at", String(claims.expiresAt));
+      headers.set(RALLY_HEADERS.WORKSPACE_ID, claims.workspaceId);
+      headers.set(RALLY_HEADERS.WORKSTREAM_ID, claims.workstreamId);
+      headers.set(RALLY_HEADERS.SUBSTREAM_ID, claims.substreamId);
+      headers.set(RALLY_HEADERS.SESSION_ID, claims.sessionId);
+      headers.set(RALLY_HEADERS.USER_ID, claims.userId);
+      headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
+      headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
       // No trace header is written: the room's spans are already children of
       // this one, because a Durable Object call is a traced binding call and
       // everything inside it runs in this span's async context.
@@ -513,12 +514,12 @@ export class WorkspaceSocketService {
     );
     const headers = new Headers(request.headers);
     headers.delete("sec-websocket-protocol");
-    headers.set("x-avalon-workspace-id", claims.workspaceId);
-    headers.set("x-avalon-placement-affinity", placementAffinity);
-    headers.set("x-avalon-session-id", claims.sessionId);
-    headers.set("x-avalon-user-id", claims.userId);
-    headers.set("x-avalon-socket-ticket-id", claims.ticketId);
-    headers.set("x-avalon-socket-ticket-expires-at", String(claims.expiresAt));
+    headers.set(RALLY_HEADERS.WORKSPACE_ID, claims.workspaceId);
+    headers.set(RALLY_HEADERS.PLACEMENT_AFFINITY, placementAffinity);
+    headers.set(RALLY_HEADERS.SESSION_ID, claims.sessionId);
+    headers.set(RALLY_HEADERS.USER_ID, claims.userId);
+    headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
+    headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
     const response = await stub.fetch(
       new Request("https://workspace.internal/socket", { method: "GET", headers }),
     );
@@ -556,12 +557,12 @@ export class WorkstreamControlSocketService {
     );
     const headers = new Headers(request.headers);
     headers.delete("sec-websocket-protocol");
-    headers.set("x-avalon-workspace-id", claims.workspaceId);
-    headers.set("x-avalon-workstream-id", claims.workstreamId);
-    headers.set("x-avalon-session-id", claims.sessionId);
-    headers.set("x-avalon-user-id", claims.userId);
-    headers.set("x-avalon-socket-ticket-id", claims.ticketId);
-    headers.set("x-avalon-socket-ticket-expires-at", String(claims.expiresAt));
+    headers.set(RALLY_HEADERS.WORKSPACE_ID, claims.workspaceId);
+    headers.set(RALLY_HEADERS.WORKSTREAM_ID, claims.workstreamId);
+    headers.set(RALLY_HEADERS.SESSION_ID, claims.sessionId);
+    headers.set(RALLY_HEADERS.USER_ID, claims.userId);
+    headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
+    headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
     const response = await stub.fetch(
       new Request("https://workstream.internal/socket", { method: "GET", headers }),
     );
@@ -615,14 +616,14 @@ export class BlockDashboardBlockSocketService {
     });
     const headers = new Headers(request.headers);
     headers.delete("sec-websocket-protocol");
-    headers.set("x-avalon-region", claims.region);
-    headers.set("x-avalon-workspace-id", claims.workspaceId);
-    headers.set("x-avalon-workstream-id", claims.workstreamId);
-    headers.set("x-avalon-block-dashboard-block-id", claims.blockId);
-    headers.set("x-avalon-session-id", claims.sessionId);
-    headers.set("x-avalon-user-id", claims.userId);
-    headers.set("x-avalon-socket-ticket-id", claims.ticketId);
-    headers.set("x-avalon-socket-ticket-expires-at", String(claims.expiresAt));
+    headers.set(RALLY_HEADERS.REGION, claims.region);
+    headers.set(RALLY_HEADERS.WORKSPACE_ID, claims.workspaceId);
+    headers.set(RALLY_HEADERS.WORKSTREAM_ID, claims.workstreamId);
+    headers.set(RALLY_HEADERS.BLOCK_DASHBOARD_BLOCK_ID, claims.blockId);
+    headers.set(RALLY_HEADERS.SESSION_ID, claims.sessionId);
+    headers.set(RALLY_HEADERS.USER_ID, claims.userId);
+    headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
+    headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
     const response = await stub.fetch(new Request(
       "https://block-dashboard.internal/socket",
       { method: "GET", headers },

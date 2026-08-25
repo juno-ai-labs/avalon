@@ -7,21 +7,21 @@ test('starts Global before EU so Wrangler Container image builds cannot race', (
   assert.deepEqual(regionalApiCommands({ local: true }), [
     {
       name: 'global',
-      arguments: ['--filter', '@avalon/api', 'dev:local'],
+      arguments: ['--filter', '@rally/api', 'dev:local'],
     },
     {
       name: 'eu',
-      arguments: ['--filter', '@avalon/api', 'dev:local:eu'],
+      arguments: ['--filter', '@rally/api', 'dev:local:eu'],
     },
   ]);
   assert.deepEqual(regionalApiCommands({ local: false }), [
     {
       name: 'global',
-      arguments: ['--filter', '@avalon/api', 'dev'],
+      arguments: ['--filter', '@rally/api', 'dev'],
     },
     {
       name: 'eu',
-      arguments: ['--filter', '@avalon/api', 'dev:eu'],
+      arguments: ['--filter', '@rally/api', 'dev:eu'],
     },
   ]);
 });

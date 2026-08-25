@@ -1,8 +1,8 @@
 import type { ErrorHandler, NotFoundHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
-import { RepositoryError } from "@avalon/db";
-import { ConnectorError } from "@avalon/connectors";
+import { RepositoryError } from "@rally/db";
+import { ConnectorError } from "@rally/connectors";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { logEvent } from "../observability/logger";

@@ -1,8 +1,8 @@
 # Terminal workspaces
 
-Terminal is Avalon's deferred Bind plugin for bounded code execution, file
+Terminal is Rally's deferred Bind plugin for bounded code execution, file
 mutation, resource exchange, and GitHub repository work. It gives a
-work stream one private Daytona sandbox without turning Avalon into an
+work stream one private Daytona sandbox without turning Rally into an
 interactive coding harness: the model receives nine typed tools, not a PTY or a
 provider API, and a sandbox is allocated only when one of those tools executes.
 
@@ -40,7 +40,7 @@ the same work stream reuses that generation only while its execution-principal,
 selected repository, connection, and visible-resource authority fingerprint
 still match.
 
-Avalon uses Daytona's managed `daytona-small` container snapshot. On first
+Rally uses Daytona's managed `daytona-small` container snapshot. On first
 creation an idempotent compatibility bootstrap creates the owned `/workspace`,
 installs only missing SQLite/`gh`/pnpm/`tsx` capabilities through the compiled
 Trusted-only apt/npm hosts, and then executes the complete manifest. That
@@ -70,7 +70,7 @@ failure does not stop an otherwise healthy sandbox. After a Worker interruption,
 Bind re-enters only an exact incomplete Terminal command receipt, verifies the
 command hash and sandbox generation, and reattaches to the sole command in that
 session. A linked run cannot use an interrupted accepted command's sandbox until
-Avalon has stopped the whole sandbox and restarted it; deleting or failing to
+Rally has stopped the whole sandbox and restarted it; deleting or failing to
 find the named session is not process-quiescence evidence. A pre-acceptance
 `planned` or `submitting` task instead retires the provider sandbox and advances
 the generation. All other incomplete writes keep the harness's fail-closed ambiguity
@@ -108,10 +108,10 @@ healthy regional GitHub App connection and calls `checkout_repository` with its
 exact `owner/name`. The connection's versioned Settings policy may expose every
 App-installation repository or an explicit immutable-ID set; each effective
 entry is `read_only` or `full_access`. Read-only is remote-only: local file edits
-and local commits remain allowed. Avalon records the immutable GitHub repository
+and local commits remain allowed. Rally records the immutable GitHub repository
 ID, exact full name, default branch, base SHA, fixed
 `avalon/adjective-adjective-adjective-noun` head ref, and connection. The branch
-slug reuses Avalon's existing work-stream address vocabulary and a previously
+slug reuses Rally's existing work-stream address vocabulary and a previously
 stored valid branch remains stable. Before a different selection
 destroys an existing sandbox, the harness creates and verifies a compressed
 recovery resource containing source, untracked files, databases, and artifacts,
@@ -120,13 +120,13 @@ plus a portable Git bundle of local refs. It excludes credentials, the live
 If the copy fails, changes during transfer, or exceeds 50 MiB compressed, the
 existing workspace remains untouched.
 
-Before initial model-facing repository access, Avalon mints a
+Before initial model-facing repository access, Rally mints a
 one-hour installation token narrowed to that repository and the connector's
 current access level and the model's durable requested ceiling, mounts it through Daytona host-scoped secret substitution,
 creates or restores the recorded branch, switches to it, and exports the exact
 name as `AVALON_GIT_BRANCH` and base as `AVALON_GIT_BASE_BRANCH`. If the branch
 already exists remotely, bootstrap restores that head so later sessions continue
-the same PR history; otherwise Avalon creates the branch locally at the recorded
+the same PR history; otherwise Rally creates the branch locally at the recorded
 base and defers remote creation until the model first pushes. Later tools attempt
 to restore the prepared branch, but an active merge, rebase, bisect, or conflicting
 local edit does not lock the model out of the Terminal tools it needs to inspect
@@ -134,7 +134,7 @@ and repair that Git state. A `read_only` token technically blocks remote mutatio
 allowing local edits and commits. A `full_access` token permits ordinary trained
 `git push` and `gh pr` workflows. The plugin prompt tells the model to remain on
 the prepared branch, push only it, and target the prepared base branch. GitHub
-does not provide branch-scoped installation tokens, and Avalon deliberately does
+does not provide branch-scoped installation tokens, and Rally deliberately does
 not emulate one with a smart-HTTP proxy.
 
 Connector policy is revalidated before every bootstrap. Saving a policy clears
@@ -146,13 +146,13 @@ publisher, but it is not a gate around standard Git and GitHub CLI use.
 ### Network policy and lifecycle
 
 Every workspace chooses Trusted only or Full internet. Trusted only compiles an
-internal immutable baseline for Avalon/GitHub, Debian packages, Python packages,
+internal immutable baseline for Rally/GitHub, Debian packages, Python packages,
 and JavaScript packages plus up to the remainder of Daytona's 20 exact/wildcard
 domain targets. Settings shows only workspace-approved domains; the managed
 baseline is not a participant-facing policy surface. Full internet clears
 `domainAllowList`. Schemes, ports, paths, IP addresses, CIDR, public suffixes,
 and private names are rejected. An admin previews canonical workspace-domain
-changes and affected sandboxes against a revision, then confirms. Avalon cancels
+changes and affected sandboxes against a revision, then confirms. Rally cancels
 active tasks, preserves a final diff, stops each
 affected sandbox, applies and reads back the provider policy, and does not
 auto-restart it.
@@ -162,7 +162,7 @@ archives it after sixty minutes, and deletes it after thirty days. Daytona's
 15-minute auto-stop is only a provider backstop. Due transitions use a bounded
 object-local claim that outlives the provider request limit and reconcile
 observed provider state after ambiguous calls. Before stop
-or deletion Avalon saves a bounded Git diff (or a summary when the diff is too
+or deletion Rally saves a bounded Git diff (or a summary when the diff is too
 large) as a generated resource. Filesystem archives are not copied to R2; after
 expiry a participant explicitly starts fresh and the next tool gets a new root.
 
@@ -207,7 +207,7 @@ personless; it is not duplicated into these product events.
   prepared workspace.** Read-only is enforced by GitHub token permissions.
   Full access intentionally trusts the model with a repository-scoped token;
   prompt guidance and automatic branch restoration keep ordinary work on the
-  Avalon branch without pretending GitHub supports branch-scoped tokens.
+  Rally branch without pretending GitHub supports branch-scoped tokens.
 - **Resources cross through authorized regional services.** Giving Daytona R2
   credentials or treating a resource ID as authorization would break workspace,
   work-stream, principal, and residency boundaries.
@@ -299,10 +299,10 @@ schema those fixtures are built on is proved by
 Run the API set with:
 
 ```text
-pnpm --filter @avalon/api exec vitest run terminal-
+pnpm --filter @rally/api exec vitest run terminal-
 ```
 
-`pnpm --filter @avalon/api terminal:verify-provider-interface` is the disposable
+`pnpm --filter @rally/api terminal:verify-provider-interface` is the disposable
 real-provider smoke gate that needs only the normal supported Daytona variables.
 It verifies create/read-back, managed bootstrap, a binary buffered upload and
 download, command sessions, stop/restart, stop/archive/restore, policy update
@@ -311,7 +311,7 @@ The buffered upload deliberately exercises `uploadFile`; Daytona's
 `uploadFileStream` is unavailable in Cloudflare Workers and must not be used by
 the provider. This smoke gate does not prove network escape resistance.
 
-`pnpm --filter @avalon/api terminal:verify-provider` is the destructive,
+`pnpm --filter @rally/api terminal:verify-provider` is the destructive,
 ephemeral real-provider acceptance gate. It requires the normal supported
 Daytona configuration plus controlled HTTPS redirect and private-DNS probe URLs,
 creates one private sandbox, checks a binary file round-trip, the snapshot
@@ -357,9 +357,9 @@ reconciliation facts and never authorize a request.
 
 All Terminal local rows, regional resource bytes, generated logs/diffs, GitHub App
 installation-token creation, and tool execution records stay in the workspace's
-owning Avalon region. Daytona processes the sandbox filesystem in the configured
+owning Rally region. Daytona processes the sandbox filesystem in the configured
 regional target and is therefore a regional subprocessor boundary, not a
-cross-region Avalon bridge. Global and EU advertise capability independently;
+cross-region Rally bridge. Global and EU advertise capability independently;
 both checked-in deployments remain `unsupported` until their target, residency,
 snapshot, egress, and lifecycle probes pass. No Terminal record falls back to
 Global.
@@ -380,7 +380,7 @@ credential. Logs include IDs, state, error code, duration, and byte counts—not
 commands, output, diffs, tokens, or resource contents.
 
 The account-level `avalon_terminal_operations` Analytics Engine dataset is even
-narrower: it contains operation, outcome, Avalon region, configured snapshot,
+narrower: it contains operation, outcome, Rally region, configured snapshot,
 source lifecycle state, failed phase, release identity, phase durations, and the
 fixed names of compatibility tools installed. It contains no workspace,
 work-stream, run, user, provider-sandbox, command, path, resource, repository, or
@@ -428,7 +428,7 @@ Allocation is lazy and reuse is scoped to one work stream. Five-minute warm stop
 reduces compute time, sixty-minute archive reduces retained live-disk cost, and
 thirty-day deletion bounds provider storage. Only user-visible generated files,
 complete eligible command logs, and the last bounded Git diff are copied to R2;
-Avalon does not pay to maintain a second cold filesystem archive. Provider time
+Rally does not pay to maintain a second cold filesystem archive. Provider time
 and output bytes are derivable from local `terminal_workspace` and
 `terminal_tasks`, so cost changes can be measured without exposing commands.
 
@@ -544,7 +544,7 @@ moves its deadline to the requested command-plus-observation horizon. The
 initial repair treated deletion of the exact retained Daytona session as
 quiescence; the 2026-08-23 entry records why production disproved that assumption
 and replaced it with mandatory whole-sandbox stop. A pre-acceptance `planned` or
-`submitting` task is different: Avalon deletes the old
+`submitting` task is different: Rally deletes the old
 sandbox and advances to a fresh generation so a late request targets only the
 retired provider id. Before final expiry, provider-level 404 follows the same
 token-fenced task cancellation and generation-retirement path; once expiry is
@@ -587,7 +587,7 @@ free, or using the nominal execution deadline as a quiescence boundary.
 and Daytona retains that named session for exact-receipt recovery. Before
 acceptance, the deadline covers only the bounded provider request; after
 acceptance, the task moves to a command-plus-observation horizon. Neither clock
-is accepted as quiescence evidence: a lost response can outlive Avalon's local
+is accepted as quiescence evidence: a lost response can outlive Rally's local
 observation. The current repair requires whole-sandbox stop for an accepted
 command or deletion and fresh-generation replacement before acceptance. It never
 replays or declares the ambiguous command resolved.
@@ -959,7 +959,7 @@ authority fingerprint as the transcript. Leaving them writable in D1 after the
 work-stream cutover would split one recovery transaction across authorities.
 
 **Considered and rejected:** Keeping Terminal in D1 because Daytona is external.
-The execution provider boundary does not change who owns Avalon's run state.
+The execution provider boundary does not change who owns Rally's run state.
 
 **Consequences:** The workspace scheduler discovers only projected due work and
 then claims the exact lifecycle transition in the object. Daytona remains the
@@ -1004,7 +1004,7 @@ but Git otherwise uses the system bundle and rejects it.
 **Considered and rejected:** Disabling Git TLS verification, copying the GitHub
 token into the sandbox, and hard-coding Daytona's current Netleash certificate
 path. They respectively remove transport authentication, break the placeholder
-secret boundary, or bind Avalon to a provider-internal path when Daytona already
+secret boundary, or bind Rally to a provider-internal path when Daytona already
 publishes the correct bundle through a process environment variable.
 
 **Consequences:** Git retains full certificate verification while authenticated
@@ -1044,7 +1044,7 @@ actual model push, and recovery archives must retain local commit history.
 ### 2026-08-13 — Standard Git and GitHub CLI replace a second publication gate
 
 **What changed:** Full-access repository sandboxes now receive a short-lived,
-single-repository write token through Daytona secret substitution. Avalon
+single-repository write token through Daytona secret substitution. Rally
 creates or restores a persisted `avalon/adjective-adjective-adjective-noun`
 branch, switches to it before every model-facing operation, and lets the model
 use normal `git push` and `gh pr` commands. Read-only credentials still enforce
@@ -1074,7 +1074,7 @@ not as the only write route.
 **What changed:** Terminal adds `checkout_repository` as its ninth tool. The
 model chooses an exact authorized repository, sees whether its remote access is
 read-only or full, and may always edit or commit locally. Before replacing a
-different sandbox repository, Avalon saves a verified attached recovery archive
+different sandbox repository, Rally saves a verified attached recovery archive
 and only then destroys the old sandbox. The participant transcript chooser was
 removed; repository policy now lives in connector Settings.
 
@@ -1190,7 +1190,7 @@ generation/provider guards, and complete command-log capture is capped at 5 MB.
 failed clone could wedge later starts, branch-target uniqueness erased earlier
 audit receipts, and unguarded state updates could mutate a replacement sandbox.
 The former 25 MB log cap also required several simultaneous Worker-sized copies
-before Avalon could publish the bounded resource.
+before Rally could publish the bounded resource.
 
 **Considered and rejected:** Blindly adopting the only named-session command,
 using the Git branch as the receipt key, writing through a resolved link, and
@@ -1214,13 +1214,13 @@ threshold for benchmarking a prebuilt image.
 
 **Why:** One combined bootstrap timer could show that first use was slow but
 could not distinguish Daytona allocation, policy read-back, missing-package
-installation, or the verification Avalon must retain with any image. That would
+installation, or the verification Rally must retain with any image. That would
 make an owned-image decision guess at both the removable latency and its sample
 size.
 
 **Considered and rejected:** Logging a single end-to-end number, persisting raw
 provider output, adding tenant/run identifiers for joins, and immediately
-maintaining an Avalon image. They respectively cannot identify the improvable
+maintaining a Rally image. They respectively cannot identify the improvable
 phase, expand the content boundary, misuse sampled analytics as a ledger, or
 commit maintenance before measuring a recurring cost.
 
@@ -1251,11 +1251,11 @@ the separate slim image is much smaller.
 **Considered and rejected:** Owning a custom snapshot based on Daytona's slim
 image, a generic Node image, VM sandboxes, unconditional runtime installation on
 every cold start, and trusting a requested sandbox user. They respectively make
-Avalon own refresh/activation compatibility, recreate Daytona conventions, buy
+Rally own refresh/activation compatibility, recreate Daytona conventions, buy
 unused isolation features, slow every first use, or conflict with observed
 toolbox identity.
 
-**Consequences:** Avalon accepts the managed snapshot's larger footprint in
+**Consequences:** Rally accepts the managed snapshot's larger footprint in
 exchange for Daytona's common, coordinated path. The bootstrap skips capabilities
 Daytona already supplies and fails closed if a managed update breaks sudo,
 workspace ownership, a promised runtime, or a manager fixture.
@@ -1344,7 +1344,7 @@ records a terminal result.
 
 ### 2026-08-13 — Terminal adds lazy, authority-fenced Daytona workspaces
 
-**What changed:** Avalon gains a deferred eight-tool Terminal plugin backed by
+**What changed:** Rally gains a deferred eight-tool Terminal plugin backed by
 one private Daytona sandbox per work stream, workspace egress policy, generated
 resource exchange, read-only GitHub bootstrap, one trusted pull-request
 publisher, participant-visible state, and scheduled stop/archive/expiry.

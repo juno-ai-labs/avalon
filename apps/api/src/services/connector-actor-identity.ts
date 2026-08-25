@@ -1,5 +1,5 @@
-import { ExternalActorSchema, type ExternalActor } from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+import { ExternalActorSchema, type ExternalActor } from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 
 import type { Env } from "../env";
 import { withWorkspaceRuntimeDatabase, workspaceRegionalDatabase } from "./workspace-runtime-database";

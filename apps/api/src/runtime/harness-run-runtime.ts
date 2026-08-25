@@ -1,4 +1,4 @@
-import { asHarnessRunId, type HarnessRunId, type StructuredFailureDetail, type WorkstreamWorkflowInput } from "@avalon/contracts";
+import { asHarnessRunId, type HarnessRunId, type StructuredFailureDetail, type WorkstreamWorkflowInput } from "@rally/contracts";
 
 import { uuidV7 } from "../lib/uuid-v7";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";

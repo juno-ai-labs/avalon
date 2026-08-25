@@ -7,7 +7,7 @@
  * caller had. Routing them through here is what lets `no-console` hold, so a
  * diagnostic cannot reach a user's log without a level and a scope.
  */
-export type LogScope = 'avalon' | 'meeting' | 'perf';
+export type LogScope = 'rally' | 'meeting' | 'perf';
 
 function emit(
   level: 'debug' | 'warn' | 'error',

@@ -1,10 +1,10 @@
 import {
   ClientFeatureFlagsSchema,
   type ClientFeatureFlags,
-} from '@avalon/contracts';
+} from '@rally/contracts';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 
-import type { AvalonApi } from './api';
+import type { RallyApi } from './api';
 
 export const CLIENT_FEATURE_FLAGS_QUERY_KEY = ['feature-flags'] as const;
 export const DEFAULT_CLIENT_FEATURE_FLAGS: ClientFeatureFlags = ClientFeatureFlagsSchema.parse({});
@@ -15,7 +15,7 @@ export const DEFAULT_CLIENT_FEATURE_FLAGS: ClientFeatureFlags = ClientFeatureFla
  * this HTTP read covers the short interval before that socket is subscribed.
  */
 export function useClientFeatureFlags(
-  api: Pick<AvalonApi, 'clientFeatureFlags'> | null,
+  api: Pick<RallyApi, 'clientFeatureFlags'> | null,
 ): UseQueryResult<ClientFeatureFlags> {
   return useQuery({
     queryKey: CLIENT_FEATURE_FLAGS_QUERY_KEY,

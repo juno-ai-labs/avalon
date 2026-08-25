@@ -1,4 +1,4 @@
-import { classifyAttachmentKind } from '@avalon/contracts';
+import { classifyAttachmentKind } from '@rally/contracts';
 import * as Dialog from '@radix-ui/react-dialog';
 import { LoaderCircle, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -59,7 +59,7 @@ export function AttachmentLightbox({ preview, onClose }: {
       if (controller.signal.aborted) return;
       setLoaded({
         preview,
-        error: error instanceof Error ? error.message : 'Avalon could not load this attachment.',
+        error: error instanceof Error ? error.message : 'Rally could not load this attachment.',
       });
     });
     return () => {

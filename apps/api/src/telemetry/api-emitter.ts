@@ -1,5 +1,5 @@
-import { newId } from '@avalon/db';
-import { TELEMETRY_EVENTS, TelemetryEnvelopeSchema, type TelemetryEnvelope, type TelemetryEventName } from '@avalon/contracts/telemetry';
+import { newId } from '@rally/db';
+import { TELEMETRY_ENVELOPE_SCHEMA, TELEMETRY_EVENTS, TelemetryEnvelopeSchema, type TelemetryEnvelope, type TelemetryEventName } from '@rally/contracts/telemetry';
 import type { Env, IdentityAuthContext } from '../env';
 import { acceptAuthenticatedTelemetry, ensureWorkspaceAnalyticsId } from './authenticated';
 import { TelemetryCollector } from './collector';
@@ -22,7 +22,7 @@ export function apiTelemetryEnvelope(
   const now = new Date();
   const registry = TELEMETRY_EVENTS[name];
   return TelemetryEnvelopeSchema.parse({
-    schema: 'com.avalon.telemetry.event',
+    schema: TELEMETRY_ENVELOPE_SCHEMA,
     schemaVersion: registry.schemaVersion,
     eventId: eventId ?? newId(now.getTime()),
     name,

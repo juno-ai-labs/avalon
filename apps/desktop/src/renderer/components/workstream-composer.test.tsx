@@ -145,7 +145,7 @@ describe('WorkstreamComposer mention confirmation', () => {
         id: '019fcc00-0000-7000-8000-000000000001',
         title: 'notes.txt',
         resourceType: 'uploaded_file',
-        provider: 'avalon_upload',
+        provider: 'rally_upload',
         mimeType: 'text/plain',
         watchEnabled: false,
         watchStatus: 'unsupported',

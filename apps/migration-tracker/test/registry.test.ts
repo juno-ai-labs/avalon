@@ -3,7 +3,7 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-object-migrations";
+import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import { REGISTRY_OBJECT_NAME } from "../src/registry";
 import { applyRegistrySchema, REGISTRY_MIGRATIONS } from "../src/schema";
 import type { MigrationRegistry } from "../src/registry";

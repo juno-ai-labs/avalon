@@ -1,9 +1,9 @@
 # Public-site telemetry
 
-Avalon's public site records a closed, content-free acquisition and desktop-
+Rally's public site records a closed, content-free acquisition and desktop-
 handoff journey through the same regional telemetry boundary as the desktop.
 Global traffic can form an anonymous multi-page funnel and reaches PostHog as
-real web events. EU traffic stays in Avalon's EU Cloudflare resources and is
+real web events. EU traffic stays in Rally's EU Cloudflare resources and is
 page-scoped: the site does not read or write a persistent analytics identifier
 for an affirmative EU route.
 
@@ -75,7 +75,7 @@ navigation or opening the desktop.
   the decision bootstrap consumes, so a network/location change between the two
   requests cannot move the epoch or event.
 - **One observed page produces one web event.** The adapter translates the
-  Avalon event to the reserved PostHog name; it does not deliver a custom copy.
+  Rally event to the reserved PostHog name; it does not deliver a custom copy.
 - **Handoff analytics never carries the handoff.** Tokens, fragments, query
   values, and resource identifiers stay inside the page-specific parser.
 - **The site has no generic capture or DOM autocapture.** A new event starts in
@@ -91,7 +91,7 @@ identity, semantic action capture, and browser-to-desktop handoff measurement.
 It does not own advertising, cross-site identity, account identification,
 session replay, heatmaps, form analytics, consent-law determinations, or the
 desktop action that follows a handoff. Site identities are not automatically
-linked to an Avalon login.
+linked to a Rally login.
 
 ## Failure modes and limits
 
@@ -112,11 +112,11 @@ linked to an Avalon login.
 ## Testing
 
 ```bash
-pnpm --filter @avalon/site test
-pnpm --filter @avalon/site typecheck
-pnpm --filter @avalon/site build
-pnpm --filter @avalon/api exec vitest run test/telemetry-routes.test.ts test/posthog-adapter.test.ts
-pnpm --filter @avalon/contracts test
+pnpm --filter @rally/site test
+pnpm --filter @rally/site typecheck
+pnpm --filter @rally/site build
+pnpm --filter @rally/api exec vitest run test/telemetry-routes.test.ts test/posthog-adapter.test.ts
+pnpm --filter @rally/contracts test
 ```
 
 Site tests prove every HTML entry receives the shared reporter, legal copy
@@ -145,7 +145,7 @@ short-lived content-free routing decision; it grants no ingest or account
 authority. The capability authorizes only its fixed epoch, route, and the
 pre-authentication event allowlist. Both the shared envelope and each event use
 strict schemas; accepted events still pass regional collection validation and
-retention. CORS permits only the production Avalon site origins and explicit
+retention. CORS permits only the production Rally site origins and explicit
 local development origins. The reporter never receives a PostHog token,
 regional service credential, account session, or cross-region bridge authority.
 
@@ -198,7 +198,7 @@ origin, so the host has to come from somewhere; configuration is the only source
 that follows the canonical domain without another edit.
 
 The environment check was the sharper bug: it compared `location.hostname`
-against the two Avalon hosts, so every visit arriving on a Rally domain would
+against the two Rally hosts, so every visit arriving on a Rally domain would
 have been filed as `staging` — invisible in the production funnel, and
 indistinguishable from a drop in traffic.
 
@@ -276,12 +276,12 @@ use its single authoritative Cloudflare request without this site-only preflight
 ### 2026-08-13 — The public acquisition path becomes region-aware product telemetry
 
 **What changed:** Every public page now reports real page views/leaves, bounded
-semantic actions, and browser-to-desktop handoff attempts through Avalon's
+semantic actions, and browser-to-desktop handoff attempts through Rally's
 regional anonymous boundary. Global may keep a first-party random anonymous
 epoch and maps page events to PostHog's reserved web events. EU uses an in-memory
 page epoch and keeps the accepted projection in EU Cloudflare resources.
 
-**Why:** Desktop adoption data could show what happened after Avalon opened but
+**Why:** Desktop adoption data could show what happened after Rally opened but
 not which acquisition pages, calls to action, downloads, or handoff paths brought
 someone there. Directly embedding a provider SDK would bypass the regional and
 schema boundaries already built for the more sensitive product.

@@ -8,7 +8,7 @@ import {
   type WorkspaceSocketClientEvent,
   type PersonalSocketEvent,
   type ServerSocketEvent,
-} from '@avalon/contracts';
+} from '@rally/contracts';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -23,7 +23,7 @@ import {
   mapViewer,
   mapWorkstreamDetail,
   normalizeHarnessStatus,
-  type AvalonApi,
+  type RallyApi,
   type MentionIdentity,
 } from './api';
 import { elicitationMessageId } from './elicitation';
@@ -54,7 +54,7 @@ export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' |
 
 /** The exact API capability the realtime cache reconciler is allowed to use. */
 export type WorkstreamSocketApi = Pick<
-  AvalonApi,
+  RallyApi,
   'getMessages' | 'getSocketTicket' | 'getWorkstreamControlSocketTicket' | 'getWorkstream' | 'messageMentionPayload'
 >;
 
@@ -689,7 +689,7 @@ export function useWorkstreamSocket(
 
     createMessageRef.current = async (input): Promise<Message> => {
       // Keyed by the client message id, which WorkspaceDO records on its own
-      // span as `avalon.message.client_id`: the command travels over an
+      // span as `rally.message.client_id`: the command travels over an
       // already-open socket the platform traces as its own invocation, so this
       // is the only value the renderer and the server both hold.
       const trace = startPerfTrace('workstream_message_send', {
@@ -942,7 +942,7 @@ export function useWorkstreamSocket(
             ? advanceWorkstreamAttention(workstream, message)
             : workstream));
       } else if (event.type === 'workstream_renamed') {
-        // Avalon names a work stream a moment after it is created, and a
+        // Rally names a work stream a moment after it is created, and a
         // participant can rename one at any time. Both arrive here, and both
         // have to reach the header and the sidebar row without a refetch.
         // Whichever status the event carries, the title has stopped being a
@@ -1291,7 +1291,7 @@ export function useWorkstreamSocket(
       // snapshot, and only the last of those puts the transcript on screen. The
       // trace ends on the frame that answers the subscribe, so its total is what
       // the person waited for. `ticketId` is what the server's upgrade and room
-      // spans carry as `avalon.socket.ticket_id`, and the request id joins the
+      // spans carry as `rally.socket.ticket_id`, and the request id joins the
       // ticket call itself. Replaced per attempt: a reconnect is a new open.
       const trace = startPerfTrace('workstream_open', { workstreamId });
       openTrace?.end({ outcome: 'superseded' });
