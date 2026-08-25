@@ -10,6 +10,12 @@ type Operator = 'equals' | 'not_equals' | 'greater_than' | 'less_than' | 'greate
   | 'less_than_or_equals' | 'contains' | 'starts_with' | 'ends_with' | 'in' | 'not_in';
 
 interface Rule {
+  // Client-only identity, never sent to Flagship (stripped in dirtyPayload).
+  // Rule cards are keyed by this rather than array position, because a
+  // position survives a reorder while the rule at that position does not —
+  // an index key would leave `SimpleConditionEditor`'s local lookup state
+  // behind at the old position instead of following the moved rule.
+  _clientId: string;
   priority: number;
   conditions: AceCondition[];
   serve_variation: 'on' | 'off';
@@ -62,6 +68,24 @@ export function reorderRules<T>(items: T[], fromIndex: number, toIndex: number):
   next.splice(toIndex, 0, moved!);
   return next;
 }
+
+// A rule loaded from Flagship, or created by "+ Add rule", has no id of its
+// own; this assigns one only where missing, so it is safe to call on a mix of
+// already-tagged and freshly loaded rules without generating new ids for the
+// ones that already have one.
+function withRuleIds(rules: Rule[]): Rule[] {
+  return rules.map((rule) => rule._clientId ? rule : { ...rule, _clientId: crypto.randomUUID() });
+}
+
+// Native drag-and-drop needs something on `dataTransfer` to be considered a
+// valid drag by Firefox, and reading the source index back from it in `onDrop`
+// removes the alternative — carrying the index only in React state — which
+// depends on a commit between `dragstart` and `drop` landing first. The type
+// string doubles as the drop-target gate: `onDragOver`/`onDrop` on a rule card
+// check for it before calling `preventDefault()`, so a drag that isn't a rule
+// drag (a file, a link, selected text) is left for the browser to handle
+// rather than silently swallowed.
+const RULE_DRAG_MIME = 'application/x-ace-rule-index';
 
 export function SimpleConditionEditor({ condition, onChange, onRemove }: {
   condition: SimpleCondition; onChange: (condition: AceCondition) => void; onRemove?: () => void;
@@ -176,7 +200,7 @@ function ConditionEditor({ condition, depth, onChange, onRemove }: {
 
 function RuleEditor({ rule, index, dragging, onChange, onRemove, onDragStart, onDragEnd, onDragOver, onDrop, onKeyDown, handleRef }: {
   rule: Rule; index: number; dragging: boolean; onChange: (rule: Rule) => void; onRemove: () => void;
-  onDragStart: () => void; onDragEnd: () => void;
+  onDragStart: (event: React.DragEvent) => void; onDragEnd: () => void;
   onDragOver: (event: React.DragEvent) => void; onDrop: (event: React.DragEvent) => void;
   onKeyDown: (event: React.KeyboardEvent) => void; handleRef: (element: HTMLButtonElement | null) => void;
 }): React.JSX.Element {
@@ -232,7 +256,10 @@ function App(): React.JSX.Element {
       fetch('/api/session').then(async (response) => await response.json() as { email?: string | null }),
     ]).then(([flagBody, sessionBody]) => {
       const byKey = new Map((flagBody.flags ?? []).map((flag) => [flag.key, flag]));
-      setFlags(MANAGED_FLAGS.map((managed) => ({ ...emptyFlag(managed.key), ...byKey.get(managed.key) })));
+      setFlags(MANAGED_FLAGS.map((managed) => {
+        const merged = { ...emptyFlag(managed.key), ...byKey.get(managed.key) };
+        return { ...merged, rules: withRuleIds(merged.rules ?? []) };
+      }));
       setOperatorEmail(sessionBody.email ?? null);
       setFlagshipConnected(true);
     }).catch(() => {
@@ -257,7 +284,11 @@ function App(): React.JSX.Element {
     description: selected.description ?? definition.description,
     enabled: selected.enabled ?? true,
     default_variation: selected.default_variation ?? definition.defaultVariation,
-    rules: (selected.rules ?? []).map((rule, priority) => ({ ...rule, priority: priority + 1 })),
+    // `FlagRuleSchema` is `.strict()`, so `_clientId` — a client-only field,
+    // never known to Flagship — has to come out here, not just for payload
+    // hygiene: left in, every save would fail validation.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured only to drop it from the payload
+    rules: (selected.rules ?? []).map(({ _clientId, ...rule }, priority) => ({ ...rule, priority: priority + 1 })),
   }), [definition.description, definition.defaultVariation, selected]);
 
   const save = async (): Promise<void> => {
@@ -288,22 +319,29 @@ function App(): React.JSX.Element {
     </div><footer><span className={flagshipConnected === true ? 'healthy-dot' : 'status-dot'} />{flagshipConnected === null ? 'Connecting to Flagship…' : flagshipConnected ? 'Flagship connected' : 'Flagship unavailable'}</footer></aside>
     <main className="flag-editor"><header className="editor-header"><div><p>Feature flag</p><h2>{definition.label}</h2><code>{selected.key}</code></div><Button variant="primary" disabled={saving || flagshipConnected !== true} onClick={() => void save()} type="button">{saving ? 'Saving…' : 'Save changes'}</Button></header>
       <section className="default-section"><div><h3>Default</h3><p>The value for anyone who does not match a targeting rule.</p></div><div className="flag-controls"><Field label="Flag status"><SegmentedControl onChange={(value) => updateSelected({ enabled: value === 'enabled' })} options={['enabled', 'paused'] as const} value={selected.enabled === false ? 'paused' : 'enabled'} /></Field><Field label="Default value"><SegmentedControl large onChange={(value) => updateSelected({ default_variation: value })} options={['off', 'on'] as const} value={selected.default_variation ?? definition.defaultVariation} /></Field></div></section>
-      <section className="targeting"><div className="section-title"><div><h3>Targeting rules</h3><p>Rules run from top to bottom. The first match wins. Nest AND/OR groups for precise audiences.</p></div><button className="add" onClick={() => updateSelected({ rules: [...(selected.rules ?? []), { priority: (selected.rules ?? []).length + 1, conditions: [newSimpleCondition()], serve_variation: 'on', rollout: { percentage: 100, attribute: 'userPlatformId' } }] })} type="button">＋ Add rule</button></div>
+      <section className="targeting"><div className="section-title"><div><h3>Targeting rules</h3><p>Rules run from top to bottom. The first match wins. Nest AND/OR groups for precise audiences.</p></div><button className="add" onClick={() => updateSelected({ rules: [...(selected.rules ?? []), { _clientId: crypto.randomUUID(), priority: (selected.rules ?? []).length + 1, conditions: [newSimpleCondition()], serve_variation: 'on', rollout: { percentage: 100, attribute: 'userPlatformId' } }] })} type="button">＋ Add rule</button></div>
         <span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>
         <div className="rule-stack">{(selected.rules ?? []).map((rule, index) => <RuleEditor
           dragging={draggedRuleIndex === index}
           handleRef={(element) => { ruleHandleRefs.current[index] = element; }}
           index={index}
-          key={index}
+          key={rule._clientId}
           onChange={(next) => updateSelected({ rules: (selected.rules ?? []).map((candidate, candidateIndex) => candidateIndex === index ? next : candidate) })}
           onDragEnd={() => setDraggedRuleIndex(null)}
-          onDragOver={(event) => event.preventDefault()}
-          onDragStart={() => setDraggedRuleIndex(index)}
-          onDrop={(event) => {
+          onDragOver={(event) => {
+            if (!event.dataTransfer.types.includes(RULE_DRAG_MIME)) return;
             event.preventDefault();
-            if (draggedRuleIndex !== null && draggedRuleIndex !== index) {
-              updateSelected({ rules: reorderRules(selected.rules ?? [], draggedRuleIndex, index) });
-            }
+          }}
+          onDragStart={(event) => {
+            event.dataTransfer.setData(RULE_DRAG_MIME, String(index));
+            event.dataTransfer.effectAllowed = 'move';
+            setDraggedRuleIndex(index);
+          }}
+          onDrop={(event) => {
+            if (!event.dataTransfer.types.includes(RULE_DRAG_MIME)) return;
+            event.preventDefault();
+            const fromIndex = Number(event.dataTransfer.getData(RULE_DRAG_MIME));
+            if (fromIndex !== index) updateSelected({ rules: reorderRules(selected.rules ?? [], fromIndex, index) });
           }}
           onKeyDown={(event) => {
             if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;

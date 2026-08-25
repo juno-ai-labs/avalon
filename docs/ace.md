@@ -34,11 +34,11 @@ keeping a distinct audience.
 
 `GET /api/flags` reads `hypersight-enabled`, `meeting-recording-enabled`,
 `suggested-work-enabled`, `automation-workspace-templates-enabled`, and
-`digests-enabled`. The editor exposes enabled/paused state, default
-Boolean value, ordered first-match rules — reordered by dragging a rule's
-handle onto another or, from that same handle, ArrowUp/ArrowDown — all eleven
-operators, nested AND/OR groups, and sticky percentage rollouts. A person
-search accepts name or full
+`digests-enabled`. The editor exposes enabled/paused state, default Boolean
+value, ordered first-match rules, all eleven operators, nested AND/OR groups,
+and sticky percentage rollouts. A rule is reordered by dragging its handle
+onto another or, from that same handle, ArrowUp/ArrowDown. A person search
+accepts name or full
 email but writes the stable `userPlatformId`; a workspace search accepts name or
 slug but writes its opaque `workspaceId`. Exact email targeting therefore works
 without storing an address in Flagship. Domains, workspace role, region, age,
@@ -200,15 +200,21 @@ When a save succeeds but clients do not change, inspect in order:
 ### 2026-08-25 — Targeting rules gain drag-to-reorder
 
 **What changed:** Each rule card in the flag editor now has a drag handle;
-dropping one rule onto another moves it to that position. The same handle is a
-real `<button>` that also answers ArrowUp/ArrowDown, moving the rule one
-position and announcing the result (`aria-live="polite"`) for a keyboard or
-screen-reader operator who cannot perform the drag gesture at all. `priority`
-is still recomputed from array position on save, same as before — reordering
-the rules array was always how a save would express a new order, this just
-gives the editor two ways to produce that reorder without deleting anything.
-`reorderRules` is the pure function behind both paths, unit-tested directly
-rather than through a simulated pointer gesture.
+dropping one rule onto another moves it to that position. The dragged rule's
+own index travels on the native `dataTransfer` payload rather than only in
+React state, so `onDrop` reads it back synchronously instead of depending on
+a commit landing first. The same handle is a real `<button>` that also
+answers ArrowUp/ArrowDown, moving the rule one position and announcing the
+result (`aria-live="polite"`) for a keyboard or screen-reader operator who
+cannot perform the drag gesture at all. Every rule now carries a client-only
+`_clientId`, assigned once when it is loaded or created and stripped back out
+before save, so React tracks a moved rule's own card — and the local state
+inside it — rather than whichever rule now sits at its old position.
+`priority` is still recomputed from array position on save, same as before —
+reordering the rules array was always how a save would express a new order,
+this just gives the editor two ways to produce that reorder without deleting
+anything. `reorderRules` is the pure function behind both paths, unit-tested
+directly rather than through a simulated pointer gesture.
 
 **Why:** "Rules run from top to bottom, the first match wins" is Flagship's
 real behavior, stated directly in the editor's own copy — but the only way to
@@ -230,13 +236,25 @@ interactions in the same place.
 
 **Consequences:** `Panel` now spreads arbitrary HTML attributes instead of
 accepting only `className`, so a rule card can carry `onDragOver`/`onDrop`
-without a one-off prop grown just for this. Rule cards are keyed by array
-position, not a stable rule identity, so a keyboard move reorders the data but
-leaves focus sitting on the position it started at — the editor explicitly
-refocuses the handle at the rule's new position after every keyboard move, or
-a second arrow-key press would silently move whichever rule had landed there
-instead. No save-path or Flagship-side
-change; the payload this produces was always a valid one.
+without a one-off prop grown just for this. Rule cards keyed by array
+position — the first version of this — reordered the data on drop but left a
+card's own local lookup state (the friendly label a person or workspace
+search resolves to) behind at the old position; reviewed and confirmed in a
+real browser before `_clientId` fixed it. A separate, position-indexed ref
+array still exists purely to move keyboard focus after a move — unaffected by
+the key fix, since a ref read immediately after the render that populated it
+is never stale the way state surviving across renders at the same key can be.
+A keyboard move reorders the data but leaves focus sitting on the position it
+started at, so the editor explicitly refocuses the handle at the rule's new
+position after every keyboard move, or a second arrow-key press would
+silently move whichever rule had landed there instead. Putting the dragged
+index on `dataTransfer` also made the drop handler synchronously correct on
+Firefox, which never begins a drag whose `dragstart` handler left
+`dataTransfer` untouched — and let `onDragOver`/`onDrop` gate on that same
+payload's presence, so a card no longer swallows a drag that was never a rule
+drag (dragged text, a link, a file). No Flagship-side change; the save
+payload this produces was always a valid one, `_clientId` included and
+stripped before it is sent.
 
 ### 2026-08-25 — digests-enabled becomes client-visible after all
 
