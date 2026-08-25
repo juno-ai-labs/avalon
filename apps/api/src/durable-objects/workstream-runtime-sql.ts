@@ -28,12 +28,10 @@ export interface WorkstreamRuntimeSqlResult {
 const TABLE_REWRITES = [
   ["message_attachments", "_runtime_message_attachments"],
   ["message_mentions", "_runtime_message_mentions"],
-  ["workstream_participants", "_runtime_workstream_participants"],
   ["users", "_runtime_users"],
   ["inference_attempts", "_runtime_inference_attempts"],
   ["harness_runs", "_runtime_harness_runs"],
   ["messages", "_runtime_messages"],
-  ["workstreams", "_runtime_workstreams"],
 ] as const;
 
 function insertTarget(sql: string): string | null {
