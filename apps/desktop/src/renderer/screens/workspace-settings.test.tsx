@@ -1,9 +1,11 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { ClientFeatureFlagsSchema } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import { ApiError } from '../lib/api';
+import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from '../lib/use-client-feature-flags';
 import type { Workspace, WorkspaceInvitation } from '../lib/types';
 import { escapeClosesSettings, WorkspaceSettingsScreen } from './workspace-settings';
 
@@ -30,6 +32,7 @@ const api = vi.hoisted(() => ({
   applyTerminalNetworkPolicy: vi.fn(),
   getDigestSchedule: vi.fn(),
   updateDigestSchedule: vi.fn(),
+  clientFeatureFlags: vi.fn(),
 }));
 const copyText = vi.hoisted(() => vi.fn());
 const openExternal = vi.hoisted(() => vi.fn());
@@ -162,6 +165,10 @@ describe('Workspace settings', () => {
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
+    // Every existing test in this file was written before digestsEnabled
+    // existed and expects the section to be there; a test that cares about it
+    // being hidden overrides this with its own resolved value.
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({}));
     api.getGitHubRepositoryAccessSettings.mockResolvedValue({
       connectionId: '00000000-0000-7000-8000-000000000020',
       connectionName: 'GitHub · Rally',
@@ -1719,6 +1726,68 @@ describe('Workspace settings', () => {
 
     expect(await screen.findByText('Application settings could not be read.')).toBeVisible();
   });
+
+  it('hides the Digest section entirely when digestsEnabled resolves false', async () => {
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ digestsEnabled: false }));
+    renderSettings();
+
+    const navigation = await screen.findByRole('navigation', { name: 'Settings sections' });
+    await waitFor(() => expect(within(navigation).queryByRole('button', { name: 'Digest' })).toBeNull());
+    // Their digest has in fact stopped arriving — see the same comment on
+    // `digestSettingsAvailable`'s use site — but there is no copy here for a
+    // paused state, so it is simply not one of the sections offered.
+    expect(within(navigation).getByRole('button', { name: 'Account' })).toBeInTheDocument();
+  });
+
+  it('withdraws the Digest section and redirects away when the flag flips live', async () => {
+    const client = createTestQueryClient();
+    renderSettings(workspace, client, true);
+    openSettingsSection('Digest');
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Digest'));
+
+    // The production path for this is the workspace socket writing a
+    // `workspace_feature_flags` push into this same query key, not a
+    // re-fetch — simulate it the same way, by writing the cache directly.
+    act(() => {
+      client.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, ClientFeatureFlagsSchema.parse({ digestsEnabled: false }));
+    });
+
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    await waitFor(() => expect(within(navigation).queryByRole('button', { name: 'Digest' })).toBeNull());
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Account');
+  });
+
+  it('keeps the Digest pane from painting when a live flip and a non-matching search both strand activeSection on it', async () => {
+    api.getDigestSchedule.mockResolvedValue({
+      id: '00000000-0000-4000-8000-000000000001',
+      enabled: true,
+      days: [1, 2, 3, 4, 5],
+      times: [9 * 60],
+      timezone: 'Europe/London',
+      deliveryTargets: [
+        { type: 'email', connectionId: null, displayName: 'adam@rally.local', status: 'active', lastDeliveredAt: null },
+      ],
+      nextRunAt: null,
+      lastDeliveredAt: null,
+    });
+    const client = createTestQueryClient();
+    renderSettings(workspace, client, true);
+    openSettingsSection('Digest');
+    await screen.findByLabelText('New digest time');
+
+    act(() => {
+      client.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, ClientFeatureFlagsSchema.parse({ digestsEnabled: false }));
+    });
+    // A non-matching search collapses every group to no items, so
+    // `availableSections` is empty and the redirect effect has no `first` to
+    // move to — `activeSection` stays 'digest' indefinitely. Nothing but the
+    // render guard on the Digest pane itself keeps it from painting here.
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search settings' }), {
+      target: { value: 'no setting matches this text' },
+    });
+
+    await waitFor(() => expect(screen.queryByLabelText('New digest time')).toBeNull());
+  });
 });
 
 describe('Closing the settings window with Escape', () => {
@@ -1742,6 +1811,7 @@ describe('Closing the settings window with Escape', () => {
     api.getWorkspaceInvitations.mockResolvedValue([]);
     api.getConnections.mockResolvedValue([]);
     api.getAvailableConnectorTypes.mockResolvedValue([]);
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({}));
     api.getDigestSchedule.mockResolvedValue({
       id: '00000000-0000-4000-8000-000000000001',
       enabled: true,
