@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
     "build:client": "vite build",
     "build": "pnpm build:client && wrangler deploy --dry-run --config wrangler.jsonc --outdir dist/worker",
     "deploy": "node scripts/deploy.mjs",

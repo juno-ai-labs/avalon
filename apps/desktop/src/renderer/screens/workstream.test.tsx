@@ -149,7 +149,7 @@ function headerElement(
   return (
     <Tooltip.Provider>
       <WorkstreamHeader
-        blockDashboardAvailable={overrides.blockDashboardAvailable}
+        blockDashboardAvailable={overrides.blockDashboardAvailable ?? true}
         blockDashboardOpen={overrides.blockDashboardOpen ?? false}
         blockDashboardPreferencePending={false}
         onAddParticipant={vi.fn()}

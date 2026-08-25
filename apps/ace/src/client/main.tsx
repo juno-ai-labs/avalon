@@ -51,10 +51,16 @@ function isGroup(condition: AceCondition): condition is AceCondition & { logical
   return condition.logical_operator !== undefined && condition.clauses !== undefined;
 }
 
-function SimpleConditionEditor({ condition, onChange, onRemove }: {
+export function initialDirectoryLookup(condition: Pick<AceCondition, 'value'>): string {
+  return String(condition.value ?? '');
+}
+
+export function SimpleConditionEditor({ condition, onChange, onRemove }: {
   condition: SimpleCondition; onChange: (condition: AceCondition) => void; onRemove?: () => void;
 }): React.JSX.Element {
-  const [lookup, setLookup] = useState('');
+  const conditionValue = initialDirectoryLookup(condition);
+  const [lookupState, setLookupState] = useState(() => ({ storedValue: conditionValue, text: conditionValue }));
+  const lookup = lookupState.storedValue === conditionValue ? lookupState.text : conditionValue;
   const [results, setResults] = useState<DirectoryResult[]>([]);
   const lookupKind = condition.attribute === 'userPlatformId' ? 'users'
     : condition.attribute === 'workspaceId' ? 'workspaces' : null;
@@ -79,7 +85,7 @@ function SimpleConditionEditor({ condition, onChange, onRemove }: {
       <div className="condition-grid">
         <Field label="Match"><select value={condition.attribute} onChange={(event) => {
           const nextAttribute = event.target.value;
-          setLookup('');
+          setLookupState({ storedValue: '', text: '' });
           onChange({ attribute: nextAttribute, operator: 'equals', value: '' });
         }}>{FLAG_ATTRIBUTES.map((attribute) => <option key={attribute.key} value={attribute.key}>{attribute.label}</option>)}</select></Field>
         <Field label="Operator"><select value={condition.operator} onChange={(event) => {
@@ -94,7 +100,7 @@ function SimpleConditionEditor({ condition, onChange, onRemove }: {
             type={attribute?.type === 'number' && !expectsList ? 'number' : 'text'}
             value={lookupKind ? lookup : Array.isArray(condition.value) ? condition.value.join(', ') : String(condition.value)}
             onChange={(event) => {
-              if (lookupKind) setLookup(event.target.value);
+              if (lookupKind) setLookupState({ storedValue: conditionValue, text: event.target.value });
               else onChange({
                 ...condition,
                 value: expectsList
@@ -107,7 +113,10 @@ function SimpleConditionEditor({ condition, onChange, onRemove }: {
           {lookupKind && results.length > 0 && <div className="lookup-menu">
             {results.map((result) => <button key={`${result.region}-${result.id}`} onClick={() => {
               onChange({ ...condition, value: result.id });
-              setLookup(result.email ?? `${result.name}${result.slug ? ` · ${result.slug}` : ''}`);
+              setLookupState({
+                storedValue: result.id,
+                text: result.email ?? `${result.name}${result.slug ? ` · ${result.slug}` : ''}`,
+              });
               setResults([]);
             }} type="button"><strong>{result.name}</strong><small>{result.email ?? result.slug} · {result.region}</small></button>)}
           </div>}
@@ -251,4 +260,5 @@ function App(): React.JSX.Element {
   </div>;
 }
 
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
+const root = typeof document === 'undefined' ? null : document.getElementById('root');
+if (root) createRoot(root).render(<React.StrictMode><App /></React.StrictMode>);

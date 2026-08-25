@@ -61,8 +61,6 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
   /** Whether the service allows this account the Developer section at all.
    * Off until a poll says otherwise, and off again on sign-out. */
   developerSettingsAvailable: boolean;
-  /** Whether Electron shows meeting-recording entry points for this account. */
-  meetingRecordingAvailable?: boolean;
   /** Whether the Avalon status item is in the macOS menu bar. On by default. */
   menuBarEnabled: boolean;
   /** Whether this platform has a menu bar Avalon can live in at all. The

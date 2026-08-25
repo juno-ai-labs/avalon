@@ -528,11 +528,17 @@ a value.
 
 #### The desktop half
 
-`hypersightEnabled` and `meetingRecordingEnabled` arrive on the private
+The four managed product Booleans arrive on the private
 WorkspaceDO subscribe response and on `workspace_feature_flags` events. They
 replace the renderer's one `['feature-flags']` cache as a complete object; a
 partial event cannot leave a mixed generation behind. Reconnect always
 re-evaluates them even if a live notification was missed.
+
+Ace delays fan-out for 30 seconds because Cloudflare documents that Flagship
+configuration changes can take
+[up to 30 seconds to propagate](https://developers.cloudflare.com/flagship/concepts/).
+The regional object evaluates after that delay; it does not trust a value from
+the administrative write response.
 
 HyperSight hides its header control and panel until the value is exactly true;
 because the panel is not mounted, its view-local query and sockets naturally do

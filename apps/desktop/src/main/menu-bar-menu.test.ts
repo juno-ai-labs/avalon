@@ -32,8 +32,8 @@ function template(
     appName: 'Avalon',
     content: { ...emptyMenuBarContent, ...content },
     signedIn: overrides.signedIn ?? true,
-    meetingRecordingAvailable: overrides.meetingRecordingAvailable,
-    suggestedWorkAvailable: overrides.suggestedWorkAvailable,
+    meetingRecordingAvailable: overrides.meetingRecordingAvailable ?? true,
+    suggestedWorkAvailable: overrides.suggestedWorkAvailable ?? true,
     sectionHeaders: overrides.sectionHeaders ?? true,
     actions: overrides.actions ?? actions(),
   });

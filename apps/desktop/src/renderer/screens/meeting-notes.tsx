@@ -29,6 +29,7 @@ import {
   telemetryVisibility,
 } from '../lib/telemetry';
 import type { NoteDetail, NoteTranscriptSegment } from '../lib/types';
+import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useRealtimeDictation } from '../lib/use-realtime-dictation';
 
 /**
@@ -146,6 +147,8 @@ function recordingPermissionClass(permissions: DesktopMeetingAudioPermissions | 
 
 export function MeetingNotesScreen(): React.JSX.Element {
   const { api, session } = useAppSession();
+  const clientFeatureFlags = useClientFeatureFlags(api);
+  const meetingRecordingAvailable = clientFeatureFlags.data?.meetingRecordingEnabled === true;
   const noteId = useMemo(currentNoteId, []);
   const creationEntrypoint = useMemo(meetingEntrypoint, []);
   const initialTitle = useMemo(defaultMeetingTitle, []);
@@ -171,8 +174,6 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const [now, setNow] = useState(Date.now());
   /** `null` until the cadence for this meeting settles; then never replaced. */
   const [refreshIntervalMs, setRefreshIntervalMs] = useState<number | null>(null);
-  /** Null until the server explicitly answers; product features never infer on. */
-  const [meetingRecordingAvailable, setMeetingRecordingAvailable] = useState<boolean | null>(null);
   const noteRef = useRef<NoteDetail | null>(null);
   const segmentsRef = useRef<NoteTranscriptSegment[]>([]);
   const segmentRef = useRef('');
@@ -282,23 +283,19 @@ export function MeetingNotesScreen(): React.JSX.Element {
     // timer mid-recording, moving a transcript boundary and leaving the
     // briefing describing a schedule that had already changed under it.
     //
-    // The Boolean is presentation-only: it decides whether this window draws
-    // recording controls. Capture behavior itself remains unchanged. The
-    // cadence still settles independently for the segment timer.
-    const settle = (intervalMs: number, available: boolean): void => {
+    const settle = (intervalMs: number): void => {
       setRefreshIntervalMs((current) => current ?? intervalMs);
-      setMeetingRecordingAvailable((current) => current ?? available);
     };
     const timeout = window.setTimeout(
       () => {
         controller.abort();
-        settle(DEFAULT_MEETING_NOTES_INTERVAL_MS, false);
+        settle(DEFAULT_MEETING_NOTES_INTERVAL_MS);
       },
       MEETING_CADENCE_REQUEST_TIMEOUT_MS,
     );
     void api.clientFeatureFlags(controller.signal)
-      .then((flags) => settle(flags.controlTowerRefreshSeconds * 1_000, flags.meetingRecordingEnabled))
-      .catch(() => settle(DEFAULT_MEETING_NOTES_INTERVAL_MS, false))
+      .then((flags) => settle(flags.controlTowerRefreshSeconds * 1_000))
+      .catch(() => settle(DEFAULT_MEETING_NOTES_INTERVAL_MS))
       .finally(() => window.clearTimeout(timeout));
     return () => {
       window.clearTimeout(timeout);
@@ -958,7 +955,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
         </div>
       </main>
 
-      {(meetingRecordingAvailable === true || recording || finalizing) && <footer className="meeting-controls">
+      {(meetingRecordingAvailable || recording || finalizing || dictation.error || dictation.warning || permissionRecoveryTarget) && <footer className="meeting-controls">
         <div className="meeting-control-status">
           {dictation.error
             ? <span role="alert">{dictation.error}</span>
@@ -971,7 +968,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
             </button>
           )}
         </div>
-        {recording || finalizing ? (
+        {meetingRecordingAvailable && (recording || finalizing ? (
           <div className="meeting-recording-actions">
             {!finalizing && (
               <Button
@@ -996,7 +993,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
           >
             <span aria-hidden="true" className="meeting-start-dot" /> {permissionRecoveryTarget ? 'Retry recording' : 'Start recording'}
           </Button>
-        )}
+        ))}
         <span aria-hidden="true" />
       </footer>}
 

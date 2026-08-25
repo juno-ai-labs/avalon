@@ -3,6 +3,9 @@ import type { Env } from './env';
 import { MANAGED_FLAGS, ManagedFlagUpdateSchema, type ManagedFlagUpdate } from './protocol';
 
 const managedKeys = new Set<string>(MANAGED_FLAGS.map((flag) => flag.key));
+// Flagship changes can take up to 30 seconds to propagate, checked 2026-08-24:
+// https://developers.cloudflare.com/flagship/concepts/
+export const FLAGSHIP_PROPAGATION_DELAY_SECONDS = 30;
 
 function endpoint(env: Env, suffix = ''): string {
   return `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}`
@@ -51,7 +54,7 @@ export async function updateManagedFlag(
   // let every WorkspaceDO evaluate after the documented propagation window.
   await env.PRODUCT_FLAG_CHANGE_QUEUE.send(
     { kind: 'flagship_product_flag_changed', flagKey: parsedKey },
-    { delaySeconds: 30 },
+    { delaySeconds: FLAGSHIP_PROPAGATION_DELAY_SECONDS },
   );
   return result;
 }
