@@ -480,7 +480,7 @@ client message IDs make reconnect resend idempotent.
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @rally/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @rally/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
-| `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Direct SubstreamAgent feed reconnect/resync, streaming, exact-connection reuse for five minutes after switching streams, expiry closure, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
+| `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial-read admission for the pooled WorkstreamDO/SubstreamAgent pair, exact-pair reuse for five minutes after switching streams, expiry closure, direct SubstreamAgent feed reconnect/resync, streaming, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
 
 **The trap, and it has already cost one bug:** Node's `Response` refuses status
@@ -519,7 +519,9 @@ what that leaves exposed.
 sockets in a keyed pool above the active route. A work stream that leaves the
 foreground keeps its exact socket pair for at least five minutes; returning
 within that window reuses the connections, and a running work stream remains
-connected without an expiry.
+connected without an expiry. A newly opened route enters that pool only after
+its initial detail and transcript reads succeed; once admitted, the keyed entry
+stays admitted while it is active, recent, or running.
 
 **Why:** Route ownership closed both sockets immediately even though the person
 was likely to switch back. Reopening paid for two ticket requests, two
@@ -536,7 +538,9 @@ the whole sidebar live.
 **Consequences:** Feed and metadata sockets share the same retention lifetime,
 but HyperSight block sockets still follow panel visibility. Access revocation
 still closes retained sockets immediately. Future route refactors must keep the
-pool keyed by work-stream id or they will turn retention into close-and-redial.
+pool keyed by work-stream id and preserve the initial-read admission signal or
+they will turn retention into either close-and-redial or rejected-route retry
+loops.
 
 Shipped in #305.
 

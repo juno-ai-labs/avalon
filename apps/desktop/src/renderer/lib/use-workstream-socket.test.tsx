@@ -342,9 +342,13 @@ describe('useWorkstreamSocket', () => {
         protocols: socketTicketProtocols(`socket-ticket-${workstreamId}`),
       })),
     });
+    function ActiveConnection({ workstreamId }: { workstreamId: string }): React.JSX.Element {
+      const connection = useRetainedWorkstreamSocket(api, workstreamId, true);
+      return <div>{connection.state}</div>;
+    }
     const view = render(
       <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
-        <div>First</div>
+        <ActiveConnection workstreamId={firstWorkstreamId} />
       </WorkstreamSocketPool>,
       { wrapper: createWrapper() },
     );
@@ -354,7 +358,7 @@ describe('useWorkstreamSocket', () => {
 
     view.rerender(
       <WorkstreamSocketPool activeWorkstreamId={secondWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
-        <div>Second</div>
+        <ActiveConnection workstreamId={secondWorkstreamId} />
       </WorkstreamSocketPool>,
     );
     await flushPromises();

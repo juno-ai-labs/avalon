@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react';
 import {
   useWorkstreamSocket,
   type WorkstreamSocketApi,
@@ -8,6 +8,7 @@ import {
 export const RECENT_WORKSTREAM_SOCKET_RETENTION_MS = 5 * 60_000;
 
 interface RetainedWorkstreamSocketContextValue {
+  admit: () => void;
   connection: WorkstreamSocketConnection;
   workstreamId: string;
 }
@@ -75,15 +76,25 @@ function useRetainedWorkstreamSocketIds(
 function RetainedWorkstreamSocket({
   active,
   api,
+  background,
   children,
   workstreamId,
 }: PropsWithChildren<{
   active: boolean;
   api: WorkstreamSocketApi | null;
+  background: boolean;
   workstreamId: string;
 }>): React.JSX.Element | null {
-  const connection = useWorkstreamSocket(api, workstreamId, true);
-  const context = useMemo(() => ({ connection, workstreamId }), [connection, workstreamId]);
+  const [admitted, setAdmitted] = useState(background);
+  const admit = useCallback(() => setAdmitted(true), []);
+  useLayoutEffect(() => {
+    if (background) admit();
+  }, [admit, background]);
+  const connection = useWorkstreamSocket(api, workstreamId, background || admitted);
+  const context = useMemo(
+    () => ({ admit, connection, workstreamId }),
+    [admit, connection, workstreamId],
+  );
   if (!active) return null;
   return (
     <RetainedWorkstreamSocketContext.Provider value={context}>
@@ -114,6 +125,7 @@ export function WorkstreamSocketPool({
         <RetainedWorkstreamSocket
           active={workstreamId === activeWorkstreamId}
           api={api}
+          background={backgroundWorkstreamIds.includes(workstreamId)}
           key={workstreamId}
           workstreamId={workstreamId}
         >
@@ -137,6 +149,9 @@ export function useRetainedWorkstreamSocket(
 ): WorkstreamSocketConnection {
   const retained = useContext(RetainedWorkstreamSocketContext);
   const matchesRetainedConnection = retained?.workstreamId === workstreamId;
+  useLayoutEffect(() => {
+    if (enabled && matchesRetainedConnection) retained.admit();
+  }, [enabled, matchesRetainedConnection, retained]);
   const direct = useWorkstreamSocket(api, workstreamId, enabled && !matchesRetainedConnection);
   return matchesRetainedConnection ? retained.connection : direct;
 }
