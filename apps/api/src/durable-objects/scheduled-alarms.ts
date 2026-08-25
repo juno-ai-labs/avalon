@@ -51,7 +51,7 @@ export const SCHEDULED_ALARM_SCHEMA_STATEMENTS: readonly string[] = [
     ON _internal_durable_alarms(MAX(due_at, retry_at), kind, alarm_key)`,
 ];
 
-/** First backoff step for an entry whose handler threw. */
+/** First retry ceiling, also used as the pre-work cancellation-recovery horizon. */
 export const SCHEDULED_ALARM_RETRY_BASE_MS = 60_000;
 /** Ceiling for that backoff: past this a target is broken, not busy. */
 export const SCHEDULED_ALARM_RETRY_MAX_MS = 30 * 60_000;
@@ -297,6 +297,17 @@ export class ScheduledAlarmStore {
     return row?.due_at ?? null;
   }
 
+  /** The earliest stored instant strictly after `after`. */
+  nextDueAtAfter(after: number): number | null {
+    const row = this.sql.exec<{ due_at: number | null }>(
+      `SELECT MIN(MAX(due_at, retry_at)) AS due_at
+         FROM _internal_durable_alarms
+        WHERE MAX(due_at, retry_at) > ?`,
+      after,
+    ).toArray()[0];
+    return row?.due_at ?? null;
+  }
+
   /**
    * Retire an entry whose handler returned.
    *
@@ -484,15 +495,27 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
    * than left to fire on an empty list. Writing only on an actual change keeps
    * the common re-arm free.
    */
-  protected async armNextAlarm(): Promise<number | null> {
-    const now = Date.now();
-    const candidates = [this.scheduledAlarms.nextDueAt(), this.nextDerivedAlarmAt(now)]
+  protected async armNextAlarm(
+    options: { now?: number; overdueAt?: number } = {},
+  ): Promise<number | null> {
+    const now = options.now ?? Date.now();
+    const storedDueAt = this.scheduledAlarms.nextDueAt();
+    const candidates = [
+      storedDueAt,
+      options.overdueAt !== undefined && storedDueAt !== null && storedDueAt <= now
+        ? this.scheduledAlarms.nextDueAtAfter(now)
+        : null,
+      this.nextDerivedAlarmAt(now),
+    ]
       .filter((value): value is number => value !== null);
     if (candidates.length === 0) {
       await this.ctx.storage.deleteAlarm();
       return null;
     }
-    const next = Math.max(now + 1, Math.min(...candidates));
+    const overdueAt = Math.max(now + 1, options.overdueAt ?? now + 1);
+    const next = Math.min(
+      ...candidates.map((candidate) => candidate <= now ? overdueAt : candidate),
+    );
     const existing = await this.ctx.storage.getAlarm();
     if (existing !== next) await this.ctx.storage.setAlarm(next);
     return next;
@@ -586,13 +609,17 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
    * A cancelled invocation does not throw and does not run a `finally`, so an
    * object that re-arms only at the end of its handler can be left with no
    * wake-up at all — and nothing but an unrelated request would ever discover
-   * the work it still owes. The exact re-derivation is the right answer for
-   * almost every object; one whose alarm *is* the worker for a derived reason
-   * overrides this, because re-deriving off the row it is about to service arms
-   * for an instant already past and hands the same work straight back.
+   * the work it still owes. Already-due reasons are re-armed at the first retry
+   * horizon rather than the next millisecond. Their source rows remain durable
+   * until this invocation settles them, so that wake recovers a cancelled
+   * continuation without creating a second invocation that the normal
+   * end-of-handler re-arm must immediately replace. A genuinely future reason
+   * keeps its exact earlier deadline. An object whose alarm *is* the worker for
+   * a derived reason may still override this to use that lane's recovery
+   * horizon.
    */
-  protected armAlarmBeforeDueWork(): Promise<unknown> {
-    return this.armNextAlarm();
+  protected armAlarmBeforeDueWork(now: number): Promise<unknown> {
+    return this.armNextAlarm({ now, overdueAt: now + SCHEDULED_ALARM_RETRY_BASE_MS });
   }
 
   /** The re-arm made once this alarm's work has run. Same override rule. */
@@ -602,8 +629,8 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
 
   override async alarm(): Promise<void> {
     await this.migrationsReady();
-    await this.armAlarmBeforeDueWork();
     const now = Date.now();
+    await this.armAlarmBeforeDueWork(now);
     const deferral = await this.scheduledAlarmDeferral(now);
     if (deferral !== null) {
       // Set outright rather than lowered: the re-arm above points at the
