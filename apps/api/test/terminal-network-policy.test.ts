@@ -15,7 +15,7 @@ describe("Terminal network policy compiler", () => {
     ]);
 
     expect(TERMINAL_NETWORK_BASELINE.map((group) => group.label)).toEqual([
-      "GitHub and Avalon",
+      "GitHub and Rally",
       "System packages",
       "Python packages",
       "JavaScript packages",

@@ -126,16 +126,16 @@ export class TerminalToolError extends Error {
  */
 const MISSING_RECEIPT = {
   command: {
-    message: "Avalon could not find the durable tool receipt. Retry the command so it can be recorded safely.",
-    reason: "Retry the same command call so Avalon can create its durable receipt first.",
+    message: "Rally could not find the durable tool receipt. Retry the command so it can be recorded safely.",
+    reason: "Retry the same command call so Rally can create its durable receipt first.",
   },
   publication: {
-    message: "Avalon could not find the durable tool receipt. Retry publication so it can be recorded safely.",
-    reason: "Retry the same publication call so Avalon can create its durable receipt first.",
+    message: "Rally could not find the durable tool receipt. Retry publication so it can be recorded safely.",
+    reason: "Retry the same publication call so Rally can create its durable receipt first.",
   },
   repositoryPublication: {
-    message: "Avalon could not find the durable publication receipt. Retry publication.",
-    reason: "Retry the same publication call so Avalon can create its durable receipt first.",
+    message: "Rally could not find the durable publication receipt. Retry publication.",
+    reason: "Retry the same publication call so Rally can create its durable receipt first.",
   },
 } as const;
 

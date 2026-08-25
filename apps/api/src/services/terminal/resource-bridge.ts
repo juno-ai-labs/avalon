@@ -39,8 +39,8 @@ function publishedOutput(row: PublishedRow, sizeBytes: number): TerminalPublishe
   if (!row.content_sha256 || !/^[0-9a-f]{64}$/u.test(row.content_sha256)) {
     throw new TerminalToolError(
       "resource_publish_failed",
-      "Avalon could not verify the previously published resource identity. Retry publish_resource with the stable final file.",
-      { reason: "Retry the same publish_resource call so Avalon can reconcile its resource identity." },
+      "Rally could not verify the previously published resource identity. Retry publish_resource with the stable final file.",
+      { reason: "Retry the same publish_resource call so Rally can reconcile its resource identity." },
     );
   }
   return {
@@ -147,8 +147,8 @@ export function createTerminalResourceBridge(
           if (!existing || Number(existing[1]) !== bytes.byteLength || existing[2] !== digest) {
             throw new TerminalToolError(
               "destination_exists",
-              "The deterministic import path already contains different bytes. Do not overwrite it; start a fresh Terminal workspace so Avalon can re-establish resource provenance.",
-              { reason: "Start a fresh Terminal workspace so Avalon can re-establish automatic import provenance." },
+              "The deterministic import path already contains different bytes. Do not overwrite it; start a fresh Terminal workspace so Rally can re-establish resource provenance.",
+              { reason: "Start a fresh Terminal workspace so Rally can re-establish automatic import provenance." },
             );
           }
           const timestamp = Date.now();
@@ -183,7 +183,7 @@ export function createTerminalResourceBridge(
       if (existence.exitCode !== 0 && existence.exitCode !== 44) {
         throw new TerminalToolError(
           "destination_not_regular",
-          "The destination exists but is not a regular file Avalon can safely replace. Choose a different destinationPath and retry.",
+          "The destination exists but is not a regular file Rally can safely replace. Choose a different destinationPath and retry.",
           { reason: "Choose a destinationPath that is absent or names a regular file beneath the Terminal workspace." },
         );
       }
@@ -340,8 +340,8 @@ export function createTerminalResourceBridge(
         ).bind(context.workspaceId, resourceId).run().catch(() => undefined);
         throw new TerminalToolError(
           "resource_publish_failed",
-          "The generated resource could not be recorded. Retry publish_resource; Avalon retained cleanup ownership for the uploaded object.",
-          { reason: "Retry the same publish_resource call so Avalon can reconcile its stable resource identity." },
+          "The generated resource could not be recorded. Retry publish_resource; Rally retained cleanup ownership for the uploaded object.",
+          { reason: "Retry the same publish_resource call so Rally can reconcile its stable resource identity." },
         );
       }
       return {

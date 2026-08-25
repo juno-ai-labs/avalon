@@ -139,14 +139,14 @@ export function createTerminalObjectPort(
         : body?.error === "invalid_terminal_operation"
           ? {
               code: "invalid_terminal_operation",
-              message: "Avalon's Terminal authority rejected an internal request because its protocol was invalid. Retry after the application and service versions are aligned.",
+              message: "Rally's Terminal authority rejected an internal request because its protocol was invalid. Retry after the application and service versions are aligned.",
               outcome: "rejected",
               retryable: false,
             }
           : body?.error === "workstream_terminal_identity_mismatch"
             ? {
                 code: "workstream_terminal_identity_mismatch",
-                message: "Avalon's Terminal authority rejected an internal request because it was routed to the wrong work stream. Retrying the same operation will not repair the route.",
+                message: "Rally's Terminal authority rejected an internal request because it was routed to the wrong work stream. Retrying the same operation will not repair the route.",
                 outcome: "rejected",
                 retryable: false,
               }
@@ -155,7 +155,7 @@ export function createTerminalObjectPort(
                 // protocol skew, not proof of rollback. Never manufacture the
                 // retryable write-safety contract from an untyped envelope.
                 code: "terminal_operation_protocol_error",
-                message: "Avalon's Terminal authority returned an invalid internal response. The operation outcome is unknown; stop and let the run reconcile before attempting more Terminal work.",
+                message: "Rally's Terminal authority returned an invalid internal response. The operation outcome is unknown; stop and let the run reconcile before attempting more Terminal work.",
                 outcome: "unknown",
                 retryable: false,
               };

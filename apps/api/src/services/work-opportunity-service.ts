@@ -387,7 +387,7 @@ function identityProvider(provider: string): string {
 
 function sourceLabel(sources: ModelSource[]): string {
   const providers = [...new Set(sources.map((source) => source.provider))];
-  if (providers.length === 1) return providers[0] === "avalon" ? "Avalon activity" : `From ${providers[0]}`;
+  if (providers.length === 1) return providers[0] === "avalon" ? "Rally activity" : `From ${providers[0]}`;
   return `From ${providers.length} connected sources`;
 }
 
@@ -543,7 +543,7 @@ async function loadSource(
     providerTenantId: workspaceId,
     connectionId: null,
     title: activity.title,
-    summary: "A workspace member mentioned someone in an Avalon work stream.",
+    summary: "A workspace member mentioned someone in a Rally work stream.",
     text: activity.body.slice(0, 8_000),
     actor: author ?? { id: activity.actorUserId, name: activity.actorLabel },
     subject: {},
