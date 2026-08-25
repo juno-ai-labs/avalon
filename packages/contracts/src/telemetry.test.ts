@@ -770,7 +770,7 @@ describe("the envelope schema identifier", () => {
   const base = envelope("onboarding_region_selected", { selectedRegion: "eu", entrypoint: "first_run" });
 
   it("mints the current identifier", () => {
-    expect(TELEMETRY_ENVELOPE_SCHEMA).toBe("com.rally.telemetry.event");
+    expect(TELEMETRY_ENVELOPE_SCHEMA).toBe("ai.rallywith.telemetry.event");
     expect(TelemetryEnvelopeSchema.safeParse(base).success).toBe(true);
   });
 
@@ -778,9 +778,14 @@ describe("the envelope schema identifier", () => {
     // A desktop build writes envelopes to disk before sending, so a spool
     // written by the previous build is drained by the next one. Rejecting the
     // superseded identifier would discard it silently.
-    for (const superseded of SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS) {
+    // Spelled out rather than looped over the constant: a rename that collapses
+    // a superseded entry into the canonical one leaves a loop asserting only
+    // that the current identifier parses, which it always does.
+    for (const superseded of ["com.rally.telemetry.event", "com.avalon.telemetry.event"]) {
+      expect(SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS).toContain(superseded);
       expect(TelemetryEnvelopeSchema.safeParse({ ...base, schema: superseded }).success).toBe(true);
     }
+    expect(SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS).not.toContain(TELEMETRY_ENVELOPE_SCHEMA);
   });
 
   it("rejects an identifier that is neither current nor superseded", () => {

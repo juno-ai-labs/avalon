@@ -155,8 +155,9 @@ edit to that list once those builds are gone.
 
 Two identifiers listed here in the first inventory turned out to be **already
 Rally**, with the Avalon form kept as deliberate compatibility rather than debt:
-`com.rally.telemetry.event` (superseded schemas in
-`packages/contracts/src/telemetry.ts`) and the crash-dump sidecar
+`ai.rallywith.telemetry.event` (superseded schemas in
+`packages/contracts/src/telemetry.ts`, which now carries both `com.rally` and
+`com.avalon` spellings) and the crash-dump sidecar
 `<dump>.rally.json` (superseded suffix in `native-crash-uploader.ts`).
 
 Not renamed, and deliberately so: `avalon_upload` / `avalon_note` /
@@ -336,6 +337,25 @@ It belongs to section 1, not here.
   which is not the same as the order the work should happen in.
 
 ## Changelog
+
+### 2026-08-25 — The telemetry envelope identifier is ai.rallywith, and a collapsed supersede list
+
+`TELEMETRY_ENVELOPE_SCHEMA` is `ai.rallywith.telemetry.event`, matching the
+desktop bundle id rather than a `com.` domain nobody owns; `com.rally` joins
+`com.avalon` in the superseded list.
+
+Recorded here because of how the second half was found. The same day's section 3
+sweep had rewritten the *superseded* entry into a copy of the canonical one, so
+the parser would have rejected every envelope from an installed build — a live
+compatibility break, produced by a rename that read as pure prose. The gates did
+not catch it: the test looped over the constant, so it asserted only that the
+current identifier parses, which is true no matter how the constant is spelled.
+
+Two rules for the sections still outstanding. A supersede list is the one place
+a rename must never reach, and it is exactly the place a name-shaped regex is
+drawn to — every remaining sweep checks those lists explicitly, by their
+literal values, before it is trusted. And a test that loops over the constant
+it is meant to guard proves nothing; assert the literal.
 
 ### 2026-08-25 — The agent loop's prompt surface is its own section
 
