@@ -1,4 +1,5 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { ConnectorError } from "@rally/connectors";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
@@ -103,5 +104,49 @@ describe("automation compile activity-source validation", () => {
       messages: [{ role: "user", content: "Summarize my day." }],
     }, "request-1")).rejects.toMatchObject({ status: 403, code: "workspace_access_denied" });
     expect(compileAutomationDraft).not.toHaveBeenCalled();
+  });
+
+  it("maps a connector failure raised while inspecting a plugin's tools to a typed, retryable error", async () => {
+    compileAutomationDraft.mockRejectedValue(
+      new ConnectorError("provider_error", "Slack exposed too many dynamic tools"),
+    );
+    const prepare = vi.fn((sql: string) => ({
+      bind: vi.fn(() => ({
+        first: vi.fn(async () => sql.includes("AS user_timezone")
+          ? { user_id: "user-1", user_timezone: "America/Los_Angeles", workspace_timezone: "UTC" }
+          : null),
+      })),
+    }));
+    const service = new AutomationService(createTestEnv({ DB: { prepare, batch: vi.fn(async () => []) } }), auth);
+
+    await expect(service.compile({
+      messages: [{ role: "user", content: "Check my Slack for anything unresolved." }],
+    }, "request-1")).rejects.toMatchObject({
+      status: 502,
+      code: "automation_connector_failed",
+      details: { connectorErrorCode: "provider_error", retryable: true },
+    });
+  });
+
+  it("marks a revoked or misconfigured connector as needing reconnection rather than a retry", async () => {
+    compileAutomationDraft.mockRejectedValue(
+      new ConnectorError("unauthorized", "Connector capability was revoked"),
+    );
+    const prepare = vi.fn((sql: string) => ({
+      bind: vi.fn(() => ({
+        first: vi.fn(async () => sql.includes("AS user_timezone")
+          ? { user_id: "user-1", user_timezone: "America/Los_Angeles", workspace_timezone: "UTC" }
+          : null),
+      })),
+    }));
+    const service = new AutomationService(createTestEnv({ DB: { prepare, batch: vi.fn(async () => []) } }), auth);
+
+    await expect(service.compile({
+      messages: [{ role: "user", content: "Check my Slack for anything unresolved." }],
+    }, "request-1")).rejects.toMatchObject({
+      status: 502,
+      code: "automation_connector_failed",
+      details: { connectorErrorCode: "unauthorized", retryable: false },
+    });
   });
 });
