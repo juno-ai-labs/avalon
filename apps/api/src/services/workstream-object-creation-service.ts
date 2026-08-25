@@ -64,6 +64,16 @@ interface CreateOptions {
   reason?: string;
   telemetryOperationId?: string;
   /**
+   * Whether the people in `participantUserIds` are told they were added.
+   *
+   * The caller's to state, never the object's to infer, for the reason `scope`
+   * is also an argument: this service is reached both by a person picking names
+   * in "Add people" and by a connector ingress handing over a conversation's
+   * resolved roster, and only the caller can tell those apart. Omitted means
+   * quiet.
+   */
+  notifyParticipants?: boolean;
+  /**
    * The caller's open `workstream_create` span. Creation is the slowest thing
    * a person waits on in Avalon, and every step below is an awaited round trip
    * to D1, a Durable Object, or the email router — so the span names here are
@@ -217,6 +227,7 @@ export class WorkstreamObjectCreationService {
       openingStructuredContent: options.openingStructuredContent ?? null,
       clientMessageId: body.clientMessageId,
       participantUserIds: body.participantUserIds,
+      notifyParticipants: options.notifyParticipants ?? false,
       attachmentIds: body.attachmentIds,
       scope,
       originResourceIds: options.originResourceIds ?? [],
