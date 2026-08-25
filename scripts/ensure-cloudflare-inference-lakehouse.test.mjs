@@ -15,11 +15,6 @@ const environment = {
 };
 const userTokenId = 'a'.repeat(32);
 const accountTokenId = 'b'.repeat(32);
-const expectedR2SecretAccessKey = [
-  '4c5dc9b7', '708905f7', '7f5e5d16', '316b5dfb',
-  '425e68cb', '326dcd55', 'a860e90a', '7707031e',
-].join('');
-
 function accountDouble({ tokenOwner = 'account' } = {}) {
   const buckets = new Set();
   const catalogs = new Map();
@@ -126,61 +121,37 @@ test('an empty account is fully provisioned by one idempotent deploy preflight',
       outputDirectory,
     });
     const createsAfterFirstRun = account.requests.filter((request) => request.method === 'POST');
-    assert.equal(createsAfterFirstRun.length, 9);
-    assert.deepEqual([...account.buckets].sort(), [
-      'avalon-eu-inference-lakehouse',
-      'avalon-global-inference-lakehouse',
-    ]);
-    assert.equal(account.entities.streams.size, 2);
-    assert.equal(account.entities.sinks.size, 2);
-    assert.equal(account.entities.pipelines.size, 2);
+    assert.equal(createsAfterFirstRun.length, 5);
+    assert.deepEqual([...account.buckets], ['avalon-global-inference-lakehouse']);
+    assert.equal(account.entities.streams.size, 1);
+    assert.equal(account.entities.sinks.size, 1);
+    assert.equal(account.entities.pipelines.size, 1);
 
     assert.deepEqual([...account.catalogs.keys()], ['avalon-global-inference-lakehouse']);
-    const euSink = [...account.entities.sinks.values()].find((sink) => sink.type === 'r2');
-    assert.match(
-      euSink.name,
-      /^avalon_eu_inference_lakehouse_sink_credential_[a-f0-9]{64}$/u,
-    );
-    assert.equal(euSink.name.includes(userTokenId), false);
-    assert.deepEqual(euSink, {
-      id: euSink.id,
-      name: euSink.name,
-      type: 'r2',
-      format: { type: 'parquet', compression: 'zstd' },
-      config: {
-        bucket: 'avalon-eu-inference-lakehouse',
-        jurisdiction: 'eu',
-        path: 'avalon/llm_inference',
-        partitioning: { time_pattern: 'year=%Y/month=%m/day=%d/hour=%H' },
-        credentials: {
-          access_key_id: accountTokenId,
-          secret_access_key: expectedR2SecretAccessKey,
-        },
-        rolling_policy: { interval_seconds: 300 },
-      },
-    });
     const globalSink = [...account.entities.sinks.values()].find((sink) =>
       sink.type === 'r2_data_catalog');
     assert.equal(Object.hasOwn(globalSink.config, 'account_id'), false);
+    assert.equal(globalSink.config.token, environment.CLOUDFLARE_API_TOKEN);
 
     const euResourceRequests = account.requests.filter((request) =>
       request.path.includes('avalon-eu-inference-lakehouse'));
-    assert.ok(euResourceRequests.length > 0);
-    assert.ok(euResourceRequests.every((request) => request.headers['cf-r2-jurisdiction'] === 'eu'));
+    assert.equal(euResourceRequests.length, 0);
     const globalResourceRequests = account.requests.filter((request) =>
       request.path.includes('avalon-global-inference-lakehouse'));
     assert.ok(globalResourceRequests.every((request) => request.headers['cf-r2-jurisdiction'] === undefined));
 
     const euConfig = JSON.parse(await readFile(first.configs.eu, 'utf8'));
     const globalConfig = JSON.parse(await readFile(first.configs.global, 'utf8'));
-    assert.deepEqual(euConfig.pipelines, [{
-      binding: 'INFERENCE_LAKEHOUSE',
-      stream: first.resources.eu.stream.id,
-    }]);
+    assert.equal(Object.hasOwn(euConfig, 'pipelines'), false);
+    assert.equal(euConfig.queues.producers.some((producer) =>
+      producer.binding === 'INFERENCE_LAKEHOUSE_QUEUE'), false);
+    assert.equal(euConfig.queues.consumers.some((consumer) =>
+      consumer.queue === 'avalon-eu-inference-lakehouse'), false);
     assert.deepEqual(globalConfig.pipelines, [{
       binding: 'INFERENCE_LAKEHOUSE',
       stream: first.resources.global.stream.id,
     }]);
+    assert.equal(first.resources.eu, undefined);
     assert.equal(euConfig.name, 'avalon-api-eu');
     assert.equal(globalConfig.name, 'avalon-api-global');
 
@@ -204,18 +175,42 @@ test('--check reports missing infrastructure without creating any resource', asy
       log: () => {},
       create: false,
     }),
-    /Missing inference lakehouse R2 bucket: eu\/avalon-eu-inference-lakehouse/u,
+    /Missing inference lakehouse R2 bucket: global\/avalon-global-inference-lakehouse/u,
   );
   assert.equal(account.requests.some((request) => request.method === 'POST'), false);
+});
+
+test('the manifest rejects an EU analytical resource set', async () => {
+  const manifest = await loadInferenceLakehouseManifest();
+  const account = accountDouble();
+  await assert.rejects(
+    ensureInferenceLakehouse({
+      environment,
+      fetchImpl: account.fetchImpl,
+      log: () => {},
+      manifest: {
+        ...manifest,
+        regions: {
+          ...manifest.regions,
+          eu: {
+            ...manifest.regions.global,
+            bucket: 'avalon-eu-inference-lakehouse',
+          },
+        },
+      },
+    }),
+    /must provision Global only/u,
+  );
+  assert.equal(account.requests.length, 0);
 });
 
 test('immutable stream drift stops deployment instead of silently splitting the schema', async () => {
   const account = accountDouble();
   await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
   const manifest = await loadInferenceLakehouseManifest();
-  const euStream = [...account.entities.streams.values()].find((stream) =>
-    stream.name === manifest.regions.eu.stream);
-  euStream.schema = { fields: euStream.schema.fields.slice(0, -1) };
+  const globalStream = [...account.entities.streams.values()].find((stream) =>
+    stream.name === manifest.regions.global.stream);
+  globalStream.schema = { fields: globalStream.schema.fields.slice(0, -1) };
 
   await assert.rejects(
     ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
@@ -223,11 +218,12 @@ test('immutable stream drift stops deployment instead of silently splitting the 
   );
 });
 
-test('account-owned deployment tokens provision the direct R2 sink without a user token', async () => {
+test('account-owned deployment tokens provision the Global Catalog sink without a user token', async () => {
   const account = accountDouble();
   await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
-  const euSink = [...account.entities.sinks.values()].find((sink) => sink.type === 'r2');
-  assert.equal(euSink.config.credentials.access_key_id, accountTokenId);
+  const globalSink = [...account.entities.sinks.values()].find((sink) =>
+    sink.type === 'r2_data_catalog');
+  assert.equal(globalSink.config.token, environment.CLOUDFLARE_API_TOKEN);
   assert.equal(account.requests[0].path, '/tokens/verify');
   assert.ok(
     !account.requests.some((request) => request.path === '/user/tokens/verify'),
@@ -247,8 +243,9 @@ test('user-owned deployment tokens use the declared verifier and retain rotation
     log: () => {},
     manifest,
   });
-  const euSink = [...account.entities.sinks.values()].find((sink) => sink.type === 'r2');
-  assert.equal(euSink.config.credentials.access_key_id, userTokenId);
+  const globalSink = [...account.entities.sinks.values()].find((sink) =>
+    sink.type === 'r2_data_catalog');
+  assert.equal(globalSink.config.token, environment.CLOUDFLARE_API_TOKEN);
   assert.equal(account.requests[0].path, '/user/tokens/verify');
   assert.ok(
     !account.requests.some((request) => request.path === '/tokens/verify'),
@@ -267,19 +264,20 @@ test('user-owned deployment tokens use the declared verifier and retain rotation
   );
 });
 
-test('immutable EU sink drift stops deployment', async () => {
+test('immutable Global sink drift stops deployment', async () => {
   const account = accountDouble();
   await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
-  const euSink = [...account.entities.sinks.values()].find((sink) => sink.type === 'r2');
-  euSink.config.jurisdiction = 'default';
+  const globalSink = [...account.entities.sinks.values()].find((sink) =>
+    sink.type === 'r2_data_catalog');
+  globalSink.config.namespace = 'drifted';
 
   await assert.rejects(
     ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
     /destination or rolling policy drifted; sinks are immutable/u,
   );
 
-  euSink.config.jurisdiction = 'eu';
-  euSink.config.account_id = 'different-account';
+  globalSink.config.namespace = 'avalon';
+  globalSink.config.account_id = 'different-account';
   await assert.rejects(
     ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
     /destination or rolling policy drifted; sinks are immutable/u,
@@ -295,12 +293,12 @@ test('deployment credential replacement stops before creating conflicting immuta
     ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
     /uses a different deployment credential; sinks are immutable/u,
   );
-  assert.equal(account.entities.sinks.size, 2);
+  assert.equal(account.entities.sinks.size, 1);
 });
 
 test('the deploy provisions bindings before migration or Worker deployment', async () => {
   const workflow = await readFile(new URL('../.github/workflows/deploy-api.yml', import.meta.url), 'utf8');
-  const provision = workflow.indexOf('Ensure both regional inference lakehouses and materialize bindings');
+  const provision = workflow.indexOf('Ensure the Global inference lakehouse and materialize bindings');
   const migrations = workflow.indexOf('List the pending remote migrations for EU');
   const deploy = workflow.indexOf('Deploy the EU Worker');
   assert.ok(provision > 0 && provision < migrations && migrations < deploy);
