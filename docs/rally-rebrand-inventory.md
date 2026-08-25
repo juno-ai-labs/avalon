@@ -297,23 +297,16 @@ Control Tower and the end-of-meeting summarizer in `meeting-notes-service.ts`,
 the automation architect in `prompts/automation-compiler.ts`, and the read-only
 sub-agent in `integrations.ts`. The prompt bodies moved with them — the
 addressing classifier, work-opportunity admission and ranking, the Bind
-summarization instructions, the injected context headers (`SCHEDULED DIGEST
-BRIEF FROM RALLY`, `USER-SELECTED RALLY SUGGESTED-WORK BRIEF`), and the
-connector tool descriptions the model reads when choosing a tool.
+summarization instructions, and the injected context headers (`SCHEDULED DIGEST
+BRIEF FROM RALLY`, `USER-SELECTED RALLY SUGGESTED-WORK BRIEF`).
 
-Two things here were not prose and moved as pairs or not at all:
+Three things here were not prose, and each moved as a pair or not at all:
 
 | Item | Now | Why it needed care |
 | --- | --- | --- |
 | `writableByRally` | renamed | A tool-output field the model is told to branch on, named inside two tool descriptions. The field and the descriptions had to move in the same change or the model would be told to read a key that no longer exists. |
 | `rallyTruncated` / `rallyTotalChars` | renamed | Same shape, in Notion tool output. |
 | `avalon-core-write-v1` | **unchanged** | Not a label: the seed of a hash deriving durable provider idempotency keys. Renaming it silently re-issues writes that were already idempotent. It belongs to section 1. |
-
-Identity this product sends to third parties moved too: `appName` (the
-`X-Title` header on every inference request, 4 call sites),
-`Rally-GitHub-Connector` as the GitHub connector's user-agent, the hosted-MCP
-`client_name` and `clientInfo.name`, and 25 GraphQL operation names that appear
-in Linear's and GitHub's own request logs.
 
 The surface was wider than the first audit found. Beyond the prompts, the model
 also reads: the attachment manifest header, the memory-retrieval embedding
@@ -327,11 +320,6 @@ recorded under the section 3 sweep.
 and Sheets descriptions in `packages/connectors/src/index.ts`, the X plugin, the
 Linear native-agent plugin, and the core plugin's own utilities line all moved;
 the four Slack connector labels moved earlier, in the Slack cut-over.
-
-One adjacent thing moved with them, because leaving half of a pair is worse than
-moving neither: the Terminal Git author identity is now `Rally Agent
-<rally-agent@users.noreply.github.com>`, which is visible in the commit history
-of every repository the agent pushes to.
 
 **Not section 9, and deliberately left here:** the transactional email copy
 (`mention-`, `invitation-`, `participant-`, `automation-email-service.ts`) and
@@ -349,7 +337,11 @@ every inference request, 4 call sites), the hosted-MCP `client_name` and
 provider's own request logs. The GitHub half — the App identity, the connector
 and Terminal publisher user agents, the pinned-repository query, and the commit
 author — moved in the GitHub provider cut-over rather than here; this section
-claims only what it changed.
+claims only what it changed. The account finding from that
+slice is worth keeping here because it is easy to re-litigate: neither
+`rally-agent` nor `avalon-agent` resolves to a GitHub account, so the commit
+trailer was unattributed before the rename and after it — the name on it moved,
+not who it credits.
 
 **One string here must not change.** `avalon-core-write-v1` in
 `integrations.ts` is the seed of a hash that derives durable provider
@@ -373,7 +365,7 @@ Daytona resource descriptions survived a pass that renamed their neighbours.
 Both are fixed. The lesson is the one already recorded for the blocklist: the
 sweep is a convenience, and only enumerating what remains proves anything.
 
-**`matchedRallyUserId` is the second field whose name is prompt text.**
+**`matchedAvalonUserId` is the second field whose name is prompt text.**
 `renderWorkstreamSystemPrompt` serializes the Slack origin object into the
 prompt, so this schema field reads to the model exactly as `addressesRally`
 does. It is declared in `packages/contracts`, which makes it look like a wire

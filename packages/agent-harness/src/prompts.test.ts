@@ -563,7 +563,7 @@ describe("prompt renderers", () => {
       threadTs: "1786130000.000100",
       invocationType: "app_mention" as const,
       channelType: "public" as const,
-      matchedRallyUserId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0",
+      matchedAvalonUserId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0",
       nearbyMessagesStatus: "available" as const,
       nearbyMessages: [{
         timestamp: "1786129999.000100",
