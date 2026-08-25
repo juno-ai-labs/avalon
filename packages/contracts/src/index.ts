@@ -321,6 +321,7 @@ export const ProductFeatureFlagKeySchema = z.enum([
   "meeting-recording-enabled",
   "suggested-work-enabled",
   "automation-workspace-templates-enabled",
+  "digests-enabled",
 ]);
 export const ProductFeatureFlagFanoutMessageSchema = z.object({
   kind: z.literal("product_feature_flag_changed"),

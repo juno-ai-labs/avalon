@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { ProductFeatureFlagKey } from '@rally/contracts';
 import type { AceCondition } from '../protocol';
 import { FLAG_ATTRIBUTES, MANAGED_FLAGS, ManagedFlagUpdateSchema, MAX_CONDITION_DEPTH } from '../protocol';
 import { Button, EmptyState, Field, Panel, SegmentedControl, StatusDot } from './components/ui';
@@ -16,7 +17,7 @@ interface Rule {
 }
 
 interface Flag {
-  key: 'hypersight-enabled' | 'meeting-recording-enabled' | 'suggested-work-enabled' | 'automation-workspace-templates-enabled';
+  key: ProductFeatureFlagKey;
   description?: string;
   enabled?: boolean;
   default_variation?: 'on' | 'off';
@@ -36,7 +37,7 @@ const operators: Array<{ value: Operator; label: string }> = [
 
 function emptyFlag(key: Flag['key']): Flag {
   const definition = MANAGED_FLAGS.find((flag) => flag.key === key)!;
-  return { key, description: definition.description, enabled: true, default_variation: 'off', rules: [] };
+  return { key, description: definition.description, enabled: true, default_variation: definition.defaultVariation, rules: [] };
 }
 
 type SimpleCondition = Omit<Required<Pick<AceCondition, 'attribute' | 'operator' | 'value'>>, 'value'> & {
@@ -219,9 +220,9 @@ function App(): React.JSX.Element {
     key: selected.key,
     description: selected.description ?? definition.description,
     enabled: selected.enabled ?? true,
-    default_variation: selected.default_variation ?? 'off',
+    default_variation: selected.default_variation ?? definition.defaultVariation,
     rules: (selected.rules ?? []).map((rule, priority) => ({ ...rule, priority: priority + 1 })),
-  }), [definition.description, selected]);
+  }), [definition.description, definition.defaultVariation, selected]);
 
   const save = async (): Promise<void> => {
     if (flagshipConnected !== true) {
@@ -246,11 +247,11 @@ function App(): React.JSX.Element {
 
   return <div className="ace-shell">
     <aside className="primary-nav"><div className="brand"><span>A</span><strong>Ace</strong></div><nav><button className="active" type="button"><i>⚑</i>Feature flags</button></nav><footer><span className="avatar">{operatorEmail?.[0]?.toUpperCase() ?? 'A'}</span><div><strong>{operatorEmail ?? 'Internal operator'}</strong><small>Cloudflare Access</small></div></footer></aside>
-    <aside className="flag-list"><header><p>Product controls</p><h1>Feature flags</h1><small>{MANAGED_FLAGS.length} user-facing controls</small></header><div className="flags">
+    <aside className="flag-list"><header><p>Product controls</p><h1>Feature flags</h1><small>{MANAGED_FLAGS.length} managed flags</small></header><div className="flags">
       {MANAGED_FLAGS.map((flag) => { const current = flags.find((candidate) => candidate.key === flag.key); const ruleCount = (current?.rules ?? []).length; const stateLabel = flagshipConnected === false ? 'Unavailable' : current?.enabled ? 'Enabled' : 'Paused'; return <button className={selectedKey === flag.key ? 'selected' : ''} key={flag.key} onClick={() => setSelectedKey(flag.key)} type="button"><StatusDot active={flagshipConnected === true && current?.enabled === true} label={stateLabel} /><div><strong>{flag.label}</strong><small>{current?.default_variation === 'on' ? 'Default on' : 'Default off'} · {ruleCount} {ruleCount === 1 ? 'rule' : 'rules'}</small></div><b>›</b></button>; })}
     </div><footer><span className={flagshipConnected === true ? 'healthy-dot' : 'status-dot'} />{flagshipConnected === null ? 'Connecting to Flagship…' : flagshipConnected ? 'Flagship connected' : 'Flagship unavailable'}</footer></aside>
     <main className="flag-editor"><header className="editor-header"><div><p>Feature flag</p><h2>{definition.label}</h2><code>{selected.key}</code></div><Button variant="primary" disabled={saving || flagshipConnected !== true} onClick={() => void save()} type="button">{saving ? 'Saving…' : 'Save changes'}</Button></header>
-      <section className="default-section"><div><h3>Default</h3><p>The value for anyone who does not match a targeting rule.</p></div><div className="flag-controls"><Field label="Flag status"><SegmentedControl onChange={(value) => updateSelected({ enabled: value === 'enabled' })} options={['enabled', 'paused'] as const} value={selected.enabled === false ? 'paused' : 'enabled'} /></Field><Field label="Default value"><SegmentedControl large onChange={(value) => updateSelected({ default_variation: value })} options={['off', 'on'] as const} value={selected.default_variation ?? 'off'} /></Field></div></section>
+      <section className="default-section"><div><h3>Default</h3><p>The value for anyone who does not match a targeting rule.</p></div><div className="flag-controls"><Field label="Flag status"><SegmentedControl onChange={(value) => updateSelected({ enabled: value === 'enabled' })} options={['enabled', 'paused'] as const} value={selected.enabled === false ? 'paused' : 'enabled'} /></Field><Field label="Default value"><SegmentedControl large onChange={(value) => updateSelected({ default_variation: value })} options={['off', 'on'] as const} value={selected.default_variation ?? definition.defaultVariation} /></Field></div></section>
       <section className="targeting"><div className="section-title"><div><h3>Targeting rules</h3><p>Rules run from top to bottom. The first match wins. Nest AND/OR groups for precise audiences.</p></div><button className="add" onClick={() => updateSelected({ rules: [...(selected.rules ?? []), { priority: (selected.rules ?? []).length + 1, conditions: [newSimpleCondition()], serve_variation: 'on', rollout: { percentage: 100, attribute: 'userPlatformId' } }] })} type="button">＋ Add rule</button></div>
         <div className="rule-stack">{(selected.rules ?? []).map((rule, index) => <RuleEditor index={index} key={index} rule={rule} onChange={(next) => updateSelected({ rules: (selected.rules ?? []).map((candidate, candidateIndex) => candidateIndex === index ? next : candidate) })} onRemove={() => updateSelected({ rules: (selected.rules ?? []).filter((_, candidateIndex) => candidateIndex !== index) })} />)}
           {(selected.rules ?? []).length === 0 && <EmptyState title="No targeting rules" description="Everyone receives the default value." />}

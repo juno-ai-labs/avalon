@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { MANAGED_FLAGS } from '../src/protocol';
 
 const aceDirectory = fileURLToPath(new URL('..', import.meta.url));
 const repositoryDirectory = fileURLToPath(new URL('../../..', import.meta.url));
@@ -113,5 +114,26 @@ describe('Ace deployment contract', () => {
     expect(deploy).toContain("ensureFlag('suggested-work-enabled'");
     expect(deploy).toContain("ensureFlag('automation-workspace-templates-enabled'");
     expect(deploy).toContain('variations: { off: false, on: true }');
+  });
+
+  it("provisions every managed flag with the default variation its own catalog entry declares", async () => {
+    const deploy = await readFile(`${aceDirectory}/scripts/deploy.mjs`, 'utf8');
+
+    // `deploy.mjs` runs under plain Node, not through Vite, so it cannot
+    // import `MANAGED_FLAGS` and read it at runtime the way this test can —
+    // `ensureFlag`'s third argument is the only place the fact lives at
+    // deploy time. Asserting against the catalog, one flag at a time, is what
+    // stops the two from silently disagreeing: `digests-enabled` defaults on
+    // precisely because a digest already sends by default for every existing
+    // person, and `ensureFlag`'s own default is 'off' for everything else, so
+    // a call site that drifted from its catalog entry would provision the
+    // wrong default rather than merely fail a targeted regex.
+    for (const flag of MANAGED_FLAGS) {
+      const call = deploy.match(new RegExp(`ensureFlag\\('${flag.key}'[\\s\\S]*?\\)(?=[,;\\n])`, 'u'))?.[0];
+      expect(call, `no ensureFlag('${flag.key}', ...) call found in deploy.mjs`).toBeDefined();
+      const servesOn = /,\s*'on'\)$/u.test(call!);
+      expect(servesOn ? 'on' : 'off', `${flag.key} provisions '${servesOn ? 'on' : 'off'}' but its MANAGED_FLAGS entry declares '${flag.defaultVariation}'`)
+        .toBe(flag.defaultVariation);
+    }
   });
 });
