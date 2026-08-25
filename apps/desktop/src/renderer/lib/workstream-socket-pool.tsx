@@ -6,11 +6,13 @@ import {
 } from './use-workstream-socket';
 
 export const RECENT_WORKSTREAM_SOCKET_RETENTION_MS = 5 * 60_000;
+export const WORKSTREAM_SOCKET_HOVER_WARMUP_MS = 1_000;
 
 interface RetainedWorkstreamSocketContextValue {
   activeWorkstreamId: string | null;
   admit: (workstreamId: string) => void;
   connections: ReadonlyMap<string, WorkstreamSocketConnection>;
+  warm: (workstreamId: string) => void;
 }
 
 const RetainedWorkstreamSocketContext = createContext<RetainedWorkstreamSocketContextValue | null>(null);
@@ -32,11 +34,22 @@ export function retainedWorkstreamSocketIds(
 function useRetainedWorkstreamSocketIds(
   activeWorkstreamId: string | null,
   backgroundWorkstreamIds: readonly string[],
-): string[] {
+): {
+  retain: (workstreamId: string) => void;
+  workstreamIds: string[];
+} {
   const previousActiveWorkstreamId = useRef(activeWorkstreamId);
   const [recentlyViewedUntil, setRecentlyViewedUntil] = useState<ReadonlyMap<string, number>>(
     () => new Map(),
   );
+  const retain = useCallback((workstreamId: string) => {
+    const retainUntil = Date.now() + RECENT_WORKSTREAM_SOCKET_RETENTION_MS;
+    setRecentlyViewedUntil((current) => {
+      const next = new Map(current);
+      next.set(workstreamId, retainUntil);
+      return next;
+    });
+  }, []);
   const justLeftWorkstreamId = previousActiveWorkstreamId.current !== activeWorkstreamId
     ? previousActiveWorkstreamId.current
     : null;
@@ -44,13 +57,8 @@ function useRetainedWorkstreamSocketIds(
   useLayoutEffect(() => {
     previousActiveWorkstreamId.current = activeWorkstreamId;
     if (justLeftWorkstreamId === null) return;
-    const retainUntil = Date.now() + RECENT_WORKSTREAM_SOCKET_RETENTION_MS;
-    setRecentlyViewedUntil((current) => {
-      const next = new Map(current);
-      next.set(justLeftWorkstreamId, retainUntil);
-      return next;
-    });
-  }, [activeWorkstreamId, justLeftWorkstreamId]);
+    retain(justLeftWorkstreamId);
+  }, [activeWorkstreamId, justLeftWorkstreamId, retain]);
 
   useEffect(() => {
     if (recentlyViewedUntil.size === 0) return;
@@ -74,12 +82,15 @@ function useRetainedWorkstreamSocketIds(
     };
   }, [recentlyViewedUntil]);
 
-  return retainedWorkstreamSocketIds(
-    activeWorkstreamId,
-    backgroundWorkstreamIds,
-    [...recentlyViewedUntil.keys()],
-    justLeftWorkstreamId,
-  );
+  return {
+    retain,
+    workstreamIds: retainedWorkstreamSocketIds(
+      activeWorkstreamId,
+      backgroundWorkstreamIds,
+      [...recentlyViewedUntil.keys()],
+      justLeftWorkstreamId,
+    ),
+  };
 }
 
 function RetainedWorkstreamSocket({
@@ -162,7 +173,10 @@ export function WorkstreamSocketPool({
   api: WorkstreamSocketApi | null;
   backgroundWorkstreamIds: readonly string[];
 }>): React.JSX.Element {
-  const workstreamIds = useRetainedWorkstreamSocketIds(activeWorkstreamId, backgroundWorkstreamIds);
+  const { retain, workstreamIds } = useRetainedWorkstreamSocketIds(
+    activeWorkstreamId,
+    backgroundWorkstreamIds,
+  );
   const [admittedWorkstreamIds, setAdmittedWorkstreamIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -175,6 +189,10 @@ export function WorkstreamSocketPool({
       return new Set(current).add(workstreamId);
     });
   }, []);
+  const warm = useCallback((workstreamId: string) => {
+    admit(workstreamId);
+    retain(workstreamId);
+  }, [admit, retain]);
   const publishConnection = useCallback((
     workstreamId: string,
     connection: WorkstreamSocketConnection,
@@ -204,7 +222,8 @@ export function WorkstreamSocketPool({
     activeWorkstreamId,
     admit,
     connections,
-  }), [activeWorkstreamId, admit, connections]);
+    warm,
+  }), [activeWorkstreamId, admit, connections, warm]);
   return (
     <RetainedWorkstreamSocketContext.Provider value={context}>
       <RetainedWorkstreamSocketOwners
@@ -219,6 +238,37 @@ export function WorkstreamSocketPool({
       {children}
     </RetainedWorkstreamSocketContext.Provider>
   );
+}
+
+/**
+ * Warm the pooled WorkstreamDO/SubstreamAgent pair after a deliberate sidebar
+ * hover. Leaving before the threshold cancels the request; once opened, the
+ * ordinary recent-work-stream lifetime owns the pair.
+ */
+export function useWorkstreamSocketHoverWarmup(workstreamId: string): {
+  onPointerEnter: () => void;
+  onPointerLeave: () => void;
+} {
+  const retained = useContext(RetainedWorkstreamSocketContext);
+  const timeout = useRef<number | null>(null);
+  const cancel = useCallback(() => {
+    if (timeout.current === null) return;
+    window.clearTimeout(timeout.current);
+    timeout.current = null;
+  }, []);
+  const start = useCallback(() => {
+    cancel();
+    if (!retained || retained.activeWorkstreamId === workstreamId) return;
+    timeout.current = window.setTimeout(() => {
+      timeout.current = null;
+      retained.warm(workstreamId);
+    }, WORKSTREAM_SOCKET_HOVER_WARMUP_MS);
+  }, [cancel, retained, workstreamId]);
+  useEffect(() => cancel, [cancel]);
+  return useMemo(() => ({
+    onPointerEnter: start,
+    onPointerLeave: cancel,
+  }), [cancel, start]);
 }
 
 /**
