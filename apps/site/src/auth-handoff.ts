@@ -136,7 +136,7 @@ export function parseDesktopTarget(fragment: string): string | null {
 }
 
 function initializeHandoff(): void {
-  const link = document.querySelector<HTMLAnchorElement>('#open-avalon');
+  const link = document.querySelector<HTMLAnchorElement>('#open-rally');
   const status = document.querySelector<HTMLElement>('#auth-status');
   const help = document.querySelector<HTMLElement>('#auth-help');
   if (!link || !status || !help) return;

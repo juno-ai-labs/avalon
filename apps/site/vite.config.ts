@@ -23,9 +23,9 @@ export default defineConfig(async () => {
     },
     plugins: [
       {
-        name: 'avalon-desktop-release',
+        name: 'rally-desktop-release',
         transformIndexHtml(html: string) {
-          return html.includes('<!-- avalon-desktop-release:start -->')
+          return html.includes('<!-- rally-desktop-release:start -->')
             ? renderDesktopRelease(html, desktopRelease, publication)
             : html;
         },
