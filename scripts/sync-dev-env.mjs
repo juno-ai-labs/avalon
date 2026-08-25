@@ -147,7 +147,7 @@ const safeDefaults = {
   APP_ENV: "development",
   AVALON_DEV_AUTH: "true",
   PUBLIC_WEB_BASE_URL: "http://127.0.0.1:5174",
-  ALLOWED_ORIGINS: "app://rally,app://avalon,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174",
+  ALLOWED_ORIGINS: "app://rallywithai,app://avalon,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174",
   DESKTOP_DEEP_LINK_URI: "rallywithai://auth/complete",
   TERMINAL_REGION_CAPABILITY: "unsupported",
   TERMINAL_EMERGENCY_DISABLED: "false",
@@ -274,7 +274,7 @@ for (const region of ["global", "eu"]) {
   regional.OAUTH_STATE_ENCRYPTION_KEY ||= randomBytes(32).toString("base64");
   regional.CONNECTOR_CREDENTIALS_KEY ||= randomBytes(32).toString("base64");
   // Migrate the original generated allowlist without overriding an explicit
-  // developer choice in .env.local. Built Electron renderers use app://rally.
+  // developer choice in .env.local. Built Electron renderers use app://rallywithai.
   if (!("ALLOWED_ORIGINS" in local) && existing.ALLOWED_ORIGINS === "http://localhost:5173") {
     regional.ALLOWED_ORIGINS = safeDefaults.ALLOWED_ORIGINS;
   }

@@ -40,7 +40,7 @@ describe('dual-domain deployment', () => {
     // A desktop build shipped before the rename sends `app://avalon` and cannot
     // be made to send anything else. Removing it rejects every installed client
     // at once, before any route code runs.
-    expect(origins(fileName)).toEqual(expect.arrayContaining(['app://rally', 'app://avalon']));
+    expect(origins(fileName)).toEqual(expect.arrayContaining(['app://rallywithai', 'app://avalon']));
   });
 
   it('admits every served public-site origin on Global', () => {

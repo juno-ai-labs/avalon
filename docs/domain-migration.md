@@ -21,8 +21,8 @@ deep-link scheme, and the work-stream email domain.
 | `packages/contracts/src/desktop-deep-link.ts` | The one list of deep-link schemes — minted, legacy, and accepted. Every other surface reads it. |
 | `apps/api/src/lib/workstream-email-address.ts` | The minted email domain and the legacy domains still accepted inbound. |
 | `apps/api/src/services/terminal/network-policy.ts` | The sandbox baseline allowlist, which holds the canonical API hosts only. |
-| `apps/desktop/src/main/index.ts` | `rendererHost` — the `app://rally` origin the Workers' `ALLOWED_ORIGINS` must admit. |
-| `apps/desktop/src/main/message-export.ts` | `MESSAGE_EXPORT_SCHEME` — `rally-export`, in-process only and renamed outright. |
+| `apps/desktop/src/main/index.ts` | `rendererHost` — the `app://rallywithai` origin the Workers' `ALLOWED_ORIGINS` must admit. |
+| `apps/desktop/src/main/message-export.ts` | `MESSAGE_EXPORT_SCHEME` — `rallywithai-export`, in-process only and renamed outright. |
 | `apps/api/test/domain-migration-config.test.ts` | Asserts the deployed configs list both renderer origins, all four site origins, both route sets, and no superseded host in any minted URL. |
 | `apps/site/public/_headers` | The site's CSP `connect-src`, which permits both API origins. |
 | `config/provider-apps/*.json` | The provider registrations to apply by hand, per provider. |
@@ -75,14 +75,14 @@ every parser on every surface accepts either.
 
 ### The two internal schemes
 
-`app://rally` is the packaged renderer's origin, and it is **not** purely
+`app://rallywithai` is the packaged renderer's origin, and it is **not** purely
 internal: it is the `Origin` header on every API request and WebSocket upgrade
-the desktop makes, so both regional Workers list `app://rally` and `app://avalon`
+the desktop makes, so both regional Workers list `app://rallywithai` and `app://avalon`
 in `ALLOWED_ORIGINS`. A shipped build sends `app://avalon` and cannot be made to
 send anything else, so this follows the same rule as the deep-link scheme —
 switch what is written, widen what is accepted.
 
-`rally-export://` is the scheme a saved message card is rendered from. That one
+`rallywithai-export://` is the scheme a saved message card is rendered from. That one
 *is* purely internal: the scheme is registered, served, and loaded inside one
 process, against a single-use in-memory token, and nothing outside ever sees it.
 It was renamed outright, with no legacy accepted, because there is no second
@@ -202,13 +202,13 @@ rather than assertions.
 
 ### 2026-08-25 — The renderer origin and the export scheme move too
 
-**What changed:** The packaged renderer's origin became `app://rally`, with
+**What changed:** The packaged renderer's origin became `app://rallywithai`, with
 `app://avalon` added to `ALLOWED_ORIGINS` in both regions rather than replaced.
-The message-export scheme became `rally-export://` outright, with no legacy
+The message-export scheme became `rallywithai-export://` outright, with no legacy
 accepted. `apps/api/test/domain-migration-config.test.ts` now asserts the
 deployed configs against both.
 
-**Why:** Neither is a hostname, but one of them behaves like one. `app://rally`
+**Why:** Neither is a hostname, but one of them behaves like one. `app://rallywithai`
 is the `Origin` header on every API request and WebSocket upgrade the desktop
 makes, so it is a value a *remote* party checks — and a build shipped before the
 rename sends `app://avalon` and cannot be made to send anything else. Renaming it
@@ -216,7 +216,7 @@ without widening the allowlist would have rejected every installed client at the
 CORS preflight, which fails before any route code runs and therefore leaves no
 API request log to diagnose it from.
 
-`rally-export://` has no such party. The scheme is registered, served, and loaded
+`rallywithai-export://` has no such party. The scheme is registered, served, and loaded
 inside one process against a single-use in-memory token; nothing outside ever
 holds one. A compatibility window there would have been dead code from the day
 it shipped.
