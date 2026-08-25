@@ -68,6 +68,7 @@ const workspace: Workspace = {
 const defaultActions = {
   onArchiveDraftAutomation: async (): Promise<void> => undefined,
   onArchiveNote: async (): Promise<void> => undefined,
+  onArchiveWorkstream: async (): Promise<void> => undefined,
   onChangeNoteScope: async (): Promise<void> => undefined,
   onChangeWorkstreamScope: async (): Promise<void> => undefined,
   onDeleteAutomation: async (): Promise<void> => undefined,
@@ -1239,6 +1240,92 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
     await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Make public to workspace' }))
       .not.toHaveAttribute('data-disabled'));
+  });
+
+  it('archives a work stream from the menu once the confirmation is accepted', async () => {
+    const onArchiveWorkstream = vi.fn(async () => undefined);
+    const target = workstream('archive-me', 'Quarterly planning', 'completed');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onArchiveWorkstream={onArchiveWorkstream}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const row = screen.getByRole('link', { name: /Quarterly planning/u });
+    fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }));
+
+    // Cancelling is the whole point of confirming: a right-click that landed a
+    // row away from where it was aimed must not have archived anything.
+    const dialog = await screen.findByRole('dialog', { name: 'Archive work stream' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive work stream' }))
+      .not.toBeInTheDocument());
+    expect(onArchiveWorkstream).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive work stream' }))
+      .getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() => expect(onArchiveWorkstream).toHaveBeenCalledWith(target));
+    await waitFor(() => expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'workstream_action_completed', workstreamId: target.id, action: 'archive',
+      visibility: 'public', origin: 'ad_hoc', pinned: false,
+    }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive work stream' }))
+      .not.toBeInTheDocument());
+  });
+
+  it('reports a work-stream archive the server rejected instead of failing silently', async () => {
+    const onArchiveWorkstream = vi.fn(async () => {
+      throw new Error('Work stream is still running');
+    });
+    const target = workstream('archive-me', 'Quarterly planning', 'running');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onArchiveWorkstream={onArchiveWorkstream}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
+      clientX: 120, clientY: 90,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive work stream' }))
+      .getByRole('button', { name: 'Archive' }));
+
+    const failure = await screen.findByRole('dialog', { name: 'Work stream could not be archived' });
+    expect(within(failure).getByText('Work stream is still running')).toBeVisible();
+
+    fireEvent.click(within(failure).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Work stream could not be archived' }))
+      .not.toBeInTheDocument());
+    // The row is still there, and saying so is the reason this dialog exists:
+    // the sidebar looks identical either way, so a silent failure reads as an
+    // archive the list has simply not caught up with yet.
+    expect(screen.getByRole('link', { name: /Quarterly planning/u })).toBeVisible();
+    expect(reportTelemetryProductIntent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'archive' }),
+    );
   });
 
   it('marks work streams unread on the server and renames from the menu', async () => {

@@ -1251,6 +1251,26 @@ export class RallyApi {
     return mapWorkstreamSummary(workstream);
   }
 
+  /**
+   * Take a work stream out of every listing, for everyone who could see it.
+   *
+   * The same `PATCH` a rename and a visibility change use, because being
+   * archived is a field of the work stream rather than a lifecycle of its own.
+   * The row that comes back is the archived one; nothing here removes it from
+   * the sidebar, because WorkstreamDO answers this write with a directory
+   * tombstone and `applyVersionedWorkstreamState` drops the row and its detail
+   * query off the back of that — the same path an archive from another window
+   * already takes.
+   */
+  async archiveWorkstream(id: string): Promise<WorkstreamSummary> {
+    const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: { archived: true },
+      schema: WireWorkstreamSchema,
+    });
+    return mapWorkstreamSummary(workstream);
+  }
+
   async acknowledgeWorkstreamRead(
     id: string,
     readThroughSequenceNumber: number,
