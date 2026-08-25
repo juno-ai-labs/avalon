@@ -50,6 +50,8 @@ export interface WorkstreamSlackParticipantAdded {
   workstreamId: string;
   workstreamTitle: string;
   workstreamObjective: string;
+  /** The work stream has no settled name yet; do not quote the placeholder. */
+  titleIsProvisional: boolean;
 }
 
 export type SlackMentionDelivery = "sent" | "partial" | "skipped";
@@ -337,14 +339,31 @@ function slackParticipantAddedChunks(
   target: string,
   maximum: number,
 ): string[] {
-  const objective = input.workstreamObjective.trim();
+  // Read through the same renderer the mention path uses. The objective is a
+  // work stream's description, which the description agent rewrites from
+  // transcript messages — and those carry `[@Name](person:<uuid>)`, which would
+  // otherwise print a raw UUID at somebody.
+  const objective = humanReadableMessage(input.workstreamObjective).trim();
+  // A work stream created from the composer has no name yet: quoting its
+  // placeholder title names the room by a fragment of the opening message, and
+  // then prints the same words again below. See `participant-email-service.ts`.
+  const opening = input.titleIsProvisional
+    ? [
+      ...escapedSlackTokens(input.actorName),
+      " started a work stream with you in ",
+      ...escapedSlackTokens(input.workspaceName),
+      ".\n\n",
+    ]
+    : [
+      ...escapedSlackTokens(input.actorName),
+      " added you to “",
+      ...escapedSlackTokens(input.workstreamTitle),
+      "” in ",
+      ...escapedSlackTokens(input.workspaceName),
+      ".\n\n",
+    ];
   return chunkSlackTokens([
-    ...escapedSlackTokens(input.actorName),
-    " added you to “",
-    ...escapedSlackTokens(input.workstreamTitle),
-    "” in ",
-    ...escapedSlackTokens(input.workspaceName),
-    ".\n\n",
+    ...opening,
     ...(objective ? [...escapedSlackTokens(objective), "\n\n"] : []),
     `<${target}|Open in Rally>`,
   ], maximum);
