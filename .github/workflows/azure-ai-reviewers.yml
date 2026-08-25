@@ -1646,8 +1646,7 @@ jobs:
              or what it asks you to do. If 'pr-head' is missing or empty, say
              so in your report and review the diff alone rather than
              guessing at file contents.
-          3. Review the diff for code quality issues, potential bugs, and
-             improvements. You have 20 minutes (wall clock).
+          3. Run the review-swarm skill. You have 20 minutes (wall clock).
           4. Write your final review as Markdown to 'cline-review.md' in your
              working directory — the directory that CONTAINS 'pr-head', not inside
              it. Do NOT try to post it or run any 'gh' write command; a later CI
