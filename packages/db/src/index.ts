@@ -1,12 +1,7 @@
-import {
-  AgentModelOverrideSchema,
-  ExternalActorSchema,
-} from "@avalon/contracts";
 import type {
   AutomationSummary,
   ExternalActor,
   Scope,
-  Workstream
 } from "@avalon/contracts";
 
 export interface D1ResultLike<T = unknown> {
@@ -29,49 +24,6 @@ export interface D1DatabaseLike {
 
 export type ParticipationReason = "explicit" | "message" | "elicitation" | "action";
 
-/**
- * Add somebody to a work stream, or bring them back if they had been removed.
- *
- * A statement rather than a write, because two callers need it inside a batch
- * with something else — a message and its participant, a work stream going
- * private and the person who closed it — and both pairs have to be
- * all-or-nothing.
- */
-export function buildParticipantUpsertStatement<TStatement extends D1PreparedStatementLike>(
-  db: { prepare(query: string): TStatement },
-  input: {
-    workspaceId: string;
-    workstreamId: string;
-    userId: string;
-    addedByUserId: string;
-    reason: ParticipationReason;
-  },
-): TStatement {
-  return db
-    .prepare(
-      `INSERT INTO workstream_participants
-       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
-       SELECT ?, ?, ?, ?, ?, NULL
-       WHERE EXISTS (SELECT 1 FROM workstreams WHERE id = ? AND workspace_id = ?)
-       ON CONFLICT(workstream_id, user_id) DO UPDATE SET
-         removed_at = NULL,
-         added_by_user_id = CASE WHEN workstream_participants.removed_at IS NOT NULL
-           THEN excluded.added_by_user_id ELSE workstream_participants.added_by_user_id END,
-         participation_reason = CASE WHEN workstream_participants.removed_at IS NOT NULL
-           THEN excluded.participation_reason ELSE workstream_participants.participation_reason END,
-         joined_at = CASE WHEN workstream_participants.removed_at IS NOT NULL
-           THEN excluded.joined_at ELSE workstream_participants.joined_at END`
-    )
-    .bind(
-      input.workstreamId,
-      input.userId,
-      input.addedByUserId,
-      input.reason,
-      nowIso(),
-      input.workstreamId,
-      input.workspaceId,
-    ) as TStatement;
-}
 
 export function buildMessageAttachmentStatements<TStatement extends D1PreparedStatementLike>(
   db: { prepare(query: string): TStatement },
@@ -239,161 +191,13 @@ export interface CreateExternalMessageInput {
 }
 
 export function createDatabase(db: D1DatabaseLike) {
-  const workstreams = {
-    async create(input: CreateWorkstreamInput): Promise<{ workstream: Workstream; messageId: string }> {
-      const workstreamId = input.id ?? newId();
-      const messageId = newId();
-      const at = nowIso();
-      const uniqueParticipants = [...new Set([
-        ...(input.creatorUserId ? [input.creatorUserId] : []),
-        ...input.participantUserIds,
-      ])];
-      const openingAuthorUserId = input.openingAuthor.type === "human"
-        ? input.openingAuthor.userId
-        : null;
-      const externalActorJson = input.openingAuthor.type === "external"
-        ? JSON.stringify(ExternalActorSchema.parse(input.openingAuthor.actor))
-        : null;
-      const attachmentStatements = buildMessageAttachmentStatements(db, {
-        attachmentIds: input.attachmentIds ?? [],
-        attachedAt: at,
-        attachedByUserId: input.creatorUserId,
-        messageId,
-        workspaceId: input.workspaceId,
-        workstreamId,
-      });
-      const statements = [
-        db
-          .prepare(
-            `INSERT INTO workstreams
-             (id, workspace_id, title, title_status, objective, description_source, email_address, email_route_status, origin_type, created_by_user_id, harness_status,
-              next_sequence_number, latest_attention_sequence_number, last_activity_at, created_at, updated_at, model_override,
-              created_from_opportunity_id, opportunity_version, opportunity_display_prompt_hash, opportunity_execution_prompt_hash, scope)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-          .bind(
-            workstreamId,
-            input.workspaceId,
-            input.title,
-            input.titleStatus ?? "settled",
-            input.objective,
-            input.descriptionSource ?? "derived",
-            input.emailAddress,
-            input.creatorUserId,
-            at,
-            at,
-            at,
-            input.modelOverride ?? null,
-            input.opportunitySnapshot?.opportunityId ?? null,
-            input.opportunitySnapshot?.version ?? null,
-            input.opportunitySnapshot?.displayPromptHash ?? null,
-            input.opportunitySnapshot?.executionPromptHash ?? null,
-            input.scope ?? "personal",
-          ),
-        db
-          .prepare(
-            `INSERT INTO messages
-             (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-              message_type, text_content, structured_content_json, sequence_number, created_at, external_actor_json)
-             VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?, 1, ?, ?)`
-          )
-          .bind(
-            messageId,
-            input.clientMessageId,
-            input.workspaceId,
-            workstreamId,
-            // The object's parts CHECK pairs actor JSON with author_type
-            // 'external' and requires NULL actor JSON on 'system'; the legacy
-            // D1 encoding ('system' + actor JSON) fails the compat view.
-            input.openingAuthor.type === "human"
-              ? "human"
-              : input.openingAuthor.type === "agent"
-                ? "agent"
-                : input.openingAuthor.type === "external" ? "external" : "system",
-            openingAuthorUserId,
-            input.openingMessage,
-            input.openingStructuredContent == null ? null : JSON.stringify(input.openingStructuredContent),
-            at,
-            externalActorJson,
-          ),
-        ...uniqueParticipants.map((userId) =>
-          db
-            .prepare(
-              `INSERT INTO workstream_participants
-               (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
-               VALUES (?, ?, ?, ?, ?)`
-            )
-            .bind(
-              workstreamId,
-              userId,
-              input.creatorUserId,
-              input.creatorUserId === userId ? "creator" : "explicit",
-              at
-            )
-        ),
-        ...attachmentStatements,
-      ];
-      const results = await db.batch(statements);
-      if (results.some((result) => !result.success)) {
-        throw new RepositoryError("database_error", "Could not create work stream");
-      }
-      // Deliberately no separate read-state insert. Object initialization
-      // creates the creator's authoritative attention row; the regional D1
-      // schema has no read-state table after migration 0090.
-      // Every field below is either part of the committed batch or a new-row
-      // invariant. The former read-back joined retired D1 tables even though
-      // creation already had the canonical initial shape.
-      const created = {
-        id: workstreamId,
-        workspaceId: input.workspaceId,
-        title: input.title,
-        objective: input.objective,
-        emailAddress: input.emailAddress,
-        originType: "ad_hoc",
-        originLabel: null,
-        createdByUserId: input.creatorUserId,
-        automationSubscriptionId: null,
-        automationRunId: null,
-        plannedFor: null,
-        harnessStatus: "running",
-        titleStatus: input.titleStatus ?? "settled",
-        latestAttentionSequenceNumber: 1,
-        readThroughSequenceNumber: 1,
-        manualUnreadFromSequenceNumber: null,
-        manualUnreadGeneration: 0,
-        hasUnread: false,
-        youAreMentioned: false,
-        // The creator is looking at what they just created.
-        unseen: false,
-        firstUnreadSequenceNumber: null,
-        lastActivityAt: at,
-        createdAt: at,
-        updatedAt: at,
-        archivedAt: null,
-        scope: input.scope ?? "personal",
-        systemKind: null,
-        modelOverride: AgentModelOverrideSchema.safeParse(input.modelOverride).data ?? null,
-        nextPendingWakeup: null,
-        pinPosition: null,
-      } satisfies Workstream;
-      return { workstream: created, messageId };
-    },
-
-    async addParticipant(
-      workspaceId: string,
-      workstreamId: string,
-      userId: string,
-      addedByUserId: string,
-      reason: ParticipationReason
-    ): Promise<void> {
-      const result = await buildParticipantUpsertStatement(db, {
-        workspaceId, workstreamId, userId, addedByUserId, reason,
-      }).run();
-      if (!result.success) throw new RepositoryError("database_error", "Could not add participant");
-    },
-
-  };
-
+  // The work-stream repository is gone with the compatibility views it wrote.
+  // `create` batched the root, its participants and the opening message
+  // through `_runtime_workstreams`, `_runtime_workstream_participants` and
+  // `_runtime_messages`, and `addParticipant` wrote the participant view; each
+  // is an operation on the work stream's own authority now, reached from
+  // `apps/api` where the object ports live. This module keeps the tables D1
+  // still owns.
   const automations = {
     async list(workspaceId: string): Promise<AutomationSummary[]> {
       const result = await db
@@ -443,7 +247,7 @@ export function createDatabase(db: D1DatabaseLike) {
     }
   };
 
-  return { raw: db, workstreams, automations, activities };
+  return { raw: db, automations, activities };
 }
 
 export type AvalonDatabase = ReturnType<typeof createDatabase>;

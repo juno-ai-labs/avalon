@@ -58,9 +58,10 @@ export interface WorkstreamProvisionInput {
   objective: string;
   scope: string;
   originType: string;
-  createdByUserId: string;
+  createdByUserId: string | null;
   participantUserIds: readonly string[];
   harnessStatus: string;
+  titleStatus?: "naming" | "automatic" | "settled";
   emailAddress: string | null;
   emailRouteStatus: string | null;
   systemKind: string | null;
@@ -478,7 +479,13 @@ export class WorkstreamIdentityStorage {
       if (root.state_reason_code !== "runtime_bootstrap") {
         return { outcome: "already_provisioned" as const };
       }
-      const scheduled = input.harnessStatus === "scheduled";
+      // The retired insert trigger's mapping, kept because a producer states
+      // what the work stream is doing rather than which of the object's
+      // fourteen exact states it is in.
+      const exactState = ["scheduled", "running", "needs_input", "completed", "failed"]
+        .includes(input.harnessStatus)
+        ? input.harnessStatus
+        : "idle";
       this.sql.exec(
         `UPDATE workstream
             SET title = ?, description = ?, scope = ?, origin_type = ?,
@@ -492,7 +499,7 @@ export class WorkstreamIdentityStorage {
                 email_route_status = COALESCE(?, email_route_status),
                 automation_subscription_id = ?,
                 automation_run_id = ?, planned_for = ?, model_override = ?,
-                exact_state = ?, state_reason_code = ?, title_status = 'settled',
+                exact_state = ?, state_reason_code = ?, title_status = ?,
                 description_source = 'derived', listing_epoch = listing_epoch + 1,
                 created_at = ?, last_people_activity_at = ?, state_changed_at = ?,
                 updated_at = ?
@@ -509,8 +516,9 @@ export class WorkstreamIdentityStorage {
         input.automationRunId,
         input.plannedFor,
         input.modelOverride,
-        scheduled ? "scheduled" : "idle",
-        scheduled ? "run_scheduled" : "provisioned",
+        exactState,
+        exactState === "idle" ? "provisioned" : `run_${exactState}`,
+        input.titleStatus ?? "settled",
         input.now,
         input.now,
         input.now,

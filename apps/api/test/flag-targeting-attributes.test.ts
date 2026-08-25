@@ -15,7 +15,6 @@ import {
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  workstreamObjectRun,
 } from "./helpers/durable-authority";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
