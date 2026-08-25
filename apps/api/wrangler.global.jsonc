@@ -10,7 +10,7 @@
     "APP_ENV": "production",
     "APP_VERSION": "0.24.0",
     "AVALON_REGION": "global",
-    "AVALON_DEV_AUTH": "false",
+    "RALLY_DEV_AUTH": "false",
     "PUBLIC_API_BASE_URL": "https://api.rallywith.ai",
     "EU_PUBLIC_API_BASE_URL": "https://eu.api.rallywith.ai",
     "PUBLIC_WEB_BASE_URL": "https://rallywith.ai",

@@ -1,3 +1,4 @@
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AnonymousTelemetryBatchSchema,
   CrashIngestResponseSchema,
@@ -12,7 +13,7 @@ import {
   UpdateProductAnalyticsPreferenceSchema,
   TelemetryBreadcrumbSidecarSchema,
   TELEMETRY_BATCH_MAX_BYTES,
-} from "@avalon/contracts/telemetry";
+} from "@rally/contracts/telemetry";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { HonoAppEnv } from "../env";
@@ -184,7 +185,7 @@ publicTelemetryRoutes.post(
 );
 
 publicTelemetryRoutes.post("/crashes/anonymous", crashUploadBodyLimit, async (c) => {
-  const capability = c.req.header("x-avalon-telemetry-capability");
+  const capability = readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.TELEMETRY_CAPABILITY);
   if (!capability) throw new ApiError(401, "telemetry_capability_required", "A telemetry capability is required");
   let authorization: { route: "global"; anonymousEpochId: string; journeyId: string };
   try {

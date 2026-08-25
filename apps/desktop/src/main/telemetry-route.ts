@@ -1,4 +1,4 @@
-import { TelemetryBootstrapResponseSchema, type TelemetryBootstrapResponse } from '@avalon/contracts';
+import { TelemetryBootstrapResponseSchema, type TelemetryBootstrapResponse } from '@rally/contracts';
 
 export interface ResolvedTelemetryRoute {
   route: 'global' | 'eu';

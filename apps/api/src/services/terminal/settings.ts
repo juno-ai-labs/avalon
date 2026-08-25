@@ -3,8 +3,8 @@ import type {
   PreviewTerminalNetworkPolicyRequestSchema,
   TerminalNetworkPolicyPreview,
   TerminalWorkspaceSettings,
-} from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+} from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 import { workstreamExecutionEnvironment } from "../workstream-runtime-database";
 import { createTerminalPortFactory } from "./object-port";
 import type { z } from "zod";

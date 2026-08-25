@@ -25,7 +25,7 @@ import {
   asWorkstreamId,
   type UserId,
   type WorkstreamId,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 import { workstreamRegionalEffectHash } from "../src/durable-objects/workstream-regional-effect";

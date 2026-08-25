@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { toolActivityName } from "@avalon/agent-harness";
+import { toolActivityName } from "@rally/agent-harness";
 import { __integrationTesting } from "../src/services/integrations";
 import { createTestConnectorRegistry } from "./helpers/connector-registry";
 

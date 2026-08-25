@@ -1,4 +1,4 @@
-import type { WorkstreamStateVersion } from '@avalon/contracts';
+import type { WorkstreamStateVersion } from '@rally/contracts';
 import type { QueryClient } from '@tanstack/react-query';
 
 import type { WorkstreamDetail, WorkstreamSummary } from './types';

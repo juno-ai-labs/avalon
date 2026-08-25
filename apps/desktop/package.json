@@ -1,9 +1,9 @@
 {
-  "name": "@avalon/desktop",
+  "name": "@rally/desktop",
   "version": "1.149.0",
   "private": true,
-  "description": "Avalon secure Electron desktop client",
-  "author": "Avalon",
+  "description": "Rally secure Electron desktop client",
+  "author": "Rally",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
@@ -29,7 +29,7 @@
     "test:crashpad": "node scripts/telemetry-crashpad-fixture.mjs"
   },
   "dependencies": {
-    "@avalon/contracts": "workspace:*",
+    "@rally/contracts": "workspace:*",
     "@radix-ui/react-avatar": "latest",
     "@radix-ui/react-context-menu": "latest",
     "@radix-ui/react-dialog": "latest",

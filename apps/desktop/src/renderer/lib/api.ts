@@ -1,3 +1,4 @@
+import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import {
   ActivitySuggestionSchema as WireActivitySuggestionSchema,
   AutomationDetailSchema as WireAutomationDetailSchema,
@@ -48,9 +49,9 @@ import {
   type Workstream as WireWorkstream,
   type WorkstreamDetail as WireWorkstreamDetail,
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
-} from '@avalon/contracts';
-import { socketTicketProtocols, socketUrlWithoutTicket } from '@avalon/contracts/socket-tickets';
-import { HttpUrlSchema } from '@avalon/contracts/url-schemas';
+} from '@rally/contracts';
+import { socketTicketProtocols, socketUrlWithoutTicket } from '@rally/contracts/socket-tickets';
+import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
@@ -679,7 +680,7 @@ export function redactQuery(path: string): string {
   return keys.length === 0 ? path.slice(0, separator) : `${path.slice(0, separator)}?${keys.join(',')}`;
 }
 
-export class AvalonApi {
+export class RallyApi {
   private readonly drafts = new Map<string, DraftState>();
   private readonly automationDetails = new Map<string, z.infer<typeof WireAutomationDetailSchema>>();
   private readonly pendingRunKeys = new Map<string, string>();
@@ -712,7 +713,7 @@ export class AvalonApi {
       return await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
-      throw networkApiError('Avalon could not reach the selected regional service.', error);
+      throw networkApiError('Rally could not reach the selected regional service.', error);
     }
   }
 
@@ -815,7 +816,7 @@ export class AvalonApi {
     const payload: unknown = await response.json();
     const parsed = options.schema.safeParse(payload);
     if (!parsed.success) {
-      throw new ApiError('Avalon received an unexpected response from the service.', 502, 'invalid_response', {
+      throw new ApiError('Rally received an unexpected response from the service.', 502, 'invalid_response', {
         issues: parsed.error.issues,
         path,
       });
@@ -1304,7 +1305,7 @@ export class AvalonApi {
     reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
     const response = await this.request('/workstreams', {
       method: 'POST',
-      headers: { 'X-Avalon-Operation-Id': operationId },
+      headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: {
         openingMessage: input.openingMessage,
         participantUserIds: input.participantIds,
@@ -1495,7 +1496,7 @@ export class AvalonApi {
     reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
     const response = await this.request(`/workstreams/${encodeURIComponent(id)}/messages`, {
       method: 'POST',
-      headers: { 'X-Avalon-Operation-Id': operationId },
+      headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: {
         text: input.text,
         clientMessageId: input.clientId,
@@ -1537,7 +1538,7 @@ export class AvalonApi {
       request.open('POST', `${this.baseUrl}/resources/upload`);
       request.responseType = 'json';
       request.setRequestHeader('Accept', 'application/json');
-      request.setRequestHeader('X-Avalon-Draft-Id', draftId);
+      request.setRequestHeader(RALLY_HEADERS.DRAFT_ID, draftId);
       if (accessToken) request.setRequestHeader('Authorization', `Bearer ${accessToken}`);
       request.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable) onProgress?.(Math.min(99, Math.round((event.loaded / event.total) * 100)));
@@ -1570,7 +1571,7 @@ export class AvalonApi {
       request.addEventListener('error', () => {
         if (settled) return;
         settled = true;
-        reject(networkApiError('Avalon could not upload the attachment.'));
+        reject(networkApiError('Rally could not upload the attachment.'));
       });
       request.addEventListener('abort', () => {
         if (settled) return;
@@ -1778,11 +1779,11 @@ export class AvalonApi {
       try {
         payload = JSON.parse(data);
       } catch (error) {
-        throw new ApiError('Avalon received an invalid automation stream.', 502, 'invalid_response', error);
+        throw new ApiError('Rally received an invalid automation stream.', 502, 'invalid_response', error);
       }
       const parsed = WireAutomationDraftStreamEventSchema.safeParse(payload);
       if (!parsed.success) {
-        throw new ApiError('Avalon received an unexpected response from the service.', 502, 'invalid_response', {
+        throw new ApiError('Rally received an unexpected response from the service.', 502, 'invalid_response', {
           issues: parsed.error.issues,
           path: '/automations/draft/stream',
         });
@@ -2032,7 +2033,7 @@ export class AvalonApi {
     });
     return this.request(`/connections/${provider}/start?telemetryVersion=2`, {
       method: 'POST',
-      headers: { 'X-Avalon-Operation-Id': operationId },
+      headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: { scope: scope === 'you' ? 'personal' : 'workspace', capabilities },
       schema: WireConnectorOAuthStartSchema,
     });
@@ -2131,7 +2132,7 @@ export class AvalonApi {
     }
     return this.request(`/connections/${encodeURIComponent(id)}/reconnect?telemetryVersion=2`, {
       method: 'POST',
-      ...(operationId ? { headers: { 'X-Avalon-Operation-Id': operationId } } : {}),
+      ...(operationId ? { headers: { [RALLY_HEADERS.OPERATION_ID]: operationId } } : {}),
       schema: WireConnectorOAuthStartSchema,
     });
   }

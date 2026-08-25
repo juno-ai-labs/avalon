@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-import { AVALON_APPLE_TEAM_ID } from './release-lib.mjs';
+import { RALLY_APPLE_TEAM_ID } from './release-lib.mjs';
 import {
   assertDeveloperIdDetails,
   assertEmbeddedUpdateConfig,
@@ -15,7 +15,7 @@ if (!['local', 'release'].includes(mode) || !appArgument) {
 }
 
 const appPath = resolve(appArgument);
-if (!existsSync(appPath)) throw new Error(`Avalon app bundle not found: ${appPath}`);
+if (!existsSync(appPath)) throw new Error(`Rally app bundle not found: ${appPath}`);
 
 function run(command, args) {
   return execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -44,7 +44,7 @@ if (displayResult.status !== 0) {
 const details = `${displayResult.stdout ?? ''}${displayResult.stderr ?? ''}`;
 
 for (const requirement of [
-  ['Identifier=app.avalon.desktop', 'the Avalon bundle identifier'],
+  ['Identifier=ai.rallywith.desktop', 'the Rally bundle identifier'],
   ['Info.plist entries=', 'a bound Info.plist'],
   ['Sealed Resources version=', 'sealed application resources'],
 ]) {
@@ -55,7 +55,7 @@ for (const requirement of [
 if (details.includes('flags=0x20002(adhoc,linker-signed)')) {
   throw new Error('Packaged app has only the Electron executable linker signature.');
 }
-assertDeveloperIdDetails(details, AVALON_APPLE_TEAM_ID, 'Packaged app');
+assertDeveloperIdDetails(details, RALLY_APPLE_TEAM_ID, 'Packaged app');
 
 function verifyArm64(executablePath, label) {
   if (!existsSync(executablePath)) throw new Error(`Packaged app is missing ${label} executable`);
@@ -65,9 +65,9 @@ function verifyArm64(executablePath, label) {
   }
 }
 
-const mainExecutable = join(appPath, 'Contents/MacOS/Avalon');
+const mainExecutable = join(appPath, 'Contents/MacOS/Rally');
 runWithStderr('/usr/bin/codesign', ['--verify', '--strict', '--verbose=4', mainExecutable]);
-verifyArm64(mainExecutable, 'Avalon');
+verifyArm64(mainExecutable, 'Rally');
 
 const resourcesDirectory = join(appPath, 'Contents/Resources');
 const infoPlistPath = join(appPath, 'Contents/Info.plist');
@@ -86,8 +86,8 @@ const dockTilePluginName = runWithStderr('/usr/bin/plutil', [
   'raw',
   infoPlistPath,
 ]).trim();
-if (dockTilePluginName !== 'AvalonDockTilePlugin.docktileplugin') {
-  throw new Error(`Packaged app must declare the Avalon Dock tile plugin; found ${dockTilePluginName || '(none)'}`);
+if (dockTilePluginName !== 'RallyDockTilePlugin.docktileplugin') {
+  throw new Error(`Packaged app must declare the Rally Dock tile plugin; found ${dockTilePluginName || '(none)'}`);
 }
 
 const legacyIconPath = join(resourcesDirectory, 'icon.icns');
@@ -144,7 +144,7 @@ if (!existsSync(nativeIconScriptPath)) throw new Error('Packaged app is missing 
 // The Retina rendition is resolved by name at runtime rather than referenced in
 // code, so a bundle missing it fails nowhere until someone looks at the menu bar
 // on a Retina Mac and sees a blurred mark.
-for (const fileName of ['avalonTemplate.png', 'avalonTemplate@2x.png']) {
+for (const fileName of ['rallyTemplate.png', 'rallyTemplate@2x.png']) {
   const menuBarIconPath = join(resourcesDirectory, 'menu-bar', fileName);
   if (!existsSync(menuBarIconPath)) {
     throw new Error(`Packaged app is missing its menu bar icon ${fileName}`);
@@ -191,7 +191,7 @@ function verifyNestedComponent(componentPath, executablePath, label, { expectEnt
     throw new Error(`Could not inspect ${label}.\n${display.stderr || display.stdout}`.trim());
   }
   const componentDetails = `${display.stdout ?? ''}${display.stderr ?? ''}`;
-  assertDeveloperIdDetails(componentDetails, AVALON_APPLE_TEAM_ID, label);
+  assertDeveloperIdDetails(componentDetails, RALLY_APPLE_TEAM_ID, label);
   if (expectEntitlements) {
     assertExactNestedEntitlements(inspectEntitlementKeys(componentPath, label), label);
   } else {
@@ -205,13 +205,13 @@ function verifyNestedComponent(componentPath, executablePath, label, { expectEnt
 
 const helperDirectory = join(appPath, 'Contents/Frameworks');
 const expectedHelpers = new Set([
-  'Avalon Helper.app',
-  'Avalon Helper (GPU).app',
-  'Avalon Helper (Plugin).app',
-  'Avalon Helper (Renderer).app',
+  'Rally Helper.app',
+  'Rally Helper (GPU).app',
+  'Rally Helper (Plugin).app',
+  'Rally Helper (Renderer).app',
 ]);
 const helperNames = readdirSync(helperDirectory, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory() && entry.name.startsWith('Avalon Helper') && entry.name.endsWith('.app'))
+  .filter((entry) => entry.isDirectory() && entry.name.startsWith('Rally Helper') && entry.name.endsWith('.app'))
   .map((entry) => entry.name)
   .sort();
 for (const expected of expectedHelpers) {
@@ -237,19 +237,19 @@ verifyNestedComponent(crashpadPath, crashpadPath, 'Electron chrome_crashpad_hand
 
 const dockTilePluginPath = join(
   appPath,
-  'Contents/PlugIns/AvalonDockTilePlugin.docktileplugin',
+  'Contents/PlugIns/RallyDockTilePlugin.docktileplugin',
 );
 verifyNestedComponent(
   dockTilePluginPath,
-  join(dockTilePluginPath, 'Contents/MacOS/AvalonDockTilePlugin'),
-  'Avalon Dock tile plugin',
+  join(dockTilePluginPath, 'Contents/MacOS/RallyDockTilePlugin'),
+  'Rally Dock tile plugin',
   { expectEntitlements: false },
 );
 const systemAudioTapPath = join(resourcesDirectory, 'native/system-audio-tap.node');
 verifyNestedComponent(
   systemAudioTapPath,
   systemAudioTapPath,
-  'Avalon Core Audio tap',
+  'Rally Core Audio tap',
   { expectEntitlements: false },
 );
 
@@ -261,4 +261,4 @@ if (mode === 'release') {
   runWithStderr('/usr/bin/xcrun', ['stapler', 'validate', appPath]);
 }
 
-console.log(`Verified ${mode} Avalon bundle: ${appPath}`);
+console.log(`Verified ${mode} Rally bundle: ${appPath}`);

@@ -7,7 +7,7 @@ import type { WorkstreamResource } from './types';
  * bytes are kept alongside the text so a restored draft can still paint its
  * thumbnails and retry its uploads without the file picker.
  */
-const DATABASE_NAME = 'avalon-composer-drafts';
+const DATABASE_NAME = 'rally-composer-drafts';
 const DATABASE_VERSION = 2;
 const TEXT_STORE = 'text';
 const ATTACHMENT_STORE = 'attachments';

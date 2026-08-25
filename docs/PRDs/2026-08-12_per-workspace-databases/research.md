@@ -8,7 +8,7 @@
 ## D1 quotas and account limits
 
 From [D1 limits](https://developers.cloudflare.com/d1/platform/limits/), Workers
-Paid plan (the plan Avalon deploys on):
+Paid plan (the plan Rally deploys on):
 
 | Limit | Value |
 | --- | --- |
@@ -157,13 +157,13 @@ Relevant properties:
   neither gains nor loses inherited provider controls.
 - **CASA** (Cloud Application Security Assessment) is the [App Defense
   Alliance](https://appdefensealliance.dev/casa) assessment Google requires of
-  applications holding **restricted OAuth scopes** — which Avalon's Google Mail
+  applications holding **restricted OAuth scopes** — which Rally's Google Mail
   + Calendar connector will put in scope. It verifies the *application* against
   OWASP ASVS categories; tenant isolation and access control (ASVS V4) are
   assessed at the application layer, so the architecture's isolation story is
   what gets examined — there is no per-database checkbox, but structural
   isolation is materially easier to evidence than query-discipline isolation.
-- **ISO 27001 for Avalon itself** would assess Avalon's ISMS, not Cloudflare's.
+- **ISO 27001 for Rally itself** would assess Rally's ISMS, not Cloudflare's.
   The controls a per-tenant store touches are asset management (a database
   inventory that must track a dynamic fleet), access control, backup/restore
   (per-tenant PITR), secure disposal (deleting a tenant deletes a database),

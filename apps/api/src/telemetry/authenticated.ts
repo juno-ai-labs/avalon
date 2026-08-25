@@ -1,5 +1,5 @@
-import { newId } from "@avalon/db";
-import type { TelemetryBatch, TelemetryEnvelope } from "@avalon/contracts/telemetry";
+import { newId } from "@rally/db";
+import type { TelemetryBatch, TelemetryEnvelope } from "@rally/contracts/telemetry";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { TelemetryCollector, type TelemetryAcceptanceResult } from "./collector";

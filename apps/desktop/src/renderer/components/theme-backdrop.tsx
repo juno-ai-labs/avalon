@@ -11,7 +11,7 @@ import { backdropScheme, themesWithBackdrop } from '../../common/theme-assets';
  * and this is where it goes.
  *
  * What keeps that from being a hole is that the document is not part of this
- * page. It is served from `avalon-backdrop://`, an origin of its own, under a
+ * page. It is served from `rally-backdrop://`, an origin of its own, under a
  * policy with no `connect-src` at all, into a frame sandboxed *without*
  * `allow-same-origin` — so its scripts run in an opaque origin that cannot reach
  * this document, this origin's storage, or the preload bridge, and cannot make a

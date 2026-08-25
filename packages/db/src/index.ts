@@ -2,7 +2,7 @@ import type {
   AutomationSummary,
   ExternalActor,
   Scope,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 
 export interface D1ResultLike<T = unknown> {
   success: boolean;

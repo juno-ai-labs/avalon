@@ -34,7 +34,7 @@ const workstream: WorkstreamDetail = {
   id: 'workstream-1',
   title: 'Monday invoice review',
   titleStatus: 'settled' as const,
-  emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
+  emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
   origin: 'automation',
   automationName: 'Weekly invoice monitor',
   harnessStatus: 'completed',
@@ -174,7 +174,7 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
 
-    const emailAddress = 'luminous-tidal-structured-curie@automation.with-avalon.com';
+    const emailAddress = 'luminous-tidal-structured-curie@automation.rallywith.ai';
     expect(screen.getByText(emailAddress)).toBeVisible();
 
     const copyButton = screen.getByRole('button', { name: 'Copy work-stream email address' });

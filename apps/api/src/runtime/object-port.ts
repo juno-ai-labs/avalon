@@ -1,4 +1,4 @@
-import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import { substreamAgentName } from "../durable-objects/names";
 import type { SubstreamAgent } from "../durable-objects/substream-agent";

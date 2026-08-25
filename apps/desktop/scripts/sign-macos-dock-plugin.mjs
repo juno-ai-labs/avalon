@@ -22,7 +22,7 @@ export default async function signMacosNativeComponents(context) {
   );
 
   const componentPaths = [
-    join(applicationPath, 'Contents/PlugIns/AvalonDockTilePlugin.docktileplugin'),
+    join(applicationPath, 'Contents/PlugIns/RallyDockTilePlugin.docktileplugin'),
     join(applicationPath, 'Contents/Resources/native/system-audio-tap.node'),
   ];
   for (const componentPath of componentPaths) {

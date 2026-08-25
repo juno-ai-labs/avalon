@@ -2,7 +2,7 @@ import {
   TELEMETRY_EVENTS,
   TelemetryEnvelopeSchema,
   type TelemetryEnvelope,
-} from "@avalon/contracts/telemetry";
+} from "@rally/contracts/telemetry";
 import { z } from "zod";
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";

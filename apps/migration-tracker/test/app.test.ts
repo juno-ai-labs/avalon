@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type {
   DurableObjectMigrationCommand,
   DurableObjectMigrationReport,
-} from "@avalon/contracts/durable-object-migrations";
+} from "@rally/contracts/durable-object-migrations";
 import { app, parseObjectQuery } from "../src/app";
 import type { Env } from "../src/env";
 import { REGISTRY_OBJECT_NAME } from "../src/registry";

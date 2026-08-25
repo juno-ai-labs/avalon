@@ -3,7 +3,7 @@
 A pinned work stream leaves the recency-sorted sidebar and moves into a
 **Pinned** section under **Automations**, where it stays until it is unpinned.
 The section is arranged by hand — dragged into order, never sorted — and both the
-pin and the arrangement live on the server, so the same person opening Avalon on
+pin and the arrangement live on the server, so the same person opening Rally on
 another machine finds their list exactly as they left it.
 
 A pin is **one person's opinion about a shared row**. Pinning a work stream tells
@@ -396,7 +396,7 @@ through `setCachedWorkstreams`, which binds the key to `WorkstreamSummary[]` and
 asserts the array category again at runtime. Socket reconciliation writes the
 `items` from `getWorkstreams`, not the page that contains them. ESLint forbids a
 direct `setQueryData` or `setQueriesData` write to that key outside the helper,
-and also forbids desktop tests from casting a partial double to `AvalonApi`.
+and also forbids desktop tests from casting a partial double to `RallyApi`.
 Those consumers now declare the smaller API capability they actually use, and
 their mocks prove it with `satisfies`.
 
@@ -406,7 +406,7 @@ in socket reconciliation. React Query inferred the page object as a perfectly
 valid generic cache value because its query key carries no value type; the
 sidebar independently read the same key as an array and crashed on `.filter`.
 The socket tests returned the obsolete array shape behind `as unknown as
-AvalonApi`, so the API signature change could not break them.
+RallyApi`, so the API signature change could not break them.
 
 **Considered and rejected:** Parsing every internal cache update with a full
 Zod schema. The server response had already passed its page schema; the defect
@@ -645,7 +645,7 @@ by whatever ran most recently — including automation output they were not
 reading. Sorting cannot express "this one matters to me", because it is a
 different question from "this one moved".
 
-Server-side rather than device-local because a person uses Avalon on more than
+Server-side rather than device-local because a person uses Rally on more than
 one machine and a pinned list that disagrees between them is worse than no
 pinned list: it teaches them not to trust the section.
 
@@ -679,6 +679,6 @@ pinned list: it teaches them not to trust the section.
   change to the merge must keep those two separate.
 - Nothing is broadcast on a pin. If pins ever need to converge faster than the
   sidebar poll, that is a socket event to the *user*, not to the work-stream
-  room, which is a channel Avalon does not have yet.
+  room, which is a channel Rally does not have yet.
 - `MAX_PINNED_WORKSTREAMS` is a contract constant and bounds the reorder
   request. Raising it raises the size of the rewrite batch with it.

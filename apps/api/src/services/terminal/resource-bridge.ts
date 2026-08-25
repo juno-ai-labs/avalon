@@ -1,5 +1,5 @@
-import { AttachmentKindSchema, classifyAttachmentKind } from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+import { AttachmentKindSchema, classifyAttachmentKind } from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 
 import type { Env } from "../../env";
 import { numericEnv } from "../../env";

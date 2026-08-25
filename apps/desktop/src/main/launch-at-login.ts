@@ -10,7 +10,7 @@ export interface LaunchAtLoginDependencies {
   readonly supported: boolean;
   /** Whether the enabled-by-default login item may be registered on this
    * launch. False in development, where the executable macOS would register is
-   * a shared Electron binary rather than an installed Avalon. */
+   * a shared Electron binary rather than an installed Rally. */
   readonly registersDefault: boolean;
   readonly getLoginItemState: () => LoginItemState;
   readonly setOpenAtLogin: (openAtLogin: boolean) => void;
@@ -29,7 +29,7 @@ export interface LaunchAtLoginDependencies {
  * like the one `setOpenAtLogin` makes — and is unset when the app is opened from
  * the Dock, Finder, Spotlight, or a deep link. Nothing distinguishes a login
  * launch from a system restart; both are the same login event to macOS, and
- * Avalon treats them the same way.
+ * Rally treats them the same way.
  *
  * `--hidden` is honoured alongside it so the startup path can be exercised
  * without waiting for a real login, and because it is the argument other
@@ -45,7 +45,7 @@ export function launchedAtLogin(input: {
 }
 
 /**
- * Owns whether Avalon is registered to open at login.
+ * Owns whether Rally is registered to open at login.
  *
  * The operating system holds the state, not `application-settings.json`: a
  * person can remove the login item from System Settings, and a preference file
@@ -60,13 +60,13 @@ export class LaunchAtLoginController {
   constructor(private readonly dependencies: LaunchAtLoginDependencies) {}
 
   /**
-   * Whether macOS opens Avalon at login — read from the operating system on
+   * Whether macOS opens Rally at login — read from the operating system on
    * every call rather than from the last value this process wrote.
    *
    * The login item can be removed, added, or approved in System Settings →
-   * General → Login Items at any moment, and nothing tells Avalon it happened.
+   * General → Login Items at any moment, and nothing tells Rally it happened.
    * A cached answer would have Settings offer to turn on something already on,
-   * or claim Avalon opens at login after someone removed it, until the next
+   * or claim Rally opens at login after someone removed it, until the next
    * launch. The read is a synchronous `SMAppService` status query.
    */
   enabled(): boolean {
@@ -74,10 +74,10 @@ export class LaunchAtLoginController {
     try {
       this.enabledState = this.dependencies.getLoginItemState().openAtLogin;
     } catch (error) {
-      // Keep the last answer rather than reporting off. "Avalon does not open
+      // Keep the last answer rather than reporting off. "Rally does not open
       // at login" is a claim about the system, and this cannot make it while it
       // cannot see the system.
-      this.dependencies.logWarning('could not read whether Avalon opens at login', error);
+      this.dependencies.logWarning('could not read whether Rally opens at login', error);
     }
     return this.enabledState;
   }
@@ -92,7 +92,7 @@ export class LaunchAtLoginController {
       const stored = await this.dependencies.readSettings();
       if (this.dependencies.registersDefault && !stored.launchAtLoginDefaultApplied) {
         // Register before recording it. A failed registration that had already
-        // written the marker would never be retried, and Avalon would silently
+        // written the marker would never be retried, and Rally would silently
         // ship its default off.
         this.dependencies.setOpenAtLogin(true);
         await this.dependencies.writeSettings({ launchAtLoginDefaultApplied: true });

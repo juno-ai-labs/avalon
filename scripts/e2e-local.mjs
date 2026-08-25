@@ -24,7 +24,7 @@ const REPORT_PATH = process.env.AVALON_E2E_REPORT ?? null;
 
 /**
  * The opening message the oversize scenario sends: one character past
- * `MESSAGE_MAX_CHARACTERS` in `@avalon/contracts`.
+ * `MESSAGE_MAX_CHARACTERS` in `@rally/contracts`.
  *
  * Carried here rather than imported because this lane is plain Node and the
  * contracts package is TypeScript. That copy is the hazard: this number sat at
@@ -122,7 +122,7 @@ async function main() {
     method: "POST", headers: { "content-type": "application/json" }, body: "{}",
   }).then((r) => r.json());
   if (!session.accessToken) {
-    console.error("Development session unavailable — the stack must run with AVALON_DEV_AUTH=true (the default local configuration).");
+    console.error("Development session unavailable — the stack must run with RALLY_DEV_AUTH=true (the default local configuration).");
     process.exit(1);
   }
   const token = session.accessToken;

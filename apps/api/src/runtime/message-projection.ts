@@ -1,6 +1,6 @@
-import { ExternalActorSchema } from "@avalon/contracts";
-import type { Message, User } from "@avalon/contracts";
-import { truncateUtf16Safe } from "@avalon/contracts/text";
+import { ExternalActorSchema } from "@rally/contracts";
+import type { Message, User } from "@rally/contracts";
+import { truncateUtf16Safe } from "@rally/contracts/text";
 
 import type {
   MessageAttachmentRow,

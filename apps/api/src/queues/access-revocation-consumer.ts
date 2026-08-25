@@ -1,4 +1,4 @@
-import { asBlockId, asWorkspaceId, asWorkstreamId, type SubstreamId } from "@avalon/contracts";
+import { asBlockId, asWorkspaceId, asWorkstreamId, type SubstreamId } from "@rally/contracts";
 
 import {
   blockDashboardAgentName,

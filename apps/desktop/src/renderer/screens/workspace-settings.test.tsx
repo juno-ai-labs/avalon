@@ -56,10 +56,10 @@ vi.mock('../lib/app-session', () => ({
       appVersion: '0.1.0',
       isPackaged: false,
       platform: 'darwin',
-      api: { global: 'https://api.with-avalon.com', eu: 'https://eu.api.with-avalon.com' },
+      api: { global: 'https://api.rallywith.ai', eu: 'https://eu.api.rallywith.ai' },
       devAuthEnabled: true,
     },
-    session: { apiBaseUrl: 'https://eu.api.with-avalon.com' },
+    session: { apiBaseUrl: 'https://eu.api.rallywith.ai' },
     signOut,
   }),
 }));
@@ -95,7 +95,7 @@ const owner = { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone:
 const member = { id: 'user-2', name: 'Sam', email: 'sam@example.com', timezone: 'America/Los_Angeles', role: 'member' };
 const workspace: Workspace = {
   id: 'workspace-1',
-  name: 'Avalon Studio',
+  name: 'Rally Studio',
   region: 'eu',
   timezone: 'Europe/London',
   currentUser: owner,
@@ -110,7 +110,7 @@ const invitation: WorkspaceInvitation = {
   acceptedAt: null,
   createdAt: '2026-08-01T00:00:00.000Z',
 };
-const inviteUrl = 'https://with-avalon.com/invite/#region=eu&token=private-token-value-long-enough';
+const inviteUrl = 'https://rallywith.ai/invite/#region=eu&token=private-token-value-long-enough';
 
 function createTestQueryClient(): QueryClient {
   return new QueryClient({
@@ -164,7 +164,7 @@ describe('Workspace settings', () => {
     api.getConnections.mockResolvedValue([]);
     api.getGitHubRepositoryAccessSettings.mockResolvedValue({
       connectionId: '00000000-0000-7000-8000-000000000020',
-      connectionName: 'GitHub · Avalon',
+      connectionName: 'GitHub · Rally',
       revision: 3,
       mode: 'all_repositories',
       defaultRemoteAccess: 'full_access',
@@ -172,13 +172,13 @@ describe('Workspace settings', () => {
       availableRepositories: [
         {
           repositoryId: '101',
-          repositoryFullName: 'with-avalon/avalon',
+          repositoryFullName: 'juno-ai-labs/rally',
           private: true,
           remoteAccess: 'full_access',
         },
         {
           repositoryId: '102',
-          repositoryFullName: 'with-avalon/docs',
+          repositoryFullName: 'juno-ai-labs/docs',
           private: false,
           remoteAccess: 'full_access',
         },
@@ -191,19 +191,19 @@ describe('Workspace settings', () => {
       repositories: Array<{ repositoryId: string; repositoryFullName: string; remoteAccess: 'read_only' | 'full_access' }>;
     }) => ({
       connectionId: '00000000-0000-7000-8000-000000000020',
-      connectionName: 'GitHub · Avalon',
+      connectionName: 'GitHub · Rally',
       revision: input.expectedRevision + 1,
       mode: input.mode,
       defaultRemoteAccess: input.defaultRemoteAccess,
       repositories: input.repositories,
       availableRepositories: [
         {
-          repositoryId: '101', repositoryFullName: 'with-avalon/avalon', private: true,
+          repositoryId: '101', repositoryFullName: 'juno-ai-labs/rally', private: true,
           remoteAccess: input.repositories.find((entry) => entry.repositoryId === '101')?.remoteAccess
             ?? (input.mode === 'all_repositories' ? input.defaultRemoteAccess : null),
         },
         {
-          repositoryId: '102', repositoryFullName: 'with-avalon/docs', private: false,
+          repositoryId: '102', repositoryFullName: 'juno-ai-labs/docs', private: false,
           remoteAccess: input.repositories.find((entry) => entry.repositoryId === '102')?.remoteAccess
             ?? (input.mode === 'all_repositories' ? input.defaultRemoteAccess : null),
         },
@@ -229,12 +229,12 @@ describe('Workspace settings', () => {
         capabilities: [],
         status: 'healthy',
       },
-      endpoint: 'https://eu.api.with-avalon.com/ingest/webhook/00000000-0000-7000-8000-000000000019',
+      endpoint: 'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000019',
       signingSecret: 'whsec_one-time-secret',
       signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
     });
     api.rotateWebhookSecret.mockResolvedValue({
-      endpoint: 'https://eu.api.with-avalon.com/ingest/webhook/00000000-0000-7000-8000-000000000099',
+      endpoint: 'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
       signingSecret: 'whsec_rotated-secret',
       signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
     });
@@ -390,7 +390,7 @@ describe('Workspace settings', () => {
     }));
   });
 
-  it('keeps Avalon-managed Trusted-only domains out of the settings surface', async () => {
+  it('keeps Rally-managed Trusted-only domains out of the settings surface', async () => {
     api.previewTerminalNetworkPolicy.mockResolvedValueOnce({
       mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1,
       proposedMode: 'trusted_only', customDomains: ['packages.example.com'],
@@ -456,7 +456,7 @@ describe('Workspace settings', () => {
       id: '00000000-0000-7000-8000-000000000020',
       connectorType: 'github',
       scope: 'workspace',
-      displayName: 'GitHub · Avalon',
+      displayName: 'GitHub · Rally',
       capabilities: ['github.metadata.read', 'github.contents.read'],
       status: 'healthy',
       settingsKind: 'github_repository_access',
@@ -469,8 +469,8 @@ describe('Workspace settings', () => {
     fireEvent.click(githubNavigation);
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Repository access' })).toBeVisible();
-    expect(await screen.findByText('with-avalon/avalon')).toBeVisible();
-    expect(screen.getByText(/Read-only still allows Avalon to edit and commit locally/u)).toBeVisible();
+    expect(await screen.findByText('juno-ai-labs/rally')).toBeVisible();
+    expect(screen.getByText(/Read-only still allows Rally to edit and commit locally/u)).toBeVisible();
     expect(api.getGitHubRepositoryAccessSettings).toHaveBeenCalledWith(
       '00000000-0000-7000-8000-000000000020',
       expect.any(AbortSignal),
@@ -482,7 +482,7 @@ describe('Workspace settings', () => {
       id: '00000000-0000-7000-8000-000000000020',
       connectorType: 'github',
       scope: 'workspace',
-      displayName: 'GitHub · Avalon',
+      displayName: 'GitHub · Rally',
       capabilities: ['github.metadata.read'],
       status: 'healthy',
       settingsKind: 'github_repository_access',
@@ -503,7 +503,7 @@ describe('Workspace settings', () => {
       id: workspaceConnectionId,
       connectorType: 'github',
       scope: 'workspace',
-      displayName: 'GitHub · Avalon',
+      displayName: 'GitHub · Rally',
       capabilities: ['github.metadata.read'],
       status: 'healthy',
       settingsKind: 'github_repository_access',
@@ -519,7 +519,7 @@ describe('Workspace settings', () => {
     }]);
     api.getGitHubRepositoryAccessSettings.mockImplementation(async (connectionId: string) => ({
       connectionId,
-      connectionName: connectionId === personalConnectionId ? 'GitHub · Sam' : 'GitHub · Avalon',
+      connectionName: connectionId === personalConnectionId ? 'GitHub · Sam' : 'GitHub · Rally',
       revision: 3,
       mode: 'all_repositories',
       defaultRemoteAccess: 'full_access',
@@ -546,7 +546,7 @@ describe('Workspace settings', () => {
       id: '00000000-0000-7000-8000-000000000020',
       connectorType: 'github',
       scope: 'workspace',
-      displayName: 'GitHub · Avalon',
+      displayName: 'GitHub · Rally',
       capabilities: ['github.metadata.read', 'github.contents.read'],
       status: 'healthy',
       settingsKind: 'github_repository_access',
@@ -571,7 +571,7 @@ describe('Workspace settings', () => {
         defaultRemoteAccess: 'full_access',
         repositories: [{
           repositoryId: '101',
-          repositoryFullName: 'with-avalon/avalon',
+          repositoryFullName: 'juno-ai-labs/rally',
           remoteAccess: 'read_only',
         }],
       },
@@ -842,7 +842,7 @@ describe('Workspace settings', () => {
     expect(slackCard).not.toBeNull();
     expect(screen.queryByText('Slack knowledge')).not.toBeInTheDocument();
     expect(screen.queryByText('Slack actions')).not.toBeInTheDocument();
-    expect(screen.queryByText('Avalon Agent for Slack')).not.toBeInTheDocument();
+    expect(screen.queryByText('Rally Agent for Slack')).not.toBeInTheDocument();
 
     // The card's name renders from the provider catalog, which settles before
     // the connections query the button's `disabled` also waits on — so the wait
@@ -871,7 +871,7 @@ describe('Workspace settings', () => {
       id: '00000000-0000-7000-8000-000000000015',
       connectorType: 'slack',
       scope: 'workspace',
-      displayName: 'Slack · Avalon',
+      displayName: 'Slack · Rally',
       capabilities: ['slack.agent'],
       status: 'healthy',
     }]);
@@ -879,7 +879,7 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
-    await screen.findByText('Slack · Avalon');
+    await screen.findByText('Slack · Rally');
     expect(screen.queryByRole('button', { name: 'Policy' })).not.toBeInTheDocument();
   });
 
@@ -958,7 +958,7 @@ describe('Workspace settings', () => {
       expect.stringMatching(/^[0-9a-f-]{36}$/u),
     ));
     expect(await within(dialog).findByLabelText('Webhook endpoint')).toHaveValue(
-      'https://eu.api.with-avalon.com/ingest/webhook/00000000-0000-7000-8000-000000000019',
+      'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000019',
     );
     expect(within(dialog).getByLabelText('Webhook signing secret')).toHaveAttribute('type', 'password');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Copy secret' }));
@@ -977,7 +977,7 @@ describe('Workspace settings', () => {
     expect(within(xCard!).getByText('Unavailable')).toBeVisible();
     const connect = within(xCard!).getByRole('button', { name: 'Connect workspace' });
     expect(connect).toBeDisabled();
-    expect(connect).toHaveAttribute('title', 'Public X via TwitterAPI.io is not configured in this Avalon region.');
+    expect(connect).toHaveAttribute('title', 'Public X via TwitterAPI.io is not configured in this Rally region.');
   });
 
   it('disables duplicate workspace X connections', async () => {
@@ -1014,7 +1014,7 @@ describe('Workspace settings', () => {
         id: '00000000-0000-7000-8000-000000000015',
         connectorType: 'slack',
         scope: 'workspace',
-        displayName: 'Slack · Avalon',
+        displayName: 'Slack · Rally',
         capabilities: ['slack.agent', 'slack.notifications.write'],
         status,
       }]);
@@ -1044,7 +1044,7 @@ describe('Workspace settings', () => {
       id: '00000000-0000-7000-8000-000000000016',
       connectorType: 'slack',
       scope: 'workspace',
-      displayName: 'Slack · Avalon',
+      displayName: 'Slack · Rally',
       capabilities: ['slack.agent', 'slack.notifications.write'],
       status: 'disabled',
     }]);
@@ -1071,7 +1071,7 @@ describe('Workspace settings', () => {
         id: '00000000-0000-7000-8000-000000000011',
         connectorType: 'linear',
         scope: 'workspace',
-        displayName: 'Linear · Avalon',
+        displayName: 'Linear · Rally',
         capabilities: ['linear.read'],
         status,
       }]);
@@ -1099,7 +1099,7 @@ describe('Workspace settings', () => {
       id: '00000000-0000-7000-8000-000000000012',
       connectorType: 'linear',
       scope: 'workspace',
-      displayName: 'Linear · Avalon',
+      displayName: 'Linear · Rally',
       capabilities: ['linear.read'],
       status: 'disabled',
     }]);
@@ -1124,7 +1124,7 @@ describe('Workspace settings', () => {
       id: '00000000-0000-7000-8000-000000000013',
       connectorType: 'google',
       scope: 'workspace',
-      displayName: 'Google Workspace · Avalon',
+      displayName: 'Google Workspace · Rally',
       capabilities: ['gmail.read', 'calendar.read'],
       status: 'healthy',
     }, {
@@ -1367,7 +1367,7 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Application');
 
-    const toggle = await screen.findByRole('switch', { name: 'Show Avalon in the menu bar' });
+    const toggle = await screen.findByRole('switch', { name: 'Show Rally in the menu bar' });
     expect(toggle).toBeChecked();
 
     // Above the app icon, inside Appearance: the row has to precede the picker
@@ -1388,7 +1388,7 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Application');
 
-    const toggle = await screen.findByRole('switch', { name: 'Open Avalon at login' });
+    const toggle = await screen.findByRole('switch', { name: 'Open Rally at login' });
     expect(toggle).toBeChecked();
 
     fireEvent.click(toggle);
@@ -1406,12 +1406,12 @@ describe('Workspace settings', () => {
 
     const toggle = await screen.findByRole('switch', { name: 'Product analytics' });
     expect(toggle).toBeChecked();
-    expect(screen.getByText(/EU telemetry stays in Avalon’s EU platform/u)).toBeVisible();
+    expect(screen.getByText(/EU telemetry stays in Rally’s EU platform/u)).toBeVisible();
 
     fireEvent.click(toggle);
     await waitFor(() => expect(setProductAnalyticsEnabled).toHaveBeenCalledWith(false));
     expect(toggle).not.toBeChecked();
-    expect(screen.getByText(/Restart Avalon to remove local native crash dumps and apply the current setting/u)).toBeVisible();
+    expect(screen.getByText(/Restart Rally to remove local native crash dumps and apply the current setting/u)).toBeVisible();
   });
 
   it('shows a read-only redacted telemetry inspector only in Developer settings', async () => {
@@ -1470,13 +1470,13 @@ describe('Workspace settings', () => {
     openSettingsSection('Application');
 
     expect(await screen.findByRole('switch', { name: 'Product analytics' })).toBeDisabled();
-    expect(screen.getByText('Product analytics is managed in the Avalon desktop app.')).toBeVisible();
+    expect(screen.getByText('Product analytics is managed in the Rally desktop app.')).toBeVisible();
   });
 
   it('reports what macOS holds rather than what was asked for', async () => {
     // A registration macOS is still waiting to have approved leaves the login
     // item off. Showing the toggle on because the write succeeded would tell
-    // someone Avalon opens at login when it does not.
+    // someone Rally opens at login when it does not.
     setLaunchAtLogin.mockResolvedValue({
       lockdownMode: false,
       lockdownAvailable: true,
@@ -1491,7 +1491,7 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Application');
 
-    const toggle = await screen.findByRole('switch', { name: 'Open Avalon at login' });
+    const toggle = await screen.findByRole('switch', { name: 'Open Rally at login' });
     fireEvent.click(toggle);
 
     await waitFor(() => expect(setLaunchAtLogin).toHaveBeenCalled());
@@ -1514,7 +1514,7 @@ describe('Workspace settings', () => {
     openSettingsSection('Application');
 
     await screen.findByRole('switch', { name: 'Lockdown mode' });
-    expect(screen.queryByRole('switch', { name: 'Open Avalon at login' })).toBeNull();
+    expect(screen.queryByRole('switch', { name: 'Open Rally at login' })).toBeNull();
   });
 
   it('says so when the status item could not be added, instead of a switch beside an empty menu bar', async () => {
@@ -1537,7 +1537,7 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Application');
 
-    expect(await screen.findByRole('switch', { name: 'Show Avalon in the menu bar' })).toBeChecked();
+    expect(await screen.findByRole('switch', { name: 'Show Rally in the menu bar' })).toBeChecked();
     expect(await screen.findByText(/could not add itself to the menu bar/u)).toBeVisible();
   });
 
@@ -1556,11 +1556,11 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Application');
 
-    expect(await screen.findByRole('switch', { name: 'Show Avalon in the menu bar' })).not.toBeChecked();
+    expect(await screen.findByRole('switch', { name: 'Show Rally in the menu bar' })).not.toBeChecked();
     expect(screen.queryByText(/could not add itself to the menu bar/u)).toBeNull();
   });
 
-  it('offers no menu bar toggle where there is no menu bar to put Avalon in', async () => {
+  it('offers no menu bar toggle where there is no menu bar to put Rally in', async () => {
     getApplicationSettings.mockResolvedValue({
       lockdownMode: false,
       lockdownAvailable: true,
@@ -1576,7 +1576,7 @@ describe('Workspace settings', () => {
     openSettingsSection('Application');
 
     await screen.findByRole('switch', { name: 'Lockdown mode' });
-    expect(screen.queryByRole('switch', { name: 'Show Avalon in the menu bar' })).toBeNull();
+    expect(screen.queryByRole('switch', { name: 'Show Rally in the menu bar' })).toBeNull();
   });
 
   it('toggles the Developer debug preference and leaves it off by default', async () => {
@@ -1749,7 +1749,7 @@ describe('Closing the settings window with Escape', () => {
       times: [9 * 60],
       timezone: 'Europe/London',
       deliveryTargets: [
-        { type: 'email', connectionId: null, displayName: 'adam@avalon.local', status: 'active', lastDeliveredAt: null },
+        { type: 'email', connectionId: null, displayName: 'adam@rally.local', status: 'active', lastDeliveredAt: null },
       ],
       nextRunAt: null,
       lastDeliveredAt: null,

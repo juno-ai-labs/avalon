@@ -1,8 +1,8 @@
 # Regional telemetry
 
-Avalon's telemetry subsystem accepts a closed set of semantic product signals,
+Rally's telemetry subsystem accepts a closed set of semantic product signals,
 content-free reliability signals, sanitized JavaScript diagnostics, and native
-Electron crash reports. Avalon owns collection, policy, routing, identity,
+Electron crash reports. Rally owns collection, policy, routing, identity,
 durability, and internal retention; PostHog is the Global destination, not an SDK
 embedded in the renderer or a source of product truth.
 
@@ -10,7 +10,7 @@ The single account-scoped **Product analytics** setting defaults on. Turning it
 off stops product events, detailed JavaScript diagnostics, identity/profile jobs,
 and native crash upload; essential bounded reliability signals continue. Global
 may send approved data to the US PostHog project. EU product and crash telemetry
-terminates in Avalon's EU-isolated Cloudflare resources.
+terminates in Rally's EU-isolated Cloudflare resources.
 
 ## Where the code lives
 
@@ -76,7 +76,7 @@ app/build, OS/version, locale, timezone, display dimensions, and—when an event
 comes from a live renderer—its random window ID and viewport dimensions. Router
 calls emit registered screen enums. Product integrations emit semantic intent
 before a state-changing request; the authoritative API emits the outcome with
-the same `operation_id`. Avalon does not capture DOM interactions, console
+the same `operation_id`. Rally does not capture DOM interactions, console
 output, arbitrary network traffic, URLs, request bodies, prompts, messages,
 documents, or session replay.
 
@@ -197,7 +197,7 @@ or `push_notification`, and `phase` distinguishes `cold_start` from
 link proves `deep_link`; menu actions prove `menu_bar`; and Electron's coalesced
 `activate` callback supplies `dock` only when no neighboring explicit source
 claims the activation. For a cold ordinary GUI launch, Electron exposes no
-reliable Dock-versus-Finder-versus-Spotlight fact, so Avalon records the honest
+reliable Dock-versus-Finder-versus-Spotlight fact, so Rally records the honest
 `user_launch` class. There is no native push-notification producer today; the
 closed value is reserved for a future native click handler, which must report it
 before raising a window. Ordinary email, Slack, and browser handoffs remain
@@ -257,7 +257,7 @@ epoch. Only the epoch is used for the explicit anonymous-history-to-person
 transition. Global desktop events also send the random installation ID as
 PostHog `$device_id`, matching first-party app SDK attribution, so identified
 events can associate a device with a person. This is not a raw platform ID and
-does not create an Avalon identity link or a cross-region mapping. Logout,
+does not create a Rally identity link or a cross-region mapping. Logout,
 account switch, or abandoned authentication rotates the epoch. In Global, the
 ordered transition is PostHog `$identify` with the stable person as
 `distinct_id`, the epoch as `$anon_distinct_id`, and the verified email/name
@@ -290,7 +290,7 @@ that value so server clock-skew normalization cannot turn offline delay into a
 later occurrence. An anonymous epoch is linked only after its local rows have all
 been acknowledged, and the periodic flush retries the link after transient
 delivery failures. The renderer sees only named IPC methods; main validates the
-sender against a live Avalon window and the pinned application origin.
+sender against a live Rally window and the pinned application origin.
 
 ### Regional acceptance and destinations
 
@@ -330,9 +330,9 @@ The adapter keeps
 first-party app context: `$app_*`, `$device_type`, `$os`/`$os_name`,
 `$os_version`, `$locale`, `$timezone`, display/viewport dimensions, and
 device/window identity. It marks only events
-that originated in the API with `$is_server`. It never emits both the Avalon and
+that originated in the API with `$is_server`. It never emits both the Rally and
 provider spelling for one occurrence. JavaScript source maps are loaded privately
-and only mapped application frames leave Avalon. Malformed
+and only mapped application frames leave Rally. Malformed
 profile jobs are terminalized individually so one corrupt row cannot block later
 profiles, event delivery, or operational snapshots. PostHog 408,
 429, 5xx, and network failures on ordinary event/profile batches retry with
@@ -354,12 +354,12 @@ personless distinct ID and `workspace` group key; they set
 ### PostHog product compatibility
 
 This table was audited against the Tools catalog visible in the US PostHog
-project on 2026-08-13. "Supported" means Avalon's truthful data contract is
+project on 2026-08-13. "Supported" means Rally's truthful data contract is
 enough for the product; it does not mean the product has been pinned in the
 sidebar or configured with a saved view. Reserved PostHog events are destination
-formatting only. The regional registry and EU projection keep their Avalon names.
+formatting only. The regional registry and EU projection keep their Rally names.
 
-| PostHog tool | Status | Avalon contract |
+| PostHog tool | Status | Rally contract |
 | --- | --- | --- |
 | Dashboards, Product analytics, SQL editor | Supported | Semantic events, `$screen`, stable identities, `$session_id`, workspace `$groups`, profiles, release/app context, and request/outcome correlation support trends, paths, funnels, retention, cohorts, and HogQL. |
 | Endpoints, Inbox, Notebooks, Workflows | Supported after PostHog-side configuration | They consume the same truthful events and profiles; no new capture event should be invented merely to enable a destination, alert, notebook, or workflow. |
@@ -368,12 +368,12 @@ formatting only. The regional registry and EU projection keep their Avalon names
 | Heatmaps, Replay vision, Session replay | Not enabled | They require browser/mobile interaction coordinates or `$snapshot` recording data. Semantic screen/action events cannot reconstruct a truthful replay or heatmap. |
 | Surveys, Support | Not enabled | PostHog surveys require survey retrieval/display logic and exact `survey shown`, `survey sent`, and `survey dismissed` events with provider survey IDs and responses. Emitting those events without actually rendering a PostHog survey would corrupt response data. |
 | Logs, Tracing | Not enabled | Logs and traces use their own OpenTelemetry/log ingestion protocols. `trace_id` and `span_id` correlation on a product event is useful but is not a substitute for exporting a trace or log record. |
-| Feature flags, Experiments, Early access features | Not enabled | Cloudflare Flagship is Avalon's flag authority. Do not forge `$feature_flag_called`, `$feature/<key>`, or experiment exposure properties for a flag PostHog did not evaluate. A future PostHog-owned or explicitly mirrored evaluator must emit the exact evaluated variant on exposure and attach it to downstream outcomes. |
+| Feature flags, Experiments, Early access features | Not enabled | Cloudflare Flagship is Rally's flag authority. Do not forge `$feature_flag_called`, `$feature/<key>`, or experiment exposure properties for a flag PostHog did not evaluate. A future PostHog-owned or explicitly mirrored evaluator must emit the exact evaluated variant on exposure and attach it to downstream outcomes. |
 | AI observability, MCP analytics, Clusters, Datasets, Evaluations, Playground, Prompts | Not enabled | These require a truthful `$ai_trace` tree with `$ai_generation`, `$ai_span`, and `$ai_embedding` records. `run_requested`/`run_completed` describe product outcomes and must not be renamed into incomplete AI traces. Prompt/output capture and provider trace export need a separate content and residency decision. |
-| Toolbar, Web scripts | Partially applicable | The public site emits the required web events through Avalon's first-party reporter; it does not install PostHog's generic browser script, Toolbar injection, autocapture, or replay. Electron remains inapplicable. |
+| Toolbar, Web scripts | Partially applicable | The public site emits the required web events through Rally's first-party reporter; it does not install PostHog's generic browser script, Toolbar injection, autocapture, or replay. Electron remains inapplicable. |
 | Skills | No capture dependency | This is a PostHog operator/agent capability and consumes the project's existing data model. |
 
-The compatibility rule is strict: use a PostHog reserved event only when Avalon
+The compatibility rule is strict: use a PostHog reserved event only when Rally
 observed the same thing and can provide its required properties. Never duplicate
 one occurrence under a custom and reserved name, and never manufacture a flag
 exposure, survey response, replay, pageview, trace, log, or AI generation to make
@@ -406,7 +406,7 @@ fingerprints the result, and retries transient processing failures without
 renewing the deadline. Missing symbols produce `unsymbolicated`; invalid output is
 `malformed`. Global sends the complete approved structured report through
 PostHog's exception path. Raw dumps, symbols, memory fragments, source excerpts,
-absolute paths, and unsanitized values remain in Avalon. EU keeps the full
+absolute paths, and unsanitized values remain in Rally. EU keeps the full
 occurrence for 90 days and a flat fingerprint/release contribution for 13 months;
 issue and crash-free views are computed from surviving rows at query time.
 The exec-only processor image exposes an unused local-supervisor port because
@@ -423,7 +423,7 @@ work still crosses the authenticated Durable Object RPC/exec boundary.
   PostHog; otherwise an XSS becomes a data-exfiltration and schema-expansion path.
 - **Only the per-login epoch performs an anonymous history merge.** The random
   installation ID may appear as PostHog `$device_id` for SDK-compatible device
-  attribution, but it is never used as `$anon_distinct_id`, entered in Avalon's
+  attribution, but it is never used as `$anon_distinct_id`, entered in Rally's
   identity-link table, or exported across regions; conflating these roles would
   merge login journeys or residency histories.
 - **An anonymous-to-person transition is ordered and never superseded.** Losing
@@ -499,15 +499,15 @@ WorkstreamDO for work-stream product data.
 Run focused suites from their package directories:
 
 ```bash
-pnpm --filter @avalon/contracts test
-pnpm --filter @avalon/db test
-pnpm --filter @avalon/api exec vitest run test/telemetry-collector.test.ts test/telemetry-delivery.test.ts test/posthog-adapter.test.ts test/tool-usage-telemetry.test.ts test/crash-processing.test.ts test/crash-operations.test.ts
-pnpm --filter @avalon/api test:crash-symbolicator-container
-pnpm --filter @avalon/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts
-pnpm --filter @avalon/desktop test:release
-pnpm --filter @avalon/desktop test:crashpad
-pnpm --filter @avalon/site test
-pnpm --filter @avalon/site build
+pnpm --filter @rally/contracts test
+pnpm --filter @rally/db test
+pnpm --filter @rally/api exec vitest run test/telemetry-collector.test.ts test/telemetry-delivery.test.ts test/posthog-adapter.test.ts test/tool-usage-telemetry.test.ts test/crash-processing.test.ts test/crash-operations.test.ts
+pnpm --filter @rally/api test:crash-symbolicator-container
+pnpm --filter @rally/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts
+pnpm --filter @rally/desktop test:release
+pnpm --filter @rally/desktop test:crashpad
+pnpm --filter @rally/site test
+pnpm --filter @rally/site build
 ```
 
 Contract tests enforce registry exhaustiveness and prohibited negative space.
@@ -618,6 +618,34 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-25 — The envelope schema identifier is com.rally.telemetry.event
+
+**What changed:** `TELEMETRY_ENVELOPE_SCHEMA` in
+`packages/contracts/src/telemetry.ts` is `com.rally.telemetry.event`, and every
+producer reads it rather than writing the literal. The envelope parser accepts
+`com.avalon.telemetry.event` alongside it. The anonymous crash capability header
+became `x-rally-telemetry-capability`, read through `readRallyHeader` so the
+superseded spelling still resolves.
+
+**Why:** The identifier is validated with a literal, and the desktop spools
+envelopes to disk before sending. A spool written by the previous build and
+drained by the next one would have failed validation and been discarded — so a
+straight rename would have silently eaten every queued event across every update,
+which is indistinguishable from a quiet period. The same reasoning covers the
+capability header: it is minted by an installed build.
+
+**Considered and rejected:** Renaming the PostHog event and property names
+(`avalon_*`) in the same change. They are one edit away, but every dashboard,
+funnel, and saved insight keys on them, so the rename splits the history at its
+date. That is a product-analytics decision about whether to backfill or accept
+the seam, not an engineering one, and it is not blocking the rebrand.
+
+**Consequences:** Nothing writes the schema literal any more; a future version
+bump is one edit to the constant plus an entry in the superseded list. The
+superseded identifier is removed only when no spool old enough to hold one can
+still drain, which is a decision about shipped builds rather than about this
+repository.
 
 ### 2026-08-24 — Lakehouse delivery fails terminally only when retry cannot help
 
@@ -754,7 +782,7 @@ bring the socket back, with the retry depth as a count bucket.
 **Why:** Nothing measured whether a client stayed connected. A work stream's
 sidebar row went stale for a member who never opened it, and the first question —
 did the push miss that client, or was there no push — could not be answered from
-anything Avalon collects: the perf trace covers one socket's open latency, and
+anything Rally collects: the perf trace covers one socket's open latency, and
 the room's own admission logs cannot tell a first connection from the fourth
 attempt of a reconnect. The renderer is the authoritative source for the same
 reason: only it holds the retry counter, the heartbeat, and the offline
@@ -830,7 +858,7 @@ prevent. The attribute is absent when the surrogate is.
 *The residual risk is documentation, not design:* PostHog does not document what
 its OTLP trace ingest does with `user.id` or `session.id`. Setting the key we
 want explicitly makes that moot for persons, but `session.id` on our spans is
-the **Avalon auth session**, a different object from PostHog's `$session_id`,
+the **Rally auth session**, a different object from PostHog's `$session_id`,
 and nothing has verified that PostHog ignores it. Re-check if session-stitched
 figures ever look wrong.
 
@@ -839,7 +867,7 @@ figures ever look wrong.
 new sub-processor begins processing, and the DPA authorizes only the providers
 on that page — where PostHog was missing, despite already receiving product
 telemetry. That gap predates this change; what this change does is widen the
-category to Customer Content. It is not gated because Avalon has no customers
+category to Customer Content. It is not gated because Rally has no customers
 yet, so there is no party the notice period protects and no objection window to
 run. PostHog is listed on that page as of this change, before the position
 becomes load-bearing. **Once there are customers, this ordering stops being
@@ -1165,7 +1193,7 @@ corrupt open counts.
 **Consequences:** Cold launches without a login-item flag or deep link are
 `user_launch`. `push_notification` remains dormant until a native notification
 callback exists. Product analytics opt-out suppresses attributed opens; bounded
-essential lifecycle events continue under their Avalon name.
+essential lifecycle events continue under their Rally name.
 
 ### 2026-08-13 — Applied desktop settings are stateful and cohortable
 
@@ -1240,7 +1268,7 @@ installation as newly installed. Those choices would respectively classify
 Electron as web acquisition traffic, create identifying high-cardinality data,
 invent device facts, or corrupt installation counts.
 
-**Consequences:** In Global PostHog, `$device_id` can associate Avalon's random
+**Consequences:** In Global PostHog, `$device_id` can associate Rally's random
 installation identity with an identified person, matching SDK device
 attribution; the explicit anonymous merge still uses only the rotating login
 epoch. EU keeps the same typed context internally and receives no PostHog
@@ -1261,25 +1289,25 @@ main-owned focus observer establishes the launch focus as its baseline, ignores
 window-to-window focus handoffs, and reports later application background and
 foreground transitions. Only API-originated captures are marked as server
 events. Every destination event
-retains its single Avalon registry name in `avalon_event_name`, and the live
+retains its single Rally registry name in `avalon_event_name`, and the live
 PostHog tool catalog is recorded with the exact products this contract can and
 cannot truthfully drive.
 
 **Why:** PostHog's built-in navigation and application views key off reserved
-event names and properties. Sending only Avalon's internal spelling hid screen
+event names and properties. Sending only Rally's internal spelling hid screen
 and lifecycle semantics, while treating every regional delivery as server-side
 would erase the originating desktop context. The provider mapping can supply the
-SDK's native semantics without weakening Avalon's regional or typed boundary.
+SDK's native semantics without weakening Rally's regional or typed boundary.
 
 **Considered and rejected:** Emitting both the custom and reserved event for one
 occurrence, renaming the regional registry, embedding the provider SDK in the
 renderer, and fabricating pageviews, flag exposures, surveys, replay snapshots,
 traces, or AI generations. Duplication corrupts counts; the other options either
-move provider concerns into the regional contract or claim observations Avalon
+move provider concerns into the regional contract or claim observations Rally
 did not make.
 
 **Consequences:** PostHog queries for provider-standard navigation/lifecycle use
-the reserved event name and can filter or recover Avalon's semantic name through
+the reserved event name and can filter or recover Rally's semantic name through
 `avalon_event_name`. EU storage and queries remain unchanged. Every future
 reserved-name mapping needs an exact semantic-equivalence test and must replace,
 not duplicate, its custom destination spelling.
@@ -1294,7 +1322,7 @@ network classification so essential process health is not lost. Handled network
 failures do not themselves emit essential process health transitions, and upload
 settlement prevents a late error event after abort from producing a false
 diagnostic. The API CORS policy and its production-shaped preflight test now admit
-the desktop's `X-Avalon-Operation-Id` mutation header.
+the desktop's `X-Rally-Operation-Id` mutation header.
 
 **Why:** Production desktop requests carried that header, but the Worker omitted
 it from `Access-Control-Allow-Headers`. Chromium rejected new-work-stream and
@@ -1618,7 +1646,7 @@ queries, dedicated telemetry buckets, release artifacts, and packaged gate.
 
 **Why:** Product analysis needs client intent joined to authoritative server
 outcomes, while Electron crashes require a deeper lifecycle than a browser SDK can
-provide. Centralizing policy in Avalon keeps route, opt-out, identity, and internal
+provide. Centralizing policy in Rally keeps route, opt-out, identity, and internal
 retention enforceable without giving the renderer provider authority.
 
 **Considered and rejected:** Direct renderer PostHog, a thin reverse proxy,

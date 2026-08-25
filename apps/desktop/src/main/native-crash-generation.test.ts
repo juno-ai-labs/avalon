@@ -13,7 +13,7 @@ const runtime = {
   launchId: '00000000-0000-7000-8000-000000000004', channel: 'stable' as const,
 };
 async function scratchDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-native-crash-generation-'));
+  const directory = await mkdtemp(join(tmpdir(), 'rally-native-crash-generation-'));
   scratchDirectories.push(directory);
   return directory;
 }

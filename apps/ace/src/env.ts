@@ -1,4 +1,4 @@
-import type { ProductFeatureFlagKey } from '@avalon/contracts';
+import type { ProductFeatureFlagKey } from '@rally/contracts';
 import type { AccessEnvironment } from './access';
 
 export interface FlagChangeMessage {

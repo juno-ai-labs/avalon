@@ -1,4 +1,4 @@
-import type { BlockId, Region, SubstreamId, WorkspaceId, WorkstreamId } from "@avalon/contracts";
+import type { BlockId, Region, SubstreamId, WorkspaceId, WorkstreamId } from "@rally/contracts";
 
 /** One regional workspace control object. */
 export function workspaceDOName(region: Region, workspaceId: WorkspaceId): string {

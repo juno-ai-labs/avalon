@@ -27,8 +27,8 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@avalon/contracts';
-import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
+import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
 import { ApiError, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
@@ -263,7 +263,7 @@ export function AddResourceDialog({
                 <span aria-hidden="true" className="resource-picker-icon"><FileText size={15} /></span>
                 <span className="resource-picker-copy">
                   <strong>{resource.title}</strong>
-                  <small>{readableResourceKind(resource.provider ?? 'Avalon')} · {readableResourceKind(resource.resourceType)}</small>
+                  <small>{readableResourceKind(resource.provider ?? 'Rally')} · {readableResourceKind(resource.resourceType)}</small>
                 </span>
                 {pending ? <LoaderCircle aria-hidden="true" className="spin" size={15} /> : <Plus aria-hidden="true" size={15} />}
               </button>
@@ -388,7 +388,7 @@ export function WorkstreamHeader({
   // Copy the canonical HTTPS link, not the `rallywithai://` deep link. A copied link
   // is going somewhere else — Slack, mail, a Linear comment — where an unknown
   // scheme does not unfurl, often does not linkify, and is dead for anyone who
-  // has not installed Avalon. The canonical link ends at the same work stream.
+  // has not installed Rally. The canonical link ends at the same work stream.
   const copyLink = (): void => {
     void (async () => {
       const bridge = desktopBridge();
@@ -666,7 +666,7 @@ export function transcriptPageCursor(
 ): string | null {
   const nextCursor = direction === 'before' ? page.nextCursor : page.newerCursor;
   if (nextCursor === requestedCursor) {
-    throw new Error('Avalon received a repeated transcript cursor.');
+    throw new Error('Rally received a repeated transcript cursor.');
   }
   return nextCursor;
 }
@@ -1764,7 +1764,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
-              message={detail.latestHarnessRun.error?.message ?? 'Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support.'}
+              message={detail.latestHarnessRun.error?.message ?? 'Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support.'}
               onCopyRequestId={() => void desktopBridge().copyText(detail.latestHarnessRun?.requestId ?? detail.latestHarnessRun!.id)}
               onRetry={() => retry.mutate()}
               requestId={detail.latestHarnessRun.requestId ?? detail.latestHarnessRun.id}

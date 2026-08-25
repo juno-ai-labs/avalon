@@ -17,7 +17,7 @@ const IDENTITIES = `
      2 valid identities found
 `;
 
-test('DMG signing selects only Avalon pinned Developer ID identity', () => {
+test('DMG signing selects only Rally pinned Developer ID identity', () => {
   assert.deepEqual(selectDeveloperIdIdentity(IDENTITIES), {
     hash: 'D3C743867424ACED012930551258595C06F93BB0',
     name: 'Developer ID Application: Juno AI Labs Inc. (7ZLT6A8W25)',
@@ -36,27 +36,27 @@ test('post-build update feed is ZIP-primary and contains all final artifact meta
   const yaml = macFeedYaml({
     version: '1.2.3',
     files: [
-      { url: 'Avalon-1.2.3-mac-arm64.zip', sha512: 'YWJjZA==', size: 42 },
-      { url: 'Avalon-1.2.3-mac-arm64.dmg', sha512: 'ZWZnaA==', size: 84 },
+      { url: 'Rally-1.2.3-mac-arm64.zip', sha512: 'YWJjZA==', size: 42 },
+      { url: 'Rally-1.2.3-mac-arm64.dmg', sha512: 'ZWZnaA==', size: 84 },
     ],
     date: '2026-08-02T00:00:00.000Z',
   });
   assert.deepEqual(parseMacUpdateFeed(yaml), {
     version: '1.2.3',
     files: [
-      { url: 'Avalon-1.2.3-mac-arm64.zip', sha512: 'YWJjZA==', size: 42 },
-      { url: 'Avalon-1.2.3-mac-arm64.dmg', sha512: 'ZWZnaA==', size: 84 },
+      { url: 'Rally-1.2.3-mac-arm64.zip', sha512: 'YWJjZA==', size: 42 },
+      { url: 'Rally-1.2.3-mac-arm64.dmg', sha512: 'ZWZnaA==', size: 84 },
     ],
-    file: { url: 'Avalon-1.2.3-mac-arm64.zip', sha512: 'YWJjZA==', size: 42 },
+    file: { url: 'Rally-1.2.3-mac-arm64.zip', sha512: 'YWJjZA==', size: 42 },
   });
-  assert.match(yaml, /^path: "Avalon-1\.2\.3-mac-arm64\.zip"$/mu);
+  assert.match(yaml, /^path: "Rally-1\.2\.3-mac-arm64\.zip"$/mu);
   assert.match(yaml, /^releaseDate: "2026-08-02T00:00:00\.000Z"$/mu);
 });
 
 test('final feed rewrite replaces electron-builder metadata after its process exits', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-final-feed-test-'));
-  const zipName = 'Avalon-1.2.3-mac-arm64.zip';
-  const dmgName = 'Avalon-1.2.3-mac-arm64.dmg';
+  const directory = await mkdtemp(join(tmpdir(), 'rally-final-feed-test-'));
+  const zipName = 'Rally-1.2.3-mac-arm64.zip';
+  const dmgName = 'Rally-1.2.3-mac-arm64.dmg';
   try {
     await Promise.all([
       writeFile(join(directory, zipName), 'final zip bytes'),

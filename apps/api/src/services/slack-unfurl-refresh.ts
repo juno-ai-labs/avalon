@@ -1,6 +1,6 @@
-import { slackApi } from "@avalon/connectors";
-import { asWorkspaceId, workstreamCanonicalUrl } from "@avalon/contracts";
-import { nowIso } from "@avalon/db";
+import { slackApi } from "@rally/connectors";
+import { asWorkspaceId, workstreamCanonicalUrl } from "@rally/contracts";
+import { nowIso } from "@rally/db";
 import { z } from "zod";
 
 import type { Env } from "../env";

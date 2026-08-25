@@ -21,7 +21,7 @@ function env() {
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "production",
-    AVALON_DEV_AUTH: "false",
+    RALLY_DEV_AUTH: "false",
     SESSION_SIGNING_KEY: signingKey,
     LOG_LEVEL: "error",
   });

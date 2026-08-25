@@ -1,4 +1,4 @@
-import { workstreamCanonicalUrl } from "@avalon/contracts";
+import { workstreamCanonicalUrl } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";

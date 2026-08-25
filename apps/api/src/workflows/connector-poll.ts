@@ -3,7 +3,7 @@ import {
   ConnectorPollWorkflowInputSchema,
   IdSchema,
   type ConnectorPollWorkflowInput
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { z } from "zod";
 

@@ -1,3 +1,4 @@
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   ConnectorManifestSchema,
   NormalizedActivitySchema,
@@ -6,7 +7,7 @@ import {
   type ConnectorSurface,
   type NormalizedActivity,
   type ToolDefinition,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { z } from "zod";
 import {
   assertPrincipalAccess,
@@ -4264,7 +4265,7 @@ export function createGenericWebhookConnector(): ConnectorAdapter {
         }
         const verified = await verifyGenericWebhook({
           secret: input.verificationSecret,
-          signatureHeader: input.headers.get("x-avalon-signature"),
+          signatureHeader: readRallyHeader(input.headers, RALLY_HEADERS.SIGNATURE) ?? null,
           body: rawBody,
           now: Math.floor(input.now / 1_000),
           replayWindowSeconds: Math.floor((input.replayWindowMs ?? 300_000) / 1_000),

@@ -1,4 +1,4 @@
-import type { ClientFeatureFlags } from "@avalon/contracts";
+import type { ClientFeatureFlags } from "@rally/contracts";
 import type { Env, IdentityAuthContext } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import { resolveControlTowerRefreshSeconds } from "./control-tower-flags";

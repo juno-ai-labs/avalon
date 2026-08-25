@@ -12,7 +12,7 @@ import { persistThemeChoice, useTheme, withFamily, withMode } from '../lib/theme
  * It shows the three things that differ between families rather than only their
  * colours: the shape of a row's leading mark, whether a person's turn sits in a
  * bubble, and — the one that reads fastest — which side of the feed each actor
- * speaks from. Avalon's own turn hugs the right; Air's runs left with everything
+ * speaks from. Rally's own turn hugs the right; Air's runs left with everything
  * else. A preview built from hardcoded values would be a second copy of the
  * palette and go stale the first time a theme is retuned; this one cannot.
  */
@@ -53,7 +53,7 @@ export function ThemePicker(): React.JSX.Element {
       <div className="settings-theme-heading">
         <span>
           <strong>Theme</strong>
-          <small>Applies to every Avalon window on this Mac, and is remembered here rather than on your account.</small>
+          <small>Applies to every Rally window on this Mac, and is remembered here rather than on your account.</small>
         </span>
       </div>
 

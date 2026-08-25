@@ -1,4 +1,4 @@
-import type { DerivativeStatus } from "@avalon/contracts";
+import type { DerivativeStatus } from "@rally/contracts";
 
 export interface AttachmentDerivativeStateRow {
   modelContentStatus: DerivativeStatus;

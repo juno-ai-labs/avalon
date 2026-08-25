@@ -1,12 +1,12 @@
-import type { HarnessToolContext } from "@avalon/agent-harness";
+import type { HarnessToolContext } from "@rally/agent-harness";
 import { createTerminalPortFactory, type TerminalPortFactory } from "./object-port";
 import {
   createGitHubAppJwt,
   githubRepositoryAuthorization,
   type GitHubRepositoryAccessLevel,
-} from "@avalon/connectors";
-import type { ExecutionPrincipal } from "@avalon/contracts";
-import { newId } from "@avalon/db";
+} from "@rally/connectors";
+import type { ExecutionPrincipal } from "@rally/contracts";
+import { newId } from "@rally/db";
 
 import type { Env } from "../../env";
 import { githubConnectorConfig } from "../../lib/connector-registry";

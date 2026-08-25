@@ -35,7 +35,7 @@ describe('application menu update lifecycle', () => {
   it('keeps Settings in the macOS app menu and the website in Help', () => {
     const callbacks = actions();
     const template = applicationMenuTemplate({
-      appName: 'Avalon',
+      appName: 'Rally',
       platform: 'darwin',
       updateStatus: { kind: 'idle' },
       actions: callbacks,
@@ -43,20 +43,20 @@ describe('application menu update lifecycle', () => {
     const appItems = template[0]!.submenu as MenuItemConstructorOptions[];
     const helpItems = template.at(-1)!.submenu as MenuItemConstructorOptions[];
 
-    expect(template[0]!.label).toBe('Avalon');
+    expect(template[0]!.label).toBe('Rally');
     expect(appItems.find((item) => item.label === 'Settings…')).toMatchObject({
       accelerator: 'CmdOrCtrl+,',
       click: callbacks.openSettings,
     });
     expect(helpItems).toContainEqual(expect.objectContaining({
-      label: 'Avalon website',
+      label: 'Rally website',
       click: callbacks.openWebsite,
     }));
   });
 
   it('gives macOS a File menu whose only item closes the focused window', () => {
     const template = applicationMenuTemplate({
-      appName: 'Avalon',
+      appName: 'Rally',
       platform: 'darwin',
       updateStatus: { kind: 'idle' },
       actions: actions(),
@@ -64,13 +64,13 @@ describe('application menu update lifecycle', () => {
     const fileMenu = template.find((item) => item.label === 'File');
 
     // Command-W is a menu key equivalent on macOS: with no item carrying the
-    // `close` role, the shortcut does nothing in any Avalon window.
+    // `close` role, the shortcut does nothing in any Rally window.
     expect(fileMenu?.submenu).toEqual([{ role: 'close' }]);
   });
 
   it('leaves the close item to the Window menu away from macOS', () => {
     const template = applicationMenuTemplate({
-      appName: 'Avalon',
+      appName: 'Rally',
       platform: 'win32',
       updateStatus: { kind: 'idle' },
       actions: actions(),

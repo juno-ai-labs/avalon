@@ -1,6 +1,6 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
-import { runHarness, type HarnessEvent } from "@avalon/agent-harness";
+import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import { runHarness, type HarnessEvent } from "@rally/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";

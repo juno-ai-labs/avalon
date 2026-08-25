@@ -1,5 +1,5 @@
-import { newId } from '@avalon/db';
-import { TelemetryBreadcrumbSidecarSchema, type TelemetryBreadcrumbSidecar } from '@avalon/contracts/telemetry';
+import { newId } from '@rally/db';
+import { TelemetryBreadcrumbSidecarSchema, type TelemetryBreadcrumbSidecar } from '@rally/contracts/telemetry';
 import { z } from 'zod';
 import type { Env } from '../env';
 import { sha256 } from '../lib/crypto';

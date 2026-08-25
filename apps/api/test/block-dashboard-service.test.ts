@@ -1,7 +1,7 @@
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 
-import { asWorkspaceId, type BlockDashboard, type BlockDashboardBlockRun } from "@avalon/contracts";
+import { asWorkspaceId, type BlockDashboard, type BlockDashboardBlockRun } from "@rally/contracts";
 import type { Env } from "../src/env";
 import { BlockDashboardService, launchBlockDashboardRefresh } from "../src/services/block-dashboard-service";
 import { createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";

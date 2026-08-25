@@ -1,8 +1,8 @@
 # Composer drafts
 
-Every Avalon composer keeps what the user has entered on the device until it is
+Every Rally composer keeps what the user has entered on the device until it is
 sent or cleared. Closing a work stream, walking to another screen, or quitting
-Avalon mid-sentence does not cost the sentence, and it does not cost the files that
+Rally mid-sentence does not cost the sentence, and it does not cost the files that
 were dropped next to it.
 
 The cache is device-local, best-effort, and short-lived: it is an IndexedDB
@@ -90,7 +90,7 @@ host, the user, or the workspace — which covers a deliberate sign-out, main
 surrendering a terminally expired credential, and one account replacing another on
 the device. A role change is not a scope change: being promoted does not cost
 anyone their unsent message. The first session of a run is an arrival rather than a
-departure, so launching Avalon keeps what the last run left behind.
+departure, so launching Rally keeps what the last run left behind.
 
 A wipe has to beat work that was already in flight when it started — a debounced
 save, a file still being fingerprinted, an upload about to record its resource — or
@@ -240,7 +240,7 @@ is the answer to assert on.
 The suites are `lib/draft-cache.test.ts`, `lib/use-draft-text.test.tsx`,
 `lib/use-file-attachments.test.tsx`, and the screen tests that render a composer.
 Run one with
-`pnpm --filter @avalon/desktop exec vitest run src/renderer/lib/use-draft-text.test.tsx`.
+`pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-draft-text.test.tsx`.
 
 ## Security and trust model
 

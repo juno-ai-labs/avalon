@@ -40,7 +40,7 @@ void app.whenReady().then(async () => {
   if (!crashpadDirectory) throw new Error('Production crash generation was not created');
   app.setPath('crashDumps', crashpadDirectory);
   crashReporter.start({
-    productName: 'Avalon Crashpad Fixture',
+    productName: 'Rally Crashpad Fixture',
     uploadToServer: false,
     ignoreSystemCrashHandler: true,
     rateLimit: false,
@@ -57,7 +57,7 @@ void app.whenReady().then(async () => {
       sandbox: true,
     },
   });
-  await window.loadURL('data:text/html,<title>Avalon Crashpad fixture</title>');
+  await window.loadURL('data:text/html,<title>Rally Crashpad fixture</title>');
   window.webContents.once('render-process-gone', async (_event, details) => {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
     await mkdir(fixtureRoot, { recursive: true });

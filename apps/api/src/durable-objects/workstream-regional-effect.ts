@@ -1,5 +1,5 @@
-import { IdSchema, RegionSchema, WorkspaceIdSchema, WorkstreamIdSchema } from "@avalon/contracts";
-import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
+import { IdSchema, RegionSchema, WorkspaceIdSchema, WorkstreamIdSchema } from "@rally/contracts";
+import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 
 const TimestampSchema = z.string().datetime({ offset: true });

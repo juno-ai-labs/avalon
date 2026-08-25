@@ -3,7 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
+import { WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { formatDateTime } from '../lib/format';
@@ -31,7 +31,7 @@ vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
     copyText,
     openSettings,
-    getRuntimeConfig: () => Promise.resolve({ webBaseUrl: 'https://with-avalon.com' }),
+    getRuntimeConfig: () => Promise.resolve({ webBaseUrl: 'https://rallywith.ai' }),
     getApplicationSettings: () => Promise.resolve(applicationSettings.current),
     onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
       applicationSettings.listeners.add(listener);
@@ -49,7 +49,7 @@ vi.mock('../lib/telemetry', () => ({
 
 const workspace: Workspace = {
   id: 'workspace-1',
-  name: 'Avalon Studio',
+  name: 'Rally Studio',
   region: 'global',
   timezone: 'America/Los_Angeles',
   currentUser: { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles' },
@@ -163,7 +163,7 @@ describe('Sidebar work-stream markers', () => {
 
     fireEvent.keyDown(resizer, { key: 'ArrowRight' });
     expect(resizer).toHaveAttribute('aria-valuenow', '316');
-    expect(window.localStorage.getItem('avalon.sidebar-width')).toBe('316');
+    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('316');
 
     fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
     expect(resizer).toHaveAttribute('aria-valuenow', '300');
@@ -283,7 +283,7 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.queryByRole('region', { name: 'Get started with Avalon' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Get started with Rally' })).not.toBeInTheDocument();
   });
 
   it('uses the compact status-dot pattern for every work stream', () => {
@@ -453,7 +453,7 @@ describe('Sidebar work-stream markers', () => {
     expect(row.querySelector('.title-skeleton')).not.toBeNull();
     expect(row.textContent).not.toContain('Create an email draft');
     // A settled title is text, not a skeleton — the placeholder is only for the
-    // second or so before Avalon answers.
+    // second or so before Rally answers.
     expect(screen.getByRole('link', { name: /Board decision/u }).querySelector('.title-skeleton')).toBeNull();
   });
 
@@ -463,7 +463,7 @@ describe('Sidebar work-stream markers', () => {
       const created = new Date('2026-08-07T12:00:00.000Z');
       vi.setSystemTime(created);
       const naming = {
-        ...workstream('naming', "let's talk about avalon pricing", 'running'),
+        ...workstream('naming', "let's talk about rally pricing", 'running'),
         titleStatus: 'naming' as const,
         createdAt: created.toISOString(),
       };
@@ -498,9 +498,9 @@ describe('Sidebar work-stream markers', () => {
       // other repair path at all.
       act(() => { vi.advanceTimersByTime(WORKSTREAM_NAMING_GRACE_MS + 1_000); });
 
-      const row = screen.getByRole('link', { name: /avalon pricing/u });
+      const row = screen.getByRole('link', { name: /rally pricing/u });
       expect(row.querySelector('.title-skeleton')).toBeNull();
-      expect(row.textContent).toContain("let's talk about avalon pricing");
+      expect(row.textContent).toContain("let's talk about rally pricing");
     } finally {
       vi.useRealTimers();
     }
@@ -1146,7 +1146,7 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.contextMenu(workstreamRow, { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy work stream link' }));
     await waitFor(() => expect(copyText).toHaveBeenCalledWith(
-      'https://with-avalon.com/app/workstreams/00000000-0000-4000-8000-000000000042',
+      'https://rallywith.ai/app/workstreams/00000000-0000-4000-8000-000000000042',
     ));
 
     fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
@@ -1351,7 +1351,7 @@ describe('private work streams', () => {
     expect(screen.queryByRole('menuitem', { name: 'Make private' })).not.toBeInTheDocument();
   });
 
-  it('does not offer the toggle on a work stream that belongs to Avalon itself', async () => {
+  it('does not offer the toggle on a work stream that belongs to Rally itself', async () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-000000000027', 'Digest · Adam', 'completed'),
       scope: 'personal',

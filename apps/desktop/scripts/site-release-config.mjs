@@ -105,7 +105,7 @@ export function createPublishedSiteReleaseConfig(current, options) {
   }
   const checksums = plainFileName(options.checksumsFile ?? 'SHA256SUMS', 'Checksums file');
   const latest = plainFileName(options.latestFile ?? 'latest-mac.yml', 'Latest metadata file');
-  const canonicalDmg = plainFileName(options.canonicalDmgFile ?? 'Avalon.dmg', 'Canonical DMG file');
+  const canonicalDmg = plainFileName(options.canonicalDmgFile ?? 'Rally.dmg', 'Canonical DMG file');
   if (!canonicalDmg.endsWith('.dmg') || canonicalDmg === dmg[0]) {
     throw new Error('Canonical DMG must be a distinct DMG file name');
   }

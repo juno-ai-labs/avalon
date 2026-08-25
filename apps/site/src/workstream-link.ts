@@ -1,7 +1,7 @@
 import {
   parseWorkstreamLinkPath,
   workstreamDeepLink,
-} from '@avalon/contracts/workstream-links';
+} from '@rally/contracts/workstream-links';
 import { reportDesktopHandoff } from './telemetry';
 
 export {};

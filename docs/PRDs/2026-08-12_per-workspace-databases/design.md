@@ -12,7 +12,7 @@ the shape of the current code, per the brief that commissioned this PRD. The
 
 ## Requirements, from first principles
 
-A tenant store for Avalon must satisfy, in priority order:
+A tenant store for Rally must satisfy, in priority order:
 
 1. **Structural tenant isolation.** Holding a workspace's database handle is
    the authorization to read that workspace and nothing else. Cross-tenant
@@ -22,7 +22,7 @@ A tenant store for Avalon must satisfy, in priority order:
    in the EU jurisdiction, through the same kind of mechanism that pins its
    Durable Objects today — not through an operator promising to have created
    the right resource.
-3. **Schema velocity.** Avalon changes schema almost every other PR. A schema
+3. **Schema velocity.** Rally changes schema almost every other PR. A schema
    change must ship in the same pull request and the same deploy as the code
    that needs it, with no separate operator step, no cross-fleet coordination,
    and no window in which deployed code and stored schema disagree.
@@ -357,7 +357,7 @@ The direct answers to the quota questions, both carriers, from
 The capacity story *improves* in every cell that matters: the shared 10 GB
 regional ceiling becomes 10 GB per workspace (R2 already carries payloads, so
 relational metadata approaching 10 GB for a single workspace is far away), and
-the account-level 1 TB D1 cap stops being Avalon's aggregate ceiling at all.
+the account-level 1 TB D1 cap stops being Rally's aggregate ceiling at all.
 
 ## Operator access
 
@@ -456,5 +456,5 @@ every-other-PR cadence:
 
 None of this machinery exists as a product anywhere in Cloudflare's platform
 (see [`research.md`](./research.md) — there is no managed migration service),
-so every line of it would be Avalon's to write, operate, and audit. The chosen
+so every line of it would be Rally's to write, operate, and audit. The chosen
 design deletes the entire category.

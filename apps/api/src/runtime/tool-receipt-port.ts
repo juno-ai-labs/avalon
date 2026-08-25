@@ -18,7 +18,7 @@ const CONTRACT: ObjectPortContract<WorkstreamToolReceiptStorage, ToolReceiptOper
   operations: TOOL_RECEIPT_OPERATIONS,
   dispatch: (stub, request) => stub.executeToolReceiptOperation(request),
   failureCode: "tool_receipt_operation_failed",
-  failureMessage: "Avalon's receipt authority rejected an internal request. Retry after the application and service versions are aligned.",
+  failureMessage: "Rally's receipt authority rejected an internal request. Retry after the application and service versions are aligned.",
 };
 
 export function createToolReceiptPortFactory(

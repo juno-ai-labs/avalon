@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { TelemetryEnvelope } from '@avalon/contracts';
+import { TELEMETRY_ENVELOPE_SCHEMA, type TelemetryEnvelope } from '@rally/contracts';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TelemetrySpool } from './telemetry-spool';
 
@@ -17,7 +17,7 @@ function envelope(
   const now = '2026-08-12T20:00:00.000Z';
   if (category === 'essential') {
     return {
-      schema: 'com.avalon.telemetry.event', schemaVersion: 1, eventId,
+      schema: TELEMETRY_ENVELOPE_SCHEMA, schemaVersion: 1, eventId,
       name: 'application_lifecycle', source: 'desktop-main', category,
       identityScope: 'installation', originalTimestamp: now, sentAt: now,
       context: { environment: 'development', release: '1.0.0', buildId: 'test' },
@@ -25,7 +25,7 @@ function envelope(
     };
   }
   return {
-    schema: 'com.avalon.telemetry.event', schemaVersion: 1, eventId,
+    schema: TELEMETRY_ENVELOPE_SCHEMA, schemaVersion: 1, eventId,
     name: 'screen_viewed', source: 'desktop-renderer', category,
     identityScope: 'anonymous-epoch', originalTimestamp: now, sentAt: now,
     context: { environment: 'development', release: '1.0.0', buildId: 'test' },
@@ -34,7 +34,7 @@ function envelope(
 }
 
 async function root(): Promise<string> {
-  const value = await mkdtemp(join(tmpdir(), 'avalon-telemetry-spool-'));
+  const value = await mkdtemp(join(tmpdir(), 'rally-telemetry-spool-'));
   roots.push(value);
   return value;
 }

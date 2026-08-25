@@ -19,7 +19,7 @@ function actions(): MenuBarActions {
     newAutomation: vi.fn(),
     startSuggestion: vi.fn(),
     openWorkstream: vi.fn(),
-    openAvalon: vi.fn(),
+    openRally: vi.fn(),
     quit: vi.fn(),
   };
 }
@@ -29,7 +29,7 @@ function template(
   overrides: { signedIn?: boolean; sectionHeaders?: boolean; actions?: MenuBarActions; meetingRecordingAvailable?: boolean; suggestedWorkAvailable?: boolean } = {},
 ): MenuItemConstructorOptions[] {
   return menuBarMenuTemplate({
-    appName: 'Avalon',
+    appName: 'Rally',
     content: { ...emptyMenuBarContent, ...content },
     signedIn: overrides.signedIn ?? true,
     meetingRecordingAvailable: overrides.meetingRecordingAvailable ?? true,
@@ -102,8 +102,8 @@ describe('menu bar menu', () => {
       'Acme renewal',
       'Board deck',
       '—',
-      'Open Avalon',
-      'Quit Avalon',
+      'Open Rally',
+      'Quit Rally',
     ]);
   });
 
@@ -143,10 +143,10 @@ describe('menu bar menu', () => {
       'New Automation',
       '—',
       'Recent',
-      'Sign in to Avalon',
+      'Sign in to Rally',
       '—',
-      'Open Avalon',
-      'Quit Avalon',
+      'Open Rally',
+      'Quit Rally',
     ]);
   });
 
@@ -180,12 +180,12 @@ describe('menu bar menu', () => {
       'Pinned',
       'Pin a work stream to see it here',
       '—',
-      'Open Avalon',
-      'Quit Avalon',
+      'Open Rally',
+      'Quit Rally',
     ]);
   });
 
-  it('names what has to happen before Avalon can suggest anything', () => {
+  it('names what has to happen before Rally can suggest anything', () => {
     const empty = template(emptyMenuBarContent)
       .find((item) => item.label === 'Connect platforms to get daily suggestions on work streams to create');
 
@@ -245,7 +245,7 @@ describe('menu bar menu', () => {
     expect(signedIn.find((item) => item.label === 'No recent work streams')?.enabled).toBe(false);
 
     const signedOut = template(emptyMenuBarContent, { signedIn: false });
-    expect(signedOut.find((item) => item.label === 'Sign in to Avalon')?.enabled).toBe(false);
+    expect(signedOut.find((item) => item.label === 'Sign in to Rally')?.enabled).toBe(false);
   });
 
   it('offers no login-item control: that preference lives in Settings', () => {
@@ -276,7 +276,7 @@ describe('menu bar menu', () => {
     // travel with the click rather than be re-read from a later refresh.
     expect(menuActions.startSuggestion).toHaveBeenCalledWith(suggestion);
     expect(menuActions.openWorkstream).toHaveBeenCalledWith('workstream-0');
-    expect(menuActions.openAvalon).toHaveBeenCalledTimes(1);
+    expect(menuActions.openRally).toHaveBeenCalledTimes(1);
     expect(menuActions.quit).toHaveBeenCalledTimes(1);
     expect(vi.mocked(menuActions.selected).mock.calls.map(([action]) => action)).toEqual([
       'new_meeting_note',
@@ -284,8 +284,8 @@ describe('menu bar menu', () => {
       'new_automation',
       'suggested_work',
       'recent_workstream',
-      'open_avalon',
-      'quit_avalon',
+      'open_rally',
+      'quit_rally',
     ]);
   });
 
@@ -300,7 +300,7 @@ describe('menu bar menu', () => {
   });
 
   it('reads the macOS version that decides whether section headers exist', () => {
-    // macOS 14 introduced them; Avalon targets 26 and 27, where they are the
+    // macOS 14 introduced them; Rally targets 26 and 27, where they are the
     // native treatment.
     expect(supportsSectionHeaders('26.1')).toBe(true);
     expect(supportsSectionHeaders('14.0.0')).toBe(true);

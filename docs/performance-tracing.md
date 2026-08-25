@@ -1,6 +1,6 @@
 # Performance tracing
 
-Three things in Avalon are slow enough that a person notices: starting a work
+Three things in Rally are slow enough that a person notices: starting a work
 stream, opening one that already exists, and sending a message to one. Each
 spans the Electron renderer, a regional Worker, and two or three Durable
 Objects, and until this existed the only measurement of any of them was the
@@ -29,7 +29,7 @@ necessarily keeps apart.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/observability/tracing.ts` | The whole API-side surface: `inSpan`, `inFlowSpan`, `requestFlowSpan`, `noFlowSpan`, and `identityAttributes` — the one place an Avalon identifier becomes an attribute name. |
+| `apps/api/src/observability/tracing.ts` | The whole API-side surface: `inSpan`, `inFlowSpan`, `requestFlowSpan`, `noFlowSpan`, and `identityAttributes` — the one place a Rally identifier becomes an attribute name. |
 | `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | `observability.traces`, which is what makes any of this reach a trace. Custom spans require it; see [`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md). |
 | `apps/api/src/routes/workstreams.ts` | The root span for `POST /workstreams`, `GET /:id`, `GET /:id/messages`, `POST /:id/messages`, and both socket-ticket routes. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | The create path's steps — every awaited call between the receipt and the activated route. |
@@ -150,7 +150,7 @@ under `avalon.`, so it can never collide with a convention added later:
 | `avalon.snapshot.bytes`, `avalon.snapshot.message_count`, `avalon.snapshot.trims` | What a subscription had to assemble. |
 | `avalon.create.path`, `avalon.create.receipt_state`, `avalon.create.first_naming` | Which create this was. |
 
-`identityAttributes` in `tracing.ts` is the only place an Avalon identifier
+`identityAttributes` in `tracing.ts` is the only place a Rally identifier
 becomes an attribute name. Add a name there rather than at a call site, so a
 rename happens once and a dashboard filtering on `avalon.workspace.id` never has
 to know which component emitted the span.
@@ -274,7 +274,7 @@ shipping a browser SDK and an exporter out of the Electron renderer would move
 telemetry off the main-owned regional path [`telemetry.md`](telemetry.md)
 requires everything to travel on.
 
-Instead `AvalonApi` stamps `x-request-id` on every call and prints one
+Instead `RallyApi` stamps `x-request-id` on every call and prints one
 `[perf] http <method> <path> <status> <ms>` line, and each flow prints one
 `[perf] <flow> <ms>` line carrying its phases and the correlation ids above.
 Both go through `logDebug`, which is `console.debug`: filtered out of DevTools
@@ -421,7 +421,7 @@ This module owns latency diagnosis for the three named flows and nothing else.
 
 | Suite | What it proves |
 | --- | --- |
-| `apps/api/test/tracing.test.ts` (`pnpm --filter @avalon/api test`) | That a step opens a runtime span and ends it, that the step which threw is still ended and the rejection propagates, the `perf_flow` row's step map and `slowest_step`, `setError`'s status attributes, that an absent identifier sets no attribute, that `noFlowSpan` opens nothing, and that a request's span carries the `x-request-id` the desktop sent. |
+| `apps/api/test/tracing.test.ts` (`pnpm --filter @rally/api test`) | That a step opens a runtime span and ends it, that the step which threw is still ended and the rejection propagates, the `perf_flow` row's step map and `slowest_step`, `setError`'s status attributes, that an absent identifier sets no attribute, that `noFlowSpan` opens nothing, and that a request's span carries the `x-request-id` the desktop sent. |
 | `apps/desktop/src/renderer/lib/perf-trace.test.ts` | The renderer tracer's phase order, its throwing phase, `end` idempotence — every socket path calls it defensively — and that `newRequestId` produces something `requestContext` will accept rather than replace. |
 | `apps/desktop/src/renderer/lib/api.test.ts` (`request correlation`) | That every call carries a distinct `x-request-id`, and that a caller's own id is used when it has one. |
 | `apps/api/test/security-and-config.test.ts` | That `x-request-id` survives the CORS preflight in both regions and is exposed on the response. |
@@ -476,7 +476,7 @@ closed — it is a standing property of the export.
 
 The first is not about this module at all and is the larger of the two, and it
 was **accepted, not solved**: the platform's automatic Durable Object SQL spans
-carry `cloudflare.durable_object.query.bindings`, which for Avalon means message
+carry `cloudflare.durable_object.query.bindings`, which for Rally means message
 content, with no hook to redact it —
 [`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md#what-automatic-tracing-captures-that-we-would-never-log)
 has the detail. An OTLP export moves that content out of the region's own trust

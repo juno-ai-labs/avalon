@@ -2,7 +2,7 @@ import {
   asWorkspaceId,
   ProductFeatureFlagFanoutMessageSchema,
   type ProductFeatureFlagFanoutMessage,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";

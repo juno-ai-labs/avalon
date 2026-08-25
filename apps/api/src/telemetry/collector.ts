@@ -2,7 +2,7 @@ import {
   TELEMETRY_EVENTS,
   TelemetryEnvelopeSchema,
   type TelemetryEnvelope,
-} from "@avalon/contracts/telemetry";
+} from "@rally/contracts/telemetry";
 import type { Env } from "../env";
 import { enqueueAnalyticsLakehousePointer } from "../services/analytics-lakehouse";
 import { canonicalTelemetryJson, telemetryPayloadHash } from "./payload-integrity";

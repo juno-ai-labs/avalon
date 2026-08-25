@@ -377,12 +377,12 @@ export function messageExportDocument(input: {
   // is the second lock. Both have to hold — a raw-HTML plug-in added to the
   // renderer would turn this into an injection point.
   const seed = seedFrom(input.contentHtml);
-  const signature = `<div class="export-signature"><span class="export-mark"></span>Saved from Avalon</div>`;
+  const signature = `<div class="export-signature"><span class="export-mark"></span>Saved from Rally</div>`;
   const card = `<div class="export-card"><div class="markdown-body">${input.contentHtml}</div>${
     input.format === 'image' ? signature : ''
   }</div>`;
   return [
-    '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Saved from Avalon</title>',
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Saved from Rally</title>',
     `<style>${stylesheet(input.format, input.logoDataUrl, seed)}</style></head>`,
     `<body>${input.format === 'pdf' ? `<div class="export-sheet">${card}</div>` : card}</body></html>`,
   ].join('');
@@ -400,7 +400,7 @@ export function messageExportFooter(logoDataUrl: string): string {
   return `<div style="-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#84857a;display:flex;font-family:Inter,-apple-system,sans-serif;font-size:8px;justify-content:flex-end;padding:0 0.4in;width:100%;">
     <span style="align-items:center;display:flex;gap:5px;">
       <img alt="" src="${escapeHtml(logoDataUrl)}" style="height:9px;width:9px;">
-      <span>Saved from Avalon</span>
+      <span>Saved from Rally</span>
       <span style="opacity:0.6;padding-left:4px;"><span class="pageNumber"></span> / <span class="totalPages"></span></span>
     </span>
   </div>`;

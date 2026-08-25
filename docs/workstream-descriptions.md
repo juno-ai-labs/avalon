@@ -29,7 +29,7 @@ stream forever.
 Almost no description is authored. Creating a work stream from the composer derives
 one from the opening message; a work stream expanded from suggested work gets the
 suggestion's display prompt; one opened from Slack gets the message that mentioned
-Avalon. Each is a reasonable guess at what the work is *about to be*, made before
+Rally. Each is a reasonable guess at what the work is *about to be*, made before
 any of it happened.
 
 Derived means derived, not copied: `provisionalWorkstreamDescription` takes the
@@ -107,7 +107,7 @@ hold:
 | Condition | Floor | Why |
 | --- | --- | --- |
 | New messages a **person** wrote | 10 | An agent's own turns restate the ask it was given and a system notice is the host talking to itself. Counting them would let one request that provoked a long agent transcript buy a fresh evaluation. |
-| — *and a person means an external one too* | | A work stream run from Slack has **no** messages authored by an Avalon account: `createExternalMessage` stores every participant as `author_type = 'system'` carrying an `external_actor_json`. Reading the column alone would file a whole Slack conversation as host notices and exclude all of its people, so the descriptions most in need of this loop would be the only ones it could never reach. The loop classifies a row with an external actor as `external`, counts it as a person, and gives the model the actor's display name. |
+| — *and a person means an external one too* | | A work stream run from Slack has **no** messages authored by a Rally account: `createExternalMessage` stores every participant as `author_type = 'system'` carrying an `external_actor_json`. Reading the column alone would file a whole Slack conversation as host notices and exclude all of its people, so the descriptions most in need of this loop would be the only ones it could never reach. The loop classifies a row with an external actor as `external`, counts it as a person, and gives the model the actor's display name. |
 | Characters of that new human text | 600 | The difference between a conversation and a row of acknowledgements. |
 | Novel subject terms | 5 | The one that matters — see below. |
 
@@ -243,7 +243,7 @@ to have in hand.
 - **A transcript with no single purpose visible in it is a `keep`.** It is never a
   reason to reach for a catch-all; the generic attractors are refused outright.
 - **A person counts as a person even when they are external.** A Slack-driven work
-  stream has no Avalon-authored rows at all, so reading `author_type` alone excludes
+  stream has no Rally-authored rows at all, so reading `author_type` alone excludes
   every person in it.
 - **The step never throws.** A description that could not be re-evaluated is the
   description the work stream already had.
@@ -308,7 +308,7 @@ carrying its own copy of a threshold stops testing the loop and starts testing
 itself.
 
 Run it with
-`pnpm --filter @avalon/api exec vitest run test/workstream-description-refresh.test.ts`
+`pnpm --filter @rally/api exec vitest run test/workstream-description-refresh.test.ts`
 — the path is package-relative.
 
 Two traps. The prompt is byte-stable and golden-hashed, so an edit fails the hash

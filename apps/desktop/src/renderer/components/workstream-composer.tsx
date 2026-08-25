@@ -1,6 +1,6 @@
 import { LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
-import type { AvalonApi, MentionIdentity } from '../lib/api';
+import type { RallyApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
 import { NO_MENTIONS, useDraftText } from '../lib/use-draft-text';
@@ -26,7 +26,7 @@ interface MentionCandidate {
 }
 
 interface WorkstreamComposerProps {
-  api?: Pick<AvalonApi, 'getTranscriptionSocketTicket'>;
+  api?: Pick<RallyApi, 'getTranscriptionSocketTicket'>;
   workstream: WorkstreamDetail;
   members: WorkspaceMember[];
   fileInputRef: RefObject<HTMLInputElement | null>;

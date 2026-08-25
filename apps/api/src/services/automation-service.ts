@@ -1,5 +1,5 @@
-import { newId, nowIso } from "@avalon/db";
-import { AutomationDraftStateSchema, TriggerDefinitionSchema, asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { newId, nowIso } from "@rally/db";
+import { AutomationDraftStateSchema, TriggerDefinitionSchema, asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type {
   HarnessRunId,
   WorkspaceId,
@@ -12,10 +12,10 @@ import type {
   ExecutionPrincipal,
   Scope,
   WorkstreamWorkflowInput,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { z } from "zod";
-import { AutomationCompilerError, OpenRouterError } from "@avalon/agent-harness";
-import type { AutomationCompilerStreamEvent } from "@avalon/agent-harness";
+import { AutomationCompilerError, OpenRouterError } from "@rally/agent-harness";
+import type { AutomationCompilerStreamEvent } from "@rally/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
 import { workstreamAudienceAllowsUser } from "../lib/audience-containment";

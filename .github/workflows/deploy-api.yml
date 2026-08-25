@@ -106,24 +106,24 @@ jobs:
           - name: typecheck-and-build-invariants
             command: >-
               pnpm typecheck &&
-              pnpm --filter @avalon/api build &&
-              pnpm --filter @avalon/api build:eu &&
-              pnpm --filter @avalon/desktop test:release
+              pnpm --filter @rally/api build &&
+              pnpm --filter @rally/api build:eu &&
+              pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-2
-            command: pnpm --filter @avalon/desktop exec vitest run --shard=1/2
+            command: pnpm --filter @rally/desktop exec vitest run --shard=1/2
           - name: desktop-tests-2-of-2
-            command: pnpm --filter @avalon/desktop exec vitest run --shard=2/2
+            command: pnpm --filter @rally/desktop exec vitest run --shard=2/2
           - name: api-tests-1-of-2
-            command: pnpm --filter @avalon/api exec vitest run --shard=1/2
+            command: pnpm --filter @rally/api exec vitest run --shard=1/2
           - name: api-tests-2-of-2
             command: >-
-              pnpm --filter @avalon/api exec vitest run --shard=2/2 &&
-              pnpm --filter @avalon/api test:workers
+              pnpm --filter @rally/api exec vitest run --shard=2/2 &&
+              pnpm --filter @rally/api test:workers
           - name: crash-symbolicator-container
-            command: pnpm --filter @avalon/api test:crash-symbolicator-container
+            command: pnpm --filter @rally/api test:crash-symbolicator-container
           - name: remaining-tests
             command: >-
-              pnpm --filter '!@avalon/desktop' --filter '!@avalon/api' --recursive --if-present test &&
+              pnpm --filter '!@rally/desktop' --filter '!@rally/api' --recursive --if-present test &&
               pnpm test:scripts
     steps:
       - name: Check out the revision being deployed
@@ -287,7 +287,7 @@ jobs:
         if: env.DEPLOY_EU == 'true'
         run: |
           set -euo pipefail
-          pending="$(pnpm --filter @avalon/api db:migrate:remote:list:eu)"
+          pending="$(pnpm --filter @rally/api db:migrate:remote:list:eu)"
           echo "$pending"
           classification="$(node scripts/classify-pending-d1-migrations.mjs \
             0090_drop_legacy_product_tables.sql \
@@ -299,7 +299,7 @@ jobs:
         if: env.DEPLOY_GLOBAL == 'true'
         run: |
           set -euo pipefail
-          pending="$(pnpm --filter @avalon/api db:migrate:remote:list)"
+          pending="$(pnpm --filter @rally/api db:migrate:remote:list)"
           echo "$pending"
           classification="$(node scripts/classify-pending-d1-migrations.mjs \
             0090_drop_legacy_product_tables.sql \
@@ -310,13 +310,13 @@ jobs:
         if: >-
           env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_EU == 'true' &&
           steps.pending_eu.outputs.worker_first != 'true'
-        run: pnpm --filter @avalon/api db:migrate:remote:eu
+        run: pnpm --filter @rally/api db:migrate:remote:eu
 
       - name: Apply the remote D1 migrations to Global
         if: >-
           env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true' &&
           steps.pending_global.outputs.worker_first != 'true'
-        run: pnpm --filter @avalon/api db:migrate:remote
+        run: pnpm --filter @rally/api db:migrate:remote
 
       # Both regional deployments build the symbolicator image, and Wrangler
       # drives that build itself with a fixed `docker build` line that takes no
@@ -351,11 +351,11 @@ jobs:
       # EU precedes Global because Global binds named EU entrypoints.
       - name: Deploy the EU Worker
         if: env.DEPLOY_EU == 'true'
-        run: pnpm --filter @avalon/api exec wrangler deploy --config .wrangler.lakehouses.eu.json
+        run: pnpm --filter @rally/api exec wrangler deploy --config .wrangler.lakehouses.eu.json
 
       - name: Deploy the Global Worker
         if: env.DEPLOY_GLOBAL == 'true'
-        run: pnpm --filter @avalon/api exec wrangler deploy --config .wrangler.lakehouses.global.json
+        run: pnpm --filter @rally/api exec wrangler deploy --config .wrangler.lakehouses.global.json
 
       # Worker-first migrations delete columns or tables the previous Worker
       # still names. The pending remote ledger, rather than the triggering diff,
@@ -365,13 +365,13 @@ jobs:
         if: >-
           env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_EU == 'true' &&
           steps.pending_eu.outputs.worker_first == 'true'
-        run: pnpm --filter @avalon/api db:migrate:remote:eu
+        run: pnpm --filter @rally/api db:migrate:remote:eu
 
       - name: Apply Worker-first D1 migrations in Global after the compatible Worker
         if: >-
           env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true' &&
           steps.pending_global.outputs.worker_first == 'true'
-        run: pnpm --filter @avalon/api db:migrate:remote
+        run: pnpm --filter @rally/api db:migrate:remote
 
       - name: Verify regional health
         run: |

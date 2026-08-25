@@ -1,6 +1,6 @@
 # Context compaction
 
-When a run's live context approaches the selected model's window, Avalon
+When a run's live context approaches the selected model's window, Rally
 replaces it with a summary of itself. The compacted context is the stable system
 prompt plus **one** synthetic user message holding an LLM continuation summary
 followed by a deterministic, freshly authorized resource inventory. Nothing
@@ -58,7 +58,7 @@ ranges, conclusions, and unresolved needs. It forbids reproducing the complete
 catalog because the host supplies that part authoritatively.
 On successive compactions it also identifies any earlier
 `# Authoritative work-stream resource inventory` appendix as generated state
-that must not be copied or summarized; Avalon replaces it after the new summary.
+that must not be copied or summarized; Rally replaces it after the new summary.
 
 An empty completion is a defect and is retried by the route plan. The
 compaction's own tokens are accounted as auxiliary spend rather than an agent
@@ -80,7 +80,7 @@ count exists.
 
 ### Persisting and replaying
 
-Before the summary call, Avalon captures the current execution-principal key and
+Before the summary call, Rally captures the current execution-principal key and
 monotonic authorized resource-inventory revision with an O(1) lookup. After the
 summary it runs one grouped inventory query under that expected revision to
 render the appendix, then includes the revision in a conditional persistence
@@ -186,7 +186,7 @@ Immutable compaction identity and replay remain the responsibility of
 
 ## Boundary
 
-Avalon's harness owns *whether* and *what*: the threshold, the prompt, and the
+Rally's harness owns *whether* and *what*: the threshold, the prompt, and the
 resulting transcript. Bind owns *when* — it calls the hooks at a safe point in
 its loop and applies the result. The API service owns *durability*: the row, the
 sequence boundary, and the replay assembly.
@@ -229,7 +229,7 @@ drive a stubbed `fetch` whose queued responses are consumed in order, so an adde
 model turn shifts every later index in `requestBodies`.
 
 ```bash
-pnpm --filter @avalon/agent-harness exec vitest run src/index.test.ts
+pnpm --filter @rally/agent-harness exec vitest run src/index.test.ts
 ```
 
 `apps/api/test/workstream-object-schema.test.ts` asserts both the object-local
@@ -257,7 +257,7 @@ results.
   at the distribution of turn sizes just below the threshold.
 - **Should there be a cheaper step before full compaction?** OpenCode prunes old
   tool results (protecting the most recent ~40k tokens) as a separate mechanism,
-  so a long run pays for a lossy whole-context summary far less often. Avalon has
+  so a long run pays for a lossy whole-context summary far less often. Rally has
   no equivalent: a run with one enormous tool result compacts the entire
   conversation to recover from it. Tool results are the natural candidate here
   because a receipt already holds the authoritative copy.
@@ -381,7 +381,7 @@ Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
 principal, authorized inventory carries a monotonic revision, and persistence
 is conditional on that revision still being current. Invalidated fallback
 history is bounded before provider dispatch. Successive compactions explicitly
-discard the earlier generated inventory appendix before Avalon appends a fresh
+discard the earlier generated inventory appendix before Rally appends a fresh
 one.
 
 **Why:** A single work-stream row let one participant evict another's usable

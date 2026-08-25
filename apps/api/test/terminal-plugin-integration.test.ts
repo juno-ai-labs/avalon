@@ -1,6 +1,6 @@
-import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
-import { asHarnessRunId, asUserId } from "@avalon/contracts";
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asHarnessRunId, asUserId } from "@rally/contracts";
+import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";

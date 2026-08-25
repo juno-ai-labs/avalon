@@ -15,7 +15,7 @@
  * | Artefact | What reads it |
  * | --- | --- |
  * | `renderer/styles/themes.css` | The renderer: `@font-face` rules and one custom-property block per theme. |
- * | `renderer/backdrops/<id>.html` | The main process, which serves it over `avalon-backdrop://`. |
+ * | `renderer/backdrops/<id>.html` | The main process, which serves it over `rally-backdrop://`. |
  * | `common/theme-assets.ts` | Both: which themes have a backdrop, and which fonts the main process caches. |
  *
  * A token path becomes a custom property by prefixing the namespace and
@@ -235,9 +235,9 @@ function fontFaceRule(font, theme) {
 }
 
 /** The scheme the main process serves cached remote font files from. */
-export const FONT_SCHEME = 'avalon-font';
+export const FONT_SCHEME = 'rally-font';
 /** The scheme a backdrop document is served from, one origin per theme. */
-export const BACKDROP_SCHEME = 'avalon-backdrop';
+export const BACKDROP_SCHEME = 'rally-backdrop';
 
 function tokenBlockLines(theme, registry, values) {
   return Object.keys(registry.tokens)
@@ -506,7 +506,7 @@ export function backdropModule(sources) {
     '/**',
     " * One whole HTML document per theme that brings a backdrop, keyed by theme id.",
     ' *',
-    ' * Served over `avalon-backdrop://` under a policy that permits painting and',
+    ' * Served over `rally-backdrop://` under a policy that permits painting and',
     " * nothing else. See `docs/theming.md` for what a backdrop document may do.",
     ' */',
     'export const backdropDocuments: Record<string, string> = {',

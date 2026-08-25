@@ -1,6 +1,6 @@
 # Branded identifiers
 
-Every identifier in Avalon is a UUID string, so the type system on its own
+Every identifier in Rally is a UUID string, so the type system on its own
 treats a workspace id, a work-stream id, a run id, and a user id as freely
 interchangeable. The places they meet are exactly the places a swap is
 catastrophic and silent: a Durable Object *name* built from two ids in the

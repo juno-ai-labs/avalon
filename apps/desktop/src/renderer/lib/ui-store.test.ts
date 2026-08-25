@@ -50,11 +50,11 @@ describe('context rail state', () => {
   it('clamps and persists sidebar resizing', () => {
     useUiStore.getState().setSidebarWidth(120);
     expect(useUiStore.getState().sidebarWidth).toBe(260);
-    expect(window.localStorage.getItem('avalon.sidebar-width')).toBe('260');
+    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('260');
 
     useUiStore.getState().setSidebarWidth(900);
     expect(useUiStore.getState().sidebarWidth).toBe(480);
-    expect(window.localStorage.getItem('avalon.sidebar-width')).toBe('480');
+    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('480');
   });
 
   it('opens the requested contextual variant and resets stale detail state', () => {

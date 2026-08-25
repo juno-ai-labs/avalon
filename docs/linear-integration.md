@@ -1,9 +1,9 @@
 # Linear integration
 
-Avalon installs into Linear as **one publicly installable OAuth app** carrying two
+Rally installs into Linear as **one publicly installable OAuth app** carrying two
 composable connector surfaces: a `resource` surface that reads and writes Linear
 objects through model-callable tools, and a `native_agent` surface that lets Linear
-delegate work to Avalon through Agent Sessions. The second is not a tool — it is a
+delegate work to Rally through Agent Sessions. The second is not a tool — it is a
 provider control-plane protocol with its own authorization, signed invocation,
 session ownership, deadlines, cancellation, activities, and outbound signals — and
 it ships in a `protocol_only` state that refuses to start work.
@@ -39,7 +39,7 @@ than in a test.
 | Surface | Capability kind | Production state | Purpose |
 | --- | --- | --- | --- |
 | `resource` | `tool` | Enabled | Read, create, update, attach, watch, and automate Linear resources. |
-| `native_agent` | `native_agent` | `protocol_only` | Let Linear delegate work to or mention Avalon through Agent Sessions. |
+| `native_agent` | `native_agent` | `protocol_only` | Let Linear delegate work to or mention Rally through Agent Sessions. |
 
 Public installation and Linear Integration Directory publication are separate
 milestones. The app can be made installable by outside Linear workspaces before
@@ -68,20 +68,20 @@ sits on.
 
 Authorization Code with PKCE S256, in one of two actor modes:
 
-- A **personal** Avalon connection requests `actor=user`. Its tools act as the
-  authorizing Linear user, are available only to that Avalon member, and may
+- A **personal** Rally connection requests `actor=user`. Its tools act as the
+  authorizing Linear user, are available only to that Rally member, and may
   include private teams that user can access.
-- A **workspace** Avalon connection requests `actor=app`. Its tools act as Avalon,
-  are available to every member of the Avalon workspace, and are limited to the
+- A **workspace** Rally connection requests `actor=app`. Its tools act as Rally,
+  are available to every member of the Rally workspace, and are limited to the
   teams selected while installing the app.
 
 One public Linear app supports both. A person who wants both identities authorizes
-it twice, once per actor, and **the sealed Avalon OAuth state — not the requested
+it twice, once per actor, and **the sealed Rally OAuth state — not the requested
 provider scopes — selects the actor.**
 
 Scopes are capability-derived, never broader:
 
-| Avalon capability | Linear scopes |
+| Rally capability | Linear scopes |
 | --- | --- |
 | `linear.read` | `read` |
 | `linear.issue.create` | `issues:create` |
@@ -90,7 +90,7 @@ Scopes are capability-derived, never broader:
 | `linear.agent` | `app:assignable`, `app:mentionable`, `write` |
 
 `admin` is never requested — Linear app actors do not support it. `linear.agent` is
-workspace-only, because delegation and mentions target the Avalon app actor rather
+workspace-only, because delegation and mentions target the Rally app actor rather
 than a human user actor.
 
 Refresh-token rotation is an atomic credential update; the previous token is
@@ -102,11 +102,11 @@ user ID and workspace connections the app-user ID.
 ### Resource surface
 
 The production manifest subscribes only to resource, lifecycle, and permission
-events Avalon can use. Canonical activity types are snake-cased,
+events Rally can use. Canonical activity types are snake-cased,
 delivery-idempotent, and associated with attachable resources wherever the provider
 exposes a stable object.
 
-| Linear family | Avalon resource | Use |
+| Linear family | Rally resource | Use |
 | --- | --- | --- |
 | Issue | `linear_issue` | Work items and automations |
 | Comment | `linear_comment` | Discussion context |
@@ -166,7 +166,7 @@ The first-class connector metadata records:
 Agent-session activation requires all of the following to pass first:
 
 1. A fast durable inbox that can meet the five-second webhook acknowledgement SLO.
-2. A unique session-to-Avalon-workspace/workstream/run mapping.
+2. A unique session-to-Rally-workspace/workstream/run mapping.
 3. A durable outbound activity outbox with stable provider activity IDs across
    retries.
 4. A deterministic `👀` source-comment acknowledgement before processing, followed
@@ -202,8 +202,8 @@ order:
 - **Signed native events must match organization ID, granted `linear.agent`, and
   the stored Linear `appUserId`.** A resource-only connection must never receive a
   delegation.
-- **One active Avalon native-agent owner per Linear organization and app
-  identity.** Without it, one delegation can start work in multiple Avalon tenants.
+- **One active Rally native-agent owner per Linear organization and app
+  identity.** Without it, one delegation can start work in multiple Rally tenants.
 - **Reconnects preserve both the organization and the actor identity.** A reconnect
   that silently changes either produces a connection whose stored history describes
   a different principal.
@@ -221,7 +221,7 @@ order:
 
 ## Boundary
 
-This document owns Avalon's design against Linear's contracts: the app shape, the
+This document owns Rally's design against Linear's contracts: the app shape, the
 scope mapping, the routing, and the native-agent gate. It does not own:
 
 | For | Read |
@@ -242,7 +242,7 @@ scope mapping, the routing, and the native-agent gate. It does not own:
 - **A personal connection whose proving query returns missing or revoked
   authorization marks the connection `needs_reconnect`.** A provider *failure* —
   as opposed to a denial — fails the delivery instead, so Linear retries rather
-  than Avalon silently dropping an event.
+  than Rally silently dropping an event.
 - **Five seconds to acknowledge a native invocation, ten seconds to the first
   activity or external link.** Both are Linear's, both need alarms, and neither can
   wait on a model turn.
@@ -260,7 +260,7 @@ scope mapping, the routing, and the native-agent gate. It does not own:
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared Linear activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 
 Run a single file from the package directory —
-`pnpm --filter @avalon/connectors exec vitest run src/linear.test.ts` — the path is
+`pnpm --filter @rally/connectors exec vitest run src/linear.test.ts` — the path is
 package-relative, not repo-relative.
 
 The trap is that signature fixtures are byte-exact. A test that re-serializes a

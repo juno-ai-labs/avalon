@@ -2,8 +2,8 @@ import {
   ActivityQueueMessageSchema,
   NormalizedActivitySchema,
   type NormalizedActivity,
-} from "@avalon/contracts";
-import { newId } from "@avalon/db";
+} from "@rally/contracts";
+import { newId } from "@rally/db";
 import type { Env } from "../env";
 import { enqueueWorkspaceConnectorEvent } from "./workspace-connector-event-ingress";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";

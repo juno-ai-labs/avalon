@@ -11,7 +11,7 @@ import {
   IconWorldSearch,
   type TablerIcon,
 } from '@tabler/icons-react';
-import type { AutomationPluginActivity, AutomationPluginIcon } from '@avalon/contracts';
+import type { AutomationPluginActivity, AutomationPluginIcon } from '@rally/contracts';
 import {
   Check,
   ChevronDown,
@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { Children, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
-import { normalizeModelMarkdown, normalizeModelText } from '@avalon/contracts/model-markdown';
+import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -304,7 +304,7 @@ function linkLabelText(children: React.ReactNode): string | undefined {
 
 /**
  * Person mentions arrive as durable `[@Name](person:<id>)` Markdown, but a
- * connection mention stays human-readable text because Avalon has no
+ * connection mention stays human-readable text because Rally has no
  * identity-bearing connector reference yet. Its stored offsets are still
  * authoritative, so this turns them into the same link shape at render time —
  * presentation only, leaving the message text models and Slack see untouched.
@@ -676,7 +676,7 @@ function AssistantMessageActions({ mentions, telemetry, text }: {
     } catch (error) {
       // The label says one attempt failed; the console is where the reason is,
       // and it is the only trail a support conversation has to go on.
-      logError('avalon', `could not save this message as ${format === 'image' ? 'an image' : 'a PDF'}`, error);
+      logError('rally', `could not save this message as ${format === 'image' ? 'an image' : 'a PDF'}`, error);
       setFailed(format);
     } finally {
       setSaving(null);
@@ -784,7 +784,7 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
         {tool.input === undefined && tool.output === undefined && tool.summary && (
           <div><h4>Activity</h4><p>{normalizeModelText(tool.summary)}</p></div>
         )}
-        {tool.status === 'ambiguous' && <p className="tool-warning">Avalon could not confirm whether this external action completed. It will not retry automatically.</p>}
+        {tool.status === 'ambiguous' && <p className="tool-warning">Rally could not confirm whether this external action completed. It will not retry automatically.</p>}
       </div>
     </details>
   );
@@ -810,7 +810,7 @@ export interface SystemRowDisclosure {
 }
 
 /**
- * A system row: the note Avalon leaves in the transcript when something happened
+ * A system row: the note Rally leaves in the transcript when something happened
  * to the work stream rather than in it.
  *
  * Most are a sentence — a scheduled wake-up, a delivery confirmation. A few are
@@ -1038,7 +1038,7 @@ export function ElicitationPanel({
   if (collapsed) {
     return (
       <button className="elicitation-collapsed-bar" onClick={() => setCollapsed(false)} type="button">
-        <span>Avalon needs input</span>
+        <span>Rally needs input</span>
         <strong>{prompt}</strong>
         <ChevronDown aria-hidden="true" size={16} />
       </button>
@@ -1276,7 +1276,7 @@ export function MessageBlock({
       {/* Your own turn carries no identity line — you know who you are. A
           context label is the exception, and the reason the header renders at
           all here: a suggested-work brief is attributed to the person who
-          selected it but written by Avalon, so the line saying where the words
+          selected it but written by Rally, so the line saying where the words
           came from is the only thing standing between them and a turn they do
           not remember typing. The name stays suppressed; only the label and the
           time appear. */}
@@ -1285,7 +1285,7 @@ export function MessageBlock({
           {!ownHumanMessage && (
             <>
               {human && <span aria-hidden="true" className="message-author-dot" />}
-              <span className="message-author">{human ? humanAuthorName : 'Avalon'}</span>
+              <span className="message-author">{human ? humanAuthorName : 'Rally'}</span>
             </>
           )}
           {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}

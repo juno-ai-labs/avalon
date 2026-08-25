@@ -8,12 +8,12 @@ import type {
   HarnessFailureCode,
   StructuredFailureDetail,
   ToolDefinition
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import {
   AddressingClassificationSchema,
   AutomationDraftSchema,
   asUserId
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import { createStreamWatchdog } from "@juno-ai/bind/completion";
 import { z } from "zod";
@@ -2809,12 +2809,12 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   run_iteration_limit_exceeded: "This run reached its model-turn limit",
   run_tool_call_limit_exceeded: "This run reached its tool-call limit",
   run_cost_limit_exceeded: "This run reached its cost limit",
-  harness_execution_failed: "Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support",
-  tool_receipt_persistence_failed: "Avalon could not record this tool's durable outcome. Check its card before retrying a write — if it is unresolved, copy the request ID for support",
-  run_state_persistence_failed: "Avalon could not save this run's progress. Retrying is unlikely to help — copy the request ID for support",
+  harness_execution_failed: "Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support",
+  tool_receipt_persistence_failed: "Rally could not record this tool's durable outcome. Check its card before retrying a write — if it is unresolved, copy the request ID for support",
+  run_state_persistence_failed: "Rally could not save this run's progress. Retrying is unlikely to help — copy the request ID for support",
   context_limit_exceeded: "This run could not fit safely in the selected model context",
   tool_surface_too_large: "The authorized tool surface is too large for one run",
-  ambiguous_external_write: "An external write may have completed, so Avalon did not retry it",
+  ambiguous_external_write: "An external write may have completed, so Rally did not retry it",
   // Not "did not respond": this code also covers a 429 and a 5xx, where the
   // service answered and the answer was an error. Naming the symptom it does not
   // have would hand a member a diagnosis that contradicts the logs.
@@ -2825,13 +2825,13 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   // a key is open — never why. So this may not say "after repeated failures",
   // which can be false, and may not stop at "try again", which sends someone
   // retrying an operator-actionable problem indefinitely.
-  provider_circuit_open: "Avalon has paused requests to this model. Try again shortly — if it keeps happening, copy the request ID for support",
+  provider_circuit_open: "Rally has paused requests to this model. Try again shortly — if it keeps happening, copy the request ID for support",
   // Says "this run", not "this tool" or "this save": the refusal lands on
   // whichever call asked next, so naming the operation would name the wrong
   // one. Retrying is offered because the limit is per invocation and a fresh
   // run starts a fresh one — which is exactly what happened on 2026-08-24,
   // where the next run in the same work stream completed.
-  platform_limit_exceeded: "Avalon hit a platform limit partway through this run. Trying again usually works — if it keeps happening, copy the request ID for support",
+  platform_limit_exceeded: "Rally hit a platform limit partway through this run. Trying again usually works — if it keeps happening, copy the request ID for support",
 });
 
 export function memberSafeHarnessFailureMessage(code: HarnessFailureCode): string {

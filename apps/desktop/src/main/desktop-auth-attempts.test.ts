@@ -8,7 +8,7 @@ describe('native desktop authentication attempts', () => {
     const store = new DesktopAuthAttemptStore({
       randomBytes: (size) => Uint8Array.from({ length: size }, () => byte++ % 256),
     });
-    const publicAttempt = store.create('https://api.with-avalon.com', 'global');
+    const publicAttempt = store.create('https://api.rallywith.ai', 'global');
     const retained = store.proof(publicAttempt.attemptId);
 
     expect(publicAttempt).toEqual({
@@ -21,7 +21,7 @@ describe('native desktop authentication attempts', () => {
       createHash('sha256').update(retained!.verifier, 'ascii').digest('base64url'),
     );
     expect(retained).toMatchObject({
-      apiBaseUrl: 'https://api.with-avalon.com',
+      apiBaseUrl: 'https://api.rallywith.ai',
       region: 'global',
     });
   });
@@ -35,9 +35,9 @@ describe('native desktop authentication attempts', () => {
       now: () => now,
       randomBytes: (size) => Uint8Array.from({ length: size }, () => seed++ % 256),
     });
-    const first = store.create('https://api.with-avalon.com', 'global');
-    const second = store.create('https://eu.api.with-avalon.com', 'eu');
-    const third = store.create('https://api.with-avalon.com', 'global');
+    const first = store.create('https://api.rallywith.ai', 'global');
+    const second = store.create('https://eu.api.rallywith.ai', 'eu');
+    const third = store.create('https://api.rallywith.ai', 'global');
 
     expect(store.proof(first.attemptId)).toBeNull();
     expect(store.proof(second.attemptId)).not.toBeNull();
@@ -51,8 +51,8 @@ describe('native desktop authentication attempts', () => {
 
   it('supports explicit single-attempt and logout cleanup', () => {
     const store = new DesktopAuthAttemptStore();
-    const first = store.create('https://api.with-avalon.com', 'global');
-    store.create('https://eu.api.with-avalon.com', 'eu');
+    const first = store.create('https://api.rallywith.ai', 'global');
+    store.create('https://eu.api.rallywith.ai', 'eu');
     store.discard(first.attemptId);
     expect(store.proof(first.attemptId)).toBeNull();
     expect(store.size).toBe(1);

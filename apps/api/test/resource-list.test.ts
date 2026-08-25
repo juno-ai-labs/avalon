@@ -1,5 +1,5 @@
-import { type UserId } from "@avalon/contracts";
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { type UserId } from "@rally/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import type { AuthContext } from "../src/env";

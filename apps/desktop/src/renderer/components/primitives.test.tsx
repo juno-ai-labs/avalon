@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AvalonMark, DropdownSelect, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
+import { RallyMark, DropdownSelect, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state }: { size: number; state: string }) => (
@@ -20,10 +20,10 @@ function stubResizeObserver(): void {
   });
 }
 
-describe('AvalonMark', () => {
+describe('RallyMark', () => {
   it('renders the shared mask-backed brand mark without the retired starburst SVG', () => {
-    const { container } = render(<AvalonMark className="test-mark" />);
-    expect(container.querySelector('.avalon-mark.test-mark')).not.toBeNull();
+    const { container } = render(<RallyMark className="test-mark" />);
+    expect(container.querySelector('.rally-mark.test-mark')).not.toBeNull();
     expect(container.querySelector('svg')).toBeNull();
   });
 });
@@ -97,7 +97,7 @@ describe('SocketStatusIndicator', () => {
     expect(indicator).toHaveClass('header-socket-state', 'socket-reconnecting');
     expect(indicator).toHaveTextContent('Reconnecting live updates');
     fireEvent.focus(indicator);
-    expect(await screen.findByText('The connection was interrupted. Avalon is reconnecting live updates.')).toBeVisible();
+    expect(await screen.findByText('The connection was interrupted. Rally is reconnecting live updates.')).toBeVisible();
 
     rerender(
       <Tooltip.Provider delayDuration={0}>

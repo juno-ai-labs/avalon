@@ -7,8 +7,8 @@ import {
   type Scope,
   type SlackOriginContext,
   type SlackSearchAuthorization,
-} from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+} from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 
 import type { Env } from "../env";

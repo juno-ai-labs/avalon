@@ -8,11 +8,11 @@
 > applying per workspace on wake. Companion design:
 > [`design.md`](./design.md); platform research: [`research.md`](./research.md).
 > Standing contract:
-> [the Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
+> [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
 ## Summary
 
-Avalon's canonical product state today is one D1 database per region, with
+Rally's canonical product state today is one D1 database per region, with
 tenancy enforced by a `workspace_id` column on every tenant-owned table and a
 `WHERE` predicate on every query. This PRD replaces that with one database per
 workspace: a small control-plane D1 per region keeps identity, sessions, the
@@ -52,7 +52,7 @@ Four pressures, all present now:
    database, and all EU workspaces another. Any single workspace's growth
    spends everyone's headroom.
 4. **The compliance road ahead.** The Google Mail + Calendar connector puts
-   Avalon on the path to a CASA assessment for restricted OAuth scopes, and an
+   Rally on the path to a CASA assessment for restricted OAuth scopes, and an
    ISO 27001 posture is a matter of time for a product asking businesses to
    connect their email. Both examine tenant isolation; structural isolation is
    materially easier to evidence than 460 correct `WHERE` clauses.
@@ -334,7 +334,7 @@ join the assessed surface, so their discipline is part of the story told.
 
 **ISO 27001.** Cloudflare's own ISO 27001/SOC 2 certifications cover D1 and
 Durable Objects alike, so inherited provider controls are unchanged either
-way. For Avalon's own future ISMS, the change is net-positive with named
+way. For Rally's own future ISMS, the change is net-positive with named
 costs: asset inventory becomes the workspace registry (complete by
 construction); secure disposal becomes real (deleting a workspace deletes a
 database, not rows in shared tables); backup and restore become per-tenant

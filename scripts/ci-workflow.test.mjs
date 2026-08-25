@@ -44,12 +44,12 @@ test('CI distributes the expensive verification work across independent lanes', 
   assert.equal(matrixCommand(workflow, 'lint'), 'pnpm lint');
   assert.equal(
     matrixCommand(workflow, 'typecheck-and-build-invariants'),
-    'pnpm typecheck && pnpm --filter @avalon/api build && '
-      + 'pnpm --filter @avalon/api build:eu && pnpm --filter @avalon/desktop test:release',
+    'pnpm typecheck && pnpm --filter @rally/api build && '
+      + 'pnpm --filter @rally/api build:eu && pnpm --filter @rally/desktop test:release',
   );
   assert.equal(
     matrixCommand(workflow, 'remaining-tests'),
-    "pnpm --filter '!@avalon/desktop' --filter '!@avalon/api' --recursive --if-present test && "
+    "pnpm --filter '!@rally/desktop' --filter '!@rally/api' --recursive --if-present test && "
       + 'pnpm test:scripts',
   );
 
@@ -71,20 +71,20 @@ test('CI shards the package-owned desktop and API test commands without drift', 
   );
   assert.equal(
     matrixCommand(workflow, 'desktop-tests-1-of-2'),
-    `pnpm --filter @avalon/desktop exec ${desktopScripts.test} --shard=1/2`,
+    `pnpm --filter @rally/desktop exec ${desktopScripts.test} --shard=1/2`,
   );
   assert.equal(
     matrixCommand(workflow, 'desktop-tests-2-of-2'),
-    `pnpm --filter @avalon/desktop exec ${desktopScripts.test} --shard=2/2`,
+    `pnpm --filter @rally/desktop exec ${desktopScripts.test} --shard=2/2`,
   );
   assert.equal(
     matrixCommand(workflow, 'api-tests-1-of-2'),
-    `pnpm --filter @avalon/api exec ${apiTestCommands[0]} --shard=1/2`,
+    `pnpm --filter @rally/api exec ${apiTestCommands[0]} --shard=1/2`,
   );
   assert.equal(
     matrixCommand(workflow, 'api-tests-2-of-2'),
-    `pnpm --filter @avalon/api exec ${apiTestCommands[0]} --shard=2/2 && `
-      + 'pnpm --filter @avalon/api test:workers',
+    `pnpm --filter @rally/api exec ${apiTestCommands[0]} --shard=2/2 && `
+      + 'pnpm --filter @rally/api test:workers',
   );
 });
 
@@ -118,11 +118,11 @@ test('CI still runs every repository quality gate', async () => {
   for (const command of [
     'pnpm lint',
     'pnpm typecheck',
-    'pnpm --filter @avalon/api build',
-    'pnpm --filter @avalon/api build:eu',
-    'pnpm --filter @avalon/desktop test:release',
+    'pnpm --filter @rally/api build',
+    'pnpm --filter @rally/api build:eu',
+    'pnpm --filter @rally/desktop test:release',
     'pnpm test:scripts',
-    'pnpm --filter @avalon/api test:workers',
+    'pnpm --filter @rally/api test:workers',
   ]) {
     assert.ok(commands.includes(command), `CI must retain the exact command: ${command}`);
   }

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
-  AvalonDesktopBridge,
+  RallyDesktopBridge,
   DesktopApplicationSettings,
   DesktopAuthAttempt,
   DesktopDeepLinkNavigation,
@@ -73,7 +73,7 @@ ipcRenderer.on('meeting:close-requested', (_event, rawReason: unknown) => {
   for (const listener of meetingCloseListeners) listener(reason);
 });
 
-const bridge: AvalonDesktopBridge = {
+const bridge: RallyDesktopBridge = {
   getRuntimeConfig: () => ipcRenderer.invoke('runtime:get-config') as Promise<RuntimeConfig>,
   getApplicationSettings: () => ipcRenderer.invoke('application-settings:get') as Promise<DesktopApplicationSettings>,
   setLockdownMode: (enabled) =>
@@ -188,4 +188,4 @@ const bridge: AvalonDesktopBridge = {
   observeClientFeatureFlags: (flags) => ipcRenderer.invoke('feature-flags:observe', flags) as Promise<void>,
 };
 
-contextBridge.exposeInMainWorld('avalon', bridge);
+contextBridge.exposeInMainWorld('rally', bridge);

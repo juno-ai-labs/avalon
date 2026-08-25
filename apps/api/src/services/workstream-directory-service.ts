@@ -1,4 +1,4 @@
-import { WorkstreamSchema, type Workstream } from "@avalon/contracts";
+import { WorkstreamSchema, type Workstream } from "@rally/contracts";
 import { z } from "zod";
 
 import { workspaceDOName } from "../durable-objects/names";

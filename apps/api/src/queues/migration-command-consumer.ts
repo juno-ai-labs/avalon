@@ -29,7 +29,7 @@
 import {
   DurableObjectMigrationCommandSchema,
   type DurableObjectMigrationCommand,
-} from "@avalon/contracts/durable-object-migrations";
+} from "@rally/contracts/durable-object-migrations";
 
 import { BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS } from "../durable-objects/block-dashboard-agent";
 import { latestMigrationVersion, type ForcedMigrationOutcome } from "../durable-objects/migration-reporting";

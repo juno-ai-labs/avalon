@@ -1,6 +1,6 @@
 # Realtime socket admission
 
-Every Avalon WebSocket — workspace synchronization/commands, work-stream
+Every Rally WebSocket — workspace synchronization/commands, work-stream
 metadata, the direct substream feed, derived HyperSight block output, and the
 dictation bridge to Azure — is
 opened with a short-lived ticket rather than
@@ -396,7 +396,7 @@ client sends one and no block-ticket bearer is ever issued in a URL.
 
 This module owns admission: issuing a purpose-specific ticket, presenting it,
 verifying it, and answering the handshake. It exposes the transport helpers in
-`@avalon/contracts/socket-tickets` to both the Worker and the renderer, and
+`@rally/contracts/socket-tickets` to both the Worker and the renderer, and
 `issueSocketTicket` / `verifySocketTicket` to the services that need them.
 
 It does not own what happens next. Workspace command authorization/routing and
@@ -461,14 +461,14 @@ client message IDs make reconnect resend idempotent.
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `packages/contracts/src/socket-tickets.test.ts` | `pnpm --filter @avalon/contracts test` | The wire format: offers, parsing, refusal of non-tickets, URL stripping. |
-| `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @avalon/api test` | Precedence and the negotiation decision, on Node. |
-| `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
-| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @avalon/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
-| `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
-| `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @avalon/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
-| `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @avalon/desktop test` | Direct SubstreamAgent feed reconnect/resync, streaming, switching streams, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
+| `packages/contracts/src/socket-tickets.test.ts` | `pnpm --filter @rally/contracts test` | The wire format: offers, parsing, refusal of non-tickets, URL stripping. |
+| `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @rally/api test` | Precedence and the negotiation decision, on Node. |
+| `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
+| `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @rally/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
+| `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @rally/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Direct SubstreamAgent feed reconnect/resync, streaming, switching streams, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
 
 **The trap, and it has already cost one bug:** Node's `Response` refuses status
@@ -488,7 +488,7 @@ URL. The ticket is the only thing that carries authority, and it is verified
 before anything else is believed.
 
 The reason the transport moved is that Cloudflare's capture is wider than
-Avalon's. `request-context.ts` logs `pathname` only and `redact` scrubs by key,
+Rally's. `request-context.ts` logs `pathname` only and `redact` scrubs by key,
 but the platform records the whole request independently — the invocation log's
 `$workers.event.request.url`, the Logpush export's `Event`, and a trace span's
 `url.full` and `url.query`. Nothing in this repository can reach those. The
@@ -1085,7 +1085,7 @@ order removes dependence on permissive runtime behavior and makes the recovery
 contract explicit.
 
 **Considered and rejected:** Maintaining a second in-memory session map merely
-to mirror the example. Avalon already enumerates `getWebSockets()` and validates
+to mirror the example. Rally already enumerates `getWebSockets()` and validates
 attachments at each use, which survives hibernation without duplicate state.
 
 **Consequences:** New socket acceptors must preserve accept-then-attach ordering,

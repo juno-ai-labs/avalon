@@ -24,12 +24,12 @@ export function applicationIconPreferenceDirectoryForLaunch(
   isPackaged: boolean,
   isPackageSmoke: boolean,
 ): string {
-  // The Dock plugin runs outside Avalon and cannot see Chromium's
+  // The Dock plugin runs outside Rally and cannot see Chromium's
   // --user-data-dir switch. A selected app icon belongs to the installed app,
   // so packaged launches use the canonical directory the plugin can read.
   // Package smoke tests are isolated so they never touch a developer's choice.
   return isPackaged && !isPackageSmoke
-    ? join(appDataDirectory, 'Avalon')
+    ? join(appDataDirectory, 'Rally')
     : userDataDirectory;
 }
 

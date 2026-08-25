@@ -1,5 +1,5 @@
 {
-  "name": "@avalon/site",
+  "name": "@rally/site",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
     "deploy": "AVALON_RELEASE_DISCOVERY=1 pnpm build && wrangler deploy --config wrangler.jsonc"
   },
   "dependencies": {
-    "@avalon/contracts": "workspace:*"
+    "@rally/contracts": "workspace:*"
   },
   "devDependencies": {
     "typescript": "catalog:",

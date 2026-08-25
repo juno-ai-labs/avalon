@@ -203,12 +203,12 @@ own:
 
 | Suite | What it proves | How to run |
 | --- | --- | --- |
-| `apps/desktop/src/renderer/lib/format.test.ts` | The ranking, pair by pair, and the **Needs attention** membership rule. | `pnpm --filter @avalon/desktop exec vitest run src/renderer/lib/format.test.ts` |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The sidebar row draws the ranked marker, and its tooltip explains it. | `pnpm --filter @avalon/desktop exec vitest run src/renderer/components/sidebar.test.tsx` |
-| `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | **Needs attention** holds the three addressed states, omits a merely unread work stream, and orders rows by recency. | `pnpm --filter @avalon/desktop exec vitest run src/renderer/screens/new-workstream.test.tsx` |
-| `apps/api/test-workers/unseen-workstream-state.test.ts` | On real workerd: added at creation, added later, cleared by the first open, unchanged by a duplicate add, set again by a re-add. | `pnpm --filter @avalon/api test:workers` |
+| `apps/desktop/src/renderer/lib/format.test.ts` | The ranking, pair by pair, and the **Needs attention** membership rule. | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/format.test.ts` |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The sidebar row draws the ranked marker, and its tooltip explains it. | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/sidebar.test.tsx` |
+| `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | **Needs attention** holds the three addressed states, omits a merely unread work stream, and orders rows by recency. | `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/new-workstream.test.tsx` |
+| `apps/api/test-workers/unseen-workstream-state.test.ts` | On real workerd: added at creation, added later, cleared by the first open, unchanged by a duplicate add, set again by a re-add. | `pnpm --filter @rally/api test:workers` |
 | `apps/api/test-workers/workspace-directory-reads.test.ts` | The flag survives the workspace projection as the viewer's rather than the row's. | as above |
-| `apps/api/test/workstream-object-schema.test.ts` | Both compatibility views reset the column on a re-add, and leave it alone on a removal. | `pnpm --filter @avalon/api exec vitest run test/workstream-object-schema.test.ts` |
+| `apps/api/test/workstream-object-schema.test.ts` | Both compatibility views reset the column on a re-add, and leave it alone on a removal. | `pnpm --filter @rally/api exec vitest run test/workstream-object-schema.test.ts` |
 
 The workers suite starts with no schema and seeds the D1 tables it needs; the
 unseen tests reach the state through the real product endpoint rather than by

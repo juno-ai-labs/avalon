@@ -2,19 +2,19 @@
 
 > Created 2026-08-22.
 >
-> Avalon's Slack presence gains a reaction that tracks a run from acknowledgement
+> Rally's Slack presence gains a reaction that tracks a run from acknowledgement
 > to outcome, and agent output that renders as formatted text rather than raw
 > markdown. Companion plan: [`plan.md`](./plan.md). Subsystem document:
 > [`slack-integration.md`](../../slack-integration.md). Standing contract:
-> [the Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
+> [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
 ## Summary
 
-When a member mentions Avalon in Slack today, Avalon adds an `eyes` reaction and
+When a member mentions Rally in Slack today, Rally adds an `eyes` reaction and
 never touches it again. The reaction says "received" and then says it forever —
 it is still there when the task is finished, and still there when the task
 failed. A member reading the channel an hour later cannot tell from the message
-whether Avalon is working, done, or dead.
+whether Rally is working, done, or dead.
 
 This change makes the reaction a **state indicator with a lifecycle**: an
 acknowledgement the moment the prompt is admitted, a rotating working reaction
@@ -22,7 +22,7 @@ while the run is live, and a terminal reaction naming the outcome. It also fixes
 a defect in the same surface: agent output delivered outside the streaming path
 is posted as raw text, so a model's `### Heading` and `**bold**` reach the
 channel as literal characters. Both halves are about the same thing — what
-Avalon looks like in a channel someone else is reading.
+Rally looks like in a channel someone else is reading.
 
 ## Motivation
 
@@ -46,16 +46,16 @@ correctly — `chat.appendStream` is called with `markdown_text` (`:1120`) — w
 means the same agent output renders well or badly depending only on which
 delivery path carried it. Every automation result, every digest, and every
 streaming fallback takes the bad path. This is what a member sees in
-`#general` when an automation posts, and it is the most-shared surface Avalon
+`#general` when an automation posts, and it is the most-shared surface Rally
 has.
 
-Leaving these alone costs Avalon credibility in exactly the room where other
+Leaving these alone costs Rally credibility in exactly the room where other
 people are watching. A channel message is read by everyone in the channel, not
 just the person who asked.
 
 ## Goals
 
-1. A member can tell, from the triggering message alone, whether Avalon has
+1. A member can tell, from the triggering message alone, whether Rally has
    acknowledged a request, is working on it, or has finished — and with what
    outcome.
 2. The working state is visibly *alive*: the reaction changes over the course of
@@ -68,9 +68,9 @@ just the person who asked.
 5. Every delivery path renders identically. The same agent output looks the same
    whether it streamed, fell back to messages, arrived as an automation result,
    or arrived as a digest.
-6. A workspace can override which emoji Avalon uses, so an installation whose
+6. A workspace can override which emoji Rally uses, so an installation whose
    conventions differ — or whose custom emoji are part of its culture — is not
-   stuck with Avalon's defaults.
+   stuck with Rally's defaults.
 
 ## Non-goals
 
@@ -91,7 +91,7 @@ just the person who asked.
    on the Messages surface only. App Home keeps its existing `section`/`mrkdwn`
    blocks, which are correct for it. Rejected as impossible rather than
    undesirable.
-5. **Rewriting what the model emits.** This change alters how Avalon *renders*
+5. **Rewriting what the model emits.** This change alters how Rally *renders*
    agent output, not the prose the model produces. Prompt-side formatting
    guidance is a separate concern.
 6. **Custom emoji validation at configuration time.** Slack exposes no
@@ -105,7 +105,7 @@ just the person who asked.
 ### The reaction lifecycle
 
 A prompt with a source message — an app mention, or a DM that starts or
-continues a session — moves through three visible states. **At most one Avalon
+continues a session — moves through three visible states. **At most one Rally
 reaction is on the message at any time.**
 
 | State | Reaction | When |
@@ -123,9 +123,9 @@ The outcome reaction is chosen from the run's existing `outcomeStatus`:
 | `failed` | ⚠️ `warning` |
 | `stopped` | 🛑 `octagonal_sign` |
 
-Each transition removes the previous Avalon reaction and adds the next, so a
+Each transition removes the previous Rally reaction and adds the next, so a
 finished message carries one reaction rather than a row of them. Reactions added
-by *people* are never touched: Avalon removes only the emoji it most recently
+by *people* are never touched: Rally removes only the emoji it most recently
 added itself, and only when it is still the one on the message.
 
 The acknowledgement is unchanged in timing and remains the first provider call
@@ -144,7 +144,7 @@ reconnect where appropriate, and is otherwise swallowed.
   idempotent retries.
 - A configured emoji Slack rejects as `invalid_name` falls back to the built-in
   default for that state, once, and logs the rejected name. A workspace that
-  configures a nonexistent emoji gets Avalon's default rather than no reaction.
+  configures a nonexistent emoji gets Rally's default rather than no reaction.
 - If the rotation stops for any reason — the run outlives it, the ticker is
   lost — the terminal transition still fires from the delivery path and still
   leaves the correct outcome reaction. **The outcome reaction never depends on
@@ -154,7 +154,7 @@ reconnect where appropriate, and is otherwise swallowed.
 
 Reaction sets resolve most-specific-wins:
 
-1. Avalon's built-in defaults, above.
+1. Rally's built-in defaults, above.
 2. A workspace installation override, stored on the Slack connection.
 3. An automation or work-stream override, for a run whose author wants its own
    vocabulary.
@@ -187,7 +187,7 @@ None — this refines behavior within the existing contract. The reaction is
 already part of the Slack surface described in
 [`slack-integration.md`](../../slack-integration.md); this gives it a lifecycle
 and makes its vocabulary configurable. The formatting change alters rendering
-only, not what Avalon reads, stores, or is permitted to do.
+only, not what Rally reads, stores, or is permitted to do.
 
 One documented invariant is narrowed rather than broken. The current wording —
 "the `eyes` reaction is added by the host control plane after admission and
@@ -203,7 +203,7 @@ the host control plane after admission, before context gathering, and
    place, add a working reaction beside it, add a checkmark beside that — ends
    with three pills on the message and makes the *current* state the thing the
    reader has to work out from a set. A single slot that changes says one thing
-   at a time. The cost is that Avalon issues a remove with every add, which is
+   at a time. The cost is that Rally issues a remove with every add, which is
    two API calls per transition rather than one; it is worth it.
 
 2. **The rotation is timed, not progress-driven.** Progress-driven is the better
@@ -240,9 +240,9 @@ the host control plane after admission, before context gathering, and
    already passes markdown through natively and a converter would make the two
    paths differ in a new way instead of the old one.
 
-6. **Only Avalon's own last-known reaction is removed.** The transition does not
-   clear the message's reactions or remove whatever Avalon finds there. A member
-   who reacts 👀 themselves keeps their reaction, and an Avalon reaction someone
+6. **Only Rally's own last-known reaction is removed.** The transition does not
+   clear the message's reactions or remove whatever Rally finds there. A member
+   who reacts 👀 themselves keeps their reaction, and a Rally reaction someone
    has already removed by hand is not re-added to be removed again.
 
 ## Data model
@@ -253,7 +253,7 @@ by the connector layer. The automation and work-stream override reuses the
 existing per-run configuration surface.
 
 The ticker's cursor — which working reaction is current, and which reaction
-Avalon last successfully placed — lives in Durable Object storage, keyed by the
+Rally last successfully placed — lives in Durable Object storage, keyed by the
 Slack session's installation, channel, and thread. It is derived state: losing it
 costs the rotation, not the outcome.
 
@@ -279,8 +279,8 @@ change is deployed.
 
 ## Acceptance
 
-1. Mention Avalon in a public channel. Within a second the message carries 👀,
-   and no other Avalon reaction.
+1. Mention Rally in a public channel. Within a second the message carries 👀,
+   and no other Rally reaction.
 2. While the run is live, the reaction changes at least once and is drawn from
    the working set.
 3. When the run finishes, the message carries exactly one reaction, matching the
@@ -319,7 +319,7 @@ cursor meant a run admitted at cursor 0 showed `working[1]` first, so the
 documented order never started where both the module comment and
 `slack-integration.md` say it does.
 
-**Changes:** Nothing in the agreed scope. Product behavior's "at most one Avalon
+**Changes:** Nothing in the agreed scope. Product behavior's "at most one Rally
 reaction is on the message at any time" is unchanged as a statement and now
 actually holds under concurrency; the working rotation's stated order is now the
 order a member sees.
@@ -374,11 +374,11 @@ untouched and is what makes the weaker liveness signal acceptable.
 **Why:** That section assumed the ticker's Durable Object storage could hold the
 whole reaction state. It cannot hold the part that matters. Delivery is the
 authority on the outcome reaction (key design decision 4) and runs in a different
-invocation from the acknowledgement, so it has to know which message Avalon
+invocation from the acknowledgement, so it has to know which message Rally
 reacted to and which emoji it put there — and it has to know that *without*
 depending on the ticker, which is the entire point of making delivery the
 authority. Deriving the message from the session's thread root is wrong for the
-common case: a reply inside an existing Avalon thread has a different timestamp,
+common case: a reply inside an existing Rally thread has a different timestamp,
 and reacting to the root would move the status off the message the member just
 sent.
 
@@ -412,7 +412,7 @@ rather than through `acknowledgeConnectorAgentActivation`.
 **Why:** Goal 6 asks that a workspace override apply to every reaction. The shared
 helper's hook signature takes only the invocation, so it cannot be handed a
 resolved reaction set, and the acknowledgement would have been the one transition
-stuck on Avalon's defaults. Both steps are still the adapter's own, so nothing
+stuck on Rally's defaults. Both steps are still the adapter's own, so nothing
 left the connector control plane; only the indirection did.
 
 **Changes:** Nothing in the agreed scope. `slack-integration.md` describes the

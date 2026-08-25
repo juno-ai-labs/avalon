@@ -1,13 +1,13 @@
 # Repairing model text on the way to a reader
 
-Every model Avalon routes to writes Markdown, and several of them reach for TeX
+Every model Rally routes to writes Markdown, and several of them reach for TeX
 when they want a symbol. `Backlog $\rightarrow$ In progress` is what a person
 sees, because nothing downstream renders TeX: not the desktop's Markdown
 renderer, not the digest email, not Slack. The delimiters and the command name
-are shown verbatim, and a reader has no way to tell them from something Avalon
+are shown verbatim, and a reader has no way to tell them from something Rally
 meant to write.
 
-This module is the repair. It is one pure function pair in `@avalon/contracts`,
+This module is the repair. It is one pure function pair in `@rally/contracts`,
 called by the surfaces listed below on the way to a reader, that maps the closed
 set of TeX commands appearing in work prose onto the Unicode characters the
 model meant and leaves everything else exactly as written. [The prompt
@@ -21,7 +21,7 @@ widening what counts as math, and before moving where either function is called.
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/model-markdown.ts` | `normalizeModelMarkdown` and `normalizeModelText`, the command table, and the rules deciding what is math. Exported as `@avalon/contracts/model-markdown`. |
+| `packages/contracts/src/model-markdown.ts` | `normalizeModelMarkdown` and `normalizeModelText`, the command table, and the rules deciding what is math. Exported as `@rally/contracts/model-markdown`. |
 | `packages/contracts/src/model-markdown.test.ts` | The behavioural suite, including the cases that must *not* be rewritten. |
 | `packages/agent-harness/src/prompts/response-formatting.ts` | `RESPONSE_FORMATTING_POLICY`, the prompt section that asks for none of this to be necessary. |
 
@@ -30,8 +30,8 @@ The call sites, each on the path from stored text to a reader:
 | Surface | Call site | Entry point |
 | --- | --- | --- |
 | Markdown surfaces in the desktop client | `renderer/components/workstream-blocks.tsx` (`MarkdownBody`) | `normalizeModelMarkdown` |
-| Every Avalon email's HTML body — the digest, an automation's result | `services/email-markdown.ts` (`markdownToEmailHtml`) | `normalizeModelMarkdown` |
-| Every Avalon email's plain-text alternative and preheader | `services/email-markdown.ts` (`markdownToEmailText`, `markdownToEmailPreheader`) | `normalizeModelText` |
+| Every Rally email's HTML body — the digest, an automation's result | `services/email-markdown.ts` (`markdownToEmailHtml`) | `normalizeModelMarkdown` |
+| Every Rally email's plain-text alternative and preheader | `services/email-markdown.ts` (`markdownToEmailText`, `markdownToEmailPreheader`) | `normalizeModelText` |
 | An elicitation's question, option labels and descriptions, and answered label | `renderer/components/workstream-blocks.tsx` (`ElicitationPanel`, `elicitationAnswerLabel`) | `normalizeModelText` |
 | A tool card's summary line | `renderer/components/workstream-blocks.tsx` | `normalizeModelText` |
 | A generated work-stream title | `services/workstream-naming-service.ts` (`normalizeGeneratedTitle`) | `normalizeModelText` |
@@ -99,7 +99,7 @@ Rendering the TeX properly, with `remark-math` and `rehype-katex`, was rejected.
 It carries the same ambiguity in a worse place: `remark-math` reads `$50 and $70`
 as a math span, so the currency problem becomes a typeset formula rather than a
 literal dollar sign, and it arrives with a stylesheet, a font payload, and a
-second parser in the Electron bundle. Avalon's models are not writing
+second parser in the Electron bundle. Rally's models are not writing
 mathematics; they are writing arrows. Mapping arrows costs one file and no
 dependency, and it is cheap to reverse if that ever stops being true.
 
@@ -232,9 +232,9 @@ halves are kept.
 ## Testing
 
 ```bash
-pnpm --filter @avalon/contracts exec vitest run src/model-markdown.test.ts
-pnpm --filter @avalon/api exec vitest run test/email-markdown.test.ts
-pnpm --filter @avalon/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
+pnpm --filter @rally/contracts exec vitest run src/model-markdown.test.ts
+pnpm --filter @rally/api exec vitest run test/email-markdown.test.ts
+pnpm --filter @rally/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
 ```
 
 The suite's centre of gravity is the cases that must **not** change: money, shell
@@ -251,7 +251,7 @@ escaping rule is visible as a difference rather than stated only in prose.
 ### 2026-08-23 — Created, because TeX was reaching readers
 
 **What changed:** `normalizeModelMarkdown` and `normalizeModelText` in
-`@avalon/contracts/model-markdown`, called from `MarkdownBody` (with a
+`@rally/contracts/model-markdown`, called from `MarkdownBody` (with a
 `verbatim` opt-out for the human bubble and the attachment preview), the shared
 email renderer on all three of its outputs — HTML, plain-text alternative, and
 preheader, covering the digest and automation-result emails alike — the

@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 
-import type { AvalonDesktopBridge } from '../common/desktop';
+import type { RallyDesktopBridge } from '../common/desktop';
 
 declare global {
   interface Window {
-    avalon?: AvalonDesktopBridge;
+    rally?: RallyDesktopBridge;
   }
 }
 

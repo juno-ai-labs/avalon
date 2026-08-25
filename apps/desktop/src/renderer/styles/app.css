@@ -129,14 +129,14 @@ pre {
   to { transform: rotate(360deg); }
 }
 
-.avalon-mark {
+.rally-mark {
   background: currentColor;
   color: var(--av-sys-color-brand-ink);
   display: inline-block;
   flex: 0 0 auto;
   height: 24px;
-  -webkit-mask: url('../assets/avalon-mark.png') center / contain no-repeat;
-  mask: url('../assets/avalon-mark.png') center / contain no-repeat;
+  -webkit-mask: url('../assets/rally-mark.png') center / contain no-repeat;
+  mask: url('../assets/rally-mark.png') center / contain no-repeat;
   width: 24px;
 }
 
@@ -816,7 +816,7 @@ pre {
   width: 7ch;
 }
 
-/* Stands in for a title Avalon is still choosing. Sized in `em` and `ch` so it
+/* Stands in for a title Rally is still choosing. Sized in `em` and `ch` so it
    takes the line height and roughly the width of the name it is waiting for,
    in the sidebar row and the header alike. The fill is light enough to read as
    a placeholder on the selected row, which is the lightest thing it sits on and
@@ -953,7 +953,7 @@ pre {
 .onboarding-signout { display: block; margin: 14px auto 0; }
 .invitation-card { width: min(560px, 100%); }
 .invitation-icon { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); color: var(--av-sys-color-brand-ink); display: flex; height: 46px; justify-content: center; margin: 0 auto 22px; width: 46px; }
-.invitation-icon .avalon-mark { height: 26px; width: 26px; }
+.invitation-icon .rally-mark { height: 26px; width: 26px; }
 .invitation-loader { color: var(--av-sys-color-text-muted); margin: 28px auto; }
 .invitation-card > p strong { color: var(--av-sys-color-text-subtle); }
 .invitation-details { border-bottom: 1px solid var(--av-sys-color-border-default); border-top: 1px solid var(--av-sys-color-border-default); margin: 22px 0 0; padding: 8px 0; text-align: left; }
@@ -967,7 +967,7 @@ pre {
 .invitation-choice span { color: var(--av-sys-color-text-muted); font-size: 10.5px; }
 .invitation-choice-actions { display: flex; flex: 0 0 auto; gap: 7px; }
 
-.boot-mark .avalon-mark { animation: active-pulse 1.35s ease-in-out infinite; height: 38px; width: 38px; }
+.boot-mark .rally-mark { animation: active-pulse 1.35s ease-in-out infinite; height: 38px; width: 38px; }
 
 .service-setup-card,
 .fatal-error-card { background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-2); border-radius: var(--av-sys-size-radius-xl); padding: 28px; }
@@ -2900,7 +2900,7 @@ pre {
 .new-automation-actions { position: fixed; right: 10px; top: 6px; z-index: 5; }
 .automation-builder { display: flex; flex-direction: column; margin: 0 auto; min-height: 100%; padding: 68px 38px 132px; width: min(996px, 100%); }
 .automation-builder-intro { margin: auto 0; padding: 30px 0 95px; text-align: center; }
-.automation-builder-intro > .avalon-mark { height: 29px; margin-bottom: 15px; width: 29px; }
+.automation-builder-intro > .rally-mark { height: 29px; margin-bottom: 15px; width: 29px; }
 .automation-builder-intro h1 { font-size: 26px; letter-spacing: -0.035em; margin: 7px 0 7px; }
 .automation-builder-intro > p:not(.eyebrow) { color: var(--av-sys-color-text-muted); margin: 0; }
 .suggested-prompt-list { display: grid; gap: 5px; margin: 28px auto 0; max-width: 620px; width: 100%; }
@@ -2967,7 +2967,7 @@ pre {
 .automation-delivery-target label:has(input:disabled) { cursor: default; }
 .automation-delivery-target .automation-plugin-copy small { color: var(--av-sys-color-text-muted); font-family: inherit; font-size: 9.5px; }
 .automation-delivery-target .automation-plugin-copy strong svg { color: var(--av-sys-color-text-muted); }
-.automation-delivery-target .automation-plugin-copy strong .avalon-mark { height: 13px; width: 13px; }
+.automation-delivery-target .automation-plugin-copy strong .rally-mark { height: 13px; width: 13px; }
 .automation-plugin-check { align-items: center; border: 1px solid var(--av-ref-color-line-5); border-radius: var(--av-sys-size-radius-xs); color: var(--av-sys-color-text-on-inverse); display: flex; flex: 0 0 auto; height: 17px; justify-content: center; margin-top: 1px; width: 17px; }
 .automation-plugin-defaults input:checked + .automation-plugin-check { background: var(--av-sys-color-warning-base); border-color: var(--av-sys-color-warning-base); }
 .automation-plugin-defaults input:focus-visible + .automation-plugin-check { box-shadow: var(--av-sys-focus-ring-brand); }
@@ -3033,7 +3033,7 @@ pre {
 .automation-delivery-fact label > svg { color: var(--av-sys-color-text-muted); flex: 0 0 auto; }
 .automation-delivery-fact label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .automation-delivery-fact li.is-locked { color: var(--av-sys-color-text-muted); font-size: 11.5px; gap: 7px; }
-.automation-delivery-fact li.is-locked .avalon-mark { flex: 0 0 auto; height: 13px; width: 13px; }
+.automation-delivery-fact li.is-locked .rally-mark { flex: 0 0 auto; height: 13px; width: 13px; }
 .automation-delivery-fact .delivery-locked-spacer { flex: 0 0 auto; height: 13px; width: 13px; }
 .automation-delivery-fact input[type='checkbox'] { height: 13px; margin: 0; width: 13px; }
 .automation-delivery-fact input[type='checkbox']:disabled { cursor: progress; }
@@ -3580,7 +3580,7 @@ pre {
 /* This is the declaration that decides which side a turn lands on. Every
    person's turn sits on the right — the signed-in person's, a coworker's, and
    one relayed in by a connector — so the transcript reads as people on one side
-   and Avalon on the other. Who sent it is carried by the header, never by the
+   and Rally on the other. Who sent it is carried by the header, never by the
    side: do not add an exception that moves a turn based on its author, or the
    same transcript renders differently for each person reading it. */
 :is(.workstream-screen, .automation-chat-surface) .human-message {

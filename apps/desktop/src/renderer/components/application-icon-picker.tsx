@@ -101,7 +101,7 @@ export function ApplicationIconPicker(): React.JSX.Element {
         <img alt="" aria-hidden="true" src={applicationIconArtwork[selectedIcon]} />
         <span>
           <strong>App icon</strong>
-          <small>Choose how Avalon appears in the Dock, Finder, Launchpad, and Spotlight.</small>
+          <small>Choose how Rally appears in the Dock, Finder, Launchpad, and Spotlight.</small>
         </span>
       </div>
       <div

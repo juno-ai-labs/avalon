@@ -1,4 +1,4 @@
-import { DigestScheduleSchema, UpdateDigestScheduleRequestSchema } from "@avalon/contracts";
+import { DigestScheduleSchema, UpdateDigestScheduleRequestSchema } from "@rally/contracts";
 import { Hono } from "hono";
 
 import type { HonoAppEnv } from "../env";

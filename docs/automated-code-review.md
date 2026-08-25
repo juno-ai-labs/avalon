@@ -1,6 +1,6 @@
 # Automated code review
 
-Avalon's automated code review workflow runs five independent Cline reviewers
+Rally's automated code review workflow runs five independent Cline reviewers
 against pull requests using models served by Azure AI Foundry. It is an
 Azure-only extraction of Monad's proven reviewer workflow: OpenCode and
 OpenRouter-backed jobs are intentionally absent.
@@ -22,7 +22,7 @@ eyes while the reviewers run.
 
 The workflow contains five separate Azure Cline jobs. The first three were
 copied from `juno-ai-labs/monad` at commit
-`8eac60499845f00afaa2db6dd41b1578c169436b`; the two GPT-5.6 jobs are Avalon
+`8eac60499845f00afaa2db6dd41b1578c169436b`; the two GPT-5.6 jobs are Rally
 copies of that same shape:
 
 | Job | Azure deployment/model identifier |
@@ -74,13 +74,13 @@ updated head is ready.
 ## Boundary
 
 This module owns asynchronous pull-request review comments. It does not gate
-merge, rerun Avalon's quality checks, modify pull-request code, or configure
-Azure itself. Avalon's ordinary correctness gates remain in
+merge, rerun Rally's quality checks, modify pull-request code, or configure
+Azure itself. Rally's ordinary correctness gates remain in
 `.github/workflows/ci.yml`.
 
 The workflow depends on GitHub-hosted Ubuntu runners, GitHub CLI, npm, Cline,
 GitHub pull-request refs, and an Azure AI Foundry OpenAI-compatible endpoint. It
-is repository-scoped rather than regional product infrastructure; Avalon's
+is repository-scoped rather than regional product infrastructure; Rally's
 Global and EU runtime boundary does not apply.
 
 ## Failure modes and limits
@@ -197,11 +197,11 @@ runners. Monad's positional-prompt workflow is already proven in production,
 and the requested resolution was to use that implementation directly.
 
 **Considered and rejected:** Further adapting or hardening the copied harness in
-Avalon. Independent changes had already diverged from the working source and
+Rally. Independent changes had already diverged from the working source and
 failed live; keeping the Azure subset aligned with Monad removes that
 experimentation.
 
-**Consequences:** Avalon again checks out PR source and runs Cline with automatic
+**Consequences:** Rally again checks out PR source and runs Cline with automatic
 approval, matching Monad's documented boundary. The workflow uses
 `pull_request` rather than `pull_request_target`, and the three jobs remain
 duplicated. Future fixes should be copied from the corresponding Monad Azure
@@ -256,11 +256,11 @@ matrix entries, not copied jobs with independently drifting security controls.
 
 ### 2026-08-12 — Azure-only Cline reviewers imported from Monad
 
-**What changed:** Avalon gained the DeepSeek V4 Pro, Grok 4.3, and Kimi K2.6
+**What changed:** Rally gained the DeepSeek V4 Pro, Grok 4.3, and Kimi K2.6
 Cline review jobs, their manual comment trigger, and their checkout and posting
 hardening.
 
-**Why:** Avalon needed Monad's automated review coverage but only for the models
+**Why:** Rally needed Monad's automated review coverage but only for the models
 Monad connects through Azure AI Foundry.
 
 **Considered and rejected:** Copying Monad's workflow unchanged. That would also
@@ -268,7 +268,7 @@ bring OpenCode and Cline jobs backed by OpenRouter, along with repository setup
 for reviewers that execute the checked-out project, despite the requested
 Azure-only boundary.
 
-**Consequences:** Avalon supports `/cline review` and deliberately does not
+**Consequences:** Rally supports `/cline review` and deliberately does not
 support `/opencode review`. Adding another reviewer requires an Azure-hosted
 deployment and an update to the workflow contract test. The three duplicated
 endpoint-validation blocks must remain equivalent.

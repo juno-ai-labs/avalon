@@ -1,22 +1,22 @@
 import { Building2, Check, ExternalLink, Globe2, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import type { AvalonDesktopBridge } from '../../common/desktop';
-import { AvalonMark, Button, InlineError } from '../components/primitives';
+import type { RallyDesktopBridge } from '../../common/desktop';
+import { RallyMark, Button, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
 import type { PendingWorkspaceInvitation, Region } from '../lib/types';
 
 export type SignInDesktopBridge = Pick<
-  AvalonDesktopBridge,
+  RallyDesktopBridge,
   'cancelDesktopAuthAttempt' | 'createDesktopAuthAttempt' | 'openExternal'
 >;
 
 export function BootScreen(): React.JSX.Element {
   return (
     <main className="onboarding-shell window-drag">
-      <div className="boot-mark" role="status" aria-label="Opening Avalon">
-        <AvalonMark />
+      <div className="boot-mark" role="status" aria-label="Opening Rally">
+        <RallyMark />
       </div>
     </main>
   );
@@ -77,7 +77,7 @@ export function SignInScreen(): React.JSX.Element {
   const [starting, setStarting] = useState(false);
 
   useEffect(() => {
-    // Identity entry is one Avalon login surface. Workspace data residency is
+    // Identity entry is one Rally login surface. Workspace data residency is
     // selected only after account and invitation discovery.
     selectRegion('global');
   }, [selectRegion]);
@@ -99,7 +99,7 @@ export function SignInScreen(): React.JSX.Element {
       await bridge.openExternal(url);
     } catch (caught) {
       if (attemptId) await bridge.cancelDesktopAuthAttempt(attemptId).catch(() => undefined);
-      setError(caught instanceof Error ? caught.message : 'Avalon could not open the sign-in page.');
+      setError(caught instanceof Error ? caught.message : 'Rally could not open the sign-in page.');
     } finally {
       setStarting(false);
     }
@@ -121,9 +121,9 @@ export function SignInScreen(): React.JSX.Element {
   return (
     <main className="onboarding-shell window-drag">
       <section className="signin-card window-no-drag" aria-labelledby="signin-heading">
-        <AvalonMark className="signin-mark" />
-        <h1 id="signin-heading">Welcome to Avalon</h1>
-        <p>Sign in first. Avalon will then open your workspace, show invitations, or help you create an organization.</p>
+        <RallyMark className="signin-mark" />
+        <h1 id="signin-heading">Welcome to Rally</h1>
+        <p>Sign in first. Rally will then open your workspace, show invitations, or help you create an organization.</p>
 
         <Button className="button-primary signin-button" disabled={starting || exchangingTicket} onClick={beginGoogleLogin}>
           {starting || exchangingTicket ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <ExternalLink aria-hidden="true" size={16} />}
@@ -169,7 +169,7 @@ export function RegionOnboarding(): React.JSX.Element {
     try {
       await finishWorkspaceSetup(name, selected, operationId);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Avalon could not create this organization.');
+      setError(caught instanceof Error ? caught.message : 'Rally could not create this organization.');
     } finally {
       setWorking(false);
     }
@@ -179,13 +179,13 @@ export function RegionOnboarding(): React.JSX.Element {
     <main className="onboarding-shell window-drag">
       <section className="onboarding-card window-no-drag" aria-labelledby="region-heading">
         <div className="onboarding-brand">
-          <AvalonMark />
-          <span>Avalon</span>
+          <RallyMark />
+          <span>Rally</span>
         </div>
         <div className="onboarding-copy">
           <p className="eyebrow">No invitations found</p>
           <h1 id="region-heading">Create your organization</h1>
-          <p>Name your shared workspace and choose where Avalon should keep its data.</p>
+          <p>Name your shared workspace and choose where Rally should keep its data.</p>
           {session && <p className="signed-in-identity">Signed in as {session.user.email}</p>}
         </div>
 
@@ -207,7 +207,7 @@ export function RegionOnboarding(): React.JSX.Element {
           </span>
         </label>
 
-        <p className="region-question">Where should Avalon keep your data?</p>
+        <p className="region-question">Where should Rally keep your data?</p>
         <RegionOptions selected={selected} onChange={setSelected} />
         <p className="region-note">
           This choice controls only where workspace data is stored and cannot be changed later.
@@ -217,7 +217,7 @@ export function RegionOnboarding(): React.JSX.Element {
             <>
               <p>Unavailable for EU region (at this time, subject to change based on providers)</p>
               <ul>
-                <li>Avalon agent: Terminal access</li>
+                <li>Rally agent: Terminal access</li>
               </ul>
             </>
           )}
@@ -280,7 +280,7 @@ export function InvitationOnboarding({
   return (
     <main className="onboarding-shell window-drag">
       <section className="signin-card invitation-card window-no-drag" aria-labelledby="invitation-heading">
-        <span className="invitation-icon"><AvalonMark /></span>
+        <span className="invitation-icon"><RallyMark /></span>
         <p className="eyebrow">Workspace invitations</p>
         <h1 id="invitation-heading">Choose where to join</h1>
         <p>Signed in as <strong>{session?.user.email}</strong>. Accept an invitation or decline it to continue.</p>

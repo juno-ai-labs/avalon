@@ -1,4 +1,4 @@
-import { asWorkspaceId } from "@avalon/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

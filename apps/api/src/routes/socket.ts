@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
-import { IdSchema } from "@avalon/contracts";
+import { IdSchema } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import {

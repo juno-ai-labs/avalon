@@ -15,7 +15,7 @@
  * is created by the deploy itself.
  */
 import { DurableObject } from "cloudflare:workers";
-import type { DurableObjectMigrationReport } from "@avalon/contracts/durable-object-migrations";
+import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import { applyRegistrySchema, REGISTRY_SCHEMA_VERSION } from "./schema";
 import type { Env } from "./env";
 import { ObjectStatusSchema, REPORTING_CLASSES } from "./protocol";

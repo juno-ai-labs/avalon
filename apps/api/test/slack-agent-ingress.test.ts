@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConnectorError, SlackWorkspaceBotScopes } from "@avalon/connectors";
+import { ConnectorError, SlackWorkspaceBotScopes } from "@rally/connectors";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";

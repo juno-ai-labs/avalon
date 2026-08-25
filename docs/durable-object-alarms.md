@@ -360,7 +360,7 @@ a failing target a free immediate attempt.
 ## Testing
 
 - `apps/api/test-workers/scheduled-alarms.test.ts` runs on real workerd
-  (`pnpm --filter @avalon/api test:workers`) and is the authority for this
+  (`pnpm --filter @rally/api test:workers`) and is the authority for this
   module: only that runtime has real `setAlarm`/`getAlarm` semantics, alarm
   handler invocation, and SQLite. It covers arming exactly, pulling an alarm in
   when an earlier entry is scheduled, pushing it back out and deleting it when

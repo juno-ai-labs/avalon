@@ -18,7 +18,7 @@ const CONTRACT: ObjectPortContract<WorkstreamMessageStorage, MessageOperation> =
   operations: MESSAGE_OPERATIONS,
   dispatch: (stub, request) => stub.executeMessageOperation(request),
   failureCode: "message_operation_failed",
-  failureMessage: "Avalon's transcript authority rejected an internal request. Retry after the application and service versions are aligned.",
+  failureMessage: "Rally's transcript authority rejected an internal request. Retry after the application and service versions are aligned.",
 };
 
 export function createMessagePortFactory(
