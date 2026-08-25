@@ -5,8 +5,8 @@ import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
-import { useWorkstreamSocket } from '../lib/use-workstream-socket';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
+import { WorkstreamSocketPool } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
@@ -15,17 +15,6 @@ import { Sidebar } from './sidebar';
 
 interface AppShellProps extends PropsWithChildren {
   workspace: Workspace;
-}
-
-function BackgroundWorkstreamSocket({
-  api,
-  workstreamId,
-}: {
-  api: NonNullable<ReturnType<typeof useAppSession>['api']>;
-  workstreamId: string;
-}): null {
-  useWorkstreamSocket(api, workstreamId, true);
-  return null;
 }
 
 export function backgroundRealtimeWorkstreamIds(
@@ -214,9 +203,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
 
   return (
     <>
-      {api && backgroundRealtimeIds.map((workstreamId) => (
-        <BackgroundWorkstreamSocket api={api} key={workstreamId} workstreamId={workstreamId} />
-      ))}
       <div className={showShellRail ? 'workspace-shell rail-open' : 'workspace-shell'} style={shellStyle}>
       {/*
         The main window only. The standalone Settings and meeting windows reach
@@ -382,7 +368,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             <button onClick={() => void Promise.all([automations.refetch(), workstreams.refetch(), notes.refetch()])} type="button">Retry</button>
           </div>
         )}
-          {children}
+          <WorkstreamSocketPool
+            activeWorkstreamId={activeWorkstreamId}
+            api={api}
+            backgroundWorkstreamIds={backgroundRealtimeIds}
+          >
+            {children}
+          </WorkstreamSocketPool>
         </main>
       </div>
     </>
