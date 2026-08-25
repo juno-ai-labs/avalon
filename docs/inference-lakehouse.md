@@ -102,8 +102,8 @@ The API deployment does all resource work before migrations or Worker upload:
    pipeline if they are absent. The immutable sink name includes the verified
    deployment-token ID's SHA-256 fingerprint without exposing the ID.
 3. The preflight discovers Cloudflare's generated Global stream ID and writes
-   ignored `.wrangler.inference.<region>.json` deploy configs. Only the Global
-   config contains a Pipeline binding.
+   ignored `.wrangler.lakehouses.<region>.json` deploy configs. The Global
+   config contains both analytical Pipeline bindings; EU contains neither.
 4. The workflow deploys EU without inference bindings and then Global with the
    generated Queue and Pipeline bindings. Health requires them only in Global;
    EU reports the export as intentionally disabled.

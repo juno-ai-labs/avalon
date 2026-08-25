@@ -202,6 +202,10 @@
       // pointer to the regional Pipeline consumer. The queue keeps provider
       // execution independent of lakehouse availability.
       { "binding": "INFERENCE_LAKEHOUSE_QUEUE", "queue": "avalon-global-inference-lakehouse" },
+      // Backend and client events already converge at the typed regional
+      // collector. Its Global D1 acceptance row is the durable outbox; this
+      // queue carries only an event ID and hash to the analytical projection.
+      { "binding": "ANALYTICS_LAKEHOUSE_QUEUE", "queue": "avalon-global-analytics-events-lakehouse" },
       // Access retractions on their way to open sockets. A queue rather
       // than RPC from the route that wrote the fact: the fan-out walks the
       // whole object hierarchy, nothing waits on its outcome, and a
@@ -247,6 +251,13 @@
         // send per record. The DLQ is the zero-setup signal that ingestion is
         // not converging; see docs/inference-lakehouse.md.
         "dead_letter_queue": "avalon-global-inference-lakehouse-dead-letter"
+      },
+      {
+        "queue": "avalon-global-analytics-events-lakehouse",
+        // Invisible analytical work, one independently idempotent pointer per
+        // event. Platform batching/retry defaults are sufficient; the DLQ is
+        // the intentionally simple signal that delivery is not converging.
+        "dead_letter_queue": "avalon-global-analytics-events-lakehouse-dead-letter"
       },
       {
         "queue": "avalon-global-access-revocations",

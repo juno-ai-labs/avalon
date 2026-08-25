@@ -114,6 +114,18 @@ healthRoutes.get("/", async (c) => {
             : "Pipeline binding is materialized only for hosted deployments",
       }
     : { ok: true, message: "EU inference analytics export intentionally disabled" };
+  const analyticsLakehouseBindingsAvailable = typeof c.env.ANALYTICS_LAKEHOUSE_QUEUE?.send === "function"
+    && typeof c.env.ANALYTICS_LAKEHOUSE?.send === "function";
+  checks.analyticsLakehouse = c.env.AVALON_REGION === "global"
+    ? {
+        ok: analyticsLakehouseBindingsAvailable,
+        message: analyticsLakehouseBindingsAvailable
+          ? "Global analytics Queue and Pipeline bindings available"
+          : c.env.APP_ENV === "production"
+            ? "Global analytics Queue or Pipeline binding unavailable"
+            : "Pipeline binding is materialized only for hosted deployments",
+      }
+    : { ok: true, message: "EU analytics lakehouse export intentionally disabled" };
   checks.workflows = {
     ok: typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function"
       && typeof c.env.CONNECTOR_EVENT_WORKFLOW?.create === "function"
@@ -242,7 +254,12 @@ healthRoutes.get("/", async (c) => {
     checks.workstreamEmailRegistry,
   ];
   if (c.env.APP_ENV === "production") {
-    required.push(checks.inboundEmail, checks.featureFlags, checks.inferenceLakehouse);
+    required.push(
+      checks.inboundEmail,
+      checks.featureFlags,
+      checks.inferenceLakehouse,
+      checks.analyticsLakehouse,
+    );
   }
   if (anyLinearConfigured) required.push(checks.linear);
   const ok = required.every((check) => check?.ok);

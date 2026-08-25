@@ -65,10 +65,12 @@ test('the queue inventory comes from every Wrangler file that binds one', async 
   assert.deepEqual(required, [
     { surface: 'api-global', role: 'producer:ACTIVITY_QUEUE', name: 'avalon-global-activities' },
     { surface: 'api-global', role: 'producer:INFERENCE_LAKEHOUSE_QUEUE', name: 'avalon-global-inference-lakehouse' },
+    { surface: 'api-global', role: 'producer:ANALYTICS_LAKEHOUSE_QUEUE', name: 'avalon-global-analytics-events-lakehouse' },
     { surface: 'api-global', role: 'producer:ACCESS_REVOCATION_QUEUE', name: 'avalon-global-access-revocations' },
     { surface: 'api-global', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-activities' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-inference-lakehouse' },
+    { surface: 'api-global', role: 'consumer', name: 'avalon-global-analytics-events-lakehouse' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-access-revocations' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-product-feature-flags' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-migration-commands' },
@@ -90,6 +92,7 @@ test('the queue inventory comes from every Wrangler file that binds one', async 
   assert.deepEqual(createdOnDeploy.map((queue) => queue.name), [
     'avalon-global-activities-dead-letter',
     'avalon-global-inference-lakehouse-dead-letter',
+    'avalon-global-analytics-events-lakehouse-dead-letter',
     'avalon-global-access-revocations-dead-letter',
     'avalon-global-product-feature-flags-dead-letter',
     'avalon-global-migration-commands-dead-letter',
@@ -107,10 +110,11 @@ test('against an empty account, exactly the queues the Wrangler files require ar
 
   await ensureRequiredQueues({ environment, log: () => {}, fetchImpl: account.fetchImpl });
 
-  // Eleven names from twenty-three bindings; no dead-letter queue among them.
+  // Twelve names from twenty-five bindings; no dead-letter queue among them.
   assert.deepEqual(account.created.map((request) => request.body.queue_name), [
     'avalon-global-activities',
     'avalon-global-inference-lakehouse',
+    'avalon-global-analytics-events-lakehouse',
     'avalon-global-access-revocations',
     'avalon-migration-reports',
     'avalon-global-product-feature-flags',

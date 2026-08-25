@@ -59,7 +59,7 @@ describe("regional telemetry collector", () => {
 
     const row = database.prepare(`
       SELECT route, routing_basis, delivery_state, accepted_at, normalized_timestamp,
-             delete_at, subject_user_id
+             delete_at, subject_user_id, analytics_lakehouse_state
       FROM telemetry_accepted_events WHERE event_id = ?
     `).get(eventId);
     expect(row).toEqual({
@@ -70,6 +70,7 @@ describe("regional telemetry collector", () => {
       normalized_timestamp: "2026-08-12T20:00:05.000Z",
       delete_at: "2026-11-10T20:00:05.000Z",
       subject_user_id: null,
+      analytics_lakehouse_state: "pending",
     });
     expect(database.prepare("SELECT COUNT(*) AS count FROM telemetry_eu_events").get()).toEqual({ count: 0 });
     database.close();
@@ -92,13 +93,15 @@ describe("regional telemetry collector", () => {
     })).resolves.toEqual({ result: "accepted", eventId });
 
     const accepted = database.prepare(
-      "SELECT route, delivery_state, terminal_code, delete_at FROM telemetry_accepted_events WHERE event_id = ?",
+      `SELECT route, delivery_state, terminal_code, delete_at, analytics_lakehouse_state
+       FROM telemetry_accepted_events WHERE event_id = ?`,
     ).get(eventId);
     expect(accepted).toEqual({
       route: "eu",
       delivery_state: "terminal",
       terminal_code: "eu_internal",
       delete_at: "2026-11-10T20:00:05.000Z",
+      analytics_lakehouse_state: null,
     });
     const eu = database.prepare(`
       SELECT event_name, analytics_subject_id, workspace_analytics_id,
