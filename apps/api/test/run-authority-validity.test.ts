@@ -1,6 +1,7 @@
 import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
-import { describe, expect, it, vi } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
@@ -11,6 +12,12 @@ import {
   createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
+import {
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
@@ -35,16 +42,95 @@ type AuthorityState = {
   activityExists: boolean;
 };
 
+/** The connector event the WorkspaceDO answers a trigger lookup with. */
+function connectorActivity() {
+  return {
+    id: ACTIVITY_ID,
+    workspaceId: WORKSPACE_ID,
+    region: "global",
+    connectionId: CONNECTION_ID,
+    connectionScope: "workspace",
+    connectionOwnerUserId: null,
+    provider: "github",
+    providerEventId: "delivery-1",
+    eventType: "issue.created",
+    resourceType: "issue",
+    providerResourceId: "issue-1",
+    actor: {},
+    subject: {},
+    occurredAt: "2026-08-18T00:00:00.000Z",
+    receivedAt: "2026-08-18T00:00:01.000Z",
+    title: "Issue created",
+    summary: "A new issue needs attention",
+    textSnippet: "Details",
+    payloadRef: null,
+    visibility: {},
+    targetUserIds: [],
+    entityKeys: ["issue-1"],
+    dedupeKey: "issue-created-1",
+    rawContentHash: null,
+    metadata: {},
+    externalPeople: [],
+  };
+}
+
 class AuthorityDatabase {
   readonly binding: D1Database;
   legacyActivityReads = 0;
+  /**
+   * The work stream's own object.
+   *
+   * The archive gate and the automation ids the revalidation reads are the
+   * identity authority's row, so they are held by the real storage class over
+   * a real object store rather than by another arm of the matcher below.
+   */
+  readonly objectStore: DatabaseSync;
+  readonly env: Env;
 
   constructor(readonly state: AuthorityState) {
     this.binding = createTestD1Database({
       prepare: (sql: string) => createTestD1PreparedStatement(new AuthorityStatement(this, sql)),
     });
+    this.objectStore = testWorkstreamObjectStore();
+    openStores.push(this.objectStore);
+    seedWorkstreamObjectRoot(this.objectStore, {
+      workstreamId: WORKSTREAM_ID,
+      workspaceId: WORKSPACE_ID,
+    });
+    workstreamObjectRun(
+      this.objectStore,
+      `UPDATE workstreams SET automation_subscription_id = ?, automation_run_id = ?,
+         archived_at = ? WHERE id = ?`,
+      SUBSCRIPTION_ID,
+      RUN_ID,
+      state.archivedAt,
+      WORKSTREAM_ID,
+    );
+    this.env = createTestEnv({
+      DB: this.binding,
+      AVALON_REGION: "global",
+      APP_ENV: "test",
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(this.objectStore),
+      // The evidence a connector run was started from is the WorkspaceDO's.
+      // The regional `activities` fallback beside it is gone, so a fixture
+      // that wants a trigger to exist has to say so here.
+      WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+        idFromName: (name: string) => createTestDurableObjectId(name),
+        get: () => ({
+          connectorEvent: async () => (this.state.activityExists
+            ? { connectorType: "github", activity: connectorActivity() }
+            : null),
+        }),
+      }),
+    });
   }
 }
+
+const openStores: DatabaseSync[] = [];
+
+afterEach(() => {
+  while (openStores.length > 0) openStores.pop()?.close();
+});
 
 class AuthorityStatement {
   private values: unknown[] = [];
@@ -75,14 +161,6 @@ class AuthorityStatement {
     }
     if (sql.includes("SELECT placement_affinity FROM workspaces")) {
       return { placement_affinity: "wnam" } as T;
-    }
-    if (sql.includes("FROM workstreams") && sql.includes("automation_subscription_id")) {
-      expect(this.values).toEqual([WORKSTREAM_ID, WORKSPACE_ID]);
-      return {
-        archived_at: this.database.state.archivedAt,
-        automation_subscription_id: SUBSCRIPTION_ID,
-        automation_run_id: RUN_ID,
-      } as T;
     }
     if (sql.includes("FROM automation_subscriptions s")) {
       expect(this.values).toEqual([RUN_ID, WORKSTREAM_ID, SUBSCRIPTION_ID, WORKSPACE_ID]);
@@ -143,33 +221,33 @@ function input(activityId: string | null = null): WorkstreamWorkflowInput {
 describe("durable run authority revalidation", () => {
   it("rejects a subscription paused between model turns", async () => {
     const database = new AuthorityDatabase(state());
-    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.binding, input());
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
     database.state.subscriptionStatus = "paused";
-    await expect(__integrationTesting.assertRunAuthorityStillValid(database.binding, input(), snapshot))
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
       .rejects.toThrow(/no longer active/i);
   });
 
   it("rejects a subscription deleted between model turns", async () => {
     const database = new AuthorityDatabase(state());
-    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.binding, input());
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
     database.state.subscriptionLifecycleState = "deleted";
-    await expect(__integrationTesting.assertRunAuthorityStillValid(database.binding, input(), snapshot))
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
       .rejects.toThrow(/no longer active/i);
   });
 
   it("rejects a trigger disabled after admission", async () => {
     const database = new AuthorityDatabase(state());
-    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.binding, input());
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
     database.state.hasEnabledSchedule = 0;
-    await expect(__integrationTesting.assertRunAuthorityStillValid(database.binding, input(), snapshot))
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
       .rejects.toThrow(/trigger was disabled/i);
   });
 
   it("rejects a template-version change so run authority cannot widen", async () => {
     const database = new AuthorityDatabase(state());
-    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.binding, input());
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
     database.state.templateVersionId = "version-two";
-    await expect(__integrationTesting.assertRunAuthorityStillValid(database.binding, input(), snapshot))
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
       .rejects.toThrow(/immutable run authority changed/i);
   });
 
@@ -179,9 +257,9 @@ describe("durable run authority revalidation", () => {
       triggerActivityId: ACTIVITY_ID,
     }));
     const activityInput = input(ACTIVITY_ID);
-    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.binding, activityInput);
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, activityInput);
     database.state.activityExists = false;
-    await expect(__integrationTesting.assertRunAuthorityStillValid(database.binding, activityInput, snapshot))
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, activityInput, snapshot))
       .rejects.toThrow(/trigger is no longer available/i);
   });
 
@@ -192,46 +270,18 @@ describe("durable run authority revalidation", () => {
       activityExists: false,
     }));
     let durableActivityExists = true;
-    const connectorEvent = vi.fn(async () => durableActivityExists ? {
-      connectorType: "github",
-      activity: {
-        id: ACTIVITY_ID,
-        workspaceId: WORKSPACE_ID,
-        region: "global",
-        connectionId: CONNECTION_ID,
-        connectionScope: "workspace",
-        connectionOwnerUserId: null,
-        provider: "github",
-        providerEventId: "delivery-1",
-        eventType: "issue.created",
-        resourceType: "issue",
-        providerResourceId: "issue-1",
-        actor: {},
-        subject: {},
-        occurredAt: "2026-08-18T00:00:00.000Z",
-        receivedAt: "2026-08-18T00:00:01.000Z",
-        title: "Issue created",
-        summary: "A new issue needs attention",
-        textSnippet: "Details",
-        payloadRef: null,
-        visibility: {},
-        targetUserIds: [],
-        entityKeys: ["issue-1"],
-        dedupeKey: "issue-created-1",
-        rawContentHash: null,
-        metadata: {},
-        externalPeople: [],
-      },
-    } : null);
+    const connectorEvent = vi.fn(async () => durableActivityExists
+      ? { connectorType: "github", activity: connectorActivity() }
+      : null);
     const namespace = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
       idFromName: (name: string) => createTestDurableObjectId(name),
       get: () => ({ connectorEvent }),
     });
     const env = createTestEnv({
-      DB: database.binding,
+      ...database.env,
+      // This test drives the trigger lookup itself, so it replaces the
+      // fixture's WorkspaceDO with one it can flip mid-run.
       WORKSPACE_DOS: namespace,
-      APP_ENV: "test",
-      AVALON_REGION: "global",
     });
     const activityInput = input(ACTIVITY_ID);
 
@@ -247,7 +297,7 @@ describe("durable run authority revalidation", () => {
 
   it("rejects an archived work stream before a tool can run", async () => {
     const database = new AuthorityDatabase(state({ archivedAt: "2026-08-03T00:00:00.000Z" }));
-    await expect(__integrationTesting.assertRunAuthorityStillValid(database.binding, input()))
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input()))
       .rejects.toThrow(/work stream is no longer active/i);
   });
 });

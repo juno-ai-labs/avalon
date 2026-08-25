@@ -5662,22 +5662,14 @@ async function assertExecutionPrincipalAuthorized(
 }
 
 async function assertRunAuthorityStillValid(
-  source: Env | D1Database,
+  env: Env,
   input: WorkstreamWorkflowInput,
   expected?: RunAuthoritySnapshot,
 ): Promise<RunAuthoritySnapshot> {
-  const env = "DB" in source ? source as Env : null;
-  const db: D1Database = env ? env.DB : source as D1Database;
+  const db: D1Database = env.DB;
   await assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal);
-  const workstream = await db.prepare(
-    `SELECT archived_at, automation_subscription_id, automation_run_id
-       FROM workstreams
-      WHERE id = ? AND workspace_id = ?`,
-  ).bind(input.workstreamId, input.workspaceId).first<{
-    archived_at: string | null;
-    automation_subscription_id: string | null;
-    automation_run_id: string | null;
-  }>();
+  const workstream = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+    .identity();
   if (!workstream || workstream.archived_at != null) {
     throw new ConnectorError("unauthorized", "Work stream is no longer active");
   }
@@ -5744,11 +5736,15 @@ async function assertRunAuthorityStillValid(
     throw new ConnectorError("unauthorized", "Automation trigger evidence changed");
   }
   if (automation.trigger_activity_id) {
-    const activity = env
-      ? await loadConnectorTriggerContext(env, input.workspaceId, automation.trigger_activity_id)
-      : await db.prepare(
-        "SELECT id FROM activities WHERE id = ? AND workspace_id = ?",
-      ).bind(automation.trigger_activity_id, input.workspaceId).first<{ id: string }>();
+    // The regional `activities` fallback beside this is gone with the union
+    // that made it reachable: this function took `Env | D1Database`, and every
+    // caller passes an `Env`. The evidence a connector run was started from is
+    // the WorkspaceDO's, and a second source for it could only disagree.
+    const activity = await loadConnectorTriggerContext(
+      env,
+      input.workspaceId,
+      automation.trigger_activity_id,
+    );
     if (!activity) throw new ConnectorError("unauthorized", "Automation trigger is no longer available");
   }
   if (automation.trigger_type === "schedule" && automation.has_enabled_schedule !== 1) {

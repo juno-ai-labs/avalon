@@ -20,10 +20,21 @@ const WORKSPACE_ID = "00000000-0000-7000-8000-000000000601";
 const WORKSTREAM_ID = "00000000-0000-7000-8000-000000000602";
 
 describe("work-stream runtime database routing", () => {
-  it("routes elicitation persistence to the owning WorkstreamDO", () => {
+  it("routes transcript persistence to the owning WorkstreamDO", () => {
+    expect(__workstreamRuntimeDatabaseTesting.localStatement(
+      "SELECT id FROM messages WHERE workstream_id = ?",
+    )).toBe(true);
+  });
+
+  it("leaves an elicitation statement for the parent router", () => {
+    // `elicitations` left the routed set with this slice: both writers reach
+    // it through `/internal/scheduling` now, and its compatibility view is
+    // gone. Same reasoning as `workstream_wakeups` below — a statement still
+    // naming it is a caller that missed the conversion, and failing loudly
+    // against a regional database that has no such table is the honest answer.
     expect(__workstreamRuntimeDatabaseTesting.localStatement(
       "SELECT id FROM elicitations WHERE workstream_id = ?",
-    )).toBe(true);
+    )).toBe(false);
   });
 
   it("leaves a statement naming a table whose slice has landed for the parent router", () => {

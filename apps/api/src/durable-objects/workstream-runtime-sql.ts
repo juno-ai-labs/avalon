@@ -32,7 +32,6 @@ const TABLE_REWRITES = [
   ["users", "_runtime_users"],
   ["inference_attempts", "_runtime_inference_attempts"],
   ["harness_runs", "_runtime_harness_runs"],
-  ["elicitations", "_runtime_elicitations"],
   ["messages", "_runtime_messages"],
   ["workstreams", "_runtime_workstreams"],
 ] as const;

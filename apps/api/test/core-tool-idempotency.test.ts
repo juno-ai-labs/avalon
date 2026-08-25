@@ -337,8 +337,8 @@ describe("Avalon core write-tool idempotency", () => {
     expect(second).toEqual(first);
     expect(first).toMatchObject({ halt: "needs_input" });
     expect(roomEvents.filter((event) => event.type === "elicitation_created")).toHaveLength(1);
-    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM elicitations")).toEqual({ count: 1 });
-    expect(workstreamObjectGet(objectStore, "SELECT target_user_id FROM elicitations")).toEqual({ target_user_id: null });
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM elicitation_requests")).toEqual({ count: 1 });
+    expect(workstreamObjectGet(objectStore, "SELECT target_user_id FROM elicitation_requests")).toEqual({ target_user_id: null });
     expect(workstreamObjectGet(
       objectStore,
       "SELECT COUNT(*) AS count FROM messages WHERE message_type = 'elicitation'",

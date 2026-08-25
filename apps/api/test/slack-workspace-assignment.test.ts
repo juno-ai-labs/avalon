@@ -304,10 +304,11 @@ describe("Slack workspace workstream assignment", () => {
 
     expect(workstreamObjectAll(
       objectStore,
-      "SELECT id, status, answer_json FROM elicitations ORDER BY created_at",
+      `SELECT elicitation_id AS id, status, answer_json
+         FROM elicitation_requests ORDER BY created_at`,
     )).toEqual([
-      { id: "elicitation-a", status: "open", answer_json: null },
-      { id: "elicitation-b", status: "open", answer_json: null },
+      { id: "elicitation-a", status: "pending", answer_json: null },
+      { id: "elicitation-b", status: "pending", answer_json: null },
     ]);
   });
 
@@ -362,10 +363,11 @@ describe("Slack workspace workstream assignment", () => {
     expect(answered?.elicitation).toMatchObject({ id: "elicitation-a", status: "answered", answer: "staging" });
     expect(workstreamObjectAll(
       objectStore,
-      "SELECT id, status, answer_json FROM elicitations ORDER BY created_at",
+      `SELECT elicitation_id AS id, status, answer_json
+         FROM elicitation_requests ORDER BY created_at`,
     )).toEqual([
       { id: "elicitation-a", status: "answered", answer_json: JSON.stringify("staging") },
-      { id: "elicitation-b", status: "open", answer_json: null },
+      { id: "elicitation-b", status: "pending", answer_json: null },
     ]);
     // The answer is in the transcript as the external actor who gave it, and
     // it took the next sequence number rather than the one the seed's own part
@@ -1511,17 +1513,20 @@ function seedElicitationRetry(
        ('run-a', '3f88f9ca-d7b3-4714-828e-b22187914524', '7a000000-0000-4000-8000-000000000005', 'test', '{}', 'needs_input', '2026-01-01'),
        ('run-b', '3f88f9ca-d7b3-4714-828e-b22187914524', '7a000000-0000-4000-8000-000000000005', 'test', '{}', 'needs_input', '2026-01-02')`,
   );
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO elicitations
-       (id, workspace_id, workstream_id, harness_run_id, prompt, response_type,
-        options_json, minimum_selections, maximum_selections, status, created_at)
-     VALUES
-       ('elicitation-a', '3f88f9ca-d7b3-4714-828e-b22187914524', '7a000000-0000-4000-8000-000000000005', 'run-a', 'First?', 'text',
-        '[]', 0, NULL, 'open', '2026-01-01'),
-       ('elicitation-b', '3f88f9ca-d7b3-4714-828e-b22187914524', '7a000000-0000-4000-8000-000000000005', 'run-b', 'Second?', 'text',
-        '[]', 0, NULL, 'open', '2026-01-02')`,
-  );
+  // The object's own table and vocabulary: `_runtime_elicitations` is gone
+  // with the last caller that named it, and `pending` is what the object
+  // stores for what the retired view rendered as `open`.
+  objectStore.exec(`
+    INSERT INTO elicitation_requests
+      (elicitation_id, run_id, prompt, response_type, options_json, minimum_selections,
+       maximum_selections, target_user_id, status, answer_json, answered_by_user_id,
+       external_actor_json, created_at, answered_at)
+    VALUES
+      ('elicitation-a', 'run-a', 'First?', 'text', '[]', 0, NULL, NULL, 'pending',
+       NULL, NULL, NULL, 1767225600000, NULL),
+      ('elicitation-b', 'run-b', 'Second?', 'text', '[]', 0, NULL, NULL, 'pending',
+       NULL, NULL, NULL, 1767312000000, NULL)
+  `);
   workstreamObjectRun(
     objectStore,
     `INSERT INTO messages
