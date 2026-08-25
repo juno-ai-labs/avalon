@@ -43,7 +43,7 @@ describe("workspace Slack mention delivery", () => {
     expect(String(calls[2]?.body.text)).toContain("Author Person mentioned you");
     expect(String(calls[2]?.body.text)).toContain("@Ada Lovelace");
     expect(String(calls[2]?.body.text)).not.toContain(`person:${recipientId}`);
-    expect(String(calls[2]?.body.text)).toContain("Open in Avalon");
+    expect(String(calls[2]?.body.text)).toContain("Open in Rally");
     // Slack can only unfurl a link on the app's registered domain, and the id
     // must sit in the path rather than a fragment for the unfurl handler to
     // read it back off the shared URL.
@@ -146,7 +146,7 @@ describe("workspace Slack mention delivery", () => {
     expect(calls.map((call) => call.method)).toEqual(["users.lookupByEmail", "users.lookupByEmail"]);
   });
 
-  it("uses Slack-sized threaded chunks without truncating the Avalon message", async () => {
+  it("uses Slack-sized threaded chunks without truncating the Rally message", async () => {
     const database = migratedDatabase();
     const env = environment(database);
     await seed(database, env, false);
