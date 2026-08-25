@@ -899,15 +899,21 @@ const addressingJsonSchema = {
 };
 
 /**
- * Does the message name the product?
+ * The two ways a message can name the product, and why they are not one pattern.
  *
- * Both spellings, deliberately. `rally` is what the agent now calls itself, and
- * `avalon` is what a member who has been here a while still types — and unlike a
- * stored identifier there is no cost to recognizing an extra word, while the
- * cost of missing one is that a person addresses the agent by name and gets
- * silence, because this is a fast path that returns without invoking the model.
+ * `avalon` is unambiguous: nothing else in a work stream is called that, so
+ * seeing it is enough to short-circuit to `agent_action` without spending a
+ * model call. `rally` is an ordinary English verb — "let's rally the team on
+ * this" names no agent — so the same short-circuit would buy a false positive
+ * at 0.96 confidence, decided deterministically and never seen by the model.
+ *
+ * So the ambiguous token does not short-circuit; it rides into the prompt as
+ * `addressesRally`, where the classifier weighs it against the surrounding
+ * turns. The prompt tells the model an explicit Rally reference is strong
+ * evidence, and this is what makes that true.
  */
-const PRODUCT_REFERENCE_PATTERN = /\b(rally|avalon)\b/iu;
+const UNAMBIGUOUS_PRODUCT_REFERENCE = /\bavalon\b/iu;
+const PRODUCT_REFERENCE = /\b(?:avalon|rally)\b/iu;
 
 export function classifyAddressingHeuristically(input: {
   message: string;
@@ -919,7 +925,7 @@ export function classifyAddressingHeuristically(input: {
   if ((input.connectorMentions?.length ?? 0) > 0) {
     return { classification: "agent_action", confidence: 0.98, rationaleCode: "connector_mention" };
   }
-  if (input.addressesRally || PRODUCT_REFERENCE_PATTERN.test(text)) {
+  if (input.addressesRally || UNAMBIGUOUS_PRODUCT_REFERENCE.test(text)) {
     return { classification: "agent_action", confidence: 0.96, rationaleCode: "rally_reference" };
   }
   if (/^(please\s+)?(find|check|create|draft|send|review|summarize|investigate|update|compare|prepare)\b/i.test(text)) {
@@ -962,7 +968,7 @@ export async function classifyAddressing(input: {
       message: input.message,
       activeTask: input.activeTask,
       connectorMentions: input.connectorMentions ?? [],
-      addressesRally: input.addressesRally ?? PRODUCT_REFERENCE_PATTERN.test(input.message),
+      addressesRally: input.addressesRally ?? PRODUCT_REFERENCE.test(input.message),
       recentMessages: input.recentMessages ?? [],
     }),
     schemaName: "message_addressing",

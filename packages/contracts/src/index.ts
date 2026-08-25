@@ -2461,7 +2461,7 @@ export const SlackOriginContextSchema = z.object({
   threadTs: z.string().min(1).max(80).nullable(),
   invocationType: z.enum(["app_mention", "direct_message", "slash_command", "shortcut"]),
   channelType: z.enum(["public", "private", "im", "unknown"]),
-  matchedRallyUserId: IdSchema.nullable(),
+  matchedAvalonUserId: IdSchema.nullable(),
   nearbyMessagesStatus: z.enum(["available", "unavailable", "not_applicable"]),
   nearbyMessages: z.array(SlackOriginNearbyMessageSchema).max(8),
   attachments: z.array(SlackOriginAttachmentSchema).max(10),

@@ -99,7 +99,13 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
         threadTs: input.slackOrigin.threadTs,
         invocationType: input.slackOrigin.invocationType,
         channelType: input.slackOrigin.channelType,
-        matchedRallyUserId: input.slackOrigin.matchedRallyUserId,
+        // The key the model reads is Rally; the field it comes from keeps its
+        // name. `SlackOriginContextSchema` is `.strict()` and rides inside
+        // `WorkstreamWorkflowInputSchema`, which is re-parsed as a dispatch
+        // request — so renaming the field in place would reject an in-flight
+        // request carrying the old key during a rolling deploy. Renaming at the
+        // serialization boundary moves the only half the model sees.
+        matchedRallyUserId: input.slackOrigin.matchedAvalonUserId,
         nearbyMessagesStatus: input.slackOrigin.nearbyMessagesStatus,
         nearbyMessageCount: input.slackOrigin.nearbyMessages.length,
         attachmentCount: input.slackOrigin.attachments.length,

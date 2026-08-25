@@ -122,17 +122,23 @@ describe("agent harness", () => {
       message: "Review the launch checklist",
       activeTask: false,
     })).toMatchObject({ classification: "agent_action", rationaleCode: "imperative" });
-    // Both spellings reach the fast path. It returns without invoking the
-    // model, so a name it fails to recognize is not a worse classification —
-    // it is silence in reply to someone addressing the agent directly.
-    expect(classifyAddressingHeuristically({
-      message: "Rally, what changed?",
-      activeTask: false,
-    })).toMatchObject({ classification: "agent_action", rationaleCode: "rally_reference" });
+    // The unambiguous name short-circuits without a model call.
     expect(classifyAddressingHeuristically({
       message: "Avalon, what changed?",
       activeTask: false,
     })).toMatchObject({ classification: "agent_action", rationaleCode: "rally_reference" });
+    // The flag does too, however the caller derived it.
+    expect(classifyAddressingHeuristically({
+      message: "Rally, what changed?",
+      activeTask: false,
+      addressesRally: true,
+    })).toMatchObject({ classification: "agent_action", rationaleCode: "rally_reference" });
+    // But "rally" alone must not: it is an ordinary verb, and deciding
+    // `agent_action` at 0.96 here would answer a message addressed to people.
+    expect(classifyAddressingHeuristically({
+      message: "Let's rally the team on this before Friday",
+      activeTask: false,
+    })).not.toMatchObject({ rationaleCode: "rally_reference" });
     expect(classifyAddressingHeuristically({
       message: "Morgan, I moved the meeting to Tuesday",
       activeTask: false,
@@ -145,6 +151,32 @@ describe("agent harness", () => {
       message: "What changed in the plan?",
       activeTask: false,
     })).toMatchObject({ classification: "both", rationaleCode: "question" });
+  });
+
+  it("flags a Rally reference into the prompt rather than deciding on it", async () => {
+    // The heuristic deliberately does not short-circuit on "rally" — it is an
+    // ordinary verb. What makes the classifier prompt's "an explicit Rally
+    // reference is strong evidence" true is this default reaching it as data.
+    let requestBody: Record<string, unknown> | null = null;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return Response.json({
+        choices: [{ message: { content: JSON.stringify({
+          classification: "agent_action", confidence: 0.8, rationaleCode: "rally_reference",
+        }) } }],
+      });
+    }) as typeof fetch;
+
+    await classifyAddressing({
+      apiKey: "test-key",
+      model: "test/model",
+      message: "Rally, can you check the deploy?",
+      activeTask: true,
+      fetch: fetcher,
+    });
+
+    const providerMessages = requestBody!.messages as Array<{ role: string; content: string }>;
+    expect(providerMessages[1]!.content).toContain('"addressesRally":true');
   });
 
   it("uses the typed addressing renderer for uncertain messages", async () => {

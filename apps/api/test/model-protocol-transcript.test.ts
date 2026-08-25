@@ -423,7 +423,7 @@ describe("durable UI-to-model transcript projection", () => {
         textContent: "Trace the failed release, identify the owner, and prepare the fix.",
         structuredContent: {
           kind: "suggested_work_expansion",
-          label: "Expanded by Rally from suggested work",
+          label: "Expanded by Avalon from suggested work",
         },
       })],
     );
