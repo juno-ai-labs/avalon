@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   assertNextReleaseVersion,
+  assertReleaseAfterMissingManifest,
   compareVersions,
   loadReleaseDirectory,
   normalizeReleasePrefix,
@@ -30,6 +31,7 @@ import {
   sha256File,
   writeSiteReleaseConfigAtomically,
 } from './site-release-config.mjs';
+import { createR2ReleaseLockClient, withR2ReleaseLock } from './release-r2-lock.mjs';
 
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(desktopDirectory, '../..');
@@ -38,6 +40,7 @@ const defaultSiteConfigPath = join(repositoryDirectory, 'apps/site/release.confi
 const canonicalDmgName = 'Avalon.dmg';
 const checksumsName = 'SHA256SUMS';
 const latestManifestName = 'latest-mac.yml';
+const releaseLockName = 'release-publish.lock';
 
 function parseArguments(argv) {
   const result = { dryRun: false };
@@ -441,121 +444,137 @@ try {
     publishedAt: new Date().toISOString(),
   });
 
-  releaseTransaction: {
-  if (arguments_.dryRun) {
-    console.log(JSON.stringify({
-      dryRun: true,
-      releaseDirectory,
-      siteConfigPath,
-      immutableObjects: [
-        ...release.artifacts.map(({ name }) => `${prefix}/${name}`),
-        `${prefix}/${release.feed.version}/${checksumsName}`,
-      ],
-      immutableCachePurgeUrls: [
-        ...release.artifacts.map(({ name }) => publicUrl(name)),
-        publicUrl(`${release.feed.version}/${checksumsName}`),
-      ],
-      canonicalDmg: `${prefix}/${canonicalDmgName}`,
-      latestManifest: `${prefix}/${latestManifestName}`,
-      siteRelease: proposedSiteConfig,
-    }, null, 2));
-    break releaseTransaction;
-  }
+  const executeReleaseTransaction = async () => {
+    if (arguments_.dryRun) {
+      console.log(JSON.stringify({
+        dryRun: true,
+        releaseDirectory,
+        siteConfigPath,
+        immutableObjects: [
+          ...release.artifacts.map(({ name }) => `${prefix}/${name}`),
+          `${prefix}/${release.feed.version}/${checksumsName}`,
+        ],
+        immutableCachePurgeUrls: [
+          ...release.artifacts.map(({ name }) => publicUrl(name)),
+          publicUrl(`${release.feed.version}/${checksumsName}`),
+        ],
+        canonicalDmg: `${prefix}/${canonicalDmgName}`,
+        latestManifest: `${prefix}/${latestManifestName}`,
+        siteRelease: proposedSiteConfig,
+      }, null, 2));
+      return;
+    }
 
-  const existingManifestPath = join(scratchDirectory, 'existing-latest-mac.yml');
-  const hasManifest = await getR2Object(`${prefix}/${latestManifestName}`, existingManifestPath);
-  let releaseIsCommitted = false;
-  let liveArtifactNames = new Set();
-  if (hasManifest) {
-    const existingBytes = await readFile(existingManifestPath);
-    const existingFeed = parseMacUpdateFeed(existingBytes.toString('utf8'));
-    liveArtifactNames = new Set(existingFeed.files.map(({ url }) => url));
-    const comparison = compareVersions(existingFeed.version, release.feed.version);
-    if (comparison > 0) {
-      throw new Error(
-        `Refusing to roll ${prefix} back from ${existingFeed.version} to ${release.feed.version}`,
+    const existingManifestPath = join(scratchDirectory, 'existing-latest-mac.yml');
+    const hasManifest = await getR2Object(`${prefix}/${latestManifestName}`, existingManifestPath);
+    let releaseIsCommitted = false;
+    let liveArtifactNames = new Set();
+    if (hasManifest) {
+      const existingBytes = await readFile(existingManifestPath);
+      const existingFeed = parseMacUpdateFeed(existingBytes.toString('utf8'));
+      liveArtifactNames = new Set(existingFeed.files.map(({ url }) => url));
+      const comparison = compareVersions(existingFeed.version, release.feed.version);
+      if (comparison > 0) {
+        throw new Error(
+          `Refusing to roll ${prefix} back from ${existingFeed.version} to ${release.feed.version}`,
+        );
+      }
+      if (comparison < 0) {
+        assertNextReleaseVersion(existingFeed.version, release.feed.version);
+      }
+      if (comparison === 0 && !existingBytes.equals(release.manifestBytes)) {
+        throw new Error(`Release ${release.feed.version} already has different latest-mac.yml bytes in R2`);
+      }
+      releaseIsCommitted = comparison === 0;
+    } else {
+      assertReleaseAfterMissingManifest(currentSiteConfig.version, release.feed.version);
+    }
+
+    // Each immutable payload is hash-verified through R2 and HEAD/Range-verified
+    // through the public custom domain before either mutable channel pointer moves.
+    const immutablePublicArtifacts = [];
+    for (const artifact of release.artifacts) {
+      immutablePublicArtifacts.push(
+        await uploadImmutableArtifact(
+          artifact,
+          scratchDirectory,
+          releaseIsCommitted,
+          liveArtifactNames,
+        ),
       );
     }
-    if (comparison < 0) {
-      assertNextReleaseVersion(existingFeed.version, release.feed.version);
-    }
-    if (comparison === 0 && !existingBytes.equals(release.manifestBytes)) {
-      throw new Error(`Release ${release.feed.version} already has different latest-mac.yml bytes in R2`);
-    }
-    releaseIsCommitted = comparison === 0;
-  } else if (compareVersions(currentSiteConfig.version, release.feed.version) < 0) {
-    assertNextReleaseVersion(currentSiteConfig.version, release.feed.version);
-  }
-
-  // Each immutable payload is hash-verified through R2 and HEAD/Range-verified
-  // through the public custom domain before either mutable channel pointer moves.
-  const immutablePublicArtifacts = [];
-  for (const artifact of release.artifacts) {
     immutablePublicArtifacts.push(
       await uploadImmutableArtifact(
-        artifact,
+        checksumsArtifact,
         scratchDirectory,
         releaseIsCommitted,
         liveArtifactNames,
       ),
     );
-  }
-  immutablePublicArtifacts.push(
-    await uploadImmutableArtifact(
-      checksumsArtifact,
-      scratchDirectory,
-      releaseIsCommitted,
-      liveArtifactNames,
-    ),
-  );
 
-  // Query parameters bypass a stale negative cache entry but updater clients do
-  // not use them. Purge every exact immutable URL as one fail-closed gate, then
-  // verify the ordinary no-query URLs before either mutable channel pointer moves.
-  await purgeAndVerifyImmutableReleaseUrls({
-    artifacts: immutablePublicArtifacts.map((artifact) => ({
-      ...artifact,
-      url: publicUrl(artifact.name),
-    })),
-    purgeUrls: purgePublicUrls,
-    verifyArtifact: async (artifact) => {
-      await verifyPublicArtifact(
-        artifact.name,
-        artifact.expectedSize,
-        artifact.verificationId,
-        { cacheBust: false },
-      );
-      await verifyPublicReleaseArtifactHash({
-        expectedHash: artifact.verificationId,
-        url: artifact.url,
+    // Query parameters bypass a stale negative cache entry but updater clients do
+    // not use them. Purge every exact immutable URL as one fail-closed gate, then
+    // verify the ordinary no-query URLs before either mutable channel pointer moves.
+    await purgeAndVerifyImmutableReleaseUrls({
+      artifacts: immutablePublicArtifacts.map((artifact) => ({
+        ...artifact,
+        url: publicUrl(artifact.name),
+      })),
+      purgeUrls: purgePublicUrls,
+      verifyArtifact: async (artifact) => {
+        await verifyPublicArtifact(
+          artifact.name,
+          artifact.expectedSize,
+          artifact.verificationId,
+          { cacheBust: false },
+        );
+        await verifyPublicReleaseArtifactHash({
+          expectedHash: artifact.verificationId,
+          url: artifact.url,
+        });
+      },
+    });
+
+    // Recovery downloads use this stable alias. It moves only after the matching
+    // immutable DMG is verified, and before latest-mac.yml commits the channel.
+    await publishCanonicalDmg(versionedDmg, scratchDirectory);
+
+    // The update manifest is the R2 release commit point and must be the final
+    // object upload. Landing-page state is activated only after it verifies.
+    const manifestKey = `${prefix}/${latestManifestName}`;
+    const localManifestPath = join(scratchDirectory, latestManifestName);
+    await writeFile(localManifestPath, release.manifestBytes);
+    await putR2Object(manifestKey, localManifestPath, {
+      contentType: releaseContentType(latestManifestName),
+      cacheControl: 'public, max-age=0, must-revalidate',
+    });
+    await purgePublicUrl(publicUrl(latestManifestName));
+    await verifyPublicManifest(release.manifestBytes);
+
+    const publishedSiteConfig = createPublishedSiteReleaseConfig(currentSiteConfig, {
+      ...publicationOptions,
+      publishedAt: new Date().toISOString(),
+    });
+    await writeSiteReleaseConfigAtomically(siteConfigPath, publishedSiteConfig);
+    console.log(
+      `Published Avalon ${release.feed.version}: immutable artifacts, recovery DMG, latest-mac.yml, then site activation`,
+    );
+  };
+
+  if (arguments_.dryRun) {
+    await executeReleaseTransaction();
+  } else {
+    const lockClient = await createR2ReleaseLockClient({ accountId, apiToken });
+    try {
+      await withR2ReleaseLock({
+        bucket,
+        client: lockClient,
+        key: `${prefix}/${releaseLockName}`,
+        operation: executeReleaseTransaction,
       });
-    },
-  });
-
-  // Recovery downloads use this stable alias. It moves only after the matching
-  // immutable DMG is verified, and before latest-mac.yml commits the channel.
-  await publishCanonicalDmg(versionedDmg, scratchDirectory);
-
-  // The update manifest is the R2 release commit point and must be the final
-  // object upload. Landing-page state is activated only after it verifies.
-  const manifestKey = `${prefix}/${latestManifestName}`;
-  const localManifestPath = join(scratchDirectory, latestManifestName);
-  await writeFile(localManifestPath, release.manifestBytes);
-  await putR2Object(manifestKey, localManifestPath, {
-    contentType: releaseContentType(latestManifestName),
-    cacheControl: 'public, max-age=0, must-revalidate',
-  });
-  await purgePublicUrl(publicUrl(latestManifestName));
-  await verifyPublicManifest(release.manifestBytes);
-
-  const publishedSiteConfig = createPublishedSiteReleaseConfig(currentSiteConfig, {
-    ...publicationOptions,
-    publishedAt: new Date().toISOString(),
-  });
-  await writeSiteReleaseConfigAtomically(siteConfigPath, publishedSiteConfig);
-  console.log(
-    `Published Avalon ${release.feed.version}: immutable artifacts, recovery DMG, latest-mac.yml, then site activation`,
-  );
+    } finally {
+      lockClient.destroy();
+    }
   }
 } finally {
   await rm(scratchDirectory, { recursive: true, force: true });

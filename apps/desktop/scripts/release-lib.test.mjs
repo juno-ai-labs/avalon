@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   assertMinorReleaseVersion,
   assertNextReleaseVersion,
+  assertReleaseAfterMissingManifest,
   assertReleaseTag,
   compareVersions,
   normalizeReleasePrefix,
@@ -37,6 +38,18 @@ test('release versions advance one minor, with a one-time 1.0.0 stable promotion
   assert.throws(() => assertNextReleaseVersion('1.0.0', '2.0.0'), /must be 1\.1\.0/u);
 });
 
+test('a missing live manifest fails closed when the site record says the release shipped', () => {
+  assert.equal(assertReleaseAfterMissingManifest('1.146.0', '1.147.0'), '1.147.0');
+  assert.throws(
+    () => assertReleaseAfterMissingManifest('1.147.0', '1.147.0'),
+    /Live latest-mac.yml is missing while the site release record is 1\.147\.0/u,
+  );
+  assert.throws(
+    () => assertReleaseAfterMissingManifest('1.148.0', '1.147.0'),
+    /Live latest-mac.yml is missing/u,
+  );
+});
+
 test('semantic versions compare with prerelease precedence', () => {
   assert.equal(compareVersions('1.2.3', '1.2.3'), 0);
   assert.equal(compareVersions('1.2.4', '1.2.3'), 1);
@@ -49,6 +62,7 @@ test('a pre-manifest retry replaces orphaned bytes but a committed release stays
   assert.equal(await reconcileImmutableReleaseObject({
     existingHash: 'old-notarized-build',
     localHash: 'new-notarized-build',
+    referencedByLiveManifest: false,
     releaseIsCommitted: false,
     objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
     upload: async () => { uploads += 1; },
@@ -59,11 +73,12 @@ test('a pre-manifest retry replaces orphaned bytes but a committed release stays
     reconcileImmutableReleaseObject({
       existingHash: 'published-build',
       localHash: 'different-build',
+      referencedByLiveManifest: false,
       releaseIsCommitted: true,
       objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
       upload: async () => { uploads += 1; },
     }),
-    /already exists with different bytes/u,
+    /Committed release key .* already exists with different bytes/u,
   );
   assert.equal(uploads, 1);
 });
@@ -73,6 +88,7 @@ test('an absent immutable object uploads and matching bytes are reused', async (
   assert.equal(await reconcileImmutableReleaseObject({
     existingHash: undefined,
     localHash: 'new-build',
+    referencedByLiveManifest: false,
     releaseIsCommitted: false,
     objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
     upload: async () => { uploads += 1; },
@@ -80,6 +96,7 @@ test('an absent immutable object uploads and matching bytes are reused', async (
   assert.equal(await reconcileImmutableReleaseObject({
     existingHash: 'new-build',
     localHash: 'new-build',
+    referencedByLiveManifest: false,
     releaseIsCommitted: true,
     objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
     upload: async () => { uploads += 1; },
@@ -90,6 +107,7 @@ test('an absent immutable object uploads and matching bytes are reused', async (
     reconcileImmutableReleaseObject({
       existingHash: undefined,
       localHash: 'new-build',
+      referencedByLiveManifest: false,
       releaseIsCommitted: true,
       objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
       upload: async () => { uploads += 1; },

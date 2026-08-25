@@ -318,7 +318,9 @@ describe('New work-stream home', () => {
     fireEvent.change(composer, { target: { value: 'ask @' } });
 
     const options = await screen.findAllByRole('option');
-    await within(options[0]!).findByText('AJ');
+    const firstOption = options[0];
+    if (!firstOption) throw new Error('Expected at least one mention option');
+    await within(firstOption).findByText('AJ');
     expect(options.map(mentionOptionCopy)).toEqual([
       { badge: 'Person', description: 'adam@example.com', label: 'Adam Juhasz' },
       { badge: 'Person', description: 'samantha@example.com', label: 'Samantha Lee' },
@@ -353,11 +355,15 @@ describe('New work-stream home', () => {
     // Picking someone here puts them in the create request, and the work-stream
     // endpoints refuse a membership that is not active.
     const options = await screen.findAllByRole('option');
-    await within(options[0]!).findByText('AJ');
+    const firstOption = options[0];
+    if (!firstOption) throw new Error('Expected at least one mention option');
+    await within(firstOption).findByText('AJ');
     expect(options.map(mentionOptionCopy)).toEqual([
       { badge: 'Person', description: 'adam@example.com', label: 'Adam Juhasz' },
       { badge: 'Person', description: 'rae@example.com', label: 'Rae Okafor' },
     ]);
+    expect(options[0]).toHaveAccessibleName('Adam Juhasz — adam@example.com — Person');
+    expect(options[1]).toHaveAccessibleName('Rae Okafor — rae@example.com — Person');
 
     fireEvent.keyDown(composer, { key: 'Escape' });
     fireEvent.click(screen.getByRole('button', { name: 'Manage participants: Adam Juhasz' }));
