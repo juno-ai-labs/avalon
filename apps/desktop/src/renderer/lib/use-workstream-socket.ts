@@ -556,10 +556,13 @@ export function useWorkstreamSocket(
   api: WorkstreamSocketApi | null,
   workstreamId: string,
   enabled: boolean,
+  // The pool owns this separately so a hover-warmed control socket survives
+  // the later transition that enables the presence-publishing feed.
+  controlSocketOwnedExternally = false,
 ): WorkstreamSocketConnection {
   const queryClient = useQueryClient();
   const { createMessage: createWorkspaceMessage } = useWorkspaceSocket();
-  useWorkstreamControlSocket(api, workstreamId, enabled);
+  useWorkstreamControlSocket(api, workstreamId, enabled && !controlSocketOwnedExternally);
   const resumeState = useWorkstreamSocketResumeState(workstreamId);
   const [state, setState] = useState<SocketState>('idle');
   const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);

@@ -51,6 +51,7 @@ vi.mock('../lib/telemetry', () => ({
 
 vi.mock('../lib/workstream-socket-pool', () => ({
   useWorkstreamSocketHoverWarmup: (workstreamId: string) => ({
+    onPointerCancel: () => cancelWorkstreamSocketWarmup(workstreamId),
     onPointerEnter: () => startWorkstreamSocketWarmup(workstreamId),
     onPointerLeave: () => cancelWorkstreamSocketWarmup(workstreamId),
   }),
@@ -201,6 +202,9 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.pointerEnter(row);
     expect(startWorkstreamSocketWarmup).toHaveBeenCalledWith(hovered.id);
     fireEvent.pointerLeave(row);
+    expect(cancelWorkstreamSocketWarmup).toHaveBeenCalledWith(hovered.id);
+    cancelWorkstreamSocketWarmup.mockClear();
+    fireEvent.pointerCancel(row);
     expect(cancelWorkstreamSocketWarmup).toHaveBeenCalledWith(hovered.id);
   });
 
