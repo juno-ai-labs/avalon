@@ -204,7 +204,8 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
     const routed = await bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, workstream.id);
     const copied: Record<string, number> = {};
 
-    await createIdentityObjectPort(env, workspaceId, workstream.id).seedFromFixture({
+    const identityPort = createIdentityObjectPort(env, workspaceId, workstream.id);
+    await identityPort.seedFromFixture({
       title: workstream.title,
       // The fixture speaks the published vocabulary because it was captured
       // from an API response; the object stores its own.
@@ -229,7 +230,18 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
       copied[table] = rows.length;
     };
     const scope = { workspace_id: workspaceId, workstream_id: workstream.id };
-    await insert("workstream_participants", workstream.participants, { workstream_id: workstream.id });
+    // Seated through the identity authority rather than inserted: the
+    // participant view is retired, and the fixture's `joined_at` is the ISO
+    // rendering that view produced.
+    for (const participant of workstream.participants) {
+      await identityPort.admitParticipant({
+        userId: String(participant.user_id),
+        addedByUserId: String(participant.added_by_user_id ?? participant.user_id),
+        reason: String(participant.participation_reason ?? "explicit"),
+        now: Date.parse(String(participant.joined_at ?? new Date().toISOString())),
+      });
+    }
+    copied.workstream_participants = workstream.participants.length;
     await insert("harness_runs", workstream.harnessRuns, scope);
     await insertToolReceipts(routed.DB, workstream.toolInvocations, copied);
     await insert("messages", workstream.messages, scope);

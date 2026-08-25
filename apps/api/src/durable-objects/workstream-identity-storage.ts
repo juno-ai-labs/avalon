@@ -304,6 +304,15 @@ export class WorkstreamIdentityStorage {
    * who is already active keeps all three. The routed upsert expressed that as
    * three `CASE WHEN … removed_at IS NOT NULL` arms on one `DO UPDATE`, which
    * is a conditional write standing in for a branch it could not take.
+   *
+   * It also bumps `participant_epoch` and clears `first_opened_at`, which the
+   * retired view's triggers did and which is easy to lose in a conversion:
+   * being put back into a room you were taken out of is being added to it, so
+   * the person is notified again and the work stream is unseen for them again.
+   * The three facts a re-add produces — a new epoch, a fresh notification, an
+   * unseen marker — have to agree, and they only do if one write makes them.
+   * The reset belongs to this direction of the transition and not the other:
+   * being removed is not being shown it again.
    */
   admitParticipant(input: {
     userId: string;
@@ -322,7 +331,9 @@ export class WorkstreamIdentityStorage {
         this.sql.exec(
           `UPDATE participants
               SET status = 'active', removed_at = NULL, participation_reason = ?,
-                  added_by_user_id = ?, added_at = ?, updated_at = ?
+                  added_by_user_id = ?, added_at = ?,
+                  participant_epoch = participant_epoch + 1, first_opened_at = NULL,
+                  updated_at = ?
             WHERE user_id = ?`,
           input.reason,
           input.addedByUserId,
