@@ -133,9 +133,12 @@ run**, **Check run**, and **Repository**. GitHub sends the `installation`,
 automatically; they do not belong in the explicit event selection. Release requires
 Contents read, while Terminal's `full_access` policy mints a single-repository token
 with Contents write so standard `git push` works. The App registration therefore
-keeps the write ceiling while each minted token is narrowed to the selected
-repository and effective access level. Issue dependencies and sub-issues require
-the existing Issues permission, so those subscriptions do not broaden App access.
+keeps the write ceiling. Terminal bootstrap and publisher tokens are narrowed to
+the selected repository and effective access level. The general connector token
+inherits the installation's selected repositories and installed permission ceiling;
+its exposed tools remain independently capability-gated and include no Contents
+write operation. Issue dependencies and sub-issues require the existing Issues
+permission, so those subscriptions do not broaden App access.
 
 The shared setup and webhook host, `github.rallywith.ai`, runs on Rally's
 Global ingress Worker. It verifies GitHub's signature before parsing, maps an
@@ -421,9 +424,11 @@ because it would turn every configured `full_access` repository into a broken wr
 path.
 
 **Consequences:** A future App rename must rotate the slug secret in EU and Global
-and pass regional health plus a fresh installation start. Installation tokens stay
-narrowed per repository and policy even though the App's installed ceiling permits
-Contents writes.
+and pass regional health plus a fresh installation start. Terminal bootstrap and
+publisher tokens stay narrowed per repository and policy even though the App's
+installed ceiling permits Contents writes. General connector tokens retain the
+installation selection and installed permission ceiling, with capability checks
+controlling which operations Rally exposes.
 
 ### 2026-08-12 — Public Notion credentials gate only workspace mode
 
