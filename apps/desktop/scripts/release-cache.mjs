@@ -66,6 +66,7 @@ function sleep(milliseconds) {
 export async function verifyPublicReleaseArtifactHash({
   expectedHash,
   fetchImplementation = fetch,
+  idleTimeoutMilliseconds = 30_000,
   sleepImplementation = sleep,
   url,
 }) {
@@ -82,9 +83,16 @@ export async function verifyPublicReleaseArtifactHash({
 
   let failure = 'no response';
   for (let attempt = 0; attempt < 7; attempt += 1) {
+    const abortController = new AbortController();
+    let idleTimeout;
+    const refreshIdleTimeout = () => {
+      clearTimeout(idleTimeout);
+      idleTimeout = setTimeout(() => abortController.abort(), idleTimeoutMilliseconds);
+    };
     try {
+      refreshIdleTimeout();
       const response = await fetchImplementation(publicUrl, {
-        signal: AbortSignal.timeout(30_000),
+        signal: abortController.signal,
       });
       if (!response.ok) {
         await response.body?.cancel();
@@ -93,12 +101,17 @@ export async function verifyPublicReleaseArtifactHash({
         failure = 'missing response body';
       } else {
         const hash = createHash('sha512');
-        for await (const chunk of response.body) hash.update(chunk);
+        for await (const chunk of response.body) {
+          hash.update(chunk);
+          refreshIdleTimeout();
+        }
         if (hash.digest('base64') === expectedHash) return;
         failure = 'SHA-512 mismatch';
       }
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
+    } finally {
+      clearTimeout(idleTimeout);
     }
     if (attempt < 6) await sleepImplementation(500 * 2 ** attempt);
   }

@@ -6,29 +6,61 @@ import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createR2ReleaseLockClient, withR2ReleaseLock } from './release-r2-lock.mjs';
 
 class FakeR2Client {
+  etagCounter = 0;
+
   failDelete = false;
 
   locked = false;
+
+  lockBody;
+
+  lockEtag;
 
   events = [];
 
   async send(command) {
     if (command instanceof PutObjectCommand) {
-      this.events.push(['put', command.input.IfNoneMatch]);
-      if (this.locked) {
-        const error = new Error('conflict');
-        error.name = 'PreconditionFailed';
-        error.$metadata = { httpStatusCode: 412 };
-        throw error;
+      if (command.input.IfNoneMatch === '*') {
+        this.events.push(['acquire', command.input.Body]);
+        if (this.locked) {
+          const error = new Error('conflict');
+          error.name = 'PreconditionFailed';
+          error.$metadata = { httpStatusCode: 412 };
+          throw error;
+        }
+      } else {
+        this.events.push(['release', command.input.Body, command.input.IfMatch]);
+        if (
+          command.input.IfMatch !== undefined
+          && (!this.locked || command.input.IfMatch !== this.lockEtag)
+        ) {
+          const error = new Error('generation changed');
+          error.name = 'PreconditionFailed';
+          error.$metadata = { httpStatusCode: 412 };
+          throw error;
+        }
       }
       this.locked = true;
-      return { ETag: 'lock-etag' };
+      this.lockBody = command.input.Body;
+      this.etagCounter += 1;
+      this.lockEtag = `etag-${this.etagCounter}`;
+      return { ETag: this.lockEtag };
     }
-    assert.ok(command instanceof DeleteObjectCommand);
+    assert.ok(command instanceof DeleteObjectCommand, 'Expected a lock tombstone delete');
     this.events.push(['delete']);
     if (this.failDelete) throw new Error('delete failed');
     this.locked = false;
+    this.lockBody = undefined;
+    this.lockEtag = undefined;
     return {};
+  }
+
+  recoverAbandonedLock() {
+    if (!this.locked) throw new Error('No abandoned lock to recover');
+    this.locked = false;
+    this.lockBody = undefined;
+    this.lockEtag = undefined;
+    this.events.push(['manual-recovery']);
   }
 }
 
@@ -65,7 +97,50 @@ test('a second publisher cannot enter while the first holds the remote lock', as
 
   releaseFirst();
   await first;
-  assert.deepEqual(client.events, [['put', '*'], ['put', '*'], ['delete']]);
+  assert.deepEqual(client.events, [
+    ['acquire', 'first'],
+    ['acquire', 'second'],
+    ['release', 'released:first', 'etag-1'],
+    ['delete'],
+  ]);
+});
+
+test('a resumed old owner cannot delete a newer publisher lock after manual recovery', async () => {
+  const client = new FakeR2Client();
+  let releaseFirst;
+  const firstCanFinish = new Promise((resolve) => { releaseFirst = resolve; });
+  const firstReports = [];
+  const first = withR2ReleaseLock({
+    bucket: 'releases',
+    client,
+    key: 'stable/release-publish.lock',
+    owner: 'first',
+    operation: async () => { await firstCanFinish; },
+    reportCleanupFailure: (message) => firstReports.push(message),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  client.recoverAbandonedLock();
+  let releaseSecond;
+  const secondCanFinish = new Promise((resolve) => { releaseSecond = resolve; });
+  const second = withR2ReleaseLock({
+    bucket: 'releases',
+    client,
+    key: 'stable/release-publish.lock',
+    owner: 'second',
+    operation: async () => { await secondCanFinish; },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(client.lockBody, 'second');
+
+  releaseFirst();
+  await first;
+  assert.equal(firstReports.length, 1);
+  assert.equal(client.lockBody, 'second');
+
+  releaseSecond();
+  await second;
+  assert.equal(client.locked, false);
 });
 
 test('the remote lock is released when publication fails', async () => {
@@ -110,7 +185,7 @@ test('account token verification derives an R2 S3 client without exposing the to
       return Response.json({
         success: true,
         errors: [],
-        result: { id: 'abcdef0123456789abcdef0123456789', status: 'active' },
+        result: { id: 'ABCDEF0123456789ABCDEF0123456789', status: 'active' },
       });
     },
   });
