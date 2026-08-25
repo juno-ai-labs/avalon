@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 4,
+  "binding": "ANALYTICS_LAKEHOUSE",
+  "deploymentTokenOwner": "account",
+  "namespace": "avalon",
+  "table": "analytics_events",
+  "streamSchema": "config/analytics-events-lakehouse-stream-schema.json",
+  "regions": {
+    "global": {
+      "jurisdiction": "default",
+      "sinkType": "r2_data_catalog",
+      "bucket": "avalon-global-analytics-events-lakehouse",
+      "stream": "avalon_global_analytics_events_lakehouse_stream",
+      "sink": "avalon_global_analytics_events_lakehouse_sink",
+      "pipeline": "avalon_global_analytics_events_lakehouse"
+    }
+  }
+}

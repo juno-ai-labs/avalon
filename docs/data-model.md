@@ -555,7 +555,9 @@ The tables have distinct lifecycles rather than one catch-all event store:
   region-pending queue.
 - `telemetry_accepted_events` and `telemetry_delivery_receipts` make event upload
   idempotent. Global accepted rows are an outbox for PostHog; EU accepted rows are
-  internal-only. `telemetry_eu_events` is an independently expiring semantic
+  internal-only. Global rows also carry the independent
+  `analytics_lakehouse_state` pointer-outbox lifecycle; EU keeps it null so no
+  event crosses into the Global Data Catalog. `telemetry_eu_events` is an independently expiring semantic
   projection with trusted release, platform, channel, launch/session, and
   operation dimensions for regional funnel and reliability queries.
 - `telemetry_identity_links` records the one anonymous-epoch-to-person link.
@@ -729,6 +731,29 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-24 — Accepted Global telemetry gains a second durable projection
+
+**What changed:** Migration 0095 adds nullable `pending`/`queued`/`delivered`
+analytics-lakehouse state and a delivery timestamp to
+`telemetry_accepted_events`, indexes active Global projection work, and seeds
+still-retained Global rows for backfill. EU rows remain null.
+
+**Why:** A Queue pointer needs a durable source and retry state, while copying
+the already validated envelope into another D1 table would pay twice for the
+same data and create a second policy boundary.
+
+**Considered and rejected:** Full-envelope Queue messages, a new D1 event table,
+and adding the state to `delivery_state`. Those respectively exceed transport
+limits for valid events, duplicate the canonical row, or couple independent
+PostHog and lakehouse delivery lifecycles.
+
+**Consequences:** D1 remains operational telemetry rather than analytical
+authority. New Global acceptance rows start pending; EU rows and all product
+state remain outside this projection.
+
+Shipped in the pull request for this change. See
+[`analytics-lakehouse.md`](analytics-lakehouse.md).
 
 ### 2026-08-24 — Active participation is the sole private-reader authority
 

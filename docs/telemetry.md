@@ -300,7 +300,11 @@ clock skew, and commits the accepted row plus receipt before returning `202`.
 Identical event-ID retries acknowledge as duplicates; a different payload under
 the same ID conflicts. EU acceptance also writes the independently expiring
 internal semantic projection. Global acceptance leaves a destination row for the
-five-minute scheduled processor.
+five-minute scheduled processor. It also leaves an independent lakehouse outbox
+state and best-effort enqueues an event-ID/hash pointer. Scheduled recovery
+retries pending pointers; the Global consumer reloads and revalidates the same
+canonical envelope before projecting every admitted context/property field to
+`avalon.analytics_events`. EU never enters that transport.
 
 Global delivery uses stable `$insert_id`, `$session_id`, `$window_id`,
 `$device_id`, `distinct_id`, PostHog workspace groups, `$is_identified`,
@@ -518,7 +522,9 @@ checks.
 also owns the canonical preference/version and opaque projection handle.
 `telemetry_onboarding_journeys` fixes provisional routes. Accepted envelopes,
 receipts, profile jobs, identity links, replay audits, rejection/rate buckets, and
-destination circuit state live in regional D1. `telemetry_eu_events` is the EU
+destination circuit state live in regional D1. Global accepted rows also carry
+the independent analytics-lakehouse pointer state; no second envelope copy is
+stored. `telemetry_eu_events` is the EU
 query projection with release/platform/channel/correlation dimensions.
 Public-site Global epochs reuse the journey table; the content-free, signed
 route probe does not create a row. Its short-lived token is not persisted as
@@ -606,6 +612,31 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-24 — Accepted events feed a governed Global analytics lakehouse
+
+**What changed:** The regional collector now seeds an independent Global
+lakehouse outbox after acceptance. A Queue pointer consumer projects every
+promoted dimension plus the complete validated context/properties into the
+Global `avalon.analytics_events` table; EU remains on its existing internal
+path.
+
+**Why:** Backend and client producers already share one typed, preference-aware,
+region-aware acceptance point. Projecting there preserves those controls and
+makes maximal admitted metadata durable without adding direct client-to-vendor
+authority.
+
+**Considered and rejected:** A second analytics ingestion endpoint, direct
+renderer Pipeline access, arbitrary autocapture, and reusing raw inference
+storage. Each weakens policy or mixes incompatible privacy contracts.
+
+**Consequences:** New event fields continue to be governed in
+`TELEMETRY_EVENTS`; adding arbitrary content remains prohibited. Global delivery
+failure is recovered asynchronously and never changes product behavior. EU
+debugging never falls back to the Global table.
+
+Shipped in the pull request for this change. See
+[`analytics-lakehouse.md`](analytics-lakehouse.md).
 
 ### 2026-08-24 — One drop is one event, whichever listener sees it first
 

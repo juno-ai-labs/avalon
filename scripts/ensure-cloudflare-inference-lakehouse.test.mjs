@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  ensureCloudflareLakehouses,
   ensureInferenceLakehouse,
+  loadAnalyticsLakehouseManifest,
   loadInferenceLakehouseManifest,
 } from './ensure-cloudflare-inference-lakehouse.mjs';
 
@@ -166,6 +168,42 @@ test('an empty account is fully provisioned by one idempotent deploy preflight',
   }
 });
 
+test('one deploy preflight provisions both Global catalogs and materializes both bindings', async () => {
+  const account = accountDouble();
+  const outputDirectory = await mkdtemp(join(tmpdir(), 'avalon-lakehouses-test-'));
+  try {
+    const result = await ensureCloudflareLakehouses({
+      environment,
+      fetchImpl: account.fetchImpl,
+      log: () => {},
+      materializeBindings: true,
+      outputDirectory,
+    });
+    assert.deepEqual([...account.buckets].sort(), [
+      'avalon-global-analytics-events-lakehouse',
+      'avalon-global-inference-lakehouse',
+    ]);
+    assert.deepEqual([...account.catalogs.keys()].sort(), [
+      'avalon-global-analytics-events-lakehouse',
+      'avalon-global-inference-lakehouse',
+    ]);
+    assert.equal(account.entities.streams.size, 2);
+    assert.equal(account.entities.sinks.size, 2);
+    assert.equal(account.entities.pipelines.size, 2);
+    const globalConfig = JSON.parse(await readFile(result.configs.global, 'utf8'));
+    const euConfig = JSON.parse(await readFile(result.configs.eu, 'utf8'));
+    assert.deepEqual(globalConfig.pipelines.map((binding) => binding.binding), [
+      'INFERENCE_LAKEHOUSE',
+      'ANALYTICS_LAKEHOUSE',
+    ]);
+    assert.equal(Object.hasOwn(euConfig, 'pipelines'), false);
+    assert.equal(result.provisioned[1].manifest.binding, 'ANALYTICS_LAKEHOUSE');
+    assert.equal((await loadAnalyticsLakehouseManifest()).table, 'analytics_events');
+  } finally {
+    await rm(outputDirectory, { recursive: true, force: true });
+  }
+});
+
 test('--check reports missing infrastructure without creating any resource', async () => {
   const account = accountDouble();
   await assert.rejects(
@@ -175,7 +213,7 @@ test('--check reports missing infrastructure without creating any resource', asy
       log: () => {},
       create: false,
     }),
-    /Missing inference lakehouse R2 bucket: global\/avalon-global-inference-lakehouse/u,
+    /Missing lakehouse R2 bucket: global\/avalon-global-inference-lakehouse/u,
   );
   assert.equal(account.requests.some((request) => request.method === 'POST'), false);
 });
@@ -298,10 +336,10 @@ test('deployment credential replacement stops before creating conflicting immuta
 
 test('the deploy provisions bindings before migration or Worker deployment', async () => {
   const workflow = await readFile(new URL('../.github/workflows/deploy-api.yml', import.meta.url), 'utf8');
-  const provision = workflow.indexOf('Ensure the Global inference lakehouse and materialize bindings');
+  const provision = workflow.indexOf('Ensure the Global lakehouses and materialize bindings');
   const migrations = workflow.indexOf('List the pending remote migrations for EU');
   const deploy = workflow.indexOf('Deploy the EU Worker');
   assert.ok(provision > 0 && provision < migrations && migrations < deploy);
-  assert.match(workflow, /wrangler deploy --config \.wrangler\.inference\.eu\.json/u);
-  assert.match(workflow, /wrangler deploy --config \.wrangler\.inference\.global\.json/u);
+  assert.match(workflow, /wrangler deploy --config \.wrangler\.lakehouses\.eu\.json/u);
+  assert.match(workflow, /wrangler deploy --config \.wrangler\.lakehouses\.global\.json/u);
 });

@@ -170,7 +170,9 @@ relabelled across regions. Global can retain and deliver its approved product an
 diagnostic records to the US PostHog project. EU retains its semantic projection,
 raw crashes, sanitized reports, symbols, and source maps in EU regional D1,
 dedicated EU R2, and EU-pinned processing; it has no PostHog token or Analytics
-Engine telemetry dataset. The account preference crosses by an opaque handle so
+Engine telemetry dataset. Accepted Global semantic events also project through a
+Global Queue/Pipeline into `avalon.analytics_events`; EU has no equivalent
+producer, binding, catalog, or Global fallback. The account preference crosses by an opaque handle so
 Global can remain the canonical identity plane without receiving an EU database
 identifier. Capability verification and journey closure also use that narrow
 control RPC: the signing key stays in Global, and EU receives only the fixed
@@ -369,6 +371,28 @@ these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
+
+### 2026-08-24 — The analytics-events lakehouse is Global-only
+
+**What changed:** Global accepted backend/client telemetry now projects into a
+separate Global Data Catalog table. EU keeps its existing internal D1/R2
+telemetry path and has no analytics-events Queue, Pipeline, catalog, or bridge.
+
+**Why:** Product analysis benefits from durable typed history, but a Global
+catalog is not an EU-resident destination. The existing regional collector is
+the correct common policy boundary; routing EU through it and then exporting the
+result would still cross the boundary.
+
+**Considered and rejected:** A shared cross-region queue, region-labelled rows
+in one Global table, and a second EU-named bucket without a documented EU Data
+Catalog jurisdiction. Names do not establish residency.
+
+**Consequences:** Global backend and client sources are jointly queryable. EU
+production debugging continues through the restricted regional telemetry API,
+and responders stop rather than querying Global as a substitute.
+
+Shipped in the pull request for this change. See
+[`analytics-lakehouse.md`](analytics-lakehouse.md).
 
 ### 2026-08-24 — Ace's operator directory is named as a regional exception
 

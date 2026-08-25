@@ -5,6 +5,7 @@ import {
 } from "@avalon/contracts/telemetry";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
+import { enqueueAnalyticsLakehousePointer } from "../services/analytics-lakehouse";
 
 export type TelemetryRoutingBasis =
   | "explicit_binding"
@@ -189,8 +190,15 @@ export class TelemetryCollector {
     const stored = await this.env.DB.prepare(
       "SELECT payload_hash FROM telemetry_accepted_events WHERE event_id = ?",
     ).bind(event.eventId).first<{ payload_hash: string }>();
+    const result = stored?.payload_hash === payloadHash ? "accepted" : "conflict";
+    if (result === "accepted" && !isEu) {
+      // D1 is the durable acceptance/outbox boundary. Queue availability must
+      // never change the product request's result; a scheduled recovery pass
+      // retries rows that remain pending.
+      await enqueueAnalyticsLakehousePointer(this.env, event.eventId, payloadHash);
+    }
     return {
-      result: stored?.payload_hash === payloadHash ? "accepted" : "conflict",
+      result,
       eventId: event.eventId,
     };
   }

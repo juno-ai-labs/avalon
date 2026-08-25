@@ -151,12 +151,18 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(eu)).not.toThrow();
   });
 
-  it("requires inference lakehouse bindings in Global but intentionally omits them in EU", () => {
+  it("requires both lakehouse binding pairs in Global but intentionally omits them in EU", () => {
     const global = contractCompleteEnv();
     delete (global as Partial<Env>).INFERENCE_LAKEHOUSE_QUEUE;
     delete (global as Partial<Env>).INFERENCE_LAKEHOUSE;
     expect(() => assertEnvContract(global)).toThrow(
       /INFERENCE_LAKEHOUSE is missing, INFERENCE_LAKEHOUSE_QUEUE is missing/u,
+    );
+    const missingAnalytics = contractCompleteEnv();
+    delete (missingAnalytics as Partial<Env>).ANALYTICS_LAKEHOUSE_QUEUE;
+    delete (missingAnalytics as Partial<Env>).ANALYTICS_LAKEHOUSE;
+    expect(() => assertEnvContract(missingAnalytics)).toThrow(
+      /ANALYTICS_LAKEHOUSE is missing, ANALYTICS_LAKEHOUSE_QUEUE is missing/u,
     );
 
     const eu = contractCompleteEnv({
@@ -167,6 +173,8 @@ describe("environment contract", () => {
     delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
     delete (eu as Partial<Env>).INFERENCE_LAKEHOUSE_QUEUE;
     delete (eu as Partial<Env>).INFERENCE_LAKEHOUSE;
+    delete (eu as Partial<Env>).ANALYTICS_LAKEHOUSE_QUEUE;
+    delete (eu as Partial<Env>).ANALYTICS_LAKEHOUSE;
     expect(() => assertEnvContract(eu)).not.toThrow();
   });
 

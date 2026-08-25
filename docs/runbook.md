@@ -61,11 +61,11 @@ Wrangler validates an R2 binding without proving its named bucket exists. Run
 Wrangler file. It is read-only: the R2 half proves each bucket exists, and the
 queue half reports any queue a deployment would create without creating it
 (`pnpm cloudflare:queues:ensure` creates them from a laptop, for break-glass
-only), and the inference-lakehouse half verifies the complete immutable Global
-resource chain. The API deployment runs the same general R2 check before any
+only), and the lakehouse half verifies both complete immutable Global resource
+chains. The API deployment runs the same general R2 check before any
 remote migration or Worker deploy, creates the missing queues, then creates or
-verifies the Global inference lakehouse and resolves its generated Pipeline
-stream ID. EU has no inference analytical chain by design. A missing general
+verifies both Global lakehouses and resolves their generated Pipeline stream
+IDs. EU has no lakehouse analytical chain by design. A missing general
 bucket is an infrastructure failure even if
 the Wrangler dry build and Worker binding are otherwise deployable.
 
@@ -766,7 +766,7 @@ Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers af
 Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
 
 - `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop and API Vitest suites each use two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
-- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), the inference-lakehouse manifests/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and fully provisions/verifies the Global inference lakehouse before migrations; the EU deploy config intentionally contains no inference binding. It does not create unrelated resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
+- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), either lakehouse manifest/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and fully provisions/verifies both Global lakehouses before migrations; the EU deploy config intentionally contains no lakehouse binding. It does not create unrelated resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
   Migration 0090 is the one destructive exception to normal migration-first ordering: when it is the sole pending migration, compatible Workers deploy before it. The workflow fails closed if 0090 appears beside any other pending migration, because Wrangler applies the complete pending ledger and must never move an ordinary later migration behind the Worker that may require it.
 - `.github/workflows/release-desktop-macos.yml` guards the tag, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, and deploys the landing site. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its `paths:` filter — the files the installed app is built from — bumping the version itself, and on a manual dispatch naming an existing tag. Nothing triggers on a tag.
 
@@ -1611,6 +1611,111 @@ bounded to the directory created by `mktemp`:
 What the feature stores and why is
 [`inference-lakehouse.md`](inference-lakehouse.md); this section is only how to
 read it back.
+
+### Querying analytics events in production
+
+Use the analytics-events lakehouse to debug whether a governed backend or client
+event was accepted and what typed metadata it carried. This is a Global-only
+analytical surface: if the authenticated session is served by
+`eu.api.rallywith.ai`, stop and use the restricted regional telemetry API below.
+Do not query Global as a fallback.
+
+Use Cloudflare's HTTP APIs, not the dashboard. Store a dedicated read token in
+ignored `.env.local` as `ANALYTICS_LAKEHOUSE_API_TOKEN`; it needs R2 SQL Read,
+R2 Data Catalog Read, and R2 Admin Read & Write on the Avalon account. Do not
+reuse the deployment token or put this token in a Worker/client variable.
+
+First query promoted, content-free dimensions in a bounded time window. Choose
+the source deliberately: `api` is backend; `desktop-main`,
+`desktop-renderer`, and `desktop-preload` are native clients; `site` is the
+public web client.
+
+```sql
+SELECT
+  normalized_timestamp,
+  event_id,
+  event_name,
+  source,
+  category,
+  identity_scope,
+  analytics_subject_id,
+  workspace_analytics_id,
+  release,
+  build_id,
+  platform,
+  architecture,
+  channel,
+  operation_id,
+  request_id,
+  trace_id,
+  span_id
+FROM avalon.analytics_events
+WHERE normalized_timestamp >= '2026-08-24T19:00:00Z'
+  AND normalized_timestamp <  '2026-08-24T20:00:00Z'
+  AND source IN ('api', 'desktop-renderer')
+  AND event_name = '<registered-event-name>'
+ORDER BY normalized_timestamp ASC
+LIMIT 200;
+```
+
+Save it as `find-analytics.sql`, then invoke R2 SQL without printing the
+response into a terminal transcript:
+
+```text
+analytics_scratch="$(mktemp -d)"
+analytics_catalog_bucket='avalon-global-analytics-events-lakehouse'
+analytics_request="$analytics_scratch/find-request.json"
+analytics_response="$analytics_scratch/find-response.json"
+node -e 'const fs=require("node:fs"); process.stdout.write(JSON.stringify({query:fs.readFileSync(process.argv[1],"utf8")}))' \
+  "$analytics_scratch/find-analytics.sql" > "$analytics_request"
+pnpm exec dotenv -e .env.local -- sh -c '
+  curl --fail-with-body --silent --show-error \
+    --request POST \
+    "https://api.sql.cloudflarestorage.com/api/v1/accounts/${CLOUDFLARE_ACCOUNT_ID}/r2-sql/query/$1" \
+    --header "Authorization: Bearer ${ANALYTICS_LAKEHOUSE_API_TOKEN}" \
+    --header "Content-Type: application/json" \
+    --data-binary "@$2" \
+    --output "$3"
+' _ "$analytics_catalog_bucket" "$analytics_request" "$analytics_response"
+```
+
+Pipeline files roll every 300 seconds, so wait roughly one roll interval before
+concluding a just-accepted event is missing. Queue/Pipeline delivery is
+at-least-once; treat rows sharing `event_id` as one logical event. After choosing
+one opaque event ID, retrieve its full admitted metadata only when necessary:
+
+```sql
+SELECT
+  normalized_timestamp,
+  event_id,
+  event_name,
+  source,
+  context,
+  properties
+FROM avalon.analytics_events
+WHERE event_id = '<event-uuid>'
+LIMIT 10;
+```
+
+Write that response to the scratch directory too. Although the telemetry schema
+is content-free, identifiers and diagnostic properties are still production
+data: do not paste them into logs, tickets, commits, or an agent response. Delete
+the scratch directory when the investigation ends.
+
+To distinguish capture from export failure without the web interface, query the
+Global D1 outbox and Queue metadata through the APIs/CLI:
+
+```text
+pnpm --filter @avalon/api exec wrangler d1 execute avalon-global --remote \
+  --command "SELECT event_id, analytics_lakehouse_state, accepted_at, analytics_lakehouse_delivered_at FROM telemetry_accepted_events WHERE event_id = '<event-uuid>'"
+pnpm exec dotenv -e .env.local -- wrangler queues info avalon-global-analytics-events-lakehouse
+pnpm exec dotenv -e .env.local -- wrangler queues info avalon-global-analytics-events-lakehouse-dead-letter
+```
+
+`pending` means the scheduled recovery pass has not successfully enqueued the
+pointer; `queued` means Queue owns delivery (including a possible DLQ outcome);
+`delivered` means the Worker handed the row to Pipeline, not that the current
+Parquet roll is already queryable. A non-empty DLQ is the escalation signal.
 
 ## Regional telemetry
 
