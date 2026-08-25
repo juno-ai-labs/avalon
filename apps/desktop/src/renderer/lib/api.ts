@@ -127,15 +127,22 @@ function networkApiError(message: string, cause?: unknown): ApiError {
 }
 
 /**
- * A response that fails the client's own copy of the wire schema is not a
- * network failure or a server bug report — the server built and validated the
- * same bytes against the same shared schema. The one thing that reliably
- * explains the two copies disagreeing is that this process has been running
- * across a deploy: the API changed shape and this build has not yet picked up
- * the matching client. Rally checks for an update every few hours and still
- * waits for the person to confirm the restart, so a stale process can outlive
- * a shape change by a long margin — long enough that a bare "unexpected
- * response" reads as unrecoverable when restarting the app is the fix.
+ * For a schema shared with the server — `WireAutomationDraftStreamEventSchema`
+ * below is one — a response that fails the client's own copy is not a network
+ * failure or a server bug report: the server built and validated the same
+ * bytes against the same shared schema, so the two copies disagreeing is best
+ * explained by this process running stale (or, less often, ahead) across a
+ * deploy. Rally checks for an update every few hours and still waits for the
+ * person to confirm the restart, so a stale process can outlive a shape
+ * change by a long margin — long enough that a bare "unexpected response"
+ * reads as unrecoverable when restarting the app is the fix.
+ *
+ * A good few of the schemas below are not shared, though — envelopes this
+ * file declares locally (`wireAutomationPageSchema` and its neighbors), which
+ * nothing on the server validates against. A mismatch there can be an
+ * ordinary client-side bug in one of those, and restarting will not help; the
+ * message still says "usually" for exactly that reason, and `details.issues`
+ * carries the actual diagnosis either way.
  */
 const STALE_BUILD_RESPONSE_MESSAGE =
   "Rally received a response it doesn't recognize. Restarting Rally usually fixes this by finishing a pending update — try that, then retry.";

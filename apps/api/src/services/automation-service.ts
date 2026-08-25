@@ -16,6 +16,7 @@ import type {
 import { z } from "zod";
 import { AutomationCompilerError, OpenRouterError } from "@rally/agent-harness";
 import { ConnectorError } from "@rally/connectors";
+import { isReconnectRequiredConnectorError } from "./connector-connection-access";
 import type { AutomationCompilerStreamEvent } from "@rally/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
@@ -348,19 +349,28 @@ export class AutomationService {
         });
       }
       if (error instanceof ConnectorError) {
-        // Raised while the compiler was inspecting a connector's own tools —
-        // a revoked token, a provider outage, or a plugin exposing more
-        // dynamic tools than Avalon will read. Left unmapped, this fell
-        // through to the generic 500 below with no hint of which connector
-        // or why, indistinguishable from an actual defect in the compiler.
-        const needsReconnect = error.code === "unauthorized" || error.code === "invalid_configuration";
+        // Not raised by a connector's own tool inspection or a tool call mid-
+        // compile — both are caught closer to their source and never reach
+        // here: `loadAutomationCreatorPluginCatalog` swallows a failing
+        // connector's dynamic-tool discovery and drops it from the catalog
+        // rather than aborting the compile (`integrations.ts`'s
+        // `dynamic_connector_tools_unavailable` catch), and a tool call
+        // during the compile itself is fed back to the model rather than
+        // thrown. What does reach here is `connectorRegistryForEnv`'s own
+        // construction failing, or an automation naming a `connector_type`
+        // this environment does not register at all — both environment
+        // defects, not something reconnecting or retrying fixes on its own.
+        // `isReconnectRequiredConnectorError` is the one shape that would
+        // call for reconnecting; nothing on this path can produce it today,
+        // but the check stays correct if that ever changes.
+        const reconnect = isReconnectRequiredConnectorError(error);
         throw new ApiError(
           502,
           "automation_connector_failed",
-          needsReconnect
-            ? "Avalon could not use that connector. Reconnect it and try again."
-            : "Avalon could not inspect that connector's tools. Try again.",
-          { connectorErrorCode: error.code, retryable: !needsReconnect },
+          reconnect
+            ? "Rally could not use that connector. Reconnect it and try again."
+            : "Rally could not use that connector in this environment.",
+          { connectorErrorCode: error.code, retryable: false },
         );
       }
       throw error;
