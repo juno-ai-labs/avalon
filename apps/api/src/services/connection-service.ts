@@ -719,7 +719,7 @@ export class ConnectionService {
       throw new ApiError(422, "invalid_connector_capabilities", "Choose supported GitHub capabilities");
     }
     if (!this.env.GITHUB_APP_SLUG || !githubConnectorConfig(this.env)) {
-      throw new ApiError(503, "github_app_unavailable", "The Avalon GitHub App is not configured");
+      throw new ApiError(503, "github_app_unavailable", "The Rally GitHub App is not configured");
     }
     // The public App has one setup URL. Keep the unpredictable value in this
     // regional D1 row and expose only the region as a routing prefix.
@@ -759,7 +759,7 @@ export class ConnectionService {
     const oauthExpiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
     if (attemptId) await this.extendOAuthAttempt(attemptId, oauthExpiresAt);
     const config = githubConnectorConfig(this.env);
-    if (!config) throw new ApiError(503, "github_app_unavailable", "The Avalon GitHub App is not configured");
+    if (!config) throw new ApiError(503, "github_app_unavailable", "The Rally GitHub App is not configured");
     const installation = await getGitHubInstallation(config, installationId, AbortSignal.timeout(15_000));
     if (String(installation.id ?? "") !== installationId) {
       throw new ApiError(401, "github_installation_mismatch", "GitHub returned a different App installation");
@@ -2844,7 +2844,7 @@ export class ConnectionService {
     const adapter = this.registry().get("github");
     const connectorConfig = githubConnectorConfig(this.env);
     if (!connectorConfig) {
-      throw new ApiError(503, "github_app_unavailable", "The Avalon GitHub App is not configured in this region");
+      throw new ApiError(503, "github_app_unavailable", "The Rally GitHub App is not configured in this region");
     }
     const discovery = await withAuthorizedConnection(
       this.env,
