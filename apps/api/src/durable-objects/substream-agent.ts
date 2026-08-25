@@ -97,6 +97,7 @@ import { refreshWorkstreamName } from "../services/workstream-naming-service";
 import {
   objectOwnsWorkstreamAuthorities,
   withLocalWorkstreamAuthorities,
+  type LocalAuthorityExecutor,
 } from "../runtime/local-authorities";
 import { withWorkstreamRuntimeDatabase } from "../services/workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
@@ -1118,20 +1119,23 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * already.
    */
   private async acceptToolReceiptOperation(request: Request): Promise<Response> {
-    const parsed = ToolReceiptOperationRequestSchema.safeParse(
-      await request.json().catch(() => null),
-    );
+    const outcome = await this.toolReceiptOperationOutcome(await request.json().catch(() => null));
+    return jsonResponse(outcome.payload, outcome.status);
+  }
+
+  private async toolReceiptOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
+    const parsed = ToolReceiptOperationRequestSchema.safeParse(body);
     if (!parsed.success) {
-      return jsonResponse({ ok: false, error: "invalid_tool_receipt_operation" }, 400);
+      return { status: 400, payload: { ok: false, error: "invalid_tool_receipt_operation" } };
     }
     const refusal = this.objectPortRefusal(
       parsed.data,
       "workstream_tool_receipt_identity_mismatch",
     );
-    if (refusal) return jsonResponse(refusal.payload, refusal.status);
+    if (refusal) return refusal;
     const method = this.toolReceipts[parsed.data.operation] as (...args: unknown[]) => unknown;
     const value = method.apply(this.toolReceipts, parsed.data.args);
-    return jsonResponse({ ok: true, value: value ?? null });
+    return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
   /**
@@ -1197,14 +1201,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * the first one landed.
    */
   private async acceptSchedulingOperation(request: Request): Promise<Response> {
-    const parsed = SchedulingOperationRequestSchema.safeParse(
-      await request.json().catch(() => null),
-    );
+    const outcome = await this.schedulingOperationOutcome(await request.json().catch(() => null));
+    return jsonResponse(outcome.payload, outcome.status);
+  }
+
+  private async schedulingOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
+    const parsed = SchedulingOperationRequestSchema.safeParse(body);
     if (!parsed.success) {
-      return jsonResponse({ ok: false, error: "invalid_scheduling_operation" }, 400);
+      return { status: 400, payload: { ok: false, error: "invalid_scheduling_operation" } };
     }
     const refusal = this.objectPortRefusal(parsed.data, "workstream_scheduling_identity_mismatch");
-    if (refusal) return jsonResponse(refusal.payload, refusal.status);
+    if (refusal) return refusal;
     const method = this.scheduling[parsed.data.operation] as (...args: unknown[]) => unknown;
     const mutates = mutatesWakeups(parsed.data.operation);
     const value = mutates
@@ -1234,7 +1241,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         });
       }
     }
-    return jsonResponse({ ok: true, value: value ?? null });
+    return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
   /**
@@ -1359,20 +1366,25 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * from an empty table.
    */
   private async acceptBlockDashboardOperation(request: Request): Promise<Response> {
-    const parsed = BlockDashboardOperationRequestSchema.safeParse(
+    const outcome = await this.blockDashboardOperationOutcome(
       await request.json().catch(() => null),
     );
+    return jsonResponse(outcome.payload, outcome.status);
+  }
+
+  private async blockDashboardOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
+    const parsed = BlockDashboardOperationRequestSchema.safeParse(body);
     if (!parsed.success) {
-      return jsonResponse({ ok: false, error: "invalid_block_dashboard_operation" }, 400);
+      return { status: 400, payload: { ok: false, error: "invalid_block_dashboard_operation" } };
     }
     const refusal = this.objectPortRefusal(
       parsed.data,
       "workstream_block_dashboard_identity_mismatch",
     );
-    if (refusal) return jsonResponse(refusal.payload, refusal.status);
+    if (refusal) return refusal;
     const method = this.blockDashboard[parsed.data.operation] as (...args: unknown[]) => unknown;
     const value = method.apply(this.blockDashboard, parsed.data.args);
-    return jsonResponse({ ok: true, value: value ?? null });
+    return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
   private async acceptTerminalOperation(request: Request): Promise<Response> {
@@ -2694,14 +2706,24 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.externalSubstreamId(),
       { workspaceId, workstreamId, substreamId },
     )) return routed;
+    // Each authority is installed as its *endpoint*, never as its storage: the
+    // endpoint is what refuses a fenced object, commits the directory
+    // projection with the row, and re-arms the alarm a wake-up write moved.
+    // Handing down the tables would drop all three for the caller running
+    // closest to them.
+    const resident = (
+      outcome: (body: unknown) => Promise<ObjectPortOutcome>,
+    ): LocalAuthorityExecutor => async (operation, args) => (
+      await outcome({ workspaceId, workstreamId, operation, args })
+    ).payload as { ok?: boolean; value?: unknown; error?: string };
     return withLocalWorkstreamAuthorities(routed, workspaceId, workstreamId, {
-      blockDashboard: this.blockDashboard,
-      harnessRun: this.harnessRuns,
-      identity: this.identityRows,
-      message: this.messages,
-      resource: this.resources,
-      scheduling: this.scheduling,
-      toolReceipt: this.toolReceipts,
+      blockDashboard: resident((body) => this.blockDashboardOperationOutcome(body)),
+      harnessRun: resident((body) => this.harnessRunOperationOutcome(body)),
+      identity: resident((body) => this.identityOperationOutcome(body)),
+      message: resident((body) => this.messageOperationOutcome(body)),
+      resource: resident((body) => this.resourceOperationOutcome(body)),
+      scheduling: resident((body) => this.schedulingOperationOutcome(body)),
+      toolReceipt: resident((body) => this.toolReceiptOperationOutcome(body)),
       terminal: (operation, args) => this.runTerminalOperation({
         workspaceId,
         workstreamId,

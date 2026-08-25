@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import {
   objectOwnsWorkstreamAuthorities,
   withLocalWorkstreamAuthorities,
+  type LocalAuthorityExecutor,
 } from "../src/runtime/local-authorities";
 import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-object-schema";
 import { WorkstreamToolReceiptStorage } from "../src/durable-objects/workstream-tool-receipt-storage";
@@ -35,7 +36,25 @@ const OTHER_WORKSTREAM = "33333333-3333-4333-8333-333333333333";
 const THIRD_WORKSTREAM = "44444444-4444-4444-8444-444444444444";
 
 /**
- * The real storage over `node:sqlite`, which is what this seam exists to reach.
+ * An installed authority, in the shape the owning object installs one.
+ *
+ * The registry holds *endpoints*, not tables — in the object the endpoint is
+ * what refuses a fenced request and commits the projection — so this wraps the
+ * real storage in the smallest thing with an endpoint's answer shape. What the
+ * real endpoint adds on top is proved where it exists, on workerd, in
+ * `test-workers/tool-receipt-authority.test.ts`.
+ */
+function residentReceipts(): LocalAuthorityExecutor {
+  const receipts = storage();
+  return async (operation, args) => {
+    const method = receipts[operation as keyof WorkstreamToolReceiptStorage] as
+      (...rest: unknown[]) => unknown;
+    return { ok: true, value: method.apply(receipts, args) ?? null };
+  };
+}
+
+/**
+ * The real storage over `node:sqlite`, which is what the executor above reaches.
  *
  * No double: the storage runs here perfectly well, and a stand-in would prove
  * only that the port called something. The schema is applied and nothing is
@@ -82,7 +101,7 @@ function env(): Env {
 
 describe("a tool-receipt port built inside the object that owns the receipts", () => {
   it("answers out of the carried storage instead of dispatching", async () => {
-    const carried = withLocalWorkstreamAuthorities(env(), WORKSPACE, WORKSTREAM, { toolReceipt: storage() });
+    const carried = withLocalWorkstreamAuthorities(env(), WORKSPACE, WORKSTREAM, { toolReceipt: residentReceipts() });
 
     const port = createToolReceiptObjectPort(carried, WORKSPACE, WORKSTREAM);
 
@@ -90,7 +109,7 @@ describe("a tool-receipt port built inside the object that owns the receipts", (
   });
 
   it("still dispatches for a different work stream on the same environment", async () => {
-    const carried = withLocalWorkstreamAuthorities(env(), WORKSPACE, WORKSTREAM, { toolReceipt: storage() });
+    const carried = withLocalWorkstreamAuthorities(env(), WORKSPACE, WORKSTREAM, { toolReceipt: residentReceipts() });
 
     const port = createToolReceiptObjectPort(carried, WORKSPACE, OTHER_WORKSTREAM);
 
@@ -105,13 +124,13 @@ describe("a tool-receipt port built inside the object that owns the receipts", (
       env(),
       WORKSPACE,
       WORKSTREAM,
-      { toolReceipt: storage() },
+      { toolReceipt: residentReceipts() },
     );
     const second = withLocalWorkstreamAuthorities(
       first,
       WORKSPACE,
       OTHER_WORKSTREAM,
-      { toolReceipt: storage() },
+      { toolReceipt: residentReceipts() },
     );
 
     // A later registration must not shadow an earlier one. The object installs

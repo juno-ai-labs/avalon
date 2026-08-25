@@ -29,29 +29,60 @@ import type { Env } from "../env";
 import type { TerminalOperationExecutor } from "../services/terminal/object-port";
 
 /**
- * The authorities a `SubstreamAgent` can serve out of its own storage.
+ * One authority's operations, as the object that owns them runs them.
+ *
+ * **Not the storage.** An endpoint is not a thin wrapper around its table: it
+ * refuses a request addressed to another work stream, to a non-main substream,
+ * or to an object whose `authority_mode` is no longer `authoritative`; it runs a
+ * mutating operation inside `commitRuntimeMutation` so the row and the directory
+ * projection that renders it are one commit; and the scheduling endpoint
+ * re-derives the timer index and arms the next alarm before answering. Handing
+ * down the storage instead would drop all of that silently for exactly the
+ * callers running closest to the data — stale sidebar previews, wake-ups that
+ * never fire, and writes accepted against a quarantined object.
+ *
+ * So an executor is the endpoint's own body, and answers what the wire answers:
+ * the same `{ ok, value }` on success and the same `{ ok: false, error }` on a
+ * refusal, so `createObjectPort` interprets both the same way and a local caller
+ * cannot observe which one it got.
+ */
+export type LocalAuthorityExecutor = (
+  operation: string,
+  args: unknown[],
+) => Promise<{ ok?: boolean; value?: unknown; error?: string }>;
+
+/**
+ * The authorities a `SubstreamAgent` can serve without leaving the isolate.
  *
  * One name per object port, and the ports are the eight in this directory plus
  * Terminal, whose port predates them. A caller supplies what it owns; anything
  * absent keeps resolving the way it did, which is what makes adding an
  * authority a change to this file rather than to every caller of one.
- *
- * The value is the storage each port already accepts as its in-isolate
- * override, or — for Terminal, whose object wraps every operation in an alarm
- * and transaction boundary — the executor that owns that boundary.
  */
 export interface LocalWorkstreamAuthorities {
-  blockDashboard?: object;
-  harnessRun?: object;
-  identity?: object;
-  message?: object;
-  resource?: object;
-  scheduling?: object;
+  blockDashboard?: LocalAuthorityExecutor;
+  harnessRun?: LocalAuthorityExecutor;
+  identity?: LocalAuthorityExecutor;
+  message?: LocalAuthorityExecutor;
+  resource?: LocalAuthorityExecutor;
+  scheduling?: LocalAuthorityExecutor;
+  // Terminal's own executor predates this registry and already answers by
+  // throwing its typed failure rather than returning one, so it keeps that
+  // shape and its port keeps reading it.
   terminal?: TerminalOperationExecutor;
-  toolReceipt?: object;
+  toolReceipt?: LocalAuthorityExecutor;
 }
 
 export type WorkstreamAuthority = keyof LocalWorkstreamAuthorities;
+
+/**
+ * The authorities a generic object port can speak for.
+ *
+ * Terminal is excluded because its port predates `createObjectPort` and its
+ * executor answers by throwing a typed failure rather than returning one. The
+ * exclusion is what lets a port read this registry without a cast.
+ */
+export type ObjectPortAuthority = Exclude<WorkstreamAuthority, "terminal">;
 
 /** The work stream a set of authorities belongs to. */
 export interface WorkstreamAuthorityScope {
