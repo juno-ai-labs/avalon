@@ -25,7 +25,7 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
@@ -39,9 +39,16 @@ import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
 import {
   currentSurfaceEntrypoint,
+  cancelWorkstreamFeedOpen,
+  markWorkstreamFeedCacheState,
+  markWorkstreamFeedDataReady,
+  markWorkstreamFeedSocketLease,
+  reportWorkstreamFeedAfterPaint,
   reportTelemetryProductIntent,
   telemetryCountBucket,
   telemetryVisibility,
+  workstreamFeedOpenCacheState,
+  workstreamFeedOpenRequestId,
   workstreamNavigation,
 } from '../lib/telemetry';
 import {
@@ -65,7 +72,7 @@ import {
   reconcileCanonicalTranscript,
   type SocketState,
 } from '../lib/use-workstream-socket';
-import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
+import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
@@ -759,6 +766,7 @@ export function RunStoppedNotice({
 
 export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
+  const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
   const navigate = useNavigate();
   const { api, session } = useAppSession();
   const featureFlags = useClientFeatureFlags(api);
@@ -840,8 +848,15 @@ export function WorkstreamScreen(): React.JSX.Element {
   // onto whichever it starts first, which is hook declaration order. A queryFn
   // that writes the panel preference sitting beside one that does not would make
   // that ordering load-bearing, so neither has a side effect the other lacks.
+  markWorkstreamFeedSocketLease(id, readSocketOpenContext().socketLeaseId);
+  markWorkstreamFeedCacheState(
+    id,
+    queryClient.getQueryData(['messages', id]) !== undefined
+      ? 'feed_cached'
+      : queryClient.getQueryData(['workstream', id]) !== undefined ? 'detail_cached' : 'cold',
+  );
   const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal) => {
-    const detail = await api!.getWorkstream(id, signal);
+    const detail = await api!.getWorkstream(id, signal, workstreamFeedOpenRequestId(id));
     // The detail carries the panel preference for the case where it arrives
     // before the control socket's boot frame. Null means this frame did not
     // carry it — the SubstreamAgent snapshot embeds the same shape and leaves
@@ -931,6 +946,36 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && id),
     staleTime: 2_000,
   });
+  useEffect(() => {
+    if (workstream.isError || messages.isError) {
+      cancelWorkstreamFeedOpen(id, performance.now(), readSocketOpenContext().socketLeaseId);
+    }
+  }, [id, messages.isError, readSocketOpenContext, workstream.isError]);
+  const initialFeedTelemetrySnapshotRef = useRef<{
+    feedSource: 'feed_cache' | 'boot_payload' | 'legacy_page';
+    messageCount: ReturnType<typeof telemetryCountBucket>;
+  } | null>(null);
+  if (workstream.data && messages.data) {
+    initialFeedTelemetrySnapshotRef.current = {
+      feedSource: workstreamFeedOpenCacheState(id) === 'feed_cached'
+        ? 'feed_cache'
+        : workstream.data.resumeFeed !== undefined || workstream.data.messageFeed !== undefined
+          ? 'boot_payload'
+          : 'legacy_page',
+      messageCount: telemetryCountBucket(messages.data.length),
+    };
+  }
+  useLayoutEffect(() => {
+    if (!workstream.isSuccess || !messages.isSuccess || !initialFeedTelemetrySnapshotRef.current
+      || !markWorkstreamFeedDataReady(id)) return;
+    const snapshot = initialFeedTelemetrySnapshotRef.current;
+    return reportWorkstreamFeedAfterPaint(
+      id,
+      snapshot.feedSource,
+      snapshot.messageCount,
+      readSocketOpenContext().socketLeaseId,
+    );
+  }, [id, messages.isSuccess, readSocketOpenContext, workstream.isSuccess]);
   const deferredContext = useQuery({
     queryKey: ['workstream-context', id, workstream.data?.automationSubscriptionId ?? null],
     queryFn: ({ signal }) => api!.getWorkstreamContext(id, workstream.data?.automationSubscriptionId, signal),

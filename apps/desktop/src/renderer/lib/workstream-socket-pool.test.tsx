@@ -10,6 +10,9 @@ import {
   retainedWorkstreamSocketIds,
   useRetainedWorkstreamSocket,
   useWorkstreamSocketHoverWarmup,
+  useWorkstreamSocketOpenContext,
+  useWorkstreamSocketOpenState,
+  type WorkstreamSocketOpenContext,
 } from './workstream-socket-pool';
 
 const workspaceCreateMessage = vi.hoisted(() => vi.fn());
@@ -102,6 +105,28 @@ function HoverWarmTarget({
   return <button {...warmup}>Warm work stream</button>;
 }
 
+function OpenStateTarget({
+  onRead,
+  workstreamId,
+}: {
+  onRead: (state: 'retained_pair' | 'control_warmup' | 'cold') => void;
+  workstreamId: string;
+}): React.JSX.Element {
+  const readOpenState = useWorkstreamSocketOpenState(workstreamId);
+  return <button onClick={() => onRead(readOpenState())}>Read pool state</button>;
+}
+
+function OpenContextTarget({
+  onRead,
+  workstreamId,
+}: {
+  onRead: (context: WorkstreamSocketOpenContext) => void;
+  workstreamId: string;
+}): React.JSX.Element {
+  const readOpenContext = useWorkstreamSocketOpenContext(workstreamId);
+  return <button onClick={() => onRead(readOpenContext())}>Read pool context</button>;
+}
+
 async function flushPromises(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -174,13 +199,22 @@ describe('WorkstreamSocketPool', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApi();
     const workstreamId = '00000000-0000-7000-8000-000000000639';
+    const onRead = vi.fn();
+    const onReadContext = vi.fn();
     const view = render(
       <WorkstreamSocketPool activeWorkstreamId={null} api={api} backgroundWorkstreamIds={[]}>
         <HoverWarmTarget workstreamId={workstreamId} />
         <ActiveConnection api={api} enabled={false} workstreamId={workstreamId} />
+        <OpenStateTarget onRead={onRead} workstreamId={workstreamId} />
+        <OpenContextTarget onRead={onReadContext} workstreamId={workstreamId} />
       </WorkstreamSocketPool>,
       { wrapper: createWrapper() },
     );
+
+    fireEvent.click(view.getByRole('button', { name: 'Read pool state' }));
+    expect(onRead).toHaveBeenLastCalledWith('cold');
+    fireEvent.click(view.getByRole('button', { name: 'Read pool context' }));
+    expect(onReadContext).toHaveBeenLastCalledWith({ state: 'cold' });
 
     fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm work stream' }));
     act(() => vi.advanceTimersByTime(1_000));
@@ -189,11 +223,21 @@ describe('WorkstreamSocketPool', () => {
     if (!warmedControl) throw new Error('The hovered work stream opened no control socket.');
     expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
     expect(api.getSocketTicket).not.toHaveBeenCalled();
+    fireEvent.click(view.getByRole('button', { name: 'Read pool state' }));
+    expect(onRead).toHaveBeenLastCalledWith('control_warmup');
+    fireEvent.click(view.getByRole('button', { name: 'Read pool context' }));
+    const warmedContext = onReadContext.mock.lastCall?.[0] as WorkstreamSocketOpenContext;
+    expect(warmedContext).toEqual({
+      state: 'control_warmup',
+      socketLeaseId: expect.stringMatching(/^[0-9a-f-]{36}$/u),
+    });
 
     view.rerender(
       <WorkstreamSocketPool activeWorkstreamId={workstreamId} api={api} backgroundWorkstreamIds={[]}>
         <HoverWarmTarget workstreamId={workstreamId} />
         <ActiveConnection api={api} enabled workstreamId={workstreamId} />
+        <OpenStateTarget onRead={onRead} workstreamId={workstreamId} />
+        <OpenContextTarget onRead={onReadContext} workstreamId={workstreamId} />
       </WorkstreamSocketPool>,
     );
     await flushPromises();
@@ -206,6 +250,13 @@ describe('WorkstreamSocketPool', () => {
     ]);
     expect(FakeWebSocket.instances[0]).toBe(warmedControl);
     expect(warmedControl.close).not.toHaveBeenCalled();
+    fireEvent.click(view.getByRole('button', { name: 'Read pool state' }));
+    expect(onRead).toHaveBeenLastCalledWith('retained_pair');
+    fireEvent.click(view.getByRole('button', { name: 'Read pool context' }));
+    expect(onReadContext).toHaveBeenLastCalledWith({
+      state: 'retained_pair',
+      socketLeaseId: warmedContext.socketLeaseId,
+    });
   });
 
   it('keeps at most one unopened control socket warm', async () => {
