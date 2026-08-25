@@ -260,6 +260,13 @@
         "dead_letter_queue": "avalon-global-access-revocations-dead-letter"
       },
       {
+        "queue": "avalon-global-product-feature-flags",
+        "max_batch_size": 100,
+        "max_batch_timeout": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-global-product-feature-flags-dead-letter"
+      },
+      {
         "queue": "avalon-global-migration-commands",
         // Operator-initiated forced migrations, one message per Durable Object.
         // The batch is the maximum and the wait is long on purpose, and neither

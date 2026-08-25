@@ -1,0 +1,44 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "avalon-ace",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-24",
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "APP_ENV": "production",
+    "APP_VERSION": "0.1.0",
+    "ACCESS_TEAM_DOMAIN": "juno-labs.cloudflareaccess.com",
+    // Ace needs its own audience even though its Access policy mirrors the
+    // migration tracker. Empty fails closed until the application is created.
+    "ACCESS_APPLICATION_AUD": "injected-by-automated-deploy",
+    "CLOUDFLARE_ACCOUNT_ID": "53b7fc25c8df9aa77cf183853cb2ce43",
+    "FLAGSHIP_APP_ID": "bec01d3a-d6b6-4d8c-b89a-37440ed63b8c"
+  },
+  "routes": [{ "pattern": "ace.internal.rallywith.ai", "custom_domain": true }],
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    { "binding": "GLOBAL_DB", "database_name": "avalon-global", "database_id": "3802fdab-e21c-4313-beb2-c1defb37f253", "remote": true },
+    { "binding": "EU_DB", "database_name": "avalon-eu", "database_id": "099eb3bf-4291-4a0f-a051-645e5c338881", "remote": true }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "PRODUCT_FLAG_CHANGE_QUEUE", "queue": "avalon-product-feature-flag-changes" },
+      { "binding": "GLOBAL_PRODUCT_FLAG_QUEUE", "queue": "avalon-global-product-feature-flags" },
+      { "binding": "EU_PRODUCT_FLAG_QUEUE", "queue": "avalon-eu-product-feature-flags" }
+    ],
+    "consumers": [{
+      "queue": "avalon-product-feature-flag-changes",
+      "max_batch_size": 10,
+      "max_batch_timeout": 1,
+      "max_retries": 5,
+      "dead_letter_queue": "avalon-product-feature-flag-changes-dead-letter"
+    }]
+  },
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
+}

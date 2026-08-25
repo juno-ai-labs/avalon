@@ -70,26 +70,35 @@ test('the queue inventory comes from every Wrangler file that binds one', async 
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-activities' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-inference-lakehouse' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-access-revocations' },
+    { surface: 'api-global', role: 'consumer', name: 'avalon-global-product-feature-flags' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-migration-commands' },
     { surface: 'api-eu', role: 'producer:ACTIVITY_QUEUE', name: 'avalon-eu-activities' },
     { surface: 'api-eu', role: 'producer:ACCESS_REVOCATION_QUEUE', name: 'avalon-eu-access-revocations' },
     { surface: 'api-eu', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
     { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-activities' },
     { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-access-revocations' },
+    { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-product-feature-flags' },
     { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-migration-commands' },
     { surface: 'migration-tracker', role: 'producer:GLOBAL_MIGRATION_COMMAND_QUEUE', name: 'avalon-global-migration-commands' },
     { surface: 'migration-tracker', role: 'producer:EU_MIGRATION_COMMAND_QUEUE', name: 'avalon-eu-migration-commands' },
     { surface: 'migration-tracker', role: 'consumer', name: 'avalon-migration-reports' },
+    { surface: 'ace', role: 'producer:PRODUCT_FLAG_CHANGE_QUEUE', name: 'avalon-product-feature-flag-changes' },
+    { surface: 'ace', role: 'producer:GLOBAL_PRODUCT_FLAG_QUEUE', name: 'avalon-global-product-feature-flags' },
+    { surface: 'ace', role: 'producer:EU_PRODUCT_FLAG_QUEUE', name: 'avalon-eu-product-feature-flags' },
+    { surface: 'ace', role: 'consumer', name: 'avalon-product-feature-flag-changes' },
   ]);
   assert.deepEqual(createdOnDeploy.map((queue) => queue.name), [
     'avalon-global-activities-dead-letter',
     'avalon-global-inference-lakehouse-dead-letter',
     'avalon-global-access-revocations-dead-letter',
+    'avalon-global-product-feature-flags-dead-letter',
     'avalon-global-migration-commands-dead-letter',
     'avalon-eu-activities-dead-letter',
     'avalon-eu-access-revocations-dead-letter',
+    'avalon-eu-product-feature-flags-dead-letter',
     'avalon-eu-migration-commands-dead-letter',
     'avalon-migration-reports-dead-letter',
+    'avalon-product-feature-flag-changes-dead-letter',
   ]);
 });
 
@@ -98,16 +107,19 @@ test('against an empty account, exactly the queues the Wrangler files require ar
 
   await ensureRequiredQueues({ environment, log: () => {}, fetchImpl: account.fetchImpl });
 
-  // Eight names from eighteen bindings; no dead-letter queue among them.
+  // Eleven names from twenty-three bindings; no dead-letter queue among them.
   assert.deepEqual(account.created.map((request) => request.body.queue_name), [
     'avalon-global-activities',
     'avalon-global-inference-lakehouse',
     'avalon-global-access-revocations',
     'avalon-migration-reports',
+    'avalon-global-product-feature-flags',
     'avalon-global-migration-commands',
     'avalon-eu-activities',
     'avalon-eu-access-revocations',
+    'avalon-eu-product-feature-flags',
     'avalon-eu-migration-commands',
+    'avalon-product-feature-flag-changes',
   ]);
 });
 

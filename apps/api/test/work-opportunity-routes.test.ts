@@ -83,6 +83,24 @@ function fixture(context: typeof CONTEXT | null = CONTEXT): {
 describe("suggested-work HTTP product actions", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it("does not use the Electron visibility flag as API authorization", async () => {
+    const { app, env, recordOpportunityImpressions } = fixture();
+    const evaluate = vi.fn(async (flagKey: string) => ({
+      flagKey, value: false, variant: "off", reason: "STATIC",
+    }));
+    env.FLAGS = createCloudflareTestBinding<Flagship>({ getBooleanDetails: evaluate });
+
+    const response = await app.request("/work-opportunities/impressions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ opportunityIds: [OPPORTUNITY_ID], surface: "workspace_home" }),
+    }, env);
+
+    expect(response.status).toBe(204);
+    expect(recordOpportunityImpressions).toHaveBeenCalledOnce();
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
   it("records impressions without reading retired D1 product tables", async () => {
     const { app, env, recordOpportunityImpressions } = fixture();
 

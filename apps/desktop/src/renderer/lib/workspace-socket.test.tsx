@@ -262,6 +262,18 @@ describe('WorkspaceSocketProvider', () => {
       reason: 'change',
     }));
     expect(invalidations).toHaveBeenCalledTimes(invalidationCount);
+    act(() => socket.message({
+      type: 'workspace_feature_flags',
+      occurredAt: '2026-08-17T20:01:00.000Z',
+      changedFlag: 'meeting-recording-enabled',
+      flags: {
+        developerSettings: false,
+        hypersightEnabled: true,
+        meetingRecordingEnabled: true,
+        controlTowerRefreshSeconds: 60,
+      },
+    }));
+    expect(queryClient.getQueryData(['feature-flags'])).toMatchObject({ meetingRecordingEnabled: true });
   });
 
   it('resends one idempotent message command after reconnect and resumes the sync cursor', async () => {
@@ -602,6 +614,12 @@ describe('WorkspaceSocketProvider', () => {
       occurredAt: '2026-08-17T20:00:00.000Z',
       topics: ['workstream_directory'],
       reason: 'initial',
+      featureFlags: {
+        developerSettings: false,
+        hypersightEnabled: true,
+        meetingRecordingEnabled: false,
+        controlTowerRefreshSeconds: 60,
+      },
       sidebar: {
       workstreams: {
         directoryWaterline: 7,
@@ -684,6 +702,8 @@ describe('WorkspaceSocketProvider', () => {
       .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000005', scope: 'workspace' })]);
     expect(queryClient.getQueryData(['notes']))
       .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000006', title: 'Standup' })]);
+    expect(queryClient.getQueryData(['feature-flags']))
+      .toMatchObject({ hypersightEnabled: true, meetingRecordingEnabled: false });
 
     // The point of the payload: the only thing the client said was where it
     // had got to. A directory request here would be the round trip this frame
