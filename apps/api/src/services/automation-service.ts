@@ -2446,7 +2446,10 @@ function assistantMessageForDraft(draft: AutomationDraft): string {
   return draft.elicitation?.prompt
     ?? draft.followUpQuestion
     ?? (draft.ready
-      ? "The automation is ready to create."
+      // The builder renders this sentence directly above the draft summary
+      // card, so it introduces the card rather than restating the request —
+      // a restatement is the one opening the product copy forbids.
+      ? "Here are the details of your proposed automation."
       : "I need one more detail before I can create this automation.");
 }
 function activityFilterValueMatches(valueType: string, value: unknown): boolean {

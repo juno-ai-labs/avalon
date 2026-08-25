@@ -336,8 +336,12 @@ The desktop retains room and per-message stream cursors across socket and route 
 
 ### Transcript row attribution
 
-Every chat surface renders one row component, so a tool row must mean the same
-thing wherever it appears. Two rules keep the work stream and the automation
+Every chat surface words and attributes a tool call the same way, so a call
+must mean the same thing wherever it appears — a row in the work-stream
+transcript, or an entry in the automation builder's run-status element
+(`apps/desktop/src/renderer/components/agent-run-status.tsx`), which renders
+the same events as one updating status line while a compile runs and a folded
+activity record afterwards. Two rules keep the work stream and the automation
 composer from wording or attributing the same call differently.
 
 A row's icon is the plugin that **owns** the tool being called, and nothing

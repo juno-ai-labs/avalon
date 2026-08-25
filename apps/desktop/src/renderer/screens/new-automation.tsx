@@ -16,9 +16,9 @@ import {
   WandSparkles,
   Zap,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { AgentWorkTiming } from '../components/agent-work-timing';
+import { AgentRunStatus, type AgentRunActivity } from '../components/agent-run-status';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
@@ -42,7 +42,7 @@ import {
 } from '../lib/telemetry';
 import { useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
-import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
+import { createElicitationMessage, createTextMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useWindowFilePaste } from '../lib/use-file-paste';
@@ -98,7 +98,6 @@ function automationTextMessage(
   id: string,
   authorType: 'human' | 'agent',
   text: string,
-  streaming = false,
   attachments: MessageAttachment[] = [],
 ): Message {
   return createTextMessage({
@@ -110,7 +109,6 @@ function automationTextMessage(
     text,
     createdAt: new Date().toISOString(),
     ...(attachments.length > 0 ? { attachments } : {}),
-    ...(streaming ? { streaming: true } : {}),
   });
 }
 
@@ -135,22 +133,24 @@ export function retainableNarration(narration: string): string {
   return `${(lastBreak > 0 ? head.slice(0, lastBreak) : head).trimEnd()}\n\n…`;
 }
 
-function settleThought(turns: Message[], thoughtId: string): Message[] {
-  const settledAt = Date.now();
-  return turns.map((message) => {
-    if (message.id !== thoughtId || !message.thoughtEvent) return message;
-    const activeDuration = message.thoughtEvent.startedAt === undefined
-      ? 0
-      : Math.max(0, settledAt - message.thoughtEvent.startedAt);
-    return {
-      ...message,
-      thoughtEvent: {
-        status: 'completed',
-        durationMs: message.thoughtEvent.durationMs + activeDuration,
-      },
-    };
-  });
+/**
+ * What one compile turn is doing, and afterwards what it did — the whole feed
+ * for the status element rendered beneath the turn that sent it. Tool events
+ * land here rather than in the transcript, so a run can never append, remove,
+ * or reorder anything around the reader while it works.
+ */
+interface CompileRunRecord {
+  startedAt: number;
+  completedAt?: number;
+  outcome?: 'completed' | 'failed';
+  /** First-arrival order; a call that settles replaces its own entry. */
+  events: AgentRunActivity[];
 }
+
+/** The status element's copy while the compiler reads the request. */
+const RUN_IDLE_LABEL = 'Understanding your automation request';
+/** Its copy once every tool call has settled and the draft is being written. */
+const RUN_FINALIZING_LABEL = 'Finalizing your automation';
 
 function AutomationMessageBlock({
   loadAttachmentContent,
@@ -601,39 +601,23 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [draft, setDraft] = useState<AutomationDraftResponse | null>(null);
   const [turns, setTurns] = useState<Message[]>([]);
-  const [streamingText, setStreamingText] = useState('');
   /**
-   * The same narration, readable from a settled-mutation callback. `onError`
-   * runs after the stream is over and has to keep what the architect said;
-   * the state above is the render source and this is the imperative read, both
-   * written only by `applyNarration` below.
+   * What each compile turn is doing, keyed by the turn that sent it. This is
+   * the status element's whole feed: tool events update the sending turn's
+   * record in place, so the transcript itself never gains a row while a
+   * compile runs, and the settled record stays behind as the run's receipt.
+   */
+  const [runs, setRuns] = useState<Record<string, CompileRunRecord>>({});
+  /**
+   * The architect's streamed narration, collected but never rendered while the
+   * turn runs — the status element above is what the reader watches. It is
+   * kept for exactly one reader: `onError` runs after the stream is over and
+   * has to preserve what the architect said, because a compile that exhausts
+   * the harness's wall clock is explained by its narration and by nothing
+   * else. A ref rather than state, so sixty deltas a second re-render nothing.
    */
   const streamingNarrationRef = useRef('');
-  const applyNarration = useCallback((next: (current: string) => string) => {
-    const settled = next(streamingNarrationRef.current);
-    streamingNarrationRef.current = settled;
-    setStreamingText(settled);
-  }, []);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
-  /**
-   * Narration and tool rows grow the transcript past the viewport, and this
-   * screen has no virtualizer following it the way a work stream does. The
-   * view is pinned to the bottom while a compile streams, and unpinned the
-   * moment the reader scrolls up: yanking someone back who has deliberately
-   * looked at an earlier step is worse than not following at all.
-   */
-  const followStreamRef = useRef(true);
-  /**
-   * The offset Rally's own follow last scrolled to, which is what makes the
-   * threshold below safe to keep tight. A scroll event is dispatched at frame
-   * time, not when the offset is assigned, so by the time the follow's own
-   * event arrives more narration has usually landed and the surface is
-   * hundreds of pixels short of a bottom that moved after the assignment.
-   * Measuring that as the reader scrolling up unpins the follow on its own
-   * scroll — the feature switching itself off a second into a compile. An
-   * event that reports this offset is Rally's; anything else is the reader's.
-   */
-  const autoScrollTopRef = useRef(-1);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [defaultPluginIds, setDefaultPluginIds] = useState<string[]>([]);
   const [activitySourcePluginIds, setActivitySourcePluginIds] = useState<Record<string, string>>({});
@@ -734,6 +718,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
         setComposerDraftId(null);
         setDraft(null);
         setTurns([]);
+        setRuns({});
       }
       return;
     }
@@ -748,6 +733,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       && draft !== null) {
       setDraft(null);
       setTurns([]);
+      setRuns({});
     }
     const resumed = resumedDraft.data;
     if (!resumed || resumedDraftId === resumeDraftId) return;
@@ -945,77 +931,54 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       }, (event) => {
         // A turn belongs to the conversation it was sent from. Picking another
         // draft out of the sidebar leaves this one in flight against a screen
-        // that has moved on, and every write below — the streamed thinking and
-        // tool rows as much as the final answer — would otherwise land in
-        // somebody else's transcript.
+        // that has moved on, and every write below — the tool activity as much
+        // as the collected narration — would otherwise land in somebody else's
+        // conversation.
         if (!showsTurn(payload)) return;
         if (event.type === 'started') {
-          applyNarration(() => '');
+          streamingNarrationRef.current = '';
           return;
         }
-        if (event.type === 'thinking') {
-          const thoughtId = `${payload.turnId}-thought`;
-          setTurns((current) => {
-            const existing = current.findIndex((message) => message.id === thoughtId);
-            const previous = existing >= 0 ? current[existing] : undefined;
-            const thoughtMessage: Message = {
-              id: thoughtId,
-              workstreamId: AUTOMATION_CHAT_ID,
-              sequenceNumber: previous?.sequenceNumber ?? current.length,
-              authorType: 'agent',
-              messageType: 'thought',
-              createdAt: previous?.createdAt ?? new Date().toISOString(),
-              thoughtEvent: {
-                // Provider completions pause the model clock, but the row
-                // remains active until this entire automation turn settles.
-                status: 'started',
-                durationMs: event.durationMs,
-                ...(event.status === 'started' ? { startedAt: Date.now() } : {}),
-              },
-            };
-            if (existing < 0) return [...current, thoughtMessage];
-            if (event.status === 'started') {
-              return [...current.filter((_, index) => index !== existing), thoughtMessage];
-            }
-            return current.map((message, index) => index === existing ? thoughtMessage : message);
-          });
-          return;
-        }
+        // Thinking events carry the model clock, which the status element does
+        // not show — its counter is the turn's own wall clock.
+        if (event.type === 'thinking') return;
         if (event.type === 'tool') {
-          setTurns((current) => {
-            const existing = current.findIndex((message) => message.id === event.toolCallId);
-            const previous = existing >= 0 ? current[existing] : undefined;
-            const toolMessage = createToolEventMessage({
+          setRuns((current) => {
+            const record = current[payload.turnId];
+            if (!record) return current;
+            const activity: AgentRunActivity = {
               id: event.toolCallId,
-              workstreamId: AUTOMATION_CHAT_ID,
-              sequenceNumber: previous?.sequenceNumber ?? current.length,
-              authorType: 'agent',
-              createdAt: previous?.createdAt ?? new Date().toISOString(),
-              toolEvent: {
-                id: event.toolCallId,
-                name: event.name,
-                summary: event.summary,
-                status: event.status,
-                ...(event.plugin ? { plugin: event.plugin } : {}),
-                ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
-              },
-            });
-            return upsertTranscriptMessage(current, toolMessage);
+              name: event.name,
+              summary: event.summary,
+              status: event.status,
+              ...(event.plugin ? { plugin: event.plugin } : {}),
+              ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
+            };
+            const existing = record.events.findIndex((candidate) => candidate.id === activity.id);
+            const events = existing < 0
+              ? [...record.events, activity]
+              : record.events.map((candidate, index) => index === existing ? activity : candidate);
+            return { ...current, [payload.turnId]: { ...record, events } };
           });
           return;
         }
-        applyNarration((current) => event.reset ? event.delta : current + event.delta);
+        streamingNarrationRef.current = event.reset
+          ? event.delta
+          : streamingNarrationRef.current + event.delta;
       }),
     onMutate: (payload) => {
-      followStreamRef.current = true;
-      applyNarration(() => '');
+      streamingNarrationRef.current = '';
+      setRuns((current) => ({
+        ...current,
+        [payload.turnId]: { startedAt: Date.now(), events: [] },
+      }));
       setTurns((current) => {
         const updated = payload.elicitation
           ? resolveElicitationMessages(current, payload.elicitation.id, payload.elicitation.answer)
           : current;
         return updated.some((turn) => turn.id === payload.turnId)
           ? updated
-          : [...updated, automationTextMessage(payload.turnId, 'human', payload.message, false, payload.attachments)];
+          : [...updated, automationTextMessage(payload.turnId, 'human', payload.message, payload.attachments)];
       });
       setInput('');
       setMentionQuery(null);
@@ -1031,7 +994,18 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       // conversation — but nothing about it belongs on screen, least of all
       // the URL write below, which would drag the reader back to it.
       if (!showsTurn(payload)) return;
-      applyNarration(() => '');
+      streamingNarrationRef.current = '';
+      // Settling the record before the reply is appended below is what makes
+      // the promise hold: the completed state is on screen in the same commit
+      // as the answer, never after it.
+      setRuns((current) => {
+        const record = current[payload.turnId];
+        if (!record) return current;
+        return {
+          ...current,
+          [payload.turnId]: { ...record, completedAt: Date.now(), outcome: 'completed' },
+        };
+      });
       setDraft(response);
       // The turn wrote a draft automation, which the sidebar lists. Naming it
       // in the URL is what makes that row the active one and what lets this
@@ -1057,9 +1031,8 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
           ? automationTextMessage(crypto.randomUUID(), 'agent', response.assistantMessage)
           : null;
       setTurns((current) => {
-        const settled = settleThought(current, `${payload.turnId}-thought`);
-        if (!responseMessage || settled.some((message) => message.id === responseMessage.id)) return settled;
-        return [...settled, responseMessage];
+        if (!responseMessage || current.some((message) => message.id === responseMessage.id)) return current;
+        return [...current, responseMessage];
       });
     },
     onError: (_error, payload) => {
@@ -1067,32 +1040,37 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       // Keep what the architect said. A compile that exhausts the harness's
       // wall clock is exactly when the narration is worth the most — "GitHub
       // holds the data but no connector is authorized" explains a timeout
-      // that a column of tool rows does not — and clearing it here would
-      // delete the explanation at the one moment it is needed.
+      // that a column of tool rows does not — and it was collected all along
+      // for exactly this moment, the one where it is shown at all.
       const narration = retainableNarration(streamingNarrationRef.current);
-      applyNarration(() => '');
-      setTurns((current) => {
-        const settled = settleThought(current, `${payload.turnId}-thought`);
-        return narration
-          ? [...settled, automationTextMessage(crypto.randomUUID(), 'agent', narration)]
-          : settled;
+      streamingNarrationRef.current = '';
+      setRuns((current) => {
+        const record = current[payload.turnId];
+        if (!record) return current;
+        return {
+          ...current,
+          [payload.turnId]: { ...record, completedAt: Date.now(), outcome: 'failed' },
+        };
       });
+      setTurns((current) => narration
+        ? [...current, automationTextMessage(crypto.randomUUID(), 'agent', narration)]
+        : current);
     },
   });
 
   const compilePending = compile.isPending;
   useEffect(() => {
-    // Only while a compile streams. Once the draft settles the summary below
+    // A compile no longer grows the transcript while it runs — the status
+    // element updates in place — so this fires once per send, bringing the
+    // new turn and its status row into view of a long conversation. Only
+    // while the compile is pending: once the draft settles, the summary below
     // the transcript is what the reader wants, and jumping past it to the
     // create button would hide the thing they are being asked to accept.
-    if (!compilePending || !followStreamRef.current) return;
+    if (!compilePending) return;
     const element = transcriptScrollRef.current;
     if (!element) return;
     element.scrollTop = element.scrollHeight;
-    // Read back rather than reusing the assigned value: the browser clamps to
-    // its own fractional maximum, and the scroll event reports that.
-    autoScrollTopRef.current = element.scrollTop;
-  }, [compilePending, streamingText, turns]);
+  }, [compilePending, turns]);
 
   const deliveryConnection = (connections.data ?? []).find((connection) =>
     connection.id === deliveryConnectionId && connection.userDelivery);
@@ -1163,17 +1141,6 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   return (
     <div
       className="new-automation-screen screen-with-titlebar"
-      onScroll={(event) => {
-        const element = event.currentTarget;
-        if (element.scrollTop === autoScrollTopRef.current) return;
-        // Sub-pixel, not the 80px a work stream uses. That threshold covers a
-        // virtualizer whose estimated row heights settle after paint; nothing
-        // here is virtualized, and at 80px a reader who nudged up a few pixels
-        // would still be pinned and get yanked forward by the next fragment.
-        // Only the browser's fractional clamp needs absorbing, and the guard
-        // above is what keeps that true while the transcript is growing.
-        followStreamRef.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
-      }}
       ref={transcriptScrollRef}
     >
       <div className="screen-drag-strip window-drag" />
@@ -1275,53 +1242,55 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
               </section>
             ) : (
               <div className="automation-chat-surface automation-conversation" aria-live="polite">
-                {turns.map((turn) => (
-                  <AutomationMessageBlock
-                    key={turn.id}
-                    loadAttachmentContent={loadAttachmentContent}
-                    message={turn}
-                    onAnswerElicitation={turn.messageType === 'elicitation' && turn.elicitation?.status === 'open'
-                      ? (answer) => answerElicitationOptimistically({
-                          answer,
-                          elicitationId: turn.elicitation!.id,
-                          previousMessage: turn,
-                          submit: () => submitAsync(
-                            answer == null ? 'Skip' : Array.isArray(answer) ? answer.join(', ') : answer,
-                            turn.id,
-                            {
-                              id: turn.elicitation!.id,
+                {turns.map((turn) => {
+                  const run = runs[turn.id];
+                  return (
+                    <Fragment key={turn.id}>
+                      <AutomationMessageBlock
+                        loadAttachmentContent={loadAttachmentContent}
+                        message={turn}
+                        onAnswerElicitation={turn.messageType === 'elicitation' && turn.elicitation?.status === 'open'
+                          ? (answer) => answerElicitationOptimistically({
                               answer,
-                              responseType: turn.elicitation!.responseType === 'text'
-                                ? 'free_text'
-                                : turn.elicitation!.responseType === 'radio'
-                                  ? 'single_select'
-                                  : turn.elicitation!.responseType,
-                              options: turn.elicitation!.options ?? [],
-                              allowOther: turn.elicitation!.allowOther ?? false,
-                              presentedAt: turn.elicitation!.createdAt ?? turn.createdAt,
-                            },
-                          ),
-                          updateMessages: (update) => setTurns(update),
-                        })
-                      : undefined}
-                    onOpenAttachment={setAttachmentPreview}
-                  />
-                ))}
-                {compile.isPending && (
-                  // Trimmed, not just non-empty: an abandoned first turn
-                  // resets to '' and a model that opens a narration turn with
-                  // a bare newline sends whitespace before it sends a word.
-                  // Either would render as Rally having said something blank.
-                  streamingText.trim().length > 0
-                    ? <AutomationMessageBlock message={automationTextMessage('automation-streaming', 'agent', streamingText, true)} />
-                    : turns.some((turn) => turn.messageType === 'thought' && turn.thoughtEvent?.status === 'started')
-                      ? null
-                      : <AgentWorkTiming
-                          active
-                          durationMs={0}
-                          {...(compile.submittedAt > 0 ? { startedAt: compile.submittedAt } : {})}
+                              elicitationId: turn.elicitation!.id,
+                              previousMessage: turn,
+                              submit: () => submitAsync(
+                                answer == null ? 'Skip' : Array.isArray(answer) ? answer.join(', ') : answer,
+                                turn.id,
+                                {
+                                  id: turn.elicitation!.id,
+                                  answer,
+                                  responseType: turn.elicitation!.responseType === 'text'
+                                    ? 'free_text'
+                                    : turn.elicitation!.responseType === 'radio'
+                                      ? 'single_select'
+                                      : turn.elicitation!.responseType,
+                                  options: turn.elicitation!.options ?? [],
+                                  allowOther: turn.elicitation!.allowOther ?? false,
+                                  presentedAt: turn.elicitation!.createdAt ?? turn.createdAt,
+                                },
+                              ),
+                              updateMessages: (update) => setTurns(update),
+                            })
+                          : undefined}
+                        onOpenAttachment={setAttachmentPreview}
+                      />
+                      {/* Anchored to the turn that sent it, in the same map
+                          iteration: a tool event can only ever change what
+                          this one element says, never where anything sits. */}
+                      {run && (
+                        <AgentRunStatus
+                          completedAt={run.completedAt}
+                          events={run.events}
+                          finalizingLabel={RUN_FINALIZING_LABEL}
+                          idleLabel={RUN_IDLE_LABEL}
+                          outcome={run.outcome}
+                          startedAt={run.startedAt}
                         />
-                )}
+                      )}
+                    </Fragment>
+                  );
+                })}
                 {draft && (
                   <DraftSummary
                     connections={connections.data ?? []}

@@ -1277,10 +1277,10 @@ async function insertRows(
     }).run();
   } catch (error) {
     const raced = await loadMutationReceipt(env, input, receiptId, "insert_rows", inputHash);
-    if (raced) return { output: raced, summary: `Inserted ${Number(raced.insertedCount ?? 0)} new durable rows`, providerOperationId: String(raced.memoryTableMutationId) };
+    if (raced) return { output: raced, summary: `Inserted ${Number(raced.insertedCount ?? 0)} new durable row${Number(raced.insertedCount ?? 0) === 1 ? "" : "s"}`, providerOperationId: String(raced.memoryTableMutationId) };
     throw error;
   }
-  return { output: result, summary: `Inserted ${insertedRows.length} new durable rows`, providerOperationId: mutationId };
+  return { output: result, summary: `Inserted ${insertedRows.length} new durable row${insertedRows.length === 1 ? "" : "s"}`, providerOperationId: mutationId };
 }
 
 async function loadRowsById(env: Env, tableId: string, rowIds: string[]): Promise<Map<string, RowRecord>> {
@@ -1384,7 +1384,7 @@ async function updateRows(
     }
     throw error;
   }
-  return { output: result, summary: `Updated ${prepared.length} durable rows`, providerOperationId: mutationId };
+  return { output: result, summary: `Updated ${prepared.length} durable row${prepared.length === 1 ? "" : "s"}`, providerOperationId: mutationId };
 }
 
 async function invalidateRows(
@@ -1461,7 +1461,7 @@ async function invalidateRows(
     }
     throw error;
   }
-  return { output: result, summary: `Invalidated ${args.rows.length} durable rows`, providerOperationId: mutationId };
+  return { output: result, summary: `Invalidated ${args.rows.length} durable row${args.rows.length === 1 ? "" : "s"}`, providerOperationId: mutationId };
 }
 
 const filterJsonSchema = { $ref: "#/$defs/filterNode" };
@@ -1527,7 +1527,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
       execute: async (raw) => {
         const args = SearchSchema.parse(raw);
         const result = await tableSearch(env, input, args.query);
-        return { output: result, summary: `Found ${result.tables.length} durable tables` };
+        return { output: result, summary: `Found ${result.tables.length} durable table${result.tables.length === 1 ? "" : "s"}` };
       },
     },
     {
@@ -1571,7 +1571,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
       },
       execute: async (raw) => {
         const result = await queryTable(env, input, raw);
-        return { output: result, summary: `Read ${result.rows.length} rows from “${result.name}”` };
+        return { output: result, summary: `Read ${result.rows.length} row${result.rows.length === 1 ? "" : "s"} from “${result.name}”` };
       },
     },
     {

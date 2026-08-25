@@ -1731,8 +1731,8 @@ async function createPluginRuntime(
           return {
             output: { plugins, totalMatches },
             summary: plugins.length < totalMatches
-              ? `Found ${plugins.length} of ${totalMatches} available plugins; narrow the query to see the rest`
-              : `Found ${totalMatches} available plugins`,
+              ? `Found ${plugins.length} of ${totalMatches} available plugin${totalMatches === 1 ? "" : "s"}; narrow the query to see the rest`
+              : `Found ${totalMatches} available plugin${totalMatches === 1 ? "" : "s"}`,
           };
         }
         const modelId = typeof raw === "object" && raw !== null && "pluginId" in raw
@@ -1781,7 +1781,7 @@ async function createPluginRuntime(
         }));
         return {
           output: { loaded: plugin.modelId, tools },
-          summary: `Loaded ${plugin.displayName ?? plugin.modelId}; ${tools.length} tools are now available`,
+          summary: `Loaded ${plugin.displayName ?? plugin.modelId}; ${tools.length} tool${tools.length === 1 ? " is" : "s are"} now available`,
           loadedPluginName: id,
         } as HarnessToolResult;
       },

@@ -325,7 +325,7 @@ function blockDashboardSubmissionPlugin(
         state.markdown = args.markdown;
         return {
           output: { submitted: true, characters: args.markdown.length },
-          summary: `Submitted ${args.markdown.length} characters of block Markdown`,
+          summary: `Submitted ${args.markdown.length} character${args.markdown.length === 1 ? "" : "s"} of block Markdown`,
         };
       },
     }],
@@ -6906,7 +6906,7 @@ function createFirecrawlWebTools(env: Env): HarnessTool[] {
               truncated: markdown !== response.markdown,
               totalChars: response.markdown.length,
             },
-            summary: `Fetched ${markdown.length} characters from ${new URL(args.url).hostname}`,
+            summary: `Fetched ${markdown.length} character${markdown.length === 1 ? "" : "s"} from ${new URL(args.url).hostname}`,
           };
         } catch (error) {
           rethrowFirecrawlToolError("fetch", error, context.signal);

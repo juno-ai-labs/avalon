@@ -1469,8 +1469,8 @@ async function executeGitHubTool(
         ...(query ? { query: searchArgs?.query ?? "", accessibleTotalCount: authorized.length } : {}),
       },
       summary: query
-        ? `Found ${pageRepositories.length} GitHub repositories matching ${searchArgs?.query ?? ""}`
-        : `Listed ${pageRepositories.length} of ${totalCount} GitHub repositories`,
+        ? `Found ${pageRepositories.length} GitHub repositor${pageRepositories.length === 1 ? "y" : "ies"} matching ${searchArgs?.query ?? ""}`
+        : `Listed ${pageRepositories.length} of ${totalCount} GitHub repositor${totalCount === 1 ? "y" : "ies"}`,
     };
   }
 
@@ -1518,7 +1518,7 @@ async function executeGitHubTool(
           hasMore: args.offset + pageEntries.length < entries.length,
           truncated: providerTruncated,
         },
-        summary: `Listed ${pageEntries.length} entries in ${args.owner}/${args.repo}:${path || "/"}`,
+        summary: `Listed ${pageEntries.length} entr${pageEntries.length === 1 ? "y" : "ies"} in ${args.owner}/${args.repo}:${path || "/"}`,
       };
     }
 
@@ -1581,7 +1581,7 @@ async function executeGitHubTool(
         hasMore: args.offset + pageEntries.length < entries.length,
         truncated: providerTruncated,
       },
-      summary: `Listed ${pageEntries.length} tree entries in ${args.owner}/${args.repo}:${path || "/"}`,
+      summary: `Listed ${pageEntries.length} tree entr${pageEntries.length === 1 ? "y" : "ies"} in ${args.owner}/${args.repo}:${path || "/"}`,
     };
   }
 
