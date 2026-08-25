@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Avalon web and Electron brand assets from the canonical alpha mask."""
+"""Generate Rally web and Electron brand assets from the canonical alpha mask."""
 
 import math
 from pathlib import Path
@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "assets" / "brand" / "avalon-mark-source.png"
+SOURCE = ROOT / "assets" / "brand" / "rally-mark-source.png"
 APPLICATION_ICON_DIRECTORY = ROOT / "apps" / "desktop" / "resources" / "app-icons"
 APPLICATION_ICON_PREVIEW_DIRECTORY = (
     ROOT / "apps" / "desktop" / "src" / "renderer" / "assets" / "app-icons"
@@ -127,7 +127,7 @@ def menu_bar_template_icon(size: int) -> Image.Image:
         lambda value: 255 if value >= MENU_BAR_ICON_ALPHA_THRESHOLD else 0
     ).getbbox()
     if box is None:
-        raise ValueError("The Avalon mark source has no visible artwork")
+        raise ValueError("The Rally mark source has no visible artwork")
     inset = round(size * MENU_BAR_ICON_INSET)
     extent = size - 2 * inset
     glyph = alpha.crop(box).resize((extent, extent), Image.Resampling.LANCZOS)
@@ -154,22 +154,35 @@ def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.Im
 
 def social_card() -> Image.Image:
     width, height = 1200, 630
-    result = Image.new("RGBA", (width, height), DARK_CANVAS)
+    result = Image.new("RGBA", (width, height), (240, 239, 232, 255))
     draw = ImageDraw.Draw(result)
-    draw.ellipse((930, -270, 1370, 170), fill=(71, 199, 252, 18))
-    draw.ellipse((-220, 430, 220, 870), fill=(206, 220, 0, 18))
-    logo = mark(300)
-    result.alpha_composite(logo, (72, 165))
-    draw.text((410, 206), "Avalon", font=font(90, bold=True), fill=(236, 235, 229, 255))
-    draw.text((416, 318), "Work, still in context.", font=font(34), fill=(202, 201, 194, 255))
-    draw.rounded_rectangle((416, 388, 510, 396), radius=4, fill=PRIMARY)
-    draw.rounded_rectangle((518, 388, 560, 396), radius=4, fill=SECONDARY)
+    draw.ellipse((-175, -190, 315, 300), fill=SECONDARY)
+    draw.ellipse((825, -210, 1315, 280), fill=(255, 99, 55, 255))
+    draw.polygon(((0, 480), (325, 480), (405, 630), (0, 630)), fill=(255, 99, 55, 255))
+    draw.polygon(((1140, 390), (1200, 390), (1200, 630), (1060, 630)), fill=SECONDARY)
+    draw.text((62, 145), "rally", font=font(210, bold=True), fill=DARK_CANVAS)
+    draw.text((68, 376), "AI is multiplayer now.", font=font(38, bold=True), fill=DARK_CANVAS)
+    points = []
+    for step in range(241):
+        angle = 2 * math.pi * step / 240
+        denominator = 1 + math.sin(angle) ** 2
+        x = 790 + 235 * math.cos(angle) / denominator
+        y = 490 + 145 * math.sin(angle) * math.cos(angle) / denominator
+        points.append((x, y))
+    draw.line(points, fill=PRIMARY, width=42, joint="curve")
+    draw.ellipse((620, 463, 674, 517), fill=PRIMARY)
+    draw.ellipse((906, 463, 960, 517), fill=PRIMARY)
     return result
 
 
 def save(image: Image.Image, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     image.save(path, optimize=True)
+
+
+def save_social_card(image: Image.Image, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.convert("RGB").save(path, format="JPEG", quality=88, optimize=True, progressive=True)
 
 
 def generate_application_icon_previews() -> None:
@@ -184,9 +197,9 @@ def main() -> None:
     transparent = mark(1024)
     generic_icon = app_icon(1024)
     dark_macos_icon = macos_app_icon(1024)
-    save(transparent, ROOT / "assets" / "brand" / "avalon-mark.png")
-    save(transparent, ROOT / "apps" / "desktop" / "src" / "renderer" / "assets" / "avalon-mark.png")
-    save(transparent, ROOT / "apps" / "site" / "public" / "brand" / "avalon-mark.png")
+    save(transparent, ROOT / "assets" / "brand" / "rally-mark.png")
+    save(transparent, ROOT / "apps" / "desktop" / "src" / "renderer" / "assets" / "rally-mark.png")
+    save(transparent, ROOT / "apps" / "site" / "public" / "brand" / "rally-mark.png")
     save(generic_icon, ROOT / "apps" / "desktop" / "resources" / "icon.png")
     # User-selectable artwork stays full-bleed. The native build stages these
     # sources in a .icon package so Apple's actool owns the enclosure, masking,
@@ -204,7 +217,7 @@ def main() -> None:
         / "resources"
         / "icon.icon"
         / "Assets"
-        / "avalon-mark.png",
+        / "rally-mark.png",
     )
     save(dark_macos_icon, ROOT / "apps" / "desktop" / "resources" / "icon.icns")
     # `…Template` is what makes AppKit treat the file as a mask, and the `@2x`
@@ -213,15 +226,17 @@ def main() -> None:
     # on a dark menu bar.
     save(
         menu_bar_template_icon(MENU_BAR_ICON_POINT_SIZE),
-        MENU_BAR_ICON_DIRECTORY / "avalonTemplate.png",
+        MENU_BAR_ICON_DIRECTORY / "rallyTemplate.png",
     )
     save(
         menu_bar_template_icon(MENU_BAR_ICON_POINT_SIZE * 2),
-        MENU_BAR_ICON_DIRECTORY / "avalonTemplate@2x.png",
+        MENU_BAR_ICON_DIRECTORY / "rallyTemplate@2x.png",
     )
     save(app_icon(64), ROOT / "apps" / "site" / "public" / "favicon.png")
     save(app_icon(180), ROOT / "apps" / "site" / "public" / "apple-touch-icon.png")
-    save(social_card(), ROOT / "apps" / "site" / "public" / "og.png")
+    social = social_card()
+    save_social_card(social, ROOT / "apps" / "site" / "public" / "rally-social.jpg")
+    save_social_card(social, ROOT / "apps" / "site" / "public" / "og-2026.jpg")
     generate_application_icon_previews()
 
 

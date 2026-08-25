@@ -69,6 +69,12 @@ describe('public Rally site', () => {
     expect(styles).toContain('html.js .reveal { opacity: 0;');
     expect(styles).toContain('html.js .reveal.is-visible { opacity: 1;');
     expect(page).toContain('<div class="rally-app-body" aria-hidden="true" inert>');
+    expect(page.indexOf('<script src="/landing-init.js"></script>')).toBeLessThan(
+      page.indexOf('<link rel="stylesheet" href="/src/styles.css" />'),
+    );
+    expect(readProjectFile('public/landing-init.js')).toContain(
+      "document.documentElement.classList.add('js');",
+    );
   });
 
   it('defines responsive behavior for every public surface', () => {
@@ -101,7 +107,7 @@ describe('public Rally site', () => {
     }
     expect(styles).toContain('@media(max-width:1050px)');
     expect(styles).toContain('@media(max-width:720px)');
-    expect(styles).toContain('@media(max-width:720px){.rally-hero h1{font-size:clamp(3.9rem,18vw,5.5rem)}}');
+    expect(styles).toContain('.rally-hero h1{font-size:clamp(3.9rem,18vw,5.5rem)}');
     expect(styles).toContain('.legal-nav a{align-items:center;display:flex;min-height:40px}');
   });
 
@@ -159,11 +165,26 @@ describe('public Rally site', () => {
     expect(manifest.icons.map(({ src }) => src)).toEqual(['/favicon.png', '/apple-touch-icon.png']);
     expect(existsSync(new URL('../public/brand/rally-mark.png', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/brand/rally-mark.svg', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../public/brand/avalon-mark.png', import.meta.url))).toBe(false);
     expect(existsSync(new URL('../public/favicon.png', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/apple-touch-icon.png', import.meta.url))).toBe(true);
     const socialCard = new URL('../public/rally-social.jpg', import.meta.url);
     expect(existsSync(socialCard)).toBe(true);
     expect(statSync(socialCard).size).toBeLessThan(200_000);
+    expect(existsSync(new URL('../public/og.png', import.meta.url))).toBe(false);
+    const generator = readFileSync(
+      new URL('../../../scripts/generate-brand-assets.py', import.meta.url),
+      'utf8',
+    );
+    expect(generator).toContain('rally-mark-source.png');
+    expect(generator).toContain('rally-social.jpg');
+    expect(generator).not.toMatch(/Avalon|avalon-mark|avalonTemplate/u);
+    const migrationGuide = readFileSync(
+      new URL('../../../docs/domain-migration.md', import.meta.url),
+      'utf8',
+    );
+    expect(migrationGuide).toContain('/brand/rally-mark.png');
+    expect(migrationGuide).not.toContain('/brand/rally-mark.svg');
   });
 
   it('keeps the shared invitation, auth handoff, and not-found surfaces styled and functional', () => {
@@ -205,6 +226,10 @@ describe('public Rally site', () => {
     expect(page).toContain('src="/brand/apple-logo.svg"');
     expect(page).not.toContain('<span class="apple-mark"');
     expect(existsSync(new URL('../public/brand/apple-logo.svg', import.meta.url))).toBe(true);
+    const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
+    expect(renderDesktopRelease(page, release)).toContain(
+      '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" />',
+    );
   });
 
   it('publishes the verified installer while keeping the source template free of stale release links', () => {
@@ -358,6 +383,8 @@ describe('public Rally site', () => {
     expect(wrangler.preview_urls).toBe(false);
     expect(headers).toContain("script-src 'self'");
     expect(headers).toContain("frame-ancestors 'none'");
+    expect(headers).toMatch(/\/rally-social\.jpg\n {2}Cache-Control: public, max-age=86400/u);
+    expect(headers).not.toContain('/og.png');
   });
 
   it('provides a private desktop invitation handoff without sending the token to the server', () => {
@@ -451,9 +478,24 @@ describe('public Rally site', () => {
     expect(readProjectFile('security/index.html')).toContain('context isolation');
     expect(readProjectFile('security/index.html')).not.toContain('Request access');
     expect(readProjectFile('security/index.html')).not.toContain('SOC 2');
+    expect(readProjectFile('security/index.html')).not.toContain('<i aria-label="Implemented">');
+    expect(readProjectFile('security/index.html').match(/role="img" aria-label="Implemented"/gu)).toHaveLength(7);
     const [landingContent, landingFooter] = landing.split('<footer class="rally-footer">');
     expect(landingContent).not.toContain('/security/');
     expect(landingFooter).toContain('<a href="/security/">Trust Center</a>');
+  });
+
+  it('uses Rally grammar and Trust Center naming on every public page', () => {
+    const pages = [
+      'index.html', 'invite/index.html', 'slack/index.html', 'terms/index.html',
+      'privacy/index.html', 'acceptable-use/index.html', 'dpa/index.html',
+      'subprocessors/index.html', 'cookies/index.html', 'security/index.html',
+    ];
+    for (const path of pages) {
+      const page = readProjectFile(path);
+      expect(page, path).not.toMatch(/\b[Aa]n Rally\b/u);
+      expect(page, path).not.toContain('>Security Policy<');
+    }
   });
 
   it('routes site telemetry before choosing whether an anonymous browser identifier may persist', () => {

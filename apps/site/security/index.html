@@ -62,31 +62,31 @@
 
         <div class="trust-control-grid">
           <article class="trust-control-card">
-            <header><span>01</span><h3>Regional architecture</h3><i aria-label="Implemented"></i></header>
+            <header><span>01</span><h3>Regional architecture</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
             <ul><li>Separate Global and EU API deployments use separate regional databases, object storage, Durable Object namespaces, queues, and encryption keys.</li><li>Authenticated requests carry a region claim; a mismatch with the serving region is rejected.</li><li>EU product telemetry has no Global PostHog fallback.</li></ul>
           </article>
           <article class="trust-control-card">
-            <header><span>02</span><h3>Identity &amp; access</h3><i aria-label="Implemented"></i></header>
+            <header><span>02</span><h3>Identity &amp; access</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
             <ul><li>Protected API routes require a signed bearer session backed by an active, unrevoked server-side session.</li><li>Workspace access is rechecked against active membership; owner and administrator actions have explicit role checks.</li><li>Google sign-in uses state validation and PKCE; the browser-to-desktop handoff uses a single-use exchange ticket with a separate desktop proof.</li></ul>
           </article>
           <article class="trust-control-card">
-            <header><span>03</span><h3>Credential protection</h3><i aria-label="Implemented"></i></header>
+            <header><span>03</span><h3>Credential protection</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
             <ul><li>Connector credentials use AES-GCM authenticated encryption with connection-bound additional data.</li><li>Credential rows record a key version so regional keys can rotate without losing old reads.</li><li>Connector secrets are kept out of model prompts and redacted from structured logs by sensitive field name.</li></ul>
           </article>
           <article class="trust-control-card">
-            <header><span>04</span><h3>Desktop boundary</h3><i aria-label="Implemented"></i></header>
+            <header><span>04</span><h3>Desktop boundary</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
             <ul><li>Electron renderers run with context isolation and sandboxing enabled and Node.js integration disabled.</li><li>A narrow preload bridge mediates privileged operations; unexpected navigation and popup creation are denied.</li><li>Content Security Policy restricts executable and network sources, and media permission checks are limited to trusted Rally windows.</li></ul>
           </article>
           <article class="trust-control-card">
-            <header><span>05</span><h3>Realtime sessions</h3><i aria-label="Implemented"></i></header>
+            <header><span>05</span><h3>Realtime sessions</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
             <ul><li>Realtime connections use short-lived, signed, scope-bound tickets and durable one-time replay receipts.</li><li>The current desktop removes the credential from the URL and presents it through the WebSocket subprotocol.</li><li>Legacy query-ticket transport remains accepted for older desktop compatibility and is documented rather than hidden.</li></ul>
           </article>
           <article class="trust-control-card">
-            <header><span>06</span><h3>Connected tools</h3><i aria-label="Implemented"></i></header>
+            <header><span>06</span><h3>Connected tools</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
             <ul><li>Personal and workspace connections are authorized against the current principal, scope, and membership.</li><li>Generic webhook ingestion verifies signatures, timestamps, replay windows, event type, and deduplication receipts.</li><li>External tool writes use durable execution receipts; a write caught mid-flight is marked ambiguous and is not automatically repeated.</li></ul>
           </article>
           <article class="trust-control-card trust-control-wide">
-            <header><span>07</span><h3>Operational safeguards</h3><i aria-label="Implemented"></i></header>
+            <header><span>07</span><h3>Operational safeguards</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
             <ul><li>API diagnostics use structured request identifiers and a shared redactor for tokens, secrets, credentials, prompts, message bodies, connector content, file content, and model context.</li><li>Repository CI runs Gitleaks against full history, and each allowlist exception has a test proving it still rejects real key material.</li><li>Public security reporting is open; an account, NDA, or document request is not required.</li></ul>
           </article>
         </div>

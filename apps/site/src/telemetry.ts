@@ -145,8 +145,8 @@ function makeEnvelope<TName extends TelemetryEventName>(
     context: {
       environment: environment(),
       region: state.route,
-      release: __AVALON_SITE_RELEASE__,
-      buildId: __AVALON_SITE_BUILD__,
+      release: __RALLY_SITE_RELEASE__,
+      buildId: __RALLY_SITE_BUILD__,
       sessionId,
       onboardingJourneyId: state.journeyId,
     },
