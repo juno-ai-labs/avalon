@@ -16,7 +16,7 @@ interface Rule {
 }
 
 interface Flag {
-  key: 'hypersight-enabled' | 'meeting-recording-enabled' | 'suggested-work-enabled' | 'automation-workspace-templates-enabled';
+  key: 'hypersight-enabled' | 'meeting-recording-enabled' | 'suggested-work-enabled' | 'automation-workspace-templates-enabled' | 'digests-enabled';
   description?: string;
   enabled?: boolean;
   default_variation?: 'on' | 'off';

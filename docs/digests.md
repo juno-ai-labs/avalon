@@ -15,6 +15,7 @@ mention, or changing what a connector can deliver to a person.
 | The log: writes, visibility-scoped reads, cursors | `apps/api/src/services/activity-event-service.ts`, backed by WorkspaceDO SQLite |
 | Digest configuration, RRULE derivation, schedule rows | `apps/api/src/services/digest-service.ts` |
 | Firing one occurrence, the window, the hidden work stream, the brief | `apps/api/src/services/digest-run-service.ts` |
+| The `digests-enabled` kill switch | `apps/api/src/services/digest-flags.ts` |
 | Getting the brief in front of the model | `loadRunPromptContext` in `apps/api/src/services/integrations.ts`, rendered by `renderScheduledDigestBriefMessage` |
 | Deciding whether a connector activity may be digested | `activityIsDigestible` in `apps/api/src/queues/activity-consumer.ts` |
 | Recording and sending what a run wrote | `apps/api/src/services/digest-run-settlement.ts` |
@@ -225,6 +226,23 @@ rebuild. The workspace alarm is refreshed *after* the write — the scheduler
 reads WorkspaceDO, so refreshing early would arm it from the rows the save just replaced.
 
 #### The run
+
+Before anything else, the scheduler checks `digests-enabled` — a Flagship kill
+switch, and the fourth reader of `env.FLAGS` alongside the three
+[`feature-flags.md`](feature-flags.md) already names. It is checked
+immediately after the schedule's own `enabled` bit and before anything is
+written, so an occurrence it skips claims nothing and moves no cursor: the
+next occurrence to fire reads `previousCursor` exactly as it always does and
+catches up on whatever was missed while the flag was off. It fails **open** —
+the opposite of the four presentation-only product Booleans Ace already
+managed — because a digest is already on by default for every existing
+person, so the behavior a Flagship outage has to reproduce is delivery
+*continuing*, not stopping; only an operator's explicit `false` variation
+turns it off. It is Ace's fifth managed flag and the first that is not
+presentation-only: Electron never reads it, and it defaults **on** rather
+than off, which is why `apps/ace/scripts/deploy.mjs` provisions it with an
+explicit third argument instead of relying on `ensureFlag`'s ordinary default.
+See [`ace.md`](ace.md) and [`feature-flags.md`](feature-flags.md#provisioning).
 
 A digest runs on the ordinary agent loop, with the ordinary tool surface. The
 scheduler:
@@ -536,6 +554,11 @@ cannot change a saved schedule, cursor, or settlement.
 - **A digest row is never deleted.** Switching one off keeps the row with
   `enabled = 0`, so absence unambiguously means "never had one" and the reconciler
   cannot resurrect it.
+- **`digests-enabled` gates firing only, never a person's own configuration.**
+  It is checked before the occurrence is claimed, so a skip moves no cursor and
+  the reconciler keeps creating and repairing digest defaults exactly as if the
+  flag did not exist. It fails open to keep sending, the opposite of a
+  client-visible product flag — see [`feature-flags.md`](feature-flags.md).
 
 ## Boundary
 
@@ -551,6 +574,7 @@ first consumer. It does not own:
 | The scheduler and its alarm | [`architecture.md`](architecture.md) |
 | The columns and their constraints | [`data-model.md`](data-model.md) |
 | The other consumer of a connector's `userDelivery` surface | [`workstream-email-addresses.md`](workstream-email-addresses.md) |
+| The `FLAGS` binding, the other three resolvers, and how each one fails | [`feature-flags.md`](feature-flags.md) |
 
 A surface that wants "what happened, for this person, since this instant" reads
 the workspace activity log through `listActivityEventsForUser`. Nothing else is a supported
@@ -597,6 +621,10 @@ entry point, and nothing else resolves audience correctly.
   emphasis, inline code, blockquote, and tables or fenced blocks kept verbatim in
   a `<pre>`. Other unknown syntax degrades to visible text rather than being
   passed through as HTML.
+- **`digests-enabled` resolves to enabled on every failure mode** — no binding,
+  a binding that throws, an unresolved flag, a non-boolean value — and only an
+  explicit `false` variation turns it off. `digest-flags.ts` never throws, so a
+  Flagship outage cannot stop a digest that would otherwise have sent.
 
 ## Testing
 
@@ -607,7 +635,8 @@ entry point, and nothing else resolves audience correctly.
 | `apps/api/test/digest-email-content.test.ts` | The digest shell: inline styles, counts, and the preheader. |
 | `apps/api/test/email-markdown.test.ts` | The shared Markdown subset, escaping, refused link targets, and the preview line. |
 | `apps/api/test/digest-schedule.test.ts` | The day mask, one `schedules` row per time, timezone re-derivation, and the reconciler's two passes. |
-| `apps/api/test/digest-run.test.ts` | The frozen window, the claim, the empty settle, and the release on a pre-launch throw. |
+| `apps/api/test/digest-run.test.ts` | The frozen window, the claim, the empty settle, the release on a pre-launch throw, and that a `digests-enabled` skip claims nothing and moves no cursor. |
+| `apps/api/test/digest-flags.test.ts` | That `digests-enabled` fails open on every failure mode and only an explicit `false` variation turns it off. |
 | `apps/api/test/digest-delivery.test.ts` | Independent per-destination settlement, the skipped unknown target type, and `needs_input` on a permanent rejection. |
 
 Run one with
@@ -621,6 +650,54 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-25 — Scheduled digests get an operational kill switch
+
+**What changed:** `digest-flags.ts` adds `digests-enabled`, a Flagship boolean
+checked at the top of `fireDigestSchedule` — right after the schedule's own
+`enabled` bit and before the occurrence is claimed. It fails open: no binding,
+a throw, an unresolved flag, and a non-boolean value all resolve to enabled,
+and only an explicit `false` variation actually served by Flagship stops
+delivery. It is managed through Ace, alongside the four existing product
+Booleans, but is provisioned **on** rather than off — the one call to
+`ensureFlag` in `apps/ace/scripts/deploy.mjs` that passes an explicit default.
+
+**Why:** Every kill switch already in the codebase — the four Ace-managed
+product Booleans — defaults off and is presentation-only: Electron hides a
+surface while the API keeps serving it underneath. Digests are the opposite
+case: on by default for every existing person, fired from a cron reconciler
+nobody visits a settings screen to trigger. Copying the product-flag pattern
+verbatim, default and all, would have silently stopped every digest the
+moment the flag was first provisioned. What was wanted was a real stop: an
+operator able to turn digest delivery off, from the same editor they already
+use for every other flag, without touching anyone's saved schedule,
+destinations, or cursor.
+
+**Considered and rejected:** A CLI-only path outside Ace, parallel to the
+agent-model flags — the more surgical choice, since nothing here needs a value
+pushed to a connected desktop socket the way Ace's fan-out exists to do. It
+was rejected for the same reason the presentation flags are not split across
+two editors: a second, undiscoverable way to change a Boolean flag is worse
+than one editor doing slightly more than its fan-out strictly needs. Also
+rejected: gating `reconcileDigestDefaults` instead of the fire path, which
+would conflate "does this person have a digest configured" — a product
+default, adjustable per person — with "are digests currently allowed to
+send" — an operational switch — and would leave a flipped-off flag fighting
+the reconciler's own idempotent repair on every cron tick.
+
+**Consequences:** `digest-flags.ts` is the fourth module reading `env.FLAGS`
+directly, alongside the three [`feature-flags.md`](feature-flags.md) already
+named, and is the only one of the four not consulted through
+`client-feature-flags.ts` — it is Ace-managed but not client-visible, so a
+save still enqueues Ace's ordinary Queue fan-out even though no connected
+client reads this key. That is harmless rather than free: the fan-out always
+re-evaluates and re-sends the complete client contract regardless of which
+key changed, so this simply repeats work already safe to repeat. A flag skip
+is indistinguishable from a quiet schedule from the delivery table alone, the
+same ambiguity an `empty` settlement already carries; unlike an `empty`
+settlement, though, a flag skip claims nothing, so the cursor does not move
+and the missed window is fully recovered the moment the flag serves `true`
+again.
 
 ### 2026-08-23 — Every email repairs a model's TeX, and consumes the escapes that repair writes
 

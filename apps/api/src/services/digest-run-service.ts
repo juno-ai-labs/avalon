@@ -9,6 +9,7 @@ import {
   type ActivityEventCursor,
   type ActivityEventRow,
 } from "./activity-event-service";
+import { resolveDigestsEnabled } from "./digest-flags";
 import { publishWorkstreamEvent } from "./integrations";
 import { workflowInstanceWasCreated } from "../lib/workflow-launch-signal";
 import { createMessageObjectPort } from "../runtime/message-port";
@@ -64,7 +65,7 @@ interface DeliveryCursorRow {
 
 export type DigestFireOutcome =
   | { started: true; deliveryId: string; harnessRunId: string }
-  | { started: false; reason: "already_planned" | "disabled" | "unauthorized" | "empty" };
+  | { started: false; reason: "already_planned" | "disabled" | "flag_disabled" | "unauthorized" | "empty" };
 
 /**
  * Starts the run for one due digest occurrence.
@@ -102,6 +103,16 @@ export async function fireDigestSchedule(
   // retrying would only reach the same answer.
   if (!schedule) return { started: false, reason: "unauthorized" };
   if (schedule.enabled !== 1) return { started: false, reason: "disabled" };
+  // Checked before any write: an occurrence skipped here claims nothing and
+  // moves no cursor, so turning the flag back on costs nothing — the next
+  // occurrence to fire reads `previousCursor` exactly as it always does and
+  // catches up on whatever was missed. See `digest-flags.ts` for why this
+  // fails open rather than closed.
+  const digestsEnabled = await resolveDigestsEnabled(env, {
+    userId: schedule.user_id,
+    workspaceId: schedule.workspace_id,
+  });
+  if (!digestsEnabled) return { started: false, reason: "flag_disabled" };
 
   // The principal is re-validated rather than trusted: a schedule saved months
   // ago must not still act as somebody who is no longer that person. The join
