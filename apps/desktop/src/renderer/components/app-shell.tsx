@@ -258,6 +258,25 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // longer serves, so leave it the way a deleted automation does.
           if (location.pathname === `/notes/${note.id}`) void navigate('/workstreams/new');
         }}
+        onArchiveWorkstream={async (workstream) => {
+          if (!api) return;
+          await api.archiveWorkstream(workstream.id);
+          // No list invalidation and no cache patch: WorkstreamDO answers this
+          // write with a directory tombstone, and `applyVersionedWorkstreamState`
+          // drops both the sidebar row and the `['workstream', id]` detail entry
+          // off the back of it — the same path an archive from another window
+          // takes, and the one that has the waterline to order it against
+          // whatever else is in flight for this row.
+          //
+          // Leaving the screen is this handler's, though. The socket removes the
+          // query but not the route, so the reader would be left on a work stream
+          // the API no longer serves. Replacing rather than pushing, so Back
+          // cannot return to it — the way an archived note and a deleted
+          // automation both leave.
+          if (openWorkstreamId(location.pathname) === workstream.id) {
+            void navigate('/workstreams/new', { replace: true });
+          }
+        }}
         onChangeNoteScope={async (note, scope) => {
           if (!api) return;
           const updated = await api.updateNote(note.id, { scope });
