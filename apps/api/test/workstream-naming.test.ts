@@ -18,6 +18,8 @@ import {
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
+  applyWorkstreamObjectRootFields,
+  workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 
 const workspaceId = "00000000-0000-7000-8000-0000000000b0";
@@ -115,12 +117,10 @@ describe("work-stream naming", () => {
       // The rename lands between the model answering and the title being
       // written — exactly the window the conditional update exists to lose.
       // Naming a work stream settles it, which is what makes it untouchable.
-      workstreamObjectRun(
-        objectStoreOf(database),
-        "UPDATE workstreams SET title = ?, title_status = 'settled' WHERE id = ?",
-        "Mucker intro thread",
-        workstreamId,
-      );
+      applyWorkstreamObjectRootFields(
+      objectStoreOf(database),
+      { title: "Mucker intro thread", titleStatus: "settled" },
+    );
     });
     const env = environment(database, published);
 
@@ -189,11 +189,9 @@ describe("work-stream naming", () => {
 
   it("names the work stream again from the conversation once it has five messages", async () => {
     const database = seededDatabase();
-    workstreamObjectRun(
+    applyWorkstreamObjectRootFields(
       objectStoreOf(database),
-      "UPDATE workstreams SET title = ?, title_status = 'automatic' WHERE id = ?",
-      "Draft email to Danny",
-      workstreamId,
+      { title: "Draft email to Danny", titleStatus: "automatic" },
     );
     seedMessages(database, 5);
     const requests: Array<Record<string, unknown>> = [];
@@ -246,11 +244,9 @@ describe("work-stream naming", () => {
 
   it("keeps its one retry when the model cannot be reached at the five-message mark", async () => {
     const database = seededDatabase();
-    workstreamObjectRun(
+    applyWorkstreamObjectRootFields(
       objectStoreOf(database),
-      "UPDATE workstreams SET title = ?, title_status = 'automatic' WHERE id = ?",
-      "Invoice export totals",
-      workstreamId,
+      { title: "Invoice export totals", titleStatus: "automatic" },
     );
     seedMessages(database, 5);
     const published: Array<Record<string, unknown>> = [];
@@ -302,11 +298,7 @@ describe("work-stream naming", () => {
 
   it("counts what the work stream said, not what the harness wrote down", async () => {
     const database = seededDatabase();
-    workstreamObjectRun(
-      objectStoreOf(database),
-      "UPDATE workstreams SET title_status = 'automatic' WHERE id = ?",
-      workstreamId,
-    );
+    applyWorkstreamObjectRootFields(objectStoreOf(database), { titleStatus: "automatic" });
     // An opening request, one reply, and three tool calls. A run ends where
     // tool rows accumulate, and that is one of the two places the second pass
     // is called from — counting them would name this from what the first pass
@@ -341,11 +333,7 @@ describe("work-stream naming", () => {
 
   it("names a work stream again only once, however often the transcript grows", async () => {
     const database = seededDatabase();
-    workstreamObjectRun(
-      objectStoreOf(database),
-      "UPDATE workstreams SET title_status = 'automatic' WHERE id = ?",
-      workstreamId,
-    );
+    applyWorkstreamObjectRootFields(objectStoreOf(database), { titleStatus: "automatic" });
     seedMessages(database, 9);
     const requests: Array<Record<string, unknown>> = [];
     stubOpenRouter(requests, "Mucker download link for founder@example.com");
@@ -359,11 +347,7 @@ describe("work-stream naming", () => {
 
   it("leaves a short work stream and a title a person chose alone", async () => {
     const database = seededDatabase();
-    workstreamObjectRun(
-      objectStoreOf(database),
-      "UPDATE workstreams SET title_status = 'automatic' WHERE id = ?",
-      workstreamId,
-    );
+    applyWorkstreamObjectRootFields(objectStoreOf(database), { titleStatus: "automatic" });
     seedMessages(database, 4);
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);
@@ -373,11 +357,9 @@ describe("work-stream naming", () => {
     expect(fetcher).not.toHaveBeenCalled();
 
     seedMessages(database, 6);
-    workstreamObjectRun(
+    applyWorkstreamObjectRootFields(
       objectStoreOf(database),
-      "UPDATE workstreams SET title = ?, title_status = 'settled' WHERE id = ?",
-      "Mucker intro thread",
-      workstreamId,
+      { title: "Mucker intro thread", titleStatus: "settled" },
     );
 
     await refreshWorkstreamName(env, { workspaceId, workstreamId });
@@ -413,11 +395,7 @@ describe("work-stream naming", () => {
 
   it("reads no more of a transcript than it takes to know the work stream is due", async () => {
     const database = seededDatabase();
-    workstreamObjectRun(
-      objectStoreOf(database),
-      "UPDATE workstreams SET title_status = 'settled' WHERE id = ?",
-      workstreamId,
-    );
+    applyWorkstreamObjectRootFields(objectStoreOf(database), { titleStatus: "settled" });
     seedMessages(database, 40);
     const counted: string[] = [];
     const transcriptOperations: string[] = [];
@@ -514,11 +492,10 @@ function seedMessages(database: DatabaseSync, count: number): void {
 }
 
 function workstreamRow(database: DatabaseSync): { title: string; title_status: string } {
-  return workstreamObjectGet(
+  return workstreamObjectRootRow<{ title: string; title_status: string }>(
     objectStoreOf(database),
-    "SELECT title, title_status FROM workstreams WHERE id = ?",
-    workstreamId,
-  ) as { title: string; title_status: string };
+    "title, title_status",
+  );
 }
 
 function title(database: DatabaseSync): string {
@@ -623,22 +600,18 @@ function seededDatabase(): DatabaseSync {
   const objectStore = testWorkstreamObjectStore();
   databases.push(objectStore);
   objectStores.set(database, objectStore);
-  seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstreams
-     (id, workspace_id, title, title_status, objective, email_address, email_route_status, origin_type,
-      created_by_user_id, harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
-     VALUES (?, ?, ?, 'naming', ?, ?, 'active', 'ad_hoc', ?, 'running', 2, ?, ?, ?)`,
+  seedWorkstreamObjectRoot(objectStore, {
     workstreamId,
     workspaceId,
-    provisionalTitle,
-    objective,
-    "calm-bright-gentle-otter@automation.with-avalon.com",
-    userId,
-    at,
-    at,
-    at,
-  );
+    title: provisionalTitle,
+    titleStatus: "naming",
+    description: objective,
+    emailAddress: "calm-bright-gentle-otter@automation.with-avalon.com",
+    emailRouteStatus: "active",
+    originType: "ad_hoc",
+    createdByUserId: userId,
+    exactState: "running",
+    nextSequenceNumber: 2,
+  }, Date.parse(at));
   return database;
 }
