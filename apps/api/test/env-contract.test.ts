@@ -151,6 +151,25 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(eu)).not.toThrow();
   });
 
+  it("requires inference lakehouse bindings in Global but intentionally omits them in EU", () => {
+    const global = contractCompleteEnv();
+    delete (global as Partial<Env>).INFERENCE_LAKEHOUSE_QUEUE;
+    delete (global as Partial<Env>).INFERENCE_LAKEHOUSE;
+    expect(() => assertEnvContract(global)).toThrow(
+      /INFERENCE_LAKEHOUSE is missing, INFERENCE_LAKEHOUSE_QUEUE is missing/u,
+    );
+
+    const eu = contractCompleteEnv({
+      AVALON_REGION: "eu",
+      PUBLIC_API_BASE_URL: "https://eu.api.with-avalon.com",
+    });
+    delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
+    delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
+    delete (eu as Partial<Env>).INFERENCE_LAKEHOUSE_QUEUE;
+    delete (eu as Partial<Env>).INFERENCE_LAKEHOUSE;
+    expect(() => assertEnvContract(eu)).not.toThrow();
+  });
+
   it("holds an unrecognized region to every rule, including Global's", () => {
     // The fail-closed branch. The invalid-region case above keeps both Google
     // keys, so on its own it never proves they stay required when the region

@@ -1,6 +1,6 @@
 /**
- * Ensure the complete regional inference lakehouse exists, then materialize
- * deploy-time Wrangler configs containing the stream IDs Cloudflare assigned.
+ * Ensure the complete Global inference lakehouse exists, then materialize the
+ * Global Pipeline ID and an inference-free EU deploy config.
  *
  * Pipelines resources are named and idempotently discovered, but a Worker
  * binding requires the stream's generated ID. Keeping that ID in a committed
@@ -23,10 +23,8 @@ const API_BASE = 'https://api.cloudflare.com/client/v4';
 const SAFE_BUCKET = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u;
 const SAFE_PIPELINE_ENTITY = /^[a-z][a-z0-9_]{2,127}$/u;
 const SAFE_TOKEN_ID = /^[a-f0-9]{32}$/u;
-const REGIONS = ['eu', 'global'];
-// These are policy guards for the approved EU residency layout, not defaults.
-const EU_PARQUET_PATH = 'avalon/llm_inference';
-const EU_PARQUET_PARTITIONING = 'year=%Y/month=%m/day=%d/hour=%H';
+const WORKER_REGIONS = ['eu', 'global'];
+const LAKEHOUSE_REGIONS = ['global'];
 
 class CloudflareApiError extends Error {
   constructor(message, { status, codes = [] } = {}) {
@@ -79,7 +77,7 @@ function jurisdictionHeaders(region) {
 }
 
 function assertManifest(manifest) {
-  if (manifest.schemaVersion !== 3 || manifest.binding !== 'INFERENCE_LAKEHOUSE') {
+  if (manifest.schemaVersion !== 4 || manifest.binding !== 'INFERENCE_LAKEHOUSE') {
     throw new Error('Unsupported inference lakehouse manifest version or binding');
   }
   if (!['account', 'user'].includes(manifest.deploymentTokenOwner)) {
@@ -88,7 +86,11 @@ function assertManifest(manifest) {
   for (const name of [manifest.namespace, manifest.table]) {
     if (!SAFE_PIPELINE_ENTITY.test(name)) throw new Error(`Unsafe Data Catalog name: ${name}`);
   }
-  for (const regionName of REGIONS) {
+  const regionNames = Object.keys(manifest.regions ?? {}).sort();
+  if (JSON.stringify(regionNames) !== JSON.stringify(LAKEHOUSE_REGIONS)) {
+    throw new Error('Inference lakehouse manifest must provision Global only');
+  }
+  for (const regionName of LAKEHOUSE_REGIONS) {
     const region = manifest.regions?.[regionName];
     if (!region) throw new Error(`Inference lakehouse manifest is missing ${regionName}`);
     if (!SAFE_BUCKET.test(region.bucket)) throw new Error(`Unsafe ${regionName} lakehouse bucket`);
@@ -101,18 +103,11 @@ function assertManifest(manifest) {
         throw new Error(`Unsafe ${regionName} ${kind} name: ${String(name)}`);
       }
     }
-    if (region.jurisdiction !== (regionName === 'eu' ? 'eu' : 'default')) {
+    if (region.jurisdiction !== 'default') {
       throw new Error(`${regionName} lakehouse has the wrong R2 jurisdiction`);
     }
-    const expectedSinkType = regionName === 'eu' ? 'r2' : 'r2_data_catalog';
-    if (region.sinkType !== expectedSinkType) {
-      throw new Error(`${regionName} lakehouse must use the ${expectedSinkType} sink`);
-    }
-    if (
-      regionName === 'eu'
-      && (region.path !== EU_PARQUET_PATH || region.partitioning !== EU_PARQUET_PARTITIONING)
-    ) {
-      throw new Error('EU lakehouse must use the checked-in Parquet path and UTC partitioning');
+    if (region.sinkType !== 'r2_data_catalog') {
+      throw new Error(`${regionName} lakehouse must use the r2_data_catalog sink`);
     }
   }
   return manifest;
@@ -243,13 +238,6 @@ function credentialBoundSinkName(region, tokenId) {
   return name;
 }
 
-function r2SinkCredentials(client) {
-  return {
-    access_key_id: client.tokenId,
-    secret_access_key: createHash('sha256').update(client.token).digest('hex'),
-  };
-}
-
 function newSinkConfig(client, region, manifest) {
   if (region.sinkType === 'r2_data_catalog') {
     return {
@@ -260,17 +248,7 @@ function newSinkConfig(client, region, manifest) {
       rolling_policy: { interval_seconds: 300 },
     };
   }
-  if (region.sinkType !== 'r2') {
-    throw new Error(`Unsupported inference lakehouse sink type: ${region.sinkType}`);
-  }
-  return {
-    bucket: region.bucket,
-    jurisdiction: region.jurisdiction,
-    path: region.path,
-    partitioning: { time_pattern: region.partitioning },
-    credentials: r2SinkCredentials(client),
-    rolling_policy: { interval_seconds: 300 },
-  };
+  throw new Error(`Unsupported inference lakehouse sink type: ${region.sinkType}`);
 }
 
 function normalizedSql(value) {
@@ -377,10 +355,15 @@ export async function materializeInferenceLakehouseWranglerConfigs(
 ) {
   const outputDirectory = options.outputDirectory ?? join(repositoryDirectory, 'apps/api');
   const written = {};
-  for (const regionName of REGIONS) {
+  for (const regionName of WORKER_REGIONS) {
     const sourcePath = join(repositoryDirectory, `apps/api/wrangler.${regionName}.jsonc`);
     const config = parseWranglerConfig(await readFile(sourcePath, 'utf8'));
-    config.pipelines = [{ binding: manifest.binding, stream: resources[regionName].stream.id }];
+    const stream = resources[regionName]?.stream;
+    if (stream) {
+      config.pipelines = [{ binding: manifest.binding, stream: stream.id }];
+    } else {
+      delete config.pipelines;
+    }
     const outputPath = join(outputDirectory, `.wrangler.inference.${regionName}.json`);
     await writeFile(outputPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
     written[regionName] = outputPath;
@@ -401,7 +384,7 @@ export async function ensureInferenceLakehouse(options = {}) {
   client.tokenId = await deploymentTokenId(client, manifest.deploymentTokenOwner);
   const resources = {};
 
-  for (const regionName of REGIONS) {
+  for (const regionName of LAKEHOUSE_REGIONS) {
     const region = manifest.regions[regionName];
     await ensureBucket(client, regionName, region, create, log);
     if (region.sinkType === 'r2_data_catalog') {

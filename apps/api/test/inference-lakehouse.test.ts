@@ -229,6 +229,35 @@ describe("inference lakehouse", () => {
     });
   });
 
+  it("does not archive EU inference while EU analytics export is deferred", async () => {
+    const { env, objects, pointers, delivered } = fixture();
+    env.AVALON_REGION = "eu";
+
+    await captureStreamingInferenceRequest(env, {
+      source: "workstream",
+      workspaceId: "workspace-eu",
+      workstreamId: "workstream-eu",
+      substreamId: "0",
+    }, {
+      inferenceRequestId: "eu-request-1",
+      turnId: "turn-eu",
+      model: "canonical/model",
+      provider: "openrouter",
+      providerInvocationModel: "provider/model",
+      cursor: { structuredOutputAttempt: 0, stageIndex: 0, candidateIndex: 0, endpointAttempt: 0 },
+      payload: {
+        model: "provider/model",
+        messages: [{ role: "user", content: "must stay out of analytics storage" }],
+        stream: true,
+        stream_options: { include_usage: true },
+      },
+    });
+
+    expect(objects.size).toBe(0);
+    expect(pointers).toEqual([]);
+    expect(delivered).toEqual([]);
+  });
+
   it("archives the exact regional record, queues only a verified pointer, and delivers it", async () => {
     const { env, objects, pointers, delivered } = fixture();
     const expected = record();
