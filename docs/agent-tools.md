@@ -614,7 +614,16 @@ future agent tool or plugin, not just this family.
    than returning a replacement token.
 10. No internal jargon in any model-visible string.
 11. Strict-id params validate the family and hint the expected one on mismatch.
-12. `capability` is covered by the connector manifest, the descriptor matches it
+12. If the executor's parse is stricter than `inputSchema` in any way JSON
+    Schema cannot carry — a `.refine()`, a `.superRefine()`, a cross-field or
+    exclusivity rule, a bound stated only in zod — the same schema is attached
+    through `validateInput` (or a connector's `validateToolInput`). Without it
+    the runtime reads only what the model was shown, finds the arguments fine,
+    files the tool's own rejection as somebody else's data problem, and tells
+    the model to retry *without changing them*. Item 2 above is where that gap
+    is created and this is where it is closed; the failure is invisible in every
+    log, so nothing but this check catches it.
+13. `capability` is covered by the connector manifest, the descriptor matches it
     in provider type and tool order, the plugin system message is updated, and
     `pnpm lint`, `pnpm typecheck`, and `pnpm test` are green.
 
