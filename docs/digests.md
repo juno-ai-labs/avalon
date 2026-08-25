@@ -625,6 +625,11 @@ entry point, and nothing else resolves audience correctly.
   a binding that throws, an unresolved flag, a non-boolean value — and only an
   explicit `false` variation turns it off. `digest-flags.ts` never throws, so a
   Flagship outage cannot stop a digest that would otherwise have sent.
+- **A resolution to disabled logs at `info`, not the `debug` every other
+  outcome uses.** No `digest_deliveries` row is written when the flag skips an
+  occurrence, by design, so the log line is the only trace an operator has
+  that the switch took effect — `debug` sits below both regions' configured
+  production level and would leave the skip invisible.
 
 ## Testing
 
