@@ -978,6 +978,15 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
           // survive schema sanitization. See `docs/agent-tools.md`.
         },
       },
+      // The exclusivity the description states is unrepresentable in the
+      // declared schema, so `{}` and both-keys-at-once both pass it and are
+      // then rejected here. Without the hook the runtime reads that as the
+      // tool's data being bad rather than the model's arguments, and the
+      // carefully worded union message below never reaches the model at all.
+      validateInput: (raw) => {
+        const result = SearchInputSchema.safeParse(raw);
+        return result.success ? null : result.error;
+      },
       execute: async (raw) => {
         const args = SearchInputSchema.parse(raw);
         const result = "query" in args
