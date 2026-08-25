@@ -545,6 +545,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
         actorNameSnapshot: "Author",
         workstreamTitleSnapshot: "Regional effects",
         workstreamObjectiveSnapshot: "Prove the second notification kind lands",
+        titleIsProvisional: false,
         occurredAt: AT,
       };
       const applied = await applyWorkstreamRegionalEffect(env, message(added, {
@@ -617,6 +618,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
         actorNameSnapshot: "Author",
         workstreamTitleSnapshot: workstreamId === WORKSTREAM_ID ? "Regional effects" : "Second room",
         workstreamObjectiveSnapshot: "",
+        titleIsProvisional: false,
         occurredAt: AT,
       });
       for (const workstreamId of [WORKSTREAM_ID, asWorkstreamId(secondWorkstreamId)]) {
@@ -659,6 +661,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
         actorNameSnapshot: "Author",
         workstreamTitleSnapshot: "Regional effects",
         workstreamObjectiveSnapshot: "",
+        titleIsProvisional: false,
         occurredAt: AT,
       };
       const envelope = message(effect, {
@@ -699,6 +702,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
         actorNameSnapshot: "Recipient",
         workstreamTitleSnapshot: "Regional effects",
         workstreamObjectiveSnapshot: "",
+        titleIsProvisional: false,
         occurredAt: AT,
       };
       await applyWorkstreamRegionalEffect(env, message(added, {
