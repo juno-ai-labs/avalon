@@ -269,8 +269,10 @@ const PERSONAL_AUTOMATIONS_FOR_HOME_SQL =
    WHERE s.workspace_id = ? AND s.owner_user_id = ? AND s.lifecycle_state = 'visible'
      AND s.status <> 'draft'
    ORDER BY s.updated_at DESC LIMIT 5`;
-const SLACK_RETRY_PROMPT_MISSING_TEXT = "I couldn’t find the original request for this retry. Mention `@Avalon` again and restate what you want me to do.";
+const SLACK_RETRY_PROMPT_MISSING_TEXT = "I couldn’t find the original request for this retry. Mention `@Rally` again and restate what you want me to do.";
 const SLACK_RETRYABLE_DENIAL_PREFIXES = [
+  "Rally needs updated Slack permissions before it can start workspace tasks here",
+  "Rally couldn’t verify whether this Slack channel is public or private",
   "Avalon’s Slack workspace connection needs attention",
   "Avalon workspace tasks are not enabled for this Slack surface",
   "Avalon needs updated Slack permissions before it can start workspace tasks here",
@@ -601,7 +603,7 @@ export class SlackAgentService {
       const view = asRecord(payload.view);
       if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_start_task_submit") {
         const prompt = modalPrompt(view.state);
-        if (!prompt) return { response_action: "errors", errors: { prompt: "Describe what Avalon should do." } };
+        if (!prompt) return { response_action: "errors", errors: { prompt: "Describe what Rally should do." } };
         if (!modalPromptSource(view.private_metadata)) {
           return {
             response_action: "errors",
@@ -612,7 +614,7 @@ export class SlackAgentService {
         return { response_action: "clear" };
       }
       if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_preferences_submit") {
-        if (!await this.linkedAccount(teamId, slackUserId)) return { response_action: "errors", errors: { delivery: "Connect your Avalon account first." } };
+        if (!await this.linkedAccount(teamId, slackUserId)) return { response_action: "errors", errors: { delivery: "Connect your Rally account first." } };
         await this.enqueueIngressJob({ id: `interaction:${bodyHash}`, teamId, bodyHash, kind: "interaction", payload });
         return { response_action: "clear" };
       }
@@ -743,13 +745,13 @@ export class SlackAgentService {
           attachments: [],
         }),
       }, AbortSignal.timeout(1_500));
-      return { response_type: "ephemeral", text: "Opening Avalon…" };
+      return { response_type: "ephemeral", text: "Opening Rally…" };
     }
     if (/^help$/iu.test(commandForm.text.trim())) {
-      return { response_type: "ephemeral", text: "Ask Avalon to investigate, summarize, coordinate, or create an automation. Run /avalon without text to open the task modal, or open App Home to connect and manage notifications." };
+      return { response_type: "ephemeral", text: "Ask Rally to investigate, summarize, coordinate, or create an automation. Run /rally without text to open the task modal, or open App Home to connect and manage notifications." };
     }
     await this.enqueueIngressJob({ id: `command:${bodyHash}`, teamId, bodyHash, kind: "command", payload: commandForm });
-    return { response_type: "ephemeral", text: "Avalon queued your request. I’ll continue in your Agent conversation." };
+    return { response_type: "ephemeral", text: "Rally queued your request. I’ll continue in your Agent conversation." };
   }
 
   async processQueuedIngress(workspaceId: string, jobId: string): Promise<void>;
@@ -972,7 +974,7 @@ export class SlackAgentService {
         await postSlackResponse(form.response_url, {
           response_type: "ephemeral",
           replace_original: false,
-          text: "Avalon processed your request. Check your Agent conversation for the task or any required action.",
+          text: "Rally processed your request. Check your Agent conversation for the task or any required action.",
         });
       } catch (error) {
         logWarn(this.env, "slack_command_follow_up_failed", { reason: error instanceof Error ? error.message : "unknown" });
@@ -1039,14 +1041,14 @@ export class SlackAgentService {
       // genuine bug to the member as "already connected to another Avalon
       // user" — advice that can never resolve.
       if (isSlackUniqueConstraintError(error)) {
-        throw new ApiError(409, "slack_identity_already_linked", "This Slack identity is already connected to another Avalon user");
+        throw new ApiError(409, "slack_identity_already_linked", "This Slack identity is already connected to another Rally user");
       }
       throw error;
     }
     const [claimed, linked] = results;
     if (!claimed || !linked) throw new ApiError(500, "slack_link_failed", "Slack could not be connected");
     if (Number(claimed.meta.changes ?? 0) !== 1 || Number(linked.meta.changes ?? 0) !== 1) {
-      throw new ApiError(409, "slack_link_consumed", "This Slack connection link was already used or replaced by a newer one; click Connect Avalon in Slack to get a new one");
+      throw new ApiError(409, "slack_link_consumed", "This Slack connection link was already used or replaced by a newer one; click Connect Rally in Slack to get a new one");
     }
     await this.assignWorkspaceSessions(
       String(challenge.connection_id),
@@ -1207,15 +1209,15 @@ export class SlackAgentService {
     // Scheduled maintenance keeps a spent row for a day past its expiry or
     // consumption, far beyond the 15-minute lifetime, so nothing that merely
     // aged out arrives here as a missing row.
-    if (!challenge) throw new ApiError(404, "slack_link_unknown", "Avalon does not recognize this Slack connection link; click Connect Avalon in Slack to get a new one");
+    if (!challenge) throw new ApiError(404, "slack_link_unknown", "Rally does not recognize this Slack connection link; click Connect Rally in Slack to get a new one");
     // Ahead of the state checks: their answers are not owed to a caller who
     // holds a token minted for a different Avalon workspace.
-    if (challenge.workspace_id !== auth.workspaceId) throw new ApiError(409, "slack_link_workspace_mismatch", "This Slack installation belongs to another Avalon workspace");
-    if (typeof challenge.consumed_at === "string") throw new ApiError(409, "slack_link_consumed", "This Slack connection link was already used or replaced by a newer one; click Connect Avalon in Slack to get a new one");
+    if (challenge.workspace_id !== auth.workspaceId) throw new ApiError(409, "slack_link_workspace_mismatch", "This Slack installation belongs to another Rally workspace");
+    if (typeof challenge.consumed_at === "string") throw new ApiError(409, "slack_link_consumed", "This Slack connection link was already used or replaced by a newer one; click Connect Rally in Slack to get a new one");
     // Still a 404, as an unusable challenge always was: `ApiError` curates the
     // statuses this API emits, and the honest 410 is not worth widening it for
     // when the distinction clients act on is the code.
-    if (String(challenge.expires_at) <= nowIso()) throw new ApiError(404, "slack_link_expired", "This Slack connection link has expired; click Connect Avalon in Slack to get a new one");
+    if (String(challenge.expires_at) <= nowIso()) throw new ApiError(404, "slack_link_expired", "This Slack connection link has expired; click Connect Rally in Slack to get a new one");
     // A stale belief does not refuse this — linking an identity is a row in
     // `slack_user_links`, it neither spends the installation's credential nor
     // needs it to be sound, and refusing on `needs_reconnect` stranded a member
@@ -1228,7 +1230,7 @@ export class SlackAgentService {
     // identity link and then fail publishing App Home — leaving the member
     // looking at an error for a mutation that had already landed.
     if (challenge.connection_status === "disabled") {
-      throw new ApiError(409, "slack_installation_disabled", "This Slack workspace's Avalon installation has been disabled; an Avalon workspace owner or admin can reconnect it under Settings → Connections");
+      throw new ApiError(409, "slack_installation_disabled", "This Slack workspace's Rally installation has been disabled; a Rally workspace owner or admin can reconnect it under Settings → Connections");
     }
     return challenge;
   }
@@ -1321,7 +1323,7 @@ export class SlackAgentService {
           channel: session.slack_channel_id,
           thread_ts: session.slack_thread_ts,
           client_msg_id: await stableUuid(`${session.id}:${deliveryKey}:controls`),
-          text: "Avalon task controls",
+          text: "Rally task controls",
           blocks: responseActionBlocks(workstreamId, this.env.PUBLIC_WEB_BASE_URL),
         }, AbortSignal.timeout(10_000));
       }
@@ -1335,7 +1337,7 @@ export class SlackAgentService {
         // A button rather than a minted URL: this DM is a notification a member
         // may open hours later, and a challenge embedded in it would be long
         // dead by then with nothing on screen to say so.
-        const connectPrompt = "This task needs an Avalon account of its own to continue. Connect yours, then reply in the thread.";
+        const connectPrompt = "This task needs a Rally account of its own to continue. Connect yours, then reply in the thread.";
         await slackApi(token, "chat.postMessage", {
           channel: dmChannel,
           client_msg_id: await stableUuid(`${session.id}:${deliveryKey}:connect-link`),
@@ -1348,8 +1350,8 @@ export class SlackAgentService {
             thread_ts: session.slack_thread_ts,
             client_msg_id: await stableUuid(`${session.id}:${deliveryKey}:connect-notice`),
             text: openElicitation?.target_user_id
-              ? "This task needs input from a specific Avalon workspace member. That member can reply here once their Avalon account is connected."
-              : "This task needs personal Avalon authority. Any connected Avalon member in this conversation can reply here to continue it.",
+              ? "This task needs input from a specific Rally workspace member. That member can reply here once their Rally account is connected."
+              : "This task needs personal Rally authority. Any connected Rally member in this conversation can reply here to continue it.",
           }, AbortSignal.timeout(10_000));
         }
       }
@@ -1429,7 +1431,7 @@ export class SlackAgentService {
         channel: channelId,
         thread_ts: threadTs,
         client_msg_id: await stableUuid(`${deliveryKey}:controls`),
-        text: "Open the full Avalon result",
+        text: "Open the full Rally result",
         blocks: automationActionBlocks(title, input.workstreamId, this.env.PUBLIC_WEB_BASE_URL),
       }, AbortSignal.timeout(10_000));
       await this.env.DB.prepare(
@@ -1675,7 +1677,7 @@ export class SlackAgentService {
       await slackApi(token, "chat.postMessage", {
         channel: channelId,
         thread_ts: rootTs,
-        text: "Ask Avalon to investigate, summarize, coordinate, or create an automation. Use /avalon anywhere, a shortcut on a message, or Start a task in App Home. Open App Home to connect your Avalon account and manage notifications.",
+        text: "Ask Rally to investigate, summarize, coordinate, or create an automation. Use /rally anywhere, a shortcut on a message, or Start a task in App Home. Open App Home to connect your Rally account and manage notifications.",
       }, AbortSignal.timeout(5_000));
       return;
     }
@@ -1905,8 +1907,8 @@ export class SlackAgentService {
             channel,
             thread_ts: thread,
             text: identity
-              ? "This question is targeted to another Avalon workspace member, so only that member can answer it."
-              : "This question is targeted to a specific Avalon workspace member. Only that linked member can answer it; I sent you a private message with a Connect Avalon button in case that member is you.",
+              ? "This question is targeted to another Rally workspace member, so only that member can answer it."
+              : "This question is targeted to a specific Rally workspace member. Only that linked member can answer it; I sent you a private message with a Connect Rally button in case that member is you.",
           }, AbortSignal.timeout(5_000));
           return;
         }
@@ -2536,7 +2538,7 @@ export class SlackAgentService {
    * the workspace principal.
    */
   private async sendPrivateConnectPrompt(slackUserId: string, token: string): Promise<void> {
-    const prompt = "Connect your Avalon account so Avalon can answer as you.";
+    const prompt = "Connect your Rally account so Rally can answer as you.";
     await slackApi(token, "chat.postMessage", {
       channel: await this.openDm(token, slackUserId),
       text: prompt,
@@ -3032,7 +3034,7 @@ export class SlackAgentService {
   ): Promise<Map<string, WorkstreamUnfurlSummary>> {
     if (!workstreamIds.length) return new Map();
     // Scoping to the connection's own workspace is the one check here that is
-    // not a matter of taste: a link to another Avalon workspace's work stream
+    // not a matter of taste: a link to another Rally workspace's work stream
     // must fall through to the anonymous card rather than be named in this
     // Slack team. A miss is indistinguishable from a link that never existed.
     // Archiving retires a work stream from view, including App Home's own task
@@ -3359,7 +3361,7 @@ export class SlackAgentService {
       ).bind(teamId).first<SlackConnectionRow>();
       if (legacy) return legacy;
     }
-    if (!route) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
+    if (!route) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Rally");
     this.env = withWorkspaceRuntimeDatabase(this.env, route.workspace_id);
     const row = await this.env.DB.prepare(
       `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
@@ -3368,7 +3370,7 @@ export class SlackAgentService {
        WHERE id = ? AND workspace_id = ? AND connector_type = 'slack'
          AND scope = 'workspace' AND provider_account_id = ? AND status <> 'disabled'`,
     ).bind(route.connection_id, route.workspace_id, teamId).first<SlackConnectionRow>();
-    if (!row) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
+    if (!row) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Rally");
     return row;
   }
 
@@ -3386,7 +3388,7 @@ export class SlackAgentService {
       ).bind(id).first<SlackConnectionRow>();
       if (legacy) return legacy;
     }
-    if (!route) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
+    if (!route) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Rally");
     this.env = withWorkspaceRuntimeDatabase(this.env, route.workspace_id);
     const row = await this.env.DB.prepare(
       `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
@@ -3394,7 +3396,7 @@ export class SlackAgentService {
        FROM connector_connections WHERE id = ? AND workspace_id = ?
          AND connector_type = 'slack' AND scope = 'workspace'`,
     ).bind(id, route.workspace_id).first<SlackConnectionRow>();
-    if (!row) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
+    if (!row) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Rally");
     return row;
   }
 
@@ -3619,7 +3621,7 @@ async function stableUuid(value: string): Promise<string> {
 }
 
 /** What a run with no text response says, rather than posting nothing at all. */
-const SLACK_EMPTY_RESULT_TEXT = "Avalon completed the task without a text response.";
+const SLACK_EMPTY_RESULT_TEXT = "Rally completed the task without a text response.";
 
 /**
  * The reaction vocabulary a workspace installation has configured, if any.
@@ -3737,12 +3739,12 @@ function slackChannelResolutionDenial(
 ): { text: string; reconnectRequired: boolean } {
   if (failure === "missing_scope") {
     return {
-      text: "Avalon needs updated Slack permissions before it can start workspace tasks here. Ask an Avalon workspace admin to reconnect the Slack workspace in Avalon Settings, then reply `try again` in this thread. You can also connect your Avalon account in App Home.",
+      text: "Rally needs updated Slack permissions before it can start workspace tasks here. Ask a Rally workspace admin to reconnect the Slack workspace in Rally Settings, then reply `try again` in this thread. You can also connect your Rally account in App Home.",
       reconnectRequired: true,
     };
   }
   return {
-    text: "Avalon couldn’t verify whether this Slack channel is public or private, so it did not start a workspace task. Reply `try again` in this thread; if this continues, ask an Avalon workspace admin to test the Slack connection in Avalon Settings. You can also connect your Avalon account in App Home.",
+    text: "Rally couldn’t verify whether this Slack channel is public or private, so it did not start a workspace task. Reply `try again` in this thread; if this continues, ask a Rally workspace admin to test the Slack connection in Rally Settings. You can also connect your Rally account in App Home.",
     reconnectRequired: false,
   };
 }
@@ -3874,17 +3876,17 @@ function startTaskModal(
     attachments: [],
   },
 ): Record<string, unknown> {
-  return { type: "modal", callback_id: "rally_start_task_submit", private_metadata: JSON.stringify(SlackModalContextSchema.parse(source)), title: { type: "plain_text", text: "Start an Avalon task" }, submit: { type: "plain_text", text: "Start" }, close: { type: "plain_text", text: "Cancel" }, blocks: [{ type: "input", block_id: "prompt", label: { type: "plain_text", text: "What should Avalon do?" }, element: { type: "plain_text_input", action_id: "value", multiline: true, initial_value: initial.slice(0, 3_000), placeholder: { type: "plain_text", text: "Summarize this, investigate an issue, or coordinate work…" } } }] };
+  return { type: "modal", callback_id: "rally_start_task_submit", private_metadata: JSON.stringify(SlackModalContextSchema.parse(source)), title: { type: "plain_text", text: "Start a Rally task" }, submit: { type: "plain_text", text: "Start" }, close: { type: "plain_text", text: "Cancel" }, blocks: [{ type: "input", block_id: "prompt", label: { type: "plain_text", text: "What should Rally do?" }, element: { type: "plain_text_input", action_id: "value", multiline: true, initial_value: initial.slice(0, 3_000), placeholder: { type: "plain_text", text: "Summarize this, investigate an issue, or coordinate work…" } } }] };
 }
 
 function preferencesModal(notifyNeedsInput: boolean, notifyAutomationCompleted: boolean): Record<string, unknown> {
   const options = [{ text: { type: "plain_text", text: "When a task needs input" }, value: "needs_input" }, { text: { type: "plain_text", text: "When an automation completes" }, value: "automation_completed" }];
   const initialOptions = options.filter((option) => option.value === "needs_input" ? notifyNeedsInput : notifyAutomationCompleted);
-  return { type: "modal", callback_id: "rally_preferences_submit", title: { type: "plain_text", text: "Avalon notifications" }, submit: { type: "plain_text", text: "Save" }, close: { type: "plain_text", text: "Cancel" }, blocks: [{ type: "input", optional: true, block_id: "delivery", label: { type: "plain_text", text: "Notify me in Slack" }, element: { type: "checkboxes", action_id: "value", options, ...(initialOptions.length ? { initial_options: initialOptions } : {}) } }] };
+  return { type: "modal", callback_id: "rally_preferences_submit", title: { type: "plain_text", text: "Rally notifications" }, submit: { type: "plain_text", text: "Save" }, close: { type: "plain_text", text: "Cancel" }, blocks: [{ type: "input", optional: true, block_id: "delivery", label: { type: "plain_text", text: "Notify me in Slack" }, element: { type: "checkboxes", action_id: "value", options, ...(initialOptions.length ? { initial_options: initialOptions } : {}) } }] };
 }
 
 function feedbackModal(workstreamId: string): Record<string, unknown> {
-  return { type: "modal", callback_id: "rally_feedback_submit", private_metadata: workstreamId.slice(0, 3000), title: { type: "plain_text", text: "Feedback for Avalon" }, submit: { type: "plain_text", text: "Send" }, close: { type: "plain_text", text: "Cancel" }, blocks: [
+  return { type: "modal", callback_id: "rally_feedback_submit", private_metadata: workstreamId.slice(0, 3000), title: { type: "plain_text", text: "Feedback for Rally" }, submit: { type: "plain_text", text: "Send" }, close: { type: "plain_text", text: "Cancel" }, blocks: [
     { type: "input", block_id: "rating", label: { type: "plain_text", text: "How was this result?" }, element: { type: "radio_buttons", action_id: "value", options: [{ text: { type: "plain_text", text: "Helpful" }, value: "helpful" }, { text: { type: "plain_text", text: "Needs improvement" }, value: "needs_improvement" }] } },
     { type: "input", optional: true, block_id: "comment", label: { type: "plain_text", text: "What should improve?" }, element: { type: "plain_text_input", action_id: "value", multiline: true, max_length: 2000 } },
   ] };
@@ -3895,7 +3897,7 @@ function feedbackModal(workstreamId: string): Record<string, unknown> {
 function connectPromptBlocks(text: string): Record<string, unknown>[] {
   return [
     { type: "section", text: { type: "mrkdwn", text } },
-    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Avalon" }, action_id: "rally_connect" }] },
+    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Rally" }, action_id: "rally_connect" }] },
   ];
 }
 
@@ -3903,24 +3905,24 @@ function connectPromptBlocks(text: string): Record<string, unknown>[] {
 // the click that minted it, so its lifetime is a member deciding whether to
 // continue rather than however long App Home has been sitting published.
 function connectModal(link: string): Record<string, unknown> {
-  return { type: "modal", callback_id: "rally_connect_link", title: { type: "plain_text", text: "Connect Avalon" }, close: { type: "plain_text", text: "Cancel" }, blocks: [
-    { type: "section", text: { type: "mrkdwn", text: "Opening Avalon connects this Slack account to the Avalon account you are signed in to on this device." } },
-    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Open Avalon" }, url: link, action_id: "rally_open_connect" }] },
-    { type: "context", elements: [{ type: "mrkdwn", text: "This link works once and expires in 15 minutes. Click *Connect Avalon* again for a new one." }] },
+  return { type: "modal", callback_id: "rally_connect_link", title: { type: "plain_text", text: "Connect Rally" }, close: { type: "plain_text", text: "Cancel" }, blocks: [
+    { type: "section", text: { type: "mrkdwn", text: "Opening Rally connects this Slack account to the Rally account you are signed in to on this device." } },
+    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Open Rally" }, url: link, action_id: "rally_open_connect" }] },
+    { type: "context", elements: [{ type: "mrkdwn", text: "This link works once and expires in 15 minutes. Click *Connect Rally* again for a new one." }] },
   ] };
 }
 
 function unlinkedHome(): Record<string, unknown>[] {
   return [
-    { type: "header", text: { type: "plain_text", text: "Meet Avalon" } },
-    { type: "section", text: { type: "mrkdwn", text: "Start workspace-authorized tasks directly from Slack. They use only shared Avalon workspace tools and remain attributed to your Slack identity. Avalon uses bounded Slack activity and task-specific context for requested work and configured automations; it does not recreate Slack as a parallel inbox or searchable workspace." } },
-    { type: "section", text: { type: "mrkdwn", text: "Connect your Avalon account so messages you send can run with your personal authority, use your personal connectors, and make your Slack work visible in Avalon. The same step connects personal Slack tools, so Avalon can search and act in Slack with your own permissions." } },
+    { type: "header", text: { type: "plain_text", text: "Meet Rally" } },
+    { type: "section", text: { type: "mrkdwn", text: "Start workspace-authorized tasks directly from Slack. They use only shared Rally workspace tools and remain attributed to your Slack identity. Rally uses bounded Slack activity and task-specific context for requested work and configured automations; it does not recreate Slack as a parallel inbox or searchable workspace." } },
+    { type: "section", text: { type: "mrkdwn", text: "Connect your Rally account so messages you send can run with your personal authority, use your personal connectors, and make your Slack work visible in Rally. The same step connects personal Slack tools, so Rally can search and act in Slack with your own permissions." } },
     // Deliberately not a `url` button: the handoff URL carries a single-use
     // challenge, and this view outlives any expiry short enough to be safe.
-    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Avalon" }, action_id: "rally_connect" }] },
+    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Rally" }, action_id: "rally_connect" }] },
     { type: "divider" },
     { type: "section", text: { type: "mrkdwn", text: "*Try now*\n• Summarize this thread and propose next steps\n• Investigate this issue with workspace tools\n• Draft a status update for this channel\n\nAfter connecting: create personal automations such as “Check my Gmail every morning and send my top 3 emails here.”" } },
-    { type: "context", elements: [{ type: "mrkdwn", text: "Avalon Agent features require paid Slack and Avalon plans." }] },
+    { type: "context", elements: [{ type: "mrkdwn", text: "Rally Agent features require paid Slack and Rally plans." }] },
     { type: "context", elements: [{ type: "mrkdwn", text: "AI can make mistakes. Review important actions. <https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/support|Help>" }] },
   ];
 }
@@ -3956,18 +3958,18 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
     blocks.push({ type: "section", text: { type: "mrkdwn", text: `*<${workstreamCanonicalUrl(webBase, workstreamId)}|${escapeMrkdwn(String(task.title))}>*\n${status}` } });
   }
   blocks.push({ type: "divider" }, { type: "header", text: { type: "plain_text", text: "Automations" } });
-  if (!automations.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "Create a recurring automation—like a 9 AM stack-ranked Gmail briefing delivered to your Avalon DM." } });
+  if (!automations.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "Create a recurring automation—like a 9 AM stack-ranked Gmail briefing delivered to your Rally DM." } });
   for (const automation of automations) blocks.push({ type: "section", text: { type: "mrkdwn", text: `*${escapeMrkdwn(String(automation.name))}* · ${escapeMrkdwn(String(automation.status))}\n${automation.next_run_at ? `Next run: ${escapeMrkdwn(String(automation.next_run_at))}` : "No scheduled run"}` } });
   blocks.push(
     { type: "divider" },
-    { type: "section", text: { type: "mrkdwn", text: `*Personal Slack tools*\n${personalSlack ? `${personalSlack.status === "healthy" ? ":large_green_circle:" : ":warning:"} ${escapeMrkdwn(personalSlack.display_name)} · ${escapeMrkdwn(personalSlack.status)}` : "Not connected — connecting your Avalon account normally does this too. Finish it to let Avalon search and act in Slack with your own permissions."}` }, accessory: { type: "button", text: { type: "plain_text", text: personalSlack ? "Manage" : "Finish connecting" }, url: desktopHandoffUrl(webBase, "rallywithai://settings/connections"), action_id: "rally_open_personal_tools" } },
+    { type: "section", text: { type: "mrkdwn", text: `*Personal Slack tools*\n${personalSlack ? `${personalSlack.status === "healthy" ? ":large_green_circle:" : ":warning:"} ${escapeMrkdwn(personalSlack.display_name)} · ${escapeMrkdwn(personalSlack.status)}` : "Not connected — connecting your Rally account normally does this too. Finish it to let Rally search and act in Slack with your own permissions."}` }, accessory: { type: "button", text: { type: "plain_text", text: personalSlack ? "Manage" : "Finish connecting" }, url: desktopHandoffUrl(webBase, "rallywithai://settings/connections"), action_id: "rally_open_personal_tools" } },
   );
   if (administration) blocks.push(
     { type: "divider" },
     { type: "header", text: { type: "plain_text", text: "Workspace administration" } },
     { type: "section", text: { type: "mrkdwn", text: `Slack workspace ${escapeMrkdwn(administration.teamId)} · ${administration.status === "healthy" ? ":large_green_circle: Healthy" : ":warning: Needs attention"}` }, accessory: { type: "button", text: { type: "plain_text", text: "Manage" }, url: desktopHandoffUrl(webBase, "rallywithai://settings/connections"), action_id: "rally_open_admin" } },
   );
-  blocks.push({ type: "divider" }, { type: "context", elements: [{ type: "mrkdwn", text: "Avalon Agent features require paid Slack and Avalon plans. Personal Slack tools use your own Slack permissions when connected. <https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/support|Support>" }] });
+  blocks.push({ type: "divider" }, { type: "context", elements: [{ type: "mrkdwn", text: "Rally Agent features require paid Slack and Rally plans. Personal Slack tools use your own Slack permissions when connected. <https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/support|Support>" }] });
   return blocks;
 }
 

@@ -555,7 +555,7 @@ function slackActivityTitle(eventType: string, channel: string | null, reaction:
     "slack.message.replied": `New Slack thread reply${location}`,
     "slack.message.edited": `Slack message edited${location}`,
     "slack.message.deleted": `Slack message deleted${location}`,
-    "slack.app_mention.received": `Avalon mentioned in Slack${location}`,
+    "slack.app_mention.received": `Rally mentioned in Slack${location}`,
     "slack.direct_message.received": "New Slack direct message",
     "slack.reaction.added": `Slack reaction${reaction ? ` :${reaction}:` : ""} added${location}`,
     "slack.reaction.removed": `Slack reaction${reaction ? ` :${reaction}:` : ""} removed${location}`,
@@ -1894,7 +1894,7 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       userDelivery: {
         targetType: "slack_agent_dm",
         label: "Slack DM",
-        description: "Avalon Agent DM in this Slack workspace.",
+        description: "Rally Agent DM in this Slack workspace.",
         // The bot is installed for the whole team, so it can only address a
         // person once that person has linked their Slack identity to Avalon.
         requiresPersonalIdentityLink: true,
@@ -1930,13 +1930,13 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
           filterFields: SlackMessageActivityFilterFields,
         },
         "slack.app_mention.received": {
-          label: "Avalon mentioned",
-          description: "A Slack member explicitly mentioned Avalon in a channel.",
+          label: "Rally mentioned",
+          description: "A Slack member explicitly mentioned Rally in a channel.",
           filterFields: SlackMessageActivityFilterFields,
         },
         "slack.direct_message.received": {
           label: "Direct message received",
-          description: "A Slack member sent Avalon a direct message.",
+          description: "A Slack member sent Rally a direct message.",
           filterFields: SlackMessageActivityFilterFields,
         },
         "slack.reaction.added": {
@@ -2151,7 +2151,7 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
             for (const token of [...new Set([response.refresh_token, accessToken].filter((value): value is string => Boolean(value)))]) {
               try { await slackApi(token, "auth.revoke", {}, AbortSignal.timeout(10_000), fetcher); } catch { /* best effort after an ineligible install */ }
             }
-            throw new ConnectorError("unauthorized", "Avalon Agent and automation features require a paid Slack workspace plan. Remove the app from Slack App Management to finish uninstalling it.");
+            throw new ConnectorError("unauthorized", "Rally Agent and automation features require a paid Slack workspace plan. Remove the app from Slack App Management to finish uninstalling it.");
           }
           return { providerAccountId: teamId, teamId, workspaceName: team.name ?? teamId, slackPlan: plan, botAccessToken: accessToken, botUserId: response.bot_user_id ?? null, appId: response.app_id ?? config.appId ?? null, oauthScopes, refreshToken: response.refresh_token ?? null, expiresAt: expiresAt(response.expires_in, now()) };
         });
