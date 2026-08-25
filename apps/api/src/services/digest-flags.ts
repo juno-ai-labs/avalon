@@ -16,27 +16,26 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
  * explicit `false` should ever stop a digest from sending, never a Flagship
  * hiccup.
  *
- * Ace-managed, but not client-visible: it is in `MANAGED_FLAGS`
- * (`apps/ace/src/protocol.ts`) and provisioned by `apps/ace/scripts/deploy.mjs`
- * alongside the four presentation flags, so an operator has exactly one editor
- * for every Boolean flag they might need to change by hand — but Electron
- * never reads it, and it is not part of `ClientFeatureFlagsSchema`. A save
- * still triggers Ace's ordinary Queue fan-out to connected desktop sockets;
- * that fan-out always re-evaluates and re-sends the complete client contract
- * regardless of which key changed, so it costs a harmless repeat of work
- * already safe to repeat rather than solving a propagation problem this flag
- * actually has — read fresh by the scheduler each time one occurrence is
- * about to fire, at most a few times a day per person, never from a live
- * socket. See `docs/ace.md` and `docs/feature-flags.md`.
+ * Ace-managed: it is in `MANAGED_FLAGS` (`apps/ace/src/protocol.ts`) and
+ * provisioned by `apps/ace/scripts/deploy.mjs` alongside the four
+ * presentation flags, so an operator has exactly one editor for every Boolean
+ * flag they might need to change by hand. A save triggers Ace's ordinary
+ * Queue fan-out to connected desktop sockets, which now has a real client
+ * consumer — see below — where it once only re-sent the other four flags'
+ * unchanged values. See `docs/ace.md` and `docs/feature-flags.md`.
  *
- * The flag gates firing only. It is read at the top of `fireDigestSchedule`,
- * before the occurrence is claimed, so an occurrence skipped for this reason
- * writes no `digest_deliveries` row and never advances the cursor — the same
- * shape a person's own `digest_schedules.enabled = 0` already produces.
- * Turning the flag back on costs nothing: the next occurrence to fire reads
+ * The flag gates firing on the server, and — since `client-feature-flags.ts`
+ * added a `digestsEnabled` field — visibility on the client, from this same
+ * function both places. It is read at the top of `fireDigestSchedule`, before
+ * the occurrence is claimed, so an occurrence skipped for this reason writes
+ * no `digest_deliveries` row and never advances the cursor — the same shape a
+ * person's own `digest_schedules.enabled = 0` already produces. Turning the
+ * flag back on costs nothing: the next occurrence to fire reads
  * `previousCursor` exactly as it always does and catches up on whatever was
  * missed, bounded by the same window the digest already applies to a quiet
- * schedule.
+ * schedule. The client side costs nothing either: the Digest settings section
+ * simply stops rendering and starts again, since nothing about a person's own
+ * saved configuration ever changes underneath it.
  */
 
 /** Flagship flag key. Boolean; defaults to on, so an outage cannot silently stop delivery. */
@@ -116,14 +115,18 @@ export async function resolveDigestsEnabled(
   // one that never fired. The attribute *names* say whether the fact a rule is
   // written against was even available, and carry none of the values.
   //
-  // Resolving to disabled logs at `info`, not `debug`: this flag is an
-  // operator's kill switch, and `debug` sits below both regions' configured
-  // production level. Without this, flipping the flag off leaves no trace an
-  // operator can find — no delivery row is written either, by design — so
-  // there would be no way to confirm the flag took effect or to answer "why
-  // did nobody get a digest" without reading this source file. Volume is
-  // bounded by the same arithmetic that makes this flag cheap to evaluate: at
-  // most a few resolutions per person per day, even with it off account-wide.
+  // Resolving to disabled logs at `info`, not `debug`, because `debug` sits
+  // below both regions' configured production level and this is the one trace
+  // an operator has that the flag took effect — no delivery row is written
+  // either, by design, so there is nothing else to check to answer "why did
+  // nobody get a digest." Two callers reach this now: `fireDigestSchedule`, a
+  // few times a day per person, and `client-feature-flags.ts`'s
+  // `digestsEnabled`, resolved on every reconnect and poll — still bounded by
+  // how often a person's client actually does that, not a hot request path,
+  // but a wider volume than the scheduler alone would produce. Deliberately
+  // one function logging the same way for both rather than a caller-specific
+  // level: the level answers "is this worth an operator seeing," which does
+  // not change with who asked.
   logStructuredEvent(env, enabled ? "debug" : "info", "digests_enabled_flag_resolved", {
     user_id: subject.userId,
     workspace_id: subject.workspaceId,

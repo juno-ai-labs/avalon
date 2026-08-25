@@ -208,6 +208,19 @@ describe("client feature flags", () => {
     expect(context).toMatchObject({ userEmailDomain: "juno-labs.com", userId: staffUserId });
   });
 
+  it("shows the digest section before a workspace is chosen, since there is nothing to evaluate against", async () => {
+    // `resolveDigestsEnabled` requires a `workspaceId` and cannot be called
+    // without one. Digests are always on by default, so absent evaluation
+    // reads the same as every other gap: fail open, not hidden.
+    const flags = serving(false);
+
+    await expect(resolveClientFeatureFlags(envWithAccounts(flags), auth(staffUserId, null)))
+      .resolves.toMatchObject({ digestsEnabled: true });
+    // And the flag is never even queried for this subject.
+    expect((flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls.map(([key]) => key))
+      .not.toContain("digests-enabled");
+  });
+
   it("sends no account attributes for a session whose user row is gone", async () => {
     const staffOnly = servingWhen((context) => context.userEmailDomain === "juno-labs.com");
     const env = envWithAccounts(staffOnly);
@@ -238,6 +251,9 @@ describe("client feature flags", () => {
         meetingRecordingEnabled: false,
         suggestedWorkEnabled: false,
         automationWorkspaceTemplatesEnabled: false,
+        // The one field that fails the other direction: a digest already sends
+        // by default, so a missing binding must reproduce that, not hide it.
+        digestsEnabled: true,
         // A feature fails closed; a cadence has no off, so it fails to the
         // checked-in default the desktop would have used anyway.
         controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
@@ -254,6 +270,10 @@ describe("client feature flags", () => {
         meetingRecordingEnabled: false,
         suggestedWorkEnabled: false,
         automationWorkspaceTemplatesEnabled: false,
+        // `serving(false)` is an explicit, successfully-served `false` — the
+        // one value that turns digestsEnabled off too, same as every other
+        // Boolean here.
+        digestsEnabled: false,
         controlTowerRefreshSeconds: 90,
       });
   });
@@ -341,13 +361,20 @@ describe("client feature flags", () => {
 
     await resolveClientFeatureFlags(envWithAccounts(flags), auth(staffUserId));
 
-    expect((flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls.map(([key]) => key))
+    // Order-independent: `digestsEnabled` resolves through `digest-flags.ts`,
+    // which awaits its own attribute load before calling `getBooleanDetails`,
+    // so its call lands after the other five's synchronous dispatch rather
+    // than at its position in the `Promise.all` array. What this test cares
+    // about — every enabled-named key queried exactly once — does not depend
+    // on which order they arrived in.
+    expect((flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls.map(([key]) => key).sort())
       .toEqual([
+        "automation-workspace-templates-enabled",
         "developer-settings",
+        "digests-enabled",
         "hypersight-enabled",
         "meeting-recording-enabled",
         "suggested-work-enabled",
-        "automation-workspace-templates-enabled",
       ]);
   });
 });
@@ -389,6 +416,7 @@ describe("GET /feature-flags", () => {
       meetingRecordingEnabled: true,
       suggestedWorkEnabled: true,
       automationWorkspaceTemplatesEnabled: true,
+      digestsEnabled: true,
       controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
     });
   });
@@ -413,6 +441,9 @@ describe("GET /feature-flags", () => {
       meetingRecordingEnabled: false,
       suggestedWorkEnabled: false,
       automationWorkspaceTemplatesEnabled: false,
+      // The one field that answers `true` here: an unresolvable flag must
+      // reproduce delivery continuing, not stopping.
+      digestsEnabled: true,
       controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
     });
   });
