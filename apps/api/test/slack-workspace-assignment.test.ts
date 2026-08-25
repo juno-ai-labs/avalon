@@ -311,6 +311,77 @@ describe("Slack workspace workstream assignment", () => {
     ]);
   });
 
+  it("answers the oldest open question for an actor Avalon has no account for", async () => {
+    const database = migratedDatabase();
+    const objectStores = new Map<string, DatabaseSync>();
+    const objectStore = testWorkstreamObjectStore();
+    databases.push(objectStore);
+    seedWorkstreamObjectRoot(objectStore, {
+      workstreamId: "7a000000-0000-4000-8000-000000000005",
+      workspaceId: "3f88f9ca-d7b3-4714-828e-b22187914524",
+    });
+    objectStores.set("7a000000-0000-4000-8000-000000000005", objectStore);
+    seedElicitationRetry(database, objectStore, "system", null, null);
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      AVALON_REGION: "global",
+    });
+    const actor = {
+      provider: "slack" as const,
+      providerAccountId: "T123",
+      providerUserId: "U456",
+      displayName: "Taylor",
+      avatarUrl: null,
+    };
+
+    const answered = await new SlackWorkspaceWorkstreamService(
+      env,
+      asWorkspaceId("3f88f9ca-d7b3-4714-828e-b22187914524"),
+    ).answerOpenElicitation("7a000000-0000-4000-8000-000000000005", {
+      actor,
+      text: "staging",
+      clientMessageId: "event:answer",
+      slackOrigin: {
+        teamId: "T123",
+        channelId: "C123",
+        channelName: "general",
+        threadTs: "123.456",
+        invocationType: "app_mention",
+        channelType: "public",
+        matchedAvalonUserId: null,
+        nearbyMessagesStatus: "available",
+        nearbyMessages: [],
+        attachments: [],
+      },
+    });
+
+    // `elicitation-b` is still open, so the work stream is still waiting on
+    // somebody and no run is launched to resume it.
+    expect(answered).toMatchObject({ harnessRunId: null });
+    expect(answered?.elicitation).toMatchObject({ id: "elicitation-a", status: "answered", answer: "staging" });
+    expect(workstreamObjectAll(
+      objectStore,
+      "SELECT id, status, answer_json FROM elicitations ORDER BY created_at",
+    )).toEqual([
+      { id: "elicitation-a", status: "answered", answer_json: JSON.stringify("staging") },
+      { id: "elicitation-b", status: "open", answer_json: null },
+    ]);
+    // The answer is in the transcript as the external actor who gave it, and
+    // it took the next sequence number rather than the one the seed's own part
+    // already holds.
+    expect(workstreamObjectGet(
+      objectStore,
+      `SELECT author_type, message_type, sequence_number, external_actor_json
+         FROM messages WHERE client_message_id = 'event:answer'`,
+    )).toEqual({
+      author_type: "external",
+      message_type: "elicitation",
+      sequence_number: 2,
+      external_actor_json: JSON.stringify(actor),
+    });
+  });
+
   it("lets an explicit account link correct a creator its own email guess produced", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
