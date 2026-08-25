@@ -1,11 +1,12 @@
 import { createRef } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MentionIdentity } from '../lib/api';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import { clearAllDrafts } from '../lib/draft-cache';
+import { mentionOptionCopy } from '../test/mention-option-copy';
 import { WorkstreamComposer } from './workstream-composer';
 
 // The composer shows the work stream's model only while Application →
@@ -346,7 +347,14 @@ describe('WorkstreamComposer mention confirmation', () => {
     // membership that is not active — the participants rail already filters for
     // exactly this reason.
     const options = await screen.findAllByRole('option');
-    expect(options.map((option) => option.textContent)).toEqual(['Adamadam@example.comPerson']);
+    const firstOption = options[0];
+    if (!firstOption) throw new Error('Expected at least one mention option');
+    await within(firstOption).findByText('A');
+    expect(options.map(mentionOptionCopy)).toEqual([{
+      badge: 'Person',
+      description: 'adam@example.com',
+      label: 'Adam',
+    }]);
   });
 
   it('offers people only, leaving the work stream\'s connections out of the list and out of the highlight', async () => {
@@ -367,11 +375,17 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.change(composer, { target: { value: '@' } });
 
     const options = await screen.findAllByRole('option');
-    expect(options.map((option) => option.textContent)).toEqual([
-      'Adamadam@example.comPerson',
-      'Bob Builderbob@example.com · not participatingPerson',
-      'Cara Chencara@example.com · not participatingPerson',
+    const firstOption = options[0];
+    if (!firstOption) throw new Error('Expected at least one mention option');
+    await within(firstOption).findByText('A');
+    expect(options.map(mentionOptionCopy)).toEqual([
+      { badge: 'Person', description: 'adam@example.com', label: 'Adam' },
+      { badge: 'Person', description: 'bob@example.com · not participating', label: 'Bob Builder' },
+      { badge: 'Person', description: 'cara@example.com · not participating', label: 'Cara Chen' },
     ]);
+    expect(options[0]).toHaveAccessibleName('Adam — adam@example.com — Person');
+    expect(options[1]).toHaveAccessibleName('Bob Builder — bob@example.com · not participating — Person');
+    expect(options[2]).toHaveAccessibleName('Cara Chen — cara@example.com · not participating — Person');
     expect(screen.queryByText('Workspace connection')).not.toBeInTheDocument();
 
     // The draft's highlight names what the composer can mention, so a

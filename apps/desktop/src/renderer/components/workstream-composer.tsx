@@ -2,6 +2,7 @@ import { LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { AvalonApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
+import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
 import { NO_MENTIONS, useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import type { PendingAttachment } from '../lib/use-file-attachments';
@@ -311,6 +312,7 @@ export function WorkstreamComposer({
         <div className="mention-popover" id="workstream-mention-listbox" role="listbox" aria-label="Mentions">
           {visibleCandidates.map((candidate, index) => (
             <button
+              aria-label={`${candidate.label} — ${candidate.description} — ${PERSON_MENTION_TYPE}`}
               aria-selected={index === mentionNavigation.activeIndex}
               className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
               id={mentionOptionId(candidate.id)}
@@ -324,9 +326,11 @@ export function WorkstreamComposer({
               role="option"
               type="button"
             >
-              <span className="mention-icon"><Avatar member={candidate.member} size="small" /></span>
+              <span aria-hidden="true" className="mention-icon">
+                <Avatar member={candidate.member} size="small" />
+              </span>
               <span><strong>{candidate.label}</strong><small>{candidate.description}</small></span>
-              <Badge>Person</Badge>
+              <Badge>{PERSON_MENTION_TYPE}</Badge>
             </button>
           ))}
         </div>

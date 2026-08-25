@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { clearAllDrafts } from '../lib/draft-cache';
+import { mentionOptionCopy } from '../test/mention-option-copy';
 import { NewWorkstreamScreen } from './new-workstream';
 
 const api = vi.hoisted(() => ({
@@ -310,10 +311,15 @@ describe('New work-stream home', () => {
     fireEvent.change(composer, { target: { value: 'ask @' } });
 
     const options = await screen.findAllByRole('option');
-    expect(options.map((option) => option.textContent)).toEqual([
-      'Morgan Ellisadam@example.comPerson',
-      'Samantha Leesamantha@example.comPerson',
+    const firstOption = options[0];
+    if (!firstOption) throw new Error('Expected at least one mention option');
+    await within(firstOption).findByText('AJ');
+    expect(options.map(mentionOptionCopy)).toEqual([
+      { badge: 'Person', description: 'adam@example.com', label: 'Morgan Ellis' },
+      { badge: 'Person', description: 'samantha@example.com', label: 'Samantha Lee' },
     ]);
+    expect(options[0]).toHaveAccessibleName('Morgan Ellis — adam@example.com — Person');
+    expect(options[1]).toHaveAccessibleName('Samantha Lee — samantha@example.com — Person');
     expect(options.map((option) => option.getAttribute('aria-selected'))).toEqual(['true', 'false']);
 
     fireEvent.keyDown(composer, { key: 'ArrowDown' });
@@ -342,10 +348,15 @@ describe('New work-stream home', () => {
     // Picking someone here puts them in the create request, and the work-stream
     // endpoints refuse a membership that is not active.
     const options = await screen.findAllByRole('option');
-    expect(options.map((option) => option.textContent)).toEqual([
-      'Morgan Ellisadam@example.comPerson',
-      'Rae Okaforrae@example.comPerson',
+    const firstOption = options[0];
+    if (!firstOption) throw new Error('Expected at least one mention option');
+    await within(firstOption).findByText('AJ');
+    expect(options.map(mentionOptionCopy)).toEqual([
+      { badge: 'Person', description: 'adam@example.com', label: 'Morgan Ellis' },
+      { badge: 'Person', description: 'rae@example.com', label: 'Rae Okafor' },
     ]);
+    expect(options[0]).toHaveAccessibleName('Morgan Ellis — adam@example.com — Person');
+    expect(options[1]).toHaveAccessibleName('Rae Okafor — rae@example.com — Person');
 
     fireEvent.keyDown(composer, { key: 'Escape' });
     fireEvent.click(screen.getByRole('button', { name: 'Manage participants: Morgan Ellis' }));

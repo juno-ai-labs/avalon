@@ -7,6 +7,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import { formatRelative, workstreamMarkerStatus, workstreamNeedsAttention } from '../lib/format';
+import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
 import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
@@ -737,6 +738,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             <div className="mention-popover" id="launch-mention-listbox" role="listbox" aria-label="Mentions">
               {visibleCandidates.map((member, index) => (
                 <button
+                  aria-label={`${member.name} — ${member.email} — ${PERSON_MENTION_TYPE}`}
                   aria-selected={index === mentionNavigation.activeIndex}
                   className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
                   id={mentionOptionId(member.id)}
@@ -747,9 +749,11 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
                   role="option"
                   type="button"
                 >
-                  <span className="mention-icon"><Avatar member={member} size="small" /></span>
+                  <span aria-hidden="true" className="mention-icon">
+                    <Avatar member={member} size="small" />
+                  </span>
                   <span><strong>{member.name}</strong><small>{member.email}</small></span>
-                  <Badge>Person</Badge>
+                  <Badge>{PERSON_MENTION_TYPE}</Badge>
                 </button>
               ))}
             </div>
