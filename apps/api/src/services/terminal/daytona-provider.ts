@@ -568,7 +568,7 @@ export function createDaytonaTerminalProvider(
           await client.secret.create({
             name: specification.name,
             value: specification.value,
-            description: `Avalon GitHub repository access for ${sandbox.id}`,
+            description: `Rally GitHub repository access for ${sandbox.id}`,
             hosts: [...specification.hosts],
           });
           attachedNewSecret = true;
@@ -780,7 +780,7 @@ export function createDaytonaTerminalProvider(
       const secret = await client.secret.create({
         name: secretName,
         value: input.githubBasicCredential,
-        description: `Ephemeral Avalon publication ${input.operationId}`,
+        description: `Ephemeral Rally publication ${input.operationId}`,
         hosts: ["github.com"],
       });
       let publisher: DaytonaSandboxLike | null = null;
