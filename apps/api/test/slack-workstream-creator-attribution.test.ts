@@ -44,7 +44,7 @@ describe("Slack work stream creator attribution", () => {
     threadTs: "123.456",
     invocationType: "app_mention" as const,
     channelType: "public" as const,
-    matchedRallyUserId: "a0000000-0000-4000-8000-000000000a10",
+    matchedAvalonUserId: "a0000000-0000-4000-8000-000000000a10",
     nearbyMessagesStatus: "available" as const,
     nearbyMessages: [],
     attachments: [],
@@ -168,7 +168,7 @@ describe("Slack work stream creator attribution", () => {
       objective: "Investigate the alert",
       text: "Investigate the alert",
       clientMessageId: "event:opening",
-      slackOrigin: { ...slackOrigin, matchedRallyUserId: null },
+      slackOrigin: { ...slackOrigin, matchedAvalonUserId: null },
     });
 
     expect(created.workstream.createdByUserId).toBeNull();

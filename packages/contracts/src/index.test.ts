@@ -759,7 +759,7 @@ describe("boundary contracts", () => {
         threadTs: "1786130000.000100",
         invocationType: "app_mention",
         channelType: "public",
-        matchedRallyUserId: id,
+        matchedAvalonUserId: id,
         nearbyMessagesStatus: "available",
         nearbyMessages: [{
           timestamp: "1786129999.000100",
@@ -779,7 +779,7 @@ describe("boundary contracts", () => {
       teamId: "TACME",
       channelId: "CIDEAS",
       invocationType: "app_mention",
-      matchedRallyUserId: id,
+      matchedAvalonUserId: id,
     });
     expect(parsed.slackSearchAuthorization).toEqual({
       actionToken: "1786130000.abcdef.event-token",
