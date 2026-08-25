@@ -18,6 +18,7 @@ import {
   workstreamObjectAll,
   workstreamObjectGet,
   workstreamObjectRun,
+  workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 
 const NOW = Date.parse("2026-08-02T18:00:00.000Z");
@@ -685,12 +686,12 @@ describe("regional Resend email ingestion", () => {
     expect(database.attachments).toHaveLength(1);
     // The append moved the work stream's own clock, which the retired counter
     // update did as a statement of its own after the insert.
-    expect(workstreamObjectGet(
+    expect(workstreamObjectRootRow(
       database.objectStore,
-      "SELECT last_activity_at, latest_attention_sequence_number FROM workstreams",
+      "last_people_activity_at, next_attention_ordinal",
     )).toEqual({
-      last_activity_at: "2026-08-02T18:00:00.000Z",
-      latest_attention_sequence_number: 1,
+      last_people_activity_at: Date.parse("2026-08-02T18:00:00.000Z"),
+      next_attention_ordinal: 2,
     });
     const payload = [...bucket.values.values()][0]!;
     expect(payload).toContain("Hello & welcome");
@@ -849,13 +850,8 @@ function objectStoreFor(): DatabaseSync {
   seedWorkstreamObjectRoot(store, {
     workstreamId: WORKSTREAM_ID,
     workspaceId: WORKSPACE_ID,
+    emailAddress: EMAIL_ADDRESS,
   });
-  workstreamObjectRun(
-    store,
-    "UPDATE workstreams SET email_address = ? WHERE id = ?",
-    EMAIL_ADDRESS,
-    WORKSTREAM_ID,
-  );
   return store;
 }
 

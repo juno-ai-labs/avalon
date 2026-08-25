@@ -118,21 +118,12 @@ function seededEnv(env: Env): Env {
   seedWorkstreamObjectRoot(objectStore, {
     workspaceId: SEEDED_WORKSPACE_ID,
     workstreamId: SEEDED_WORKSTREAM_ID,
-  });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstreams (
-       id, workspace_id, title, objective, origin_type, created_by_user_id,
-       automation_subscription_id, automation_run_id, planned_for, harness_status,
-       last_activity_at, created_at, updated_at, archived_at, scope
-     ) VALUES (?, ?, 'Ship it', '', 'ad_hoc', ?, NULL, NULL, NULL, 'idle', ?, ?, ?, NULL, 'workspace')`,
-    SEEDED_WORKSTREAM_ID,
-    SEEDED_WORKSPACE_ID,
-    "00000000-0000-4000-8000-000000000011",
-    at,
-    at,
-    at,
-  );
+    title: "Ship it",
+    description: "",
+    originType: "ad_hoc",
+    createdByUserId: "00000000-0000-4000-8000-000000000011",
+    scope: "workspace",
+  }, Date.parse(at));
   return createTestEnv({
     ...env,
     DB: sqliteD1(database),

@@ -18,8 +18,8 @@ import {
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  workstreamObjectGet,
-  workstreamObjectRun,
+  seedWorkstreamObjectParticipant,
+  workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 
 /** Per-workstream object databases, shared by every binding built over one regional database. */
@@ -173,21 +173,16 @@ describe("automation lifecycle", () => {
     for (const [workstreamId, readerId] of readers) {
       const objectStore = testWorkstreamObjectStore();
       databases.push(objectStore);
-      seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId: auth.workspaceId });
-      workstreamObjectRun(
-        objectStore,
-        `UPDATE workstream SET scope = 'personal', created_by_user_id = ? WHERE id = 1`,
-        readerId,
-      );
-      workstreamObjectRun(
-        objectStore,
-        `INSERT INTO participants
-           (user_id, participation_reason, added_by_user_id, status, participant_epoch,
-            added_at, removed_at, updated_at)
-         VALUES (?, 'creator', ?, 'active', 0, 1, NULL, 1)`,
-        readerId,
-        readerId,
-      );
+      seedWorkstreamObjectRoot(objectStore, {
+        workstreamId,
+        workspaceId: auth.workspaceId,
+        scope: "personal",
+        createdByUserId: readerId,
+      });
+      seedWorkstreamObjectParticipant(objectStore, {
+        userId: readerId,
+        participationReason: "creator",
+      });
       storesFor(database).set(workstreamId, objectStore);
     }
 
@@ -390,20 +385,16 @@ describe("automation lifecycle", () => {
     seedWorkstreamObjectRoot(objectStore, {
       workstreamId: "00000000-0000-7000-8000-00000000000a",
       workspaceId: "00000000-0000-7000-8000-000000000001",
+      title: "Daily product brief",
+      description: "Write the brief",
+      originType: "automation",
+      automationSubscriptionId: "00000000-0000-7000-8000-000000000007",
+      automationRunId: "00000000-0000-7000-8000-00000000000b",
+      plannedFor: Date.parse("2026-01-02T16:00:00.000Z"),
+      exactState: "scheduled",
     });
     storesFor(database).set("00000000-0000-7000-8000-00000000000a", objectStore);
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO workstreams
-         (id, workspace_id, title, objective, origin_type, created_by_user_id, automation_subscription_id,
-          automation_run_id, planned_for, harness_status, last_activity_at, created_at, updated_at)
-       VALUES (?, ?, 'Daily product brief', 'Write the brief', 'automation', NULL, ?,
-               ?, '2026-01-02T16:00:00.000Z', 'scheduled', '2026-01-01', '2026-01-01', '2026-01-01')`,
-      "00000000-0000-7000-8000-00000000000a",
-      "00000000-0000-7000-8000-000000000001",
-      "00000000-0000-7000-8000-000000000007",
-      "00000000-0000-7000-8000-00000000000b",
-    );
+
 
     await serviceFor(database).deleteAutomation("00000000-0000-7000-8000-000000000007");
 
@@ -414,11 +405,10 @@ describe("automation lifecycle", () => {
       result_summary: "The automation was deleted before this run started",
     });
     // The archive is a product write, applied in the work stream's own object.
-    expect(workstreamObjectGet(
+    expect(workstreamObjectRootRow<{ archived_at: number | null }>(
       objectStore,
-      "SELECT archived_at IS NOT NULL AS archived FROM workstreams WHERE id = ?",
-      "00000000-0000-7000-8000-00000000000a",
-    )).toEqual({ archived: 1 });
+      "archived_at",
+    ).archived_at).not.toBeNull();
   });
 
   it("leaves a planned work stream alone when its run has already begun", async () => {
@@ -447,28 +437,21 @@ describe("automation lifecycle", () => {
     seedWorkstreamObjectRoot(objectStore, {
       workstreamId: "00000000-0000-7000-8000-00000000001a",
       workspaceId: "00000000-0000-7000-8000-000000000001",
+      title: "Daily product brief",
+      description: "Write the brief",
+      originType: "automation",
+      automationSubscriptionId: "00000000-0000-7000-8000-000000000007",
+      automationRunId: "00000000-0000-7000-8000-00000000001b",
+      plannedFor: Date.parse("2026-01-02T16:00:00.000Z"),
+      exactState: "running",
     });
     storesFor(database).set("00000000-0000-7000-8000-00000000001a", objectStore);
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO workstreams
-         (id, workspace_id, title, objective, origin_type, created_by_user_id, automation_subscription_id,
-          automation_run_id, planned_for, harness_status, last_activity_at, created_at, updated_at)
-       VALUES (?, ?, 'Daily product brief', 'Write the brief', 'automation', NULL, ?,
-               ?, '2026-01-02T16:00:00.000Z', 'running', '2026-01-01', '2026-01-01', '2026-01-01')`,
-      "00000000-0000-7000-8000-00000000001a",
-      "00000000-0000-7000-8000-000000000001",
-      "00000000-0000-7000-8000-000000000007",
-      "00000000-0000-7000-8000-00000000001b",
-    );
+
 
     await serviceFor(database).deleteAutomation("00000000-0000-7000-8000-000000000007");
 
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT archived_at, harness_status FROM workstreams WHERE id = ?",
-      "00000000-0000-7000-8000-00000000001a",
-    )).toEqual({ archived_at: null, harness_status: "running" });
+    expect(workstreamObjectRootRow(objectStore, "archived_at, exact_state"))
+      .toEqual({ archived_at: null, exact_state: "running" });
   });
 
   it("refuses inbound email to a deleted automation's address", async () => {

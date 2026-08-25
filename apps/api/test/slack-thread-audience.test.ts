@@ -17,6 +17,7 @@ import {
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectAll,
+  workstreamObjectParticipantRows,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -194,10 +195,8 @@ describe("who may continue a Slack work stream", () => {
       addedByUserId: TAYLOR,
     });
 
-    expect(workstreamObjectAll(
-      objectStore,
-      "SELECT user_id, participation_reason FROM workstream_participants",
-    )).toEqual([{ user_id: TAYLOR, participation_reason: "explicit" }]);
+    expect(workstreamObjectParticipantRows(objectStore, "user_id, participation_reason"))
+      .toEqual([{ user_id: TAYLOR, participation_reason: "explicit" }]);
     // Nothing reached the fenced D1 copy — it aborts writes, it does not skip them.
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM workstream_participants",

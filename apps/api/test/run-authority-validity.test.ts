@@ -96,16 +96,11 @@ class AuthorityDatabase {
     seedWorkstreamObjectRoot(this.objectStore, {
       workstreamId: WORKSTREAM_ID,
       workspaceId: WORKSPACE_ID,
+      automationSubscriptionId: SUBSCRIPTION_ID,
+      automationRunId: RUN_ID,
+      archivedAt: state.archivedAt === null ? null : Date.parse(state.archivedAt),
     });
-    workstreamObjectRun(
-      this.objectStore,
-      `UPDATE workstreams SET automation_subscription_id = ?, automation_run_id = ?,
-         archived_at = ? WHERE id = ?`,
-      SUBSCRIPTION_ID,
-      RUN_ID,
-      state.archivedAt,
-      WORKSTREAM_ID,
-    );
+
     this.env = createTestEnv({
       DB: this.binding,
       AVALON_REGION: "global",
