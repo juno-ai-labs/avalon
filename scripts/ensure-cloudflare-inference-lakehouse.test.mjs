@@ -20,7 +20,7 @@ const expectedR2SecretAccessKey = [
   '425e68cb', '326dcd55', 'a860e90a', '7707031e',
 ].join('');
 
-function accountDouble({ tokenOwner = 'user' } = {}) {
+function accountDouble({ tokenOwner = 'account' } = {}) {
   const buckets = new Set();
   const catalogs = new Map();
   const entities = {
@@ -39,7 +39,9 @@ function accountDouble({ tokenOwner = 'user' } = {}) {
   );
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(String(input));
-    const path = url.pathname.replace('/client/v4/accounts/test-account', '');
+    const path = url.pathname
+      .replace('/client/v4/accounts/test-account', '')
+      .replace('/client/v4', '');
     const method = init.method ?? 'GET';
     const request = {
       method,
@@ -49,17 +51,19 @@ function accountDouble({ tokenOwner = 'user' } = {}) {
     };
     requests.push(request);
 
-    if (url.pathname === '/client/v4/user/tokens/verify') {
-      if (tokenOwner === 'account') {
+    if (path === '/user/tokens/verify') {
+      return success({
+        id: tokenOwner === 'user' ? tokenId : userTokenId,
+        status: 'active',
+      });
+    }
+    if (path === '/tokens/verify') {
+      if (tokenOwner === 'user') {
         return Response.json(
-          { success: false, errors: [{ code: 1000, message: 'account-owned token' }] },
+          { success: false, errors: [{ code: 1000, message: 'user-owned token' }] },
           { status: 403 },
         );
       }
-      return success({ id: tokenId, status: 'active' });
-    }
-    if (path === '/tokens/verify') {
-      assert.equal(tokenOwner, 'account');
       return success({ id: tokenId, status: 'active' });
     }
 
@@ -149,7 +153,7 @@ test('an empty account is fully provisioned by one idempotent deploy preflight',
         path: 'avalon/llm_inference',
         partitioning: { time_pattern: 'year=%Y/month=%m/day=%d/hour=%H' },
         credentials: {
-          access_key_id: userTokenId,
+          access_key_id: accountTokenId,
           secret_access_key: expectedR2SecretAccessKey,
         },
         rolling_policy: { interval_seconds: 300 },
@@ -220,11 +224,47 @@ test('immutable stream drift stops deployment instead of silently splitting the 
 });
 
 test('account-owned deployment tokens provision the direct R2 sink without a user token', async () => {
-  const account = accountDouble({ tokenOwner: 'account' });
+  const account = accountDouble();
   await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
   const euSink = [...account.entities.sinks.values()].find((sink) => sink.type === 'r2');
   assert.equal(euSink.config.credentials.access_key_id, accountTokenId);
-  assert.ok(account.requests.some((request) => request.path === '/tokens/verify'));
+  assert.equal(account.requests[0].path, '/tokens/verify');
+  assert.ok(
+    !account.requests.some((request) => request.path === '/user/tokens/verify'),
+    'account-owned provisioning must not consult the user verifier',
+  );
+});
+
+test('user-owned deployment tokens use the declared verifier and retain rotation protection', async () => {
+  const account = accountDouble({ tokenOwner: 'user' });
+  const manifest = {
+    ...await loadInferenceLakehouseManifest(),
+    deploymentTokenOwner: 'user',
+  };
+  await ensureInferenceLakehouse({
+    environment,
+    fetchImpl: account.fetchImpl,
+    log: () => {},
+    manifest,
+  });
+  const euSink = [...account.entities.sinks.values()].find((sink) => sink.type === 'r2');
+  assert.equal(euSink.config.credentials.access_key_id, userTokenId);
+  assert.equal(account.requests[0].path, '/user/tokens/verify');
+  assert.ok(
+    !account.requests.some((request) => request.path === '/tokens/verify'),
+    'user-owned provisioning must not consult the account verifier',
+  );
+
+  account.setTokenId('c'.repeat(32));
+  await assert.rejects(
+    ensureInferenceLakehouse({
+      environment,
+      fetchImpl: account.fetchImpl,
+      log: () => {},
+      manifest,
+    }),
+    /uses a different deployment credential; sinks are immutable/u,
+  );
 });
 
 test('immutable EU sink drift stops deployment', async () => {
@@ -247,7 +287,7 @@ test('immutable EU sink drift stops deployment', async () => {
 });
 
 test('deployment credential replacement stops before creating conflicting immutable sinks', async () => {
-  const account = accountDouble();
+  const account = accountDouble({ tokenOwner: 'account' });
   await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
   account.setTokenId('c'.repeat(32));
 
