@@ -214,7 +214,11 @@ It deliberately does not:
   silently disagrees with the server.
 - **A pin whose work stream is gone contributes nothing.** Archived or no longer
   readable, it is filtered out of every read; the row survives, so a work stream
-  reopened to the workspace comes back in its old place.
+  reopened to the workspace comes back in its old place. An archived one does not
+  come back: archiving is one-way from the client, so its pin keeps a stored row
+  — and a slot against the per-person cap — with no visible row to unpin. That
+  became reachable when the sidebar's **Archive work stream** action was wired
+  up; before it, nothing a person could click reached this state.
 - **A drag that ends where it started, or that was cancelled, sends nothing.**
   Rewriting every position for a drag that went nowhere is a write with no change
   behind it, and committing one that was backed out of would make Escape the
