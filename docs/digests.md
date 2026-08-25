@@ -692,9 +692,11 @@ revisiting once this has real usage behind it.
 previously a harmless no-op, since nothing read the result — now has a real
 client effect: a save through Ace propagates to a person's Settings screen
 the same way an `automation-workspace-templates-enabled` change already does.
-Nothing about `reconcileDigestDefaults` or `digest_schedules` changed; the
-section reads a person's own saved configuration exactly as before, it is
-just not offered while this resolves false for them.
+`reconcileDigestDefaults` and `digest_schedules` are untouched by this — the
+row a person configured is exactly what it was — but their digest has in
+fact stopped arriving, the same `flag_disabled` skip the scheduler already
+returns for them. The section is withdrawn because this screen has no copy
+for a paused state, not because nothing changed.
 
 ### 2026-08-25 — Scheduled digests get an operational kill switch
 
