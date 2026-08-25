@@ -1,7 +1,7 @@
 {
-  "name": "Avalon Workstreams",
+  "name": "Rally With AI",
   "url": "https://rallywith.ai",
-  "description": "Connect GitHub repositories to Avalon work streams and automations.",
+  "description": "Connect GitHub repositories to Rally work streams and automations.",
   "hook_attributes": {
     "url": "https://github.rallywith.ai/ingest/github",
     "active": true
@@ -18,7 +18,7 @@
   "public": true,
   "default_permissions": {
     "metadata": "read",
-    "contents": "read",
+    "contents": "write",
     "issues": "write",
     "pull_requests": "write",
     "actions": "read",
