@@ -1,6 +1,6 @@
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { useEffect, type PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSocketApi } from './use-workstream-socket';
@@ -9,6 +9,7 @@ import {
   WorkstreamSocketPool,
   retainedWorkstreamSocketIds,
   useRetainedWorkstreamSocket,
+  useWorkstreamSocketHoverWarmup,
 } from './workstream-socket-pool';
 
 const workspaceCreateMessage = vi.hoisted(() => vi.fn());
@@ -89,6 +90,11 @@ function ActiveConnection({
   return <div>{connection.state}</div>;
 }
 
+function HoverWarmTarget({ workstreamId }: { workstreamId: string }): React.JSX.Element {
+  const warmup = useWorkstreamSocketHoverWarmup(workstreamId);
+  return <button {...warmup}>Warm work stream</button>;
+}
+
 async function flushPromises(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -116,6 +122,47 @@ describe('retainedWorkstreamSocketIds', () => {
 });
 
 describe('WorkstreamSocketPool', () => {
+  it('opens and retains the socket pair only after a one-second hover', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const workstreamId = '00000000-0000-7000-8000-000000000630';
+    const view = render(
+      <WorkstreamSocketPool activeWorkstreamId={null} api={api} backgroundWorkstreamIds={[]}>
+        <HoverWarmTarget workstreamId={workstreamId} />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+    const target = view.getByRole('button', { name: 'Warm work stream' });
+
+    fireEvent.pointerEnter(target);
+    act(() => vi.advanceTimersByTime(999));
+    fireEvent.pointerLeave(target);
+    act(() => vi.advanceTimersByTime(1));
+    await flushPromises();
+    expect(api.getSocketTicket).not.toHaveBeenCalled();
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
+
+    fireEvent.pointerEnter(target);
+    act(() => vi.advanceTimersByTime(1_000));
+    await flushPromises();
+    expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
+    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
+    const warmedPair = FakeWebSocket.instances.filter(
+      (socket) => String(socket.url).includes(workstreamId),
+    );
+    expect(warmedPair.map((socket) => String(socket.url))).toEqual([
+      `wss://api.rally.test/workstreams/${workstreamId}/control`,
+      `wss://api.rally.test/workstreams/${workstreamId}/feed`,
+    ]);
+
+    fireEvent.pointerLeave(target);
+    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
+    expect(warmedPair.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
+    act(() => vi.advanceTimersByTime(1));
+    expect(warmedPair.every((socket) => socket.close.mock.calls.length === 1)).toBe(true);
+  });
+
   it('keeps the route subtree mounted while the active work stream changes', () => {
     const mounted = vi.fn();
     function Route({ workstreamId }: { workstreamId: string }): React.JSX.Element {

@@ -205,7 +205,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   } as CSSProperties;
 
   return (
-    <>
+    <WorkstreamSocketPool
+      activeWorkstreamId={activeWorkstreamId}
+      api={api}
+      backgroundWorkstreamIds={backgroundRealtimeIds}
+    >
       <div className={showShellRail ? 'workspace-shell rail-open' : 'workspace-shell'} style={shellStyle}>
       {/*
         The main window only. The standalone Settings and meeting windows reach
@@ -371,15 +375,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             <button onClick={() => void Promise.all([automations.refetch(), workstreams.refetch(), notes.refetch()])} type="button">Retry</button>
           </div>
         )}
-          <WorkstreamSocketPool
-            activeWorkstreamId={activeWorkstreamId}
-            api={api}
-            backgroundWorkstreamIds={backgroundRealtimeIds}
-          >
-            {children}
-          </WorkstreamSocketPool>
+          {children}
         </main>
       </div>
-    </>
+    </WorkstreamSocketPool>
   );
 }
