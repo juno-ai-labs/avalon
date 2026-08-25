@@ -287,13 +287,14 @@ Before applying for Linear Integration Directory review:
 
 ## Changelog
 
-### 2026-08-25 — Linear's app and request identity moved to Rally
+### 2026-08-25 — The provider manifest completed Linear's Rally identity cut-over
 
-**What changed:** Both manifests now publish Rally descriptions and client names,
-the native-agent capability names Rally in Linear, and all 24 resource and agent
-GraphQL operations use a `Rally` prefix. The same production app, callbacks,
-scopes, webhook resource events, client credentials, and signing secret remain in
-place.
+**What changed:** Both checked-in manifests and the live production registration
+now publish Rally descriptions and client names. The broader agent-identity
+cut-over in #301 had already changed the native-agent capability and all 24
+resource and agent GraphQL operation names; this follow-up adds exact assertions
+for those provider-visible names. The same production app, callbacks, scopes,
+webhook resource events, client credentials, and signing secret remain in place.
 
 **Why:** Linear exposes the manifest identity to installers and GraphQL operation
 names in its request logs. Leaving either surface on Avalon made one integration
@@ -305,6 +306,9 @@ installation, and delivery behavior unrelated to the public-identity correction.
 
 **Consequences:** Existing authorizations and webhook routing remain valid, and
 the four compatibility/canonical callbacks continue to cover the domain migration.
-Observability queries that group GraphQL requests by operation name must accept the
-new prefix at deployment. The reasoning behind the integration before this entry,
-beyond the rationale already written inline, was not recorded or reconstructed.
+The preview manifest remains a later update to that same app rather than a second
+registration, and its preview-only scopes and events remain gated. The reasoning
+behind the integration before this entry, beyond the rationale already written
+inline, was not recorded or reconstructed.
+
+Shipped in #307; the runtime rename first landed in #301.
