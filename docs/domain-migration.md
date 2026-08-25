@@ -21,6 +21,9 @@ deep-link scheme, and the work-stream email domain.
 | `packages/contracts/src/desktop-deep-link.ts` | The one list of deep-link schemes — minted, legacy, and accepted. Every other surface reads it. |
 | `apps/api/src/lib/workstream-email-address.ts` | The minted email domain and the legacy domains still accepted inbound. |
 | `apps/api/src/services/terminal/network-policy.ts` | The sandbox baseline allowlist, which holds the canonical API hosts only. |
+| `apps/desktop/src/main/index.ts` | `rendererHost` — the `app://rally` origin the Workers' `ALLOWED_ORIGINS` must admit. |
+| `apps/desktop/src/main/message-export.ts` | `MESSAGE_EXPORT_SCHEME` — `rally-export`, in-process only and renamed outright. |
+| `apps/api/test/domain-migration-config.test.ts` | Asserts the deployed configs list both renderer origins, all four site origins, both route sets, and no superseded host in any minted URL. |
 | `apps/site/public/_headers` | The site's CSP `connect-src`, which permits both API origins. |
 | `config/provider-apps/*.json` | The provider registrations to apply by hand, per provider. |
 
@@ -70,6 +73,23 @@ the links it minted are sitting in inboxes and Slack history that nobody can
 reissue. So the Worker's `DESKTOP_DEEP_LINK_URI` moved to `rallywithai://`, and
 every parser on every surface accepts either.
 
+### The two internal schemes
+
+`app://rally` is the packaged renderer's origin, and it is **not** purely
+internal: it is the `Origin` header on every API request and WebSocket upgrade
+the desktop makes, so both regional Workers list `app://rally` and `app://avalon`
+in `ALLOWED_ORIGINS`. A shipped build sends `app://avalon` and cannot be made to
+send anything else, so this follows the same rule as the deep-link scheme —
+switch what is written, widen what is accepted.
+
+`rally-export://` is the scheme a saved message card is rendered from. That one
+*is* purely internal: the scheme is registered, served, and loaded inside one
+process, against a single-use in-memory token, and nothing outside ever sees it.
+It was renamed outright, with no legacy accepted, because there is no second
+party to keep working. The distinction is the useful one to carry: a scheme
+needs a compatibility window exactly when something outside this process
+remembers it.
+
 ### The work-stream email domain
 
 New addresses are minted on `automation.rallywith.ai`. Mail to
@@ -107,10 +127,11 @@ both regions and a connection completes on whichever origin the client used.
 - **`downloads.with-avalon.com` can never be retired.** The update feed URL is
   compiled into every shipped DMG, so binaries in the field poll it forever. It
   outlives every other Avalon hostname.
-- **Every served site origin appears in `ALLOWED_ORIGINS`.** An origin the
-  browser actually used but the Worker does not list is rejected by Chromium
-  before any route code runs — the renderer sees a transport failure and no API
-  request is logged.
+- **Every origin a live client sends appears in `ALLOWED_ORIGINS`.** That is the
+  four site origins *and* both renderer origins. An origin the browser actually
+  used but the Worker does not list is rejected by Chromium before any route
+  code runs — the renderer sees a transport failure and no API request is
+  logged, so the failure is invisible from the server side.
 - **The deep-link scheme list lives in one module.** Five surfaces must agree on
   it and none can check the others; a copy that fell behind would silently
   classify a real link as untrusted, on one surface only.
@@ -135,10 +156,9 @@ policy. Certificate and DNS procedure is in [`runbook.md`](runbook.md).
 
 It also does not cover the rest of the rebrand. Worker names
 (`avalon-api-global`, `avalon-site`), the R2 bucket `avalon-desktop-releases`,
-Vectorize index names, the `app://avalon` renderer origin, the `avalon-export://`
-scheme, the `@avalon/*` package names, and the `Avalon` product string are
-deliberately untouched: none of them is addressable from outside, so none of
-them carries the constraint that makes a hostname hard to move.
+Vectorize index names, the `@avalon/*` package names, and the `Avalon` product
+string are deliberately untouched: none of them is addressable from outside, so
+none of them carries the constraint that makes a hostname hard to move.
 
 ## Failure modes and limits
 
@@ -180,6 +200,37 @@ rather than assertions.
 
 ## Changelog
 
+### 2026-08-25 — The renderer origin and the export scheme move too
+
+**What changed:** The packaged renderer's origin became `app://rally`, with
+`app://avalon` added to `ALLOWED_ORIGINS` in both regions rather than replaced.
+The message-export scheme became `rally-export://` outright, with no legacy
+accepted. `apps/api/test/domain-migration-config.test.ts` now asserts the
+deployed configs against both.
+
+**Why:** Neither is a hostname, but one of them behaves like one. `app://rally`
+is the `Origin` header on every API request and WebSocket upgrade the desktop
+makes, so it is a value a *remote* party checks — and a build shipped before the
+rename sends `app://avalon` and cannot be made to send anything else. Renaming it
+without widening the allowlist would have rejected every installed client at the
+CORS preflight, which fails before any route code runs and therefore leaves no
+API request log to diagnose it from.
+
+`rally-export://` has no such party. The scheme is registered, served, and loaded
+inside one process against a single-use in-memory token; nothing outside ever
+holds one. A compatibility window there would have been dead code from the day
+it shipped.
+
+**Considered and rejected:** Treating both the same way for consistency — either
+renaming both outright, or giving both a legacy alias. Consistency is the wrong
+axis: what decides it is whether something outside this process remembers the
+old value. One does, one does not.
+
+**Consequences:** `app://avalon` is now load-bearing in `ALLOWED_ORIGINS` and is
+removed on the same evidence as an Avalon hostname — when nothing is observed
+arriving on it, which is a decision about shipped clients rather than about this
+repository. The config test fails on the edit rather than on the deploy, which is
+the only place this class of mistake is cheap to catch.
 ### 2026-08-25 — Both zones serve, Rally is canonical
 
 **What changed:** All ten public hostnames now serve on `rallywith.ai` and

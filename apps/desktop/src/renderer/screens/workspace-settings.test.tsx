@@ -1081,7 +1081,8 @@ describe('Workspace settings', () => {
 
       const linearCard = (await screen.findByText('Linear')).closest('article');
       expect(linearCard).not.toBeNull();
-      expect(within(linearCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
+      // The catalog query gates enablement; `findByText` resolves before it.
+      await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
       const workspaceButton = within(linearCard!).getByRole('button', { name: 'Connect workspace' });
       await waitFor(() => expect(workspaceButton).toBeDisabled());
       expect(workspaceButton).toHaveAttribute(
@@ -1141,11 +1142,11 @@ describe('Workspace settings', () => {
     const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
     expect(driveCard).not.toBeNull();
     await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect workspace' })).toBeDisabled());
-    expect(within(driveCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
+    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
 
     const linearCard = screen.getByText('Linear').closest('article');
     expect(linearCard).not.toBeNull();
-    expect(within(linearCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled();
+    await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
   });
 
   it('lets members connect Linear personally without offering a workspace installation', async () => {
@@ -1154,7 +1155,7 @@ describe('Workspace settings', () => {
 
     const linearCard = (await screen.findByText('Linear')).closest('article');
     expect(linearCard).not.toBeNull();
-    expect(within(linearCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
+    await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
     expect(within(linearCard!).queryByRole('button', { name: 'Connect workspace' })).not.toBeInTheDocument();
   });
 

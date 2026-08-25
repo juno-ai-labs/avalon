@@ -99,7 +99,7 @@ are canonical storage services, not authorization layers.
   therefore no bridge, no Node, no devtools, sandboxed, and served a document
   under `default-src 'none'; img-src data: https:; style-src 'unsafe-inline'`.
   That document is built from text a model wrote, so it is given a scheme of its
-  own — `avalon-export://`, one in-memory document per single-use token — rather
+  own — `rally-export://`, one in-memory document per single-use token — rather
   than the renderer's origin. Its IPC entry point parses all four fields of the
   request, and the file name it proposes to the save dialog is *rejected* unless
   it matches `^[a-z0-9][a-z0-9-]{0,79}$`, because that name is derived from the
@@ -516,8 +516,8 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   `-1`, and raw values, Zod messages, regexes, and unmasked request bodies do not
   enter the log.
 - **A document built out of model output is never same-origin with the
-  application.** The exported message card gets `avalon-export://`, no preload,
-  and a policy that forbids script; putting it on `app://avalon` would buy one
+  application.** The exported message card gets `rally-export://`, no preload,
+  and a policy that forbids script; putting it on `app://rally` would buy one
   fewer scheme at the price of the boundary.
 - **A webhook is verified against its exact raw body before anything parses,
   stores, or queues it.**
@@ -642,6 +642,35 @@ incident response that may prompt it.
 
 ## Changelog
 
+### 2026-08-25 — The renderer origin is app://rally, and both are admitted
+
+**What changed:** The packaged renderer serves from `app://rally`. Both regional
+Workers list `app://rally` and `app://avalon` in `ALLOWED_ORIGINS`. The saved
+message card's scheme became `rally-export://`.
+
+**Why:** The rebrand to Rally reached the two internal schemes. The renderer
+origin is not merely internal — it is the `Origin` header on every API request
+and WebSocket upgrade the desktop makes, and a desktop build shipped before the
+rename sends `app://avalon` with no way to change it. An origin that is actually
+sent but not listed fails at the CORS preflight, before any route code runs, so
+it produces a transport error in the renderer and no API request log at all: the
+exact failure this policy exists to prevent, applied to ourselves.
+
+The export scheme took no such window. It is registered, served, and loaded
+inside one process against a single-use in-memory token, so no other party holds
+an `avalon-export://` URL to honour.
+
+**Considered and rejected:** Leaving the renderer origin alone, since nothing
+outside the product reads the string. That is true of the name and false of the
+header: the Workers read it on every request, which is what makes it a
+compatibility surface rather than a label.
+
+**Consequences:** `app://avalon` stays in the allowlist until shipped clients
+carrying it are gone; removing it is a decision about installed builds.
+`apps/api/test/domain-migration-config.test.ts` asserts both origins are listed
+in both regions, so dropping one fails on the edit. The origin policy is
+otherwise unchanged — it still admits exact origins only, and CORS remains not
+authorization. See [`domain-migration.md`](domain-migration.md).
 ### 2026-08-25 — The origin allowlist admits both site zones
 
 **What changed:** `ALLOWED_ORIGINS` on the Global Worker admits
