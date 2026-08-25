@@ -130,8 +130,9 @@ A work-stream address is **stored, not derived** — one row per work stream in
 the Global `workstream_email_routes` ledger — so renaming the domain does not
 move the addresses already issued. Those are printed in mail clients, saved in
 contacts, and forwarded to by rules nobody here can see. Routing is keyed by
-local part, so an old address resolves through exactly the same lookup as a new
-one; the domain only decides whether a recipient is ours at all.
+the full normalized address, so the old and current domains retain independent
+namespaces even when a local part repeats. The accepted-domain set decides which
+recipients may be looked up; it does not disappear from the lookup key.
 
 The domain a message *arrived on* is carried through to the region rather than
 replaced with the canonical one, so the address attached to the work stream is
@@ -270,6 +271,24 @@ only in production, which is why they are runbook steps with an explicit order
 rather than assertions.
 
 ## Changelog
+
+### 2026-08-25 — Email compatibility retains the domain in route identity
+
+**What changed:** The Global email registry and inbound resolver now key claims
+by full address. Existing Avalon-domain addresses and newly minted Rally-domain
+addresses remain distinct permanent routes.
+
+**Why:** Discarding the domain caused detail reconciliation to rebuild every
+legacy route using the current Rally domain, producing a conflict with the exact
+address already stored regionally. It would also prevent future custom domains
+from using a local part present on any other domain.
+
+**Considered and rejected:** Making legacy and Rally domains compare equal. That
+would suppress the visible error while preserving the ambiguous routing model.
+
+**Consequences:** Every compatibility domain remains part of route identity.
+Adding a custom domain widens ingress acceptance and creates exact-address claims;
+it does not require a new registry key.
 
 ### 2026-08-25 — Public pages write Rally while compatibility routes keep reading Avalon
 
