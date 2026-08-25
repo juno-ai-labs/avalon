@@ -140,9 +140,11 @@ describe("Slack Agent durable ingress", () => {
     )) as {
       oauth_config: { scopes: { bot: string[] } };
       settings: { event_subscriptions: { bot_events: string[] } };
+      app_directory: { support_email: string };
     };
 
     expect([...manifest.oauth_config.scopes.bot].sort()).toEqual([...SlackWorkspaceBotScopes].sort());
+    expect(manifest.app_directory.support_email).toBe("help@rallywith.ai");
     expect(manifest.settings.event_subscriptions.bot_events).toEqual(expect.arrayContaining([
       "file_shared",
       "member_joined_channel",

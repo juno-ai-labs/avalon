@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
@@ -465,7 +465,7 @@ describe('public Rally site', () => {
     }
 
     const privacy = readProjectFile('privacy/index.html');
-    expect(privacy).toContain('Effective August 13, 2026');
+    expect(privacy).toContain('Effective August 25, 2026');
     expect(privacy).toContain('does not scrape, mirror');
     expect(privacy).toContain('do not sell personal information');
     expect(privacy).toContain('accepted product-event and delivery records expire within 90 days');
@@ -496,6 +496,34 @@ describe('public Rally site', () => {
       expect(page, path).not.toMatch(/\b[Aa]n Rally\b/u);
       expect(page, path).not.toContain('>Security Policy<');
     }
+  });
+
+  it('uses help@rallywith.ai as the only role-based public contact and preserves triage subjects', () => {
+    const publicHtmlPaths = readdirSync(new URL('../', import.meta.url), {
+      encoding: 'utf8',
+      recursive: true,
+    }).filter((path) => path.endsWith('.html')
+      && !path.startsWith('dist/')
+      && !path.startsWith('node_modules/'));
+    const publicAddresses = new Set<string>();
+    const publicMailtoTargets = new Set<string>();
+
+    for (const path of publicHtmlPaths) {
+      const page = readProjectFile(path);
+      const addresses = page.match(/[a-z0-9._%+-]+@rallywith\.ai/giu) ?? [];
+      for (const address of addresses) {
+        const normalizedAddress = address.toLowerCase();
+        publicAddresses.add(normalizedAddress);
+        expect(normalizedAddress, path).toBe('help@rallywith.ai');
+      }
+      for (const target of page.match(/mailto:[^"\s]+/gu) ?? []) {
+        publicMailtoTargets.add(target);
+        expect(target, path).toMatch(/^mailto:help@rallywith\.ai\?subject=[^&"\s]+$/u);
+      }
+    }
+
+    expect(publicAddresses).toEqual(new Set(['help@rallywith.ai']));
+    expect(publicMailtoTargets.size).toBeGreaterThan(0);
   });
 
   it('routes site telemetry before choosing whether an anonymous browser identifier may persist', () => {
