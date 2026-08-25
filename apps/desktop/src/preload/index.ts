@@ -185,6 +185,7 @@ const bridge: AvalonDesktopBridge = {
     ipcRenderer.on('session:changed', handler);
     return () => ipcRenderer.removeListener('session:changed', handler);
   },
+  observeClientFeatureFlags: (flags) => ipcRenderer.invoke('feature-flags:observe', flags) as Promise<void>,
 };
 
 contextBridge.exposeInMainWorld('avalon', bridge);

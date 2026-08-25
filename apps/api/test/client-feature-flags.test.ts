@@ -234,6 +234,10 @@ describe("client feature flags", () => {
     await expect(resolveClientFeatureFlags(envWithAccounts(), auth(staffUserId)))
       .resolves.toEqual({
         developerSettings: false,
+        hypersightEnabled: false,
+        meetingRecordingEnabled: false,
+        suggestedWorkEnabled: false,
+        automationWorkspaceTemplatesEnabled: false,
         // A feature fails closed; a cadence has no off, so it fails to the
         // checked-in default the desktop would have used anyway.
         controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
@@ -244,7 +248,14 @@ describe("client feature flags", () => {
     const env = envWithAccounts({ ...serving(false), ...servingNumber(90) });
 
     await expect(resolveClientFeatureFlags(env, auth(staffUserId)))
-      .resolves.toEqual({ developerSettings: false, controlTowerRefreshSeconds: 90 });
+      .resolves.toEqual({
+        developerSettings: false,
+        hypersightEnabled: false,
+        meetingRecordingEnabled: false,
+        suggestedWorkEnabled: false,
+        automationWorkspaceTemplatesEnabled: false,
+        controlTowerRefreshSeconds: 90,
+      });
   });
 
   it("clamps a cadence that would make every meeting a billing incident", async () => {
@@ -324,6 +335,21 @@ describe("client feature flags", () => {
     expect(contexts.length).toBeGreaterThan(1);
     for (const context of contexts) expect(context).toEqual(contexts[0]);
   });
+
+  it("evaluates application booleans under enabled-named Flagship keys", async () => {
+    const flags = { ...serving(true), ...servingNumber(60) };
+
+    await resolveClientFeatureFlags(envWithAccounts(flags), auth(staffUserId));
+
+    expect((flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls.map(([key]) => key))
+      .toEqual([
+        "developer-settings",
+        "hypersight-enabled",
+        "meeting-recording-enabled",
+        "suggested-work-enabled",
+        "automation-workspace-templates-enabled",
+      ]);
+  });
 });
 
 describe("GET /feature-flags", () => {
@@ -359,6 +385,10 @@ describe("GET /feature-flags", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       developerSettings: true,
+      hypersightEnabled: true,
+      meetingRecordingEnabled: true,
+      suggestedWorkEnabled: true,
+      automationWorkspaceTemplatesEnabled: true,
       controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
     });
   });
@@ -379,6 +409,10 @@ describe("GET /feature-flags", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       developerSettings: false,
+      hypersightEnabled: false,
+      meetingRecordingEnabled: false,
+      suggestedWorkEnabled: false,
+      automationWorkspaceTemplatesEnabled: false,
       controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
     });
   });

@@ -46,6 +46,8 @@ The rest:
 | --- | --- |
 | `apps/api/src/services/flag-targeting-attributes.ts` | Loads the facts, caches them, and holds the line on what may leave the Worker. |
 | `apps/api/src/routes/feature-flags.ts` | `GET /feature-flags`, answered under identity auth. |
+| `apps/ace` | Access-protected editor and write authority for the managed user-facing product flags. See [`ace.md`](ace.md). |
+| `apps/api/src/queues/product-feature-flag-consumer.ts`, `WorkspaceDO.notifyProductFeatureFlagChanged` | Regional key-only fan-out and private per-user socket refresh. |
 | `packages/contracts` — `AGENT_MODEL_OVERRIDES`, `CONTROL_TOWER_REFRESH_SECONDS` | The closed set of pinnable models, and the one definition of the cadence both ends read. |
 | `apps/desktop/src/main/developer-settings-flag.ts` | The main-process poll and its interval. |
 | `apps/desktop/src/renderer/lib/agent-models.ts` | How every model id reads on screen — the menu's names and groups, and the shortening the work stream's read-only pill applies to an id the closed set does not admit. |
@@ -436,21 +438,27 @@ guarantee. The inference ledger records what each attempt actually used.
 ### Client-visible flags
 
 A client flag decides what the desktop is allowed to *offer*, or how it should
-behave. There are two today:
+behave. There are six today:
 
 | Flag key | Type | Default | Decides |
 | --- | --- | --- | --- |
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
+| `hypersight-enabled` | boolean | `false` | Whether Electron shows HyperSight surfaces |
+| `meeting-recording-enabled` | boolean | `false` | Whether Electron shows meeting-recording actions |
+| `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
+| `automation-workspace-templates-enabled` | boolean | `false` | Whether Electron shows workspace-template surfaces |
 | `control-tower-refresh-seconds` | number | `60` | How often a recording meeting commits a transcript segment and rewrites its Control Tower briefing |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
-false, "controlTowerRefreshSeconds": 60 }` — resolved for the signed-in person.
+false, "hypersightEnabled": false, "meetingRecordingEnabled": false,
+"suggestedWorkEnabled": false, "automationWorkspaceTemplatesEnabled": false,
+"controlTowerRefreshSeconds": 60 }` — resolved for the signed-in person.
 It answers under *identity* auth rather than workspace auth: eligibility belongs
 to the account, and a device that has not chosen an organization yet still has to
 be told the feature is off rather than read a 403 as an outage.
 
-The two are not the same kind of answer, and the response schema says so.
-`developerSettings` is a feature and defaults to off. `controlTowerRefreshSeconds`
+The fields are not all the same kind of answer, and the response schema says so.
+The five Boolean features default to off. `controlTowerRefreshSeconds`
 is a setting with no off: it defaults to the cadence the client would have used
 anyway, and both ends read that number from one definition —
 `CONTROL_TOWER_REFRESH_SECONDS` in `@avalon/contracts` — so an unreachable
@@ -465,6 +473,19 @@ meeting screen, once when it opens — rather than through the main-process poll
 below. A meeting window exists for one meeting, and a cadence that changed
 underneath a recording would move the transcript's own segment boundaries
 mid-conversation.
+
+The managed product Boolean names deliberately end in **Enabled**, as do their
+camel-case response fields. `true` therefore always means the surface may be
+shown and `false` means it is hidden; no caller has to infer whether a bare name
+means disabled, hidden, or selected.
+
+The four managed product Booleans are presentation-only. Only Electron consumes
+them to show or hide product surfaces; the API routes and underlying product
+capabilities do not evaluate them. They are rollout controls for discovery and
+visibility, not authorization, entitlements, or server-side kill switches. A
+hidden Suggested Work surface may skip its own fetch and impressions because
+nothing was drawn, but the Suggested Work API remains available. The same rule
+applies to workspace-template, meeting-recording, and HyperSight operations.
 
 The Developer section is for Juno staff, and **that is a Flagship targeting
 rule, not a condition in the Worker** — see [the rule the flag is provisioned
@@ -506,6 +527,18 @@ whether the fact the rule is written against was even available. Neither carries
 a value.
 
 #### The desktop half
+
+`hypersightEnabled` and `meetingRecordingEnabled` arrive on the private
+WorkspaceDO subscribe response and on `workspace_feature_flags` events. They
+replace the renderer's one `['feature-flags']` cache as a complete object; a
+partial event cannot leave a mixed generation behind. Reconnect always
+re-evaluates them even if a live notification was missed.
+
+HyperSight hides its header control and panel until the value is exactly true;
+because the panel is not mounted, its view-local query and sockets naturally do
+not run. Meeting recording hides its actions in the sidebar, macOS menu, and
+meeting screen. Neither flag is checked by an API route or by the Electron IPC
+handler that performs an already-selected action.
 
 `DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS` in
 `apps/desktop/src/main/developer-settings-flag.ts` — one minute — is how long a
@@ -585,6 +618,16 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   `client-feature-flags.ts` describes the person, evaluates the flag, and serves
   the answer; changing who is in is a flag change with a changelog entry, not a
   deploy.
+- **Product Boolean flag names explain true.** `hypersight-enabled` and
+  `meeting-recording-enabled` map to `hypersightEnabled` and
+  `meetingRecordingEnabled`; a bare or negatively named Boolean invites one
+  layer to invert another.
+- **A product-flag notification carries a key, never a value.** Two people in
+  one workspace may match different rules, so WorkspaceDO evaluates each user
+  before sending a private event. The subscribe response is the repair path.
+- **Ace is the managed product-flag write path.** Flagship has no documented
+  webhook or Queue notification surface; a dashboard edit changes evaluation
+  but cannot wake connected Avalon clients.
 - **The cadence has one definition** — `CONTROL_TOWER_REFRESH_SECONDS` in
   `@avalon/contracts` — read by the resolver, the service default, and the desktop
   fallback, and the resolver clamps what Flagship serves to that range before
@@ -665,6 +708,9 @@ correctly provisioned flag.
   Only an answer, a sign-out, or a shutdown turns the Developer section off; a flag
   change takes up to `DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS` (one minute) to
   arrive, and a sign-in re-asks immediately.
+- **Product features do not use that open last-answer behavior.** Their shared
+  schema defaults false, sign-out resets it, reconnect receives a fresh answer,
+  and recording requires exactly true again inside main.
 - **`GET /health` counts `featureFlags` as required in production**, so a Worker
   deployed without a working binding fails the release health gate rather than
   quietly running every agent on the Worker variables. Deployment itself does not
@@ -683,6 +729,10 @@ correctly provisioned flag.
 | `apps/api/test/agent-model-flags.test.ts` | Each resolver's failure direction, the four unresolved cases, the zod rejection, and that HyperSight honours its flag's fallbacks like every other role. |
 | `apps/api/test/agent-model-override.test.ts` | Pin precedence, the closed id set validated on write and read, and the three run-creation paths that must copy the column. |
 | `apps/api/test/client-feature-flags.test.ts` | That everything but an explicit `true` resolves to off, and that the cadence is clamped to `CONTROL_TOWER_REFRESH_SECONDS`. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | Initial private values and per-user live re-evaluation over a real hibernating WebSocket. |
+| `apps/ace/test` | Safe rule vocabulary and Flagship limits, signed-site failure behavior, key-only notification, and cross-region Queue fan-out. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | Initial and live full-contract replacement in the feature-flag cache. |
+| Desktop menu, sidebar, work-stream, and meeting suites | Every visible entry point remains hidden until explicitly enabled while product actions remain otherwise unchanged. |
 | `apps/api/test/flag-targeting-attributes.test.ts` | The attribute vocabulary, the omitted-not-empty rule, the cache and its negative cases, and — scoped to the fields the rule covers — that no local part or authored text leaves the Worker. |
 | `apps/desktop/src/main/developer-settings-flag.test.ts` | The poll, the last-answer-standing behavior, and that a stored `debugEnabled` grants nothing while the flag is off. |
 | `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | The selector's **Debug enabled** gate, that an untouched control sends no override, and that an explicit pin to the flag's own default is still sent. |
@@ -727,6 +777,15 @@ it is rather than left to whoever adds the next rule: what crosses is a slug, a
 count, an age, a schema-declared enum, an id, and an email domain — never a
 name, an address, or anything a person wrote. Widening that set is a data
 decision about both regions at once, not a local change to a loader.
+
+Ace automatically ensures `hypersight-enabled`, `meeting-recording-enabled`,
+`suggested-work-enabled`, and `automation-workspace-templates-enabled` exist as
+Boolean flags whose default is off on every
+merge-to-main deployment. It does not overwrite existing rules. Once created,
+edit those flags through Ace rather than the Flagship dashboard: Flagship's
+documented API has no outbound change webhook, so only Ace performs the Queue
+fan-out that wakes connected clients. [`ace.md`](ace.md) owns that release and
+recovery path.
 
 To provision the app in a fresh account:
 
@@ -935,6 +994,55 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-08-24 — Suggested Work and workspace templates become managed product flags
+
+**What changed:** `suggested-work-enabled` and
+`automation-workspace-templates-enabled` joined the Ace-managed Boolean flag
+set. Electron hides their entry points while off and avoids view-local reads for
+surfaces it does not draw. Suggested Work and workspace-template API routes do
+not evaluate these flags.
+
+**Why:** These features need per-person and per-workspace staged visibility in
+Electron. The rollout controls whether the application presents the feature; it
+is not an entitlement or authorization boundary, so it must not change server
+behavior for older clients, integrations, or direct API callers.
+
+**Considered and rejected:** Enforcing the same flags on product routes and
+Electron action authorities. That would turn a show/hide control into a product
+capability gate and make targeted visibility unexpectedly alter API behavior.
+Also rejected: stopping Suggested Work generation, because opportunities remain
+workspace product state regardless of whether one person's Electron shows them.
+
+**Consequences:** Both flags fail closed until Flagship returns exact `true`.
+Template update metadata may still exist on an automation while the flag is off,
+but Electron does not expose it. All Suggested Work and workspace-template API
+operations remain available. Future consumers may use these flags for Electron
+visibility only and must not add server-side action gates.
+
+### 2026-08-24 — Enabled-named product flags push per-user values through WorkspaceDO
+
+**What changed:** `hypersight-enabled` and `meeting-recording-enabled` join the
+client contract as fail-closed Boolean flags. Ace is their write path; a shared
+Queue enumerates both regional D1 workspace directories, regional consumers RPC
+the owning WorkspaceDO, and each connected user receives a privately evaluated
+full flag object. Subscribe returns the same object for reconciliation.
+
+**Why:** Product managers need targeting changes without a deploy, while a
+minute poll leaves visible application surfaces stale and one value cannot
+represent multiple users in a targeted workspace. The names were made
+directional because a bare Boolean name does not say what true means.
+
+**Considered and rejected:** A value-bearing broadcast is wrong for per-user
+rules. A permanent desktop poll repeats work while still leaving a delay.
+Direct Flagship dashboard edits cannot drive a push because Flagship exposes no
+documented outbound notification endpoint.
+
+**Consequences:** Managed product flags are edited through Ace, Queue/RPC
+messages remain key-only, Electron visibility fails closed, and new Boolean
+application flags use an Enabled name with an off default. Product API
+availability is independent of these flags. Earlier reasoning in this document
+predates the running changelog and was not reconstructed.
 
 ### 2026-08-22 — A preparing work stream is identity, not readable attributes
 

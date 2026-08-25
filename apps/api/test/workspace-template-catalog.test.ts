@@ -1,11 +1,11 @@
 import { asUserId, asWorkspaceId } from "@avalon/contracts";
 import { Hono } from "hono";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env, HonoAppEnv } from "../src/env";
 import { errorHandler } from "../src/middleware/errors";
 import { templateRoutes } from "../src/routes/automations";
-import { createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -158,6 +158,19 @@ const SEMANTIC_ACTIVITY = JSON.stringify([
 ]);
 
 describe("the workspace template catalog", () => {
+  it("does not use the Electron visibility flag as API authorization", async () => {
+    const { app, env } = fixture([]);
+    const evaluate = vi.fn(async (flagKey: string) => ({
+      flagKey, value: false, variant: "off", reason: "STATIC",
+    }));
+    env.FLAGS = createCloudflareTestBinding<Flagship>({ getBooleanDetails: evaluate });
+
+    const response = await app.request("/automation-templates", undefined, env);
+
+    expect(response.status).toBe(200);
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
   it("serves a template whose trigger binds a connector", async () => {
     const { app, env } = fixture([{
       id: "74000000-0000-7000-8000-000000000011",

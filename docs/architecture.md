@@ -1,8 +1,8 @@
 # Architecture
 
-Avalon is a pnpm TypeScript monorepo with three deployment surfaces — an Electron
-desktop client, a Hono Worker deployed twice as Global and EU, and shared
-packages that hold every contract and rule the two ends agree on. This document
+Avalon is a pnpm TypeScript monorepo with an Electron desktop client, a Hono API
+Worker deployed twice as Global and EU, internal operator Workers, and shared
+packages that hold every contract and rule the surfaces agree on. This document
 is the map of how those surfaces fit together: what runs where, what crosses
 which boundary, and which document owns each subsystem in detail.
 
@@ -23,6 +23,7 @@ infrastructure role.
 apps/
   desktop/                 Electron main, preload, React renderer, packaging
   api/                     Hono Worker, routes, services, DOs, Workflows, Queue
+  ace/                     Access-protected internal administration Worker
 packages/
   contracts/               Zod API, WebSocket, agent, connector contracts
   db/                      D1 migrations, repositories, region-aware queries
@@ -45,13 +46,14 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
 | `apps/api/src/lib/rpc-contracts.ts` | The parsers every RPC bridge argument passes through. |
 | `apps/migration-tracker` | The private operator Worker behind `migrations.internal.rallywith.ai`: the Durable Object migration inventory, its hourly account sweep, the forced-migration fan-out onto each region's command queue, and the Cloudflare Access boundary in front of all of it. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
+| `apps/ace` | The private Hono operator Worker behind `ace.internal.rallywith.ai`: D1-assisted Flagship product targeting, the shared-to-regional Queue fan-out, and the component library future internal pages extend. See [`ace.md`](ace.md). |
 | `packages/contracts` | Every runtime contract both ends share. A type that only exists at build time is not one of them. |
 | `packages/db` | Migrations and region-aware repositories. The migrations are authoritative for the schema. |
 | `scripts/eslint-rules/require-validated-response.mjs` | The lint rule that makes a route validate its own response. |
 
 ## How it works
 
-### The three surfaces
+### Core surfaces
 
 1. **`apps/desktop`** is the Electron application. Its main process owns main and
    Settings window lifecycle, custom-protocol login completion, encrypted session
@@ -78,6 +80,10 @@ docs/                      Product, architecture, security, setup, runbooks
 3. **Shared packages** contain runtime-validated contracts, database schema and
    repositories, connector adapters, agent-loop code, UI primitives, and test
    fixtures. Business rules live here or in services, never in route handlers.
+4. **Internal operator Workers** sit behind Cloudflare Access and verify the
+   signed Access assertion again in application code. Ace manages product flags;
+   the migration tracker manages Durable Object schema state. Neither is a
+   privileged route inside the customer API.
 
 ### Request and event flow
 
@@ -111,6 +117,9 @@ flowchart LR
   A --> O["OpenRouter"]
   A --> T["Authorized connection plugins"]
   A --> X["Deferred Terminal plugin"]
+  ACE["Ace internal Hono Worker"] -->|"managed write"| FF["Cloudflare Flagship"]
+  ACE -->|"flag key"| FQ["Shared then regional Queues"]
+  FQ -->|"regional Worker RPC"| WD
   X --> DT["Private Daytona sandbox"]
   T --> G["Google APIs"]
   T --> M["Signed webhook"]
@@ -762,6 +771,26 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-24 — Ace is a separate internal deployment surface
+
+**What changed:** Ace joins the architecture as an Access-protected Hono Worker
+with its own assets and deployment, while its product-flag delivery crosses into
+the regional API Workers through Queues and WorkspaceDO RPC.
+
+**Why:** Internal administration will grow beyond feature flags and needs one
+stable home and visual system. Putting its management routes in the customer API
+would mix an employee trust boundary and Cloudflare management credential into
+both regional product deployments.
+
+**Considered and rejected:** Extending the migration tracker would combine an
+operational schema inventory with product administration and give both one
+credential surface. Adding routes to each regional API would duplicate a global
+Flagship configuration and make operators choose a region.
+
+**Consequences:** Future internal administration extends Ace and its component
+library. Ace may coordinate regional work only through explicit bindings and
+opaque messages; it does not become a public API or a cross-region data plane.
 
 ### 2026-08-22 — Losing access reaches a socket by queue, not by revalidation
 

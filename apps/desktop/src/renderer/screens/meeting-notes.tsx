@@ -171,6 +171,8 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const [now, setNow] = useState(Date.now());
   /** `null` until the cadence for this meeting settles; then never replaced. */
   const [refreshIntervalMs, setRefreshIntervalMs] = useState<number | null>(null);
+  /** Null until the server explicitly answers; product features never infer on. */
+  const [meetingRecordingAvailable, setMeetingRecordingAvailable] = useState<boolean | null>(null);
   const noteRef = useRef<NoteDetail | null>(null);
   const segmentsRef = useRef<NoteTranscriptSegment[]>([]);
   const segmentRef = useRef('');
@@ -280,24 +282,23 @@ export function MeetingNotesScreen(): React.JSX.Element {
     // timer mid-recording, moving a transcript boundary and leaving the
     // briefing describing a schedule that had already changed under it.
     //
-    // Capture is not made to wait for it. Recording starts as soon as the note
-    // loads; only the segment timer holds until this settles, which is why the
-    // request is bounded rather than left to the network — a device that cannot
-    // ask, or an older service that does not answer, settles on the checked-in
-    // default within the timeout and records on that.
-    const settle = (intervalMs: number): void => {
+    // The Boolean is presentation-only: it decides whether this window draws
+    // recording controls. Capture behavior itself remains unchanged. The
+    // cadence still settles independently for the segment timer.
+    const settle = (intervalMs: number, available: boolean): void => {
       setRefreshIntervalMs((current) => current ?? intervalMs);
+      setMeetingRecordingAvailable((current) => current ?? available);
     };
     const timeout = window.setTimeout(
       () => {
         controller.abort();
-        settle(DEFAULT_MEETING_NOTES_INTERVAL_MS);
+        settle(DEFAULT_MEETING_NOTES_INTERVAL_MS, false);
       },
       MEETING_CADENCE_REQUEST_TIMEOUT_MS,
     );
     void api.clientFeatureFlags(controller.signal)
-      .then((flags) => settle(flags.controlTowerRefreshSeconds * 1_000))
-      .catch(() => settle(DEFAULT_MEETING_NOTES_INTERVAL_MS))
+      .then((flags) => settle(flags.controlTowerRefreshSeconds * 1_000, flags.meetingRecordingEnabled))
+      .catch(() => settle(DEFAULT_MEETING_NOTES_INTERVAL_MS, false))
       .finally(() => window.clearTimeout(timeout));
     return () => {
       window.clearTimeout(timeout);
@@ -957,7 +958,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
         </div>
       </main>
 
-      <footer className="meeting-controls">
+      {(meetingRecordingAvailable === true || recording || finalizing) && <footer className="meeting-controls">
         <div className="meeting-control-status">
           {dictation.error
             ? <span role="alert">{dictation.error}</span>
@@ -997,7 +998,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
           </Button>
         )}
         <span aria-hidden="true" />
-      </footer>
+      </footer>}
 
       <Modal
         description="Closing this window ends the meeting. Avalon saves the last of the transcript and writes the final summary before it goes."
