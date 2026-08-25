@@ -627,8 +627,13 @@ function WorkstreamRow({
           )}
           {debugEnabled && <CopyWorkstreamLinkItem workstreamId={workstream.id} />}
           <ContextMenu.Separator className="menu-separator" />
+          {/* Names its noun, as every other destructive item in these menus
+              does — "Archive note", "Archive draft", "Delete automation". A
+              bare "Archive" under Mark as unread and Rename reads as archiving
+              the messages rather than removing the work stream from everyone's
+              sidebar for good. */}
           <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onArchive(workstream)}>
-            <Archive aria-hidden="true" size={16} /> Archive
+            <Archive aria-hidden="true" size={16} /> Archive work stream
           </ContextMenu.Item>
         </ContextMenu.Content>
       </ContextMenu.Portal>
@@ -1720,9 +1725,10 @@ export function Sidebar({
         title="Archive work stream"
       >
         <p className="modal-copy">
-          <strong>{archiveWorkstreamTarget?.title}</strong> leaves the sidebar for everyone in it,
-          stops its timers and its email address, and stops reaching the agent. Its transcript is
-          kept, but Rally has no way to bring the work stream back yet.
+          <strong>{archiveWorkstreamTarget?.title}</strong> leaves the sidebar for everyone who can
+          see it, and nobody — you included — will be able to open it again. A run still in flight
+          is stopped, scheduled follow-ups stop, and mail to its address is refused. Nothing is
+          deleted, but Rally has no way to bring a work stream back.
         </p>
       </Modal>
       <Modal
