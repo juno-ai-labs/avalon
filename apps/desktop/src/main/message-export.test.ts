@@ -122,7 +122,7 @@ describe('recognising an export URL', () => {
     [`${MESSAGE_EXPORT_SCHEME}://sheet/token-1`, true],
     [`${MESSAGE_EXPORT_SCHEME}://sheet/`, true],
     [`${MESSAGE_EXPORT_SCHEME}://elsewhere/token-1`, false],
-    ['app://rally/index.html', false],
+    ['app://rallywithai/index.html', false],
     ['https://sheet/token-1', false],
     ['not a url', false],
   ])('answers %s with %s', (url, expected) => {
@@ -304,7 +304,7 @@ describe('saving a message', () => {
   it.each([
     ['an unknown token', `${MESSAGE_EXPORT_SCHEME}://sheet/nope`],
     ['another host on the export scheme', `${MESSAGE_EXPORT_SCHEME}://elsewhere/token-1`],
-    ['the renderer scheme', 'app://rally/token-1'],
+    ['the renderer scheme', 'app://rallywithai/token-1'],
     ['a path that is not a URL at all', 'not a url'],
   ])('serves nothing for %s', (_label, url) => {
     const test = harness();

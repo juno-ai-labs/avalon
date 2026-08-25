@@ -25,7 +25,7 @@ import { exportSyntaxPalette } from '../common/theme-assets';
  * also carries a response header, so the export policy below is a real CSP
  * rather than a `<meta>` the document could restate.
  */
-export const MESSAGE_EXPORT_SCHEME = 'rally-export';
+export const MESSAGE_EXPORT_SCHEME = 'rallywithai-export';
 const MESSAGE_EXPORT_HOST = 'sheet';
 
 /**
