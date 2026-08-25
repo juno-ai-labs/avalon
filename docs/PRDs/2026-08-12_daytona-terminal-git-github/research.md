@@ -98,7 +98,7 @@ comparison:
 | --- | ---: | --- | --- | --- |
 | Managed `daytona-small` snapshot (0.9.0 when observed) | 6.85 GiB compressed underlying image | Daytona's best-supported default: Node, Python, TypeScript, uv, Git, `rg`, GUI tooling, ML/data/image libraries, and coding harness CLIs | No `/workspace`, SQLite CLI, pnpm, or `gh` in the observed revision | **Use with an idempotent compatibility bootstrap** |
 | `daytonaio/sandbox:0.10.0` image | 6.91 GiB compressed | Same architecture as 0.9.0 with refreshed Daytona, Claude Code, Codex, OpenCode, and Python agent-package versions | Direct image use makes Rally own snapshot refresh and activation | Reject direct pinning; accept when Daytona promotes it behind the managed snapshot and probes pass |
-| `daytonaio/sandbox:v0.185.0-slim-amd64` | 457 MiB compressed | Node 22.14, Python 3.14, TypeScript, uv, `rg`, sudo, NumPy, pandas, and matplotlib | Needs Git, `gh`, SQLite CLI, pnpm, `tsx`, common archive/build utilities, and an Rally-owned snapshot lifecycle | Reject in favor of the managed default |
+| `daytonaio/sandbox:v0.185.0-slim-amd64` | 457 MiB compressed | Node 22.14, Python 3.14, TypeScript, uv, `rg`, sudo, NumPy, pandas, and matplotlib | Needs Git, `gh`, SQLite CLI, pnpm, `tsx`, common archive/build utilities, and a Rally-owned snapshot lifecycle | Reject in favor of the managed default |
 | Generic `node:22-*-bookworm-slim` | Smallest base | Node 22 and apt | Rebuilds Daytona's user/sudo/Python/data-tool conventions and loses its curated agent baseline | Reject |
 
 The slim image minimizes storage and cold-start weight, but it also makes Rally

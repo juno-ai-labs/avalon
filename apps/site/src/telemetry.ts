@@ -1,3 +1,4 @@
+import { TELEMETRY_ENVELOPE_SCHEMA } from '@rally/contracts/telemetry';
 import type {
   TelemetryBootstrapResponse,
   TelemetryEnvelope,
@@ -131,7 +132,7 @@ function makeEnvelope<TName extends TelemetryEventName>(
 ): TelemetryEnvelope {
   const timestamp = new Date().toISOString();
   return {
-    schema: 'com.avalon.telemetry.event',
+    schema: TELEMETRY_ENVELOPE_SCHEMA,
     schemaVersion: 1,
     eventId: uuidV7(),
     name,

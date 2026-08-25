@@ -18,7 +18,7 @@ No single benchmark product fits Rally's boundary.
 - Amplitude demonstrates the power and danger of autocapture. Its own privacy guidance supports Rally's conclusion that a content-rich desktop should prefer explicit semantic instrumentation and a tiny automatic reliability baseline.
 - Honeycomb reinforces high-cardinality structured correlation and the separation between manual business context and automatic technical instrumentation.
 
-The recommended architecture is an Rally-owned regional collector and crash pipeline with PostHog behind a Global-only destination adapter and an isolated internal sink for EU. This is “Segment-like” in contract and routing, not in product breadth.
+The recommended architecture is a Rally-owned regional collector and crash pipeline with PostHog behind a Global-only destination adapter and an isolated internal sink for EU. This is “Segment-like” in contract and routing, not in product breadth.
 
 ## Capability comparison
 
@@ -209,7 +209,7 @@ The PRD keeps the architecture custom because Rally already has a strong regiona
 - Native dumps never rely on graceful in-process delivery.
 - Release artifacts are private, immutable, matched by debug/build identity, and uploaded before release.
 - Crash-free measures disclose loss, sampling, and rate limiting.
-- Destination acknowledgement cannot extend or restart an Rally-controlled retention clock.
+- Destination acknowledgement cannot extend or restart a Rally-controlled retention clock.
 - EU/Global applies to the full lifecycle, not just the ingest URL.
 - Destination mappings and replays preserve event identity and adapter version.
 - Public-site collection remains absent from V1 and requires a separate PRD.

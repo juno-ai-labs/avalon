@@ -569,7 +569,7 @@ protocol.registerSchemesAsPrivileged([{
 // whenever their ad-hoc code requirement changes.
 //
 // The name is also what macOS derives the safeStorage keychain entry from, so
-// the rename from Rally leaves `Rally Safe Storage` unreadable. Only Lockdown
+// a build named Rally cannot read what `Avalon Safe Storage` holds. Only Lockdown
 // mode binds a session to that key; the default global mode does not, which is
 // why the directory below carries almost everyone across and Lockdown users
 // sign in once more. There is no Electron API that names the keychain entry
@@ -1678,7 +1678,7 @@ function validatedApiBase(rawUrl: unknown): string {
   if (typeof rawUrl !== 'string') throw new Error('Invalid regional API endpoint');
   const normalized = new URL(rawUrl).toString().replace(/\/$/u, '');
   if (!Object.values(runtimeConfig().api).includes(normalized)) {
-    throw new Error('The requested endpoint does not match an Rally region');
+    throw new Error('The requested endpoint does not match a Rally region');
   }
   return normalized;
 }
@@ -1815,7 +1815,7 @@ async function requireOnboardingIdentitySession(): Promise<WireSession> {
   if (!stored) throw new Error('Sign in to Rally before setting up a workspace');
   if (stored.workspace) throw new Error('This Rally account already has an active workspace');
   if (stored.apiBaseUrl !== runtimeConfig().api.global) {
-    throw new Error('Workspace setup requires an Rally platform identity session');
+    throw new Error('Workspace setup requires a Rally platform identity session');
   }
   return stored;
 }

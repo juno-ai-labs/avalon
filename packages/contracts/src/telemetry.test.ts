@@ -7,7 +7,9 @@ import {
   TelemetryBatchSchema,
   TelemetryBreadcrumbSidecarSchema,
   TelemetryEnvelopeSchema,
+  TELEMETRY_ENVELOPE_SCHEMA,
   TELEMETRY_EVENTS,
+  SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS,
   telemetryEventNames,
 } from "./telemetry";
 
@@ -16,7 +18,7 @@ const timestamp = "2026-08-12T20:00:00.000Z";
 
 function envelope(name: string, properties: unknown) {
   return {
-    schema: "com.avalon.telemetry.event",
+    schema: TELEMETRY_ENVELOPE_SCHEMA,
     schemaVersion: 1,
     contextSchemaVersion: 2,
     eventId,
@@ -761,5 +763,28 @@ describe("telemetry registry", () => {
         sequence: index + 1, at: timestamp, kind: "lifecycle", phase: "ready",
       })),
     }).success).toBe(false);
+  });
+});
+
+describe("the envelope schema identifier", () => {
+  const base = envelope("onboarding_region_selected", { selectedRegion: "eu", entrypoint: "first_run" });
+
+  it("mints the current identifier", () => {
+    expect(TELEMETRY_ENVELOPE_SCHEMA).toBe("com.rally.telemetry.event");
+    expect(TelemetryEnvelopeSchema.safeParse(base).success).toBe(true);
+  });
+
+  it("parses an envelope a build shipped before the rename still spools", () => {
+    // A desktop build writes envelopes to disk before sending, so a spool
+    // written by the previous build is drained by the next one. Rejecting the
+    // superseded identifier would discard it silently.
+    for (const superseded of SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS) {
+      expect(TelemetryEnvelopeSchema.safeParse({ ...base, schema: superseded }).success).toBe(true);
+    }
+  });
+
+  it("rejects an identifier that is neither current nor superseded", () => {
+    expect(TelemetryEnvelopeSchema.safeParse({ ...base, schema: "com.example.telemetry.event" }).success)
+      .toBe(false);
   });
 });
