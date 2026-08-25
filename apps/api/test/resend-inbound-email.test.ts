@@ -90,6 +90,7 @@ class FakeDatabase {
   fullAddressRegistry = true;
   readonly routes = new Map<string, {
     email_address: string;
+    address_source?: "migration" | "allocator" | "owner";
     region: Region;
     workspace_id: string;
     workstream_id: string | null;
@@ -220,7 +221,14 @@ class FakeDatabase {
   }
 
   all(sql: string, values: unknown[]): D1Result<Record<string, unknown>> {
-    void values;
+    if (sql.includes("address_source = 'migration'") && sql.includes("substr(email_address")) {
+      const localPart = String(values[0]).toLowerCase();
+      const routes = [...this.routes.values()].filter((candidate) =>
+        candidate.address_source === "migration"
+        && candidate.email_address.slice(0, candidate.email_address.lastIndexOf("@")).toLowerCase() === localPart)
+        .slice(0, 2);
+      return createTestD1Result({ success: true, results: routes });
+    }
     throw new Error(`Unexpected all query: ${sql}`);
   }
 
@@ -460,6 +468,47 @@ describe("Resend inbound-email routing", () => {
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(dispatch.mock.calls.map(([, input]) => input.emailAddress).sort())
       .toEqual([EMAIL_ADDRESS, legacyAddress].sort());
+  });
+
+  it("routes a still-unverified migration row when its inferred platform domain was wrong", async () => {
+    const database = new FakeDatabase();
+    const receivedAddress = `${LOCAL_PART}@${LEGACY_DOMAIN}`;
+    database.routes.set(EMAIL_ADDRESS, {
+      email_address: EMAIL_ADDRESS,
+      address_source: "migration",
+      region: "eu",
+      workspace_id: WORKSPACE_ID,
+      workstream_id: WORKSTREAM_ID,
+      automation_subscription_id: null,
+    });
+    const dispatched: ResendRegionalEmailInput[] = [];
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const service = new ResendInboundEmailRoutingService(environment(database, "global"), {
+      now: () => NOW,
+      dispatchInRegion: async (_region, input) => {
+        dispatched.push(input);
+        return { accepted: true, duplicate: false, messageId: "message", resourceId: "resource" };
+      },
+    });
+    const raw = eventBody([receivedAddress]);
+
+    await expect(service.ingest(new TextEncoder().encode(raw), await signedHeaders(raw))).resolves.toEqual({
+      accepted: true,
+      duplicate: false,
+      ignored: false,
+      routedCount: 1,
+    });
+    expect(dispatched).toEqual([expect.objectContaining({
+      emailAddress: receivedAddress,
+      localPart: LOCAL_PART,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })]);
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+      event: "email_route_migration_domain_fallback",
+      target_type: "workstream",
+    }));
+    warning.mockRestore();
   });
 
   it("keeps routing while the Worker-first full-address migration is pending", async () => {

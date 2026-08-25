@@ -94,6 +94,7 @@ class FakeDatabase {
   readonly objectStore: DatabaseSync = objectStoreForTest();
   readonly automations: LocalAutomationRow[] = [];
   routeInsertAttempts = 0;
+  registrySchemaProbes = 0;
 
   prepare(sql: string): D1PreparedStatement {
     return createTestD1PreparedStatement(new FakeStatement(this, sql));
@@ -105,6 +106,7 @@ class FakeDatabase {
 
   first(sql: string, values: unknown[]): RouteRow | LocalAutomationRow | null {
     if (sql.includes("pragma_table_info('workstream_email_routes')")) {
+      this.registrySchemaProbes += 1;
       return this.fullAddressRegistry ? { name: "email_address" } as unknown as RouteRow : null;
     }
     if (sql.includes("FROM automation_subscriptions WHERE id = ? AND workspace_id = ?")) {
@@ -310,6 +312,76 @@ describe("WorkstreamEmailRoutingService", () => {
     await expect(service.ensureAutomationAddress(input)).resolves.toMatchObject({
       emailAddress: legacyAddress,
     });
+  });
+
+  it("uses owner-claim RPCs after the new Global Worker deploys but before migration 0097", async () => {
+    const globalDatabase = new FakeDatabase();
+    globalDatabase.fullAddressRegistry = false;
+    const globalService = new WorkstreamEmailRoutingService(environment(globalDatabase, {
+      WORKSTREAM_EMAIL_DOMAIN: CURRENT_DOMAIN,
+    }));
+    const reserveAutomation = vi.fn(async (input) => success(
+      await globalService.reserveAutomationInGlobalRegistry(input),
+    ));
+    const claimAutomation = vi.fn(async (input) => success(
+      await globalService.claimAutomationInGlobalRegistry(input),
+    ));
+    const reserve = vi.fn(async (input) => success(
+      await globalService.reserveInGlobalRegistry(input),
+    ));
+    const claim = vi.fn(async (input) => success(
+      await globalService.claimInGlobalRegistry(input),
+    ));
+    const binding: GlobalWorkstreamEmailRouterRpcBinding = {
+      ping: async () => success(await globalService.pingGlobalRegistry()),
+      reserve,
+      reserveMany: async (inputs) => success(await globalService.reserveManyInGlobalRegistry(inputs)),
+      claim,
+      reserveAutomation,
+      claimAutomation,
+    };
+    const euService = new WorkstreamEmailRoutingService(environment(new FakeDatabase(), {
+      AVALON_REGION: "eu",
+      APP_ENV: "production",
+      GLOBAL_EMAIL_ROUTER: binding,
+    }));
+    const input = {
+      region: "eu" as const,
+      workspaceId: "workspace-eu-worker-first",
+      automationSubscriptionId: "automation-eu-worker-first",
+      emailAddress: `crisp-calibrated-arctic-kuiper@${DOMAIN}`,
+    };
+
+    await expect(euService.claimAutomation(input)).resolves.toMatchObject({
+      ...input,
+      localPart: "crisp-calibrated-arctic-kuiper",
+    });
+    expect(claimAutomation).toHaveBeenCalledExactlyOnceWith(input);
+    expect(reserveAutomation).not.toHaveBeenCalled();
+    const workstreamClaim = {
+      region: "eu" as const,
+      workspaceId: input.workspaceId,
+      workstreamId: "workstream-eu-worker-first",
+      emailAddress: `steady-modern-starlit-kovalevsky@${DOMAIN}`,
+    };
+    await expect(euService.claim(workstreamClaim)).resolves.toMatchObject({
+      ...workstreamClaim,
+      localPart: "steady-modern-starlit-kovalevsky",
+    });
+    expect(claim).toHaveBeenCalledExactlyOnceWith(workstreamClaim);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(globalDatabase.routes).toEqual([
+      expect.objectContaining({
+        email_address: input.emailAddress,
+        region: "eu",
+        automation_subscription_id: input.automationSubscriptionId,
+      }),
+      expect.objectContaining({
+        email_address: workstreamClaim.emailAddress,
+        region: "eu",
+        workstream_id: workstreamClaim.workstreamId,
+      }),
+    ]);
   });
 
   it("allows the same local part on another domain without advancing the allocator", async () => {
@@ -650,6 +722,25 @@ describe("WorkstreamEmailRoutingService", () => {
     expect(reserveMany).toHaveBeenCalledExactlyOnceWith(inputs);
     expect(reserve).not.toHaveBeenCalled();
     expect(database.routeInsertAttempts).toBe(0);
+  });
+
+  it("probes the registry schema once per Global bulk reservation", async () => {
+    const database = new FakeDatabase();
+    const service = new WorkstreamEmailRoutingService(environment(database));
+    const workstreams = [
+      routeInput("workstream-global-bulk-1"),
+      routeInput("workstream-global-bulk-2"),
+      routeInput("workstream-global-bulk-3"),
+    ];
+
+    await expect(service.reserveManyInGlobalRegistry(workstreams)).resolves.toHaveLength(3);
+    expect(database.registrySchemaProbes).toBe(1);
+
+    await expect(service.reserveAutomationsInGlobalRegistry([
+      { region: "global", workspaceId: "workspace-1", automationSubscriptionId: "automation-bulk-1" },
+      { region: "global", workspaceId: "workspace-1", automationSubscriptionId: "automation-bulk-2" },
+    ])).resolves.toHaveLength(2);
+    expect(database.registrySchemaProbes).toBe(2);
   });
 
   it("reconstructs expected Global RPC errors as ApiError instances", async () => {

@@ -37,6 +37,11 @@ function beforeMigration(): DatabaseSync {
     CREATE TRIGGER workstream_email_routes_identity_immutable
     BEFORE UPDATE OF local_part, region, workspace_id, workstream_id, automation_subscription_id
     ON workstream_email_routes
+    WHEN NEW.local_part IS NOT OLD.local_part
+      OR NEW.region IS NOT OLD.region
+      OR NEW.workspace_id IS NOT OLD.workspace_id
+      OR NEW.workstream_id IS NOT OLD.workstream_id
+      OR NEW.automation_subscription_id IS NOT OLD.automation_subscription_id
     BEGIN
       SELECT RAISE(ABORT, 'email route identities are immutable');
     END;
@@ -77,6 +82,12 @@ describe("0097 full-address email routes", () => {
       },
     ]);
 
+    expect(() => database.exec(`
+      UPDATE workstream_email_routes
+      SET email_address = 'crisp-calibrated-arctic-kuiper@customer.example'
+      WHERE workspace_id = 'workspace-old';
+    `)).toThrow(/immutable/u);
+
     database.exec(`
       UPDATE workstream_email_routes
       SET email_address = 'crisp-calibrated-arctic-kuiper@customer.example',
@@ -88,5 +99,13 @@ describe("0097 full-address email routes", () => {
       SET email_address = 'crisp-calibrated-arctic-kuiper@second.example'
       WHERE workspace_id = 'workspace-old';
     `)).toThrow(/immutable/u);
+    expect(() => database.exec(`
+      UPDATE workstream_email_routes
+      SET workspace_id = 'different-workspace'
+      WHERE workspace_id = 'workspace-old';
+    `)).toThrow(/immutable/u);
+    expect(() => database.exec(`
+      DELETE FROM workstream_email_routes WHERE workspace_id = 'workspace-old';
+    `)).toThrow(/permanent tombstones/u);
   });
 });
