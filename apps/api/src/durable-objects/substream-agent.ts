@@ -235,6 +235,24 @@ const RuntimeBootstrapRequestSchema = z.object({
   workstreamId: WorkstreamIdSchema,
   generation: z.number().int().positive(),
 }).strict();
+const RuntimeProvisionRequestSchema = z.object({
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  title: z.string().min(1).max(400),
+  objective: z.string(),
+  scope: z.enum(["workspace", "personal"]),
+  originType: z.string().min(1).max(64),
+  createdByUserId: IdSchema,
+  participantUserIds: z.array(IdSchema),
+  harnessStatus: z.enum(["idle", "scheduled"]),
+  emailAddress: z.string().nullable(),
+  emailRouteStatus: z.string().nullable(),
+  systemKind: z.string().nullable(),
+  automationSubscriptionId: z.string().nullable(),
+  automationRunId: z.string().nullable(),
+  plannedFor: z.number().int().nullable(),
+  modelOverride: z.string().nullable(),
+}).strict();
 const RuntimeDispatchRequestSchema = WorkstreamWorkflowInputSchema;
 const AgentTerminalOutcomeSchema = z.object({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
@@ -325,6 +343,7 @@ export type SubstreamProductRequest = z.infer<typeof ProductRequestSchema>;
 export type SubstreamRuntimeResourceRequest = z.infer<typeof RuntimeResourceRequestSchema>;
 export type SubstreamRuntimeSuggestionRequest = z.infer<typeof RuntimeSuggestionRequestSchema>;
 export type SubstreamRuntimeBootstrapRequest = z.infer<typeof RuntimeBootstrapRequestSchema>;
+export type SubstreamRuntimeProvisionRequest = z.infer<typeof RuntimeProvisionRequestSchema>;
 export type SubstreamTimerRefreshRequest = z.infer<typeof AgentTimerRefreshRequestSchema>;
 export type SubstreamPublishedEvent = z.infer<typeof RoomIdentitySchema> & {
   event: unknown;
@@ -963,6 +982,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return responseToRpcResult(await this.acceptRuntimeBootstrap(this.rpcRequest(input)));
   }
 
+  async provisionRuntime(input: SubstreamRuntimeProvisionRequest): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return objectPortRpcResult(await this.runtimeProvisionOutcome(input));
+  }
+
   async dispatchRun(input: WorkstreamWorkflowInput): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptRunDispatch(this.rpcRequest(input)));
@@ -1584,6 +1608,37 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return jsonResponse({
         error: error instanceof Error ? error.message : "workstream_runtime_bootstrap_failed",
       }, 409);
+    }
+  }
+
+  /**
+   * Write what a system-provisioned work stream is, once its object is open.
+   *
+   * The identity check is `objectPortRefusal`'s, for its reasons: a misrouted
+   * stub must not name another work stream, and a non-authoritative object is
+   * not the one whose writes count. The provision itself is idempotent, so a
+   * producer retrying the bootstrap-then-provision pair is safe.
+   */
+  private async runtimeProvisionOutcome(
+    input: SubstreamRuntimeProvisionRequest,
+  ): Promise<ObjectPortOutcome> {
+    const parsed = RuntimeProvisionRequestSchema.safeParse(input);
+    if (!parsed.success) return { status: 400, payload: { error: "invalid_runtime_provision" } };
+    const refusal = this.objectPortRefusal(parsed.data, "workstream_provision_identity_mismatch");
+    if (refusal) return refusal;
+    try {
+      const outcome = await this.product.provisionWorkstream({
+        ...parsed.data,
+        now: Date.now(),
+      });
+      return { status: 200, payload: { ok: true, ...outcome } };
+    } catch (error) {
+      return {
+        status: 409,
+        payload: {
+          error: error instanceof Error ? error.message : "workstream_provision_failed",
+        },
+      };
     }
   }
 
