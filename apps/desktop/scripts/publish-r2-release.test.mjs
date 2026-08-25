@@ -10,6 +10,7 @@ import test from 'node:test';
 import {
   purgeAndVerifyImmutableReleaseUrls,
   purgeCloudflareUrls,
+  verifyPublicReleaseArtifactHash,
 } from './release-cache.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -273,4 +274,21 @@ test('does not verify immutable public artifacts until their purge is confirmed'
     /purge rejected/u,
   );
   assert.equal(verified, false);
+});
+
+test('rejects stale public bytes even when their size and first byte match', async () => {
+  const expected = Buffer.from('same-new');
+  const stale = Buffer.from('same-old');
+  assert.equal(stale.length, expected.length);
+  assert.equal(stale[0], expected[0]);
+
+  await assert.rejects(
+    verifyPublicReleaseArtifactHash({
+      expectedHash: createHash('sha512').update(expected).digest('base64'),
+      fetchImplementation: async () => new Response(stale),
+      sleepImplementation: async () => undefined,
+      url: 'https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-1.147.0.dmg',
+    }),
+    /SHA-512 mismatch/u,
+  );
 });

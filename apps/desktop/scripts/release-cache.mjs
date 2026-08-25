@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 function cloudflareErrorCodes(body) {
   if (!Array.isArray(body?.errors)) return 'none';
   const codes = body.errors
@@ -61,4 +63,48 @@ export async function purgeAndVerifyImmutableReleaseUrls({
 }) {
   await purgeUrls(artifacts.map(({ url }) => url));
   for (const artifact of artifacts) await verifyArtifact(artifact);
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
+}
+
+export async function verifyPublicReleaseArtifactHash({
+  expectedHash,
+  fetchImplementation = fetch,
+  sleepImplementation = sleep,
+  url,
+}) {
+  const publicUrl = new URL(url);
+  if (
+    publicUrl.protocol !== 'https:'
+    || publicUrl.username
+    || publicUrl.password
+    || publicUrl.search
+    || publicUrl.hash
+  ) {
+    throw new Error('Public release hash verification requires an exact HTTPS URL');
+  }
+
+  let failure = 'no response';
+  for (let attempt = 0; attempt < 7; attempt += 1) {
+    try {
+      const response = await fetchImplementation(publicUrl, {
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok || !response.body) {
+        await response.body?.cancel();
+        failure = `HTTP ${response.status}`;
+      } else {
+        const hash = createHash('sha512');
+        for await (const chunk of response.body) hash.update(chunk);
+        if (hash.digest('base64') === expectedHash) return;
+        failure = 'SHA-512 mismatch';
+      }
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    if (attempt < 6) await sleepImplementation(500 * 2 ** attempt);
+  }
+  throw new Error(`Public artifact hash verification failed for ${publicUrl}: ${failure}`);
 }
