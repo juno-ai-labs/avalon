@@ -158,6 +158,7 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
       ? sendPostHogBatch({
         host: env.POSTHOG_HOST,
         projectToken: env.POSTHOG_PROJECT_TOKEN,
+        webBaseUrl: env.PUBLIC_WEB_BASE_URL,
         rows: ordinary.map(deliveryRow),
       }).then((result) => [ordinary, result, "posthog_capture"] as const)
       : Promise.resolve([ordinary, null, "posthog_capture"] as const),

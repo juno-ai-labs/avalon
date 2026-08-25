@@ -46,7 +46,7 @@ test("exercises the shapes the template has to survive", () => {
 
   // A preview that only shows plain bullets proves nothing about the template.
   assert.match(body, /^## Needs you$/mu);
-  assert.match(body, /\[Prepare the Acme follow-up\]\(https:\/\/with-avalon\.com\/app\/workstreams\//u);
+  assert.match(body, /\[Prepare the Acme follow-up\]\(https:\/\/rallywith\.ai\/app\/workstreams\//u);
   assert.match(body, /^> /mu);
   assert.match(body, /\*\*Owner still unassigned\.\*\*/u);
 });

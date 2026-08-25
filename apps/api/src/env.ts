@@ -1,4 +1,4 @@
-import { AvalonUrlSchema, HttpUrlSchema } from "@avalon/contracts/url-schemas";
+import { DesktopDeepLinkUrlSchema, HttpUrlSchema } from "@avalon/contracts/url-schemas";
 import type { Pipeline } from "cloudflare:pipelines";
 import { z } from "zod";
 import type { Region, UserId, WorkspaceId } from "@avalon/contracts";
@@ -307,7 +307,7 @@ const EnvContractSchema = z.object({
   PUBLIC_API_BASE_URL: HttpUrlSchema,
   PUBLIC_WEB_BASE_URL: HttpUrlSchema,
   ALLOWED_ORIGINS: z.string().min(1),
-  DESKTOP_DEEP_LINK_URI: AvalonUrlSchema,
+  DESKTOP_DEEP_LINK_URI: DesktopDeepLinkUrlSchema,
   TERMINAL_REGION_CAPABILITY: z.enum(["supported", "unsupported"]).optional(),
   TERMINAL_EMERGENCY_DISABLED: z.enum(["true", "false"]).optional(),
   DAYTONA_API_URL: z.string().optional(),

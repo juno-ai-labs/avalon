@@ -382,7 +382,7 @@ export function WorkstreamHeader({
       if (shownWorkstreamId.current === submittedFor) setRenaming(false);
     }
   };
-  // Copy the canonical HTTPS link, not the `avalon://` deep link. A copied link
+  // Copy the canonical HTTPS link, not the `rallywithai://` deep link. A copied link
   // is going somewhere else — Slack, mail, a Linear comment — where an unknown
   // scheme does not unfurl, often does not linkify, and is dead for anyone who
   // has not installed Avalon. The canonical link ends at the same work stream.

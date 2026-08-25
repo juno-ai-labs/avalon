@@ -9,6 +9,11 @@ import {
   WorkspaceOnboardingStateSchema,
   type Session as WireSession,
 } from '@avalon/contracts';
+import {
+  DESKTOP_DEEP_LINK_PROTOCOL,
+  DESKTOP_DEEP_LINK_PROTOCOLS,
+  isDesktopDeepLinkProtocol,
+} from '@avalon/contracts/desktop-deep-link';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
@@ -205,7 +210,17 @@ const executeFile = promisify(execFile);
 // packaged build must remain pinned to its embedded renderer and Avalon hosts.
 const rendererDevelopmentUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL'];
 const allowedExternalProtocols = new Set(['https:', 'http:']);
-const customProtocol = 'avalon';
+/**
+ * The deep-link schemes registered with the operating system: the one this
+ * build mints, plus every one it still answers. `electron` wants them without
+ * the trailing colon that `URL.protocol` carries, so the shared list is
+ * trimmed rather than restated — a second literal here is exactly the copy
+ * that would be missed when the legacy scheme is finally dropped.
+ */
+const customProtocol = DESKTOP_DEEP_LINK_PROTOCOL.replace(/:$/u, '');
+const deepLinkProtocols: readonly string[] = DESKTOP_DEEP_LINK_PROTOCOLS
+  .map((scheme) => scheme.replace(/:$/u, ''));
+const isDeepLinkProtocol = isDesktopDeepLinkProtocol;
 const rendererProtocol = 'app';
 const rendererHost = 'avalon';
 const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
@@ -1397,16 +1412,16 @@ function runtimeConfig(): RuntimeConfig {
     api: {
       global: parseAvalonBaseUrl(
         packaged ? undefined : process.env['VITE_API_GLOBAL_URL'],
-        packaged ? 'https://api.with-avalon.com' : 'http://127.0.0.1:8787',
+        packaged ? 'https://api.rallywith.ai' : 'http://127.0.0.1:8787',
       ),
       eu: parseAvalonBaseUrl(
         packaged ? undefined : process.env['VITE_API_EU_URL'],
-        packaged ? 'https://eu.api.with-avalon.com' : 'http://127.0.0.1:8788',
+        packaged ? 'https://eu.api.rallywith.ai' : 'http://127.0.0.1:8788',
       ),
     },
     webBaseUrl: parseAvalonBaseUrl(
       packaged ? undefined : process.env['PUBLIC_WEB_BASE_URL'],
-      packaged ? 'https://with-avalon.com' : 'http://127.0.0.1:5174',
+      packaged ? 'https://rallywith.ai' : 'http://127.0.0.1:5174',
     ),
     devAuthEnabled: process.env['AVALON_DEV_AUTH'] !== 'false' && !app.isPackaged,
   };
@@ -2108,7 +2123,7 @@ function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): vo
     try {
       const deepLink = new URL(rawUrl);
       const connectionId = deepLink.searchParams.get('connection');
-      const isAuthCompletion = deepLink.protocol === `${customProtocol}:`
+      const isAuthCompletion = isDeepLinkProtocol(deepLink.protocol)
         && deepLink.hostname === 'auth'
         && deepLink.pathname === '/complete';
       if (!isAuthCompletion) return false;
@@ -2198,30 +2213,30 @@ function revealNoteInMainWindow(noteId: string): void {
 function acceptedDeepLink(rawUrl: string): string | null {
   try {
     const deepLink = new URL(rawUrl);
-    const isAuthentication = deepLink.protocol === `${customProtocol}:`
+    const isAuthentication = isDeepLinkProtocol(deepLink.protocol)
       && deepLink.hostname === 'auth'
       && deepLink.pathname === '/complete';
-    const isWorkstream = deepLink.protocol === `${customProtocol}:`
+    const isWorkstream = isDeepLinkProtocol(deepLink.protocol)
       && deepLink.hostname === 'workstreams'
       && /^\/[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(deepLink.pathname);
-    const isNewWorkstream = deepLink.protocol === `${customProtocol}:`
+    const isNewWorkstream = isDeepLinkProtocol(deepLink.protocol)
       && deepLink.hostname === 'workstreams'
       && deepLink.pathname === '/new'
       && deepLink.search === '';
-    const isInvitation = deepLink.protocol === `${customProtocol}:`
+    const isInvitation = isDeepLinkProtocol(deepLink.protocol)
       && deepLink.hostname === 'invitations'
       && deepLink.pathname === '/accept'
       && deepLink.searchParams.get('token') !== null
       && (deepLink.searchParams.get('region') === 'global' || deepLink.searchParams.get('region') === 'eu');
-    const isSettings = deepLink.protocol === `${customProtocol}:`
+    const isSettings = isDeepLinkProtocol(deepLink.protocol)
       && deepLink.hostname === 'settings'
       && (deepLink.pathname === '/workspace' || deepLink.pathname === '/connections')
       && deepLink.search === '';
-    const isAutomation = deepLink.protocol === `${customProtocol}:`
+    const isAutomation = isDeepLinkProtocol(deepLink.protocol)
       && deepLink.hostname === 'automations'
       && deepLink.pathname === '/new'
       && deepLink.search === '';
-    const isSlackLink = deepLink.protocol === `${customProtocol}:`
+    const isSlackLink = isDeepLinkProtocol(deepLink.protocol)
       && deepLink.hostname === 'slack'
       && deepLink.pathname === '/link'
       && /^[A-Za-z0-9_-]{20,500}$/u.test(deepLink.searchParams.get('token') ?? '')
@@ -3147,7 +3162,7 @@ function installApplicationMenu(): void {
         });
       },
       openWebsite: () => {
-        void shell.openExternal('https://with-avalon.com/').catch((error: unknown) => {
+        void shell.openExternal('https://rallywith.ai/').catch((error: unknown) => {
           logError('avalon', 'failed to open website', error);
         });
       },
@@ -3270,7 +3285,9 @@ if (!singleInstanceLock) {
   app.quit();
 } else {
   app.on('second-instance', (_event, commandLine) => {
-    const deepLink = commandLine.find((argument) => argument.startsWith(`${customProtocol}://`));
+    const deepLink = commandLine.find((argument) => (
+      deepLinkProtocols.some((scheme) => argument.startsWith(`${scheme}://`))
+    ));
     if (deepLink) {
       if (emitDeepLink(deepLink)) observeAcceptedDeepLinkOpen();
     }
@@ -3289,7 +3306,7 @@ if (!singleInstanceLock) {
 
   void app.whenReady().then(async () => {
     app.setAppUserModelId('app.avalon.desktop');
-    app.setAsDefaultProtocolClient(customProtocol);
+    for (const scheme of deepLinkProtocols) app.setAsDefaultProtocolClient(scheme);
     try {
       if (app.isPackaged) {
         await migrateLegacyUserDataStoredSessionFile(

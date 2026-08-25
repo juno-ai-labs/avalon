@@ -137,7 +137,7 @@ defaults according to scope before final schema validation.
 ### Region boundary
 
 Google sign-in has one platform endpoint: the Global control plane at
-`api.with-avalon.com`. It creates a short-lived, identity-only bootstrap session
+`api.rallywith.ai`. It creates a short-lived, identity-only bootstrap session
 and then discovers the user's existing workspace memberships and pending
 invitations in both regions. Only users with neither receive the post-auth
 workspace-region selector. Existing members activate their workspace directly,
@@ -176,8 +176,8 @@ identity, crash, and restricted operator flow.
   Global `/auth/google/start` endpoint. The Electron main process also creates a
   separate high-entropy verifier for each native attempt and exposes only its
   opaque attempt ID and S256 challenge to the renderer. The provider callback
-  redirects through `https://with-avalon.com/auth/desktop/#target=…`; that page
-  accepts only an exact `avalon://auth/complete` target, removes the fragment
+  redirects through `https://rallywith.ai/auth/desktop/#target=…`; that page
+  accepts only an exact `rallywithai://auth/complete` target, removes the fragment
   from history, and opens the app with a short-lived login ticket bound to the
   attempt. Ticket redemption is one-time and requires the verifier retained only
   in main-process memory. Workspace choice and invitations are resolved after

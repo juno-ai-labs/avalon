@@ -189,13 +189,13 @@ async function deliverToTarget(
  * The site serves no page under `/app/settings`, so a URL there would 404 — and
  * this is the link recipients are most likely to click, since the digest is on
  * by default. `/open` is the existing desktop handoff and already allowlists
- * `avalon://settings/...`, so it is the page that exists. Built with `new URL`
+ * `rallywithai://settings/...`, so it is the page that exists. Built with `new URL`
  * like every other public link in the API, which also survives a trailing slash
  * on the base.
  */
 export function digestSettingsUrl(env: Pick<Env, "PUBLIC_WEB_BASE_URL">): string {
   const handoff = new URL("/open", env.PUBLIC_WEB_BASE_URL);
-  handoff.hash = new URLSearchParams({ target: "avalon://settings/digest" }).toString();
+  handoff.hash = new URLSearchParams({ target: "rallywithai://settings/digest" }).toString();
   return handoff.toString();
 }
 

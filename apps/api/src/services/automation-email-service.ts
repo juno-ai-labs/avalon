@@ -102,7 +102,7 @@ export async function deliverAutomationResultEmail(
   const ran = runDate(recipient.timezone);
   const subject = `${OUTCOME_PREFIX[input.outcomeStatus] ?? ""}${name} · ${ran}`;
   const body = resultBody(input.text);
-  // `avalon://` is not linkified by mail clients and is dead for a reader with
+  // `rallywithai://` is not linkified by mail clients and is dead for a reader with
   // no app installed, which is most phones. The canonical HTTPS link is a real
   // link everywhere and ends at the same work stream —
   // `docs/workstream-links.md` owns that rule.

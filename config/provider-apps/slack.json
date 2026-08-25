@@ -56,15 +56,18 @@
         "description": "Start or continue a task with Avalon.",
         "usage_hint": "what you want Avalon to do",
         "should_escape": true,
-        "url": "https://slack.with-avalon.com/slack/commands"
+        "url": "https://slack.rallywith.ai/slack/commands"
       }
     ],
     "unfurl_domains": [
+      "rallywith.ai",
       "with-avalon.com"
     ]
   },
   "oauth_config": {
     "redirect_urls": [
+      "https://api.rallywith.ai/connections/slack/callback",
+      "https://eu.api.rallywith.ai/connections/slack/callback",
       "https://api.with-avalon.com/connections/slack/callback",
       "https://eu.api.with-avalon.com/connections/slack/callback"
     ],
@@ -132,7 +135,7 @@
   },
   "settings": {
     "event_subscriptions": {
-      "request_url": "https://slack.with-avalon.com/slack/events",
+      "request_url": "https://slack.rallywith.ai/slack/events",
       "bot_events": [
         "app_context_changed",
         "app_home_opened",
@@ -153,7 +156,7 @@
     },
     "interactivity": {
       "is_enabled": true,
-      "request_url": "https://slack.with-avalon.com/slack/interactivity"
+      "request_url": "https://slack.rallywith.ai/slack/interactivity"
     },
     "org_deploy_enabled": false,
     "socket_mode_enabled": false,
@@ -165,9 +168,9 @@
       "productivity"
     ],
     "use_direct_install": false,
-    "installation_landing_page": "https://with-avalon.com/slack",
-    "privacy_policy_url": "https://with-avalon.com/privacy",
-    "support_url": "https://with-avalon.com/support",
+    "installation_landing_page": "https://rallywith.ai/slack",
+    "privacy_policy_url": "https://rallywith.ai/privacy",
+    "support_url": "https://rallywith.ai/support",
     "support_email": "support@with-avalon.com",
     "supported_languages": [
       "en-US"

@@ -245,13 +245,13 @@ email-name reservations use
 the Global `WorkstreamEmailRoutingBridge`; there is no regional allocator key or
 regional fallback registry.
 
-`RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. There are two checked-in senders, both `vars` in each region's Wrangler config: `RESEND_FROM_EMAIL` (`Avalon <invites@with-avalon.com>`) for transactional mail, and `RESEND_NOTIFICATION_FROM_EMAIL` (`Avalon <notifications@with-avalon.com>`) for mail Avalon generates — digests, automation results, mention notifications. Resend verifies the domain rather than the address, so the second rides the same verification; keep `with-avalon.com` verified with its DKIM/SPF records. An unset notification sender does not fail: `sendResendEmail` falls back to the transactional one silently, which is why `GET /health` reports `resendNotificationSender` separately — check it after a deploy that touches either var. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
+`RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. There are two checked-in senders, both `vars` in each region's Wrangler config: `RESEND_FROM_EMAIL` (`Avalon <invites@rallywith.ai>`) for transactional mail, and `RESEND_NOTIFICATION_FROM_EMAIL` (`Avalon <notifications@rallywith.ai>`) for mail Avalon generates — digests, automation results, mention notifications. Resend verifies the domain rather than the address, so the second rides the same verification; keep both `rallywith.ai` and `with-avalon.com` verified with their own DKIM/SPF records — Resend verifies the sending domain, so the Rally senders do not inherit the Avalon verification and mail from them is rejected until the Rally records are live. An unset notification sender does not fail: `sendResendEmail` falls back to the transactional one silently, which is why `GET /health` reports `resendNotificationSender` separately — check it after a deploy that touches either var. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
 
-Inbound work-stream and automation mail uses the dedicated catch-all subdomain `automation.with-avalon.com`. Create it with Resend Receiving enabled, install the exact MX record returned by Resend in Cloudflare DNS, and create one `email.received` webhook pointing to `https://api.with-avalon.com/ingest/resend`. Store its `whsec_...` value as the Global `RESEND_WEBHOOK_SIGNING_SECRET`. Ensure the reused `RESEND_API_KEY` has Full access in both regions because the regional Worker retrieves the full received message after routing. Store one stable 32+ byte `WORKSTREAM_EMAIL_ADDRESS_KEY` in the Global Worker. Do not log any of these values. Existing deployments using `RESEND_WEBHOOK_SECRET` remain compatible during migration.
+Inbound work-stream and automation mail uses the dedicated catch-all subdomain `automation.rallywith.ai`. Create it with Resend Receiving enabled, install the exact MX record returned by Resend in Cloudflare DNS, and create one `email.received` webhook pointing to `https://api.rallywith.ai/ingest/resend`. **Keep `automation.with-avalon.com` receiving, with its own MX record and webhook, for as long as any address on it exists.** Addresses are stored per work stream rather than derived, so every address issued before the rename still carries that domain, is printed in the sender's mail client, and is what mail rules forward to; the Worker routes on the local part and accepts either domain. See [`domain-migration.md`](domain-migration.md). Store its `whsec_...` value as the Global `RESEND_WEBHOOK_SIGNING_SECRET`. Ensure the reused `RESEND_API_KEY` has Full access in both regions because the regional Worker retrieves the full received message after routing. Store one stable 32+ byte `WORKSTREAM_EMAIL_ADDRESS_KEY` in the Global Worker. Do not log any of these values. Existing deployments using `RESEND_WEBHOOK_SECRET` remain compatible during migration.
 
 For non-interactive Wrangler commands, prefer `CLOUDFLARE_API_TOKEN`. The older global-key method requires both `CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` in `.env.local`; an API key by itself cannot authenticate a deployment.
 
-Use a custom token restricted to the Avalon Cloudflare account and the `with-avalon.com` zone. The deployment and migration workflow needs these permissions:
+Use a custom token restricted to the Avalon Cloudflare account and the `rallywith.ai` and `with-avalon.com` zones — both are served while the rename is in flight, and a token holding only one of them fails route provisioning for the other. The deployment and migration workflow needs these permissions:
 
 - Account: Account Settings Read
 - Account: Workers Scripts Write (shown as Edit in older dashboards)
@@ -270,6 +270,8 @@ Use a custom token restricted to the Avalon Cloudflare account and the `with-ava
   `Flagship` in the dashboard's API-token editor. Read access alone lists apps
   but fails `wrangler flagship apps create` with `Authentication error [code:
   10000]`, and automatic provisioning on deploy fails the same way.
+- Zone `rallywith.ai`: Zone Read
+- Zone `rallywith.ai`: Workers Routes Write/Edit
 - Zone `with-avalon.com`: Zone Read
 - Zone `with-avalon.com`: Workers Routes Write/Edit
 
@@ -283,6 +285,29 @@ origins, and the downloads origin redirect cleartext HTTP to HTTPS and return th
 expected `Strict-Transport-Security` header over HTTPS.
 
 ## Deployment order
+
+### Order the EU API certificate before deploying the Rally routes
+
+**`eu.api.rallywith.ai` is two labels deep and the zone's Universal SSL does not
+cover it.** A Universal pack covers `rallywith.ai` and `*.rallywith.ai`, and a
+wildcard matches exactly one label — so this hostname is not in it, and without a
+further certificate it serves a TLS error rather than the EU API. Wrangler
+creates the route and the DNS record regardless, so the symptom is an EU region
+that looks deployed and is unreachable, which reads as an outage rather than as a
+missing certificate. This is the same trap the migration tracker hit; see
+[the tracker's hostname note](#the-durable-object-migration-tracker).
+
+Add `*.api.rallywith.ai` to the **existing Advanced Certificate Manager pack** on
+the `rallywith.ai` zone — the one already covering `*.internal.rallywith.ai`. It
+is a per-zone add-on that is already paid for and holds up to 50 hostnames, so
+this costs nothing beyond the order. Issue from **Google Trust Services**, to
+match the zone's other packs. TXT validation completes on its own because
+Cloudflare is authoritative for the zone, and the pack takes roughly fifteen
+minutes to go active. Confirm it is active, then deploy.
+
+The other nine Rally hostnames are single-label and covered by the Universal
+pack, so they need no certificate work. [`domain-migration.md`](domain-migration.md)
+lists all ten and what each serves.
 
 ### Release version policy
 
@@ -794,14 +819,14 @@ Changing such a default afterwards is far more expensive than choosing it correc
 
 Google identity and connector OAuth use two distinct Google Cloud OAuth **Web application** clients in one project. The **Avalon Login** client requests only platform identity scopes and has this one redirect URI:
 
-- Global identity: `https://api.with-avalon.com/auth/google/callback`
+- Global identity: `https://api.rallywith.ai/auth/google/callback`
 
 The **Avalon Google Connectors** client owns the Gmail, Calendar, Drive, Docs, and Sheets scopes and has these redirect URIs:
 
-- Global connector: `https://api.with-avalon.com/connections/google/callback`
-- EU connector: `https://eu.api.with-avalon.com/connections/google/callback`
+- Global connector: `https://api.rallywith.ai/connections/google/callback`
+- EU connector: `https://eu.api.rallywith.ai/connections/google/callback`
 
-`https://with-avalon.com/auth/desktop/` is Avalon's browser handoff for login and connector outcomes, and `avalon://auth/complete` is the allowlisted desktop return URI. Provider codes always terminate at a regional API callback first; neither handoff URI belongs in Google's authorized redirect URI list. Identity login requests only `openid`, `email`, and `profile`.
+`https://rallywith.ai/auth/desktop/` is Avalon's browser handoff for login and connector outcomes, and `rallywithai://auth/complete` is the allowlisted desktop return URI. Provider codes always terminate at a regional API callback first; neither handoff URI belongs in Google's authorized redirect URI list. Identity login requests only `openid`, `email`, and `profile`.
 
 Store the Login client as `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` on the Global Worker. Store the connector client as `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID` / `GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET` on both regional Workers. The connector runtime deliberately has no fallback to the login credentials.
 
@@ -816,7 +841,7 @@ The production-approved connector scopes use `gmail.modify` for the Gmail capabi
 
 Google connector ingestion currently polls Gmail history, Calendar sync/completion cursors, and Drive changes. Drive change-token polling is also the change source for Docs and Sheets. Do not configure or claim Gmail Pub/Sub watch delivery, Calendar notification channels, Drive push notifications, or any Google webhook; none is implemented.
 
-Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so identity and connector callbacks redirect through `/auth/desktop/` before opening the custom protocol. The Global Worker must bind `EU_IDENTITY_BRIDGE` to the EU Worker's named `RegionalIdentityBridge` entrypoint and set `EU_PUBLIC_API_BASE_URL=https://eu.api.with-avalon.com`; do not expose an equivalent public route. Keep `ALLOWED_ORIGINS` exact: hosted Electron uses `app://avalon`; public-site telemetry uses `https://with-avalon.com` and `https://www.with-avalon.com`; local Vite development uses its explicit `http://localhost:<port>` origin. Do not add wildcard, prefix, or suffix patterns.
+Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://rallywith.ai` so identity and connector callbacks redirect through `/auth/desktop/` before opening the custom protocol. The Global Worker must bind `EU_IDENTITY_BRIDGE` to the EU Worker's named `RegionalIdentityBridge` entrypoint and set `EU_PUBLIC_API_BASE_URL=https://eu.api.with-avalon.com`; do not expose an equivalent public route. Keep `ALLOWED_ORIGINS` exact: hosted Electron uses `app://avalon`; public-site telemetry uses `https://with-avalon.com` and `https://www.with-avalon.com`; local Vite development uses its explicit `http://localhost:<port>` origin. Do not add wildcard, prefix, or suffix patterns.
 
 ## Realtime operations and cost controls
 
@@ -1247,15 +1272,15 @@ index, and `agent-inference/` request-only writer no longer exist.
 #### Before querying
 
 1. Copy the work-stream UUID from the canonical
-   `https://with-avalon.com/app/workstreams/<uuid>` URL. The current main
+   `https://rallywith.ai/app/workstreams/<uuid>` URL. The current main
    substream ID is `0`. When Avalon exposes additional product substreams, copy
    the canonical substream ID from the API response or route that opened that
    substream; do not infer it from an inline child run. These opaque IDs are safe
    to place in the query examples below; do not paste a title, prompt fragment,
    email, or other user content into SQL.
 2. Resolve the workspace's immutable **Data region** from the regional API base
-   URL serving its authenticated session: `api.with-avalon.com` is Global and
-   `eu.api.with-avalon.com` is EU. Use the authenticated API response, not the
+   URL serving its authenticated session: `api.rallywith.ai` is Global and
+   `eu.api.rallywith.ai` is EU. Use the authenticated API response, not the
    web interface. If it is EU, stop: no lakehouse evidence exists by design. Do
    not search D1, Workers Logs, the unused EU preflight resources, or Global as a
    substitute.

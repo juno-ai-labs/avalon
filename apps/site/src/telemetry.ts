@@ -28,7 +28,7 @@ let leaveReported = false;
 function apiBaseUrl(): string {
   return location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://127.0.0.1:8787'
-    : 'https://api.with-avalon.com';
+    : 'https://api.rallywith.ai';
 }
 
 function uuidV7(milliseconds = Date.now()): string {
@@ -108,8 +108,18 @@ function getCapability(): Promise<CapabilityState> {
   return capabilityPromise;
 }
 
+// Both production domains, for as long as both are served. Omitting one would
+// not fail anywhere visible — it would quietly file every visit arriving on
+// that domain under `staging`, which is indistinguishable from nobody visiting.
+const PRODUCTION_SITE_HOSTS = new Set([
+  'rallywith.ai',
+  'www.rallywith.ai',
+  'with-avalon.com',
+  'www.with-avalon.com',
+]);
+
 function environment(): 'development' | 'staging' | 'production' {
-  if (location.hostname === 'with-avalon.com' || location.hostname === 'www.with-avalon.com') return 'production';
+  if (PRODUCTION_SITE_HOSTS.has(location.hostname)) return 'production';
   if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') return 'development';
   return 'staging';
 }

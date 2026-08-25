@@ -64,12 +64,12 @@ Register these exact hosted authorized redirect URIs:
 
 | OAuth client | Authorized redirect URI |
 | --- | --- |
-| Avalon Login | `https://api.with-avalon.com/auth/google/callback` |
-| Avalon Google Connectors | `https://api.with-avalon.com/connections/google/callback` |
-| Avalon Google Connectors | `https://eu.api.with-avalon.com/connections/google/callback` |
+| Avalon Login | `https://api.rallywith.ai/auth/google/callback` |
+| Avalon Google Connectors | `https://api.rallywith.ai/connections/google/callback` |
+| Avalon Google Connectors | `https://eu.api.rallywith.ai/connections/google/callback` |
 
-`https://with-avalon.com/auth/desktop/` is Avalon's post-callback browser handoff
-for login and every connector, and `avalon://auth/complete` is its allowlisted
+`https://rallywith.ai/auth/desktop/` is Avalon's post-callback browser handoff
+for login and every connector, and `rallywithai://auth/complete` is its allowlisted
 desktop return URI. Provider codes always terminate at the owning API callback
 first; **neither handoff URI is a Google OAuth redirect URI.** Add the
 corresponding `http://127.0.0.1:<port>` API callbacks only to a development client
@@ -115,10 +115,10 @@ install state.
 | --- | --- |
 | Name | `Avalon Workstreams` |
 | Description | `Connect GitHub repositories to Avalon work streams and automations.` |
-| Homepage URL | `https://with-avalon.com` |
-| Callback URLs | `https://api.with-avalon.com/connections/github/callback` and `https://eu.api.with-avalon.com/connections/github/callback` |
-| Setup URL | `https://github.with-avalon.com/connections/github/setup` |
-| Webhook URL | `https://github.with-avalon.com/ingest/github` |
+| Homepage URL | `https://rallywith.ai` |
+| Callback URLs | `https://api.rallywith.ai/connections/github/callback` and `https://eu.api.rallywith.ai/connections/github/callback` |
+| Setup URL | `https://github.rallywith.ai/connections/github/setup` |
+| Webhook URL | `https://github.rallywith.ai/ingest/github` |
 | Webhook secret | The shared local `GITHUB_WEBHOOK_SECRET` value (or the existing `GITHUB_WEBHOOK_SECRET_GLOBAL` value while migrating) |
 | Installability | Any account |
 
@@ -135,7 +135,7 @@ the existing Contents read permission, while issue dependencies and sub-issues
 require the existing Issues permission, so these subscriptions do not broaden App
 access.
 
-The shared setup and webhook host, `github.with-avalon.com`, runs on Avalon's
+The shared setup and webhook host, `github.rallywith.ai`, runs on Avalon's
 Global ingress Worker. It verifies GitHub's signature before parsing, maps an
 installation to every Avalon region where it is connected, and forwards the exact
 signed bytes over a Worker service binding. Each regional Worker verifies the
@@ -158,7 +158,7 @@ The registered production App is `Avalon Workstreams` with slug
 Register `linear.json` as one public Linear OAuth app. Public distribution permits
 installation by other workspaces; listing it in Linear's integration directory is a
 separate review. The manifest registers both regional callback URLs and the single
-webhook URL `https://linear.with-avalon.com/ingest/linear`. It is the
+webhook URL `https://linear.rallywith.ai/ingest/linear`. It is the
 production-safe resource configuration and intentionally does not subscribe to
 `AgentSessionEvent` or `AppUserNotification`.
 
@@ -195,7 +195,7 @@ The personal Notion connection uses the official hosted MCP server at
 client ID, client secret, webhook, or checked-in provider manifest. Avalon uses
 MCP OAuth discovery and dynamic client registration for each authorization,
 with PKCE and the shared
-`https://notion.with-avalon.com/connections/notion/callback` redirect. The DCR
+`https://notion.rallywith.ai/connections/notion/callback` redirect. The DCR
 client and rotating credentials are encrypted in the member's owning region.
 The public connection below is still required for the separate workspace bot
 and webhook mode. The API registers personal Notion even when the public client
@@ -209,7 +209,7 @@ both regions:
 | --- | --- |
 | Name | Avalon |
 | Installation scope | Any workspace |
-| Redirect URI | `https://notion.with-avalon.com/connections/notion/callback` |
+| Redirect URI | `https://notion.rallywith.ai/connections/notion/callback` |
 | Webhook URL | Run `pnpm notion:webhook:prepare` and paste the URL it copies |
 
 An Avalon workspace owner or administrator initiates installation. The authorize
@@ -223,7 +223,7 @@ A Notion connection accepts one redirect URI and delivers to one webhook URL, an
 it has no way to know which region a Notion workspace belongs to — so unlike Linear
 and Slack, its callbacks cannot be regional. Both URLs are the Global ingress,
 which routes each callback and delivery to the owning region;
-`notion.with-avalon.com` must exist as a custom domain on `avalon-api-global`
+`notion.rallywith.ai` must exist as a custom domain on `avalon-api-global`
 before registration. [`notion-ingress.md`](notion-ingress.md) owns that design.
 
 Use the read, insert, update, comment-read, and comment-insert capabilities and
@@ -250,7 +250,7 @@ binding. The token then signs every later `X-Notion-Signature`.
 ### Slack app
 
 One public Slack Marketplace app serves both regions. OAuth callbacks are regional;
-events, interactivity, commands, and unfurls use `https://slack.with-avalon.com`
+events, interactivity, commands, and unfurls use `https://slack.rallywith.ai`
 and the opaque team router. Enable Slack's **Delayed Events** retry option: Avalon
 verifies requests immediately, admits work through an idempotent regional ingress
 job, and enforces a 2.6-second end-to-end response budget.
@@ -306,7 +306,7 @@ Both regions need `TWITTER_API_IO_API_KEY` to expose the read-only X connector, 
   authentication independent of sensitive and restricted Google Workspace scopes
   and their verification lifecycle.
 - **A provider code always terminates at the owning regional API callback first.**
-  `https://with-avalon.com/auth/desktop/` and `avalon://auth/complete` are Avalon's
+  `https://rallywith.ai/auth/desktop/` and `rallywithai://auth/complete` are Avalon's
   own handoff, never a provider redirect URI.
 - **The webhook secret is byte-identical in both regions**, for every provider whose
   ingress is shared. The signature is verified at the ingress *and again* in the
@@ -327,7 +327,7 @@ Both regions need `TWITTER_API_IO_API_KEY` to expose the read-only X connector, 
   setup nonce**, is encrypted in D1, and never appears in logs or source control.
   A consumed nonce is bound to the first token it sees, and a superseded nonce
   cannot restore an earlier signing secret.
-- **`notion.with-avalon.com` exists as a custom domain on `avalon-api-global`
+- **`notion.rallywith.ai` exists as a custom domain on `avalon-api-global`
   before the connection is registered**, or the one redirect URI Notion accepts
   points at nothing.
 

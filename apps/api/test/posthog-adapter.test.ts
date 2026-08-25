@@ -11,6 +11,9 @@ import {
   type GlobalProfileDeliveryRow,
 } from "../src/telemetry/posthog-adapter";
 
+/** The deployment's canonical public site, as the Worker's own var carries it. */
+const WEB_BASE = { webBaseUrl: "https://rallywith.ai" };
+
 const event: TelemetryEnvelope = {
   schema: "com.avalon.telemetry.event",
   schemaVersion: 1,
@@ -193,7 +196,7 @@ describe("PostHog adapter", () => {
     expect(mapPostHogCapture(row({
       workspaceAnalyticsId: "018f22f2-4c22-7abc-8def-0123456789ae",
       envelope: { ...event, identityScope: "workspace-user" },
-    }))).toEqual({
+    }), WEB_BASE)).toEqual({
       event: "workspace_create_completed",
       timestamp: "2026-08-12T20:00:02.000Z",
       properties: {
@@ -241,7 +244,7 @@ describe("PostHog adapter", () => {
       },
     };
 
-    expect(mapPostHogCapture(row({ envelope: workstreamEnvelope })).properties).toMatchObject({
+    expect(mapPostHogCapture(row({ envelope: workstreamEnvelope }), WEB_BASE).properties).toMatchObject({
       $is_server: true,
       avalon_event_name: "workstream_created",
       creationSource: "suggested_work",
@@ -270,7 +273,7 @@ describe("PostHog adapter", () => {
       },
     };
 
-    expect(mapPostHogCapture(row({ envelope: settingsEnvelope })).properties).toMatchObject({
+    expect(mapPostHogCapture(row({ envelope: settingsEnvelope }), WEB_BASE).properties).toMatchObject({
       $set: {
         avalon_launch_at_login_enabled: true,
         avalon_launch_at_login_available: true,
@@ -328,7 +331,7 @@ describe("PostHog adapter", () => {
       properties,
     };
 
-    expect(mapPostHogCapture(row({ envelope: settingsEnvelope })).properties)
+    expect(mapPostHogCapture(row({ envelope: settingsEnvelope }), WEB_BASE).properties)
       .toMatchObject({ $set: expectedSet });
   });
 
@@ -358,7 +361,7 @@ describe("PostHog adapter", () => {
       properties: { screen: "workspace_home" },
     };
 
-    expect(mapPostHogCapture(row({ envelope: screenEnvelope }))).toMatchObject({
+    expect(mapPostHogCapture(row({ envelope: screenEnvelope }), WEB_BASE)).toMatchObject({
       event: "$screen",
       properties: {
         avalon_event_name: "screen_viewed",
@@ -399,7 +402,7 @@ describe("PostHog adapter", () => {
           resourceId: "018f22f2-4c22-7abc-8def-0123456789a1",
         },
       },
-    }));
+    }), WEB_BASE);
 
     expect(capture).toMatchObject({
       event: "$screen",
@@ -431,13 +434,13 @@ describe("PostHog adapter", () => {
       },
     };
 
-    const capture = mapPostHogCapture(row({ envelope: siteEnvelope }));
+    const capture = mapPostHogCapture(row({ envelope: siteEnvelope }), WEB_BASE);
     expect(capture).toMatchObject({
       event: "$pageview",
       properties: {
-        $current_url: "https://with-avalon.com/",
+        $current_url: "https://rallywith.ai/",
         $pathname: "/",
-        $host: "with-avalon.com",
+        $host: "rallywith.ai",
         $referrer: "https://example.com/",
         $referring_domain: "example.com",
         $utm_source: "launch",
@@ -483,7 +486,7 @@ describe("PostHog adapter", () => {
       properties,
     };
 
-    expect(mapPostHogCapture(row({ envelope: versionEnvelope }))).toMatchObject({
+    expect(mapPostHogCapture(row({ envelope: versionEnvelope }), WEB_BASE)).toMatchObject({
       event: destinationEvent,
       properties: {
         avalon_event_name: "application_version_changed",
@@ -509,7 +512,7 @@ describe("PostHog adapter", () => {
       properties: { entrypoint, phase },
     };
 
-    expect(mapPostHogCapture(row({ envelope: openedEnvelope }))).toMatchObject({
+    expect(mapPostHogCapture(row({ envelope: openedEnvelope }), WEB_BASE)).toMatchObject({
       event: "Application Opened",
       properties: {
         avalon_event_name: "application_opened",
@@ -544,7 +547,7 @@ describe("PostHog adapter", () => {
       properties: { state, crashReportingEligible: true },
     };
 
-    const capture = mapPostHogCapture(row({ envelope: lifecycleEnvelope }));
+    const capture = mapPostHogCapture(row({ envelope: lifecycleEnvelope }), WEB_BASE);
     expect(capture.event).toBe(destinationEvent);
     expect(capture.properties).toMatchObject({
       avalon_event_name: "application_lifecycle",
@@ -568,7 +571,7 @@ describe("PostHog adapter", () => {
         name: "screen_viewed",
         properties: { screen: "workspace_home" },
       },
-    }));
+    }), WEB_BASE);
 
     expect(capture.properties).not.toHaveProperty("$is_server");
   });
@@ -577,7 +580,7 @@ describe("PostHog adapter", () => {
     const launchId = "018f22f2-4c22-7abc-8def-0123456789a0";
     const capture = mapPostHogCapture(row({
       envelope: { ...event, context: { ...event.context, launchId } },
-    }));
+    }), WEB_BASE);
 
     expect(capture.properties).toMatchObject({ $session_id: launchId, launch_id: launchId });
     expect(capture.properties).not.toHaveProperty("session_id");
@@ -586,7 +589,7 @@ describe("PostHog adapter", () => {
   it("keeps anonymous and installation captures personless", () => {
     expect(mapPostHogCapture(row({
       envelope: { ...event, identityScope: "installation" },
-    })).properties).toMatchObject({ $process_person_profile: false, $is_identified: false });
+    }), WEB_BASE).properties).toMatchObject({ $process_person_profile: false, $is_identified: false });
   });
 
   it("keeps workspace-owned tool activity personless while grouping it", () => {
@@ -612,7 +615,7 @@ describe("PostHog adapter", () => {
       envelope: toolEnvelope,
       analyticsSubjectId: workspaceAnalyticsId,
       workspaceAnalyticsId,
-    })).properties).toMatchObject({
+    }), WEB_BASE).properties).toMatchObject({
       distinct_id: workspaceAnalyticsId,
       $groups: { workspace: workspaceAnalyticsId },
       $process_person_profile: false,
@@ -639,7 +642,7 @@ describe("PostHog adapter", () => {
       },
     };
 
-    expect(mapPostHogCapture(row({ envelope: settingsEnvelope })).properties)
+    expect(mapPostHogCapture(row({ envelope: settingsEnvelope }), WEB_BASE).properties)
       .not.toHaveProperty("$set");
   });
 
@@ -653,6 +656,7 @@ describe("PostHog adapter", () => {
     await expect(sendPostHogBatch({
       host: "https://us.i.posthog.com",
       projectToken: "phc_test_project_token",
+      webBaseUrl: WEB_BASE.webBaseUrl,
       rows: [row()],
     })).resolves.toEqual({ result: "delivered", requestId: "posthog-request-1", retryAfterMs: null });
 
@@ -663,7 +667,7 @@ describe("PostHog adapter", () => {
     const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body));
     expect(body).toEqual({
       api_key: "phc_test_project_token",
-      batch: [mapPostHogCapture(row())],
+      batch: [mapPostHogCapture(row(), WEB_BASE)],
     });
     expect(JSON.stringify(body)).not.toMatch(/ip_address|request_ip|email|customerMessage/u);
   });
@@ -682,6 +686,7 @@ describe("PostHog adapter", () => {
     await expect(sendPostHogBatch({
       host: "https://us.i.posthog.com",
       projectToken: "phc_test_project_token",
+      webBaseUrl: WEB_BASE.webBaseUrl,
       rows: [row()],
     })).resolves.toEqual({ result, requestId: null, retryAfterMs });
   });
@@ -692,6 +697,7 @@ describe("PostHog adapter", () => {
     await expect(sendPostHogBatch({
       host: "https://analytics.example.com",
       projectToken: "phc_test_project_token",
+      webBaseUrl: WEB_BASE.webBaseUrl,
       rows: [row()],
     })).rejects.toThrow("posthog_host_forbidden");
     expect(fetchMock).not.toHaveBeenCalled();

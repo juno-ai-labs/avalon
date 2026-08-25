@@ -11,7 +11,7 @@ import {
   type ProviderWebhookIngestionResult,
 } from "./provider-webhook-service";
 
-export const DEFAULT_LINEAR_INGRESS_BASE_URL = "https://linear.with-avalon.com";
+export const DEFAULT_LINEAR_INGRESS_BASE_URL = "https://linear.rallywith.ai";
 
 export interface LinearRegionalWebhookInput {
   rawBody: ArrayBuffer;

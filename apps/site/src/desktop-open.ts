@@ -1,3 +1,4 @@
+import { isDesktopDeepLinkProtocol } from '@avalon/contracts/desktop-deep-link';
 import { reportDesktopHandoff } from './telemetry';
 
 type DesktopHandoffType = Parameters<typeof reportDesktopHandoff>[0];
@@ -14,7 +15,7 @@ export function classifyDesktopHandoffTarget(value: string | null): {
       : url.hostname === 'settings'
         ? 'settings'
         : url.hostname === 'automations' ? 'automation' : 'unknown';
-    const commonValid = url.protocol === 'avalon:'
+    const commonValid = isDesktopDeepLinkProtocol(url.protocol)
       && !url.search && !url.hash && !url.username && !url.password && !url.port;
     const targetValid = handoffType === 'workstream'
       ? /^\/[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(url.pathname)
