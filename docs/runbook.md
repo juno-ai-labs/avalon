@@ -55,11 +55,12 @@ Wrangler validates an R2 binding without proving its named bucket exists. Run
 Wrangler file. It is read-only: the R2 half proves each bucket exists, and the
 queue half reports any queue a deployment would create without creating it
 (`pnpm cloudflare:queues:ensure` creates them from a laptop, for break-glass
-only), and the inference-lakehouse half verifies both complete immutable
-resource chains. The API deployment runs the same general R2 check before any
+only), and the inference-lakehouse half verifies the complete immutable Global
+resource chain. The API deployment runs the same general R2 check before any
 remote migration or Worker deploy, creates the missing queues, then creates or
-verifies both inference lakehouses and resolves their generated Pipeline stream
-IDs. A missing general bucket is an infrastructure failure even if
+verifies the Global inference lakehouse and resolves its generated Pipeline
+stream ID. EU has no inference analytical chain by design. A missing general
+bucket is an infrastructure failure even if
 the Wrangler dry build and Worker binding are otherwise deployable.
 
 `avalon-api` and its seven per-agent flags are provisioned, and both regional Wrangler files carry the `app_id`; [the feature-flag document](feature-flags.md#provisioning) has the commands for rebuilding them in a fresh account. Each flag is seeded with the model ids already in the `OPENROUTER_*` variables, so the flags change nothing until one is edited. Keep the two in step afterwards — an agent whose flag is missing or unreadable falls back to the variables. Changing which OpenRouter model an agent runs on is a flag change, not a deploy.
