@@ -4,7 +4,6 @@ import {
   type WorkstreamNameContextMessage,
 } from "@avalon/agent-harness";
 import { WorkstreamNameResultSchema } from "@avalon/contracts";
-import { nowIso } from "@avalon/db";
 
 import type { Env } from "../env";
 import { firstNonEmptyLine, truncateUtf16Safe } from "../lib/text";
@@ -312,11 +311,9 @@ async function advanceTitle(env: Env, input: {
   title: string | null;
   standingTitle: string;
 }): Promise<void> {
-  const result = await env.DB.prepare(
-    `UPDATE workstreams SET title = COALESCE(?, title), title_status = ?, updated_at = ?
-      WHERE id = ? AND workspace_id = ? AND title_status = ?`,
-  ).bind(input.title, input.to, nowIso(), input.workstreamId, input.workspaceId, input.from).run();
-  if (Number(result.meta.changes ?? 0) === 0) {
+  const result = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+    .rename({ title: input.title, from: input.from, to: input.to, now: Date.now() });
+  if (result.outcome === "superseded") {
     logStructuredEvent(env, "debug", "workstream_name_superseded", {
       workspace_id: input.workspaceId,
       workstream_id: input.workstreamId,

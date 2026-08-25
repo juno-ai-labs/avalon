@@ -26,6 +26,15 @@ const DISPATCHED_OPERATIONS = [
   "identity",
   "participants",
   "provision",
+  "archiveSystemWorkstream",
+  "archiveScheduledWorkstream",
+  "adoptEmailAddress",
+  "bindAutomationRun",
+  "rename",
+  "redescribe",
+  "admitParticipant",
+  "adoptCreator",
+  "seedFromFixture",
 ] as const satisfies readonly IdentityOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */
@@ -35,11 +44,25 @@ export const IDENTITY_OPERATIONS:
 /**
  * The operations that change what the work stream is.
  *
- * A provision is what makes a system-created work stream appear in a sidebar,
- * so it commits its directory projection with the row. Named here rather than
- * tested for at the endpoint, for the reason the scheduling protocol gives.
+ * Every one of them changes something a sidebar renders — whether the work
+ * stream is listed at all, its name, its description, its state, who is on it
+ * — so each commits its directory projection with the row it writes. A write
+ * whose projection is a second commit can be applied and never shown. Named
+ * here rather than tested for at the endpoint, for the reason the scheduling
+ * protocol gives.
  */
-const IDENTITY_WRITES = new Set<IdentityOperation>(["provision"]);
+const IDENTITY_WRITES = new Set<IdentityOperation>([
+  "provision",
+  "archiveSystemWorkstream",
+  "archiveScheduledWorkstream",
+  "adoptEmailAddress",
+  "bindAutomationRun",
+  "rename",
+  "redescribe",
+  "admitParticipant",
+  "adoptCreator",
+  "seedFromFixture",
+]);
 
 export function mutatesIdentity(operation: IdentityOperation): boolean {
   return IDENTITY_WRITES.has(operation);

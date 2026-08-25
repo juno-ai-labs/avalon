@@ -84,12 +84,12 @@ import {
   type OriginResourceDescriptor,
 } from "./workstream-origin-resource";
 import { withAuthorizedConnection } from "./connector-connection-access";
-import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
 } from "./workspace-runtime-database";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -3497,51 +3497,18 @@ async function reconcileSlackWorkstreamIdentity(
     mayCorrectVerifiedCreator: boolean;
   },
 ): Promise<void> {
-  const executionEnv = await workstreamExecutionEnvironment(
-    env,
-    input.workspaceId,
-    input.workstreamId,
-  );
-  const root = await executionEnv.DB.prepare(
-    `SELECT created_by_user_id FROM workstreams
-      WHERE id = ? AND workspace_id = ?`,
-  ).bind(input.workstreamId, input.workspaceId).first<{ created_by_user_id: string | null }>();
-  if (!root) throw new Error("slack_workstream_identity_target_missing");
-  const makeCreator = root.created_by_user_id === null || (
-    input.mayCorrectVerifiedCreator
-    && input.previousAssignedUserId !== null
-    && root.created_by_user_id === input.previousAssignedUserId
-  );
-  const at = nowIso();
-  const statements = [
-    executionEnv.DB.prepare(
-      `INSERT INTO workstream_participants
-         (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
-       VALUES (?, ?, ?, 'explicit', ?, NULL)
-       ON CONFLICT(workstream_id, user_id) DO UPDATE SET
-         removed_at = NULL,
-         joined_at = COALESCE(workstream_participants.joined_at, excluded.joined_at)`,
-    ).bind(input.workstreamId, input.userId, input.userId, at),
-  ];
-  if (makeCreator) {
-    statements.push(
-      executionEnv.DB.prepare(
-        `UPDATE workstreams SET created_by_user_id = ?, updated_at = ?
-          WHERE id = ? AND workspace_id = ?`,
-      ).bind(input.userId, at, input.workstreamId, input.workspaceId),
-      executionEnv.DB.prepare(
-        `UPDATE workstream_participants SET participation_reason = 'creator'
-          WHERE workstream_id = ? AND user_id = ?`,
-      ).bind(input.workstreamId, input.userId),
-    );
-    if (root.created_by_user_id && root.created_by_user_id !== input.userId) {
-      statements.push(executionEnv.DB.prepare(
-        `UPDATE workstream_participants SET participation_reason = 'explicit'
-          WHERE workstream_id = ? AND user_id = ? AND participation_reason = 'creator'`,
-      ).bind(input.workstreamId, root.created_by_user_id));
-    }
-  }
-  await executionEnv.DB.batch(statements);
+  // The read that decided whether the creator seat was open, the participant
+  // upsert, the promotion and the demotion of the previous holder were four
+  // statements across two tables. They are one operation on the authority that
+  // owns both, because they are one fact about who this work stream belongs to
+  // — and a work stream with two creators or none is what a partial batch
+  // leaves behind.
+  await createIdentityObjectPort(env, input.workspaceId, input.workstreamId).adoptCreator({
+    userId: input.userId,
+    previousAssignedUserId: input.previousAssignedUserId,
+    mayCorrectVerifiedCreator: input.mayCorrectVerifiedCreator,
+    now: Date.now(),
+  });
 }
 
 const SlackResponseMessageSchema = z.object({
