@@ -35,8 +35,10 @@ keeping a distinct audience.
 `GET /api/flags` reads `hypersight-enabled`, `meeting-recording-enabled`,
 `suggested-work-enabled`, `automation-workspace-templates-enabled`, and
 `digests-enabled`. The editor exposes enabled/paused state, default
-Boolean value, ordered first-match rules, all eleven operators, nested AND/OR
-groups, and sticky percentage rollouts. A person search accepts name or full
+Boolean value, ordered first-match rules — reordered by dragging a rule's
+handle onto another, the only way, since there is no separate up/down
+control — all eleven operators, nested AND/OR groups, and sticky percentage
+rollouts. A person search accepts name or full
 email but writes the stable `userPlatformId`; a workspace search accepts name or
 slug but writes its opaque `workspaceId`. Exact email targeting therefore works
 without storing an address in Flagship. Domains, workspace role, region, age,
@@ -194,6 +196,35 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-08-25 — Targeting rules gain drag-to-reorder
+
+**What changed:** Each rule card in the flag editor now has a drag handle;
+dropping one rule onto another moves it to that position. `priority` is still
+recomputed from array position on save, same as before — reordering the rules
+array was always how a save would express a new order, this just gives the
+editor a way to produce that reorder without deleting anything. `reorderRules`
+is the pure function behind it, unit-tested directly rather than through a
+simulated pointer gesture.
+
+**Why:** "Rules run from top to bottom, the first match wins" is Flagship's
+real behavior, stated directly in the editor's own copy — but the only way to
+change that order was removing a rule and re-adding it at the bottom, since
+`+ Add rule` always appends. That was not a hypothetical gap: an operator
+adding a personal override on top of an existing workspace-wide rule got the
+opposite of what they configured, because the broader rule sat first and
+Flagship never reached the narrower one. Nothing in the editor said so.
+
+**Considered and rejected:** Move-up/move-down buttons instead of drag.
+Simpler to build and keyboard-accessible for free, but the ask was
+specifically the drag gesture, and for a list this short — rules per flag run
+to single digits — drag reads more directly as "this is an ordered list" than
+a pair of buttons would.
+
+**Consequences:** `Panel` now spreads arbitrary HTML attributes instead of
+accepting only `className`, so a rule card can carry `onDragOver`/`onDrop`
+without a one-off prop grown just for this. No save-path or Flagship-side
+change; the payload this produces was always a valid one.
 
 ### 2026-08-25 — digests-enabled becomes client-visible after all
 
