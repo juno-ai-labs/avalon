@@ -29,7 +29,11 @@ import { substreamAgentName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import type { TerminalOperation } from "../src/durable-objects/workstream-terminal-protocol";
 import { rpcResultBody } from "../src/durable-objects/rpc-result";
-import type { TerminalPortFactory } from "../src/services/terminal/object-port";
+import {
+  createTerminalPortFactory,
+  type TerminalPortFactory,
+} from "../src/services/terminal/object-port";
+import type { Env } from "../src/env";
 import {
   WORKSPACE_ID,
   WORKSTREAM_ID,
@@ -190,6 +194,23 @@ async function reserve(
   });
   expect(result.status).toBe(200);
   return result.value as Record<string, unknown>;
+}
+
+/**
+ * The resident Terminal factory as a run gets it: built from the execution
+ * environment the object installs its authorities on, rather than from a
+ * method that hands one out. That is the boundary under test — if the
+ * installation regresses, this factory dispatches and the assertions below
+ * catch it at the object's own RPC method.
+ */
+function residentExecutionEnvironment(instance: object): Env {
+  return (instance as unknown as {
+    localRuntimeEnvironment(workspaceId: string, workstreamId: string, substreamId: string): Env;
+  }).localRuntimeEnvironment(WORKSPACE_ID, WORKSTREAM_ID, "0");
+}
+
+function residentTerminalFactory(instance: object): TerminalPortFactory {
+  return createTerminalPortFactory(residentExecutionEnvironment(instance));
 }
 
 describe("Terminal authority on real workerd", () => {
@@ -404,9 +425,7 @@ describe("Terminal authority on real workerd", () => {
     const result = await runInDurableObject(stub, async (instance, state) => {
       seedWorkstreamRoot(state);
       seedRunRow(state, RUN_A, "running", Date.now());
-      const terminalPortFactory = (instance as unknown as {
-        localTerminalPortFactory(): TerminalPortFactory;
-      }).localTerminalPortFactory();
+      const terminalPortFactory = residentTerminalFactory(instance);
       const terminal = terminalPortFactory(WORKSPACE_ID, WORKSTREAM_ID);
       const now = Date.now();
       // If this port regresses to namespace routing, its first call re-enters
@@ -475,9 +494,7 @@ describe("Terminal authority on real workerd", () => {
     await boot(stub);
     const failure = await runInDurableObject(stub, async (instance, state) => {
       seedWorkstreamRoot(state);
-      const terminalPortFactory = (instance as unknown as {
-        localTerminalPortFactory(): TerminalPortFactory;
-      }).localTerminalPortFactory();
+      const terminalPortFactory = residentTerminalFactory(instance);
       try {
         await terminalPortFactory(
           "00000000-0000-7000-8000-00000000ffff",
@@ -549,14 +566,21 @@ describe("Terminal authority on real workerd", () => {
     await boot(stub);
     const failures = await runInDurableObject(stub, async (instance, state) => {
       seedWorkstreamRoot(state);
+      // Genuinely non-main, whatever this object was before: Terminal is
+      // work-stream-wide authority held by the main child, so a non-main
+      // substream must reach it over the wire rather than out of its own
+      // storage.
       state.storage.sql.exec(
-        `UPDATE substream_agent_identity
-            SET external_substream_id = '00000000-0000-7000-8000-000000000001'
-          WHERE id = 1`,
+        `INSERT OR REPLACE INTO substream_agent_identity
+           (id, external_substream_id, created_at, updated_at)
+         VALUES (1, '00000000-0000-7000-8000-000000000001', 1, 1)`,
       );
-      const terminalPortFactory = (instance as unknown as {
-        localTerminalPortFactory(): TerminalPortFactory;
-      }).localTerminalPortFactory();
+      // Read back rather than trusted: this assertion is only about a non-main
+      // child, and a write that silently did nothing would leave it testing the
+      // main child's behaviour under a misleading name.
+      expect(state.storage.sql.exec<{ external_substream_id: string }>(
+        `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
+      ).one().external_substream_id).not.toBe("0");
       const resourceAttacher = (instance as unknown as {
         localRuntimeResourceAttacher(
           workspaceId: string,
@@ -564,12 +588,24 @@ describe("Terminal authority on real workerd", () => {
         ): (input: Record<string, unknown>) => Promise<void>;
       }).localRuntimeResourceAttacher(WORKSPACE_ID, WORKSTREAM_ID);
       const observed: string[] = [];
+      // Not a sentinel on this instance: a dispatched port reaches the *main*
+      // child, a different object, which would answer normally and prove
+      // nothing. Making the namespace unusable is what distinguishes the two —
+      // a port that answers here held local authority, and a non-main child
+      // must not.
+      const execution = new Proxy(residentExecutionEnvironment(instance), {
+        get(target, property, receiver) {
+          if (property === "SUBSTREAM_AGENTS") {
+            throw new Error("terminal operation left the isolate");
+          }
+          return Reflect.get(target, property, receiver) as unknown;
+        },
+      });
       try {
-        await terminalPortFactory(WORKSPACE_ID, WORKSTREAM_ID).sandbox();
+        await createTerminalPortFactory(execution)(WORKSPACE_ID, WORKSTREAM_ID).sandbox();
+        observed.push("terminal_answered_locally");
       } catch (error) {
-        observed.push(error instanceof Error && "code" in error
-          ? String(error.code)
-          : "unknown_terminal_error");
+        observed.push(error instanceof Error ? error.message : "unknown_terminal_error");
       }
       try {
         await resourceAttacher({
@@ -586,7 +622,7 @@ describe("Terminal authority on real workerd", () => {
     });
 
     expect(failures).toEqual([
-      "workstream_terminal_identity_mismatch",
+      "terminal operation left the isolate",
       "workstream_runtime_identity_mismatch",
     ]);
   });

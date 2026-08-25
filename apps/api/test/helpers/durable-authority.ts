@@ -40,6 +40,7 @@ import { WorkstreamToolReceiptStorage } from "../../src/durable-objects/workstre
 import { WorkstreamTerminalStorage } from "../../src/durable-objects/workstream-terminal-storage";
 import {
   createTerminalPortFactory,
+  type TerminalOperationExecutor,
   type TerminalPortFactory,
 } from "../../src/services/terminal/object-port";
 import {
@@ -521,6 +522,24 @@ export function testWorkstreamRuntimeD1(
  * caller, an alarm observing a committed row — which is why the Terminal
  * runtime tests live in `test-workers/` against real workerd.
  */
+/**
+ * The resident authority in the form an object installs it: an executor over
+ * the real Terminal storage, which is what `withLocalWorkstreamAuthorities`
+ * carries and what `createTerminalObjectPort` calls when it finds one.
+ */
+export function testTerminalOperationExecutor(objectStore: DatabaseSync): TerminalOperationExecutor {
+  const storage = new WorkstreamTerminalStorage(createCloudflareTestBinding<DurableObjectStorage>({
+    getAlarm: async () => null,
+    setAlarm: async () => undefined,
+    transactionSync: (body: () => unknown) => body(),
+    sql: objectSqlStorage(objectStore),
+  }));
+  return async (operation, args) => {
+    const method = storage[operation] as (...rest: unknown[]) => unknown;
+    return method.apply(storage, args) ?? null;
+  };
+}
+
 export function testTerminalPortFactory(objectStore: DatabaseSync): TerminalPortFactory {
   const storage = createCloudflareTestBinding<DurableObjectStorage>({
     getAlarm: async () => null,

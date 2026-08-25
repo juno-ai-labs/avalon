@@ -16,8 +16,11 @@ import {
   type SubstreamAgent,
 } from "../src/durable-objects/substream-agent";
 import type { Env } from "../src/env";
-import { durableObjectStubForWorkspace } from "../src/lib/durable-object-namespace";
-import { durableObjectSelf, withDurableObjectSelf } from "../src/lib/durable-object-self";
+import {
+  durableObjectStubForRegion,
+  durableObjectStubForWorkspace,
+} from "../src/lib/durable-object-namespace";
+import { durableObjectSelfForId, withDurableObjectSelf } from "../src/lib/durable-object-self";
 import { publishWorkstreamEvent } from "../src/services/integrations";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
@@ -55,11 +58,15 @@ const SIBLING_NAME = substreamAgentName(
  */
 function trackedNamespace(resolved: object = {}) {
   const idFromName = vi.fn((name: string) => createTestDurableObjectId(name));
-  const namespace = createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
+  const get = vi.fn((): object => resolved);
+  // `jurisdiction` answers the same binding so a production environment routes
+  // the way it does in staging and production without a second double.
+  const namespace: Env["SUBSTREAM_AGENTS"] = createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
     idFromName,
-    get: vi.fn((): object => resolved),
+    get,
+    jurisdiction: vi.fn(() => namespace),
   });
-  return { namespace, idFromName, resolved };
+  return { namespace, idFromName, get, resolved };
 }
 
 function affinityDatabase(): D1Database {
@@ -90,10 +97,20 @@ function selfEnv(
   instance: SubstreamAgent,
   namespace: Env["SUBSTREAM_AGENTS"],
   name: string | null,
+  /**
+   * The name this object's id was derived from, when that is not the name it
+   * answers to.
+   *
+   * The two come apart in exactly one state, and it is the interesting one: an
+   * object whose identity is not yet durably its own has a real id and no name.
+   */
+  idName: string = name ?? "unnamed",
+  /** `production` is what separates the fatal path from the logged one. */
+  appEnv: "test" | "production" = "test",
 ): Env {
   return withDurableObjectSelf(
     createTestEnv({
-      APP_ENV: "test",
+      APP_ENV: appEnv,
       AVALON_REGION: "global",
       DB: affinityDatabase(),
       SUBSTREAM_AGENTS: namespace,
@@ -101,7 +118,7 @@ function selfEnv(
     {
       namespace,
       name: () => name,
-      id: createTestDurableObjectId(name ?? "unnamed"),
+      id: createTestDurableObjectId(idName),
       instance,
     },
   );
@@ -110,7 +127,7 @@ function selfEnv(
 describe("a Durable Object addressing its own name", () => {
   it("reaches the object itself instead of resolving through the namespace", async () => {
     const published: unknown[] = [];
-    const { namespace, idFromName } = trackedNamespace();
+    const { namespace, get } = trackedNamespace();
     const env = selfEnv(testAgent(published), namespace, OWN_NAME);
 
     const stub = await durableObjectStubForWorkspace(env, namespace, WORKSPACE, OWN_NAME);
@@ -120,7 +137,9 @@ describe("a Durable Object addressing its own name", () => {
       event: { type: "message_created" },
     });
 
-    expect(idFromName).not.toHaveBeenCalled();
+    // Deriving the id is expected — that is how the caller recognizes itself.
+    // Fetching a stub from the namespace is what must not happen.
+    expect(get).not.toHaveBeenCalled();
     expect(result).toEqual({ status: 202, body: "{}" });
     expect(published).toHaveLength(1);
   });
@@ -161,12 +180,24 @@ describe("a Durable Object addressing its own name", () => {
     expect(otherIdFromName).toHaveBeenCalledWith(OWN_NAME);
   });
 
-  it("resolves through the namespace until the object knows its own identity", async () => {
-    const { namespace, idFromName, resolved } = trackedNamespace();
-    const env = selfEnv(testAgent([]), namespace, null);
+  it("reaches itself even while it cannot say what it is called", async () => {
+    // The incident's state, and the reason recognition moved off the name: the
+    // object holds a registration and answers `null` for its own name, which
+    // used to send every call to that name out through the namespace and back
+    // into this object. The id it would resolve to is known either way.
+    const published: unknown[] = [];
+    const { namespace, resolved } = trackedNamespace();
+    const env = selfEnv(testAgent(published), namespace, null, OWN_NAME);
 
-    expect(await durableObjectStubForWorkspace(env, namespace, WORKSPACE, OWN_NAME)).toBe(resolved);
-    expect(idFromName).toHaveBeenCalledWith(OWN_NAME);
+    const stub = await durableObjectStubForWorkspace(env, namespace, WORKSPACE, OWN_NAME);
+    await stub.publishEvent({
+      workspaceId: asWorkspaceId(WORKSPACE),
+      workstreamId: asWorkstreamId(WORKSTREAM),
+      event: { type: "message_created" },
+    });
+
+    expect(stub).not.toBe(resolved);
+    expect(published).toHaveLength(1);
   });
 
   it("refuses to match an omitted binding against another omitted binding", async () => {
@@ -186,12 +217,16 @@ describe("a Durable Object addressing its own name", () => {
       instance: testAgent([]),
     });
 
-    expect(durableObjectSelf(env, bare.WORKSTREAM_DOS, OWN_NAME)).toBeNull();
+    expect(durableObjectSelfForId(
+      env,
+      bare.WORKSTREAM_DOS,
+      createTestDurableObjectId(OWN_NAME),
+    )).toBeNull();
   });
 
   it("keeps a shared helper local when it publishes for the object's own work stream", async () => {
     const published: unknown[] = [];
-    const { namespace, idFromName } = trackedNamespace();
+    const { namespace, get } = trackedNamespace();
     const env = selfEnv(testAgent(published), namespace, OWN_NAME);
 
     const delivered = await publishWorkstreamEvent(env, WORKSPACE, WORKSTREAM, {
@@ -200,7 +235,7 @@ describe("a Durable Object addressing its own name", () => {
     });
 
     expect(delivered).toBe(true);
-    expect(idFromName).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
     expect(published).toHaveLength(1);
   });
 });
@@ -300,5 +335,82 @@ describe("the name a SubstreamAgent answers to", () => {
   it("names a non-main substream as its own object", () => {
     const second = "55555555-5555-4555-8555-555555555555";
     expect(substreamSelfObjectName("global", identity, second)).toBe(`${OWN_NAME}:${second}`);
+  });
+});
+
+/**
+ * The backstop, now that routing cannot produce a self-address on its own.
+ *
+ * Every resolver answers the caller's own id locally, so what is left to catch
+ * is a caller that skipped them: `durableObjectStubForRegion` is the one
+ * sanctioned way to reach a namespace — `durable-object-region-routing` rejects
+ * the rest — so it is where the refusal lives. Development and test throw,
+ * because a failing test is the cheapest version of this news; staging and
+ * production log at error and hand back the stub, because refusing there would
+ * turn a latent defect into an outage.
+ */
+describe("a caller that reaches a namespace for its own object", () => {
+  it("is refused outright in development and test", () => {
+    const { namespace } = trackedNamespace();
+    const env = selfEnv(testAgent([]), namespace, OWN_NAME);
+
+    expect(() => durableObjectStubForRegion(env, namespace, "global", OWN_NAME, "wnam"))
+      .toThrow("durable_object_self_addressed_over_rpc:region:" + OWN_NAME);
+  });
+
+  it("logs an error and continues in production", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { namespace, resolved } = trackedNamespace();
+      const env = selfEnv(testAgent([]), namespace, null, OWN_NAME, "production");
+
+      expect(durableObjectStubForRegion(env, namespace, "global", OWN_NAME, "wnam"))
+        .toBe(resolved);
+      expect(error.mock.calls.map(([entry]) => entry)).toEqual([expect.objectContaining({
+        level: "error",
+        event: "durable_object_self_addressed_over_rpc",
+        resolver: "region",
+        requested_name: OWN_NAME,
+        // The object could not name itself. That no longer decides anything —
+        // the id did — but it still separates an object mid-initialization from
+        // one whose registration never reached the environment.
+        self_name: null,
+      })]);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("says nothing for a sibling of the same class", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { namespace, resolved } = trackedNamespace();
+      const env = selfEnv(testAgent([]), namespace, OWN_NAME);
+
+      expect(durableObjectStubForRegion(env, namespace, "global", SIBLING_NAME, "wnam"))
+        .toBe(resolved);
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("says nothing for the same name under a different binding", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const other = {};
+      const { namespace } = trackedNamespace();
+      const otherBinding = createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
+        idFromName: vi.fn((name: string) => createTestDurableObjectId(name)),
+        get: vi.fn((): object => other),
+      });
+      const env = selfEnv(testAgent([]), namespace, OWN_NAME);
+
+      expect(durableObjectStubForRegion(env, otherBinding, "global", OWN_NAME, "wnam"))
+        .toBe(other);
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
   });
 });
