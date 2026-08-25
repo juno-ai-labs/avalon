@@ -121,19 +121,18 @@ function seededDatabase(options: { targets?: string } = {}): DatabaseSync {
   `);
   const objectStore = testWorkstreamObjectStore();
   databases.push(objectStore);
-  seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM, workspaceId: WORKSPACE });
+  seedWorkstreamObjectRoot(objectStore, {
+    workstreamId: WORKSTREAM,
+    workspaceId: WORKSPACE,
+    title: "Competitor briefing · 2026-08-22",
+    description: "Produce the daily competitor briefing.",
+    originType: "automation",
+    createdByUserId: OWNER,
+    exactState: "running",
+    scope: "personal",
+  });
   objectStores = new Map([[WORKSTREAM as string, objectStore]]);
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstreams
-       (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
-        next_sequence_number, last_activity_at, created_at, updated_at, scope)
-     VALUES (?, ?, 'Competitor briefing · 2026-08-22', 'Produce the daily competitor briefing.',
-             'automation', ?, 'running', 1, '2026-08-22', '2026-08-22', '2026-08-22', 'personal')`,
-    WORKSTREAM,
-    WORKSPACE,
-    OWNER,
-  );
+
   workstreamObjectRun(
     objectStore,
     `INSERT INTO harness_runs
