@@ -334,14 +334,17 @@ tests used to, and that is where most of the suite's runtime sat.
 
 They do not replay the migrations per call. The sequence runs once for the whole
 run, in `test/global-setup.ts`, and each call rebuilds the shape it ended in
-against an empty database: ~7ms rather than ~800ms. The schema is still derived
-from the checked-in migrations on every run, so it cannot drift from them — but
-the rebuild is a second implementation of *what the migrations produce*, and
-`test/sqlite-d1-snapshot.test.ts` is what keeps the two honest. It holds a
-rebuilt database next to a freshly replayed one and diffs every `sqlite_master`
-entry, column, foreign key, index and row count. **If you teach the rebuild a new
-trick — another kind of schema object, another pragma — assert it there**, or the
-next person gets a database that is subtly not the one the migrations describe.
+against an empty database: ~7ms rather than ~800ms. Global setup carries both the
+compact rebuild snapshot and a full description of the replayed database into
+the workers; `test/sqlite-d1-snapshot.test.ts` compares the rebuilt database to
+that original description instead of replaying all migrations again under
+contended test-file load. The schema is still derived from the checked-in
+migrations on every run, so it cannot drift from them — but the rebuild is a
+second implementation of *what the migrations produce*, and that fidelity test
+is what keeps the two honest. It diffs every `sqlite_master` entry, column,
+foreign key, index and row count. **If you teach the rebuild a new trick —
+another kind of schema object, another pragma — assert it there**, or the next
+person gets a database that is subtly not the one the migrations describe.
 It has already caught one: FTS5 index triggers share a name prefix with the
 shadow tables a virtual table creates for itself, and the first shadow-table
 filter took the triggers with them, leaving every memory-search test green

@@ -4,8 +4,8 @@ import {
   type TelemetryEnvelope,
 } from "@avalon/contracts/telemetry";
 import type { Env } from "../env";
-import { sha256 } from "../lib/crypto";
 import { enqueueAnalyticsLakehousePointer } from "../services/analytics-lakehouse";
+import { canonicalTelemetryJson, telemetryPayloadHash } from "./payload-integrity";
 
 export type TelemetryRoutingBasis =
   | "explicit_binding"
@@ -27,22 +27,6 @@ export type TelemetryAcceptanceResult = {
 };
 
 const ACCEPTED_RETENTION_DAYS = 90;
-
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, child]) => [key, canonicalize(child)]),
-    );
-  }
-  return value;
-}
-
-export function canonicalTelemetryJson(value: unknown): string {
-  return JSON.stringify(canonicalize(value));
-}
 
 function addDays(value: Date, days: number): string {
   return new Date(value.getTime() + days * 24 * 60 * 60 * 1_000).toISOString();
@@ -92,13 +76,7 @@ export class TelemetryCollector {
     }
 
     const envelopeJson = canonicalTelemetryJson(event);
-    const payloadHash = await sha256(canonicalTelemetryJson({
-      envelope: event,
-      route: context.route,
-      analyticsSubjectId: context.analyticsSubjectId,
-      subjectUserId: context.subjectUserId,
-      workspaceAnalyticsId: context.workspaceAnalyticsId,
-    }));
+    const payloadHash = await telemetryPayloadHash(event, context);
     const existing = await this.env.DB.prepare(
       "SELECT payload_hash FROM telemetry_accepted_events WHERE event_id = ?",
     ).bind(event.eventId).first<{ payload_hash: string }>();

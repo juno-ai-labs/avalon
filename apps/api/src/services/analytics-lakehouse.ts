@@ -6,6 +6,7 @@ import {
 import { z } from "zod";
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
+import { telemetryPayloadHash } from "../telemetry/payload-integrity";
 
 export const ANALYTICS_LAKEHOUSE_QUEUE_NAMES = new Set([
   "avalon-global-analytics-events-lakehouse",
@@ -89,11 +90,21 @@ interface AcceptedAnalyticsRow {
   delete_at: string;
   subject_user_id: string | null;
   product_analytics_enabled: number | null;
+  analytics_lakehouse_state: "pending" | "queued" | "delivered" | "suppressed" | "rejected" | null;
 }
 
 export type AnalyticsLakehouseDeliveryResult =
   | { outcome: "delivered"; record: AnalyticsLakehouseRecord }
-  | { outcome: "expired" | "suppressed" };
+  | { outcome: "expired" | "suppressed" | "duplicate" }
+  | { outcome: "rejected"; reason: string };
+
+export const ANALYTICS_LAKEHOUSE_RECOVERY_QUERY = `SELECT event_id, payload_hash
+ FROM telemetry_accepted_events
+ WHERE route = 'global'
+   AND analytics_lakehouse_state IN ('pending', 'queued')
+   AND delete_at > ?
+ ORDER BY accepted_at DESC
+ LIMIT 50`;
 
 export function isAnalyticsLakehouseQueue(queue: string): boolean {
   return ANALYTICS_LAKEHOUSE_QUEUE_NAMES.has(queue);
@@ -179,7 +190,7 @@ export async function enqueueAnalyticsLakehousePointer(
       `UPDATE telemetry_accepted_events
        SET analytics_lakehouse_state = 'queued'
        WHERE event_id = ? AND payload_hash = ? AND route = 'global'
-         AND analytics_lakehouse_state = 'pending'`,
+         AND analytics_lakehouse_state IN ('pending', 'queued')`,
     ).bind(eventId, payloadHash).run();
     return true;
   } catch (error) {
@@ -192,22 +203,31 @@ export async function enqueueAnalyticsLakehousePointer(
   }
 }
 
-export async function recoverPendingAnalyticsLakehouseEvents(env: Env): Promise<number> {
+export async function recoverUndeliveredAnalyticsLakehouseEvents(env: Env): Promise<number> {
   if (env.AVALON_REGION !== "global" || !env.ANALYTICS_LAKEHOUSE_QUEUE) return 0;
   // Fifty is the established telemetry outbox quantum and the maximum accepted
   // client batch, so recovery cannot create a larger burst than normal ingest.
-  const rows = await env.DB.prepare(
-    `SELECT event_id, payload_hash
-     FROM telemetry_accepted_events
-     WHERE route = 'global' AND analytics_lakehouse_state = 'pending' AND delete_at > ?
-     ORDER BY accepted_at
-     LIMIT 50`,
-  ).bind(new Date().toISOString()).all<{ event_id: string; payload_hash: string }>();
+  const rows = await env.DB.prepare(ANALYTICS_LAKEHOUSE_RECOVERY_QUERY)
+    .bind(new Date().toISOString()).all<{ event_id: string; payload_hash: string }>();
   let queued = 0;
   for (const row of rows.results) {
     if (await enqueueAnalyticsLakehousePointer(env, row.event_id, row.payload_hash)) queued += 1;
   }
   return queued;
+}
+
+async function rejectStoredAnalyticsRow(
+  env: Pick<Env, "DB">,
+  row: AcceptedAnalyticsRow,
+  reason: string,
+): Promise<AnalyticsLakehouseDeliveryResult> {
+  await env.DB.prepare(
+    `UPDATE telemetry_accepted_events
+     SET analytics_lakehouse_state = 'rejected'
+     WHERE event_id = ? AND route = 'global'
+       AND analytics_lakehouse_state IN ('pending', 'queued')`,
+  ).bind(row.event_id).run();
+  return { outcome: "rejected", reason };
 }
 
 export async function deliverAnalyticsLakehousePointer(
@@ -220,19 +240,46 @@ export async function deliverAnalyticsLakehousePointer(
   }
   if (!env.ANALYTICS_LAKEHOUSE) throw new Error("analytics_lakehouse_pipeline_binding_missing");
   const row = await env.DB.prepare(
-    `SELECT event_id, payload_hash, envelope_json, route, routing_basis,
+    `SELECT e.event_id, e.payload_hash, e.envelope_json, e.route, e.routing_basis,
             e.analytics_subject_id, e.workspace_analytics_id, e.accepted_at,
             e.normalized_timestamp, e.delete_at, e.subject_user_id,
-            u.product_analytics_enabled
+            e.analytics_lakehouse_state, u.product_analytics_enabled
      FROM telemetry_accepted_events e
      LEFT JOIN users u ON u.id = e.subject_user_id
      WHERE e.event_id = ?`,
   ).bind(pointer.eventId).first<AcceptedAnalyticsRow>();
   if (!row) return { outcome: "expired" };
   if (row.route !== "global" || row.payload_hash !== pointer.payloadHash) {
-    throw new Error(`analytics_lakehouse_payload_integrity_failed:${pointer.eventId}`);
+    return { outcome: "rejected", reason: "pointer_integrity_failed" };
   }
-  const envelope = TelemetryEnvelopeSchema.parse(JSON.parse(row.envelope_json)) as TelemetryEnvelope;
+  if (row.analytics_lakehouse_state === "delivered") return { outcome: "duplicate" };
+  if (row.analytics_lakehouse_state === "suppressed") return { outcome: "suppressed" };
+  if (row.analytics_lakehouse_state === "rejected") {
+    return { outcome: "rejected", reason: "previously_rejected" };
+  }
+  if (row.analytics_lakehouse_state === null) {
+    return { outcome: "rejected", reason: "row_not_eligible" };
+  }
+  let storedEnvelope: unknown;
+  try {
+    storedEnvelope = JSON.parse(row.envelope_json);
+  } catch {
+    return rejectStoredAnalyticsRow(env, row, "stored_envelope_invalid");
+  }
+  const recomputedHash = await telemetryPayloadHash(storedEnvelope, {
+    route: row.route,
+    analyticsSubjectId: row.analytics_subject_id,
+    subjectUserId: row.subject_user_id,
+    workspaceAnalyticsId: row.workspace_analytics_id,
+  });
+  if (recomputedHash !== row.payload_hash) {
+    return rejectStoredAnalyticsRow(env, row, "stored_payload_integrity_failed");
+  }
+  const parsedEnvelope = TelemetryEnvelopeSchema.safeParse(storedEnvelope);
+  if (!parsedEnvelope.success) {
+    return rejectStoredAnalyticsRow(env, row, "stored_envelope_schema_incompatible");
+  }
+  const envelope = parsedEnvelope.data as TelemetryEnvelope;
   if (row.subject_user_id !== null
     && envelope.category !== "essential"
     && row.product_analytics_enabled !== 1) {

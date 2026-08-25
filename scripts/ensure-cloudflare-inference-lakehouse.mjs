@@ -361,29 +361,6 @@ async function ensurePipeline(client, region, sink, create, log) {
   return pipeline;
 }
 
-export async function materializeInferenceLakehouseWranglerConfigs(
-  manifest,
-  resources,
-  options = {},
-) {
-  const outputDirectory = options.outputDirectory ?? join(repositoryDirectory, 'apps/api');
-  const written = {};
-  for (const regionName of WORKER_REGIONS) {
-    const sourcePath = join(repositoryDirectory, `apps/api/wrangler.${regionName}.jsonc`);
-    const config = parseWranglerConfig(await readFile(sourcePath, 'utf8'));
-    const stream = resources[regionName]?.stream;
-    if (stream) {
-      config.pipelines = [{ binding: manifest.binding, stream: stream.id }];
-    } else {
-      delete config.pipelines;
-    }
-    const outputPath = join(outputDirectory, `.wrangler.inference.${regionName}.json`);
-    await writeFile(outputPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-    written[regionName] = outputPath;
-  }
-  return written;
-}
-
 export async function materializeLakehouseWranglerConfigs(
   provisioned,
   options = {},
@@ -432,7 +409,7 @@ export async function ensureInferenceLakehouse(options = {}) {
   }
 
   const configs = options.materializeBindings
-    ? await materializeInferenceLakehouseWranglerConfigs(manifest, resources, options)
+    ? await materializeLakehouseWranglerConfigs([{ manifest, resources }], options)
     : undefined;
   return { manifest, resources, configs };
 }

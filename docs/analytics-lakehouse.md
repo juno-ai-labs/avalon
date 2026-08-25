@@ -19,7 +19,7 @@ Global lakehouse.
 | `apps/api/src/telemetry/collector.ts` | Validates consent and route, commits the canonical regional D1 row, then best-effort enqueues its pointer. |
 | `apps/api/src/services/analytics-lakehouse.ts` | Builds pointers, recovers pending outbox rows, verifies the canonical row, and maps all accepted metadata to the analytical record. |
 | `apps/api/src/queues/analytics-lakehouse-consumer.ts` | Applies queue poison/misroute policy and sends valid Global rows through `ANALYTICS_LAKEHOUSE`. |
-| `packages/db/migrations/0095_analytics_events_lakehouse_outbox.sql` | Adds the Global lakehouse delivery state to the existing acceptance outbox and backfills retained Global rows. |
+| `packages/db/migrations/0095_analytics_events_lakehouse_outbox.sql` | Adds the Global lakehouse delivery state to the existing acceptance outbox; historical rows remain ineligible. |
 | `config/analytics-events-lakehouse*.json` | Immutable Pipeline stream schema and names for the bucket, catalog, stream, sink, pipeline, namespace, table, and binding. |
 | `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Idempotently provisions both Global lakehouses and materializes their generated stream IDs into deploy configs. |
 | `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | Global declares the queue pair; EU declares the intentional absence. |
@@ -28,7 +28,7 @@ Global lakehouse.
 
 Every producer first passes the telemetry registry and regional collector. This
 keeps client and backend analysis on the same source, identity, preference,
-route, validation, and retention rules instead of adding a second client API.
+route, validation, and retention metadata instead of adding a second client API.
 The collector commits the canonical envelope, acceptance timestamps, routing
 basis, and analytics surrogates to `telemetry_accepted_events`. Global rows
 begin with `analytics_lakehouse_state = 'pending'`; EU rows keep it null.
@@ -37,11 +37,17 @@ After the D1 commit, the collector sends only `{ eventId, payloadHash, region }`
 to `avalon-global-analytics-events-lakehouse`. The pointer stays below Queue
 payload limits even when the validated envelope is large. A failed send does not
 change telemetry acceptance or any product response. The five-minute telemetry
-maintenance pass retries pending rows in the same 50-event quantum already used
-by telemetry ingestion and delivery.
+maintenance pass retries both `pending` and still-undelivered `queued` rows in
+the same 50-event quantum already used by telemetry ingestion and delivery. It
+selects newest first so a live outage cannot put fresh debugging evidence behind
+older recovery work. Migration `0095` deliberately does not backfill historical
+acceptances.
 
-The consumer reloads the D1 row, verifies the route and hash, reparses the
-envelope, and writes one record through Pipeline. Promoted columns include event
+The consumer reloads the D1 row, recomputes the acceptance hash from the stored
+envelope and identity fields, verifies the route and pointer, reparses the
+envelope against the live registry, and writes one record through Pipeline.
+Permanent integrity or schema failures become `rejected` and are acknowledged;
+only D1, Queue, and Pipeline availability failures retry. Promoted columns include event
 and context schema versions; event/source/category/identity; routing and all four
 timestamps; analytics person/workspace surrogates; release/build/platform;
 launch, session, journey, operation, request, trace, span, device, and window
@@ -101,19 +107,30 @@ through Cloudflare's authenticated HTTP APIs as documented in the
 
 - A collector Queue-send failure leaves the Global row `pending`; scheduled
   recovery retries it without failing the request.
+- A consumer failure leaves the row `queued`; scheduled recovery re-enqueues it
+  even if the original message exhausted retries into the DLQ. That can overlap
+  an active Queue retry, which is safe under the `event_id` deduplication rule.
 - A malformed pointer or a pointer received by EU is acknowledged after a
   content-free error log because retry cannot make it valid.
 - A missing acceptance row means its 90-day D1 retention elapsed before an old
   message arrived; the consumer acknowledges it rather than filling the DLQ with
   unrecoverable work.
-- A hash mismatch, invalid stored envelope, D1 failure, or Pipeline failure is
-  retried by Queue and eventually appears in
-  `avalon-global-analytics-events-lakehouse-dead-letter`.
+- A pointer mismatch is acknowledged without changing the canonical row so
+  recovery can create a correct pointer. A modified stored payload or an
+  envelope the live registry no longer accepts is marked `rejected` and
+  acknowledged because retry cannot repair either one.
+- A D1, Queue, or Pipeline failure is retried and can appear in
+  `avalon-global-analytics-events-lakehouse-dead-letter`; the scheduled outbox
+  pass remains able to redrive its canonical row.
 - Pipeline files roll every 300 seconds, so a delivered event may take roughly
   one roll interval to become queryable.
-- Accepted telemetry and its recovery source retain the existing 90-day
-  deadline. Data Catalog retention is not a new product or authority deadline;
-  deletion/retention policy continues to be governed by telemetry policy.
+- The D1 acceptance row and recovery source still expire after 90 days. Pipeline
+  handoff is the lakehouse point of no return: a later opt-out, user cascade, or
+  D1 deadline does not retract an already-projected Iceberg row, and
+  `acceptance_delete_at` / `regional_retention` are analytical metadata rather
+  than enforced catalog deletion deadlines. Cloudflare automatic snapshot
+  expiration removes obsolete snapshots and unreferenced files; it does not
+  delete current rows by predicate.
 
 ## Testing
 
@@ -129,10 +146,11 @@ binding requirement.
 ## Data model
 
 `telemetry_accepted_events.analytics_lakehouse_state` is nullable and is one of
-`pending`, `queued`, `delivered`, or `suppressed`; null means the row is not eligible, which is
-the permanent EU state. `analytics_lakehouse_delivered_at` records successful
-Pipeline handoff. Migration 0095 seeds still-retained Global acceptance rows as
-pending so the first scheduled passes backfill them.
+`pending`, `queued`, `delivered`, `suppressed`, or `rejected`; null means the row
+is not eligible, which is the permanent EU state and the state of acceptances
+that predate this feature. `analytics_lakehouse_delivered_at` records successful
+Pipeline handoff. Migration `0095` seeds only new Global inserts so deployment
+does not put live recovery behind a historical backfill.
 
 The Iceberg table is `avalon.analytics_events` in bucket
 `avalon-global-analytics-events-lakehouse`. Its schema is append-oriented and
@@ -165,7 +183,46 @@ table through the R2 SQL HTTP API, never the web dashboard. Exact commands and
 safe query order are in the
 [`runbook`](runbook.md#querying-analytics-events-in-production).
 
+## Open questions
+
+- Selective row expiry requires a transactional Iceberg writer. R2 SQL is a
+  query surface, and Data Catalog's automatic snapshot expiration cleans up
+  historical snapshots only after a row mutation has made files unreferenced.
+  The current content-free semantic table therefore remains append-only until an
+  automated engine can delete by `acceptance_delete_at`; direct R2 object
+  deletion is forbidden because it corrupts the catalog. Expanding this table
+  to arbitrary content or direct product identifiers is blocked on resolving
+  that lifecycle.
+
 ## Changelog
+
+### 2026-08-24 — Recovery distinguishes poison rows from unavailable dependencies
+
+**What changed:** Delivery now recomputes the stored acceptance hash, terminally
+rejects permanent pointer/schema failures, redrives both pending and queued rows
+newest-first through the partial index, and omits the initial historical
+backfill. The retention boundary now explicitly names Pipeline handoff as the
+catalog point of no return.
+
+**Why:** Review proved that retrying immutable corruption only fills the DLQ,
+that a Queue message exhausting retries stranded its D1 row as `queued`, that
+the original query could not use its partial index, and that months of backfill
+could starve fresh failures. It also proved that D1 expiry and late opt-out do
+not delete a current Iceberg row, so describing the table as inheriting source
+retention was false.
+
+**Considered and rejected:** Treating every delivery exception as transient,
+re-enqueueing only `pending` rows, retaining the historical backfill, and
+claiming automatic snapshot expiration implements row retention. Snapshot
+expiration cleans up unreferenced files; it does not issue predicate deletes.
+
+**Consequences:** Historical accepted events are not backfilled. Active Queue
+retries can overlap scheduled recovery, so physical duplicates remain possible
+and `event_id` remains the logical key. Projected rows persist until Avalon adds
+an automated transactional Iceberg deletion engine; their retention fields are
+metadata, not an enforced erasure promise.
+
+Shipped in the pull request for this change.
 
 ### 2026-08-24 — Backend and client analytics gain one governed Global lakehouse
 

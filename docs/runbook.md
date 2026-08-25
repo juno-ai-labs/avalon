@@ -1681,7 +1681,10 @@ pnpm exec dotenv -e .env.local -- sh -c '
 
 Pipeline files roll every 300 seconds, so wait roughly one roll interval before
 concluding a just-accepted event is missing. Queue/Pipeline delivery is
-at-least-once; treat rows sharing `event_id` as one logical event. After choosing
+at-least-once; treat rows sharing `event_id` as one logical event. Pipeline
+handoff is also the current point of no return: a later opt-out, user deletion,
+or D1 `acceptance_delete_at` deadline does not retract an Iceberg row, and the
+retention columns are metadata rather than proof of catalog deletion. After choosing
 one opaque event ID, retrieve its full admitted metadata only when necessary:
 
 ```sql
@@ -1712,10 +1715,13 @@ pnpm exec dotenv -e .env.local -- wrangler queues info avalon-global-analytics-e
 pnpm exec dotenv -e .env.local -- wrangler queues info avalon-global-analytics-events-lakehouse-dead-letter
 ```
 
-`pending` means the scheduled recovery pass has not successfully enqueued the
-pointer; `queued` means Queue owns delivery (including a possible DLQ outcome);
+`pending` means the first Queue send has not completed; `queued` means at least
+one Queue send completed and scheduled recovery will continue redriving it;
 `delivered` means the Worker handed the row to Pipeline, not that the current
-Parquet roll is already queryable. A non-empty DLQ is the escalation signal.
+Parquet roll is already queryable. `suppressed` records a preference recheck;
+`rejected` records a permanent integrity or live-schema failure. A non-empty DLQ
+is the escalation signal for a dependency failure even though durable recovery
+continues from D1.
 
 ## Regional telemetry
 

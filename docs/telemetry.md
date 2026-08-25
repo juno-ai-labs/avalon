@@ -302,9 +302,11 @@ the same ID conflicts. EU acceptance also writes the independently expiring
 internal semantic projection. Global acceptance leaves a destination row for the
 five-minute scheduled processor. It also leaves an independent lakehouse outbox
 state and best-effort enqueues an event-ID/hash pointer. Scheduled recovery
-retries pending pointers; the Global consumer reloads and revalidates the same
-canonical envelope before projecting every admitted context/property field to
-`avalon.analytics_events`. EU never enters that transport.
+retries pending and still-undelivered queued pointers newest-first; the Global
+consumer reloads the canonical row, recomputes its acceptance hash, and
+revalidates the envelope before projecting every admitted context/property
+field to `avalon.analytics_events`. Permanent integrity/schema failures are
+terminally rejected rather than retried. EU never enters that transport.
 
 Global delivery uses stable `$insert_id`, `$session_id`, `$window_id`,
 `$device_id`, `distinct_id`, PostHog workspace groups, `$is_identified`,
@@ -474,6 +476,10 @@ WorkstreamDO for work-stream product data.
 - Regional accepted/outbox/receipt/profile/replay/rejection and full crash rows
   expire no later than 90 days. EU product contributions and minimized crash
   contributions expire independently after 13 months.
+- Global analytics lakehouse handoff is unretractable in the current design. A
+  late opt-out, user cascade, or D1 expiry does not delete a current Iceberg row;
+  the projected deadline and registry retention fields are metadata until an
+  automated transactional Iceberg deletion engine exists.
 - A destination outage backs off to the immutable deadline and opens a five-minute
   circuit after five consecutive transient failures. The product action is not
   retried or failed because telemetry is unavailable.
@@ -612,6 +618,30 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-24 — Lakehouse delivery fails terminally only when retry cannot help
+
+**What changed:** The analytics projection now recomputes accepted-row integrity,
+marks permanent poison rows rejected, recovers queued as well as pending work,
+uses its partial index newest-first, and starts with new events instead of a
+historical backfill. The catalog's unretractable retention boundary is explicit.
+
+**Why:** Review found that schema evolution and stored-row corruption would burn
+Queue retries, a DLQ transition could strand a queued outbox row forever, and
+the backfill could put live failures behind months of history. Review also
+proved that regional D1 deletion cannot retract an Iceberg projection.
+
+**Considered and rejected:** Treating every throw as transient, guessing a stale
+lease interval, and describing snapshot expiration as row retention. Replaying
+both durable states is safe under at-least-once semantics, while snapshot
+expiration only removes files made unreferenced by a separate row mutation.
+
+**Consequences:** `event_id` remains the logical deduplication key, historical
+accepted rows are not projected, and catalog retention fields remain metadata
+until an automated transactional deletion path is selected.
+
+Shipped in the pull request for this change. See
+[`analytics-lakehouse.md`](analytics-lakehouse.md).
 
 ### 2026-08-24 — Accepted events feed a governed Global analytics lakehouse
 
