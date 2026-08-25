@@ -53,6 +53,8 @@ export interface Env {
   ACTIVITY_QUEUE: Queue;
   /** Regional durable hand-off from inference capture to Pipeline ingestion. */
   INFERENCE_LAKEHOUSE_QUEUE?: Queue;
+  /** Global durable hand-off from accepted typed telemetry to its lakehouse. */
+  ANALYTICS_LAKEHOUSE_QUEUE?: Queue;
   /** The one path from a D1 access retraction to an open socket. */
   ACCESS_REVOCATION_QUEUE: Queue;
   CONNECTOR_POLL_WORKFLOW: Workflow;
@@ -81,6 +83,8 @@ export interface Env {
   MIGRATION_REPORT_QUEUE?: Queue<DurableObjectMigrationReport>;
   /** Materialized into production Wrangler configs after the stream is ensured. */
   INFERENCE_LAKEHOUSE?: Pipeline;
+  /** Materialized into Global production after the analytics stream is ensured. */
+  ANALYTICS_LAKEHOUSE?: Pipeline;
 
   APP_ENV: "development" | "test" | "staging" | "production";
   APP_VERSION?: string;
@@ -295,8 +299,10 @@ const EnvContractSchema = z.object({
   SLACK_REACTION_TICKERS: binding<DurableObjectNamespace>(),
   ACTIVITY_QUEUE: binding<Queue>(),
   INFERENCE_LAKEHOUSE_QUEUE: binding<Queue>().optional(),
+  ANALYTICS_LAKEHOUSE_QUEUE: binding<Queue>().optional(),
   ACCESS_REVOCATION_QUEUE: binding<Queue>(),
   INFERENCE_LAKEHOUSE: binding<Pipeline>().optional(),
+  ANALYTICS_LAKEHOUSE: binding<Pipeline>().optional(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
   CONNECTOR_EVENT_WORKFLOW: binding<Workflow>(),
   WORK_OPPORTUNITY_WORKFLOW: binding<Workflow>(),
@@ -409,6 +415,8 @@ const productionOnlySecrets = [
 const productionOnlyBindings = [
   { key: "INFERENCE_LAKEHOUSE_QUEUE", regions: ["global"] },
   { key: "INFERENCE_LAKEHOUSE", regions: ["global"] },
+  { key: "ANALYTICS_LAKEHOUSE_QUEUE", regions: ["global"] },
+  { key: "ANALYTICS_LAKEHOUSE", regions: ["global"] },
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 /**

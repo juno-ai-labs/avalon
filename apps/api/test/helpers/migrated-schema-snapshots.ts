@@ -16,11 +16,18 @@ import { inject } from "vitest";
 import {
   buildTemplateDatabase,
   captureSchemaSnapshot,
+  describeDatabase,
+  type DatabaseDescription,
   type SchemaSnapshot,
   type SqliteTemplateVariant,
 } from "./migrated-schema";
 
-export type MigratedSchemaSnapshots = Readonly<Record<SqliteTemplateVariant, SchemaSnapshot>>;
+interface MigratedSchemaCapture {
+  readonly snapshot: SchemaSnapshot;
+  readonly description: DatabaseDescription;
+}
+
+export type MigratedSchemaSnapshots = Readonly<Record<SqliteTemplateVariant, MigratedSchemaCapture>>;
 
 declare module "vitest" {
   interface ProvidedContext {
@@ -30,11 +37,14 @@ declare module "vitest" {
 
 /** Captures every variant once. Called by the global setup, in Vitest's node context. */
 export function captureMigratedSchemaSnapshots(): MigratedSchemaSnapshots {
-  const captured = {} as Record<SqliteTemplateVariant, SchemaSnapshot>;
+  const captured = {} as Record<SqliteTemplateVariant, MigratedSchemaCapture>;
   for (const variant of ["regional", "pre-retirement", "legacy-product"] as const) {
     const template = buildTemplateDatabase(variant);
     try {
-      captured[variant] = captureSchemaSnapshot(template);
+      captured[variant] = {
+        snapshot: captureSchemaSnapshot(template),
+        description: describeDatabase(template),
+      };
     } finally {
       template.close();
     }
@@ -42,20 +52,31 @@ export function captureMigratedSchemaSnapshots(): MigratedSchemaSnapshots {
   return captured;
 }
 
-const localSnapshots = new Map<SqliteTemplateVariant, SchemaSnapshot>();
+const localCaptures = new Map<SqliteTemplateVariant, MigratedSchemaCapture>();
 
-export function migratedSchemaSnapshot(variant: SqliteTemplateVariant): SchemaSnapshot {
+function migratedSchemaCapture(variant: SqliteTemplateVariant): MigratedSchemaCapture {
   const provided = inject("migratedSchemaSnapshots") as MigratedSchemaSnapshots | undefined;
   const shared = provided?.[variant];
   if (shared) return shared;
-  const cached = localSnapshots.get(variant);
+  const cached = localCaptures.get(variant);
   if (cached) return cached;
   const template = buildTemplateDatabase(variant);
   try {
-    const snapshot = captureSchemaSnapshot(template);
-    localSnapshots.set(variant, snapshot);
-    return snapshot;
+    const capture = {
+      snapshot: captureSchemaSnapshot(template),
+      description: describeDatabase(template),
+    };
+    localCaptures.set(variant, capture);
+    return capture;
   } finally {
     template.close();
   }
+}
+
+export function migratedSchemaSnapshot(variant: SqliteTemplateVariant): SchemaSnapshot {
+  return migratedSchemaCapture(variant).snapshot;
+}
+
+export function migratedSchemaDescription(variant: SqliteTemplateVariant): DatabaseDescription {
+  return migratedSchemaCapture(variant).description;
 }

@@ -63,6 +63,22 @@ describe("the health probe's environment-contract check", () => {
     });
   });
 
+  it("reports the EU analytics-events lakehouse as intentionally disabled", async () => {
+    vi.mocked(assertEnvContract).mockImplementation(() => undefined);
+    const response = await probe({
+      AVALON_REGION: "eu",
+      ANALYTICS_LAKEHOUSE_QUEUE: undefined,
+      ANALYTICS_LAKEHOUSE: undefined,
+    });
+    const body = await response.json() as {
+      checks: { analyticsLakehouse: { ok: boolean; message: string } };
+    };
+    expect(body.checks.analyticsLakehouse).toEqual({
+      ok: true,
+      message: "EU analytics lakehouse export intentionally disabled",
+    });
+  });
+
   it("reports an environment contract failure as a check", async () => {
     vi.mocked(assertEnvContract).mockImplementation(() => {
       throw new EnvContractError(["SESSION_SIGNING_KEY is missing"]);
