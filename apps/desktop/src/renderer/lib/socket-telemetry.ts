@@ -1,10 +1,32 @@
 import type { TelemetryRealtimeSocket, TelemetryRealtimeSocketCause } from '@rally/contracts/telemetry';
 
 import { reportTelemetryProductIntent, telemetryCountBucket } from './telemetry';
+import type { WorkstreamSocketStartReason } from './telemetry';
 
 export type RealtimeSocket = TelemetryRealtimeSocket;
 /** Why a socket transitioned. `opened` is the only one a live socket carries. */
 export type RealtimeSocketCause = TelemetryRealtimeSocketCause;
+
+export function reportWorkstreamSocketStarted(
+  workstreamId: string,
+  socketLeaseId: string,
+  socket: 'workstream_control' | 'substream_feed',
+  reason: WorkstreamSocketStartReason,
+  attempts: number,
+  operationId: string,
+  openAttemptId?: string,
+): void {
+  reportTelemetryProductIntent({
+    kind: 'workstream_socket_started',
+    operationId,
+    workstreamId,
+    socketLeaseId,
+    ...(openAttemptId ? { openAttemptId } : {}),
+    socket,
+    reason,
+    attempts: telemetryCountBucket(attempts),
+  });
+}
 
 /**
  * The `realtime_socket_state` producer, one instance per live socket loop.

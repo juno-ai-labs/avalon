@@ -1376,8 +1376,12 @@ export class RallyApi {
    * which window to render; `resumeFeed` is where this reader stopped and is
    * null when that is already the newest page.
    */
-  async getWorkstream(id: string, signal?: AbortSignal): Promise<WorkstreamBoot> {
-    const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, { schema: WireWorkstreamBootSchema, signal });
+  async getWorkstream(id: string, signal?: AbortSignal, requestId?: string): Promise<WorkstreamBoot> {
+    const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
+      schema: WireWorkstreamBootSchema,
+      signal,
+      ...(requestId ? { requestId } : {}),
+    });
     return {
       ...mapWorkstreamDetail(raw),
       // Undefined, not empty, when the Worker predates this field — the caller
@@ -1751,9 +1755,10 @@ export class RallyApi {
     return this.request('/workspace/socket', { schema: socketTicketSchema });
   }
 
-  getWorkstreamControlSocketTicket(id: string): Promise<SocketTicket> {
+  getWorkstreamControlSocketTicket(id: string, requestId?: string): Promise<SocketTicket> {
     return this.request(`/workstreams/${encodeURIComponent(id)}/control-socket`, {
       schema: socketTicketSchema,
+      ...(requestId ? { requestId } : {}),
     });
   }
 

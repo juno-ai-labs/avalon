@@ -6,12 +6,17 @@ import {
   type WorkstreamControlMetadata,
 } from '@rally/contracts';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { logWarn } from '../../common/logger';
 import { normalizeHarnessStatus, type RallyApi } from './api';
 import type { WorkstreamSummary } from './types';
 import { applyVersionedWorkstreamState } from './workstream-state-store';
-import { realtimeSocketTelemetry } from './socket-telemetry';
+import { realtimeSocketTelemetry, reportWorkstreamSocketStarted } from './socket-telemetry';
+import {
+  type WorkstreamSocketStartReason,
+  uuidV7,
+  workstreamFeedOpenRequestId,
+} from './telemetry';
 import { setCachedWorkstreams } from './workstreams-cache';
 
 type WorkstreamControlSocketApi = Pick<RallyApi, 'getWorkstreamControlSocketTicket'>;
@@ -106,8 +111,14 @@ export function useWorkstreamControlSocket(
   api: WorkstreamControlSocketApi | null,
   workstreamId: string,
   enabled: boolean,
+  initialReason: Exclude<WorkstreamSocketStartReason, 'reconnect'> = 'active_workstream',
+  socketLeaseId?: string,
 ): void {
   const queryClient = useQueryClient();
+  const [generatedSocketLeaseId] = useState(() => socketLeaseId ?? uuidV7());
+  const resolvedSocketLeaseId = socketLeaseId ?? generatedSocketLeaseId;
+  const initialReasonRef = useRef(initialReason);
+  initialReasonRef.current = initialReason;
   useEffect(() => {
     if (!api || !enabled) return;
     let stopped = false;
@@ -118,6 +129,7 @@ export function useWorkstreamControlSocket(
     let pongTimer: number | null = null;
     let connecting = false;
     let attempt = 0;
+    let startedOnce = false;
     let protocolWarningReported = false;
     const socketTelemetry = realtimeSocketTelemetry('workstream_control');
     const isOffline = (): boolean => navigator.onLine === false;
@@ -188,8 +200,19 @@ export function useWorkstreamControlSocket(
       if (navigator.onLine === false) return;
       connecting = true;
       clearReconnect();
+      const operationId = uuidV7();
+      reportWorkstreamSocketStarted(
+        workstreamId,
+        resolvedSocketLeaseId,
+        'workstream_control',
+        startedOnce ? 'reconnect' : initialReasonRef.current,
+        attempt,
+        operationId,
+        workstreamFeedOpenRequestId(workstreamId),
+      );
+      startedOnce = true;
       try {
-        const ticket = await api.getWorkstreamControlSocketTicket(workstreamId);
+        const ticket = await api.getWorkstreamControlSocketTicket(workstreamId, operationId);
         if (stopped) return;
         // See `workspace-socket.tsx`: an offline transition during the ticket
         // request is invisible to the offline handler, because there was no
@@ -301,5 +324,5 @@ export function useWorkstreamControlSocket(
       clearHeartbeat();
       socket?.close();
     };
-  }, [api, enabled, queryClient, workstreamId]);
+  }, [api, enabled, queryClient, resolvedSocketLeaseId, workstreamId]);
 }

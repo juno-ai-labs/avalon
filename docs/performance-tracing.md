@@ -344,10 +344,13 @@ and the backoff explains it.
 This module owns latency diagnosis for the three named flows and nothing else.
 
 - **It is not product telemetry.** [`telemetry.md`](telemetry.md) owns product
-  signals, their regional routing, and the preferences that gate them; the
-  `api_operation_outcome` event's coarse duration bucket is a product metric and
-  stays where it is. A span and a `perf_flow` row are diagnostics, subject to
-  Workers Traces and Workers Logs retention, and reach no destination adapter.
+  signals, their regional routing, and the preferences that gate them. The
+  explicitly approved `workstream_feed_visible` event is the exception that
+  measures exact sidebar-click-to-paint and data-ready durations; its operation
+  ID reuses the detail request ID for correlation, but it does not export this
+  tracer's phase list, long-task buffer, URLs, or other diagnostic state. A span
+  and a `perf_flow` row remain diagnostics, subject to Workers Traces and Workers
+  Logs retention, and reach no destination adapter through this module.
 - **It is not the run ledger.** A harness run's duration, tokens, and cost are
   `harness_run_finished` and the `RUN_ANALYTICS` dataset, described in
   [`runbook.md`](runbook.md#root-run-analytics). Tracing stops at the run
@@ -528,6 +531,57 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-08-25 — Opening, lease, and request IDs keep separate scopes
+
+**What changed:** A sidebar attempt now emits start and terminal outcome events
+under one opening operation ID. The detail request reuses it. Socket starts use
+their own operation ID for the ticket request, carry the pending opening ID when
+applicable, and carry the socket owner's stable lease ID. The feed and opening
+outcome record the lease that served the painted transcript.
+
+**Why:** One identifier cannot simultaneously name a user interaction, several
+ticket requests, and a pooled connection that may predate that interaction.
+Rapid navigation also needs a durable superseded outcome rather than a missing
+completion row.
+
+**Considered and rejected:** Timestamp joins are ambiguous for A to B to A
+switches. Making the click ID the request ID for both control and feed would
+merge independent requests. Treating the work-stream ID as a session would
+merge every open and reconnect for that resource.
+
+**Consequences:** `operation_id` means the event's own attempt: opening attempt
+on opening/feed events, socket attempt on socket-start events. `openAttemptId`
+is the explicit parent on a socket start; `socketLeaseId` joins control/feed
+attempts to the retained owner. None is a Cloudflare trace ID, ticket, or
+authorization value.
+
+### 2026-08-25 — The approved feed-paint metric exports totals, not renderer traces
+
+**What changed:** A click-scoped operation ID now labels the desktop's
+`workstream_feed_visible` product event and, when the open needs it,
+`GET /workstreams/:id`. The event
+exports exact click-to-data-ready and click-to-painted-feed milliseconds. The
+local renderer tracer remains local, and its phase list and long-task overlap
+are not copied into the product envelope.
+
+**Why:** The earlier decision below rejected regional renderer latency because
+no concrete product question required raw values. The requested average and
+P50/P75/P90/P99 click-to-feed distribution cannot be reconstructed from local
+lines, socket-open timing, or duration buckets. Reusing the request ID makes
+backend phase attribution possible without inventing a second trace graph.
+
+**Considered and rejected:** Exporting `[perf]` lines wholesale would move a
+diagnostic vocabulary into the product contract and retain substantially more
+state. Minting `traceparent` still forks Cloudflare's trace graph. Keeping only
+buckets makes the requested percentiles mathematically unavailable.
+
+**Consequences:** Exact totals are governed Product analytics and follow its
+consent and regional destinations; detailed phases remain diagnostic. A reader
+joins an uncached open on the opening operation/request ID and must not treat it
+as authorization or as a Cloudflare trace ID. A `feed_cache` open has no detail
+request to join by design. The newer entry above owns correlation to socket
+attempts and retained leases.
 
 ### 2026-08-25 — Subscription snapshots name replay-loss recovery
 
