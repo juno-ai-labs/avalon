@@ -125,7 +125,7 @@ describe("agent harness", () => {
     expect(classifyAddressingHeuristically({
       message: "Avalon, what changed?",
       activeTask: false,
-    })).toMatchObject({ classification: "agent_action", rationaleCode: "avalon_reference" });
+    })).toMatchObject({ classification: "agent_action", rationaleCode: "rally_reference" });
     expect(classifyAddressingHeuristically({
       message: "Morgan, I moved the meeting to Tuesday",
       activeTask: false,
@@ -635,7 +635,7 @@ describe("agent harness", () => {
       summary: "Fetched Microsoft Learn",
     }));
     const responses = [
-      automationToolResponse("load_plugin", { pluginId: "avalon_web" }),
+      automationToolResponse("load_plugin", { pluginId: "rally_web" }),
       automationToolResponse("web_search", { query: "Azure AI model releases" }),
       automationToolResponse("web_fetch", { url: "https://learn.microsoft.com/azure/ai-foundry/" }),
       automationSubmitResponse(valid),
@@ -645,8 +645,8 @@ describe("agent harness", () => {
       return responses.shift()!;
     }) as typeof fetch;
     const webPlugin: HarnessPlugin = {
-      canonicalId: "avalon:web",
-      modelId: "avalon_web",
+      canonicalId: "rally:web",
+      modelId: "rally_web",
       shortWireName: "web",
       displayName: "Web",
       searchAliases: ["internet", "research"],
@@ -692,7 +692,7 @@ describe("agent harness", () => {
     const firstSystem = String((bodies[0]!.messages as Array<{ content: string }>)[0]!.content);
     const firstToolNames = (bodies[0]!.tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name);
     const loadedToolNames = (bodies[1]!.tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name);
-    expect(firstSystem).toContain("avalon_web (Web; aliases: internet, research)");
+    expect(firstSystem).toContain("rally_web (Web; aliases: internet, research)");
     expect(firstToolNames).not.toContain("web_search");
     expect(firstToolNames).not.toContain("web_fetch");
     expect(loadedToolNames).toEqual(expect.arrayContaining(["web_search", "web_fetch"]));
@@ -742,14 +742,14 @@ describe("agent harness", () => {
       summary: "Found one web result",
     }));
     const responses = [
-      automationToolResponse("load_plugin", { pluginId: "avalon_web" }),
+      automationToolResponse("load_plugin", { pluginId: "rally_web" }),
       automationToolResponse("web_search", { query: "Azure AI model releases" }),
       automationSubmitResponse(valid),
     ];
     const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
     const webPlugin: HarnessPlugin = {
-      canonicalId: "avalon:web",
-      modelId: "avalon_web",
+      canonicalId: "rally:web",
+      modelId: "rally_web",
       shortWireName: "web",
       displayName: "Web",
       searchAliases: ["internet"],
@@ -956,12 +956,12 @@ describe("agent harness", () => {
     expect(firstToolNames).toContain("load_plugin");
     expect(firstToolNames).not.toContain("google_2_drive_search");
     expect(firstToolNames).not.toContain("workstream_read");
-    expect(firstSystem).toContain("- avalon_core:");
-    expect(firstSystem).not.toContain("avalon_workstream");
+    expect(firstSystem).toContain("- rally_core:");
+    expect(firstSystem).not.toContain("rally_workstream");
     const secondSystem = String((bodies[1]!.messages as Array<{ content: string }>)[0]!.content);
-    expect(secondSystem).toContain("- avalon_discovery:");
-    expect(secondSystem).toContain("- avalon_core:");
-    expect(secondSystem).toContain("- avalon_automation_architect:");
+    expect(secondSystem).toContain("- rally_discovery:");
+    expect(secondSystem).toContain("- rally_core:");
+    expect(secondSystem).toContain("- rally_automation_architect:");
     expect(secondSystem).toContain("- plugin_google_2 (Google Drive · Work; aliases: drive, files)");
     expect(secondSystem).toContain("# Active Plugin Instructions");
     expect(secondSystem).toContain("## plugin_google_2 — Google Drive · Work\nUse Drive tools");
@@ -2903,8 +2903,8 @@ describe("agent harness", () => {
       },
     };
     const terminalPlugin: HarnessPlugin = {
-      canonicalId: "avalon:terminal",
-      modelId: "avalon_terminal",
+      canonicalId: "rally:terminal",
+      modelId: "rally_terminal",
       shortWireName: "terminal",
       description: "Terminal",
       preload: true,
@@ -3305,10 +3305,10 @@ describe("agent harness", () => {
     expect(events.find((event) =>
       event.type === "tool_started" && event.toolName === "load_plugin"
     )).toMatchObject({
-      pluginId: "avalon:discovery",
+      pluginId: "rally:discovery",
       policy: {
         canonicalToolName: "load_plugin",
-        capability: "avalon.plugins.load",
+        capability: "rally.plugins.load",
         mode: "read",
         idempotency: "safe",
       },
@@ -3480,10 +3480,10 @@ describe("agent harness", () => {
 
     expect(outcome).toMatchObject({ status: "completed", content: "catalog listed", toolCalls: 1 });
     expect(events.find((event) => event.type === "tool_started")).toMatchObject({
-      pluginId: "avalon:discovery",
+      pluginId: "rally:discovery",
       policy: {
         canonicalToolName: "list_plugins",
-        capability: "avalon.plugins.list",
+        capability: "rally.plugins.list",
         mode: "read",
         idempotency: "safe",
       },
@@ -3519,7 +3519,7 @@ describe("agent harness", () => {
             tool_calls: [toolDeltaWithArguments(
               0,
               "provider-linear-search",
-              "avalon_core.linear_search_issues",
+              "rally_core.linear_search_issues",
               JSON.stringify({ query: "status" }),
             )],
           },
@@ -3585,7 +3585,7 @@ describe("agent harness", () => {
       "## plugin_linear — Linear\nSearch only the authorized Linear workspace.",
     );
     expect(events.find((event) =>
-      event.type === "tool_started" && event.toolName === "avalon_core.linear_search_issues"
+      event.type === "tool_started" && event.toolName === "rally_core.linear_search_issues"
     )).toMatchObject({
       pluginId,
       policy: {
@@ -3620,7 +3620,7 @@ describe("agent harness", () => {
       streamResponse([{
         choices: [{
           delta: {
-            tool_calls: [toolDeltaWithArguments(0, "ambiguous-search", "avalon_core.search", "{}")],
+            tool_calls: [toolDeltaWithArguments(0, "ambiguous-search", "rally_core.search", "{}")],
           },
           finish_reason: "tool_calls",
         }],
@@ -4519,8 +4519,8 @@ function credentialPlugin(canonicalId: string, shortWireName: string, systemMess
 
 function testCorePlugin(tools: HarnessTool[]): HarnessPlugin {
   return {
-    canonicalId: "avalon:test",
-    modelId: "avalon_test",
+    canonicalId: "rally:test",
+    modelId: "rally_test",
     shortWireName: "test",
     description: "Test-only always-active tools",
     preload: true,

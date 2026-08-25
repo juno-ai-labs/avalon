@@ -56,7 +56,7 @@ function runtime(initial: Record<string, string> = {}) {
       };
     },
     async importResource(_context, input) {
-      return { resourceId: input.resourceId, filePath: ".avalon/resources/item", outcome: "created", mimeType: "text/plain", sizeBytes: 4, sourceSha256: "a".repeat(64) };
+      return { resourceId: input.resourceId, filePath: ".rally/resources/item", outcome: "created", mimeType: "text/plain", sizeBytes: 4, sourceSha256: "a".repeat(64) };
     },
     async publishResource() {
       return {
@@ -126,7 +126,7 @@ describe("Terminal file and command tools", () => {
       }],
       ["import_resource", { resourceId: "00000000-0000-4000-8000-000000000001" }, {
         output: {
-          resourceId: "00000000-0000-4000-8000-000000000001", filePath: ".avalon/resources/item",
+          resourceId: "00000000-0000-4000-8000-000000000001", filePath: ".rally/resources/item",
           outcome: "created", mimeType: "text/plain", sizeBytes: 4, sourceSha256: "a".repeat(64),
         },
         summary: "Imported resource 00000000-0000-4000-8000-000000000001",

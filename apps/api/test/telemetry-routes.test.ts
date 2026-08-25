@@ -160,7 +160,7 @@ describe('telemetry HTTP bounds', () => {
       body: JSON.stringify({
         capability: 'x'.repeat(64),
         events: [{
-          schema: 'com.avalon.telemetry.event', schemaVersion: 1,
+          schema: 'ai.rallywith.telemetry.event', schemaVersion: 1,
           eventId: '018f22f2-4c22-7abc-8def-0123456789ac',
           name: 'screen_viewed', source: 'desktop-renderer', category: 'product',
           identityScope: 'anonymous-epoch', originalTimestamp: '2026-08-12T20:00:00.000Z',
@@ -200,7 +200,7 @@ describe('telemetry HTTP bounds', () => {
       body: JSON.stringify({
         capability: bootstrap.capability,
         events: [{
-          schema: 'com.avalon.telemetry.event', schemaVersion: 1, eventId,
+          schema: 'ai.rallywith.telemetry.event', schemaVersion: 1, eventId,
           name: 'site_page_viewed', source: 'site', category: 'product',
           identityScope: 'anonymous-epoch', originalTimestamp: '2026-08-12T20:00:00.000Z',
           sentAt: '2026-08-12T20:00:00.000Z',
@@ -285,7 +285,7 @@ describe('telemetry HTTP bounds', () => {
       LOG_LEVEL: 'error', DB: sqliteD1(database),
     });
     const body = JSON.stringify({ events: [{
-      schema: 'com.avalon.telemetry.event', schemaVersion: 1,
+      schema: 'ai.rallywith.telemetry.event', schemaVersion: 1,
       eventId: '018f22f2-4c22-7abc-8def-0123456789af',
       name: 'screen_viewed', source: 'desktop-renderer', category: 'product',
       identityScope: 'workspace-user', originalTimestamp: '2026-08-12T20:00:00.000Z',
@@ -320,7 +320,7 @@ describe('telemetry HTTP bounds', () => {
         'x-rally-dev-workspace-id': '00000000-0000-7000-8000-0000000000d2',
       },
       body: JSON.stringify({ events: [{
-        schema: 'com.avalon.telemetry.event', schemaVersion: 1,
+        schema: 'ai.rallywith.telemetry.event', schemaVersion: 1,
         eventId: '018f22f2-4c22-7abc-8def-0123456789b1',
         name: 'workstream_create_completed', source: 'api', category: 'product',
         identityScope: 'workspace-user', originalTimestamp: '2026-08-12T20:00:00.000Z',
@@ -342,7 +342,7 @@ describe('telemetry HTTP bounds', () => {
         'x-rally-dev-workspace-id': '00000000-0000-7000-8000-0000000000d2',
       },
       body: JSON.stringify({ events: [{
-        schema: 'com.avalon.telemetry.event', schemaVersion: 1,
+        schema: 'ai.rallywith.telemetry.event', schemaVersion: 1,
         eventId: '018f22f2-4c22-7abc-8def-0123456789b0',
         name: 'agent_tool_started', source: 'api', category: 'product',
         identityScope: 'workspace', originalTimestamp: '2026-08-12T20:00:00.000Z',
@@ -351,7 +351,7 @@ describe('telemetry HTTP bounds', () => {
         properties: {
           workstreamId: '018f22f2-4c22-7abc-8def-012345678901',
           harnessRunId: '018f22f2-4c22-7abc-8def-012345678902',
-          toolName: 'search_messages', pluginId: 'avalon.workstream', capability: 'workstream.search',
+          toolName: 'search_messages', pluginId: 'rally.workstream', capability: 'workstream.search',
           mode: 'read', runKind: 'system', executionScope: 'workspace',
         },
       }] }),

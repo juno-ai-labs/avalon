@@ -10,7 +10,7 @@ const securityPrincipal = { operatorId, role: 'security' as const };
 
 function envelope() {
   return {
-    schema: 'com.avalon.telemetry.event' as const,
+    schema: 'ai.rallywith.telemetry.event' as const,
     schemaVersion: 1 as const,
     eventId,
     name: 'onboarding_region_selected' as const,

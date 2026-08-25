@@ -43,7 +43,7 @@ import type { HarnessSkill, HarnessTool, HarnessToolResult } from "./index";
  * document.
  */
 
-export const AVALON_SKILLS_PLUGIN_ID = "avalon.skills";
+export const AVALON_SKILLS_PLUGIN_ID = "rally.skills";
 
 /**
  * Default cap on one `read_skill_resource` response. Generous for a reference
@@ -64,7 +64,7 @@ export const AVALON_SKILL_TOOL_DEFINITIONS = [
     name: "load_skill",
     description:
       "Load a skill's full instructions by its exact name. Its body is added to your active instructions and stays available for the rest of the run.",
-    capability: "avalon.skills.load",
+    capability: "rally.skills.load",
     // Activation changes only Avalon's in-run prompt surface — no external
     // write, and safe to resume from the same receipt.
     mode: "read",
@@ -80,7 +80,7 @@ export const AVALON_SKILL_TOOL_DEFINITIONS = [
     name: "read_skill_resource",
     description:
       "Read a reference file bundled with a skill you have already loaded, by its exact path.",
-    capability: "avalon.skills.read_resource",
+    capability: "rally.skills.read_resource",
     mode: "read",
     idempotency: "safe",
     inputSchema: {

@@ -310,6 +310,41 @@ const SlackAutomationTargetSchema = z.object({
   last_delivered_workstream_id: z.string().nullable().optional(),
 }).passthrough();
 
+/** The prefix every Slack action id and modal callback id is minted with. */
+const SLACK_INTERACTION_PREFIX = "rally_";
+
+/**
+ * Prefixes still honoured inbound, and deliberately never emitted.
+ *
+ * A Slack action id is not a request header: it is baked into a surface that
+ * persists on Slack's side. An App Home view published before a deploy, a
+ * posted message with a button, and a modal already on someone's screen all
+ * keep the id they were minted with, and Slack echoes it back on the click. So
+ * the rename is only safe if the superseded spelling keeps resolving —
+ * otherwise every one of those buttons silently falls past its branch and
+ * opens the generic task modal instead.
+ *
+ * Removed once no surface minted before the rename can still be clicked, which
+ * is a fact about Slack's retained views rather than about this repository.
+ */
+const SUPERSEDED_SLACK_INTERACTION_PREFIXES: readonly string[] = Object.freeze([
+  "avalon_",
+]);
+
+/**
+ * An inbound action or callback id in its canonical spelling, so every branch
+ * below compares against one form. Anything not carrying a known prefix is
+ * returned unchanged and falls through as it did before.
+ */
+function canonicalSlackInteractionId(value: string): string {
+  for (const prefix of SUPERSEDED_SLACK_INTERACTION_PREFIXES) {
+    if (value.startsWith(prefix)) {
+      return `${SLACK_INTERACTION_PREFIX}${value.slice(prefix.length)}`;
+    }
+  }
+  return value;
+}
+
 export class SlackAgentService {
   private env: Env;
 
@@ -326,7 +361,7 @@ export class SlackAgentService {
       team_id: connection.provider_account_id,
       ...(this.env.SLACK_APP_ID ? { api_app_id: this.env.SLACK_APP_ID } : {}),
       event_id: eventId,
-      event: { type: "avalon_public_channel_sync" },
+      event: { type: "rally_public_channel_sync" },
     };
     await this.enqueueIngressJob({
       id: `event:${eventId}`,
@@ -564,7 +599,7 @@ export class SlackAgentService {
 
     if (type === "view_submission") {
       const view = asRecord(payload.view);
-      if (view.callback_id === "avalon_start_task_submit") {
+      if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_start_task_submit") {
         const prompt = modalPrompt(view.state);
         if (!prompt) return { response_action: "errors", errors: { prompt: "Describe what Avalon should do." } };
         if (!modalPromptSource(view.private_metadata)) {
@@ -576,12 +611,12 @@ export class SlackAgentService {
         await this.enqueueIngressJob({ id: `interaction:${bodyHash}`, teamId, bodyHash, kind: "interaction", payload });
         return { response_action: "clear" };
       }
-      if (view.callback_id === "avalon_preferences_submit") {
+      if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_preferences_submit") {
         if (!await this.linkedAccount(teamId, slackUserId)) return { response_action: "errors", errors: { delivery: "Connect your Avalon account first." } };
         await this.enqueueIngressJob({ id: `interaction:${bodyHash}`, teamId, bodyHash, kind: "interaction", payload });
         return { response_action: "clear" };
       }
-      if (view.callback_id === "avalon_feedback_submit") {
+      if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_feedback_submit") {
         const identity = await this.linkedAccount(teamId, slackUserId);
         const workstreamId = typeof view.private_metadata === "string" ? view.private_metadata : "";
         const rating = modalSelectedValues(view.state, "rating", "value")[0];
@@ -613,13 +648,13 @@ export class SlackAgentService {
     // of the link it just followed. The action id is the button, whatever it is
     // embedded in. The two manifest shortcuts carry no action at all and reach
     // the task modal below by falling past every branch here.
-    const actionId = String(action?.action_id ?? "");
+    const actionId = canonicalSlackInteractionId(String(action?.action_id ?? ""));
     // Slack follows a `url` button's link itself, so the interaction it also
     // sends needs nothing but an acknowledgement.
-    if (type === "block_actions" && actionId.startsWith("avalon_open_")) return {};
+    if (type === "block_actions" && actionId.startsWith("rally_open_")) return {};
     if ((type === "shortcut" || type === "message_action" || type === "block_actions") && triggerId) {
-      if (actionId === "avalon_create_automation") return {};
-      if (actionId === "avalon_connect") {
+      if (actionId === "rally_create_automation") return {};
+      if (actionId === "rally_connect") {
         // No status gate. Reaching here means the bot token just opened a
         // Slack view, so the installation demonstrably works; refusing to mint
         // a link on a stored belief sent a member to ask an admin to fix
@@ -637,7 +672,7 @@ export class SlackAgentService {
         await this.supersedeLinksMintedBefore(connection.id, slackUserId, challenge.createdAt);
         return {};
       }
-      if (actionId === "avalon_preferences") {
+      if (actionId === "rally_preferences") {
         const preferences = await this.env.DB.prepare(
           `SELECT notify_needs_input, notify_automation_completed
            FROM slack_delivery_preferences pref
@@ -650,7 +685,7 @@ export class SlackAgentService {
         }, AbortSignal.timeout(1_500));
         return {};
       }
-      if (actionId === "avalon_feedback") {
+      if (actionId === "rally_feedback") {
         await slackApi(token, "views.open", { trigger_id: triggerId, view: feedbackModal(String(action?.value ?? "")) }, AbortSignal.timeout(1_500));
         return {};
       }
@@ -868,7 +903,7 @@ export class SlackAgentService {
     if (!teamId || !slackUserId) throw new ApiError(422, "slack_interaction_invalid", "Slack interaction identity is missing");
     if (payload.type !== "view_submission") return;
     const view = asRecord(payload.view);
-    if (view.callback_id === "avalon_start_task_submit") {
+    if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_start_task_submit") {
       const prompt = modalPrompt(view.state);
       if (!prompt) throw new ApiError(422, "slack_prompt_missing", "The Slack task prompt is missing");
       const source = modalPromptSource(view.private_metadata);
@@ -886,7 +921,7 @@ export class SlackAgentService {
     }
     const identity = await this.linkedAccount(teamId, slackUserId);
     if (!identity) throw new ApiError(409, "slack_link_missing", "The Slack user link is no longer active");
-    if (view.callback_id === "avalon_preferences_submit") {
+    if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_preferences_submit") {
       const selected = modalSelectedValues(view.state, "delivery", "value");
       await this.env.DB.prepare(
         `INSERT INTO slack_delivery_preferences
@@ -900,7 +935,7 @@ export class SlackAgentService {
       await this.publishHome(teamId, slackUserId);
       return;
     }
-    if (view.callback_id === "avalon_feedback_submit") {
+    if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_feedback_submit") {
       const workstreamId = typeof view.private_metadata === "string" ? view.private_metadata : "";
       const rating = modalSelectedValues(view.state, "rating", "value")[0];
       if (!workstreamId || (rating !== "helpful" && rating !== "needs_improvement")) throw new ApiError(422, "slack_feedback_invalid", "Slack feedback is invalid");
@@ -1474,7 +1509,9 @@ export class SlackAgentService {
   private async dispatchEvent(teamId: string, envelope: SlackIngressEnvelope, bodyHash: string): Promise<void> {
     const event = envelope.event!;
     const type = String(event.type ?? "");
-    if (type === "avalon_public_channel_sync") {
+    // A chunked sync enqueued before the rename is still in the queue with the
+    // superseded type; refusing it stops that sync silently partway through.
+    if (type === "rally_public_channel_sync" || type === "avalon_public_channel_sync") {
       const connection = await this.connectionForTeam(teamId);
       let summary;
       try {
@@ -2812,7 +2849,7 @@ export class SlackAgentService {
     if (!link) {
       // No challenge is minted here. App Home is a published document with no
       // expiry of its own, so a token embedded in it dies where the member can
-      // still see it; `avalon_connect` mints one against the click instead.
+      // still see it; `rally_connect` mints one against the click instead.
       blocks = unlinkedHome();
     } else {
       // `includeSystem: false` keeps machinery out — a digest run's transcript,
@@ -3837,17 +3874,17 @@ function startTaskModal(
     attachments: [],
   },
 ): Record<string, unknown> {
-  return { type: "modal", callback_id: "avalon_start_task_submit", private_metadata: JSON.stringify(SlackModalContextSchema.parse(source)), title: { type: "plain_text", text: "Start an Avalon task" }, submit: { type: "plain_text", text: "Start" }, close: { type: "plain_text", text: "Cancel" }, blocks: [{ type: "input", block_id: "prompt", label: { type: "plain_text", text: "What should Avalon do?" }, element: { type: "plain_text_input", action_id: "value", multiline: true, initial_value: initial.slice(0, 3_000), placeholder: { type: "plain_text", text: "Summarize this, investigate an issue, or coordinate work…" } } }] };
+  return { type: "modal", callback_id: "rally_start_task_submit", private_metadata: JSON.stringify(SlackModalContextSchema.parse(source)), title: { type: "plain_text", text: "Start an Avalon task" }, submit: { type: "plain_text", text: "Start" }, close: { type: "plain_text", text: "Cancel" }, blocks: [{ type: "input", block_id: "prompt", label: { type: "plain_text", text: "What should Avalon do?" }, element: { type: "plain_text_input", action_id: "value", multiline: true, initial_value: initial.slice(0, 3_000), placeholder: { type: "plain_text", text: "Summarize this, investigate an issue, or coordinate work…" } } }] };
 }
 
 function preferencesModal(notifyNeedsInput: boolean, notifyAutomationCompleted: boolean): Record<string, unknown> {
   const options = [{ text: { type: "plain_text", text: "When a task needs input" }, value: "needs_input" }, { text: { type: "plain_text", text: "When an automation completes" }, value: "automation_completed" }];
   const initialOptions = options.filter((option) => option.value === "needs_input" ? notifyNeedsInput : notifyAutomationCompleted);
-  return { type: "modal", callback_id: "avalon_preferences_submit", title: { type: "plain_text", text: "Avalon notifications" }, submit: { type: "plain_text", text: "Save" }, close: { type: "plain_text", text: "Cancel" }, blocks: [{ type: "input", optional: true, block_id: "delivery", label: { type: "plain_text", text: "Notify me in Slack" }, element: { type: "checkboxes", action_id: "value", options, ...(initialOptions.length ? { initial_options: initialOptions } : {}) } }] };
+  return { type: "modal", callback_id: "rally_preferences_submit", title: { type: "plain_text", text: "Avalon notifications" }, submit: { type: "plain_text", text: "Save" }, close: { type: "plain_text", text: "Cancel" }, blocks: [{ type: "input", optional: true, block_id: "delivery", label: { type: "plain_text", text: "Notify me in Slack" }, element: { type: "checkboxes", action_id: "value", options, ...(initialOptions.length ? { initial_options: initialOptions } : {}) } }] };
 }
 
 function feedbackModal(workstreamId: string): Record<string, unknown> {
-  return { type: "modal", callback_id: "avalon_feedback_submit", private_metadata: workstreamId.slice(0, 3000), title: { type: "plain_text", text: "Feedback for Avalon" }, submit: { type: "plain_text", text: "Send" }, close: { type: "plain_text", text: "Cancel" }, blocks: [
+  return { type: "modal", callback_id: "rally_feedback_submit", private_metadata: workstreamId.slice(0, 3000), title: { type: "plain_text", text: "Feedback for Avalon" }, submit: { type: "plain_text", text: "Send" }, close: { type: "plain_text", text: "Cancel" }, blocks: [
     { type: "input", block_id: "rating", label: { type: "plain_text", text: "How was this result?" }, element: { type: "radio_buttons", action_id: "value", options: [{ text: { type: "plain_text", text: "Helpful" }, value: "helpful" }, { text: { type: "plain_text", text: "Needs improvement" }, value: "needs_improvement" }] } },
     { type: "input", optional: true, block_id: "comment", label: { type: "plain_text", text: "What should improve?" }, element: { type: "plain_text_input", action_id: "value", multiline: true, max_length: 2000 } },
   ] };
@@ -3858,7 +3895,7 @@ function feedbackModal(workstreamId: string): Record<string, unknown> {
 function connectPromptBlocks(text: string): Record<string, unknown>[] {
   return [
     { type: "section", text: { type: "mrkdwn", text } },
-    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Avalon" }, action_id: "avalon_connect" }] },
+    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Avalon" }, action_id: "rally_connect" }] },
   ];
 }
 
@@ -3866,9 +3903,9 @@ function connectPromptBlocks(text: string): Record<string, unknown>[] {
 // the click that minted it, so its lifetime is a member deciding whether to
 // continue rather than however long App Home has been sitting published.
 function connectModal(link: string): Record<string, unknown> {
-  return { type: "modal", callback_id: "avalon_connect_link", title: { type: "plain_text", text: "Connect Avalon" }, close: { type: "plain_text", text: "Cancel" }, blocks: [
+  return { type: "modal", callback_id: "rally_connect_link", title: { type: "plain_text", text: "Connect Avalon" }, close: { type: "plain_text", text: "Cancel" }, blocks: [
     { type: "section", text: { type: "mrkdwn", text: "Opening Avalon connects this Slack account to the Avalon account you are signed in to on this device." } },
-    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Open Avalon" }, url: link, action_id: "avalon_open_connect" }] },
+    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Open Avalon" }, url: link, action_id: "rally_open_connect" }] },
     { type: "context", elements: [{ type: "mrkdwn", text: "This link works once and expires in 15 minutes. Click *Connect Avalon* again for a new one." }] },
   ] };
 }
@@ -3880,7 +3917,7 @@ function unlinkedHome(): Record<string, unknown>[] {
     { type: "section", text: { type: "mrkdwn", text: "Connect your Avalon account so messages you send can run with your personal authority, use your personal connectors, and make your Slack work visible in Avalon. The same step connects personal Slack tools, so Avalon can search and act in Slack with your own permissions." } },
     // Deliberately not a `url` button: the handoff URL carries a single-use
     // challenge, and this view outlives any expiry short enough to be safe.
-    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Avalon" }, action_id: "avalon_connect" }] },
+    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Avalon" }, action_id: "rally_connect" }] },
     { type: "divider" },
     { type: "section", text: { type: "mrkdwn", text: "*Try now*\n• Summarize this thread and propose next steps\n• Investigate this issue with workspace tools\n• Draft a status update for this channel\n\nAfter connecting: create personal automations such as “Check my Gmail every morning and send my top 3 emails here.”" } },
     { type: "context", elements: [{ type: "mrkdwn", text: "Avalon Agent features require paid Slack and Avalon plans." }] },
@@ -3892,9 +3929,9 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
   const blocks: Record<string, unknown>[] = [
     { type: "header", text: { type: "plain_text", text: `Welcome, ${name}`.slice(0, 150) } },
     { type: "actions", elements: [
-      { type: "button", style: "primary", text: { type: "plain_text", text: "Start a task" }, action_id: "avalon_start_task" },
-      { type: "button", text: { type: "plain_text", text: "Create automation" }, url: desktopHandoffUrl(webBase, "rallywithai://automations/new"), action_id: "avalon_create_automation" },
-      { type: "button", text: { type: "plain_text", text: "Notifications" }, action_id: "avalon_preferences" },
+      { type: "button", style: "primary", text: { type: "plain_text", text: "Start a task" }, action_id: "rally_start_task" },
+      { type: "button", text: { type: "plain_text", text: "Create automation" }, url: desktopHandoffUrl(webBase, "rallywithai://automations/new"), action_id: "rally_create_automation" },
+      { type: "button", text: { type: "plain_text", text: "Notifications" }, action_id: "rally_preferences" },
     ] },
     { type: "divider" },
     { type: "header", text: { type: "plain_text", text: "Needs attention & recent tasks" } },
@@ -3923,12 +3960,12 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
   for (const automation of automations) blocks.push({ type: "section", text: { type: "mrkdwn", text: `*${escapeMrkdwn(String(automation.name))}* · ${escapeMrkdwn(String(automation.status))}\n${automation.next_run_at ? `Next run: ${escapeMrkdwn(String(automation.next_run_at))}` : "No scheduled run"}` } });
   blocks.push(
     { type: "divider" },
-    { type: "section", text: { type: "mrkdwn", text: `*Personal Slack tools*\n${personalSlack ? `${personalSlack.status === "healthy" ? ":large_green_circle:" : ":warning:"} ${escapeMrkdwn(personalSlack.display_name)} · ${escapeMrkdwn(personalSlack.status)}` : "Not connected — connecting your Avalon account normally does this too. Finish it to let Avalon search and act in Slack with your own permissions."}` }, accessory: { type: "button", text: { type: "plain_text", text: personalSlack ? "Manage" : "Finish connecting" }, url: desktopHandoffUrl(webBase, "rallywithai://settings/connections"), action_id: "avalon_open_personal_tools" } },
+    { type: "section", text: { type: "mrkdwn", text: `*Personal Slack tools*\n${personalSlack ? `${personalSlack.status === "healthy" ? ":large_green_circle:" : ":warning:"} ${escapeMrkdwn(personalSlack.display_name)} · ${escapeMrkdwn(personalSlack.status)}` : "Not connected — connecting your Avalon account normally does this too. Finish it to let Avalon search and act in Slack with your own permissions."}` }, accessory: { type: "button", text: { type: "plain_text", text: personalSlack ? "Manage" : "Finish connecting" }, url: desktopHandoffUrl(webBase, "rallywithai://settings/connections"), action_id: "rally_open_personal_tools" } },
   );
   if (administration) blocks.push(
     { type: "divider" },
     { type: "header", text: { type: "plain_text", text: "Workspace administration" } },
-    { type: "section", text: { type: "mrkdwn", text: `Slack workspace ${escapeMrkdwn(administration.teamId)} · ${administration.status === "healthy" ? ":large_green_circle: Healthy" : ":warning: Needs attention"}` }, accessory: { type: "button", text: { type: "plain_text", text: "Manage" }, url: desktopHandoffUrl(webBase, "rallywithai://settings/connections"), action_id: "avalon_open_admin" } },
+    { type: "section", text: { type: "mrkdwn", text: `Slack workspace ${escapeMrkdwn(administration.teamId)} · ${administration.status === "healthy" ? ":large_green_circle: Healthy" : ":warning: Needs attention"}` }, accessory: { type: "button", text: { type: "plain_text", text: "Manage" }, url: desktopHandoffUrl(webBase, "rallywithai://settings/connections"), action_id: "rally_open_admin" } },
   );
   blocks.push({ type: "divider" }, { type: "context", elements: [{ type: "mrkdwn", text: "Avalon Agent features require paid Slack and Avalon plans. Personal Slack tools use your own Slack permissions when connected. <https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/support|Support>" }] });
   return blocks;
@@ -3936,13 +3973,13 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
 
 function responseActionBlocks(workstreamId: string, webBase: string): Record<string, unknown>[] {
   return [{ type: "actions", elements: [
-    { type: "button", text: { type: "plain_text", text: "Open task" }, url: workstreamCanonicalUrl(webBase, workstreamId), action_id: "avalon_open_task" },
-    { type: "button", text: { type: "plain_text", text: "Give feedback" }, action_id: "avalon_feedback", value: workstreamId },
+    { type: "button", text: { type: "plain_text", text: "Open task" }, url: workstreamCanonicalUrl(webBase, workstreamId), action_id: "rally_open_task" },
+    { type: "button", text: { type: "plain_text", text: "Give feedback" }, action_id: "rally_feedback", value: workstreamId },
   ] }, aiResponseDisclaimerBlock()];
 }
 
 function automationActionBlocks(title: string, workstreamId: string, webBase: string): Record<string, unknown>[] {
-  return [{ type: "header", text: { type: "plain_text", text: title.slice(0, 150) } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open full result" }, url: workstreamCanonicalUrl(webBase, workstreamId), action_id: "avalon_open_automation_result" }] }, aiResponseDisclaimerBlock()];
+  return [{ type: "header", text: { type: "plain_text", text: title.slice(0, 150) } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open full result" }, url: workstreamCanonicalUrl(webBase, workstreamId), action_id: "rally_open_automation_result" }] }, aiResponseDisclaimerBlock()];
 }
 
 function aiResponseDisclaimerBlock(): Record<string, unknown> {

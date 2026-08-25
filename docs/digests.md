@@ -997,7 +997,7 @@ message *is* the digest and is mailed verbatim — that no summary of it, report
 about it, or closing sentence may take its place — and `settleDigestRun` refuses
 to settle on a final message too short to be one. The `create_artifact` tool a
 digest run could reach — every digest executes the ordinary work-stream loop, so
-it loaded `avalon_workstream` like any other run — no longer exists. See
+it loaded `rally_workstream` like any other run — no longer exists. See
 [`agent-harness.md`](agent-harness.md#changelog).
 
 **Why:** A run wrote its digest into an artifact and ended with "Outcome: Digest

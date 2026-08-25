@@ -2543,7 +2543,7 @@ export const AddressingClassificationSchema = z.object({
     "imperative",
     "question",
     "connector_mention",
-    "avalon_reference",
+    "rally_reference",
     "active_task",
     "elicitation_answer",
     "human_coordination",

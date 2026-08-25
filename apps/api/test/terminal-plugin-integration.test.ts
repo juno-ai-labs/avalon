@@ -79,7 +79,7 @@ describe("Terminal Bind integration", () => {
   it("registers the complete deferred plugin without allocating a sandbox", async () => {
     const { objectStore, env, input } = fixture("supported");
     const tools = await __integrationTesting.loadHarnessTools(withWorkstreamRuntimeDatabase(env, W, S), input);
-    const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "avalon:terminal");
+    const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "rally:terminal");
 
     expect(plugin).toMatchObject({ preload: false, explicit: false, shortWireName: "terminal" });
     expect(plugin?.tools.map((tool) => tool.definition.name)).toEqual([
@@ -158,7 +158,7 @@ describe("Terminal Bind integration", () => {
   it("omits Terminal in unsupported regions", async () => {
     const { env, input } = fixture("unsupported");
     const tools = await __integrationTesting.loadHarnessTools(withWorkstreamRuntimeDatabase(env, W, S), input);
-    expect(tools.plugins.some((plugin) => plugin.canonicalId === "avalon:terminal")).toBe(false);
+    expect(tools.plugins.some((plugin) => plugin.canonicalId === "rally:terminal")).toBe(false);
   });
 
   it("omits Terminal without crashing when an opted-in development environment is incomplete", async () => {
@@ -166,13 +166,13 @@ describe("Terminal Bind integration", () => {
     delete env.DAYTONA_API_KEY;
     delete env.DAYTONA_TARGET;
     const tools = await __integrationTesting.loadHarnessTools(withWorkstreamRuntimeDatabase(env, W, S), input);
-    expect(tools.plugins.some((plugin) => plugin.canonicalId === "avalon:terminal")).toBe(false);
+    expect(tools.plugins.some((plugin) => plugin.canonicalId === "rally:terminal")).toBe(false);
   });
 
   it("keeps the complete plugin visible while the emergency breaker blocks provider operations", async () => {
     const { env, input } = fixture("supported", true);
     const tools = await __integrationTesting.loadHarnessTools(withWorkstreamRuntimeDatabase(env, W, S), input);
-    const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "avalon:terminal");
+    const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "rally:terminal");
     expect(plugin?.tools).toHaveLength(9);
     await expect(plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
       { filePath: "README.md" },

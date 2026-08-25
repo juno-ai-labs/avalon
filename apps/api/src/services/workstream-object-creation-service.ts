@@ -143,8 +143,8 @@ export class WorkstreamObjectCreationService {
       throw new ApiError(409, "workstream_create_generation_stale", "Retry the create against the current authority generation");
     }
     span.setAttributes({
-      "avalon.workstream.id": receipt.workstream_id,
-      "avalon.create.receipt_state": receipt.state,
+      "rally.workstream.id": receipt.workstream_id,
+      "rally.create.receipt_state": receipt.state,
     });
     // The object's own spans nest under this one automatically: a Durable
     // Object call is a traced binding call, and everything it runs happens in
@@ -159,7 +159,7 @@ export class WorkstreamObjectCreationService {
     if (receipt.state === "completed" && receipt.message_id && receipt.harness_run_id) {
       // A replayed create is a different latency question from a first one, so
       // it is labelled rather than folded into the same distribution.
-      span.setAttributes({ "avalon.create.path": "replayed_receipt" });
+      span.setAttributes({ "rally.create.path": "replayed_receipt" });
       const workstream = await span.step("workstream.create.replayed_detail.read", () => client.get());
       return {
         workstream,
@@ -167,7 +167,7 @@ export class WorkstreamObjectCreationService {
         harnessRunId: receipt.harness_run_id,
       };
     }
-    span.setAttributes({ "avalon.create.path": "fresh" });
+    span.setAttributes({ "rally.create.path": "fresh" });
 
     const objective = body.objective
       ?? provisionalWorkstreamDescription(body.openingMessage, "Review the attached files");
@@ -241,7 +241,7 @@ export class WorkstreamObjectCreationService {
       } : {}),
       reason: options.reason ?? "opening_message",
     }));
-    span.setAttributes({ "avalon.harness_run.id": created.harnessRunId });
+    span.setAttributes({ "rally.harness_run.id": created.harnessRunId });
     const substream = await durableObjectStubForWorkspace(
       this.env,
       this.env.SUBSTREAM_AGENTS,
@@ -332,7 +332,7 @@ export class WorkstreamObjectCreationService {
       // Deferred naming is off the caller's clock by design, so the trace
       // records which of the two happened rather than a duration that would
       // mean opposite things in the two cases.
-      span.setAttributes({ "avalon.create.first_naming": this.defer ? "deferred" : "awaited" });
+      span.setAttributes({ "rally.create.first_naming": this.defer ? "deferred" : "awaited" });
       if (this.defer) this.defer(naming); else await span.step("workstream.create.naming.first_pass", () => naming);
     }
     return created;

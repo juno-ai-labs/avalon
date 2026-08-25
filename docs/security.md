@@ -152,7 +152,7 @@ Rally's production identity is pinned to bundle ID `ai.rallywith.desktop` and
 Apple team `7ZLT6A8W25`. Release packaging never auto-selects a certificate.
 
 **Squirrel.Mac cannot safely update across either boundary.** The team has not
-moved, but the bundle ID has — it was `app.avalon.desktop` before the rename to
+moved, but the bundle ID has — it was `app.rally.desktop` before the rename to
 Rally — so the release that carries the rename cannot reach an installed Avalon
 build through the ordinary update path, and needs a deliberate manual-reinstall
 migration instead. That is a release-sequencing decision rather than a packaging
@@ -215,7 +215,7 @@ the stable block ID and a distinct audience, so they cannot authorize a source
 feed or parent control socket. The ticket travels in
 `Sec-WebSocket-Protocol` — the one handshake header a browser will set, through
 the `WebSocket` constructor's `protocols` argument — as the sentinel
-`avalon.ticket.v1` followed by the ticket. Current clients never place it in the
+`rally.ticket.v1` followed by the ticket. Current clients never place it in the
 query string: Cloudflare records whole request URLs into the invocation log, the
 Logpush export, and trace spans, and no redaction in this repository can reach
 them. Legacy workspace/work-stream/substream/dictation issuers retain a query
@@ -695,7 +695,7 @@ provisioning profile.
 
 The bundle identifier is the expensive part, and it is not only a TCC and
 login-item reset. **Squirrel.Mac cannot update across a bundle-ID change**, per
-the macOS distribution section above, so an installed `app.avalon.desktop` build
+the macOS distribution section above, so an installed `app.rally.desktop` build
 cannot receive this release through the update feed it already polls: the rename
 has to reach those installs as a manual reinstall. Keeping the identifier would
 have avoided that entirely, at the cost of an `avalon` string in the shipped

@@ -90,7 +90,7 @@ export async function symbolicateNativeCrash(
       '--no-same-permissions',
     ]);
     const output = await execute(executor, [
-      '/usr/local/bin/avalon-symbolicate',
+      '/usr/local/bin/rally-symbolicate',
       DUMP_PATH,
       SYMBOL_DIRECTORY,
     ]);

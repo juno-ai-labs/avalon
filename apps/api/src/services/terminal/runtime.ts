@@ -22,8 +22,8 @@ import type { TerminalTaskRecord } from "../../durable-objects/workstream-termin
 import type { TerminalRepositorySelector } from "./repository-selection";
 
 const ROOT = "/workspace";
-const RESOURCE_ROOT = ".avalon/resources";
-const OUTPUT_ROOT = ".avalon-output";
+const RESOURCE_ROOT = ".rally/resources";
+const OUTPUT_ROOT = ".rally-output";
 const MAX_PROVIDER_CAPTURE_BYTES = 128 * 1_024;
 const MAX_COMMAND_LOG_BYTES = 5_000_000;
 const OUTPUT_LIMIT_MARKER_RESERVE_BYTES = 256;
@@ -307,7 +307,7 @@ export function createDaytonaTerminalRuntime(
     async writeFile(context, filePath, bytes) {
       const sandbox = await acquire(context);
       const target = await resolveInsideRoot(context, sandbox, filePath);
-      const temporary = `${ROOT}/.avalon/tmp/${newId()}`;
+      const temporary = `${ROOT}/.rally/tmp/${newId()}`;
       await provider.writeFile(sandbox.providerSandboxId, temporary, bytes, context.signal);
       const result = await provider.runCommand(sandbox.providerSandboxId, {
         taskName: `avalon-write-${newId()}`,
@@ -324,7 +324,7 @@ export function createDaytonaTerminalRuntime(
     async applyPatch(context, patch) {
       const parsed = parsePatch(patch);
       const sandbox = await acquire(context);
-      const temporary = `${ROOT}/.avalon/tmp/${newId()}.patch`;
+      const temporary = `${ROOT}/.rally/tmp/${newId()}.patch`;
       await provider.writeFile(sandbox.providerSandboxId, temporary, new TextEncoder().encode(patch), context.signal);
       const result = await provider.runCommand(sandbox.providerSandboxId, {
         taskName: `avalon-patch-${newId()}`,
@@ -502,7 +502,7 @@ export function createDaytonaTerminalRuntime(
           : completeLog;
         try {
           const published = await resources.publishResource(context, {
-            filePath: `.avalon/logs/${effectIntentId}.log`,
+            filePath: `.rally/logs/${effectIntentId}.log`,
             displayName: `Terminal command log ${effectIntentId}`,
             description: outputLimitExceeded
               ? "Bounded command log; provider output exceeded Avalon's capture limit."

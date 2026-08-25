@@ -17,7 +17,7 @@ const eventId = "018f22f2-4c22-7abc-8def-0123456789ab";
 
 function event(): TelemetryEnvelope {
   return {
-    schema: "com.avalon.telemetry.event",
+    schema: "ai.rallywith.telemetry.event",
     schemaVersion: 1,
     contextSchemaVersion: 2,
     eventId,
@@ -54,7 +54,7 @@ function event(): TelemetryEnvelope {
 
 function backendEvent(): TelemetryEnvelope {
   return {
-    schema: "com.avalon.telemetry.event",
+    schema: "ai.rallywith.telemetry.event",
     schemaVersion: 1,
     eventId: "018f22f2-4c22-7abc-8def-0123456789ac",
     name: "api_operation_outcome",

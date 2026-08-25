@@ -11,7 +11,7 @@ function productEvent(
   overrides: Partial<Pick<TelemetryEnvelope, "eventId" | "originalTimestamp" | "sentAt" | "properties">> = {},
 ): TelemetryEnvelope {
   return {
-    schema: "com.avalon.telemetry.event",
+    schema: "ai.rallywith.telemetry.event",
     schemaVersion: 1,
     eventId,
     name: "onboarding_region_selected",

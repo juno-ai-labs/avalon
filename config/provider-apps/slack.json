@@ -40,13 +40,13 @@
       {
         "name": "Start an Avalon task",
         "type": "global",
-        "callback_id": "avalon_start_task",
+        "callback_id": "rally_start_task",
         "description": "Delegate a new durable task to Avalon."
       },
       {
         "name": "Work on this with Avalon",
         "type": "message",
-        "callback_id": "avalon_work_on_message",
+        "callback_id": "rally_work_on_message",
         "description": "Start an Avalon task using this message as context."
       }
     ],
