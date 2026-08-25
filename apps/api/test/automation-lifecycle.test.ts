@@ -421,6 +421,56 @@ describe("automation lifecycle", () => {
     )).toEqual({ archived: 1 });
   });
 
+  it("leaves a planned work stream alone when its run has already begun", async () => {
+    const database = seededDatabase();
+    database.exec(`
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, automation_subscription_id, automation_run_id,
+         planned_for, harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES ('00000000-0000-7000-8000-00000000001a', '00000000-0000-7000-8000-000000000001', 'Daily product brief',
+              'Write the brief', 'automation', '00000000-0000-7000-8000-000000000007',
+              '00000000-0000-7000-8000-00000000001b', '2026-01-02T16:00:00.000Z', 'scheduled', 1,
+              '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO automation_runs
+        (id, workspace_id, automation_subscription_id, workstream_id, trigger_type, planned_for,
+         started_at, status, created_at)
+      VALUES ('00000000-0000-7000-8000-00000000001b', '00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000007', '00000000-0000-7000-8000-00000000001a', 'schedule',
+              '2026-01-02T16:00:00.000Z', NULL, 'scheduled', '2026-01-01');
+    `);
+    // The window the object's own fence exists for. The regional run row still
+    // says `scheduled` with no start, so the delete selects this work stream —
+    // but the harness has claimed its attempt in the meantime, and the object
+    // says so. Archiving it would take a live run out of every listing while it
+    // is still writing into it.
+    const objectStore = testWorkstreamObjectStore();
+    databases.push(objectStore);
+    seedWorkstreamObjectRoot(objectStore, {
+      workstreamId: "00000000-0000-7000-8000-00000000001a",
+      workspaceId: "00000000-0000-7000-8000-000000000001",
+    });
+    storesFor(database).set("00000000-0000-7000-8000-00000000001a", objectStore);
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO workstreams
+         (id, workspace_id, title, objective, origin_type, created_by_user_id, automation_subscription_id,
+          automation_run_id, planned_for, harness_status, last_activity_at, created_at, updated_at)
+       VALUES (?, ?, 'Daily product brief', 'Write the brief', 'automation', NULL, ?,
+               ?, '2026-01-02T16:00:00.000Z', 'running', '2026-01-01', '2026-01-01', '2026-01-01')`,
+      "00000000-0000-7000-8000-00000000001a",
+      "00000000-0000-7000-8000-000000000001",
+      "00000000-0000-7000-8000-000000000007",
+      "00000000-0000-7000-8000-00000000001b",
+    );
+
+    await serviceFor(database).deleteAutomation("00000000-0000-7000-8000-000000000007");
+
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT archived_at, harness_status FROM workstreams WHERE id = ?",
+      "00000000-0000-7000-8000-00000000001a",
+    )).toEqual({ archived_at: null, harness_status: "running" });
+  });
+
   it("refuses inbound email to a deleted automation's address", async () => {
     const database = seededDatabase();
     const service = serviceFor(database);
