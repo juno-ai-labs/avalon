@@ -63,6 +63,7 @@ interface SidebarProps {
   automationWorkspaceTemplatesAvailable?: boolean;
   onArchiveDraftAutomation: (automation: AutomationSummary) => Promise<void>;
   onArchiveNote: (note: NoteSummary) => Promise<void>;
+  onArchiveWorkstream: (workstream: WorkstreamSummary) => Promise<void>;
   onChangeNoteScope: (note: NoteSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onChangeWorkstreamScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onDeleteAutomation: (automation: AutomationSummary) => Promise<void>;
@@ -421,6 +422,7 @@ function WorkstreamRow({
   workstream,
   pinPending,
   scopePending,
+  onArchive,
   onChangeScope,
   onMarkUnread,
   onRename,
@@ -433,6 +435,7 @@ function WorkstreamRow({
   workstream: WorkstreamSummary;
   pinPending: boolean;
   scopePending: boolean;
+  onArchive: (workstream: WorkstreamSummary) => void;
   onChangeScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => void;
   onMarkUnread: (workstream: WorkstreamSummary) => void;
   onRename: (workstream: WorkstreamSummary) => void;
@@ -624,8 +627,13 @@ function WorkstreamRow({
           )}
           {debugEnabled && <CopyWorkstreamLinkItem workstreamId={workstream.id} />}
           <ContextMenu.Separator className="menu-separator" />
-          <ContextMenu.Item className="menu-item menu-item-danger">
-            <Archive aria-hidden="true" size={16} /> Archive
+          {/* Names its noun, as every other destructive item in these menus
+              does — "Archive note", "Archive draft", "Delete automation". A
+              bare "Archive" under Mark as unread and Rename reads as archiving
+              the messages rather than removing the work stream from everyone's
+              sidebar for good. */}
+          <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onArchive(workstream)}>
+            <Archive aria-hidden="true" size={16} /> Archive work stream
           </ContextMenu.Item>
         </ContextMenu.Content>
       </ContextMenu.Portal>
@@ -772,6 +780,7 @@ export function Sidebar({
   automationWorkspaceTemplatesAvailable = false,
   onArchiveDraftAutomation,
   onArchiveNote,
+  onArchiveWorkstream,
   onChangeNoteScope,
   onChangeWorkstreamScope,
   onDeleteAutomation,
@@ -843,6 +852,8 @@ export function Sidebar({
   const draggingWorkstreamId = useRef<string | null>(null);
   const [archiveNoteTarget, setArchiveNoteTarget] = useState<NoteSummary | null>(null);
   const [archivingNote, setArchivingNote] = useState(false);
+  const [archiveWorkstreamTarget, setArchiveWorkstreamTarget] = useState<WorkstreamSummary | null>(null);
+  const [archivingWorkstream, setArchivingWorkstream] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -1038,6 +1049,43 @@ export function Sidebar({
       });
     } finally {
       setArchivingNote(false);
+    }
+  };
+
+  const closeArchiveWorkstream = (): void => {
+    if (archivingWorkstream) return;
+    setArchiveWorkstreamTarget(null);
+  };
+
+  // Confirmed for the reason the note's archive is, with one more behind it: a
+  // work stream is shared, so this takes it out of the sidebar of everybody in
+  // it rather than only the reader who right-clicked. The row leaves through
+  // the directory tombstone WorkstreamDO pushes, so there is nothing to patch
+  // here — a failure means the row simply stayed, which is what the dialog on
+  // the way out says.
+  const submitArchiveWorkstream = async (): Promise<void> => {
+    if (!archiveWorkstreamTarget) return;
+    setArchivingWorkstream(true);
+    try {
+      await onArchiveWorkstream(archiveWorkstreamTarget);
+      reportTelemetryProductIntent({
+        kind: 'workstream_action_completed',
+        workstreamId: archiveWorkstreamTarget.id,
+        action: 'archive',
+        visibility: telemetryVisibility(archiveWorkstreamTarget.scope),
+        origin: archiveWorkstreamTarget.systemKind ? 'system' : archiveWorkstreamTarget.origin,
+        pinned: archiveWorkstreamTarget.pinPosition !== null,
+      });
+      setArchiveWorkstreamTarget(null);
+    } catch (error) {
+      setArchiveWorkstreamTarget(null);
+      setMenuError({
+        title: 'Work stream could not be archived',
+        copy: 'The work stream is still in the sidebar. Try again in a moment.',
+        message: error instanceof Error ? error.message : 'The work stream could not be archived.',
+      });
+    } finally {
+      setArchivingWorkstream(false);
     }
   };
 
@@ -1441,6 +1489,7 @@ export function Sidebar({
                     debugEnabled={debugEnabled}
                     drag={pinnedRowDrag(pinned, index)}
                     key={pinned.id}
+                    onArchive={setArchiveWorkstreamTarget}
                     onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
                     onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
                     onRename={openRename}
@@ -1492,6 +1541,7 @@ export function Sidebar({
                         commandShortcutsVisible={commandShortcutsVisible}
                         debugEnabled={debugEnabled}
                         key={item.id}
+                        onArchive={setArchiveWorkstreamTarget}
                         onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
                         onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
                         onRename={openRename}
@@ -1653,6 +1703,32 @@ export function Sidebar({
           <strong>{archiveNoteTarget?.title}</strong> leaves the sidebar, stops being offered as a
           resource, and stops reaching the agent. Its transcript is kept, but Rally has no way to
           bring the note back yet.
+        </p>
+      </Modal>
+      <Modal
+        footer={(
+          <>
+            <Button disabled={archivingWorkstream} onClick={closeArchiveWorkstream}>Cancel</Button>
+            <Button
+              className="button-danger"
+              disabled={archivingWorkstream}
+              onClick={() => void submitArchiveWorkstream()}
+            >
+              Archive
+            </Button>
+          </>
+        )}
+        onOpenChange={(open) => {
+          if (!open) closeArchiveWorkstream();
+        }}
+        open={Boolean(archiveWorkstreamTarget)}
+        title="Archive work stream"
+      >
+        <p className="modal-copy">
+          <strong>{archiveWorkstreamTarget?.title}</strong> leaves the sidebar for everyone who can
+          see it, and nobody — you included — will be able to open it again. A run still in flight
+          is stopped, scheduled follow-ups stop, and mail to its address is refused. Nothing is
+          deleted, but Rally has no way to bring a work stream back.
         </p>
       </Modal>
       <Modal

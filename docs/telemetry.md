@@ -124,7 +124,7 @@ visibility, origin, participant count, opening-attachment count, and model
 override from stored rows. Connector attribution is the canonical connector type
 or a bounded unique list for a multi-source suggestion—never a connection or
 provider-account ID. Successful resource
-menus record work-stream pin/visibility/unread/rename changes, note
+menus record work-stream pin/visibility/unread/rename/archive changes, note
 visibility/archive changes, and automation run/archive/delete actions. Message
 creation is server-owned across desktop, Slack, and email channels and records
 counts but no text. Elicitation presentation and resolution carry a stable
@@ -134,9 +134,7 @@ the owning resource UUID only after the clipboard write succeeds. Notes record
 create/open/reopen plus transcription start/pause/resume/complete with their
 actual audio-source class. These events may carry opaque work-stream, message,
 note, automation, and run UUIDs for pathing and joins, but never titles, bodies,
-clipboard values, prompts, transcripts, or provider content. The currently inert
-work-stream Archive menu row emits nothing; adding the actual archive operation
-must add completion telemetry at the same time.
+clipboard values, prompts, transcripts, or provider content.
 
 Work-stream collaboration records authoritative participant changes, resource
 attach/detach/watch/preview/open-source outcomes, stop/retry actions, unread
