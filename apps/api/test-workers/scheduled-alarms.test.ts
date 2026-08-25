@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { substreamAgentName, workspaceDOName } from "../src/durable-objects/names";
 import {
   SCHEDULED_ALARM_DRAIN_LIMIT,
+  SCHEDULED_ALARM_RETRY_BASE_MS,
   ScheduledAlarmStore,
   scheduledAlarmRetryDelay,
   type ScheduledAlarm,
@@ -44,6 +45,7 @@ interface AlarmScheduling {
   }): Promise<void>;
   cancelScheduledAlarm(kind: string, key: string): Promise<boolean>;
   armNextAlarm(): Promise<number | null>;
+  armAlarmBeforeDueWork(now: number): Promise<unknown>;
   drainDueScheduledAlarms(now: number): Promise<ScheduledAlarmRun[]>;
   gateStalledScheduledAlarms(ran: readonly ScheduledAlarmRun[], now: number): void;
   runScheduledAlarm(alarm: ScheduledAlarm): Promise<ScheduledAlarmOutcome>;
@@ -147,6 +149,41 @@ describe("the shared Durable Object alarm list", () => {
       const armed = await state.storage.getAlarm();
       expect(armed).not.toBeNull();
       expect(armed!).toBeGreaterThan(before);
+    });
+  });
+
+  it("re-arms due work at a recovery horizon before running it", async () => {
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      const store = new ScheduledAlarmStore(state.storage.sql);
+      const now = Date.now();
+      store.schedule({ kind: "schedule", key: "overdue", dueAt: now - 60_000 }, now);
+
+      await scheduling(instance).armAlarmBeforeDueWork(now);
+
+      // The source entry stays durable until the handler settles it, so this
+      // later wake recovers a cancelled continuation. The old exact pre-arm
+      // used `now + 1`, creating a second alarm invocation that the successful
+      // handler's final re-arm immediately replaced and Cloudflare cancelled.
+      expect(await state.storage.getAlarm()).toBe(now + SCHEDULED_ALARM_RETRY_BASE_MS);
+      expect(store.get("schedule", "overdue")?.dueAt).toBe(now - 60_000);
+    });
+  });
+
+  it("keeps an earlier future deadline while parking already-due work for recovery", async () => {
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      const store = new ScheduledAlarmStore(state.storage.sql);
+      const now = Date.now();
+      const future = now + SCHEDULED_ALARM_RETRY_BASE_MS / 2;
+      store.schedule({ kind: "schedule", key: "overdue", dueAt: now - 60_000 }, now);
+      store.schedule({ kind: "schedule", key: "future", dueAt: future }, now);
+
+      await scheduling(instance).armAlarmBeforeDueWork(now);
+
+      expect(await state.storage.getAlarm()).toBe(future);
     });
   });
 
