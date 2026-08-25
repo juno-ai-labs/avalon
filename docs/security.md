@@ -98,13 +98,14 @@ are canonical storage services, not authorization layers.
   window that is deliberately *less* privileged than any other: no preload and
   therefore no bridge, no Node, no devtools, sandboxed, and served a document
   under `default-src 'none'; img-src data: https:; style-src 'unsafe-inline'`.
-  That document is built from text a model wrote, so it is given a scheme of its
-  own — `rally-export://`, one in-memory document per single-use token — rather
-  than the renderer's origin. Its IPC entry point parses all four fields of the
-  request, and the file name it proposes to the save dialog is *rejected* unless
-  it matches `^[a-z0-9][a-z0-9-]{0,79}$`, because that name is derived from the
-  message's own text. The only thing written is the file the person chose in a
-  native dialog. [`message-export.md`](message-export.md) owns the mechanism.
+  That document is built from text a model wrote, so it is given a scheme of
+  its own — `rallywithai-export://`, one in-memory document per single-use
+  token — rather than the renderer's origin. Its IPC entry point parses all four
+  fields of the request, and the file name it proposes to the save dialog is
+  *rejected* unless it matches `^[a-z0-9][a-z0-9-]{0,79}$`, because that name is
+  derived from the message's own text. The only thing written is the file the
+  person chose in a native dialog. [`message-export.md`](message-export.md)
+  owns the mechanism.
 - The native Settings window uses the same sandbox, preload, CSP, navigation
   denial, and regional session bridge as the main window. **Command-,** opens a
   singleton window rather than a privileged remote page.
@@ -516,8 +517,8 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   `-1`, and raw values, Zod messages, regexes, and unmasked request bodies do not
   enter the log.
 - **A document built out of model output is never same-origin with the
-  application.** The exported message card gets `rally-export://`, no preload,
-  and a policy that forbids script; putting it on `app://rally` would buy one
+  application.** The exported message card gets `rallywithai-export://`, no preload,
+  and a policy that forbids script; putting it on `app://rallywithai` would buy one
   fewer scheme at the price of the boundary.
 - **A webhook is verified against its exact raw body before anything parses,
   stores, or queues it.**
@@ -642,11 +643,11 @@ incident response that may prompt it.
 
 ## Changelog
 
-### 2026-08-25 — The renderer origin is app://rally, and both are admitted
+### 2026-08-25 — The renderer origin is app://rallywithai, and both are admitted
 
-**What changed:** The packaged renderer serves from `app://rally`. Both regional
-Workers list `app://rally` and `app://avalon` in `ALLOWED_ORIGINS`. The saved
-message card's scheme became `rally-export://`.
+**What changed:** The packaged renderer serves from `app://rallywithai`. Both regional
+Workers list `app://rallywithai` and `app://avalon` in `ALLOWED_ORIGINS`. The saved
+message card's scheme became `rallywithai-export://`.
 
 **Why:** The rebrand to Rally reached the two internal schemes. The renderer
 origin is not merely internal — it is the `Origin` header on every API request
