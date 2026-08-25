@@ -34,7 +34,7 @@ export const TERMINAL_SNAPSHOT_PROBES: readonly TerminalSnapshotProbe[] = [
 export function terminalManagedSnapshotBootstrapCommand(): string {
   return [
     "set -euo pipefail",
-    "sudo -n install -d -o \"$(id -u)\" -g \"$(id -g)\" -m 700 /workspace /workspace/.avalon /workspace/.rally-output /workspace/.rally/resources /workspace/.rally/tmp",
+    "sudo -n install -d -o \"$(id -u)\" -g \"$(id -g)\" -m 700 /workspace /workspace/.rally /workspace/.rally-output /workspace/.rally/resources /workspace/.rally/tmp",
     "system_packages=''",
     "installed_capabilities=''",
     "if ! command -v sqlite3 >/dev/null 2>&1; then system_packages=\"$system_packages sqlite3\"; installed_capabilities=\"$installed_capabilities,sqlite3\"; fi",

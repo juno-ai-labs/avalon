@@ -38,9 +38,24 @@ function base64UrlDecode(value: string): Uint8Array {
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
-async function purposeSeparatedSecret(secret: string): Promise<string> {
+/**
+ * The domain separator this build mints with, and the one it still verifies.
+ *
+ * A cursor is valid for an hour and is held by an agent run between paginated
+ * tool calls, so a deploy lands mid-run: the run seals a cursor under the old
+ * separator and presents it to a Worker that has already moved. Verifying
+ * against both spellings keeps that run going. Remove the superseded entry once
+ * an hour has passed since the deploy that introduced it — nothing older can
+ * still be presented.
+ */
+const CURSOR_DOMAIN_SEPARATOR = "rally:attachment-cursor:v1";
+const SUPERSEDED_CURSOR_DOMAIN_SEPARATORS: readonly string[] = Object.freeze([
+  "avalon:attachment-cursor:v1",
+]);
+
+async function purposeSeparatedSecret(secret: string, separator: string): Promise<string> {
   if (!secret) throw new Error("Attachment cursor signing key is not configured");
-  return hmacSha256(secret, "rally:attachment-cursor:v1");
+  return hmacSha256(secret, separator);
 }
 
 export async function sealAttachmentCursor(
@@ -49,7 +64,7 @@ export async function sealAttachmentCursor(
 ): Promise<string> {
   const payload = AttachmentCursorPayloadSchema.parse({ version: 1, ...input });
   const encoded = base64UrlEncode(encoder.encode(JSON.stringify(payload)));
-  const signature = await hmacSha256(await purposeSeparatedSecret(secret), encoded);
+  const signature = await hmacSha256(await purposeSeparatedSecret(secret, CURSOR_DOMAIN_SEPARATOR), encoded);
   const cursor = `${encoded}.${signature}`;
   if (cursor.length > MAXIMUM_CURSOR_LENGTH) {
     throw new AttachmentCursorError("invalid_cursor", "Attachment cursor is too large");
@@ -72,8 +87,15 @@ export async function openAttachmentCursor(
     const parts = cursor.split(".");
     if (parts.length !== 2) throw new Error("Invalid cursor shape");
     const [encoded, receivedSignature] = parts as [string, string];
-    const expectedSignature = await hmacSha256(await purposeSeparatedSecret(secret), encoded);
-    if (!timingSafeEqualText(receivedSignature, expectedSignature)) throw new Error("Invalid signature");
+    // Every separator is tried rather than short-circuiting on the first
+    // match, so verification cost does not depend on which spelling signed the
+    // cursor; `timingSafeEqualText` guards the comparison itself.
+    let signatureMatched = false;
+    for (const separator of [CURSOR_DOMAIN_SEPARATOR, ...SUPERSEDED_CURSOR_DOMAIN_SEPARATORS]) {
+      const expectedSignature = await hmacSha256(await purposeSeparatedSecret(secret, separator), encoded);
+      if (timingSafeEqualText(receivedSignature, expectedSignature)) signatureMatched = true;
+    }
+    if (!signatureMatched) throw new Error("Invalid signature");
     const payload = AttachmentCursorPayloadSchema.parse(JSON.parse(decoder.decode(base64UrlDecode(encoded))));
     if (payload.purpose !== expected.purpose
       || payload.principal !== expected.principal
