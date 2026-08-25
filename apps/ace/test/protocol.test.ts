@@ -9,6 +9,7 @@ describe('Ace managed flag protocol', () => {
       'meeting-recording-enabled',
       'suggested-work-enabled',
       'automation-workspace-templates-enabled',
+      'digests-enabled',
     ]);
     expect(MANAGED_FLAGS.map((flag) => flag.key)).toEqual(ProductFeatureFlagKeySchema.options);
     for (const flag of MANAGED_FLAGS) {
