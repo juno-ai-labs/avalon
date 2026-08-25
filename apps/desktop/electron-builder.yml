@@ -1,6 +1,6 @@
 appId: ai.rallywith.desktop
 productName: Rally
-copyright: Copyright © 2026 Rally
+copyright: Copyright © 2026 Juno AI Labs Inc
 asar: true
 artifactName: Rally-${version}-${os}-${arch}.${ext}
 afterPack: ./scripts/sign-macos-dock-plugin.mjs
