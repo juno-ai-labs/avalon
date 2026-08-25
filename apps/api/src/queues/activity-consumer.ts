@@ -860,6 +860,7 @@ async function startActivityAutomation(
         automationRunId: runId,
         plannedFor: null,
         modelOverride: modelOverride,
+        now: Date.parse(now),
       });
       await createHarnessRunObjectPort(
         executionEnv,
