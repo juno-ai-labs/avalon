@@ -40,7 +40,7 @@ import { ApiError } from "../lib/api-error";
 import { connectionFromRow } from "../mappers/connection";
 import { connectorRegistryForEnv, githubConnectorConfig, xConnectorConfig } from "../lib/connector-registry";
 import { encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
-import { connectorAttemptTarget, normalizeConnectorOAuthErrorCode } from "../lib/desktop-handoff";
+import { compatibleDesktopDeepLink, connectorAttemptTarget, normalizeConnectorOAuthErrorCode } from "../lib/desktop-handoff";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { createRegionRoutedState } from "../lib/region-routed-state";
 import { withAuthorizedConnection } from "./connector-connection-access";
@@ -2525,7 +2525,9 @@ export class ConnectionService {
         input.statePayload,
         input.auth.userId,
         input.auth.workspaceId,
-        this.env.DESKTOP_DEEP_LINK_URI,
+        // Connector start carries no caller scheme to record, unlike identity's
+        // `returnUri`, so this stores the scheme every live build answers to.
+        compatibleDesktopDeepLink(this.env).toString(),
         input.expiresAt,
       ).run();
     } catch (error) {

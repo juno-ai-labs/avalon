@@ -199,7 +199,12 @@ function webPageContext(envelope: TelemetryEnvelope, webBaseUrl: string): Record
   const referringDomain = envelope.properties["referringDomain"];
   const base = new URL(webBaseUrl);
   return {
-    $current_url: new URL(pathname, base).toString(),
+    // Concatenated onto the origin rather than resolved against it: the
+    // telemetry schema admits a pathname beginning with `//`, which `new URL`
+    // reads as a network-path reference and resolves to a different host
+    // entirely. It is reachable by visiting a doubled-slash path on our own
+    // site, and would report someone else's host as ours.
+    $current_url: `${base.origin}${pathname}`,
     $pathname: pathname,
     $host: base.host,
     ...(typeof referringDomain === "string"
