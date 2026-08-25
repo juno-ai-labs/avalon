@@ -1,11 +1,9 @@
 import { ParticipantSchema, type ExternalActor, type Scope } from "@avalon/contracts";
-import { buildParticipantUpsertStatement } from "@avalon/db";
 
 import type { Env } from "../env";
 import { logWarn } from "../observability/logger";
 import { publishWorkstreamEvent } from "./integrations";
 import { resolveConnectorActorIdentities } from "./connector-actor-identity";
-import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
@@ -167,11 +165,6 @@ export async function admitConnectorAudience(
   // the Durable Object, and the D1 copy is fenced. User profiles stay regional,
   // which is why the roster read below is split in two instead of joining
   // `users` from inside the object.
-  const executionEnv = await workstreamExecutionEnvironment(
-    env,
-    input.workspaceId,
-    input.workstreamId,
-  );
   const identity = createIdentityObjectPort(env, input.workspaceId, input.workstreamId);
   // The `user_id IN (json_each(?))` narrowing is gone with the statement. The
   // roster of one work stream is small and this call already holds the list it
@@ -179,16 +172,16 @@ export async function admitConnectorAudience(
   // authority a bound-parameter list that grows with the audience.
   const activeUserIds = new Set((await identity.participants()).map((row) => row.user_id));
   const newlyAdmittedUserIds = userIds.filter((userId) => !activeUserIds.has(userId));
-  const results = await executionEnv.DB.batch(userIds.map((userId) => buildParticipantUpsertStatement(executionEnv.DB, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
+  const now = Date.now();
+  // The upsert's `WHERE EXISTS (SELECT 1 FROM workstreams …)` is the identity
+  // check the port makes before it dispatches, and the batch's atomicity was
+  // never across work streams — every statement in it named this one.
+  await Promise.all(userIds.map((userId) => identity.admitParticipant({
     userId,
     addedByUserId: input.addedByUserId ?? userId,
     reason: "explicit",
+    now,
   })));
-  if (results.some((result) => !result.success)) {
-    throw new Error("Could not admit the connector conversation audience");
-  }
   if (newlyAdmittedUserIds.length === 0) return;
   // The `JOIN workstreams` here proved nothing the object does not already
   // know: it re-checked that the participant's work stream belongs to this

@@ -535,29 +535,24 @@ async function evaluate(
   // retitled the work stream while the model was thinking wins: theirs is the
   // more recent statement of intent, and silently overwriting it is the one
   // outcome that would make this loop untrustworthy.
-  const applied = await env.DB.prepare(
-    `UPDATE workstreams
-        SET objective = ?, description_source = 'derived', updated_at = ?
-      WHERE id = ? AND workspace_id = ? AND objective = ?`,
-  ).bind(
-    verdict.description,
-    now.toISOString(),
-    input.workstreamId,
-    input.workspaceId,
-    workstream.objective,
-  ).run();
-  if ((applied.meta?.changes ?? 0) === 0) {
+  const applied = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+    .redescribe({
+      description: verdict.description,
+      expectedDescription: workstream.objective,
+      now: now.getTime(),
+    });
+  if (applied.outcome === "superseded") {
     // `description` is what is in force after this evaluation, and after a
     // refusal that is whatever the other writer put there — not the text this
-    // evaluation read. Re-read it rather than record the superseded value.
-    const inForce = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
-      .identity();
+    // evaluation read. The authority hands it back from inside the transaction
+    // that refused, rather than leaving this to a second read of a row that
+    // could move again between the two.
     await recordOutcome(env, input, scheduling, claim, {
       decision: "rejected",
       rejectionCode: "description_changed_during_evaluation",
       model: evaluatedModel,
       previousDescription: workstream.objective,
-      description: inForce?.description ?? null,
+      description: applied.description,
       confidence: proposal.confidence,
       reasoning: proposal.reasoning.slice(0, 2_000),
       windowMessageCount: window.messages.length,
