@@ -898,6 +898,17 @@ const addressingJsonSchema = {
   required: ["classification", "confidence", "rationaleCode"]
 };
 
+/**
+ * Does the message name the product?
+ *
+ * Both spellings, deliberately. `rally` is what the agent now calls itself, and
+ * `avalon` is what a member who has been here a while still types — and unlike a
+ * stored identifier there is no cost to recognizing an extra word, while the
+ * cost of missing one is that a person addresses the agent by name and gets
+ * silence, because this is a fast path that returns without invoking the model.
+ */
+const PRODUCT_REFERENCE_PATTERN = /\b(rally|avalon)\b/iu;
+
 export function classifyAddressingHeuristically(input: {
   message: string;
   activeTask: boolean;
@@ -908,7 +919,7 @@ export function classifyAddressingHeuristically(input: {
   if ((input.connectorMentions?.length ?? 0) > 0) {
     return { classification: "agent_action", confidence: 0.98, rationaleCode: "connector_mention" };
   }
-  if (input.addressesRally || /\bavalon\b/i.test(text)) {
+  if (input.addressesRally || PRODUCT_REFERENCE_PATTERN.test(text)) {
     return { classification: "agent_action", confidence: 0.96, rationaleCode: "rally_reference" };
   }
   if (/^(please\s+)?(find|check|create|draft|send|review|summarize|investigate|update|compare|prepare)\b/i.test(text)) {
@@ -951,7 +962,7 @@ export async function classifyAddressing(input: {
       message: input.message,
       activeTask: input.activeTask,
       connectorMentions: input.connectorMentions ?? [],
-      addressesRally: input.addressesRally ?? /\bavalon\b/iu.test(input.message),
+      addressesRally: input.addressesRally ?? PRODUCT_REFERENCE_PATTERN.test(input.message),
       recentMessages: input.recentMessages ?? [],
     }),
     schemaName: "message_addressing",
