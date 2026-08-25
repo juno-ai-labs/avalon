@@ -228,6 +228,13 @@ than whichever rejection landed first.
   only a caller that *knows* the audience is wider — an ingress reading a public
   channel — says `workspace`. See
   [`data-model.md`](data-model.md#2026-08-21--a-work-stream-is-born-private).
+- **Everybody named is told, the creator is not.** Each id in
+  `participantUserIds` gets the activity event and the Slack-or-email
+  notification that being added to an existing work stream produces, behind
+  their own directory row; the creator is looking at the work stream they just
+  started. A create path added later inherits neither — seating somebody and
+  telling them are separate effects. See
+  [`workstream-durable-object.md`](workstream-durable-object.md#2026-08-25--being-named-at-creation-tells-the-person-too).
 - **Both launchers seed both queries, through `launchedWorkstreamDetail`.** The
   work-stream screen loads on either query being absent, so seeding one of the
   two still lands on the full-screen orb; and two hand-built details would drift

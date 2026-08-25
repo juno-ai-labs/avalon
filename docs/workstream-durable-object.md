@@ -1108,6 +1108,60 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-25 — Being named at creation tells the person too
+
+**What changed:** `initialize` now emits the same three effects per invited
+participant that `addParticipant` does — their viewer projection, a
+`workstream_participant_added` activity event, and a `participant_notification`
+gated on the projection version that viewer effect just wrote — for everybody in
+`participantUserIds` other than the creator. The identities are the ones
+`addParticipant` mints (`participant:<work stream>:<user>:0` and
+`participant_added:<work stream>:<user>:0`), with the epoch a literal zero
+because the rows are inserted by the same call and nothing can have removed them
+yet. The two person-notification email templates now say Rally, matching the
+Slack half of the same pair.
+
+**Why:** the entry below deferred exactly this and called it "a different path
+with a different audience question". It is neither. It is the *ordinary* path:
+the new-work-stream screen has an "Add people" step, so being picked there is
+how most people are put in a work stream, and every one of them reached
+`participants` with only their sidebar row enqueued — no Slack DM, no email, and
+no `activity_events` row for the digest to fall back on. The hole is permanent
+rather than merely late, because the repair anybody would reach for does not
+work: adding somebody already active is a deliberate no-op that emits only the
+viewer effect, so a second, manual add tells them nothing either. That is the
+same "a colleague added to a work stream, told by nobody, who then could not
+find it" report the entry below was written to close, arriving through the door
+it left open.
+
+The audience question it was deferred over has one answer, and the code below
+already made it: the creator is not told (they are looking at the work stream
+they just started), and everybody else is. There is no third case on this path
+— `participantUserIds` is people a person picked by hand.
+
+**Considered and rejected:** re-emitting the notification from the replay branch,
+which repairs an effect-construction failure by calling
+`enqueueDirectorySnapshot`. Directory effects are safe to re-enqueue because
+they *write* the projection key they are versioned on, so an unchanged snapshot
+is skipped and a changed one advances. A notification is versioned on a key it
+only reads, so re-emitting one after the root has moved recomputes a different
+`requiredProjectionVersion`, and the outbox refuses the same message id under a
+new payload hash — turning a rare lost notification into work-stream creation
+that cannot be retried. The crash window between `initialize`'s root commit and
+its effect commit therefore still loses the notification, as it always has; that
+is a smaller and quieter failure than wedging the create path, and closing it
+means giving `initialize` one transaction, which it cannot have because
+`commitWithRegionalEffects` requires the authority this call is what establishes.
+
+**Consequences, and what a future change has to respect:** the two paths mint one
+identity per participation and must keep doing so — the epoch here is zero
+precisely so that a hand-add of the same person converges on the intent this
+already enqueued rather than minting a second. A notification effect must stay
+immediately behind its own recipient's viewer effect in the returned array,
+because the array's order *is* the arming: `commitWithRegionalEffects` reads the
+projection key in the same loop pass. Adding a third path that seats somebody
+(`provision`, `admitConnectorAudience`) inherits neither of those for free.
+
 ### 2026-08-25 — Hibernation replay misses stay on the child socket
 
 **What changed:** When a resume cursor is behind the durable room sequence but

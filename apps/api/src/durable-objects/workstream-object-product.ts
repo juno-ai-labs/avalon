@@ -509,6 +509,17 @@ export class WorkstreamObjectProductService {
         workflowInput: this.workflowInput(input, asHarnessRunId(run.run_id), part.id),
       };
     }
+    // Everybody the creator named on the way in, which is every add on this
+    // path: the creator is looking at the work stream they just started and is
+    // not news to themselves.
+    const invitedUserIds = memberIds.filter((userId) => userId !== input.creatorUserId);
+    // Read before the commit for the reason `addParticipant` states: the
+    // effects that carry these names are built inside it, and an effect
+    // callback runs against object SQL and cannot await a regional round trip.
+    const names = invitedUserIds.length === 0
+      ? new Map<string, UserRow>()
+      : await this.messageUsers(memberIds);
+    const actorName = names.get(input.creatorUserId)?.name ?? "A workspace member";
     const now = Date.now();
     const messageId = uuidV7(now);
     const runId = asHarnessRunId(uuidV7(now));
@@ -640,12 +651,80 @@ export class WorkstreamObjectProductService {
       () => undefined,
       () => {
         const root = this.root();
+        const occurredAt = new Date(now).toISOString();
         return [
           { partitionKey: "common", effect: this.commonEffect(root) },
-          ...memberIds.map((userId) => ({
-            partitionKey: `user:${userId}`,
-            effect: this.userEffect(root, userId),
-          })),
+          ...memberIds.flatMap((userId) => {
+            const viewer = {
+              partitionKey: `user:${userId}`,
+              effect: this.userEffect(root, userId),
+            };
+            if (userId === input.creatorUserId) return [viewer];
+            // The epoch is a literal zero rather than a read: these rows are
+            // inserted by the transaction above with `participant_epoch = 0`,
+            // and nothing can have removed them yet. It is in the identity so
+            // that being taken out and brought back later is a new thing to
+            // say rather than a redelivery of this one.
+            //
+            // The same identity `addParticipant` mints, which is what keeps
+            // the two paths from telling one person about one participation
+            // twice: naming somebody here and then adding them again finds
+            // them already active, and that add emits only their viewer row.
+            const sourceId = `participant:${root.workstream_key}:${userId}:0`;
+            const intentId = `participant_added:${root.workstream_key}:${userId}:0`;
+            const recipientName = names.get(userId)?.name ?? "a workspace member";
+            return [
+              viewer,
+              {
+                partitionKey: `activity:${sourceId}`,
+                sourceVersion: 1,
+                dedupeKey: sourceId,
+                effect: {
+                  kind: "activity_event" as const,
+                  eventId: uuidV7(now),
+                  eventType: "workstream_participant_added",
+                  // Nobody said this in the transcript: a person was put in
+                  // the room on the way to opening it.
+                  subjectSequenceNumber: null,
+                  actorType: "user" as const,
+                  actorUserId: input.creatorUserId,
+                  actorLabel: actorName,
+                  title: truncateUtf16Safe(root.title, 500),
+                  body: `${actorName} added ${recipientName} to this work stream.`,
+                  canonicalUrl: null,
+                  digestible: true,
+                  occurredAt,
+                  sourceKind: "workstream_participant",
+                  sourceId,
+                  dedupeKey: sourceId,
+                  metadata: { participantUserId: userId, addedByUserId: input.creatorUserId },
+                  targets: [{ userId, relation: "added" }],
+                },
+              },
+              // After this person's own viewer effect, and immediately after
+              // it, because that is what arms the gate: the notification's
+              // `requiredProjectionVersion` is read from the projection key
+              // the effect above has just advanced, so nobody is told about a
+              // work stream their sidebar cannot yet show them.
+              {
+                partitionKey: `notification:${intentId}`,
+                sourceVersion: 1,
+                dedupeKey: intentId,
+                dependsOnProjectionKey: `user:${userId}`,
+                effect: {
+                  kind: "participant_notification" as const,
+                  intentId,
+                  sourceId,
+                  recipientUserId: userId,
+                  actorUserId: input.creatorUserId,
+                  actorNameSnapshot: actorName,
+                  workstreamTitleSnapshot: truncateUtf16Safe(root.title, 500),
+                  workstreamObjectiveSnapshot: truncateUtf16Safe(root.description, 500),
+                  occurredAt,
+                },
+              },
+            ];
+          }),
         ];
       },
     );

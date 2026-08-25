@@ -165,7 +165,7 @@ Producers today:
 | --- | --- | --- | --- |
 | `WorkstreamService.createMessage` | `workstream.message.posted` | the work stream; mentions become `mentioned` targets | always — everything Rally records here is somebody addressing somebody |
 | Authoritative `SubstreamAgent` regional-effect outbox | `workstream.message.posted` and later first-party work-stream events | the work stream; named targets travel in the same immutable effect | decided by the object mutation; messages are digestible |
-| `WorkstreamObjectProduct.addParticipant` | `workstream_participant_added` | the work stream; the person added is an `added` target | always — being put in a room is addressed at exactly one person |
+| `WorkstreamObjectProduct.addParticipant`, `WorkstreamObjectProduct.initialize` | `workstream_participant_added` | the work stream; the person added is an `added` target | always — being put in a room is addressed at exactly one person. `initialize` writes one per name in `participantUserIds`, never for the creator |
 | `activity-consumer` after routing | `connector.<provider>.<manifest event type>` — so `connector.github.github.push`, and `connector.google.email.received`, because GitHub's manifest ids carry a provider prefix and Google's do not | the connection's own scope | whatever the connector's manifest declared for that activity type |
 
 ### The digest
