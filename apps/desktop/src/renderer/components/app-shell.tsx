@@ -259,7 +259,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           if (location.pathname === `/notes/${note.id}`) void navigate('/workstreams/new');
         }}
         onArchiveWorkstream={async (workstream) => {
-          if (!api) return;
+          // Thrown rather than returned, unlike the handlers around it. The
+          // sidebar treats this promise resolving as the archive having
+          // happened: it reports the `archive` intent and closes the dialog. A
+          // signed-out `api` would therefore claim success for a request that
+          // was never sent — the one outcome the confirmation's failure dialog
+          // exists to prevent, and a false product event besides.
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
           await api.archiveWorkstream(workstream.id);
           // No list invalidation and no cache patch: WorkstreamDO answers this
           // write with a directory tombstone, and `applyVersionedWorkstreamState`
