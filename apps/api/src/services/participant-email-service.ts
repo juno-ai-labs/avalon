@@ -45,7 +45,7 @@ export async function sendWorkstreamParticipantAddedEmail(
   const workstreamTitle = singleLine(input.workstreamTitle);
   const recipientName = singleLine(input.recipientName);
   const objective = objectiveExcerpt(input.workstreamObjective);
-  // The `avalon://` deep link is not linkified by mail clients, and a
+  // The `rallywithai://` deep link is not linkified by mail clients, and a
   // recipient reading on a phone has no desktop app to hand it to. The
   // canonical HTTPS link is a real link everywhere and ends in the same place.
   const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, input.workstreamId);

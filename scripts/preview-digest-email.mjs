@@ -87,7 +87,7 @@ export function resolveLocalDatabase(directory, entries) {
  */
 export function sampleBody(input) {
   const link = (title, id) => id
-    ? `[${title}](https://with-avalon.com/app/workstreams/${id})`
+    ? `[${title}](https://rallywith.ai/app/workstreams/${id})`
     : `**${title}**`;
   const sections = input.workstreams.slice(0, 3).map((workstream, index) => index === 0
     ? [
@@ -179,8 +179,8 @@ async function main() {
       bodyMarkdown,
       itemCount: SAMPLE_WORKSTREAMS.length * 2,
       highlightCount,
-      appUrl: "https://with-avalon.com",
-      settingsUrl: "https://with-avalon.com/app/settings/digest",
+      appUrl: "https://rallywith.ai",
+      settingsUrl: "https://rallywith.ai/app/settings/digest",
     });
     const file = join(options.out, `${member.email.replace(/[^a-z0-9]+/giu, "-")}.html`);
     writeFileSync(file, html);

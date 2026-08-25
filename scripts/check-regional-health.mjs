@@ -11,8 +11,8 @@
 import { isEntryPoint } from "./entry-point.mjs";
 
 const DEFAULT_BASE_URLS = {
-  global: "https://api.with-avalon.com",
-  eu: "https://eu.api.with-avalon.com",
+  global: "https://api.rallywith.ai",
+  eu: "https://eu.api.rallywith.ai",
 };
 
 const ATTEMPTS = Number(process.env.AVALON_HEALTH_ATTEMPTS ?? "5");

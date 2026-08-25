@@ -101,7 +101,7 @@ Normal product use can persist information in the resources that use it. A user 
 
 ### Ingress and routing
 
-The shared ingress is `https://slack.with-avalon.com`:
+The shared ingress is `https://slack.rallywith.ai`:
 
 - `POST /slack/events`
 - `POST /slack/interactivity`
@@ -371,10 +371,10 @@ or delays that product summary rather than reading a frozen D1 work-stream row.
 - Avalon links: unfurls that summarize the work stream — title, last activity, automation origin, and a status badge only while it is running, needs input, or failed — and require the viewer's normal Avalon authorization for its contents.
 
 Every work-stream link Avalon posts is the canonical
-`https://with-avalon.com/app/workstreams/<uuid>` — see
+`https://rallywith.ai/app/workstreams/<uuid>` — see
 [`workstream-links.md`](workstream-links.md). Slack delivers `link_shared` only
 for the registered unfurl domain, so a link must be on that domain, with the id
-in its path, to be unfurled at all; `avalon://` links pasted by a member never
+in its path, to be unfurled at all; `rallywithai://` links pasted by a member never
 produce an event and cannot be previewed. The unfurl handler also still accepts
 the legacy `/open#target=` handoff already sitting in channel history.
 
@@ -501,7 +501,7 @@ At each run Avalon ranks actionable inbox items, sends up to three (fewer if few
 - **No installation becomes the implicit default when more than one is
   available**, and Avalon never silently switches accounts or Slack workspaces.
 - **Every work-stream link Avalon posts is the canonical HTTPS form.** Slack
-  delivers `link_shared` only for the registered unfurl domain, so an `avalon://`
+  delivers `link_shared` only for the registered unfurl domain, so an `rallywithai://`
   link pasted by a member produces no event and can never be previewed.
 - **Modal submissions are validated server-side**, and modals never request Avalon
   or provider passwords.
@@ -735,7 +735,7 @@ briefing's three/one/zero-result cases.
 ### Deployment and Marketplace gates
 
 1. Set `SLACK_APP_ID`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` in both regional Workers. Keep the public app identity identical.
-2. Deploy migrations through `0046` and both Workers, including the Global/EU Slack service bindings and `slack.with-avalon.com` custom domain.
+2. Deploy migrations through `0046` and both Workers, including the Global/EU Slack service bindings and `slack.rallywith.ai` custom domain.
 3. Run `slack manifest validate`; then create/update the Marketplace app from `config/provider-apps/slack.json`.
 4. Reconnect existing Slack workspace installations so Slack grants the expanded bot scopes, then exercise the acceptance cases in `docs/e2e.md`.
 5. Confirm paid-plan eligibility for Agent/automation features and document the `team.billing:read` use in review materials.

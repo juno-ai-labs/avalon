@@ -168,7 +168,7 @@ try {
     route: 'global',
   });
   if (requests.length !== 1
-    || requests[0].endpoint !== 'https://api.with-avalon.com/telemetry/crashes'
+    || requests[0].endpoint !== 'https://api.rallywith.ai/telemetry/crashes'
     || requests[0].metadata.route !== 'global') {
     throw new Error('Production native crash uploader did not use the route-final API');
   }

@@ -22,7 +22,7 @@ window.history.replaceState(null, document.title, window.location.pathname);
 
 if (button && valid && token && region) {
   reportDesktopHandoff('invite', 'presented', 'valid');
-  const deepLink = new URL('avalon://invitations/accept');
+  const deepLink = new URL('rallywithai://invitations/accept');
   deepLink.searchParams.set('region', region);
   deepLink.searchParams.set('token', token);
   button.href = deepLink.toString();

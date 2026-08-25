@@ -93,7 +93,7 @@ describe('identity-first onboarding screens', () => {
 
     await waitFor(() => expect(api.beginGoogleLogin).toHaveBeenCalledWith(
       'global',
-      'avalon://auth/complete',
+      'rallywithai://auth/complete',
       { authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) } },
     ));
   });

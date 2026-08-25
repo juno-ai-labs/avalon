@@ -40,7 +40,7 @@ pnpm --filter @avalon/api exec vitest run test/security-and-config.test.ts
 For a hosted endpoint, verify the real browser preflight shape before releasing:
 
 ```bash
-curl -i -X OPTIONS https://api.with-avalon.com/workstreams \
+curl -i -X OPTIONS https://api.rallywith.ai/workstreams \
   -H 'Origin: app://avalon' \
   -H 'Access-Control-Request-Method: POST' \
   -H 'Access-Control-Request-Headers: authorization,content-type,x-example-header'

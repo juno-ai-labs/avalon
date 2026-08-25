@@ -266,7 +266,7 @@ function CopyResourceIdItem({
  * a row is shared with a person far more often than it is quoted into a bug
  * report, and the id is still one click away in the work stream's own header
  * menu and its right rail. Like every other surface it emits the canonical
- * HTTPS link, never the `avalon://` deep link — see `docs/workstream-links.md`.
+ * HTTPS link, never the `rallywithai://` deep link — see `docs/workstream-links.md`.
  */
 function CopyWorkstreamLinkItem({ workstreamId }: { workstreamId: string }): React.JSX.Element {
   const copy = async (): Promise<void> => {

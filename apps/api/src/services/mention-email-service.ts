@@ -36,7 +36,7 @@ export async function sendWorkstreamMentionEmail(
   const workstreamTitle = singleLine(input.workstreamTitle);
   const recipientName = singleLine(input.recipientName);
   const excerpt = messageExcerpt(input.messageText);
-  // A mail client will not linkify `avalon://`, and a recipient reading on a
+  // A mail client will not linkify `rallywithai://`, and a recipient reading on a
   // phone has no desktop app to hand it to. The canonical HTTPS link is a real
   // link in every client and still ends at the same work stream.
   const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, input.workstreamId);

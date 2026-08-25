@@ -128,7 +128,7 @@ function desktopApplicationContext(input: {
   };
 }
 
-function destinationEvent(envelope: TelemetryEnvelope): {
+function destinationEvent(envelope: TelemetryEnvelope, webBaseUrl: string): {
   event: string;
   properties: Record<string, unknown>;
 } {
@@ -138,8 +138,8 @@ function destinationEvent(envelope: TelemetryEnvelope): {
       properties: { $screen_name: envelope.properties["screen"] ?? envelope.properties["surface"] },
     };
   }
-  if (envelope.name === "site_page_viewed") return { event: "$pageview", properties: webPageContext(envelope) };
-  if (envelope.name === "site_page_left") return { event: "$pageleave", properties: webPageContext(envelope) };
+  if (envelope.name === "site_page_viewed") return { event: "$pageview", properties: webPageContext(envelope, webBaseUrl) };
+  if (envelope.name === "site_page_left") return { event: "$pageleave", properties: webPageContext(envelope, webBaseUrl) };
   if (envelope.name === "application_lifecycle") {
     const state = envelope.properties["state"];
     if (state === "background") return { event: "Application Backgrounded", properties: {} };
@@ -177,14 +177,31 @@ function destinationEvent(envelope: TelemetryEnvelope): {
   return { event: envelope.name, properties: {} };
 }
 
-function webPageContext(envelope: TelemetryEnvelope): Record<string, unknown> {
+/**
+ * Rebuilds the page URL PostHog's web analytics reads from the one part of it
+ * the site is allowed to report.
+ *
+ * A site envelope carries a `pathname` and nothing else about where it came
+ * from — deliberately, per `docs/public-site-telemetry.md`. The origin is
+ * therefore supplied here, from the deployment's own configured web base URL
+ * rather than a literal, so it follows the canonical domain instead of having
+ * to be found and edited when that domain changes.
+ *
+ * That makes the host the *canonical* one, not the one that served the page:
+ * while two domains both answer, a visit arriving on either is attributed to
+ * whichever `PUBLIC_WEB_BASE_URL` names. Splitting acquisition by domain would
+ * mean the site reporting its own host, which is a registered telemetry
+ * property and a privacy-boundary decision — not a default worth assuming.
+ */
+function webPageContext(envelope: TelemetryEnvelope, webBaseUrl: string): Record<string, unknown> {
   const pathname = envelope.properties["pathname"];
   if (typeof pathname !== "string") return {};
   const referringDomain = envelope.properties["referringDomain"];
+  const base = new URL(webBaseUrl);
   return {
-    $current_url: `https://with-avalon.com${pathname}`,
+    $current_url: new URL(pathname, base).toString(),
     $pathname: pathname,
-    $host: "with-avalon.com",
+    $host: base.host,
     ...(typeof referringDomain === "string"
       ? { $referrer: `https://${referringDomain}/`, $referring_domain: referringDomain }
       : {}),
@@ -239,12 +256,15 @@ function applicationSettingsPersonProperties(envelope: TelemetryEnvelope): Recor
   return null;
 }
 
-export function mapPostHogCapture(row: GlobalTelemetryDeliveryRow): PostHogCapture {
+export function mapPostHogCapture(
+  row: GlobalTelemetryDeliveryRow,
+  options: { webBaseUrl: string },
+): PostHogCapture {
   const envelope = row.envelope;
   const personless = envelope.identityScope === "installation"
     || envelope.identityScope === "anonymous-epoch"
     || envelope.identityScope === "workspace";
-  const mapped = destinationEvent(envelope);
+  const mapped = destinationEvent(envelope, options.webBaseUrl);
   const desktopSource = envelope.source.startsWith("desktop-");
   const settingsPersonProperties = personless ? null : applicationSettingsPersonProperties(envelope);
   return {
@@ -412,12 +432,13 @@ function retryAfter(response: Response): number | null {
 export async function sendPostHogBatch(input: {
   host: string;
   projectToken: string;
+  webBaseUrl: string;
   rows: GlobalTelemetryDeliveryRow[];
 }): Promise<PostHogDeliveryResult> {
   return sendPostHogCaptures({
     host: input.host,
     projectToken: input.projectToken,
-    captures: input.rows.map(mapPostHogCapture),
+    captures: input.rows.map((row) => mapPostHogCapture(row, { webBaseUrl: input.webBaseUrl })),
   });
 }
 

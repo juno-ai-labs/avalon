@@ -231,9 +231,13 @@ runs, which appears to the renderer as a transport failure and leaves no API
 request log for the blocked mutation. The required implementation and test steps
 live in [When adding a new HTTP header](when-adding-a-new-http-header.md).
 
-The same exact origin policy admits `https://with-avalon.com` and
-`https://www.with-avalon.com` so the public site can call only the capability-
-bound anonymous telemetry surface from a browser. CORS is not authorization: the
+The same exact origin policy admits `https://rallywith.ai`,
+`https://www.rallywith.ai`, `https://with-avalon.com`, and
+`https://www.with-avalon.com` — the public site is served on both zones while
+the rename is in flight, and an origin the browser actually used but the Worker
+does not list is rejected by Chromium before any route code runs — so the public
+site can call only the capability-bound anonymous telemetry surface from a
+browser. CORS is not authorization: the
 site receives no session, provider token, PostHog token, signing key, or named-RPC
 authority. Its route lookup returns only a coarse two-value decision; its
 capability permits only the registered pre-authentication event names. Handoff
@@ -638,6 +642,27 @@ incident response that may prompt it.
 
 ## Changelog
 
+### 2026-08-25 — The origin allowlist admits both site zones
+
+**What changed:** `ALLOWED_ORIGINS` on the Global Worker admits
+`https://rallywith.ai` and `https://www.rallywith.ai` alongside the two Avalon
+origins. The site's CSP `connect-src` permits both API origins.
+
+**Why:** The rebrand to Rally put the public site on two zones at once. CORS is an
+exact-origin match made by the browser before any route code runs, so an origin
+that is actually served but not listed fails as a transport error with no API
+request logged — the failure mode this policy already exists to prevent. Listing
+all four served origins is the same rule applied to a site that now has four.
+
+**Considered and rejected:** Matching the site origins by suffix or pattern
+instead of listing them. Exact origins are the entire strength of this check; a
+pattern that admits `rallywith.ai` also admits a look-alike that ends in it.
+
+**Consequences:** The list grows and shrinks with what is actually served, and an
+origin is removed from it only when its route is. This widens who may *call* the
+capability-bound anonymous telemetry surface and nothing else — CORS remains not
+authorization, and the site still receives no session, token, or signing key. See
+[`domain-migration.md`](domain-migration.md).
 ### 2026-08-24 — Input validation keeps body shape without keeping content
 
 **What changed:** Avalon's Hono validator now throws a typed internal validation
