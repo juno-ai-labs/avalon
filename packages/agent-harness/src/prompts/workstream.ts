@@ -99,7 +99,7 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
         threadTs: input.slackOrigin.threadTs,
         invocationType: input.slackOrigin.invocationType,
         channelType: input.slackOrigin.channelType,
-        matchedAvalonUserId: input.slackOrigin.matchedAvalonUserId,
+        matchedRallyUserId: input.slackOrigin.matchedRallyUserId,
         nearbyMessagesStatus: input.slackOrigin.nearbyMessagesStatus,
         nearbyMessageCount: input.slackOrigin.nearbyMessages.length,
         attachmentCount: input.slackOrigin.attachments.length,

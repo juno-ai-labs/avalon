@@ -524,7 +524,7 @@ function slackOriginContext(overrides: Partial<SlackOriginContext> = {}): SlackO
     threadTs: "1786491700.928349",
     invocationType: "app_mention",
     channelType: "public",
-    matchedAvalonUserId: null,
+    matchedRallyUserId: null,
     nearbyMessagesStatus: "not_applicable",
     nearbyMessages: [],
     attachments: [],
