@@ -30,6 +30,22 @@ const DEEP_LINK_HOST = "workstreams";
 /** Path prefix of the canonical HTTPS link: `/app/workstreams/<id>`. */
 export const WORKSTREAM_LINK_PATH_PREFIX = "/app/workstreams/";
 
+/**
+ * Site origins a shared work-stream link may still be on, besides the caller's
+ * own. Fixed historical values, like the legacy deep-link scheme: links minted
+ * on these are in Slack history and inboxes and cannot be reissued.
+ *
+ * A caller opts in. Most read one origin at a time — the site really does serve
+ * one origin per request — but a caller handed URLs by a third party does not
+ * get to choose which domain they arrive on. Slack is the case that matters:
+ * its app registers both domains for unfurling, so it delivers `link_shared`
+ * for both.
+ */
+export const LEGACY_WORKSTREAM_LINK_ORIGINS: readonly string[] = Object.freeze([
+  "https://with-avalon.com",
+  "https://www.with-avalon.com",
+]);
+
 /** Legacy handoff still present in Slack and mail history: `/open#target=…`. */
 const LEGACY_HANDOFF_PATHS = new Set(["/open", "/open/"]);
 
@@ -86,15 +102,22 @@ function parseDeepLink(url: URL): string | null {
  * - the desktop deep link `rallywithai://workstreams/<id>`, or `avalon://…`
  * - the legacy handoff `<webBaseUrl>/open#target=<either deep link>`
  *
- * Only links on `webBaseUrl`'s own origin are read, so a look-alike host cannot
- * borrow the treatment Avalon gives its own links.
+ * Only links on an origin the caller named are read, so a look-alike host
+ * cannot borrow the treatment Avalon gives its own links. `webBaseUrl` accepts
+ * several origins for a caller that is handed URLs it did not choose the domain
+ * of — see `LEGACY_WORKSTREAM_LINK_ORIGINS`.
  */
-export function parseWorkstreamLink(raw: string, options: { webBaseUrl: string }): string | null {
+export function parseWorkstreamLink(
+  raw: string,
+  options: { webBaseUrl: string | readonly string[] },
+): string | null {
   let url: URL;
-  let origin: string;
+  let origins: string[];
   try {
     url = new URL(raw);
-    origin = new URL(options.webBaseUrl).origin;
+    const bases = typeof options.webBaseUrl === "string" ? [options.webBaseUrl] : options.webBaseUrl;
+    if (bases.length === 0) return null;
+    origins = bases.map((base) => new URL(base).origin);
   } catch {
     return null;
   }
@@ -102,7 +125,7 @@ export function parseWorkstreamLink(raw: string, options: { webBaseUrl: string }
   const deepLinkId = parseDeepLink(url);
   if (deepLinkId) return deepLinkId;
 
-  if (url.origin !== origin) return null;
+  if (!origins.includes(url.origin)) return null;
 
   if (!url.search) {
     const canonicalId = parseWorkstreamLinkPath(url.pathname);

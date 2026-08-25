@@ -50,6 +50,7 @@ export {
   type TelemetrySource,
 } from "./telemetry";
 export {
+  LEGACY_WORKSTREAM_LINK_ORIGINS,
   WORKSTREAM_LINK_PATH_PREFIX,
   isWorkstreamId,
   parseWorkstreamLink,

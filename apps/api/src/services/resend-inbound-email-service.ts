@@ -327,9 +327,11 @@ export class ResendInboundEmailRoutingService {
         workspaceId: route.workspace_id,
         ...target,
         localPart: route.local_part.toLowerCase(),
-        emailAddress: `${route.local_part.toLowerCase()}@${
-          arrivedOn.get(route.local_part.toLowerCase()) ?? configuredEmailDomain(this.bindings().WORKSTREAM_EMAIL_DOMAIN)
-        }`,
+        // `arrivedOn` is what produced the local parts these routes were looked
+        // up by, so it always holds this one. Indexing rather than defaulting
+        // keeps that guarantee visible instead of implying a route could arrive
+        // without a recorded domain.
+        emailAddress: `${route.local_part.toLowerCase()}@${arrivedOn.get(route.local_part.toLowerCase())!}`,
       });
     }));
     const failures = dispatches.filter((result): result is PromiseRejectedResult => result.status === "rejected");
@@ -1333,14 +1335,17 @@ function resourceTitle(subject: string): string {
 /**
  * The domain this deployment mints new addresses on.
  *
- * The guard stays deliberately narrow: the configured value must be a domain
- * this build knows, not merely a well-formed one. A typo here silently drops
- * every inbound email — the failure the `0021` migration was written to repair
- * — and there is no signal that distinguishes it from nobody having written in.
+ * The guard is exact, not membership in the accepted set: a deployment left on
+ * a superseded domain would otherwise pass here and quietly go on minting
+ * addresses nobody intends to issue any more — the accepted set exists to keep
+ * *receiving* old mail, not to license writing it. A typo is refused outright,
+ * because it silently drops every inbound email — the failure the `0021`
+ * migration was written to repair — and nothing distinguishes that from nobody
+ * having written in.
  */
 function configuredEmailDomain(value: string | undefined): string {
   const domain = (value ?? DEFAULT_WORKSTREAM_EMAIL_DOMAIN).trim().toLowerCase().replace(/\.$/u, "");
-  if (!ACCEPTED_WORKSTREAM_EMAIL_DOMAINS.includes(domain)) {
+  if (domain !== WORKSTREAM_EMAIL_DOMAIN) {
     throw new ApiError(503, "resend_inbound_unavailable", "The work-stream email domain is not configured correctly");
   }
   return domain;

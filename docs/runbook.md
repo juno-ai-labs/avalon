@@ -531,6 +531,14 @@ The tracker needs no D1 database and no R2 bucket: its entire store is the
 `MIGRATION_REGISTRY` Durable Object namespace, which the deploy creates. Three
 further one-time steps are required outside the repository.
 
+**Attach `downloads.rallywith.ai` to the releases bucket before the next
+desktop release.** `electron-builder.yml`, `updater.ts`, `mac-signature-policy.mjs`,
+and the release workflow all publish and poll there now, but the R2 bucket
+(`avalon-desktop-releases`) is unchanged — the hostname is a new R2 custom domain
+on the Rally zone and nothing creates it automatically. Already-shipped DMGs keep
+polling `downloads.with-avalon.com`, correctly and permanently, so this blocks
+the next release rather than the Worker deploy.
+
 **1. The hostname.** `migrations.internal.rallywith.ai` is declared as a custom domain in
 `wrangler.jsonc`, and the deploy provisions the route on the `rallywith.ai` zone.
 
@@ -818,6 +826,12 @@ Changing such a default afterwards is far more expensive than choosing it correc
 ## Provider configuration
 
 Google identity and connector OAuth use two distinct Google Cloud OAuth **Web application** clients in one project. The **Avalon Login** client requests only platform identity scopes and has this one redirect URI:
+
+**Register the Rally callback URLs on both Google clients before deploying.**
+`callbackUrl()` derives `redirect_uri` from `PUBLIC_API_BASE_URL`, so the moment
+that var moves, every Google sign-in and every Google connector authorization
+fails with `redirect_uri_mismatch` on its first request. Keep the Avalon URLs
+registered alongside: they cost nothing and they are what a rollback lands on.
 
 - Global identity: `https://api.rallywith.ai/auth/google/callback`
 

@@ -12,7 +12,7 @@ import { HttpOrDesktopDeepLinkUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
-import { desktopHandoffUrl } from "../lib/desktop-handoff";
+import { compatibleDesktopDeepLink, desktopHandoffUrl } from "../lib/desktop-handoff";
 import { AuthService, verifyAccessToken } from "../services/auth-service";
 import { previewInvitation } from "../services/workspace-service";
 
@@ -66,8 +66,11 @@ authRoutes.post("/google/start", zValidator("json", startBody), async (c) => {
 
 authRoutes.get("/google/callback", zValidator("query", callbackQuery), async (c) => {
   const query = c.req.valid("query");
+  // Reached when no stored return URI can be consumed, so there is no caller
+  // scheme to answer in — the scheme every live build registers is the one that
+  // gets the error in front of somebody rather than dead-ending.
   const desktopTarget = (code?: string): URL => {
-    const target = new URL(c.env.DESKTOP_DEEP_LINK_URI);
+    const target = compatibleDesktopDeepLink(c.env);
     if (code) target.searchParams.set("error", code);
     target.searchParams.set("region", c.env.AVALON_REGION);
     return target;
