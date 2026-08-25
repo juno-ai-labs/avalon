@@ -17,12 +17,12 @@ import { launchWorkstreamHarness } from "./workstream-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
-  workstreamExecutionEnvironment,
 } from "./workstream-runtime-database";
 import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
 } from "./workspace-runtime-database";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
  * How far back a person's first ever digest reads. Without a floor, switching a
@@ -218,15 +218,9 @@ export async function fireDigestSchedule(
       // Legacy D1 rows cascade. The DO path leaves a durable, unlistable
       // tombstone because its object identity cannot join this transaction.
       if (workstreamId) {
-        const executionEnv = await workstreamExecutionEnvironment(
-          env,
-          schedule.workspace_id,
-          workstreamId,
-        );
-        await executionEnv.DB.prepare(
-          `UPDATE workstreams SET archived_at = ?, updated_at = ?
-            WHERE id = ? AND system_kind = 'digest'`,
-        ).bind(nowIso(), nowIso(), workstreamId).run().catch(() => undefined);
+        await createIdentityObjectPort(env, schedule.workspace_id, workstreamId)
+          .archiveSystemWorkstream({ systemKind: "digest", now: Date.now() })
+          .catch(() => undefined);
         // A Durable Object identity cannot be deleted transactionally with
         // its parent delivery claim. This authoritative tombstone keeps the
         // never-started system stream unlistable and is safer than a

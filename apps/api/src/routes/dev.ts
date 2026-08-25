@@ -13,6 +13,7 @@ import {
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
 
@@ -110,6 +111,21 @@ const SeedProductResultSchema = z.object({
   })),
 }).strict();
 
+export /**
+ * The `exact_state` a captured `harnessStatus` restores to.
+ *
+ * The retired `_runtime_workstreams` update trigger's mapping, kept here
+ * because only the seed route speaks the published vocabulary: a fixture is a
+ * recorded API response, and the object stores its own states. Every state the
+ * trigger did not name collapsed to `idle`, and so does every one here.
+ */
+function storedWorkstreamState(harnessStatus: string): string {
+  return ["scheduled", "running", "needs_input", "completed", "failed"]
+    .includes(harnessStatus)
+    ? harnessStatus
+    : "idle";
+}
+
 export const devRoutes = new Hono<{ Bindings: Env }>();
 
 /**
@@ -188,18 +204,14 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
     const routed = await bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, workstream.id);
     const copied: Record<string, number> = {};
 
-    await routed.DB.prepare(
-      `UPDATE workstreams SET title = ?, harness_status = ?, next_sequence_number = ?,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-              last_activity_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-        WHERE id = ? AND workspace_id = ?`,
-    ).bind(
-      workstream.title,
-      workstream.harnessStatus,
-      workstream.nextSequenceNumber,
-      workstream.id,
-      workspaceId,
-    ).run();
+    await createIdentityObjectPort(env, workspaceId, workstream.id).seedFromFixture({
+      title: workstream.title,
+      // The fixture speaks the published vocabulary because it was captured
+      // from an API response; the object stores its own.
+      exactState: storedWorkstreamState(workstream.harnessStatus),
+      nextSequenceNumber: workstream.nextSequenceNumber,
+      now: Date.now(),
+    });
 
     const insert = async (
       table: string,

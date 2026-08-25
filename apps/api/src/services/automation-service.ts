@@ -63,6 +63,7 @@ import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
 } from "./workspace-runtime-database";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 type CreateAutomationInput = z.infer<typeof CreateAutomationRequestSchema>;
 type TriggerDefinition = z.infer<typeof TriggerDefinitionSchema>;
@@ -1184,18 +1185,9 @@ export class AutomationService {
            AND status = 'scheduled' AND started_at IS NULL`,
       ).bind(at, this.auth.workspaceId, id),
     ];
-    await Promise.all(plannedWorkstreamIds.map(async (workstreamId) => {
-      const executionEnv = await workstreamExecutionEnvironment(
-        this.env,
-        this.auth.workspaceId,
-        workstreamId,
-      );
-      await executionEnv.DB.prepare(
-        `UPDATE workstreams SET archived_at = ?, updated_at = ?
-          WHERE workspace_id = ? AND id = ? AND harness_status = 'scheduled'
-            AND archived_at IS NULL`,
-      ).bind(at, at, this.auth.workspaceId, workstreamId).run();
-    }));
+    await Promise.all(plannedWorkstreamIds.map((workstreamId) =>
+      createIdentityObjectPort(this.env, this.auth.workspaceId, workstreamId)
+        .archiveScheduledWorkstream({ now: Date.parse(at) })));
     await this.env.DB.batch(regionalStatements);
     // No route to close. The address stays claimed forever — that is the point
     // of the Global ledger — and mail to it is refused by the same checks that

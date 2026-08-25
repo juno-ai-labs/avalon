@@ -69,6 +69,7 @@ import type { ScheduledAlarmOutcome } from "../durable-objects/scheduled-alarms"
 import { SLACK_LINK_CHALLENGE_GRACE_MS } from "./slack-agent-service";
 import type { TerminalLifecycleTransition } from "./terminal/lifecycle";
 import { createHarnessRunObjectPort, createHarnessRunPortFactory } from "../runtime/harness-run-port";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
  * The directory reads a schedule needs, satisfied without an RPC hop.
@@ -664,9 +665,13 @@ async function startAutomation(
     const createdWorkstreamId = planned ? null : workstreamId;
     const runId = uuidV7(now.getTime());
     const timestamp = now.toISOString();
-    const executionEnv = planned
-      ? await workstreamExecutionEnvironment(workspaceEnv, schedule.workspace_id, workstreamId)
-      : await bootstrapWorkstreamRuntimeEnvironment(workspaceEnv, schedule.workspace_id, workstreamId);
+    // A work stream nobody has opened yet has no object; the bootstrap is what
+    // makes one, and it is the only reason this branch survives the move off
+    // the routed statements. Nothing here reads through the environment any
+    // more — every write below addresses its own authority.
+    if (!planned) {
+      await bootstrapWorkstreamRuntimeEnvironment(workspaceEnv, schedule.workspace_id, workstreamId);
+    }
 
     if (!planned) {
       const emailRoute = await emailRouting.reserve({
@@ -728,13 +733,8 @@ async function startAutomation(
         status: "running",
         workflow_instance_id: null
       };
-      await executionEnv.DB.prepare(
-        `UPDATE workstreams
-            SET automation_run_id = ?1, harness_status = 'running', updated_at = ?2
-          WHERE id = ?3 AND workspace_id = ?4`
-      )
-        .bind(runId, timestamp, workstreamId, schedule.workspace_id)
-        .run();
+      await createIdentityObjectPort(ctx.env, schedule.workspace_id, workstreamId)
+        .bindAutomationRun({ automationRunId: runId, now: Date.parse(timestamp) });
       if (createdWorkstreamId) {
         await recordWorkstreamCreatedTelemetry(ctx.env, {
           workspaceId: asWorkspaceId(schedule.workspace_id),
