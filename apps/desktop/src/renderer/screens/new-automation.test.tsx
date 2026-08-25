@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   getConnections: vi.fn(),
   getNotes: vi.fn(),
   getResourcePreviewContent: vi.fn(),
+  getWorkspaceTemplates: vi.fn(),
   uploadResource: vi.fn(),
 }));
 const copyText = vi.hoisted(() => vi.fn());
@@ -25,6 +26,9 @@ const copyText = vi.hoisted(() => vi.fn());
 // to offer the model selector, so this bridge has to answer for it.
 const applicationSettings = vi.hoisted(() => ({
   current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false },
+}));
+const featureFlags = vi.hoisted(() => ({
+  current: { automationWorkspaceTemplatesEnabled: true },
 }));
 
 const session = vi.hoisted(() => ({
@@ -41,6 +45,9 @@ const workspace: Workspace = {
 };
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session }) }));
+vi.mock('../lib/use-client-feature-flags', () => ({
+  useClientFeatureFlags: () => ({ data: featureFlags.current }),
+}));
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
     copyText,
@@ -94,9 +101,11 @@ describe('New automation composer', () => {
     // a failure there cannot leak the role into every later test.
     session.workspace.role = 'owner';
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false };
+    featureFlags.current = { automationWorkspaceTemplatesEnabled: true };
     await clearAllDrafts();
     api.getConnections.mockResolvedValue([]);
     api.getNotes.mockResolvedValue([]);
+    api.getWorkspaceTemplates.mockResolvedValue([]);
     // Loud by default: a test that resumes a draft says so, and one that does
     // not must never have a stale conversation swapped in under it.
     api.resumeAutomationDraft.mockRejectedValue(new Error('no draft was meant to be resumed'));
@@ -125,6 +134,15 @@ describe('New automation composer', () => {
       contentAvailable: true,
       sizeBytes: 5,
     });
+  });
+
+  it('removes the workspace-template path while Automation Workspace Templates Enabled is false', () => {
+    featureFlags.current = { automationWorkspaceTemplatesEnabled: false };
+
+    renderScreen();
+
+    expect(screen.queryByRole('button', { name: 'Use a workspace template' })).not.toBeInTheDocument();
+    expect(api.getWorkspaceTemplates).not.toHaveBeenCalled();
   });
 
   it('uses the shared connection, attachment, and dictation controls', () => {

@@ -1958,6 +1958,30 @@ describe("Durable Objects in the Workers runtime", () => {
     return socket;
   }
 
+  it("re-evaluates a changed product flag privately for subscribed users", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060b");
+    try {
+      const delivered = nextMessage(socket);
+      await expect(stub.notifyProductFeatureFlagChanged(
+        "hypersight-enabled",
+        WORKSPACE_ID,
+        "wnam",
+      )).resolves.toBe(1);
+      expect(JSON.parse(String((await delivered).data))).toMatchObject({
+        type: "workspace_feature_flags",
+        changedFlag: "hypersight-enabled",
+        flags: { hypersightEnabled: false, meetingRecordingEnabled: false },
+      });
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
   it("distinguishes an invalid workspace frame from access revocation and logs only its shape", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
@@ -2660,10 +2684,12 @@ describe("Durable Objects in the Workers runtime", () => {
           automations: { waterline: number; items: Array<{ id: string; name: string; emailAddress: string | null }> };
           notes: { waterline: number; items: Array<{ id: string; title: string }> };
         };
+        featureFlags: { hypersightEnabled: boolean; meetingRecordingEnabled: boolean };
       };
 
       expect(event.type).toBe("workspace_sync");
       expect(event.reason).toBe("initial");
+      expect(event.featureFlags).toMatchObject({ hypersightEnabled: false, meetingRecordingEnabled: false });
       const page = event.sidebar;
       expect(page).toBeDefined();
       expect(page.workstreams.items).toHaveLength(1);

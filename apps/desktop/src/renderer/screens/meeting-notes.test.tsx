@@ -49,6 +49,14 @@ const state = vi.hoisted(() => ({
     includeSystemAudio?: boolean;
     useSystemDefaultMicrophone?: boolean;
   },
+  featureFlags: {
+    developerSettings: false,
+    hypersightEnabled: false,
+    meetingRecordingEnabled: true,
+    suggestedWorkEnabled: false,
+    automationWorkspaceTemplatesEnabled: false,
+    controlTowerRefreshSeconds: 60,
+  },
   onTranscript: undefined as undefined | ((transcript: string) => void),
   pause: vi.fn(async () => undefined),
   resume: vi.fn(async () => undefined),
@@ -101,6 +109,9 @@ vi.mock('../lib/use-realtime-dictation', () => ({
     };
   },
 }));
+vi.mock('../lib/use-client-feature-flags', () => ({
+  useClientFeatureFlags: () => ({ data: state.featureFlags }),
+}));
 
 function noteDetail(overrides: Record<string, unknown> = {}) {
   return {
@@ -140,6 +151,14 @@ describe('MeetingNotesScreen', () => {
     state.dictationOptions = undefined;
     state.dictationState = 'idle';
     state.dictationWarning = undefined;
+    state.featureFlags = {
+      developerSettings: false,
+      hypersightEnabled: false,
+      meetingRecordingEnabled: true,
+      suggestedWorkEnabled: false,
+      automationWorkspaceTemplatesEnabled: false,
+      controlTowerRefreshSeconds: 60,
+    };
     state.permissions = { microphone: 'granted', systemAudio: 'granted' };
     state.getMeetingAudioPermissions.mockImplementation(async () => state.permissions);
     state.prepareMeetingAudioPermissions.mockImplementation(async () => state.permissions);
@@ -147,6 +166,8 @@ describe('MeetingNotesScreen', () => {
     const detail = noteDetail();
     state.api.clientFeatureFlags.mockResolvedValue({
       developerSettings: false,
+      hypersightEnabled: false,
+      meetingRecordingEnabled: true,
       controlTowerRefreshSeconds: 60,
     });
     state.api.createNote.mockResolvedValue(detail);
@@ -185,6 +206,8 @@ describe('MeetingNotesScreen', () => {
     try {
       state.api.clientFeatureFlags.mockResolvedValue({
         developerSettings: false,
+        hypersightEnabled: false,
+        meetingRecordingEnabled: true,
         controlTowerRefreshSeconds: 15,
       });
       state.commit.mockResolvedValue('A committed minute of talk.');
@@ -442,6 +465,8 @@ describe('MeetingNotesScreen', () => {
     try {
       state.api.clientFeatureFlags.mockResolvedValue({
         developerSettings: false,
+        hypersightEnabled: false,
+        meetingRecordingEnabled: true,
         controlTowerRefreshSeconds: 15,
       });
       const slowGeneration = deferred<void>();
@@ -492,7 +517,7 @@ describe('MeetingNotesScreen', () => {
     }
   });
 
-  it('records on the default when the cadence request never answers, without waiting on it to start', async () => {
+  it('records on the default when the flag request never answers, without waiting on it to start', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       // A request that never settles, which is what a captive portal looks like.
@@ -502,12 +527,12 @@ describe('MeetingNotesScreen', () => {
       const view = render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
       await screen.findByDisplayValue('Meeting notes');
 
-      // Capture is never made to wait for a feature flag.
+      // Capture behavior is unchanged by this presentation flag.
       await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
       state.dictationState = 'listening';
       view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
 
-      // The segment timer does, but only until the request is given up on.
+      // The cadence waits for the bounded request, then uses the default.
       await act(async () => { await vi.advanceTimersByTimeAsync(MEETING_CADENCE_REQUEST_TIMEOUT_MS - 1); });
       expect(state.commit).not.toHaveBeenCalled();
 
@@ -530,17 +555,52 @@ describe('MeetingNotesScreen', () => {
     }
   });
 
+  it('hides recording controls when Meeting Recording Enabled is false without blocking capture', async () => {
+    state.featureFlags.meetingRecordingEnabled = false;
+    state.api.clientFeatureFlags.mockResolvedValue({
+      developerSettings: false,
+      hypersightEnabled: false,
+      meetingRecordingEnabled: false,
+      suggestedWorkEnabled: false,
+      automationWorkspaceTemplatesEnabled: false,
+      controlTowerRefreshSeconds: 60,
+    });
+
+    render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    await screen.findByDisplayValue('Meeting notes');
+
+    await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Start recording' })).not.toBeInTheDocument());
+    expect(state.prepareMeetingAudioPermissions).toHaveBeenCalledOnce();
+  });
+
+  it('updates recording controls when the live feature flag changes', async () => {
+    state.featureFlags.meetingRecordingEnabled = false;
+    const view = render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    await screen.findByDisplayValue('Meeting notes');
+    await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('button', { name: 'End' })).not.toBeInTheDocument();
+
+    state.featureFlags.meetingRecordingEnabled = true;
+    view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
+
+    state.featureFlags.meetingRecordingEnabled = false;
+    view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    expect(screen.queryByRole('button', { name: 'End' })).not.toBeInTheDocument();
+  });
+
   it('keeps one cadence for the whole meeting once it has settled', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      const cadence = deferred<{ developerSettings: boolean; controlTowerRefreshSeconds: number }>();
+      const cadence = deferred<{ developerSettings: boolean; hypersightEnabled: boolean; meetingRecordingEnabled: boolean; controlTowerRefreshSeconds: number }>();
       state.api.clientFeatureFlags.mockReturnValue(cadence.promise);
       state.commit.mockResolvedValue('Talk.');
 
       const view = render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
       await screen.findByDisplayValue('Meeting notes');
+      await act(async () => cadence.resolve({ developerSettings: false, hypersightEnabled: false, meetingRecordingEnabled: true, controlTowerRefreshSeconds: 15 }));
       await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
-      await act(async () => cadence.resolve({ developerSettings: false, controlTowerRefreshSeconds: 15 }));
       state.dictationState = 'listening';
       view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
 
@@ -549,6 +609,8 @@ describe('MeetingNotesScreen', () => {
       // mid-recording moves the transcript with it.
       state.api.clientFeatureFlags.mockResolvedValue({
         developerSettings: false,
+        hypersightEnabled: false,
+        meetingRecordingEnabled: true,
         controlTowerRefreshSeconds: 600,
       });
       await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
@@ -566,6 +628,8 @@ describe('MeetingNotesScreen', () => {
   it('describes the cadence it was actually served', async () => {
     state.api.clientFeatureFlags.mockResolvedValue({
       developerSettings: false,
+      hypersightEnabled: false,
+      meetingRecordingEnabled: true,
       controlTowerRefreshSeconds: 300,
     });
 

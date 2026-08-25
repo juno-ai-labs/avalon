@@ -222,6 +222,7 @@ export default tseslint.config(
     ],
     ignores: [
       "apps/api/test/helpers/cloudflare-test.ts",
+      "apps/ace/test/helpers/cloudflare-test.ts",
       "apps/migration-tracker/test/helpers/cloudflare-test.ts",
       "apps/release-retention/test/helpers/cloudflare-test.ts",
     ],

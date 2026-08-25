@@ -13,6 +13,7 @@ release/
 output/
 .wrangler/
 apps/api/.wrangler.inference.*.json
+apps/ace/wrangler.generated.json
 .vite/
 coverage/
 *.log

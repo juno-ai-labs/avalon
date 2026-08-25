@@ -387,6 +387,9 @@ const browserBridge: AvalonDesktopBridge = {
     target.hash = '/meeting';
     window.open(target.toString(), '_blank', 'noopener,noreferrer,width=1120,height=820');
   },
+  async observeClientFeatureFlags() {
+    // Browser development has no main-process-only surfaces to synchronize.
+  },
   async closeMeetingNotes(noteId) {
     // A browser tab has no sibling window to hand the note to; the opener may
     // not even be reachable. Closing is the whole of what this can do here.

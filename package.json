@@ -55,6 +55,7 @@
     "deploy:site": "dotenv -e .env.local -- pnpm --filter @avalon/site run deploy",
     "deploy:release-retention": "dotenv -e .env.local -- pnpm --filter @avalon/release-retention run deploy",
     "deploy:migration-tracker": "dotenv -e .env.local -- pnpm --filter @avalon/migration-tracker run deploy",
+    "deploy:ace": "dotenv -e .env.local -- pnpm --filter @avalon/ace run deploy",
     "deploy:global": "dotenv -e .env.local -- pnpm --filter @avalon/api run deploy:global",
     "deploy:eu": "dotenv -e .env.local -- pnpm --filter @avalon/api run deploy:eu"
   },

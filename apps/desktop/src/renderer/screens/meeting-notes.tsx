@@ -29,6 +29,7 @@ import {
   telemetryVisibility,
 } from '../lib/telemetry';
 import type { NoteDetail, NoteTranscriptSegment } from '../lib/types';
+import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useRealtimeDictation } from '../lib/use-realtime-dictation';
 
 /**
@@ -146,6 +147,8 @@ function recordingPermissionClass(permissions: DesktopMeetingAudioPermissions | 
 
 export function MeetingNotesScreen(): React.JSX.Element {
   const { api, session } = useAppSession();
+  const clientFeatureFlags = useClientFeatureFlags(api);
+  const meetingRecordingAvailable = clientFeatureFlags.data?.meetingRecordingEnabled === true;
   const noteId = useMemo(currentNoteId, []);
   const creationEntrypoint = useMemo(meetingEntrypoint, []);
   const initialTitle = useMemo(defaultMeetingTitle, []);
@@ -280,11 +283,6 @@ export function MeetingNotesScreen(): React.JSX.Element {
     // timer mid-recording, moving a transcript boundary and leaving the
     // briefing describing a schedule that had already changed under it.
     //
-    // Capture is not made to wait for it. Recording starts as soon as the note
-    // loads; only the segment timer holds until this settles, which is why the
-    // request is bounded rather than left to the network — a device that cannot
-    // ask, or an older service that does not answer, settles on the checked-in
-    // default within the timeout and records on that.
     const settle = (intervalMs: number): void => {
       setRefreshIntervalMs((current) => current ?? intervalMs);
     };
@@ -957,7 +955,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
         </div>
       </main>
 
-      <footer className="meeting-controls">
+      {(meetingRecordingAvailable || recording || finalizing || dictation.error || dictation.warning || permissionRecoveryTarget) && <footer className="meeting-controls">
         <div className="meeting-control-status">
           {dictation.error
             ? <span role="alert">{dictation.error}</span>
@@ -970,7 +968,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
             </button>
           )}
         </div>
-        {recording || finalizing ? (
+        {meetingRecordingAvailable && (recording || finalizing ? (
           <div className="meeting-recording-actions">
             {!finalizing && (
               <Button
@@ -995,9 +993,9 @@ export function MeetingNotesScreen(): React.JSX.Element {
           >
             <span aria-hidden="true" className="meeting-start-dot" /> {permissionRecoveryTarget ? 'Retry recording' : 'Start recording'}
           </Button>
-        )}
+        ))}
         <span aria-hidden="true" />
-      </footer>
+      </footer>}
 
       <Modal
         description="Closing this window ends the meeting. Avalon saves the last of the transcript and writes the final summary before it goes."

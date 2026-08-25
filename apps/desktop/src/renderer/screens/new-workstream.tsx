@@ -12,6 +12,7 @@ import { useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
+import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming } from '../components/agent-work-timing';
@@ -254,6 +255,8 @@ function ParticipantPicker({
 
 export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { api } = useAppSession();
+  const featureFlags = useClientFeatureFlags(api);
+  const suggestedWorkEnabled = featureFlags.data?.suggestedWorkEnabled === true;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -300,7 +303,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const opportunities = useQuery({
     queryKey: ['work-opportunities'],
     queryFn: ({ signal }) => api!.getWorkOpportunities(signal),
-    enabled: Boolean(api),
+    enabled: Boolean(api && suggestedWorkEnabled),
     staleTime: Number.POSITIVE_INFINITY,
   });
   const selectedIds = useMemo(() => new Set(selectedMembers.map((member) => member.id)), [selectedMembers]);
@@ -461,9 +464,10 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
 
   const impressionKey = (opportunities.data ?? []).map((item) => `${item.id}:${item.version}`).join('|');
   useEffect(() => {
+    if (!suggestedWorkEnabled) return;
     const ids = (opportunities.data ?? []).map((item) => item.id);
     if (ids.length > 0) void api?.recordWorkOpportunityImpressions(ids);
-  }, [api, impressionKey]);
+  }, [api, impressionKey, suggestedWorkEnabled]);
 
   const submit = (): void => {
     const openingMessage = message.trim();
@@ -666,15 +670,17 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
                 </section>
               )}
 
-              <WorkSuggestedPrompts
-                error={opportunities.error?.message ?? startOpportunity.error?.message ?? dismissOpportunity.error?.message}
-                items={opportunities.data ?? []}
-                onDismiss={(opportunity) => dismissOpportunity.mutate(opportunity)}
-                onSelect={(opportunity) => startOpportunity.mutate(opportunity)}
-                pendingId={startOpportunity.isPending
-                  ? startOpportunity.variables?.id ?? null
-                  : dismissOpportunity.isPending ? dismissOpportunity.variables?.id ?? null : null}
-              />
+              {suggestedWorkEnabled && (
+                <WorkSuggestedPrompts
+                  error={opportunities.error?.message ?? startOpportunity.error?.message ?? dismissOpportunity.error?.message}
+                  items={opportunities.data ?? []}
+                  onDismiss={(opportunity) => dismissOpportunity.mutate(opportunity)}
+                  onSelect={(opportunity) => startOpportunity.mutate(opportunity)}
+                  pendingId={startOpportunity.isPending
+                    ? startOpportunity.variables?.id ?? null
+                    : dismissOpportunity.isPending ? dismissOpportunity.variables?.id ?? null : null}
+                />
+              )}
 
             </div>
           </div>
