@@ -10,7 +10,7 @@ part that decides the order of work — what each reference is coupled to. As
 each category is worked, its section records what moved, what deliberately did
 not, and what a consumer outside this repository still has to do.
 
-Sections 3 and 5 are **done**; sections 1, 4, 6, 7, and 8 are outstanding;
+Sections 3 and 5 are **done**; sections 1, 4, 6, 7, 8, and 9 are outstanding;
 section 2 is closed as out of scope.
 
 **The Cloudflare infrastructure does not get renamed.** Every `avalon-*` Worker,
@@ -264,6 +264,66 @@ throughout while serving from `rallywith.ai`.
   which are internal to the test that mints them and coupled to nothing.
 - **`.github`** (14) and **`.agents`** (8).
 
+### 9. The agent loop's prompt surface — outstanding, and the most visible left
+
+The first inventory counted these under section 8 as prose. That was wrong, and
+the misfiling is the finding: **this prose is executed, not read.** The
+work-stream system prompt opens `You are Avalon`, so the agent introduces
+itself as the code name, in its own voice, to every user in every work stream —
+which is precisely what [`AGENTS.md`](../AGENTS.md) means by a name that is not
+user-facing. Nothing here is coupled to stored data or a deployed resource, so
+it is among the cheapest categories to change and the highest-value.
+
+**Self-identity — the agent says it is Avalon (5 prompts).**
+
+| Prompt | Opens with |
+| --- | --- |
+| `packages/agent-harness/src/prompts/workstream.ts` | `You are Avalon, the inherent intelligent environment in this work stream.` |
+| `apps/api/src/services/meeting-notes-service.ts` | `You are Avalon Control Tower, a real-time briefing assistant…` |
+| `apps/api/src/services/meeting-notes-service.ts` | `You are Avalon's end-of-meeting chief of staff.` |
+| `packages/agent-harness/src/prompts/automation-compiler.ts` | `You are Avalon's automation architect.` |
+| `apps/api/src/services/integrations.ts` | `You are a focused read-only Avalon sub-agent.` |
+
+**Prompt bodies naming the product.** `prompts/addressing.ts` (5) classifies
+whether a message addresses "Avalon"; `prompts/work-opportunity.ts` (5) admits
+and ranks work "Avalon can start"; `prompts/automation-compiler.ts` (8) explains
+what "Avalon itself sends"; `prompts/workstream.ts` (6) carries the Slack
+authority and automation-delivery bullets. `bind-runtime.ts` tells the model
+that a section is "Avalon-generated live state".
+
+**Injected context headers**, which the model reads verbatim:
+`SCHEDULED DIGEST BRIEF FROM AVALON`, `USER-SELECTED AVALON SUGGESTED-WORK
+BRIEF`, and `The person responded to Avalon's blocking question.`
+
+**Tool descriptions the model reads when choosing a tool** — six Google Docs and
+Sheets descriptions in `packages/connectors/src/index.ts` ("writable under
+Avalon's per-file Google Drive grant"), the X plugin, the Linear native-agent
+plugin, four Slack connector labels and descriptions, and the core plugin's own
+`Use Avalon's universally available core utilities.`
+
+**Model-facing schema field names**, which are harder than the prose around
+them because a description names the field and the model is told to branch on
+it: `writableByAvalon` (14, in Google Drive tool output and named in two
+descriptions) and Notion's `avalonTruncated` / `avalonTotalChars`.
+
+**Strings the agent emits to people**, not prompts but produced by this loop:
+`Avalon posted a result.` (Slack fallback), `Avalon mentioned in Slack`, and the
+Control Tower failure notices `Avalon could not create the final meeting
+summary` / `Avalon could not update Control Tower`.
+
+**Identity sent to third parties.** `appName: "Avalon"` becomes the `X-Title`
+header on every inference request (3 call sites); the GitHub connector sends
+`user-agent: Avalon-GitHub-Connector`; hosted MCP registers `client_name` and
+`clientInfo.name` as `Avalon`. Also 25 GraphQL operation names — `AvalonReadIssue`,
+`AvalonSearchIssues`, `AvalonLinearAgentSessionCreate` — which appear in Linear's
+own request logs.
+
+**One string here must not change.** `avalon-core-write-v1` in
+`integrations.ts` is the seed of a hash that derives durable provider
+idempotency keys. It is not prose and nothing reads it as a name; changing it
+changes every derived id and re-issues writes that were already idempotent.
+It belongs to section 1, not here.
+
 ## What this inventory does not settle
 
 - **Which Avalon references are permanent.** Three are now settled: the
@@ -276,6 +336,29 @@ throughout while serving from `rallywith.ai`.
   which is not the same as the order the work should happen in.
 
 ## Changelog
+
+### 2026-08-25 — The agent loop's prompt surface is its own section
+
+Added section 9 after auditing the system prompts, tool descriptions, plugin
+prose, and tool and field names that the product's own agent loop sends to the
+model. The first inventory had folded these into section 8 as prose, which is
+the mistake this entry exists to correct: a system prompt is executed, and
+`You are Avalon` in the work-stream prompt means the agent introduces itself
+by the code name to every user — a user-facing leak counted as an internal
+comment.
+
+Kept as its own section rather than merged into 7 (user-facing copy), because
+the failure mode differs: site copy is wrong where a reader sees it, while a
+prompt is wrong in a way that propagates — the model paraphrases the name into
+text nobody wrote and no grep will find. Ordering by coupling cost puts this
+last; ordering by what a user notices puts it first, which is why the section
+says so rather than relying on its number.
+
+Two things the audit turned up that are not prose and do not move with it:
+`writableByAvalon` is a tool-output field the model is told to branch on, so
+its description and its name have to move together; and `avalon-core-write-v1`
+is a hash seed for durable idempotency keys, where a rename silently re-issues
+writes — it belongs to section 1.
 
 ### 2026-08-25 — Sections 3 and 5 refactored to Rally
 
