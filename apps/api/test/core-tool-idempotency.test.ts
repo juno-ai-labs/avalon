@@ -11,7 +11,6 @@ import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare
 import {
   executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
-  testSchedulingPort,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
@@ -299,36 +298,25 @@ describe("Avalon core write-tool idempotency", () => {
 
   it("converges elicitation retries on one durable question", async () => {
     const { objectStore, baseEnv } = fixture();
-    // The existence check travels the scheduling port now, so the stale read is
-    // injected there: the operation answers "no such question" both times while
-    // every other statement, and every other scheduling operation, reaches the
-    // object. What is under test is that the durable insert converges anyway —
-    // the check is an optimization, and the `ON CONFLICT` is the guarantee.
-    let staleExistenceChecks = 0;
-    const scheduling = testSchedulingPort(objectStore) as unknown as
-      Record<string, (...args: unknown[]) => Promise<unknown>>;
-    const staleExistenceEnv = withWorkstreamRuntimeDatabase(
+    // The routed version could be raced: the existence check was a read of its
+    // own in front of a three-statement batch, and this test injected a stale
+    // answer to prove the `ON CONFLICT` converged anyway. The check is the
+    // first statement of the authority's own transaction now, so there is no
+    // window left to inject into — what is asserted instead is the outcome the
+    // caller acts on: the second attempt writes nothing and announces nothing,
+    // and the first attempt's question is still the only one.
+    const roomEvents: Array<Record<string, unknown>> = [];
+    const env = withWorkstreamRuntimeDatabase(
       createTestEnv({
         ...baseEnv,
-        SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
-          extra: {
-            executeSchedulingOperation: async (input: { operation: string; args: unknown[] }) => {
-              if (input.operation === "elicitationExistsForRun") {
-                staleExistenceChecks += 1;
-                return { status: 200, bodyJson: JSON.stringify({ ok: true, value: false }) };
-              }
-              const value = await scheduling[input.operation]!(...input.args);
-              return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
-            },
-          },
-        }),
+        SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, { roomEvents }),
       }),
       WORKSPACE_ID,
       WORKSTREAM_ID,
       "0",
       async (statements) => executeWorkstreamObjectSql(objectStore, statements),
     );
-    const tool = __integrationTesting.createAvalonTools(staleExistenceEnv, workflowInput())
+    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "request_elicitation");
     expect(tool?.definition.idempotency).toBe("provider_key");
     expect(tool?.definition.inputSchema).not.toHaveProperty("properties.targetUserId");
@@ -346,9 +334,9 @@ describe("Avalon core write-tool idempotency", () => {
     const first = await tool!.execute(args, context("run:turn:2:tool:0"));
     const second = await tool!.execute(args, context("run:turn:2:tool:0"));
 
-    expect(staleExistenceChecks).toBe(2);
     expect(second).toEqual(first);
     expect(first).toMatchObject({ halt: "needs_input" });
+    expect(roomEvents.filter((event) => event.type === "elicitation_created")).toHaveLength(1);
     expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM elicitations")).toEqual({ count: 1 });
     expect(workstreamObjectGet(objectStore, "SELECT target_user_id FROM elicitations")).toEqual({ target_user_id: null });
     expect(workstreamObjectGet(
