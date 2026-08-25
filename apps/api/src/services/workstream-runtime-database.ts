@@ -66,7 +66,6 @@ const LOCAL_TABLES = [
   "message_mentions",
   "messages",
   "workstreams",
-  "elicitations",
   // The object's own receipt table, not a legacy name: when migration 17
   // retired `tool_invocations` from this list, the dev seed moved to writing
   // `tool_effects` directly — and a statement naming only that table fell

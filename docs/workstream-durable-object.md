@@ -1063,6 +1063,57 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-25 — The identity and elicitation slices, and migration 25
+
+**What changed:** `WorkstreamIdentityStorage` gains the three layers the five
+authorities before it have — a protocol derived from the storage class, a
+Worker-side port, and one `/internal/identity` endpoint — and every routed read
+and write of `workstreams` and `workstream_participants` moves onto it.
+`WorkstreamSchedulingStorage` gains `openElicitation` and
+`answerElicitationExternally`, the last two writers of `_runtime_elicitations`.
+Migration 25 drops that view and its two triggers, and `elicitations` leaves
+`LOCAL_TABLES` and `TABLE_REWRITES`.
+
+**Why:** every one of these was a statement working around not being able to
+read before it wrote.
+
+- The compare-and-swaps — the naming pass on `title_status`, the description
+  loop on `objective`, the email adoption on `email_address IS NULL` — fenced
+  in a `WHERE` clause and then read `meta.changes` to learn what had happened.
+  They decide inside the transaction now and *name* the outcome, and
+  `redescribe` hands back what is in force after a refusal rather than leaving
+  the caller a second read of a row that can move again.
+- The batches that spanned two tables — the Slack creator reconciliation, the
+  elicitation create, the elicitation answer, the inbound-email transcript
+  write — were sequences whose later statements re-stated the earlier ones'
+  effects as `EXISTS` subqueries, because a batch cannot see its own rows. The
+  elicitation create was the clearest: an `INSERT … SELECT … FROM workstreams`
+  to read the sequence number in the statement that consumed it, then a counter
+  update fenced twice more on the part having taken exactly that number.
+- The joins proved nothing. Both telemetry emitters joined `workstreams` to
+  read one column; the connector audience joined it to re-check a workspace the
+  port checks before it dispatches.
+
+`provisionRuntime` goes with them. It was a bespoke RPC that validated its own
+body and re-checked identity inside the product service — both of which the
+shared dispatcher already does — so a provision could be refused under two
+different mismatch codes depending on which layer noticed first.
+
+One behaviour changes on purpose, and one contract narrows.
+`assertRunAuthorityStillValid` took `Env | D1Database`, and the regional
+`activities` fallback that union made reachable is gone: every caller passes an
+`Env`, and the evidence a connector run started from is the WorkspaceDO's, so a
+second source for it could only disagree.
+
+**What a future change has to respect:** `_runtime_workstreams` and
+`_runtime_workstream_participants` are still declared, and this slice does not
+drop them. Production has no caller left, but roughly two hundred test sites
+and the `/dev` seed's transcript import still write through the object's compat
+vocabulary, and `workstreamObjectRun`/`workstreamObjectGet` exist to let them.
+Retiring the views means migrating those to the object's own tables, which is
+its own slice — and until it lands, a new caller can still reach these tables
+through the router without anything failing.
+
 ### 2026-08-25 — The four system producers provision through the object
 
 **What changed:** `WorkstreamIdentityStorage.provision` is the operation the
