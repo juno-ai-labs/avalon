@@ -357,6 +357,23 @@ idempotency keys. It is not prose and nothing reads it as a name; changing it
 changes every derived id and re-issues writes that were already idempotent.
 It belongs to section 1, not here.
 
+**A regex literal is neither a comment nor a string, and the sweep saw only the
+latter two.** `classifyAddressingHeuristically` matched `/\bavalon\b/i` to decide
+whether a message names the product. It is a fast path that returns *without*
+invoking the model, so after the prompts moved, "Rally, take a look at this"
+classified as `human_only` and the agent stayed silent while being addressed by
+name. It now matches both spellings — recognizing an extra word costs nothing,
+and there is no stored value to keep consistent.
+
+**Found while sweeping for other regex literals, and left for later:**
+`AVALON_BRANCH_PATTERN` in `terminal/repository-selection.ts` both mints
+`avalon/<slug>` and recognizes `^avalon/`. Moving it is not a rename but a
+compatibility problem — branches of that name already exist in members' GitHub
+repositories and in open pull requests, so the minted prefix and the recognized
+one have to diverge for as long as those branches live. That is section 5's
+shape, not this section's, and it is recorded here so the next pass does not
+rediscover it as an oversight.
+
 **One split is deliberate and will look like a miss.** The Terminal plugin's
 system message now says "Rally creates or restores `$AVALON_GIT_BRANCH`" — the
 sentence is section 9 and moved; the variable it names is section 4 and stays,
