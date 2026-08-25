@@ -126,6 +126,27 @@ function networkApiError(message: string, cause?: unknown): ApiError {
   return error;
 }
 
+/**
+ * For a schema shared with the server — `WireAutomationDraftStreamEventSchema`
+ * below is one — a response that fails the client's own copy is not a network
+ * failure or a server bug report: the server built and validated the same
+ * bytes against the same shared schema, so the two copies disagreeing is best
+ * explained by this process running stale (or, less often, ahead) across a
+ * deploy. Rally checks for an update every few hours and still waits for the
+ * person to confirm the restart, so a stale process can outlive a shape
+ * change by a long margin — long enough that a bare "unexpected response"
+ * reads as unrecoverable when restarting the app is the fix.
+ *
+ * A good few of the schemas below are not shared, though — envelopes this
+ * file declares locally (`wireAutomationPageSchema` and its neighbors), which
+ * nothing on the server validates against. A mismatch there can be an
+ * ordinary client-side bug in one of those, and restarting will not help; the
+ * message still says "usually" for exactly that reason, and `details.issues`
+ * carries the actual diagnosis either way.
+ */
+const STALE_BUILD_RESPONSE_MESSAGE =
+  "Rally received a response it doesn't recognize. Restarting Rally usually fixes this by finishing a pending update — try that, then retry.";
+
 /** The service answers 401 for plenty of things that are not a dead bearer —
  * replayed socket tickets, stale OAuth state, a missing identity. Renewing on
  * those would burn a refresh-token rotation and silently replay the request,
@@ -816,7 +837,7 @@ export class RallyApi {
     const payload: unknown = await response.json();
     const parsed = options.schema.safeParse(payload);
     if (!parsed.success) {
-      throw new ApiError('Rally received an unexpected response from the service.', 502, 'invalid_response', {
+      throw new ApiError(STALE_BUILD_RESPONSE_MESSAGE, 502, 'invalid_response', {
         issues: parsed.error.issues,
         path,
       });
@@ -1783,7 +1804,7 @@ export class RallyApi {
       }
       const parsed = WireAutomationDraftStreamEventSchema.safeParse(payload);
       if (!parsed.success) {
-        throw new ApiError('Rally received an unexpected response from the service.', 502, 'invalid_response', {
+        throw new ApiError(STALE_BUILD_RESPONSE_MESSAGE, 502, 'invalid_response', {
           issues: parsed.error.issues,
           path: '/automations/draft/stream',
         });
