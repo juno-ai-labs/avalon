@@ -47,7 +47,7 @@ const TOOL_TREE_ENTRY_LIMIT = 200;
 const TOOL_TREE_PATH_DEPTH_LIMIT = 32;
 const GITHUB_CONTENTS_DIRECTORY_LIMIT = 1_000;
 const PINNED_REPOSITORIES_QUERY = `
-  query AvalonPinnedRepositories($login: String!) {
+  query RallyPinnedRepositories($login: String!) {
     repositoryOwner(login: $login) {
       ... on ProfileOwner {
         pinnedItems(first: 6, types: [REPOSITORY]) {
@@ -1799,7 +1799,7 @@ async function githubJsonWithHeaders(
   }
   const requestHeaders = new Headers(headers);
   requestHeaders.set("x-github-api-version", apiVersion);
-  requestHeaders.set("user-agent", "Avalon-GitHub-Connector");
+  requestHeaders.set("user-agent", "Rally-GitHub-Connector");
   let response: Response;
   try {
     response = await fetcher(url, {
