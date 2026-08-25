@@ -136,4 +136,19 @@ describe('Ace deployment contract', () => {
         .toBe(flag.defaultVariation);
     }
   });
+
+  it("provisions every managed flag with the description its own catalog entry declares", async () => {
+    const deploy = await readFile(`${aceDirectory}/scripts/deploy.mjs`, 'utf8');
+
+    // Same reason as the variation check above: `deploy.mjs` is the only place
+    // this string is live at deploy time, so nothing stops it from drifting
+    // from the catalog's copy except reading both back and comparing them.
+    // The capture assumes no apostrophe inside the quoted description — true
+    // of every description today — because that would close the quote early.
+    for (const flag of MANAGED_FLAGS) {
+      const call = deploy.match(new RegExp(`ensureFlag\\('${flag.key}',\\s*'([^']*)'`, 'u'));
+      expect(call, `no ensureFlag('${flag.key}', ...) call found in deploy.mjs`).not.toBeNull();
+      expect(call![1], `${flag.key}'s deploy.mjs description drifted from its MANAGED_FLAGS entry`).toBe(flag.description);
+    }
+  });
 });

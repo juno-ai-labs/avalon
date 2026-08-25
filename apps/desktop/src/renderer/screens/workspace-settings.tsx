@@ -45,6 +45,7 @@ import { DigestSettings } from '../components/digest-settings';
 import { SLACK_PERSONAL_CAPABILITIES } from '../lib/slack-personal-capabilities';
 import { useAppSession } from '../lib/app-session';
 import { ApiError } from '../lib/api';
+import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { desktopBridge } from '../lib/platform';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import type {
@@ -365,6 +366,12 @@ export function WorkspaceSettingsScreen({
 }: { standaloneWindow?: boolean; workspace: Workspace }): React.JSX.Element {
   const { api, runtime, session, signOut } = useAppSession();
   const workspaceSocket = useOptionalWorkspaceSocket();
+  const featureFlags = useClientFeatureFlags(api);
+  // Fails open: `digestsEnabled` defaults `true` and only an explicit `false`
+  // hides the section, so a stale cache entry, an unbound Flagship, or the
+  // brief window before the first fetch resolves all show the section rather
+  // than hiding someone's own saved settings for no reason they could find.
+  const digestSettingsAvailable = featureFlags.data?.digestsEnabled !== false;
   const queryClient = useQueryClient();
   const bridge = useMemo(() => desktopBridge(), []);
   const contentRef = useRef<HTMLElement | null>(null);
@@ -673,8 +680,8 @@ export function WorkspaceSettingsScreen({
     [invitations.data],
   );
   const developerSettingsAvailable = applicationSettings?.developerSettingsAvailable ?? false;
-  const settingsNavigationWithConnectors = useMemo(() => settingsNavigation.map((group) => (
-    group.label !== 'Settings' || githubSettingsConnections.length === 0
+  const settingsNavigationWithConnectors = useMemo(() => settingsNavigation.map((group) => {
+    const withGithub = group.label !== 'Settings' || githubSettingsConnections.length === 0
       ? group
       : {
           ...group,
@@ -687,8 +694,16 @@ export function WorkspaceSettingsScreen({
                 child: true,
               }]
             : [item]),
-        }
-  )), [githubSettingsConnections.length]);
+        };
+    // Dropped from the list entirely rather than shown disabled: their digest
+    // has in fact stopped arriving (`fireDigestSchedule` reads this same flag
+    // and returns `flag_disabled`), but there is no copy in this screen for a
+    // paused state, and an absent section is still an honest answer to "is
+    // this available to me."
+    return digestSettingsAvailable
+      ? withGithub
+      : { ...withGithub, items: withGithub.items.filter((item) => item.id !== 'digest') };
+  }), [githubSettingsConnections.length, digestSettingsAvailable]);
   const filteredNavigation = useMemo(() => {
     const query = navigationQuery.trim().toLowerCase();
     if (!query) return settingsNavigationWithConnectors;
@@ -981,7 +996,7 @@ export function WorkspaceSettingsScreen({
               </section>
             )}
 
-            {activeSection === 'digest' && api && (
+            {activeSection === 'digest' && api && digestSettingsAvailable && (
               <DigestSettings
                 api={api}
                 connections={connections.data ?? []}

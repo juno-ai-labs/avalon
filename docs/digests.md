@@ -227,8 +227,8 @@ reads WorkspaceDO, so refreshing early would arm it from the rows the save just 
 
 #### The run
 
-Before anything else, the scheduler checks `digests-enabled` — a Flagship kill
-switch, and the fourth reader of `env.FLAGS` alongside the three
+Before anything else, the scheduler checks `digests-enabled` — a Flagship
+Boolean, and the fourth reader of `env.FLAGS` alongside the three
 [`feature-flags.md`](feature-flags.md) already names. It is checked
 immediately after the schedule's own `enabled` bit and before anything is
 written, so an occurrence it skips claims nothing and moves no cursor: the
@@ -239,10 +239,14 @@ managed — because a digest is already on by default for every existing
 person, so the behavior a Flagship outage has to reproduce is delivery
 *continuing*, not stopping; only an operator's explicit `false` variation
 turns it off. It is Ace's fifth managed flag and the first that is not
-presentation-only: Electron never reads it, and it defaults **on** rather
-than off, which is why `apps/ace/scripts/deploy.mjs` provisions it with an
-explicit third argument instead of relying on `ensureFlag`'s ordinary default.
-See [`ace.md`](ace.md) and [`feature-flags.md`](feature-flags.md#provisioning).
+presentation-only in the usual sense, but it *is* client-visible: it defaults
+**on** rather than off, which is why `apps/ace/scripts/deploy.mjs` provisions
+it with an explicit third argument instead of relying on `ensureFlag`'s
+ordinary default, and `client-feature-flags.ts` serves it as `digestsEnabled`
+so Electron can hide the Digest settings section for whoever it resolves
+`false` for — through the identical evaluation the scheduler uses, never a
+second check the client derives on its own. See [`ace.md`](ace.md) and
+[`feature-flags.md`](feature-flags.md#provisioning).
 
 A digest runs on the ordinary agent loop, with the ordinary tool surface. The
 scheduler:
@@ -554,11 +558,18 @@ cannot change a saved schedule, cursor, or settlement.
 - **A digest row is never deleted.** Switching one off keeps the row with
   `enabled = 0`, so absence unambiguously means "never had one" and the reconciler
   cannot resurrect it.
-- **`digests-enabled` gates firing only, never a person's own configuration.**
-  It is checked before the occurrence is claimed, so a skip moves no cursor and
-  the reconciler keeps creating and repairing digest defaults exactly as if the
-  flag did not exist. It fails open to keep sending, the opposite of a
-  client-visible product flag — see [`feature-flags.md`](feature-flags.md).
+- **`digests-enabled` gates firing and client visibility, never a person's own
+  configuration.** It is checked before the occurrence is claimed, so a skip
+  moves no cursor and the reconciler keeps creating and repairing digest
+  defaults exactly as if the flag did not exist. It fails open to keep
+  sending — the opposite fail direction from the four presentation-only
+  client flags, even though it is now client-visible like they are — see
+  [`feature-flags.md`](feature-flags.md).
+- **The Digest settings section reads the identical evaluation the scheduler
+  uses.** `client-feature-flags.ts` calls the same `resolveDigestsEnabled`,
+  never a second "is it off for the workspace" check the client combines with
+  it. One evaluation, reused, so the section's visibility and the scheduler's
+  behavior can never disagree about the same person in the same workspace.
 
 ## Boundary
 
@@ -655,6 +666,37 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-25 — The Digest settings section hides when digests-enabled is off
+
+**What changed:** `ClientFeatureFlagsSchema` gained `digestsEnabled`, resolved
+in `client-feature-flags.ts` through the same `resolveDigestsEnabled` the
+entry below already added. Electron's Settings screen drops the Digest nav
+item and section entirely — not a disabled state, an absent one — for
+whoever it resolves `false` for.
+
+**Why:** The entry below deliberately kept this flag off the client, on the
+grounds that nothing needed a value pushed to a connected socket. That left a
+real gap: a person whose digest was turned off from outside their control
+would open Settings and see it reported as configured and on, with nothing
+telling them why nothing was arriving. Hiding the section is the honest
+answer to "is this available to me right now," which showing it — disabled
+or not — is not.
+
+**Considered and rejected:** Showing the section with a "paused" notice
+instead of hiding it. Reasonable on its own, but not what was decided here;
+recorded as the alternative in case the hidden version turns out to need
+revisiting once this has real usage behind it.
+
+**Consequences:** The Ace-save Queue fan-out this flag already triggered —
+previously a harmless no-op, since nothing read the result — now has a real
+client effect: a save through Ace propagates to a person's Settings screen
+the same way an `automation-workspace-templates-enabled` change already does.
+`reconcileDigestDefaults` and `digest_schedules` are untouched by this — the
+row a person configured is exactly what it was — but their digest has in
+fact stopped arriving, the same `flag_disabled` skip the scheduler already
+returns for them. The section is withdrawn because this screen has no copy
+for a paused state, not because nothing changed.
 
 ### 2026-08-25 — Scheduled digests get an operational kill switch
 
