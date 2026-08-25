@@ -257,9 +257,10 @@ from the API, not a second renderer completion.
 | --- | --- |
 | `apps/api/test/automation-draft-persistence.test.ts` | The lifecycle end to end against a migrated SQLite database: a draft appearing in the list, later turns updating it in place, the conversation coming back, promotion keeping the id, and a draft id the caller may not write through to. |
 | `apps/api/test/automation-lifecycle.test.ts` | Archival, and the refusal to archive an automation that runs. |
-| `apps/api/test/automation-compile-source-validation.test.ts` | An unbindable activity source still saving as a draft. |
+| `apps/api/test/automation-compile-source-validation.test.ts` | An unbindable activity source still saving as a draft, and a `ConnectorError` raised while compiling mapping to a typed, correctly-`retryable` `ApiError` instead of a generic 500. |
 | `apps/desktop/src/renderer/screens/new-automation.test.tsx` | Resuming `?draft=`, the screen naming the draft it wrote, and the delivery choice a draft's `requestedDelivery` pre-selects. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | Draft ordering, the row's link, and the archive menu item. |
+| `packages/agent-harness/src/automation-compiler-wire-roundtrip.test.ts` | A compiled draft for a Slack correspondence check with an unnamed multi-time-daily schedule surviving the exact `AutomationDraftStreamEventSchema` round trip the route and the desktop client each validate against. |
 
 Run them with `pnpm --filter @rally/api exec vitest run test/automation-draft-persistence.test.ts`
 and `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/new-automation.test.tsx`.
@@ -301,6 +302,16 @@ conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
 ## Changelog
+
+### 2026-08-25 — A connector failure during compiling gets its own error, and a schema mismatch names its likely cause
+
+**What changed:** `AutomationService.compile`'s catch block maps `ConnectorError` — raised by `loadAutomationCreatorPluginCatalog` while inspecting a connector's live tool surface, e.g. Slack — to a typed `ApiError`, distinguishing a revoked or misconfigured connector (not retryable; reconnect it) from everything else (retryable). Separately, `RallyApi`'s two response-schema-mismatch messages in the desktop client — the generic `request` helper and the automation draft stream's per-event check — now say that restarting Rally usually fixes an unrecognized response, instead of only naming the symptom.
+
+**Why:** A report of automation creation failing with a nondescriptive error while the compiler was inspecting Slack's tools led nowhere in the compile pipeline itself — a reproduction built from the same request (a Slack correspondence check, three times a day, no zone named) round-trips cleanly through the normalizer, `AutomationDraftSchema`, and the exact SSE shape both the route and the desktop client parse (pinned in `packages/agent-harness/src/automation-compiler-wire-roundtrip.test.ts`). Two real gaps turned up along the way instead. `ConnectorError` was the one error type among the compiler's failure modes with no `instanceof` branch, so any live connector-inspection failure — an expired Slack token, a plugin exposing too many dynamic tools — fell through to the same generic 500 as an actual defect, naming neither the connector nor the reason. And the client's own schema-mismatch message, read carefully, only describes what a same-version client and server cannot actually produce: the two sides validate the same bytes against the same shared schema, so a genuine mismatch is best explained by this process running stale across a deploy — Rally checks for an update every few hours and still waits on a confirmed restart, so a shape change can outlive a given desktop process for a long margin. The old message gave no hint that "restart the app" was the one thing worth trying before an unrecoverable-looking "Retry".
+
+**Considered and rejected:** Resolving a calendar trigger's unnamed timezone before it reaches the draft-stream wire, mirroring what the automation detail response already does for the same field. Rejected because the two responses are not analogous: nothing posts a detail response's triggers back, but the create screen posts the draft response's triggers back verbatim on `POST /automations`, which is exactly the wire boundary the 2026-08-24 entry below relies on staying null through. Resolving it here would freeze a scope-guessed default into the definition again, reopening the bug that entry closed.
+
+**Consequences:** A connector failure surfaced while compiling now carries `automation_connector_failed` and a `retryable` flag a caller can act on, rather than `internal_error`. The stale-build message change is client-only and general — every `RallyApi` caller gets it, not only the automation builder — because the same reasoning holds for any response that fails local schema validation. The remaining skew this document's entry below names — the draft response is the one place a null calendar timezone still reaches a client — is unresolved and, per the rejected option above, does not have a fix that does not cost more than it saves; a client that has picked up a shape change parses it same as the server that sent it.
 
 ### 2026-08-24 — A promoted draft is scheduled in the account's timezone
 
