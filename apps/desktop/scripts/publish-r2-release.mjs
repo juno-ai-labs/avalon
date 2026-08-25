@@ -21,6 +21,7 @@ import {
 import {
   purgeAndVerifyImmutableReleaseUrls,
   purgeCloudflareUrls,
+  verifyPublicReleaseArtifactHash,
 } from './release-cache.mjs';
 import {
   createChecksumManifest,
@@ -316,7 +317,12 @@ async function verifyR2Hash(key, expectedHash, destination) {
   }
 }
 
-async function uploadImmutableArtifact(artifact, scratchDirectory, releaseIsCommitted) {
+async function uploadImmutableArtifact(
+  artifact,
+  scratchDirectory,
+  releaseIsCommitted,
+  liveArtifactNames,
+) {
   const objectName = normalizeObjectName(artifact.objectName ?? artifact.name);
   const key = `${prefix}/${objectName}`;
   const verificationPath = join(scratchDirectory, `verified-${objectName.replaceAll('/', '_')}`);
@@ -328,6 +334,7 @@ async function uploadImmutableArtifact(artifact, scratchDirectory, releaseIsComm
     localHash,
     releaseIsCommitted,
     objectLocation: `r2://${bucket}/${key}`,
+    referencedByLiveManifest: liveArtifactNames.has(objectName),
     upload: async () => {
       await rm(verificationPath, { force: true });
       await putR2Object(key, artifact.path, {
@@ -458,9 +465,11 @@ try {
   const existingManifestPath = join(scratchDirectory, 'existing-latest-mac.yml');
   const hasManifest = await getR2Object(`${prefix}/${latestManifestName}`, existingManifestPath);
   let releaseIsCommitted = false;
+  let liveArtifactNames = new Set();
   if (hasManifest) {
     const existingBytes = await readFile(existingManifestPath);
     const existingFeed = parseMacUpdateFeed(existingBytes.toString('utf8'));
+    liveArtifactNames = new Set(existingFeed.files.map(({ url }) => url));
     const comparison = compareVersions(existingFeed.version, release.feed.version);
     if (comparison > 0) {
       throw new Error(
@@ -483,11 +492,21 @@ try {
   const immutablePublicArtifacts = [];
   for (const artifact of release.artifacts) {
     immutablePublicArtifacts.push(
-      await uploadImmutableArtifact(artifact, scratchDirectory, releaseIsCommitted),
+      await uploadImmutableArtifact(
+        artifact,
+        scratchDirectory,
+        releaseIsCommitted,
+        liveArtifactNames,
+      ),
     );
   }
   immutablePublicArtifacts.push(
-    await uploadImmutableArtifact(checksumsArtifact, scratchDirectory, releaseIsCommitted),
+    await uploadImmutableArtifact(
+      checksumsArtifact,
+      scratchDirectory,
+      releaseIsCommitted,
+      liveArtifactNames,
+    ),
   );
 
   // Query parameters bypass a stale negative cache entry but updater clients do
@@ -506,6 +525,10 @@ try {
         artifact.verificationId,
         { cacheBust: false },
       );
+      await verifyPublicReleaseArtifactHash({
+        expectedHash: artifact.verificationId,
+        url: artifact.url,
+      });
     },
   });
 

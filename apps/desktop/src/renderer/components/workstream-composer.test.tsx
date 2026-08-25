@@ -90,7 +90,7 @@ function renderComposer(
 
 function mentionOptionCopy(option: HTMLElement): { badge: string | null; description: string | null; label: string | null } {
   return {
-    badge: within(option).getByText('Person').textContent,
+    badge: option.querySelector('.badge')?.textContent ?? null,
     description: option.querySelector('small')?.textContent ?? null,
     label: option.querySelector('strong')?.textContent ?? null,
   };
@@ -354,6 +354,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     // membership that is not active — the participants rail already filters for
     // exactly this reason.
     const options = await screen.findAllByRole('option');
+    await within(options[0]!).findByText('A');
     expect(options.map(mentionOptionCopy)).toEqual([{
       badge: 'Person',
       description: 'adam@example.com',
@@ -379,15 +380,15 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.change(composer, { target: { value: '@' } });
 
     const options = await screen.findAllByRole('option');
-    await waitFor(() => expect(options[0]?.querySelector('.avatar-fallback')).toBeInTheDocument());
+    await within(options[0]!).findByText('A');
     expect(options.map(mentionOptionCopy)).toEqual([
       { badge: 'Person', description: 'adam@example.com', label: 'Adam' },
       { badge: 'Person', description: 'bob@example.com · not participating', label: 'Bob Builder' },
       { badge: 'Person', description: 'cara@example.com · not participating', label: 'Cara Chen' },
     ]);
-    expect(options[0]).toHaveAccessibleName('Adamadam@example.comPerson');
-    expect(options[1]).toHaveAccessibleName('Bob Builderbob@example.com · not participatingPerson');
-    expect(options[2]).toHaveAccessibleName('Cara Chencara@example.com · not participatingPerson');
+    expect(options[0]).toHaveAccessibleName('Adam — adam@example.com — Person');
+    expect(options[1]).toHaveAccessibleName('Bob Builder — bob@example.com · not participating — Person');
+    expect(options[2]).toHaveAccessibleName('Cara Chen — cara@example.com · not participating — Person');
     expect(screen.queryByText('Workspace connection')).not.toBeInTheDocument();
 
     // The draft's highlight names what the composer can mention, so a

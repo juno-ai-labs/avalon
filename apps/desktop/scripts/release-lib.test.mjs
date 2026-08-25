@@ -85,6 +85,34 @@ test('an absent immutable object uploads and matching bytes are reused', async (
     upload: async () => { uploads += 1; },
   }), 'reused');
   assert.equal(uploads, 1);
+
+  await assert.rejects(
+    reconcileImmutableReleaseObject({
+      existingHash: undefined,
+      localHash: 'new-build',
+      releaseIsCommitted: true,
+      objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
+      upload: async () => { uploads += 1; },
+    }),
+    /is missing; restore its exact published bytes/u,
+  );
+  assert.equal(uploads, 1);
+});
+
+test('an object named by the live manifest cannot be replaced by the next release', async () => {
+  let uploads = 0;
+  await assert.rejects(
+    reconcileImmutableReleaseObject({
+      existingHash: 'published-build',
+      localHash: 'next-build',
+      objectLocation: 'r2://releases/Avalon-mac-arm64.zip',
+      referencedByLiveManifest: true,
+      releaseIsCommitted: false,
+      upload: async () => { uploads += 1; },
+    }),
+    /Live release key .* cannot be replaced/u,
+  );
+  assert.equal(uploads, 0);
 });
 
 test('mac update feed parser requires a local checksummed artifact', () => {

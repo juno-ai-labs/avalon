@@ -737,6 +737,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             <div className="mention-popover" id="launch-mention-listbox" role="listbox" aria-label="Mentions">
               {visibleCandidates.map((member, index) => (
                 <button
+                  aria-label={`${member.name} — ${member.email} — Person`}
                   aria-selected={index === mentionNavigation.activeIndex}
                   className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
                   id={mentionOptionId(member.id)}
@@ -747,7 +748,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
                   role="option"
                   type="button"
                 >
-                  <span className="mention-icon"><Avatar member={member} size="small" /></span>
+                  <span aria-hidden="true" className="mention-icon">
+                    <Avatar member={member} size="small" />
+                  </span>
                   <span><strong>{member.name}</strong><small>{member.email}</small></span>
                   <Badge>Person</Badge>
                 </button>
