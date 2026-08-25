@@ -1037,7 +1037,21 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("calendar"),
     rrule: z.string().min(1),
-    timezone: IanaTimezoneSchema,
+    /**
+     * The zone the recurrence's wall-clock time is read in, or `null` when
+     * nobody named one.
+     *
+     * Null is the ordinary case and it is load-bearing, not a gap: it is what
+     * distinguishes a zone somebody asked for from one nothing but a default
+     * would answer, and it survives all the way into storage so that every
+     * later reader resolves it against the account the automation actually runs
+     * for — explicit trigger, then the owner's `users.timezone`, then
+     * `workspaces.timezone`, read where the `schedules` row is derived. Filling
+     * a default in earlier makes the two indistinguishable, and then a draft
+     * created under a different scope than the compiler suggested, and every
+     * copy of a shared template, silently keeps the drafting session's answer.
+     */
+    timezone: IanaTimezoneSchema.nullable(),
     summary: z.string().min(1)
   }),
   z.object({
@@ -1320,7 +1334,13 @@ export const DesktopExchangeRequestSchema = z.object({
   region: RegionSchema,
   attemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
   codeVerifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/u),
-  timezone: IanaTimezoneSchema.default("America/Los_Angeles")
+  /**
+   * The signing-in machine's zone, which seeds an account that has never chosen
+   * one. Optional rather than defaulted: a client that sends nothing knows
+   * nothing, and answering that with a zone wrote Pacific onto accounts whose
+   * own setting was the only real answer anyone had.
+   */
+  timezone: IanaTimezoneSchema.optional()
 });
 export const ConnectorOAuthProviderSchema = z.enum(ConnectorOAuthProviders);
 export const ConnectorOAuthAttemptStatusSchema = z.enum(["pending", "succeeded", "denied", "failed"]);

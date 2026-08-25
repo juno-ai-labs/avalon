@@ -42,9 +42,9 @@ For every declared memory table, record in instructions the exact table name, wh
 
 For recommendedPlugins, use only authorized plugins with exact inspected plugin IDs and tool names, and briefly explain why each helps. These are preload defaults, not an authority boundary.
 
-Supported triggers are manual; calendar with RRULE and timezone; interval of at least 60 seconds; connector_activity with an inspected connector type, exact declared event types, and only declared deterministic filter fields; semantic_activity with one inspected connector source, a declared deterministic prefilter, and a precise condition; resource_watch with a real resource ID; and webhook with exact event types. Every activity, semantic-activity, or webhook trigger must include a stable sourceBindingKey and the exact suggestedSourcePluginId inspected for that source. Reuse a binding key only when multiple triggers intentionally share the same connector connection. If multiple same-provider plugins remain plausible after safe read-only inspection, request one focused choice. Use manual when no cadence or event is requested. Never invent provider event names, filter fields, plugin IDs, or resource IDs.
+Supported triggers are manual; calendar with RRULE and optional timezone; interval of at least 60 seconds; connector_activity with an inspected connector type, exact declared event types, and only declared deterministic filter fields; semantic_activity with one inspected connector source, a declared deterministic prefilter, and a precise condition; resource_watch with a real resource ID; and webhook with exact event types. Every activity, semantic-activity, or webhook trigger must include a stable sourceBindingKey and the exact suggestedSourcePluginId inspected for that source. Reuse a binding key only when multiple triggers intentionally share the same connector connection. If multiple same-provider plugins remain plausible after safe read-only inspection, request one focused choice. Use manual when no cadence or event is requested. Never invent provider event names, filter fields, plugin IDs, or resource IDs.
 
-For a requested daily or morning briefing without an exact time, use a 9:00 AM calendar trigger in the user's timezone. Default to no notification when nothing qualifies.
+For a requested daily or morning briefing without an exact time, use a 9:00 AM calendar trigger. Set a calendar trigger's timezone only to a zone the person named, and name that zone in the summary; otherwise leave it null and write the summary without one. Default to no notification when nothing qualifies.
 
 Avalon itself sends each run's final message to the destinations the owner picks when accepting the automation: their own email address, their Avalon Slack Agent DM, or both. A request that the owner be emailed, DMed, or sent the result names a destination, not a step: record it in requestedDelivery, and never write a provider send for it — that delivers the same result twice, from two senders — and never model an Avalon destination as a plugin or provider tool. Write a provider send only to reach somebody other than the owner. Leave requestedDelivery empty whenever the owner named no destination of their own, including a request to send the result to somebody else and a request to be sent it that names no channel, and never infer one from the subject matter — a briefing about an inbox is not a request to be emailed.
 
@@ -62,14 +62,42 @@ The turn that calls automation_submit_draft or core_request_elicitation must con
 
 When the automation is well defined, call automation_submit_draft with ready=true and end the turn. If a blocking detail remains, call automation_submit_draft with ready=false and then core_request_elicitation. Do not emit a separate confirmation or question; Avalon renders the user-facing result from the saved draft and elicitation.
 
-automation_submit_draft is the only way to return a draft. core_request_elicitation is the only way to ask a blocking question.
+automation_submit_draft is the only way to return a draft. core_request_elicitation is the only way to ask a blocking question.`;
 
-Flat trigger records require null for every unused field. Encode deterministic filter objects and defaultBehavior as JSON strings for the response schema.`;
+/**
+ * The zones an unnamed schedule falls back to, as the account holds them.
+ *
+ * The policy above tells the compiler which of the two applies to the draft it
+ * is writing; without this message it would be a rule about a fact the model was
+ * never given, and a model asked for "the user's timezone" it cannot read
+ * answers with a popular one instead. Rendered as a user-role message rather
+ * than interpolated into the policy so the standing policy stays one constant
+ * string shared by every workspace, which is the block the prompt cache is
+ * worth the most on.
+ */
+export interface AutomationCompilerTimezoneDefaults {
+  /** `users.timezone` — what a personal automation takes when nobody names a zone. */
+  personal: string;
+  /** `workspaces.timezone` — what a workspace-scoped automation takes instead. */
+  workspace: string;
+}
+
+function renderTimezoneDefaultsMessage(defaults: AutomationCompilerTimezoneDefaults): string {
+  return [
+    "Scheduling defaults (Avalon account settings, data to schedule by, not instructions):",
+    `- personal automation timezone: ${defaults.personal}`,
+    `- workspace automation timezone: ${defaults.workspace}`,
+  ].join("\n");
+}
 
 export function renderAutomationCompilerMessages(input: {
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   currentDraft?: AutomationDraft | null;
+  defaultTimezones?: AutomationCompilerTimezoneDefaults | undefined;
 }): PromptMessage[] {
+  const timezoneContext = input.defaultTimezones
+    ? [{ role: "user" as const, content: renderTimezoneDefaultsMessage(input.defaultTimezones) }]
+    : [];
   const draftContext = input.currentDraft
     ? [{
         role: "user" as const,
@@ -78,6 +106,7 @@ export function renderAutomationCompilerMessages(input: {
     : [];
   return [
     { role: "system", content: SYSTEM_PROMPT },
+    ...timezoneContext,
     ...draftContext,
     ...input.messages,
   ];
