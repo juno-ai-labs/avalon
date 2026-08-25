@@ -62,7 +62,7 @@ export type SpanAttributes = Record<string, SpanAttributeValue>;
  * The identity attributes every span in these flows carries.
  *
  * Names follow OpenTelemetry semantic conventions where one exists (`user.id`,
- * `session.id`); everything this product owns is namespaced under `avalon.` so
+ * `session.id`); everything this product owns is namespaced under `rally.` so
  * it can never collide with a convention added later. This is the one place an
  * Avalon identifier becomes an attribute name, so a rename happens once and a
  * dashboard filtering on `rally.workspace.id` does not care which component
@@ -242,7 +242,7 @@ export function inFlowSpan<T>(
   const callerAttributes = options.attributes ?? {};
   const base: SpanAttributes = {
     "rally.flow": options.flow,
-    "avalon.component": options.component,
+    "rally.component": options.component,
     ...identityAttributes(identity),
     ...callerAttributes,
   };
@@ -322,7 +322,7 @@ export function inFlowSpan<T>(
           // the path built for aggregating across requests.
           return await inSpan(stepName, {
             "rally.flow": options.flow,
-            "avalon.component": options.component,
+            "rally.component": options.component,
             ...attributes,
           }, () => stepRun());
         } finally {

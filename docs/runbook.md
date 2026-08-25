@@ -1303,7 +1303,7 @@ every churn.
 ### Terminal platform analytics
 
 Both API Workers bind `TERMINAL_ANALYTICS` to the account-level
-`rally_terminal_operations` dataset. This dataset has one point per Daytona
+`avalon_terminal_operations` dataset. This dataset has one point per Daytona
 platform operation and is intentionally separate from `avalon_agent_runs`: a
 provider create/bootstrap/start is a different grain from a completed model
 run. Writes are non-blocking and advisory. A failed analytics write cannot

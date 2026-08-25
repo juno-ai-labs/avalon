@@ -71,7 +71,7 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
     expect(opened.every((span) => span.ended)).toBe(true);
     expect(opened[0]?.attributes).toMatchObject({
       "rally.flow": "workstream_create",
-      "avalon.component": "api",
+      "rally.component": "api",
       "rally.workspace.id": "workspace-1",
       "rally.workstream.id": "workstream-1",
       "user.id": "user-1",
@@ -310,7 +310,7 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
     const step = recordedSpans().find((s) => s.name === "workstream.create.receipt.reserve");
     expect(step?.attributes).toMatchObject({
       "rally.flow": "workstream_create",
-      "avalon.component": "api",
+      "rally.component": "api",
     });
     // Identity stays on the root: it is many attributes, the step shares the
     // root's trace, and `perf_flow` carries every step beside the identity.
