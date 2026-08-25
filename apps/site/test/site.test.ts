@@ -283,6 +283,58 @@ describe('public Rally site', () => {
     );
   });
 
+  it('rewrites only the hero button href, leaving every other attribute and label as authored', () => {
+    const page = readProjectFile('index.html');
+    const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
+
+    // A future copy, class, or data-* edit to this anchor in index.html must
+    // survive the transform untouched — only proof of that, not a second
+    // hardcoded copy of the markup, catches a renderer that regenerates the
+    // button instead of rewriting its href in place.
+    const original = '<a class="rally-button rally-button-dark button-primary" href="#download">'
+      + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a>';
+    const edited = '<a class="rally-button rally-button-dark button-primary" data-cta="hero" href="#download">'
+      + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download the macOS app now <span>↘</span></a>';
+    expect(page).toContain(original);
+    const editedPage = page.replace(original, edited);
+
+    const rendered = renderDesktopRelease(editedPage, release);
+
+    expect(rendered).toContain(
+      `<a class="rally-button rally-button-dark button-primary" data-cta="hero" href="${desktopDmgUrl(release)}">`
+      + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download the macOS app now <span>↘</span></a>',
+    );
+  });
+
+  it('leaves the hero download button entirely untouched when its marker pair is missing or malformed', () => {
+    const page = readProjectFile('index.html');
+    const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
+    const heroAnchor = '<a class="rally-button rally-button-dark button-primary" href="#download">'
+      + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a>';
+    const startMarker = '<!-- rally-desktop-hero-cta:start -->';
+    const endMarker = '<!-- rally-desktop-hero-cta:end -->';
+
+    // A missing start marker is documented as a safe no-op; the same has to
+    // hold for a missing end marker, an end marker ahead of the start, and
+    // both markers gone — a template typo should degrade, never crash the
+    // build. The download section's own markers stay intact throughout, so
+    // it keeps rendering normally alongside the untouched hero button.
+    const missingEnd = page.replace(endMarker, '');
+    expect(renderDesktopRelease(missingEnd, release)).toContain(heroAnchor);
+
+    const placeholder = '@@rally-hero-marker-swap-placeholder@@';
+    const endBeforeStart = page
+      .replace(startMarker, placeholder)
+      .replace(endMarker, startMarker)
+      .replace(placeholder, endMarker);
+    expect(renderDesktopRelease(endBeforeStart, release)).toContain(heroAnchor);
+
+    const bothMissing = page.replaceAll(startMarker, '').replaceAll(endMarker, '');
+    const renderedBothMissing = renderDesktopRelease(bothMissing, release);
+    expect(renderedBothMissing).toContain(heroAnchor);
+    expect(renderedBothMissing).toContain('Download Rally for macOS');
+  });
+
   it('renders the immutable DMG object only after a release is published', () => {
     const page = readProjectFile('index.html');
     const base = unpublishedReleaseFixture();
