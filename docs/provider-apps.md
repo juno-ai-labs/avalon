@@ -179,7 +179,7 @@ must match this table:
 | Name | Rally |
 | Developer | Juno AI Labs |
 | Developer URL | `https://rallywith.ai` |
-| Description | Bring Linear issues, projects, documents, and updates into Rally work streams. |
+| Description | Match `display.description` in [`linear.json`](../config/provider-apps/linear.json) |
 | Redirect URIs | Both `rallywith.ai` callbacks followed by both `with-avalon.com` compatibility callbacks from `linear.json` |
 | Webhook URL | `https://linear.rallywith.ai/ingest/linear` |
 | Publicly available | Enabled |
@@ -210,8 +210,10 @@ personal token before creating an owner-only activity.
 Store the same client ID, client secret, and webhook signing secret in both
 regional Workers. `linear-native-agent.preview.json` is a later configuration
 snapshot for that **same app**, applied only after the native-session acceptance
-gate passes. [`linear-integration.md`](linear-integration.md) owns the protocol,
-surface model, event matrix, and that gate.
+gate passes—not a separate preview registration. Its Rally name and description
+already match the live app; its preview-only scopes and events remain unapplied
+until that gate passes. [`linear-integration.md`](linear-integration.md) owns the
+protocol, surface model, event matrix, and that gate.
 
 ### Notion public connection
 

@@ -246,16 +246,18 @@ patch a historical snapshot into Rally.
 
 ## Changelog
 
-### 2026-08-25 — Hosted MCP now presents the Rally client identity
+### 2026-08-25 — The Rally client identity is pinned as one hosted-MCP contract
 
-**What changed:** Standards-based dynamic client registration defaults to the
-public name `Rally`, and MCP initialization sends the same client name. The
-identity is shared across Granola, Slack, and Notion hosted-MCP sessions; only a
-provider-specific declaration can override DCR metadata.
+**What changed:** The broader agent-identity cut-over in #301 changed dynamic
+client registration and MCP initialization from Avalon to Rally. This follow-up
+uses shared name/version constants for those two boundaries and adds exact tests
+for both. The identity is shared across Granola, Slack, and Notion hosted-MCP
+sessions; only a provider-specific declaration can override DCR metadata.
 
-**Why:** The generic transport still announced Avalon directly to providers after
-the product rename. Keeping DCR and MCP initialization aligned avoids two names
-for the same client in authorization records, provider logs, and active sessions.
+**Why:** Duplicated, unasserted identity literals could let authorization records
+and active-session logs drift back to two names even after the runtime rename.
+One constant and assertions at both protocol boundaries make that drift fail the
+connector suite.
 
 **Considered and rejected:** Re-registering every stored OAuth client or forcing
 every member to reconnect. Existing provider-issued client IDs and refresh tokens
@@ -264,8 +266,9 @@ discarding.
 
 **Consequences:** New dynamic registrations and new MCP sessions display Rally.
 Existing encrypted credentials continue to refresh normally, so the change does
-not rotate secrets or revoke connections. The reasoning behind this module before
-its existing changelog began was not reconstructed.
+not rotate secrets or revoke connections.
+
+Shipped in #307; the runtime rename first landed in #301.
 
 ### 2026-08-16 — The remote-schema repair defers to the sanitizer
 
