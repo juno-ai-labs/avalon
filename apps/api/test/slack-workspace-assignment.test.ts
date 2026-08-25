@@ -24,6 +24,10 @@ import {
   workstreamObjectAll,
   workstreamObjectGet,
   workstreamObjectRun,
+  applyWorkstreamObjectRootFields,
+  seedWorkstreamObjectParticipant,
+  workstreamObjectParticipantRows,
+  workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 
 const databases: DatabaseSync[] = [];
@@ -36,24 +40,18 @@ const databases: DatabaseSync[] = [];
 function seedWorkstreamObject(
   objectStores: Map<string, DatabaseSync>,
   ids: { workstreamId: string; workspaceId: string },
-  row: { title: string; objective: string; createdByUserId: string | null; harnessStatus: string },
+  row: { title: string; objective: string; createdByUserId: string | null; exactState: string },
 ): DatabaseSync {
   const store = testWorkstreamObjectStore();
   databases.push(store);
-  seedWorkstreamObjectRoot(store, ids);
-  workstreamObjectRun(
-    store,
-    `INSERT INTO workstreams
-       (id, workspace_id, title, objective, origin_type, created_by_user_id,
-        harness_status, last_activity_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'ad_hoc', ?, ?, '2026-01-01', '2026-01-01', '2026-01-01')`,
-    ids.workstreamId,
-    ids.workspaceId,
-    row.title,
-    row.objective,
-    row.createdByUserId,
-    row.harnessStatus,
-  );
+  seedWorkstreamObjectRoot(store, {
+    ...ids,
+    title: row.title,
+    description: row.objective,
+    originType: "ad_hoc",
+    createdByUserId: row.createdByUserId,
+    exactState: row.exactState,
+  });
   objectStores.set(ids.workstreamId, store);
   return store;
 }
@@ -113,7 +111,7 @@ describe("Slack workspace workstream assignment", () => {
     const objectStore = seedWorkstreamObject(
       objectStores,
       { workstreamId: "7a000000-0000-4000-8000-000000000001", workspaceId: "3f88f9ca-d7b3-4714-828e-b22187914524" },
-      { title: "Investigate", objective: "Investigate", createdByUserId: null, harnessStatus: "completed" },
+      { title: "Investigate", objective: "Investigate", createdByUserId: null, exactState: "completed" },
     );
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
@@ -157,15 +155,9 @@ describe("Slack workspace workstream assignment", () => {
       linked_user_id: null,
     });
     // Creator and participant state lives in the work stream's object.
-    expect(workstreamObjectGet(
-      objectStore,
-      `SELECT user_id, participation_reason FROM workstream_participants
-       WHERE workstream_id = '7a000000-0000-4000-8000-000000000001'`,
-    )).toEqual({ user_id: "a352221e-2577-4ad0-8889-5b24421f63fb", participation_reason: "creator" });
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT created_by_user_id FROM workstreams WHERE id = '7a000000-0000-4000-8000-000000000001'",
-    )).toEqual({ created_by_user_id: "a352221e-2577-4ad0-8889-5b24421f63fb" });
+    expect(workstreamObjectParticipantRows(objectStore, "user_id, participation_reason"))
+      .toEqual([{ user_id: "a352221e-2577-4ad0-8889-5b24421f63fb", participation_reason: "creator" }]);
+    expect(workstreamObjectRootRow(objectStore, "created_by_user_id")).toEqual({ created_by_user_id: "a352221e-2577-4ad0-8889-5b24421f63fb" });
   });
 
   it("keeps an existing creator when a later Slack assignment resolves the same session", async () => {
@@ -216,7 +208,7 @@ describe("Slack workspace workstream assignment", () => {
     const objectStore = seedWorkstreamObject(
       objectStores,
       { workstreamId: "7a000000-0000-4000-8000-000000000002", workspaceId: "3f88f9ca-d7b3-4714-828e-b22187914524" },
-      { title: "Investigate", objective: "Investigate", createdByUserId: "user-owner", harnessStatus: "completed" },
+      { title: "Investigate", objective: "Investigate", createdByUserId: "user-owner", exactState: "completed" },
     );
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       ok: true,
@@ -246,10 +238,7 @@ describe("Slack workspace workstream assignment", () => {
       "taylor@example.com",
     )).resolves.toBe(1);
 
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT created_by_user_id FROM workstreams WHERE id = '7a000000-0000-4000-8000-000000000002'",
-    )).toEqual({ created_by_user_id: "user-owner" });
+    expect(workstreamObjectRootRow(objectStore, "created_by_user_id")).toEqual({ created_by_user_id: "user-owner" });
   });
 
   it("does not answer the next external elicitation when a Slack event is retried", async () => {
@@ -454,18 +443,16 @@ describe("Slack workspace workstream assignment", () => {
     const guessedStore = seedWorkstreamObject(
       objectStores,
       { workstreamId: "7a000000-0000-4000-8000-000000000003", workspaceId: "3f88f9ca-d7b3-4714-828e-b22187914524" },
-      { title: "Guessed", objective: "Slack task", createdByUserId: "user-jordan", harnessStatus: "completed" },
+      { title: "Guessed", objective: "Slack task", createdByUserId: "user-jordan", exactState: "completed" },
     );
-    workstreamObjectRun(
-      guessedStore,
-      `INSERT INTO workstream_participants
-         (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
-       VALUES ('7a000000-0000-4000-8000-000000000003', 'user-jordan', 'user-jordan', 'creator', '2026-01-01', NULL)`,
-    );
+    seedWorkstreamObjectParticipant(guessedStore, {
+      userId: "user-jordan",
+      participationReason: "creator",
+    });
     const elsewhereStore = seedWorkstreamObject(
       objectStores,
       { workstreamId: "7a000000-0000-4000-8000-000000000004", workspaceId: "3f88f9ca-d7b3-4714-828e-b22187914524" },
-      { title: "Elsewhere", objective: "Slack task", createdByUserId: "user-owner", harnessStatus: "completed" },
+      { title: "Elsewhere", objective: "Slack task", createdByUserId: "user-owner", exactState: "completed" },
     );
     vi.stubGlobal("fetch", vi.fn(async () => new Response(
       JSON.stringify({ ok: true }),
@@ -499,23 +486,14 @@ describe("Slack workspace workstream assignment", () => {
 
     // The link is a stronger statement about who this Slack member is than the
     // address its own earlier assignment matched on.
-    expect(workstreamObjectGet(
-      guessedStore,
-      "SELECT created_by_user_id FROM workstreams WHERE id = '7a000000-0000-4000-8000-000000000003'",
-    )).toEqual({ created_by_user_id: "a352221e-2577-4ad0-8889-5b24421f63fb" });
-    expect(workstreamObjectAll(
-      guessedStore,
-      `SELECT user_id, participation_reason FROM workstream_participants
-       WHERE workstream_id = '7a000000-0000-4000-8000-000000000003' ORDER BY user_id`,
-    )).toEqual([
-      { user_id: "a352221e-2577-4ad0-8889-5b24421f63fb", participation_reason: "creator" },
-      { user_id: "user-jordan", participation_reason: "explicit" },
-    ]);
+    expect(workstreamObjectRootRow(guessedStore, "created_by_user_id")).toEqual({ created_by_user_id: "a352221e-2577-4ad0-8889-5b24421f63fb" });
+    expect(workstreamObjectParticipantRows(guessedStore, "user_id, participation_reason"))
+      .toEqual([
+        { user_id: "user-jordan", participation_reason: "explicit" },
+        { user_id: "a352221e-2577-4ad0-8889-5b24421f63fb", participation_reason: "creator" },
+      ]);
     // A creator recorded by anything other than that guess still stands.
-    expect(workstreamObjectGet(
-      elsewhereStore,
-      "SELECT created_by_user_id FROM workstreams WHERE id = '7a000000-0000-4000-8000-000000000004'",
-    )).toEqual({ created_by_user_id: "user-owner" });
+    expect(workstreamObjectRootRow(elsewhereStore, "created_by_user_id")).toEqual({ created_by_user_id: "user-owner" });
   });
 });
 
@@ -710,7 +688,7 @@ describe("Slack connector principal delivery", () => {
     seedWorkstreamObject(
       objectStores,
       { workstreamId: "7a000000-0000-4000-8000-0000000000aa", workspaceId: "22222222-2222-4222-8222-222222222222" },
-      { title: "Investigate", objective: "Investigate", createdByUserId: null, harnessStatus: "completed" },
+      { title: "Investigate", objective: "Investigate", createdByUserId: null, exactState: "completed" },
     );
     insertSlackEventJob(database, "event:reply", appMention("EvReply", { threadTs: "1.0", ts: "2.0" }));
     const { fetcher } = slackTaskApiFetcher(database, { ok: true });
@@ -1258,9 +1236,9 @@ describe("Slack public channel membership", () => {
     const [createdId] = [...objectStores.keys()];
     const createdStore = objectStores.get(createdId!)!;
     databases.push(createdStore);
-    expect(workstreamObjectGet(createdStore, "SELECT title, objective FROM workstreams")).toEqual({
+    expect(workstreamObjectRootRow(createdStore, "title, description")).toEqual({
       title: "investigate this",
-      objective: "investigate this",
+      description: "investigate this",
     });
     expect(database.prepare(
       "SELECT id, workspace_id, do_identity_anchor FROM workstreams WHERE id = ?",
@@ -1448,9 +1426,9 @@ describe("Slack public channel membership", () => {
     const [createdId] = [...objectStores.keys()];
     const createdStore = objectStores.get(createdId!)!;
     databases.push(createdStore);
-    expect(workstreamObjectGet(createdStore, "SELECT title, objective FROM workstreams")).toEqual({
+    expect(workstreamObjectRootRow(createdStore, "title, description")).toEqual({
       title: "investigate this",
-      objective: "investigate this",
+      description: "investigate this",
     });
     expect(database.prepare(
       "SELECT id, workspace_id, do_identity_anchor FROM workstreams WHERE id = ?",
@@ -1495,16 +1473,15 @@ function seedElicitationRetry(
   `);
   // Runs, elicitations, and the transcript live only in the work stream's
   // object since migration 0090.
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstreams
-       (id, workspace_id, title, objective, origin_type, created_by_user_id,
-        harness_status, next_sequence_number, email_address, email_route_status,
-        last_activity_at, created_at, updated_at)
-     VALUES ('7a000000-0000-4000-8000-000000000005', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Retry', 'Retry', 'ad_hoc', NULL,
-             'needs_input', 2, 'retry@automation.with-avalon.com', 'active',
-             '2026-01-01', '2026-01-01', '2026-01-01')`,
-  );
+  applyWorkstreamObjectRootFields(objectStore, {
+    title: "Retry",
+    description: "Retry",
+    originType: "ad_hoc",
+    exactState: "needs_input",
+    nextSequenceNumber: 2,
+    emailAddress: "retry@automation.with-avalon.com",
+    emailRouteStatus: "active",
+  });
   workstreamObjectRun(
     objectStore,
     `INSERT INTO harness_runs

@@ -81,26 +81,18 @@ function seedWorkstream(
   },
 ): void {
   const store = workstreamStore(id);
-  seedWorkstreamObjectRoot(store, { workspaceId: WORKSPACE_ID, workstreamId: id });
-  workstreamObjectRun(
-    store,
-    `INSERT INTO workstreams (
-       id, workspace_id, title, objective, origin_type, created_by_user_id,
-       automation_subscription_id, automation_run_id, planned_for, harness_status,
-       last_activity_at, created_at, updated_at, archived_at,
-       scope, system_kind, created_from_opportunity_id
-     ) VALUES (?, ?, 'Ship it', '', ?, ?, NULL, NULL, NULL, 'idle', ?, ?, ?, NULL, ?, ?, ?)`,
-    id,
-    WORKSPACE_ID,
-    values.origin,
-    values.createdByUserId,
-    NOW,
-    NOW,
-    NOW,
-    values.scope ?? "workspace",
-    values.systemKind ?? null,
-    values.opportunityId ?? null,
-  );
+  seedWorkstreamObjectRoot(store, {
+    workspaceId: WORKSPACE_ID,
+    workstreamId: id,
+    title: "Ship it",
+    description: "",
+    originType: values.origin,
+    createdByUserId: values.createdByUserId,
+    scope: values.scope ?? "workspace",
+    systemKind: values.systemKind ?? null,
+    createdFromOpportunityId: values.opportunityId ?? null,
+  }, Date.parse(NOW));
+
 }
 
 beforeEach(() => {
@@ -277,20 +269,13 @@ describe("flag targeting attributes", () => {
       seedWorkstreamObjectRoot(object, {
         workspaceId: WORKSPACE_ID,
         workstreamId: AD_HOC_WORKSTREAM,
-      });
-      workstreamObjectRun(
-        object,
-        `INSERT INTO workstreams (
-           id, workspace_id, title, objective, origin_type, created_by_user_id,
-           harness_status, last_activity_at, created_at, updated_at, scope
-         ) VALUES (?, ?, 'Ship it', '', 'ad_hoc', ?, 'idle', ?, ?, ?, 'workspace')`,
-        AD_HOC_WORKSTREAM,
-        WORKSPACE_ID,
-        MEMBER_ID,
-        NOW,
-        NOW,
-        NOW,
-      );
+        title: "Ship it",
+        description: "",
+        originType: "ad_hoc",
+        createdByUserId: MEMBER_ID,
+        scope: "workspace",
+      }, Date.parse(NOW));
+
       const env = createTestEnv({
         DB: sqliteD1(regional),
         SUBSTREAM_AGENTS: testSubstreamAgentsBinding(object),
