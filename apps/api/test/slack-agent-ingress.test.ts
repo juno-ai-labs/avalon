@@ -294,6 +294,27 @@ describe("Slack Agent durable ingress", () => {
     });
   });
 
+  it("resolves a modal minted before the rename, which Slack still echoes back", async () => {
+    // A Slack action id is baked into a surface Slack retains: an App Home
+    // view, a posted message's button, a modal already on screen. Those keep
+    // the id they were minted with, so refusing the superseded spelling makes
+    // every pre-deploy button fall past its branch into the generic task modal.
+    const service = new SlackAgentService(createTestEnv({ AVALON_REGION: "global" }));
+    await expect(service.processInteraction({
+      type: "view_submission",
+      team: { id: "T1" },
+      user: { id: "U1" },
+      view: {
+        id: "V1",
+        callback_id: "avalon_start_task_submit",
+        state: { values: { prompt: { value: { value: "" } } } },
+      },
+    }, "body-hash")).resolves.toEqual({
+      response_action: "errors",
+      errors: { prompt: "Describe what Avalon should do." },
+    });
+  });
+
   it("rejects a start-task modal whose signed source metadata is missing", async () => {
     const service = new SlackAgentService(createTestEnv({ AVALON_REGION: "global" }));
     await expect(service.processInteraction({
