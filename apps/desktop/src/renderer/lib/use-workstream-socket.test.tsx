@@ -20,6 +20,7 @@ import {
   type WorkstreamSocketApi,
 } from './use-workstream-socket';
 import {
+  RECENT_WORKSTREAM_SOCKET_RETENTION_MS,
   WorkstreamSocketPool,
   useRetainedWorkstreamSocket,
 } from './workstream-socket-pool';
@@ -281,8 +282,20 @@ afterEach(() => {
 });
 
 describe('useWorkstreamSocket', () => {
+  it('keeps the connection object stable when none of its fields changed', () => {
+    const api = socketApiWith({});
+    const { result, rerender } = renderHook(
+      () => useWorkstreamSocket(api, '00000000-0000-7000-8000-000000000620', false),
+      { wrapper: createWrapper() },
+    );
+    const first = result.current;
+
+    rerender();
+
+    expect(result.current).toBe(first);
+  });
+
   it('reuses the same socket when returning to a recently viewed work stream', async () => {
-    const fiveMinutesMs = 5 * 60_000;
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const firstWorkstreamId = '00000000-0000-7000-8000-000000000621';
@@ -317,7 +330,7 @@ describe('useWorkstreamSocket', () => {
     expect(FakeWebSocket.instances).toHaveLength(2);
     expect(firstClose).not.toHaveBeenCalled();
 
-    act(() => vi.advanceTimersByTime(fiveMinutesMs - 1));
+    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
     view.rerender(
       <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
         <ActiveConnection workstreamId={firstWorkstreamId} />
@@ -330,7 +343,6 @@ describe('useWorkstreamSocket', () => {
   });
 
   it('closes an idle recently viewed socket only after five minutes', async () => {
-    const fiveMinutesMs = 5 * 60_000;
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const firstWorkstreamId = '00000000-0000-7000-8000-000000000623';
@@ -362,7 +374,7 @@ describe('useWorkstreamSocket', () => {
       </WorkstreamSocketPool>,
     );
     await flushPromises();
-    act(() => vi.advanceTimersByTime(fiveMinutesMs - 1));
+    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
     expect(firstClose).not.toHaveBeenCalled();
 
     act(() => vi.advanceTimersByTime(1));

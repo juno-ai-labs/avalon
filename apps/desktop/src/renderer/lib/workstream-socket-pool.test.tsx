@@ -1,12 +1,13 @@
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render } from '@testing-library/react';
-import type { PropsWithChildren } from 'react';
+import { useEffect, type PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSocketApi } from './use-workstream-socket';
 import {
   RECENT_WORKSTREAM_SOCKET_RETENTION_MS,
   WorkstreamSocketPool,
+  retainedWorkstreamSocketIds,
   useRetainedWorkstreamSocket,
 } from './workstream-socket-pool';
 
@@ -98,11 +99,48 @@ async function flushPromises(): Promise<void> {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   workspaceCreateMessage.mockReset();
   FakeWebSocket.instances = [];
 });
 
+describe('retainedWorkstreamSocketIds', () => {
+  it('deduplicates active, background, recent, and just-left membership in priority order', () => {
+    expect(retainedWorkstreamSocketIds('active', ['active', 'running'], ['running', 'recent'], 'recent'))
+      .toEqual(['active', 'running', 'recent']);
+  });
+
+  it('returns no IDs when every source is empty', () => {
+    expect(retainedWorkstreamSocketIds(null, [], [], null)).toEqual([]);
+  });
+});
+
 describe('WorkstreamSocketPool', () => {
+  it('keeps the route subtree mounted while the active work stream changes', () => {
+    const mounted = vi.fn();
+    function Route({ workstreamId }: { workstreamId: string }): React.JSX.Element {
+      useEffect(() => {
+        mounted();
+      }, []);
+      return <div>{workstreamId}</div>;
+    }
+    const api = socketApi();
+    const view = render(
+      <WorkstreamSocketPool activeWorkstreamId="first" api={api} backgroundWorkstreamIds={[]}>
+        <Route workstreamId="first" />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+
+    view.rerender(
+      <WorkstreamSocketPool activeWorkstreamId="second" api={api} backgroundWorkstreamIds={[]}>
+        <Route workstreamId="second" />
+      </WorkstreamSocketPool>,
+    );
+
+    expect(mounted).toHaveBeenCalledTimes(1);
+  });
+
   it('does not admit a route whose initial reads failed, including after navigation', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
@@ -179,6 +217,73 @@ describe('WorkstreamSocketPool', () => {
       </WorkstreamSocketPool>,
     );
     act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
+    expect(firstPair.every((socket) => socket.close.mock.calls.length === 1)).toBe(true);
+  });
+
+  it('keeps a background-running socket pair past the recent-view deadline', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const firstWorkstreamId = '00000000-0000-7000-8000-000000000635';
+    const secondWorkstreamId = '00000000-0000-7000-8000-000000000636';
+    const view = render(
+      <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <ActiveConnection api={api} enabled workstreamId={firstWorkstreamId} />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+    await flushPromises();
+    const firstPair = FakeWebSocket.instances.filter((socket) => String(socket.url).includes(firstWorkstreamId));
+
+    view.rerender(
+      <WorkstreamSocketPool
+        activeWorkstreamId={secondWorkstreamId}
+        api={api}
+        backgroundWorkstreamIds={[firstWorkstreamId]}
+      >
+        <ActiveConnection api={api} enabled workstreamId={secondWorkstreamId} />
+      </WorkstreamSocketPool>,
+    );
+    await flushPromises();
+    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
+    expect(firstPair.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
+
+    view.rerender(
+      <WorkstreamSocketPool activeWorkstreamId={secondWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <ActiveConnection api={api} enabled workstreamId={secondWorkstreamId} />
+      </WorkstreamSocketPool>,
+    );
+    expect(firstPair.every((socket) => socket.close.mock.calls.length === 1)).toBe(true);
+  });
+
+  it('re-arms expiry when the wall clock moves backward before the timer fires', async () => {
+    const startedAt = new Date('2026-08-25T12:00:00.000Z').getTime();
+    vi.useFakeTimers({ now: startedAt });
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const firstWorkstreamId = '00000000-0000-7000-8000-000000000637';
+    const secondWorkstreamId = '00000000-0000-7000-8000-000000000638';
+    const view = render(
+      <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <ActiveConnection api={api} enabled workstreamId={firstWorkstreamId} />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+    await flushPromises();
+    const firstPair = FakeWebSocket.instances.filter((socket) => String(socket.url).includes(firstWorkstreamId));
+    view.rerender(
+      <WorkstreamSocketPool activeWorkstreamId={secondWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <ActiveConnection api={api} enabled workstreamId={secondWorkstreamId} />
+      </WorkstreamSocketPool>,
+    );
+    await flushPromises();
+
+    const now = vi.spyOn(Date, 'now').mockReturnValue(startedAt - 60_000);
+    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
+    expect(firstPair.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
+
+    now.mockReturnValue(startedAt + RECENT_WORKSTREAM_SOCKET_RETENTION_MS);
+    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS + 60_000));
     expect(firstPair.every((socket) => socket.close.mock.calls.length === 1)).toBe(true);
   });
 });
