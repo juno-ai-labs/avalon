@@ -36,7 +36,7 @@ listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 
 Rally uses one public Slack Marketplace app for two related but separate connections:
 
-1. A **workspace installation** gives Rally a bot identity and the Slack Agent surfaces. It receives Events API deliveries and powers Agent DMs, mentions, App Home, shortcuts, `/avalon`, modals, unfurls, streaming replies, and proactive automation results.
+1. A **workspace installation** gives Rally a bot identity and the Slack Agent surfaces. It receives Events API deliveries and powers Agent DMs, mentions, App Home, shortcuts, `/rally`, modals, unfurls, streaming replies, and proactive automation results.
 2. An optional **personal connection** gives Rally's MCP client a Slack user token. It preserves that user's broader private-channel, DM, MPIM, canvas, visibility, and user attribution.
 
 The workspace installation is required for the in-Slack Agent experience. Personal MCP authorization is not required to chat with Rally in Slack. Every Slack-originated run receives bounded source provenance (team, channel, thread, invocation and channel types, and any matched Rally member), plus up to eight nearby messages and attachment metadata when the bot can read them. Nearby Slack content is model-visible as explicitly labelled untrusted evidence rather than system instructions. The workspace installation also exposes bounded message search, channel/thread/message/file/user/member reads, and bot-authored message/reaction/conversation writes. Slack's Real-time Search API requires the short-lived `action_token` from a user-initiated message or app mention; Rally carries that token as hidden run authorization and never adds it to prompts or model tool arguments. Bot search covers public channels only. Other workspace reads cover conversations and files visible to the installed bot. The message shortcut can explicitly prefill a task with its selected message.
@@ -360,7 +360,7 @@ or delays that product summary rather than reading a frozen D1 work-stream row.
 - `@Rally` in a channel: create/continue a task in the mention thread; later human replies in that Rally-owned thread do not need another mention, and responses always stay threaded.
 - Global shortcut **Start a Rally task**: open a task modal.
 - Message shortcut **Work on this with Rally**: prefill the task modal with the selected message.
-- `/avalon [request]`: start the request; an empty command opens the modal.
+- `/rally [request]`: start the request; an empty command opens the modal.
 - **Connect Rally**: mint a link challenge and open it in a modal whose single
   button is the desktop handoff. Not refused on a stored status; a grant that is
   really gone fails on Slack's answer.
@@ -386,7 +386,7 @@ Modal submissions are validated server-side. Modals never request Rally or provi
 
 #### Delegate from Slack
 
-As a linked member, I can DM Rally, mention it, invoke a shortcut on a message, or run `/avalon`, and receive progress and the durable result in the same Agent thread.
+As a linked member, I can DM Rally, mention it, invoke a shortcut on a message, or run `/rally`, and receive progress and the durable result in the same Agent thread.
 
 #### Bring Slack context into Rally
 
@@ -690,10 +690,10 @@ For a Global-only local acceptance pass:
    SLACK_MANIFEST_NAME="Rally Dev" \
    SLACK_MANIFEST_API_GLOBAL_BASE_URL="https://your-tunnel.example" \
    SLACK_MANIFEST_INGRESS_BASE_URL="https://your-tunnel.example" \
-   node scripts/slack-manifest-hook.mjs > /tmp/avalon-slack-dev.json
+   node scripts/slack-manifest-hook.mjs > /tmp/rally-slack-dev.json
    ```
 
-6. Paste `/tmp/avalon-slack-dev.json` into the development app's **App
+6. Paste `/tmp/rally-slack-dev.json` into the development app's **App
    Manifest** editor. Slack will verify the now-live Events request URL. Link
    the app to this project if CLI diff/sync is desired:
 
@@ -726,7 +726,7 @@ Render the staging manifest with both `SLACK_MANIFEST_API_GLOBAL_BASE_URL` and
 databases, and configure the same four Slack secrets in both Workers.
 
 Run the acceptance matrix in `docs/e2e.md`, beginning with App Home/linking,
-Agent DM and thread continuation, mention, both shortcuts, `/avalon`, signature
+Agent DM and thread continuation, mention, both shortcuts, `/rally`, signature
 replay, workspace search/read/write tools, personal MCP authorization, multi-workspace routing, and the Gmail
 briefing's three/one/zero-result cases.
 
@@ -750,6 +750,44 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 This document predates the [module document](module-documents.md) convention and
 had no changelog until the entries below; the reasoning behind everything above them
 was not recorded and is not reconstructed here.
+
+### 2026-08-25 — The Slack app is Rally: `@rally`, `/rally`
+
+**What changed:** `config/provider-apps/slack.json` now registers the app and bot
+as **Rally**, the slash command as `/rally`, and both shortcuts as "Start a Rally
+task" and "Work on this with Rally". Every user-visible string the ingress emits
+into Slack moved with them — modal titles, App Home copy, error and status
+messages, and the retry prompt that names the mention.
+
+**Why:** The manifest was the last place the product introduced itself to a user
+as Avalon while every URL it pointed at was already `rallywith.ai`. It was left
+until now because re-applying the manifest is a manual trip to Slack, and doing
+it while the visible labels still said Avalon would have fixed the invisible half
+and needed a second trip. A full cut-over is safe here only because the app has
+no installations yet. With live workspaces it would not be, and the sharp edge
+is not the slash command: `SLACK_RETRYABLE_DENIAL_PREFIXES` matches the text of
+the bot's *own earlier messages*, still sitting in channel history, to recover
+the prompt behind a "try again". Renaming those prefixes with real history in a
+channel would silently stop recovering any denial posted before the deploy — the
+same durable-external-state shape as the action ids, in prose rather than an
+identifier. No history exists, so the prefixes move outright rather than
+carrying a superseded copy nothing could ever match.
+
+Deliberately unchanged: the two superseded OAuth redirect URLs and the
+`with-avalon.com` entry in `unfurl_domains`, both of which keep links and
+callbacks minted before the rename working; `support_email` is `help@rallywith.ai`: the Rally
+support address is `help@`, not `support@`, so it is not the mechanical
+translation of the address it replaces.
+
+The shortcut `callback_id`s moved in #294 and are inert: a Slack shortcut carries
+no action id, so nothing in the ingress compares against them. The bot rename is
+safe for the same structural reason mentions are matched by `<@bot_user_id>`
+rather than by name, so `@rally` resolves to the same identity Slack already has.
+
+**Still to do, outside this repository:** run `slack manifest validate` and update
+the app from the manifest. Until that is applied, the live app still presents as
+Avalon and `/avalon` is still the registered command — the checked-in manifest is
+the target state, not the deployed one.
 
 ### 2026-08-24 — A personal connection stopped depending on a response shape Slack does not publish
 

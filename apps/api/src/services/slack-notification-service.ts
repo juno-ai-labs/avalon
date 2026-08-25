@@ -346,7 +346,7 @@ function slackParticipantAddedChunks(
     ...escapedSlackTokens(input.workspaceName),
     ".\n\n",
     ...(objective ? [...escapedSlackTokens(objective), "\n\n"] : []),
-    `<${target}|Open in Avalon>`,
+    `<${target}|Open in Rally>`,
   ], maximum);
 }
 
@@ -360,7 +360,7 @@ function slackMentionChunks(input: WorkstreamSlackMention, target: string, maxim
     ".\n\n",
     ...escapedSlackTokens(humanReadableMessage(input.messageText)),
     "\n\n",
-    `<${target}|Open in Avalon>`,
+    `<${target}|Open in Rally>`,
   ], maximum);
 }
 

@@ -78,7 +78,7 @@ export class SlackRoutingService {
           OR slack_installation_routes.workspace_id = excluded.workspace_id
        RETURNING team_id`,
     ).bind(input.teamId, input.region, input.workspaceId, input.connectionId, at, at).first<{ team_id: string }>();
-    if (!registered) throw new ApiError(409, "slack_workspace_already_connected", "This Slack workspace is already connected to another Avalon workspace");
+    if (!registered) throw new ApiError(409, "slack_workspace_already_connected", "This Slack workspace is already connected to another Rally workspace");
     return { registered: true };
   }
 
@@ -118,7 +118,7 @@ export class SlackRoutingService {
     const route = await this.env.DB.prepare(
       `SELECT region FROM slack_installation_routes WHERE team_id = ? AND status = 'active'`,
     ).bind(teamId).first<{ region: Region }>();
-    if (!route) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
+    if (!route) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Rally");
     if (route.region === "global") return local(new SlackAgentService(this.env));
     if (route.region === "eu" && this.env.EU_SLACK_BRIDGE) return unwrap(await remote(this.env.EU_SLACK_BRIDGE));
     throw new ApiError(503, "slack_region_unavailable", `The ${route.region} Slack connector service is unavailable`);
