@@ -148,10 +148,19 @@ are canonical storage services, not authorization layers.
 
 ### macOS distribution and updates
 
-Rally's production identity is pinned to bundle ID `app.avalon.desktop` and Apple
-team `7ZLT6A8W25`. Squirrel.Mac cannot safely update across either boundary, so
-changing them requires a deliberate manual-reinstall migration. Release packaging
-never auto-selects a certificate.
+Rally's production identity is pinned to bundle ID `ai.rallywith.desktop` and
+Apple team `7ZLT6A8W25`. Release packaging never auto-selects a certificate.
+
+**Squirrel.Mac cannot safely update across either boundary.** The team has not
+moved, but the bundle ID has — it was `app.avalon.desktop` before the rename to
+Rally — so the release that carries the rename cannot reach an installed Avalon
+build through the ordinary update path, and needs a deliberate manual-reinstall
+migration instead. That is a release-sequencing decision rather than a packaging
+one: nothing in this repository can make an installed build accept a bundle it
+does not recognise as itself. The consequence of getting it wrong is silent —
+those installs simply stop receiving updates, with no error on either side — so
+the migration has to be planned before the rename ships, not discovered after.
+[`runbook.md`](runbook.md) carries the procedure.
 
 The main app and Electron helpers use separate entitlement files. In particular,
 renderer/GPU/plugin helpers, Squirrel `ShipIt`, and `chrome_crashpad_handler` must
@@ -679,12 +688,20 @@ the Dock disagrees with the product forever.
 
 **Consequences:** Lockdown users sign in once after updating; the failure mode is
 the sign-in screen, not a crash, because an undecryptable envelope is already
-caught and treated as no session. The bundle identifier change means macOS treats
-the update as a different application: microphone and system-audio (TCC) grants
-re-prompt once and the login item re-registers. Signing is unaffected — a
-Developer ID Application certificate is issued to the team, not to a bundle
-identifier, and none of the entitlements in `resources/entitlements.mac.plist`
-requires a provisioning profile.
+caught and treated as no session. Signing is unaffected — a Developer ID
+Application certificate is issued to the team, not to a bundle identifier, and
+none of the entitlements in `resources/entitlements.mac.plist` requires a
+provisioning profile.
+
+The bundle identifier is the expensive part, and it is not only a TCC and
+login-item reset. **Squirrel.Mac cannot update across a bundle-ID change**, per
+the macOS distribution section above, so an installed `app.avalon.desktop` build
+cannot receive this release through the update feed it already polls: the rename
+has to reach those installs as a manual reinstall. Keeping the identifier would
+have avoided that entirely, at the cost of an `avalon` string in the shipped
+bundle forever. The rename was chosen deliberately; the migration it requires is
+a release-sequencing decision recorded in [`runbook.md`](runbook.md), not
+something this change can solve on its own.
 
 ### 2026-08-25 — The renderer origin is app://rallywithai, and both are admitted
 

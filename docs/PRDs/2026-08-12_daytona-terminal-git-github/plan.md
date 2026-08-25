@@ -79,7 +79,7 @@ repository race tests pass repeatedly.
   conflict, affected active sandboxes, cancel-before-stop, pending/verified/
   failed reconciliation, and no auto-restart after a policy change.
 - [x] Implement the compiler and owner/admin settings service using only
-  Daytona's `domainAllowList`; Full internet clears it. CIDR and an Rally proxy
+  Daytona's `domainAllowList`; Full internet clears it. CIDR and a Rally proxy
   remain absent.
 - [x] Add production-provider probe hooks for effective-policy read-back, allowed
   targets, denied targets, redirects, direct IP, and private/special-use DNS

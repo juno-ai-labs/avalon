@@ -1,6 +1,6 @@
 {
   "$schema": "./registry.schema.json",
-  "description": "Every token an Rally theme may set. A theme file supplies values for these paths and no others.",
+  "description": "Every token a Rally theme may set. A theme file supplies values for these paths and no others.",
   "groups": {
     "ref.color.neutral": "The neutral ramp, ordered by contrast against the surface rather than by lightness, so a step means the same thing whichever way round a theme runs. Fills at the faint end, text at the strong end.",
     "ref.color.line": "The line ramp. Borders are not faint fills: a theme that draws with space needs to flatten its lines without erasing the fills that share a contrast level with them.",

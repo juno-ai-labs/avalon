@@ -1,11 +1,33 @@
 const RELEASE_PREFIX = "stable/darwin/arm64/";
-const MUTABLE_POINTERS = new Set([
-  `${RELEASE_PREFIX}Avalon.dmg`,
-  `${RELEASE_PREFIX}latest-mac.yml`,
-]);
+/**
+ * Every product name a release artifact in this bucket may carry, current
+ * first.
+ *
+ * The rename from Avalon changed what a release is *named*, not what is already
+ * in the bucket: `Avalon-1.146.0-mac-arm64.dmg` and `Rally-1.147.0-mac-arm64.dmg`
+ * both exist, and both are complete releases. A retention pass that knows only
+ * one name does not degrade — `analyzeInventory` throws `Unexpected active R2
+ * key` on the first object it cannot classify, so retention stops entirely and
+ * the active bucket grows without bound.
+ *
+ * A version's own artifacts decide its name; the two are never mixed within
+ * one release.
+ */
+const PRODUCT_NAMES: readonly string[] = Object.freeze(["Rally", "Avalon"]);
+/**
+ * The recovery-installer pointer, one per product name.
+ *
+ * `Avalon.dmg` is never removed: `MANUAL_UPDATE_URL` is compiled into every
+ * build shipped before the rename, so that key is polled forever. At least one
+ * must exist — requiring a specific one would fail every night between this
+ * shipping and the first Rally release.
+ */
+const CANONICAL_DMG_POINTERS = new Set(PRODUCT_NAMES.map((name) => `${RELEASE_PREFIX}${name}.dmg`));
+const REQUIRED_POINTERS = new Set([`${RELEASE_PREFIX}latest-mac.yml`]);
+const MUTABLE_POINTERS = new Set([...CANONICAL_DMG_POINTERS, ...REQUIRED_POINTERS]);
 const SEMANTIC_VERSION = "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)";
 const VERSIONED_ARTIFACT = new RegExp(
-  `^${RELEASE_PREFIX}Avalon-(${SEMANTIC_VERSION})-mac-arm64\\.(?:dmg|zip)(?:\\.blockmap)?$`,
+  `^${RELEASE_PREFIX}(${PRODUCT_NAMES.join("|")})-(${SEMANTIC_VERSION})-mac-arm64\\.(?:dmg|zip)(?:\\.blockmap)?$`,
 );
 const CHECKSUM_MANIFEST = new RegExp(
   `^${RELEASE_PREFIX}(${SEMANTIC_VERSION})/SHA256SUMS$`,
@@ -42,21 +64,24 @@ interface ReleaseInventory {
   releases: Map<string, string[]>;
 }
 
-function releaseKeys(version: string): string[] {
+function releaseKeys(version: string, productName: string): string[] {
   return [
-    `${RELEASE_PREFIX}Avalon-${version}-mac-arm64.dmg`,
-    `${RELEASE_PREFIX}Avalon-${version}-mac-arm64.dmg.blockmap`,
-    `${RELEASE_PREFIX}Avalon-${version}-mac-arm64.zip`,
-    `${RELEASE_PREFIX}Avalon-${version}-mac-arm64.zip.blockmap`,
+    `${RELEASE_PREFIX}${productName}-${version}-mac-arm64.dmg`,
+    `${RELEASE_PREFIX}${productName}-${version}-mac-arm64.dmg.blockmap`,
+    `${RELEASE_PREFIX}${productName}-${version}-mac-arm64.zip`,
+    `${RELEASE_PREFIX}${productName}-${version}-mac-arm64.zip.blockmap`,
     `${RELEASE_PREFIX}${version}/SHA256SUMS`,
   ].sort();
 }
 
-function versionForKey(key: string): string | null {
+/** The version a key belongs to, and the product name it carries if any. */
+function releaseForKey(key: string): { version: string; productName: string | null } | null {
   const artifact = VERSIONED_ARTIFACT.exec(key);
-  if (artifact?.[1]) return artifact[1];
+  if (artifact?.[1] && artifact[2]) return { version: artifact[2], productName: artifact[1] };
   const checksums = CHECKSUM_MANIFEST.exec(key);
-  return checksums?.[1] ?? null;
+  // A checksum manifest is named by version alone, so it says nothing about
+  // which product name its release carries.
+  return checksums?.[1] ? { version: checksums[1], productName: null } : null;
 }
 
 function compareVersions(left: string, right: string): number {
@@ -80,24 +105,45 @@ function analyzeInventory(objects: R2Object[], keepCount: number): ReleaseInvent
 
   const seenKeys = new Set<string>();
   const releases = new Map<string, string[]>();
+  const productNames = new Map<string, string>();
   for (const object of objects) {
     if (seenKeys.has(object.key)) throw new Error(`Duplicate active R2 key: ${object.key}`);
     seenKeys.add(object.key);
     if (MUTABLE_POINTERS.has(object.key)) continue;
-    const version = versionForKey(object.key);
-    if (version === null) throw new Error(`Unexpected active R2 key: ${object.key}`);
-    const keys = releases.get(version) ?? [];
+    const release = releaseForKey(object.key);
+    if (release === null) throw new Error(`Unexpected active R2 key: ${object.key}`);
+    if (release.productName !== null) {
+      const recorded = productNames.get(release.version);
+      if (recorded !== undefined && recorded !== release.productName) {
+        throw new Error(
+          `Release ${release.version} mixes product names: ${recorded} and ${release.productName}`,
+        );
+      }
+      productNames.set(release.version, release.productName);
+    }
+    const keys = releases.get(release.version) ?? [];
     keys.push(object.key);
-    releases.set(version, keys);
+    releases.set(release.version, keys);
   }
 
-  const missingPointers = [...MUTABLE_POINTERS].filter((key) => !seenKeys.has(key));
+  const missingPointers = [...REQUIRED_POINTERS].filter((key) => !seenKeys.has(key));
   if (missingPointers.length > 0) {
     throw new Error(`Missing mutable release pointers: ${missingPointers.join(", ")}`);
   }
+  // Whichever product name it carries, exactly one recovery installer has to be
+  // reachable; which one is a fact about when the last release shipped.
+  if (![...CANONICAL_DMG_POINTERS].some((key) => seenKeys.has(key))) {
+    throw new Error(
+      `Missing mutable release pointers: one of ${[...CANONICAL_DMG_POINTERS].join(", ")}`,
+    );
+  }
 
   for (const [version, keys] of releases) {
-    const expected = releaseKeys(version);
+    const productName = productNames.get(version);
+    if (productName === undefined) {
+      throw new Error(`Incomplete release ${version}: no versioned artifact names it`);
+    }
+    const expected = releaseKeys(version, productName);
     if (!sameStrings(keys, expected)) {
       throw new Error(
         `Incomplete release ${version}: expected ${expected.length} exact objects, found ${keys.length}`,
@@ -110,7 +156,9 @@ function analyzeInventory(objects: R2Object[], keepCount: number): ReleaseInvent
   const splitIndex = Math.max(0, versions.length - keepCount);
   const archiveVersions = versions.slice(0, splitIndex);
   const retainedVersions = versions.slice(splitIndex);
-  const candidateKeys = archiveVersions.flatMap((version) => releaseKeys(version)).sort();
+  const candidateKeys = archiveVersions
+    .flatMap((version) => releaseKeys(version, productNames.get(version)!))
+    .sort();
   return {
     releases,
     plan: {
@@ -255,10 +303,14 @@ export async function runRetention(
 
   const finalObjects = await listAll(bindings.ACTIVE_RELEASES);
   const completed = analyzeInventory(finalObjects, options.keepCount).plan;
+  // Count the pointers actually present rather than the names this build knows
+  // about: `Rally.dmg` and `Avalon.dmg` are both recognized, and which of them
+  // the bucket holds depends on when the last release shipped.
+  const finalPointerCount = finalObjects.filter((object) => MUTABLE_POINTERS.has(object.key)).length;
   if (
     completed.archiveVersions.length !== 0 ||
     !sameStrings(completed.retainedVersions, initial.plan.retainedVersions) ||
-    finalObjects.length !== initial.plan.retainedVersions.length * 5 + MUTABLE_POINTERS.size
+    finalObjects.length !== initial.plan.retainedVersions.length * 5 + finalPointerCount
   ) {
     throw new Error("Final active release inventory failed retention verification");
   }

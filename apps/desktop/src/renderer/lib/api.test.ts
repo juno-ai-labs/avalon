@@ -504,7 +504,7 @@ describe('Rally API wire adapter', () => {
     expect(mapped.toolEvent?.name).toBe('Reviewed Google Drive · Work');
   });
 
-  it('leaves a work-stream tool row from an Rally-owned tool unattributed', () => {
+  it('leaves a work-stream tool row from a Rally-owned tool unattributed', () => {
     const mapped = mapMessage({
       ...message,
       id: taskId,
