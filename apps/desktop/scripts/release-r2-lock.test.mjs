@@ -82,18 +82,21 @@ test('the remote lock is released when publication fails', async () => {
   assert.equal(client.locked, false);
 });
 
-test('a cleanup failure says that publication completed and leaves the lock fail-closed', async () => {
+test('a cleanup failure reports the shipped release and lets tag and record steps continue', async () => {
   const client = new FakeR2Client();
   client.failDelete = true;
-  await assert.rejects(
-    withR2ReleaseLock({
-      bucket: 'releases',
-      client,
-      key: 'stable/release-publish.lock',
-      operation: async () => 'published',
-    }),
-    /publication completed, but its remote lock could not be released/u,
-  );
+  const reports = [];
+  const result = await withR2ReleaseLock({
+    bucket: 'releases',
+    client,
+    key: 'stable/release-publish.lock',
+    operation: async () => 'published',
+    reportCleanupFailure: (message) => reports.push(message),
+  });
+  assert.equal(result, 'published');
+  assert.deepEqual(reports, [
+    'Desktop release publication completed, but its remote lock could not be released at r2://releases/stable/release-publish.lock; confirm no publisher is active and remove only that lock before the next release',
+  ]);
   assert.equal(client.locked, true);
 });
 

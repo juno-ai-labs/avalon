@@ -69,6 +69,7 @@ export async function withR2ReleaseLock({
   key,
   operation,
   owner = randomUUID(),
+  reportCleanupFailure = console.error,
 }) {
   try {
     await client.send(new PutObjectCommand({
@@ -116,6 +117,13 @@ export async function withR2ReleaseLock({
     );
   }
   if (operationFailed) throw operationError;
-  if (releaseError) throw releaseError;
+  if (releaseError) {
+    try {
+      reportCleanupFailure(releaseError.message);
+    } catch {
+      // Reporting must not strand an already-published release before its tag
+      // and checked-in release record are written by the workflow.
+    }
+  }
   return result;
 }
