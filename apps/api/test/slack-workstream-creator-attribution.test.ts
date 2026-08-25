@@ -9,6 +9,8 @@ import {
   openWorkstreamAuthorityForTest,
   testSubstreamAgentsBinding,
   workstreamObjectGet,
+  workstreamObjectRootRow,
+  workstreamObjectParticipantRows,
 } from "./helpers/durable-authority";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
