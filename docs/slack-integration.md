@@ -743,7 +743,7 @@ briefing's three/one/zero-result cases.
 7. Before submission, meet Slack's active-workspace and weekly-active-user thresholds, complete preliminary review, and budget for functional review.
 8. Submit the exact scopes and test credentials/instructions. Explain why broad user scopes are optional and user initiated, why public-channel membership does not ingest ordinary channel traffic, how account linking works, and how automation approval/delivery binding works.
 
-The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Validation does not replace deployment or Marketplace review.
+The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
 
@@ -751,7 +751,7 @@ This document predates the [module document](module-documents.md) convention and
 had no changelog until the entries below; the reasoning behind everything above them
 was not recorded and is not reconstructed here.
 
-### 2026-08-25 — The Slack app is Rally: `@rally`, `/rally`
+### 2026-08-25 — The Slack app is Rally: `@Rally`, `/rally`
 
 **What changed:** `config/provider-apps/slack.json` now registers the app and bot
 as **Rally**, the slash command as `/rally`, and both shortcuts as "Start a Rally
@@ -760,7 +760,7 @@ into Slack moved with them — modal titles, App Home copy, error and status
 messages, and the retry prompt that names the mention.
 
 **Why:** The manifest was the last place the product introduced itself to a user
-as Avalon while every URL it pointed at was already `rallywith.ai`. It was left
+as Avalon while every canonical public URL it pointed at was already `rallywith.ai`. It was left
 until now because re-applying the manifest is a manual trip to Slack, and doing
 it while the visible labels still said Avalon would have fixed the invisible half
 and needed a second trip. The public app is already installed in the Juno Labs
@@ -769,24 +769,28 @@ state. The sharp edge is not the slash command: `SLACK_RETRYABLE_DENIAL_PREFIXES
 matches the text of the bot's *own earlier messages* to recover the prompt behind
 a "try again". Renaming those prefixes outright would silently stop recovering a
 denial posted before the deploy — the same durable-external-state shape as the
-action ids, in prose rather than an identifier. Rally prefixes are canonical for
-new messages, while the four Avalon prefixes remain accepted inbound.
+action ids, in prose rather than an identifier. The two denial prefixes emitted
+by current Rally code are canonical for new messages, while the four historical
+Avalon prefixes remain accepted inbound.
 
 Deliberately unchanged: the two superseded OAuth redirect URLs and the
 `with-avalon.com` entry in `unfurl_domains`, both of which keep links and
-callbacks minted before the rename working; `support_email` is `help@rallywith.ai`: the Rally
-support address is `help@`, not `support@`, so it is not the mechanical
-translation of the address it replaces.
+callbacks minted before the rename working. `support_email` remains
+`support@with-avalon.com` until the mailbox itself moves; changing a printed
+address before it can receive mail would turn the rebrand into a support outage.
 
 The shortcut `callback_id`s moved in #294 and are inert: a Slack shortcut carries
 no action id, so nothing in the ingress compares against them. The bot rename is
 safe for the same structural reason mentions are matched by `<@bot_user_id>`
-rather than by name, so `@rally` resolves to the same identity Slack already has.
+rather than by name, so `@Rally` resolves to the same identity Slack already has.
 
-**Still to do, outside this repository:** run `slack manifest validate` and update
-the app from the manifest. Until that is applied, the live app still presents as
-Avalon and `/avalon` is still the registered command — the checked-in manifest is
-the target state, not the deployed one.
+**Provider cut-over:** after the matching Worker build has reached both regions,
+render the production JSON with `node scripts/slack-manifest-hook.mjs`, confirm it
+still contains `"pkce_enabled": true`, and apply it through Slack's App Manifest
+editor. CLI 4.6.0 currently strips that immutable field from validation and sync
+requests, so `slack manifest validate` and `slack manifest sync --force` are not
+safe for this app. Until the editor update is applied, the live app still presents
+as Avalon and `/avalon` remains the registered command.
 
 ### 2026-08-24 — A personal connection stopped depending on a response shape Slack does not publish
 

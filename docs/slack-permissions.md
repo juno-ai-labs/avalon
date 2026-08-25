@@ -100,7 +100,7 @@ The production manifest requests these scopes as one administrator-approved bund
 | `channels:manage` | Create a public channel with workspace `slack_create_conversation`. |
 | `channels:read` | Discover public channels, read conversation metadata, maintain bot membership, classify the Slack surface, list visible members, and detect a Slack Connect channel before an unfurl names a work stream. |
 | `chat:write` | Post and stream Agent replies, errors, controls, proactive notifications, automation results, and workspace `slack_send_message` output. |
-| `commands` | Receive `/avalon` slash commands and Slack global or message shortcuts. |
+| `commands` | Receive `/rally` slash commands and Slack global or message shortcuts. |
 | `files:read` | Read metadata and bounded textual content for files visible to the bot. |
 | `groups:history` | Receive private-channel follow-ups in existing Rally threads, perform bounded explicit-retry recovery, and run authorized private-channel/thread/context reads. Unrelated private messages are discarded before durable queueing. |
 | `groups:read` | Read invited private-channel metadata, list visible members, and detect an externally shared private channel before an unfurl names a work stream. It does not grant access to private channels the bot has not joined. |
