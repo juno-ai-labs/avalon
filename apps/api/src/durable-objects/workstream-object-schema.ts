@@ -16,21 +16,8 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 25;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 26;
 
-/**
- * The names the retired elicitation view and its triggers were declared under.
- *
- * Written out rather than derived from `WORKSTREAM_RUNTIME_COMPAT_SCHEMA`, as
- * the promotions above are, because this migration drops the statements in the
- * same change that deletes them: a filter over that array would find nothing
- * and the assertion would fire on a correct migration.
- */
-const RETIRED_ELICITATION_COMPAT_OBJECTS = [
-  "_runtime_elicitations",
-  "_runtime_elicitations_insert",
-  "_runtime_elicitations_update",
-] as const;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1373,6 +1360,11 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "retire the elicitation view now both of its writers are object operations",
     statements: elicitationAuthorityPromotion(),
   },
+  {
+    version: 26,
+    description: "retire the identity and participant views, the last two compatibility objects",
+    statements: identityAuthorityPromotion(),
+  },
 ];
 
 /**
@@ -1390,17 +1382,55 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
  * fail the build rather than produce a migration that quietly patches nothing.
  */
 function elicitationAuthorityPromotion(): string[] {
-  const names = /^_runtime_elicitations/;
-  const compatObjects = RETIRED_ELICITATION_COMPAT_OBJECTS.filter((name) => names.test(name));
-  if (compatObjects.length !== 3) {
-    throw new Error(`expected three elicitation compat objects, found ${compatObjects.length}`);
+  return compatObjectDrops(/^_runtime_elicitations/, 3, "elicitation");
+}
+
+/**
+ * Retires the identity and participant views, and their four write triggers.
+ *
+ * The last two compatibility views. Production stopped naming `workstreams`
+ * and `workstream_participants` with the identity slice; the fixtures that
+ * still did now seed and read the object's own tables, which is what makes
+ * this droppable at all.
+ */
+function identityAuthorityPromotion(): string[] {
+  return compatObjectDrops(
+    /^_runtime_workstreams$|^_runtime_workstreams_|^_runtime_workstream_participants/,
+    7,
+    "identity",
+  );
+}
+
+/**
+ * The drops that retire one family of compatibility objects.
+ *
+ * Every promotion in this file wrote this out: filter the compat schema for
+ * the family's views and triggers, assert the expected count so a reshaped
+ * schema fails the build rather than producing a migration that quietly
+ * patches nothing, and drop the triggers first so none is left orphaned in
+ * `sqlite_schema`.
+ *
+ * `WORKSTREAM_RUNTIME_COMPAT_SCHEMA` keeps declaring what these drop, and has
+ * to: it is what migration 1 applies, so an object replaying from empty
+ * creates each view before a later migration drops it. Deleting a retired
+ * statement from that array rewrites history — and silently, because the
+ * damage lands on the *next* migration that names the view.
+ */
+function compatObjectDrops(names: RegExp, expected: number, family: string): string[] {
+  const compatObjects = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.flatMap((statement) => {
+    const trigger = /CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    if (trigger) return names.test(trigger) ? [`DROP TRIGGER IF EXISTS ${trigger}`] : [];
+    const view = /CREATE VIEW IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    return view && names.test(view) ? [`DROP VIEW IF EXISTS ${view}`] : [];
+  });
+  if (compatObjects.length !== expected) {
+    throw new Error(
+      `expected ${expected} ${family} compat objects, found ${compatObjects.length}`,
+    );
   }
   return [
-    // Triggers first, so no trigger is left orphaned in `sqlite_schema`.
-    ...compatObjects
-      .filter((name) => name !== "_runtime_elicitations")
-      .map((name) => `DROP TRIGGER IF EXISTS ${name}`),
-    "DROP VIEW IF EXISTS _runtime_elicitations",
+    ...compatObjects.filter((statement) => statement.startsWith("DROP TRIGGER")),
+    ...compatObjects.filter((statement) => statement.startsWith("DROP VIEW")),
   ];
 }
 
