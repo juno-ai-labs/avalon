@@ -36,9 +36,26 @@ describe("Terminal snapshot manifest", () => {
     expect(command).toContain("python3 -c");
     expect(command).toContain("node -e");
     expect(command).toContain("sqlite3 :memory:");
-    expect(command).toContain("test -d /workspace/.avalon/tmp");
-    expect(command).toContain("test -d /workspace/.avalon-output");
+    expect(command).toContain("test -d /workspace/.rally/tmp");
+    expect(command).toContain("test -d /workspace/.rally-output");
     expect(command).not.toMatch(/token|secret|credential/iu);
+  });
+
+  it("owns every directory it writes into, naming .rally itself rather than creating it as an intermediate", () => {
+    // `install -d` creates missing intermediate components, but applies -o/-g
+    // only to the operands it is given. If `/workspace/.rally` is reached only
+    // through `/workspace/.rally/tmp`, it lands root-owned and the sandbox user
+    // cannot create `session.env`, `publications/`, or `logs/` directly beneath
+    // it — which is every repository bootstrap.
+    const command = terminalManagedSnapshotBootstrapCommand();
+    const install = command.split("\n").find((line) => line.includes("install -d"));
+    expect(install).toBeDefined();
+    const operands = install!.slice(install!.indexOf("/workspace")).split(" ");
+    expect(operands).toContain("/workspace/.rally");
+    expect(operands).toContain("/workspace/.rally-output");
+    expect(operands).toContain("/workspace/.rally/resources");
+    expect(operands).toContain("/workspace/.rally/tmp");
+    expect(operands.some((operand) => operand.includes(".avalon"))).toBe(false);
   });
 
   it("idempotently adapts Daytona's managed default snapshot and reports installed gaps", () => {

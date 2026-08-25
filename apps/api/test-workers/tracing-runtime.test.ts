@@ -25,7 +25,7 @@ describe("custom spans on the Workers runtime", () => {
   it("runs the callback and returns its value through a real span", async () => {
     const seen: string[] = [];
 
-    const result = await inSpan("workstream.create.receipt.reserve", { "avalon.flow": "workstream_create" }, async () => {
+    const result = await inSpan("workstream.create.receipt.reserve", { "rally.flow": "workstream_create" }, async () => {
       seen.push("ran");
       return "receipt-1";
     });

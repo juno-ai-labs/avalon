@@ -886,7 +886,7 @@ const addressingJsonSchema = {
         "imperative",
         "question",
         "connector_mention",
-        "avalon_reference",
+        "rally_reference",
         "active_task",
         "elicitation_answer",
         "human_coordination",
@@ -909,7 +909,7 @@ export function classifyAddressingHeuristically(input: {
     return { classification: "agent_action", confidence: 0.98, rationaleCode: "connector_mention" };
   }
   if (input.addressesAvalon || /\bavalon\b/i.test(text)) {
-    return { classification: "agent_action", confidence: 0.96, rationaleCode: "avalon_reference" };
+    return { classification: "agent_action", confidence: 0.96, rationaleCode: "rally_reference" };
   }
   if (/^(please\s+)?(find|check|create|draft|send|review|summarize|investigate|update|compare|prepare)\b/i.test(text)) {
     return { classification: "agent_action", confidence: 0.9, rationaleCode: "imperative" };
@@ -1635,7 +1635,7 @@ export async function compileAutomation(input: {
   const corePlugins: HarnessPlugin[] = [
     {
       canonicalId: AVALON_CORE_PLUGIN_ID,
-      modelId: "avalon_core",
+      modelId: "rally_core",
       shortWireName: "core",
       description: "Read the exact current time and applicable timezones.",
       systemMessage: "Use core_current_time when exact current time or timezone matters; never infer it from transcript timestamps. Use core_request_elicitation only after saving the best current draft when a blocking human choice remains.",
@@ -1645,7 +1645,7 @@ export async function compileAutomation(input: {
     },
     {
       canonicalId: AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID,
-      modelId: "avalon_automation_architect",
+      modelId: "rally_automation_architect",
       shortWireName: "automation",
       description: "Research authorized plugins, inspect frozen draft attachments, and submit automation drafts.",
       tools: [...creatorTools, ...(input.architectTools ?? [])],
@@ -2259,13 +2259,13 @@ export function rejectToolModesBeforeCall(
 }
 
 /** Bind-owned catalog policies mirrored and verified by the durable host. */
-export const AVALON_DISCOVERY_PLUGIN_ID = "avalon:discovery";
-export const AVALON_CORE_PLUGIN_ID = "avalon:core";
-export const AVALON_MEMORY_PLUGIN_ID = "avalon:memory";
-export const AVALON_TABLES_PLUGIN_ID = "avalon:tables";
-export const AVALON_WEB_PLUGIN_ID = "avalon:web";
-export const AVALON_WORKSTREAM_PLUGIN_ID = "avalon:workstream";
-export const AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID = "avalon:automation_architect";
+export const AVALON_DISCOVERY_PLUGIN_ID = "rally:discovery";
+export const AVALON_CORE_PLUGIN_ID = "rally:core";
+export const AVALON_MEMORY_PLUGIN_ID = "rally:memory";
+export const AVALON_TABLES_PLUGIN_ID = "rally:tables";
+export const AVALON_WEB_PLUGIN_ID = "rally:web";
+export const AVALON_WORKSTREAM_PLUGIN_ID = "rally:workstream";
+export const AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID = "rally:automation_architect";
 
 export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {
   name: "current_time",
@@ -2339,7 +2339,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   {
     name: "plugins_list",
     description: "List every connector plugin authorized for this automation creator, with compact trusted metadata.",
-    capability: "avalon.automation.plugins.list",
+    capability: "rally.automation.plugins.list",
     mode: "read",
     idempotency: "safe",
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
@@ -2347,7 +2347,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   {
     name: "plugins_search",
     description: "Search authorized connector plugins and their tools by capability, provider, action, or keyword.",
-    capability: "avalon.automation.plugins.search",
+    capability: "rally.automation.plugins.search",
     mode: "read",
     idempotency: "safe",
     inputSchema: {
@@ -2360,7 +2360,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   {
     name: "plugin_inspect",
     description: "Inspect one authorized plugin's trusted system guidance and exact tool schemas before recommending it.",
-    capability: "avalon.automation.plugins.inspect",
+    capability: "rally.automation.plugins.inspect",
     mode: "read",
     idempotency: "safe",
     inputSchema: {
@@ -2373,7 +2373,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   {
     name: "submit_draft",
     description: "Save the best current automation draft. Set ready=false when blocking input remains, then call core_request_elicitation with the structured question.",
-    capability: "avalon.automation.submit",
+    capability: "rally.automation.submit",
     mode: "read",
     idempotency: "safe",
     inputSchema: automationDraftSubmissionJsonSchema,
@@ -2384,7 +2384,7 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
   {
     name: "list_plugins",
     description: "List plugins available to this frozen run scope.",
-    capability: "avalon.plugins.list",
+    capability: "rally.plugins.list",
     mode: "read",
     idempotency: "safe",
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
@@ -2392,7 +2392,7 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
   {
     name: "search_plugins",
     description: "Search plugins available to this frozen run scope using ranked keywords across IDs, names, aliases, and descriptions. Returns the top 20 matches plus the total match count.",
-    capability: "avalon.plugins.search",
+    capability: "rally.plugins.search",
     mode: "read",
     idempotency: "safe",
     inputSchema: {
@@ -2405,7 +2405,7 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
   {
     name: "load_plugin",
     description: "Load one available plugin from the catalog for this run.",
-    capability: "avalon.plugins.load",
+    capability: "rally.plugins.load",
     // Activation changes only Avalon's durable run surface. It does not write
     // to an external provider and is safe to resume from the same receipt.
     mode: "read",
@@ -2436,7 +2436,7 @@ export interface HarnessTool {
 export interface HarnessPlugin {
   /** Stable host authorization/persistence identity (`avalon:*` or `connection:<uuid>`). */
   canonicalId: string;
-  /** Stable identifier exposed to the model (`avalon_core` or `plugin_google`). */
+  /** Stable identifier exposed to the model (`rally_core` or `plugin_google`). */
   modelId: string;
   shortWireName: string;
   /** Static, code-authored label used only for catalog display and discovery. */

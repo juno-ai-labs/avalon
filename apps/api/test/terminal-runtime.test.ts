@@ -851,12 +851,12 @@ describe("Daytona Terminal runtime", () => {
     const { files, provider, resources, runtime } = fixture();
     await expect(runtime.importResource(context, { resourceId: "00000000-0000-4000-8000-000000000099" })).resolves.toMatchObject({
       resourceId: "00000000-0000-4000-8000-000000000099",
-      filePath: ".avalon/resources/00000000-0000-4000-8000-000000000099/resource",
+      filePath: ".rally/resources/00000000-0000-4000-8000-000000000099/resource",
     });
-    files.set("/workspace/.avalon-output/report.txt", new TextEncoder().encode("report"));
+    files.set("/workspace/.rally-output/report.txt", new TextEncoder().encode("report"));
     await expect(runtime.publishResource(context, { filePath: "report.txt" })).resolves.toMatchObject({ resourceId: "published", sizeBytes: 6 });
-    expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/.avalon-output/report.txt");
-    expect(resources.importResource).toHaveBeenCalledWith(context, expect.anything(), ".avalon/resources/00000000-0000-4000-8000-000000000099/resource", 1, "sandbox-runtime", expect.anything());
+    expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/report.txt");
+    expect(resources.importResource).toHaveBeenCalledWith(context, expect.anything(), ".rally/resources/00000000-0000-4000-8000-000000000099/resource", 1, "sandbox-runtime", expect.anything());
   });
 
   it("publishes complete command output before returning bounded inline head and tail", async () => {
@@ -864,7 +864,7 @@ describe("Daytona Terminal runtime", () => {
     database.prepare(
       `INSERT INTO resources
        (id, workspace_id, resource_type, provider, title, metadata_json, created_at, updated_at)
-       VALUES ('command-log', ?, 'generated_file', 'avalon_terminal', 'Command log', '{}', '2026-08-13', '2026-08-13')`,
+       VALUES ('command-log', ?, 'generated_file', 'rally_terminal', 'Command log', '{}', '2026-08-13', '2026-08-13')`,
     ).run(W);
     vi.mocked(resources.publishResource).mockResolvedValueOnce({
       resourceId: "command-log", title: "Command log", resourceType: "generated_file",
@@ -880,7 +880,7 @@ describe("Daytona Terminal runtime", () => {
     });
     expect(resources.publishResource).toHaveBeenCalledWith(
       context,
-      expect.objectContaining({ filePath: `.avalon/logs/${I}.log` }),
+      expect.objectContaining({ filePath: `.rally/logs/${I}.log` }),
       expect.any(Uint8Array),
     );
     expect(workstreamObjectGet(
@@ -896,7 +896,7 @@ describe("Daytona Terminal runtime", () => {
       code: "not_found",
       message: expect.stringContaining("AVALON_RESOURCE_DIR"),
     });
-    files.set("/workspace/.avalon-output/empty.txt", new Uint8Array());
+    files.set("/workspace/.rally-output/empty.txt", new Uint8Array());
     await expect(runtime.publishResource(context, { filePath: "empty.txt" })).rejects.toMatchObject({
       code: "resource_empty",
       message: expect.stringContaining("empty"),

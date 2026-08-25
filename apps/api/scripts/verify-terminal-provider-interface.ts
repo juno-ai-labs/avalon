@@ -45,14 +45,14 @@ try {
     workstreamId: randomUUID(),
     generation: 1,
     domainAllowList: [],
-    environment: { AVALON_RESOURCE_DIR: "/workspace/.avalon-output" },
+    environment: { AVALON_RESOURCE_DIR: "/workspace/.rally-output" },
   });
   sandboxId = created.id;
   if (created.domainAllowList.length !== 0) throw new Error("Daytona did not report Full-internet create state");
   await provider.prepareSandbox?.(sandboxId, []);
   await run("printf 'session-ok\\n'", "command-session");
 
-  const path = "/workspace/.avalon/tmp/provider-interface-round-trip.bin";
+  const path = "/workspace/.rally/tmp/provider-interface-round-trip.bin";
   const source = new Uint8Array([0, 1, 2, 10, 13, 127, 128, 254, 255]);
   await provider.writeFile(sandboxId, path, source, new AbortController().signal);
   const downloaded = await provider.readFile(sandboxId, path);

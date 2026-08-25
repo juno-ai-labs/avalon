@@ -255,7 +255,7 @@ source, event type, and whether the row used the oversized fallback.
 all other declared hosted resources without creating anything.
 `pnpm cloudflare:inference-lakehouse:ensure -- --materialize-bindings` is the
 same idempotent path the deployment uses and is break-glass tooling, not a
-required release step. Query Global's `avalon.llm_inference` Iceberg table by
+required release step. Query Global's `rally.llm_inference` Iceberg table by
 `event_id`, `inference_request_id`, workspace/work-stream/substream/request IDs,
 model, source, time, success/failure, or usage. Follow `payload_object_key` into
 the Global payload bucket when the exact JSON is needed. There is no EU query

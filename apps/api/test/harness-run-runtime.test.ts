@@ -1390,8 +1390,8 @@ describe("durable harness attempt runtime", () => {
       systemPrompt: "Exercise the durable inference ledger.",
       messages: [{ role: "user", content: "Use the read tool, then finish." }],
       corePlugins: [{
-        canonicalId: "avalon:test_ledger",
-        modelId: "avalon_test_ledger",
+        canonicalId: "rally:test_ledger",
+        modelId: "rally_test_ledger",
         shortWireName: "ledger",
         description: "Test ledger tools",
         preload: true,
@@ -1555,7 +1555,7 @@ describe("durable harness attempt runtime", () => {
       inputHash: "input-write",
       input: { id: "AVA-1", title: "Updated" },
       plan: { connectionId: "connection-linear", operation: "issue.update" },
-      providerIdempotencyKey: "avalon:run:call-write",
+      providerIdempotencyKey: "rally:run:call-write",
       mode: "write",
     });
     expect(writePlan.state).toBe("created");
@@ -1566,7 +1566,7 @@ describe("durable harness attempt runtime", () => {
     })).toBe("ambiguous");
     expect(sqlite.object.prepare(
       "SELECT status, provider_idempotency_key FROM tool_effects WHERE effect_intent_id = 'invocation-write'",
-    ).get()).toEqual({ status: "ambiguous", provider_idempotency_key: "avalon:run:call-write" });
+    ).get()).toEqual({ status: "ambiguous", provider_idempotency_key: "rally:run:call-write" });
     expect(await completeToolInvocation(sqlite.receipts, claim.lease, {
       harnessRunId: RUN_ONE,
       invocationId: "invocation-write",
@@ -1824,7 +1824,7 @@ describe("durable harness attempt runtime", () => {
     if (claim.state !== "claimed") throw new Error("expected claimed attempt");
 
     const readPlan = {
-      pluginId: "avalon:tool-discovery",
+      pluginId: "rally:tool-discovery",
       canonicalToolName: "load_plugin",
       capability: "tools.discover",
       connectionId: null,
@@ -1845,7 +1845,7 @@ describe("durable harness attempt runtime", () => {
       invocationId: "invocation-reused-coordinate",
       toolName: "load_plugin",
       inputHash: "terminal-plugin",
-      input: { pluginId: "avalon_terminal" },
+      input: { pluginId: "rally_terminal" },
       plan: readPlan,
     })).toMatchObject({ state: "created" });
     expect(await completeToolInvocation(sqlite.receipts, claim.lease, {
@@ -1862,7 +1862,7 @@ describe("durable harness attempt runtime", () => {
       ...coordinates,
       toolName: "load_plugin",
       inputHash: "terminal-plugin",
-      input: { pluginId: "avalon_terminal" },
+      input: { pluginId: "rally_terminal" },
       plan: readPlan,
     })).toMatchObject({ state: "replay_completed", invocationId: "invocation-reused-coordinate" });
 
@@ -1996,7 +1996,7 @@ describe("durable harness attempt runtime", () => {
     if (claim.state !== "claimed") throw new Error("expected claimed attempt");
 
     const readPlan = {
-      pluginId: "avalon:workstream",
+      pluginId: "rally:workstream",
       canonicalToolName: "run_subagent",
       capability: "subagent.run",
       connectionId: null,
@@ -2156,7 +2156,7 @@ describe("durable harness attempt runtime", () => {
 
       const toolCallId = `${RUN_ONE}:turn:1:tool:0`;
       const readPlan = {
-        pluginId: "avalon:workstream",
+        pluginId: "rally:workstream",
         canonicalToolName: "view_resource",
         capability: "workstream.resources.view",
         connectionId: null,
@@ -2811,7 +2811,7 @@ describe("durable harness attempt runtime", () => {
       inputHash: "cancelled-write-input",
       input: { command: "sleep 60" },
       plan: {
-        pluginId: "avalon:terminal",
+        pluginId: "rally:terminal",
         canonicalToolName: "run_command",
         capability: "terminal.command.run",
         connectionId: null,
@@ -3135,7 +3135,7 @@ describe("durable harness attempt runtime", () => {
       toolName: "load_plugin",
       inputHash: "direct-failure-input",
       input: { pluginId: "plugin_x" },
-      plan: { operation: "avalon.plugins.load", mode: "read", idempotency: "safe" },
+      plan: { operation: "rally.plugins.load", mode: "read", idempotency: "safe" },
       mode: "read",
     });
     seedPendingToolCard(sqlite, "invocation-direct-failure", "load_plugin");
@@ -3186,7 +3186,7 @@ describe("durable harness attempt runtime", () => {
       toolName: "load_plugin",
       inputHash: "completed-residual-input",
       input: { pluginId: "plugin_x" },
-      plan: { operation: "avalon.plugins.load", mode: "read", idempotency: "safe" },
+      plan: { operation: "rally.plugins.load", mode: "read", idempotency: "safe" },
       mode: "read",
     });
     seedPendingToolCard(sqlite, "invocation-completed-residual", "load_plugin");
@@ -3233,7 +3233,7 @@ describe("durable harness attempt runtime", () => {
       toolName: "load_plugin",
       inputHash: "direct-failure-repair-input",
       input: { pluginId: "plugin_x" },
-      plan: { operation: "avalon.plugins.load", mode: "read", idempotency: "safe" },
+      plan: { operation: "rally.plugins.load", mode: "read", idempotency: "safe" },
       mode: "read",
     });
     seedPendingToolCard(sqlite, "invocation-direct-failure-repair", "load_plugin");
@@ -3311,7 +3311,7 @@ describe("durable harness attempt runtime", () => {
       toolName: "load_plugin",
       inputHash: "needs-input-residual-input",
       input: { pluginId: "plugin_x" },
-      plan: { operation: "avalon.plugins.load", mode: "read", idempotency: "safe" },
+      plan: { operation: "rally.plugins.load", mode: "read", idempotency: "safe" },
       mode: "read",
     });
     seedPendingToolCard(sqlite, "invocation-needs-input-residual", "load_plugin");
@@ -3385,7 +3385,7 @@ describe("durable harness attempt runtime", () => {
       toolName: "load_plugin",
       inputHash: "stale-behind-backfill-input",
       input: { pluginId: "plugin_x" },
-      plan: { operation: "avalon.plugins.load", mode: "read", idempotency: "safe" },
+      plan: { operation: "rally.plugins.load", mode: "read", idempotency: "safe" },
       mode: "read",
     });
     seedPendingToolCard(sqlite, "invocation-stale-behind-backfill", "load_plugin");
@@ -3430,7 +3430,7 @@ describe("durable harness attempt runtime", () => {
       toolName: "load_plugin",
       inputHash: "reaped-then-returned-input",
       input: { pluginId: "plugin_x" },
-      plan: { operation: "avalon.plugins.load", mode: "read", idempotency: "safe" },
+      plan: { operation: "rally.plugins.load", mode: "read", idempotency: "safe" },
       mode: "read",
     });
     sqlite.object.prepare(

@@ -285,6 +285,27 @@ describe("Slack Agent durable ingress", () => {
       user: { id: "U1" },
       view: {
         id: "V1",
+        callback_id: "rally_start_task_submit",
+        state: { values: { prompt: { value: { value: "" } } } },
+      },
+    }, "body-hash")).resolves.toEqual({
+      response_action: "errors",
+      errors: { prompt: "Describe what Avalon should do." },
+    });
+  });
+
+  it("resolves a modal minted before the rename, which Slack still echoes back", async () => {
+    // A Slack action id is baked into a surface Slack retains: an App Home
+    // view, a posted message's button, a modal already on screen. Those keep
+    // the id they were minted with, so refusing the superseded spelling makes
+    // every pre-deploy button fall past its branch into the generic task modal.
+    const service = new SlackAgentService(createTestEnv({ AVALON_REGION: "global" }));
+    await expect(service.processInteraction({
+      type: "view_submission",
+      team: { id: "T1" },
+      user: { id: "U1" },
+      view: {
+        id: "V1",
         callback_id: "avalon_start_task_submit",
         state: { values: { prompt: { value: { value: "" } } } },
       },
@@ -302,7 +323,7 @@ describe("Slack Agent durable ingress", () => {
       user: { id: "U1" },
       view: {
         id: "V1",
-        callback_id: "avalon_start_task_submit",
+        callback_id: "rally_start_task_submit",
         state: { values: { prompt: { value: { value: "Investigate this" } } } },
       },
     }, "body-hash")).resolves.toEqual({
@@ -322,7 +343,7 @@ describe("Slack Agent durable ingress", () => {
       user: { id: "U1" },
       view: {
         id: "V1",
-        callback_id: "avalon_start_task_submit",
+        callback_id: "rally_start_task_submit",
         private_metadata: JSON.stringify({
           kind: "shortcut",
           channelType: "public",
@@ -664,7 +685,7 @@ describe("work-stream link unfurl card", () => {
           type: "button",
           text: { type: "plain_text", text: "Open in Avalon" },
           url,
-          action_id: "avalon_open_unfurl",
+          action_id: "rally_open_unfurl",
         }],
       });
     }

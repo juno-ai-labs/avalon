@@ -30,7 +30,7 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 
 ### Loading and allocation
 
-`avalon:terminal` is a built-in deferred plugin. Bind can discover and load it,
+`rally:terminal` is a built-in deferred plugin. Bind can discover and load it,
 which exposes all nine tools and the language guidance but performs no provider
 operation. The first tool execution asks `TerminalSandboxCoordinator` for the
 work stream's exclusive Terminal mutation lease. It creates, starts, or restores
@@ -91,7 +91,7 @@ time from acquisition through durable settlement. Callers must not present
 
 `import_resource` copies the original bytes of one currently authorized
 work-stream resource from regional R2 into the sandbox. With no destination it
-uses deterministic placement beneath `.avalon/resources/`; an explicit
+uses deterministic placement beneath `.rally/resources/`; an explicit
 destination is create-only unless `overwrite` is true. The sandbox never
 receives R2 credentials or a signed R2 URL.
 
@@ -449,6 +449,22 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-25 — Sandbox paths are .rally
+
+**What changed:** `/workspace/.avalon` and `/workspace/.avalon-output` are
+`/workspace/.rally` and `/workspace/.rally-output`, along with the
+`resources/`, `tmp/`, `logs/`, and `publications/` trees beneath them and the
+`rally-publisher-*` session names. `AVALON_RESOURCE_DIR`, which carries the
+output path into the sandbox, keeps its name.
+
+**Why:** The rename. Safe to do without a compatibility path because the
+snapshot bootstrap that creates these directories is idempotent and a sandbox
+is per work stream and short-lived — one already running against an older
+snapshot keeps its `.avalon` directories until it is replaced, and nothing
+reads them afterwards. The env var stayed because renaming a variable the
+sandbox image's own scripts read is a coordinated change with that image, not
+with this repository.
 
 ### 2026-08-23 — Terminal receipt cleanup acknowledges its terminal-first handoff
 
@@ -1315,8 +1331,8 @@ a UI claim rather than an enforced provider fact.
 the create request as evidence. Each is an input or intention, not observed
 state at the boundary where bytes or network access are granted.
 
-**Consequences:** Snapshot activation fails until `.avalon/tmp` and
-`.avalon-output` exist. Publication performs two bounded file inspections, and a
+**Consequences:** Snapshot activation fails until `.rally/tmp` and
+`.rally-output` exist. Publication performs two bounded file inspections, and a
 create-policy mismatch discards the sandbox and leaves durable failed state.
 
 ### 2026-08-13 — Named command sessions close the Worker response-loss window

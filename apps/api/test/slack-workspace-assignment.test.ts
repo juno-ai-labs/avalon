@@ -751,7 +751,7 @@ describe("Slack public channel membership", () => {
       type: "event_callback",
       team_id: "T123",
       api_app_id: "A1",
-      event: { type: "avalon_public_channel_sync" },
+      event: { type: "rally_public_channel_sync" },
     });
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
       kind: "slack_ingress",

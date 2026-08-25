@@ -326,7 +326,7 @@ durable baseline without emitting a false installation event. A pending
 transition keeps one stable event ID until its local spool enqueue succeeds, so
 an interrupted write retries without losing or double-counting the transition.
 The adapter keeps
-`avalon_event_name` on every destination event and adds the applicable
+`rally_event_name` on every destination event and adds the applicable
 first-party app context: `$app_*`, `$device_type`, `$os`/`$os_name`,
 `$os_version`, `$locale`, `$timezone`, display/viewport dimensions, and
 device/window identity. It marks only events
@@ -342,9 +342,9 @@ exceptions, so a failed flush retries without status-specific classification.
 Five consecutive transient failures open a per-stream five-minute circuit. EU
 has no PostHog token, host, adapter call, or telemetry Analytics Engine dataset.
 For identified Global settings events, the adapter also uses PostHog's event
-`$set` shape to maintain current `avalon_launch_at_login_*`,
-`avalon_lockdown_mode_*`, `avalon_application_icon_*`, and
-`avalon_menu_bar_*` person properties.
+`$set` shape to maintain current `rally_launch_at_login_*`,
+`rally_lockdown_mode_*`, `rally_application_icon_*`, and
+`rally_menu_bar_*` person properties.
 Anonymous settings snapshots remain personless; the semantic event itself is the
 regional source of truth in both regions.
 Workspace-owned API events use the stable workspace analytics ID as both their
@@ -619,12 +619,48 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-25 — The envelope schema identifier is ai.rallywith.telemetry.event
+
+**What changed:** `TELEMETRY_ENVELOPE_SCHEMA` is `ai.rallywith.telemetry.event`.
+`SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS` now carries two entries —
+`com.rally.telemetry.event` and `com.avalon.telemetry.event` — and the envelope
+parser accepts all three.
+
+**Why:** `com.rally` matched no domain the company owns; `ai.rallywith` matches
+the desktop bundle id `ai.rallywith.desktop`, so the reverse-DNS identifier and
+the bundle it ships in agree. The entry below it stays as written: `com.rally`
+really was minted, a spool on disk can still hold it, and rewriting that entry
+to name the current spelling would erase the reason the superseded list has two
+entries rather than one.
+
+Also repaired a regression from the same day's span-attribute rename, which
+rewrote the superseded entry into a copy of the canonical one and would have
+made the reader reject every envelope from an installed build. The test that
+should have caught it looped over the constant, so it asserted only that the
+current identifier parses — always true, however the constant is spelled. It
+now names the superseded spellings as literals and asserts the canonical is
+*not* among them.
+
+### 2026-08-25 — Product event names and the app namespace are Rally
+
+**What changed:** The `avalon_*` product event names are `rally_*`, and the
+PostHog `$app_namespace` is `app.rally.desktop`.
+
+**Why:** The rename. This one is not self-contained: PostHog dashboards, saved
+insights, and cohorts still query the Avalon names, and nothing in this
+repository can alias them — that is a destination-side change, recorded in
+[`rally-rebrand-inventory.md`](rally-rebrand-inventory.md) as outstanding.
+Rejected: emitting both names for a transition period, which doubles event
+volume and leaves every count ambiguous while it runs. A future change that
+renames an event has the same obligation to say what breaks at the
+destination.
+
 ### 2026-08-25 — The envelope schema identifier is com.rally.telemetry.event
 
 **What changed:** `TELEMETRY_ENVELOPE_SCHEMA` in
 `packages/contracts/src/telemetry.ts` is `com.rally.telemetry.event`, and every
 producer reads it rather than writing the literal. The envelope parser accepts
-`com.avalon.telemetry.event` alongside it. The anonymous crash capability header
+`com.rally.telemetry.event` alongside it. The anonymous crash capability header
 became `x-rally-telemetry-capability`, read through `readRallyHeader` so the
 superseded spelling still resolves.
 
@@ -927,8 +963,8 @@ putting their entire request deadline in front of the first window.
 **What changed:** Nothing about how `users.analytics_person_id` and
 `workspaces.analytics_workspace_id` are minted, stored, or delivered. They are
 now also read on the session query that authenticates an HTTP request, and set
-on system traces as `avalon.analytics.person_id` and
-`avalon.analytics.workspace_id`. A Durable Object reads only the workspace
+on system traces as `rally.analytics.person_id` and
+`rally.analytics.workspace_id`. A Durable Object reads only the workspace
 surrogate, from a table it already joins — see
 [`performance-tracing.md`](performance-tracing.md#joining-a-system-span-to-a-product-event).
 
@@ -1289,7 +1325,7 @@ main-owned focus observer establishes the launch focus as its baseline, ignores
 window-to-window focus handoffs, and reports later application background and
 foreground transitions. Only API-originated captures are marked as server
 events. Every destination event
-retains its single Rally registry name in `avalon_event_name`, and the live
+retains its single Rally registry name in `rally_event_name`, and the live
 PostHog tool catalog is recorded with the exact products this contract can and
 cannot truthfully drive.
 
@@ -1308,7 +1344,7 @@ did not make.
 
 **Consequences:** PostHog queries for provider-standard navigation/lifecycle use
 the reserved event name and can filter or recover Rally's semantic name through
-`avalon_event_name`. EU storage and queries remain unchanged. Every future
+`rally_event_name`. EU storage and queries remain unchanged. Every future
 reserved-name mapping needs an exact semantic-equivalence test and must replace,
 not duplicate, its custom destination spelling.
 

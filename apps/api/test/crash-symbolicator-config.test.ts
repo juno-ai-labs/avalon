@@ -94,7 +94,7 @@ describe('crash symbolicator deployment', () => {
     const dockerfile = readFileSync(new URL('../crash-symbolicator/Dockerfile', import.meta.url), 'utf8');
     expect(dockerfile).toContain('minidump-stackwalk --version 0.26.1 --locked');
     expect(dockerfile).toContain('USER processor');
-    expect(dockerfile).toContain('COPY --chmod=0555 processor.py /usr/local/bin/avalon-symbolicate');
+    expect(dockerfile).toContain('COPY --chmod=0555 processor.py /usr/local/bin/rally-symbolicate');
     expect(dockerfile).toContain('EXPOSE 8080');
     expect(dockerfile).not.toMatch(/curl|wget|apt-get install.*(?:curl|wget)/u);
   });

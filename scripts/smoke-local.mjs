@@ -4,7 +4,7 @@ import WebSocket from "ws";
 // plain Node, which resolves no workspace package and would not run the
 // TypeScript source behind one. `scripts/socket-ticket-transport.test.mjs`
 // fails if these drift from `packages/contracts/src/socket-tickets.ts`.
-const SOCKET_TICKET_SUBPROTOCOL = "avalon.ticket.v1";
+const SOCKET_TICKET_SUBPROTOCOL = "rally.ticket.v1";
 const SOCKET_TICKET_QUERY_PARAM = "ticket";
 
 function socketTicketProtocols(ticket) {
