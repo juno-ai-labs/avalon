@@ -11,6 +11,9 @@ describe('Ace deployment contract', () => {
 
     expect(workflow).toContain('branches: [main]');
     expect(workflow).toContain('pnpm --filter @avalon/ace run deploy');
+    expect(workflow).toContain(
+      "--write-out '%{http_code}' https://ace.internal.rallywith.ai/ || true",
+    );
     expect(workflow).toContain('secrets.CLOUDFLARE_API_TOKEN');
     expect(workflow).toContain('secrets.ACE_FLAGSHIP_API_TOKEN');
     expect(workflow).toContain('https://ace.internal.rallywith.ai/');
