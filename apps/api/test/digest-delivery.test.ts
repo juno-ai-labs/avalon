@@ -17,6 +17,7 @@ import {
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
+  workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 
 const WORKSPACE = "00000000-0000-7000-8000-000000000001";
@@ -80,18 +81,19 @@ function seededDatabase(status = "running"): DatabaseSync {
   openWorkstreamAuthorityForTest(database);
   objectStore = testWorkstreamObjectStore();
   databases.push(objectStore);
-  seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM, workspaceId: WORKSPACE });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstreams
-       (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
-        next_sequence_number, last_activity_at, created_at, updated_at, system_kind, scope)
-     VALUES (?, ?, 'Digest · Owner · Tuesday 11 August · 9:00 AM', '', 'ad_hoc', ?, 'running',
-             2, '2026-08-11', '2026-08-11', '2026-08-11', 'digest', 'personal')`,
-    WORKSTREAM,
-    WORKSPACE,
-    OWNER,
-  );
+  seedWorkstreamObjectRoot(objectStore, {
+    workstreamId: WORKSTREAM,
+    workspaceId: WORKSPACE,
+    title: "Digest · Owner · Tuesday 11 August · 9:00 AM",
+    description: "",
+    originType: "ad_hoc",
+    createdByUserId: OWNER,
+    exactState: "running",
+    nextSequenceNumber: 2,
+    systemKind: "digest",
+    scope: "personal",
+  });
+
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, timezone, created_at, updated_at)
     VALUES ('${OWNER}', 'g-owner', 'owner@example.com', 'Owner', 'Europe/London', '2026-01-01', '2026-01-01');
@@ -248,11 +250,8 @@ describe("settling a digest run", () => {
       workstream_id: WORKSTREAM,
       text_content: "Delivered to 1 destination.",
     });
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT next_sequence_number FROM workstreams WHERE id = ?",
-      WORKSTREAM,
-    )).toEqual({ next_sequence_number: 3 });
+    expect(workstreamObjectRootRow(objectStore, "next_sequence_number"))
+      .toEqual({ next_sequence_number: 3 });
   });
 
   it("still notes a delivered digest when telemetry context lookup fails", async () => {

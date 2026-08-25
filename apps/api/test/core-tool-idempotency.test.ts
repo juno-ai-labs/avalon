@@ -15,6 +15,7 @@ import {
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
+  workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -80,17 +81,16 @@ function fixture(): { database: DatabaseSync; objectStore: DatabaseSync; baseEnv
   // harness hands its tools.
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
-  seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstreams
-      (id, workspace_id, title, objective, origin_type, created_by_user_id,
-       harness_status, last_activity_at, created_at, updated_at)
-     VALUES (?, ?, 'Core Tool', 'Core Tool', 'ad_hoc', ?, 'running', '2026-01-01', '2026-01-01', '2026-01-01')`,
-    WORKSTREAM_ID,
-    WORKSPACE_ID,
-    USER_ID,
-  );
+  seedWorkstreamObjectRoot(objectStore, {
+    workstreamId: WORKSTREAM_ID,
+    workspaceId: WORKSPACE_ID,
+    title: "Core Tool",
+    description: "Core Tool",
+    originType: "ad_hoc",
+    createdByUserId: USER_ID,
+    exactState: "running",
+  });
+
   workstreamObjectRun(
     objectStore,
     `INSERT INTO harness_runs
@@ -343,15 +343,15 @@ describe("Avalon core write-tool idempotency", () => {
       objectStore,
       "SELECT COUNT(*) AS count FROM messages WHERE message_type = 'elicitation'",
     )).toEqual({ count: 1 });
-    expect(workstreamObjectGet(
+    // `next_attention_ordinal` is the object's own counter; the retired view
+    // rendered it as `latest_attention_sequence_number = next_attention_ordinal - 1`.
+    expect(workstreamObjectRootRow(
       objectStore,
-      `SELECT harness_status, next_sequence_number, latest_attention_sequence_number
-       FROM workstreams WHERE id = ?`,
-      WORKSTREAM_ID,
+      "exact_state, next_sequence_number, next_attention_ordinal",
     )).toEqual({
-      harness_status: "needs_input",
+      exact_state: "needs_input",
       next_sequence_number: 2,
-      latest_attention_sequence_number: 1,
+      next_attention_ordinal: 2,
     });
   });
 
