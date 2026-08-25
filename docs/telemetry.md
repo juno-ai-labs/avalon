@@ -619,6 +619,28 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-25 — The envelope schema identifier is ai.rallywith.telemetry.event
+
+**What changed:** `TELEMETRY_ENVELOPE_SCHEMA` is `ai.rallywith.telemetry.event`.
+`SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS` now carries two entries —
+`com.rally.telemetry.event` and `com.avalon.telemetry.event` — and the envelope
+parser accepts all three.
+
+**Why:** `com.rally` matched no domain the company owns; `ai.rallywith` matches
+the desktop bundle id `ai.rallywith.desktop`, so the reverse-DNS identifier and
+the bundle it ships in agree. The entry below it stays as written: `com.rally`
+really was minted, a spool on disk can still hold it, and rewriting that entry
+to name the current spelling would erase the reason the superseded list has two
+entries rather than one.
+
+Also repaired a regression from the same day's span-attribute rename, which
+rewrote the superseded entry into a copy of the canonical one and would have
+made the reader reject every envelope from an installed build. The test that
+should have caught it looped over the constant, so it asserted only that the
+current identifier parses — always true, however the constant is spelled. It
+now names the superseded spellings as literals and asserts the canonical is
+*not* among them.
+
 ### 2026-08-25 — Product event names and the app namespace are Rally
 
 **What changed:** The `avalon_*` product event names are `rally_*`, and the

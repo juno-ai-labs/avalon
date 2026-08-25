@@ -1840,11 +1840,18 @@ const TelemetryContextV2Schema = z.object({
  * a spool written before an update. The reader accepts both; only this constant
  * is written.
  */
-export const TELEMETRY_ENVELOPE_SCHEMA = "com.rally.telemetry.event";
+export const TELEMETRY_ENVELOPE_SCHEMA = "ai.rallywith.telemetry.event";
 
-/** Superseded identifiers still accepted inbound, never emitted. */
+/**
+ * Superseded identifiers still accepted inbound, never emitted.
+ *
+ * Two of them, because the rename landed in two steps: `com.avalon` was the
+ * original, `com.rally` the first Rally spelling, and `ai.rallywith` matches the
+ * desktop bundle id. A spool on disk can hold any of the three.
+ */
 export const SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS = [
   "com.rally.telemetry.event",
+  "com.avalon.telemetry.event",
 ] as const;
 
 const envelopeCommon = {

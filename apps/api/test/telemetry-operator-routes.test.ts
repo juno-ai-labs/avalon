@@ -61,7 +61,7 @@ describe('regional telemetry operator routes', () => {
       VALUES (?, 'hash', ?, 'global', 'explicit_binding', 'person', ?, ?, ?, 'terminal')`).run(
       eventId,
       JSON.stringify({
-        schema: 'com.rally.telemetry.event', schemaVersion: 1, eventId,
+        schema: 'ai.rallywith.telemetry.event', schemaVersion: 1, eventId,
         name: 'screen_viewed', source: 'desktop-renderer', category: 'product',
         identityScope: 'platform-user', originalTimestamp: '2026-08-12T20:00:00.000Z',
         sentAt: '2026-08-12T20:00:00.000Z',

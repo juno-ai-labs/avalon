@@ -9,7 +9,7 @@ const now = "2026-08-12T20:00:00.000Z";
 
 function envelope(eventId: string) {
   return {
-    schema: "com.rally.telemetry.event" as const,
+    schema: "ai.rallywith.telemetry.event" as const,
     schemaVersion: 1 as const,
     eventId,
     name: "onboarding_region_selected" as const,
