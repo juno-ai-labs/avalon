@@ -7,7 +7,7 @@
  * none of it. What the objects then do is proved where it already was, against
  * real Durable Objects.
  */
-import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { substreamAgentName } from "../src/durable-objects/names";

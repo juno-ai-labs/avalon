@@ -15,14 +15,14 @@ const baseSession = {
   },
   workspace: {
     id: '00000000-0000-7000-8000-000000000002',
-    name: 'Avalon',
-    slug: 'avalon',
+    name: 'Rally',
+    slug: 'rally',
     region: 'global' as const,
     role: 'owner' as const,
     timezone: 'America/Los_Angeles',
     createdAt: '2026-08-01T12:00:00.000Z',
   },
-  apiBaseUrl: 'https://api.with-avalon.com',
+  apiBaseUrl: 'https://api.rallywith.ai',
 };
 
 describe('legacy encrypted desktop sessions', () => {

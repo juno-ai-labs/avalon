@@ -1,5 +1,5 @@
-import { asWorkspaceId, type Message, type Region } from "@avalon/contracts";
-import { newId } from "@avalon/db";
+import { asWorkspaceId, type Message, type Region } from "@rally/contracts";
+import { newId } from "@rally/db";
 import { z } from "zod";
 import type { Env } from "../env";
 import { numericEnv } from "../env";

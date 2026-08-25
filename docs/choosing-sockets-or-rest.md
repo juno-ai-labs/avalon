@@ -14,7 +14,7 @@ opened it, who connected and which workspace they are looking at, and it knows
 what the first screen of that workspace needs. Anything the client would have
 requested first is something the server should already be sending.
 
-The product reason is the whole reason: Avalon should feel like the data was
+The product reason is the whole reason: Rally should feel like the data was
 already there. A screen that renders from a payload that arrived unasked paints
 once and paints immediately. A screen that mounts, discovers it needs four
 things, requests them, and re-renders as each one lands shows the person four
@@ -23,7 +23,7 @@ endpoint, a streamed event, or a client query.
 
 **How to read this document.** Rules are written as imperatives, and a bullet
 that begins with "Don't" describes something to avoid — never an instruction to
-follow. Two sections near the end, [Where Avalon stands
+follow. Two sections near the end, [Where Rally stands
 today](#where-avalon-stands-today) and [Known
 divergences](#known-divergences), describe how the code behaves right now,
 including in the places where it contradicts these rules. Those two sections are
@@ -31,7 +31,7 @@ a record of the current state, not examples to copy.
 
 Every section states the principle first and ends with a **Do and Don't**
 distillation. The principles are meant to survive this codebase: they apply to a
-stream nobody has built yet, and Avalon's current mechanisms appear as worked
+stream nobody has built yet, and Rally's current mechanisms appear as worked
 examples of them rather than as the rule itself. Where a section describes what
 the code does today, it says so.
 
@@ -52,7 +52,7 @@ follows it is a client spending a round trip to tell the server something the
 server just proved. That is the cost of a question whose answer was already
 determined.
 
-**The state is already in the authority that holds the socket.** In Avalon that
+**The state is already in the authority that holds the socket.** In Rally that
 is WorkspaceDO, which owns the work-stream directory, the suggestion tables
 (`work_opportunities`, `suggested_work_sets`), automations, notes, resources,
 and connector connections in its own SQLite. The general form of the argument
@@ -112,7 +112,7 @@ today" and needs tooling this repository does not have to attribute.
 
 A rule that says "keep a socket open for every window and push everything down
 it" invites an obvious objection: that sounds expensive. It is not, and the
-reason is the specific platform choice underneath — **Avalon runs its
+reason is the specific platform choice underneath — **Rally runs its
 authorities as Cloudflare Durable Objects because they can hibernate a
 WebSocket.**
 
@@ -242,7 +242,7 @@ scroll to next.
 
 ### Designing a connect payload
 
-The two lists above are the contract for Avalon's two connects, not a
+The two lists above are the contract for Rally's two connects, not a
 description of what the code sends today — the workspace connect still answers
 with an invalidation the client turns into REST reads, as [Known
 divergences](#known-divergences) records. The way to derive the next one:
@@ -267,13 +267,13 @@ divergences](#known-divergences) records. The way to derive the next one:
 
 **Sizing a payload to a window requires the handshake to say which window it
 is**, and that belongs in the ticket rather than the subscribe frame. A ticket
-already establishes a purpose at admission — Avalon mints separate workspace,
+already establishes a purpose at admission — Rally mints separate workspace,
 control, feed, and block audiences — so a per-surface payload is a purpose the
 server was told at issue time, not a query the client sends afterwards. The
 distinction is the whole of the rule above: the client may declare *what this
 connection is for*, never *what data it would like*.
 
-Avalon's workspace ticket carries no such purpose today.
+Rally's workspace ticket carries no such purpose today.
 `getWorkspaceSocketTicket()` takes no arguments and the subscribe frame carries
 only a waterline, so Main, Settings, and Meeting each receive the same payload
 and each pays for everything in it. Until a purpose is added there, "budget it
@@ -320,7 +320,7 @@ race.** This is not an edge case to be designed out — it is the normal operati
 of any hierarchy where a child owns the truth and a parent owns the list, and it
 appears the moment a client subscribes to both levels at once.
 
-Avalon's instance of it: a work stream's state change commits in
+Rally's instance of it: a work stream's state change commits in
 `WorkstreamDO`. That object publishes the committed row on its own control
 socket immediately, and *also* projects it through the regional Queue to
 `WorkspaceDO`, which publishes it on the workspace socket. A desktop window
@@ -371,9 +371,9 @@ restart — a re-import, a rebuild, a cutover to a new object. Without one, a
 fresh authority's low numbers look like ancient history and the client discards
 everything it is told.
 
-### How Avalon stamps it today
+### How Rally stamps it today
 
-`WorkstreamStateVersion` in `@avalon/contracts` is the shape both work-stream
+`WorkstreamStateVersion` in `@rally/contracts` is the shape both work-stream
 paths carry, and it is worth reading as a design rather than a struct:
 
 | Field | What it decides |
@@ -408,7 +408,7 @@ points. Two handlers each with their own comparison is how the race comes back:
 the ledger stops being one ordering and becomes two, and the two diverge the
 moment one of the sockets reconnects.
 
-Avalon's receiver is
+Rally's receiver is
 `apps/desktop/src/renderer/lib/workstream-state-store.ts`. The control-socket
 hook and the workspace-socket provider both call
 `applyVersionedWorkstreamState`; neither writes the work-stream caches directly.
@@ -700,7 +700,7 @@ consequence of breaking it.
   invariant and every window pays for a request whose answer was already on its
   way.
 
-## Where Avalon stands today
+## Where Rally stands today
 
 The parts of this that are already true, and the parts that are not, as of the
 last edit to this file. The middle column says what the code does; the right-hand

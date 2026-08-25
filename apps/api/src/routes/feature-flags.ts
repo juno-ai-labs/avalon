@@ -1,4 +1,4 @@
-import { ClientFeatureFlagsSchema } from "@avalon/contracts";
+import { ClientFeatureFlagsSchema } from "@rally/contracts";
 import { Hono } from "hono";
 import type { HonoAppEnv } from "../env";
 import { getIdentityAuth } from "../middleware/auth";

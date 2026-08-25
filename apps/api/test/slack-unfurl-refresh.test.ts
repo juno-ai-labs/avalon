@@ -1,5 +1,5 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
-import { SlackWorkspaceBotScopes } from "@avalon/connectors";
+import { SlackWorkspaceBotScopes } from "@rally/connectors";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";

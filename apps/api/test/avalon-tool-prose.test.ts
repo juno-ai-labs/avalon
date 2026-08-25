@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { hasAvalonToolProse } from "@avalon/agent-harness";
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+import { hasAvalonToolProse } from "@rally/agent-harness";
+import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../src/services/integrations";
 import { createTestEnv } from "./helpers/cloudflare-test";
 

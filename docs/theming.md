@@ -207,7 +207,7 @@ before property; the value never appears in the name, so a token called
 
 A path becomes a custom property by prefixing the namespace and swapping dots
 for hyphens: `sys.color.text.default` is `--av-sys-color-text-default`. The
-`--av-` namespace keeps Avalon's properties apart from the ones Radix and
+`--av-` namespace keeps Rally's properties apart from the ones Radix and
 `tw-fade` set on their own elements.
 
 Two structural decisions sit underneath the taxonomy and are worth
@@ -248,7 +248,7 @@ happen to be. Each carries the same roles:
 | `on` | Text drawn on top of a filled swatch of the hue. |
 
 `brand` carries `ink`, the brand drawn as a mark or a label on an ordinary
-surface — a different question from `base`, because Avalon's chartreuse is a
+surface — a different question from `base`, because Rally's chartreuse is a
 fine fill on white and an illegible label on it. `success` carries `fill` and
 `fill-edge` for a filled control, which is neither the vivid hue nor the wash.
 
@@ -373,7 +373,7 @@ offers them as two rows rather than one list.
 
 | Family | Light | Dark |
 | --- | --- | --- |
-| **Terra** — Avalon's original palette | `terra-light` | `terra` |
+| **Terra** — Rally's original palette | `terra-light` | `terra` |
 | **Air** — amber light on a moving field | `air` | `air-dark` |
 
 `familyAppearances` in `common/themes.ts` is the whole coupling: adding a family
@@ -468,7 +468,7 @@ depend on that:
   that changed overnight opened the first window of the next launch in the old
   colour and corrected itself once the renderer ran — the flash this whole
   mechanism exists to prevent. Because the resolve happens per window rather than
-  once at startup, it also follows a Mac that changes while Avalon is running.
+  once at startup, it also follows a Mac that changes while Rally is running.
 - **The relay can tell that a preference changed.** Two choices can resolve to
   the same appearance — Terra following a dark Mac, and Terra pinned to Dark —
   so comparing appearances reports no change for a move between them. Every
@@ -646,7 +646,7 @@ request description is not reachable from the repository.
 | `src/renderer/components/theme-picker.test.tsx` | The picker, including that each swatch previews with its own `data-theme`. |
 | `src/renderer/lib/device-preferences.test.ts` | That an unknown theme is dropped without discarding the record. |
 
-Run them with `pnpm --filter @avalon/desktop test`.
+Run them with `pnpm --filter @rally/desktop test`.
 
 Two traps. The stylesheet tests read from disk rather than importing, because
 Vite hands `?raw` an empty string for a file it is already processing as CSS;
@@ -659,7 +659,7 @@ None of this says whether a theme is *legible*. That needs a real window: run th
 client under Xvfb and read the screens, per
 [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it). Two of
 the defects fixed on the way in — a near-black label on a near-black fill in
-Air, and Avalon's chartreuse mark on white — passed every assertion above.
+Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
@@ -782,7 +782,7 @@ race harmless — a window with a deliberately stale store still draws what the
 message said, and reports that back, so main's comparison matches and stops.
 
 **What a future change has to respect:** `localStorage` is shared between
-Avalon's windows but not synchronously coherent across them. Anything that has
+Rally's windows but not synchronously coherent across them. Anything that has
 to agree *now* across windows travels in the message; the store is for what has
 to survive a relaunch.
 
@@ -857,7 +857,7 @@ built. `sameThemeChoice` is the relay's new comparison.
 **Why:** storing what a choice resolved *to* threw away the axis that produced
 it, and two independent defects fell out of that.
 
-- A Mac that changed appearance while Avalon was closed opened the next launch's
+- A Mac that changed appearance while Rally was closed opened the next launch's
   first window in the old colour, because `system` had been flattened to
   whichever appearance was in force when it was last written. That is exactly
   the flash the stored value exists to prevent. A fresh profile had the same
@@ -1007,7 +1007,7 @@ match what they are: `light`/`dark` became `neu-light`/`neu`, and `airy`/
 `airy-dark` became `air`/`air-dark`.
 
 **Why the flat list was wrong.** `system` was a peer of the designs, which made
-it mean two things at once — follow the Mac, *and* use Avalon's original
+it mean two things at once — follow the Mac, *and* use Rally's original
 palette. Someone on Air had no way to say "this design, but follow the room";
 picking System took the design away. Separating the axes says both things
 independently, and it is the shape that keeps working when a third family
@@ -1127,7 +1127,7 @@ cannot report that it ran; and `sandbox="allow-scripts"` without
 `allow-same-origin` so its script sits in an opaque origin with no parent, no
 storage, and no bridge. Verified in a running window rather than reasoned about:
 `parent.location` throws, `fetch` throws, `localStorage` throws, and nothing
-Avalon-shaped is on `window`. A future change must not relax any one of the
+Rally-shaped is on `window`. A future change must not relax any one of the
 three on the grounds that the other two hold — they cover different things.
 
 The window's own policy now *skips* a backdrop response instead of attaching
@@ -1279,7 +1279,7 @@ and screen title — along with three weights beside the existing
 `--weight-strong`. Airy runs prose at 16.5px against 14px and pulls every weight
 back: headings to 480, emphasis to 500, `--weight-strong` from 500 to 450. Its
 author label also picks up `--label-transform` and `--label-tracking`, so
-"Avalon" over a turn renders as letterspaced capitals the way a group label in
+"Rally" over a turn renders as letterspaced capitals the way a group label in
 the navigation does.
 
 **Why:** Asked for, and the reference carries its hierarchy with size and
@@ -1353,7 +1353,7 @@ only makes sense as the counterpart of hugging the opposite edge.
 identity line above your own turn — "you know who you are" — and that held
 because the right-aligned bubble was itself the attribution. Under a theme that
 left-aligns and removes the bubble, nothing distinguishes your turn from
-Avalon's except that Avalon's carries an author line and yours does not. The
+Rally's except that Rally's carries an author line and yours does not. The
 alternation and the agent's label still make it inferable, and changing what the
 interface *says* was out of scope for a change about where things sit, so the
 suppression was left alone. A theme in this shape probably wants a `You · <time>`
@@ -1549,7 +1549,7 @@ one; and Airy — with a `system` choice that follows the Mac, a picker in
 Settings, and a device-local preference. The main process mirrors the resolved
 theme so a window is constructed on the right canvas.
 
-**Why:** Avalon had one appearance and no way to add a second. The colours were
+**Why:** Rally had one appearance and no way to add a second. The colours were
 not merely hardcoded but *duplicated*: 268 distinct values, most of them within a
 few units of luminance of a neighbour, so the same border was written eleven
 different ways and no two surfaces that should have matched reliably did. That

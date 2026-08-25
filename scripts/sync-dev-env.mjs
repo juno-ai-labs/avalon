@@ -13,7 +13,7 @@ const regionalTargetPaths = {
 const workerKeys = [
   "APP_ENV",
   "AVALON_REGION",
-  "AVALON_DEV_AUTH",
+  "RALLY_DEV_AUTH",
   "PUBLIC_API_BASE_URL",
   "PUBLIC_WEB_BASE_URL",
   "ALLOWED_ORIGINS",
@@ -145,7 +145,7 @@ const globalOnlyKeys = new Set([
 
 const safeDefaults = {
   APP_ENV: "development",
-  AVALON_DEV_AUTH: "true",
+  RALLY_DEV_AUTH: "true",
   PUBLIC_WEB_BASE_URL: "http://127.0.0.1:5174",
   ALLOWED_ORIGINS: "app://rallywithai,app://avalon,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174",
   DESKTOP_DEEP_LINK_URI: "rallywithai://auth/complete",
@@ -155,8 +155,8 @@ const safeDefaults = {
   OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
   OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
   OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
-  RESEND_FROM_EMAIL: "Avalon <invites@rallywith.ai>",
-  RESEND_NOTIFICATION_FROM_EMAIL: "Avalon <notifications@rallywith.ai>",
+  RESEND_FROM_EMAIL: "Rally <invites@rallywith.ai>",
+  RESEND_NOTIFICATION_FROM_EMAIL: "Rally <notifications@rallywith.ai>",
   WORKSTREAM_EMAIL_DOMAIN: "automation.rallywith.ai",
   LINEAR_NATIVE_AGENT_ENABLED: "false",
   CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
@@ -183,6 +183,15 @@ function parseEnv(source) {
       value = value.slice(1, -1);
     }
     values[key] = value;
+  }
+  // A developer's `.env.local` is not in the repository, so the rename from
+  // Avalon cannot reach it. Read the superseded name where the current one is
+  // absent: without this the only symptom is dev sign-in answering 503, which
+  // names neither the variable nor the rename.
+  for (const [key, value] of Object.entries(values)) {
+    if (!key.startsWith("AVALON_")) continue;
+    const renamed = `RALLY_${key.slice("AVALON_".length)}`;
+    if (values[renamed] === undefined) values[renamed] = value;
   }
   return values;
 }

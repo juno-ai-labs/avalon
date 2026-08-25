@@ -1,4 +1,4 @@
-import type { NormalizedActivity, ToolDefinition } from "@avalon/contracts";
+import type { NormalizedActivity, ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 import {
   base64,

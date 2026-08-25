@@ -4,7 +4,7 @@ import {
   asWorkspaceId,
   asWorkstreamId,
   type WorkstreamWorkflowInput,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 

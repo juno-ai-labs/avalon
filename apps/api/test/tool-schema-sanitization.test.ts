@@ -6,8 +6,8 @@ import {
   AVALON_SKILL_TOOL_DEFINITIONS,
   nonObjectRootUnionBranches,
   weakenedCompositionBranches,
-} from "@avalon/agent-harness";
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+} from "@rally/agent-harness";
+import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../src/services/integrations";
 import { TERMINAL_TOOL_DEFINITIONS } from "../src/services/terminal/contract";
 import { createTestEnv } from "./helpers/cloudflare-test";

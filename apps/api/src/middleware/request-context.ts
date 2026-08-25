@@ -1,3 +1,4 @@
+import { RALLY_HEADERS, rallyHeaderAliases, readRallyHeader } from "@rally/contracts/http-headers";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 import type { MiddlewareHandler } from "hono";
@@ -11,7 +12,7 @@ export const requestContext: MiddlewareHandler<HonoAppEnv> = async (c, next) => 
   c.set("requestId", requestId);
   c.header("x-request-id", requestId);
 
-  const requestedRegion = c.req.header("x-avalon-region");
+  const requestedRegion = readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.REGION);
   if (requestedRegion && requestedRegion !== c.env.AVALON_REGION) {
     throw new ApiError(409, "region_mismatch", "This workspace belongs to a different data region");
   }
@@ -40,13 +41,16 @@ export function securityMiddleware(): MiddlewareHandler<HonoAppEnv>[] {
         const allowed = new Set(c.env.ALLOWED_ORIGINS.split(",").map((value: string) => value.trim()).filter(Boolean));
         return allowed.has(origin) ? origin : undefined;
       },
+      // Both spellings of every product header: the browser matches the
+      // preflight list literally, so a shipped build still sending the
+      // superseded name is rejected before any route code runs.
       allowHeaders: [
         "authorization",
         "content-type",
         "idempotency-key",
-        "x-avalon-draft-id",
-        "x-avalon-operation-id",
-        "x-avalon-region",
+        ...rallyHeaderAliases(RALLY_HEADERS.DRAFT_ID),
+        ...rallyHeaderAliases(RALLY_HEADERS.OPERATION_ID),
+        ...rallyHeaderAliases(RALLY_HEADERS.REGION),
         "x-request-id",
       ],
       exposeHeaders: ["x-request-id"],

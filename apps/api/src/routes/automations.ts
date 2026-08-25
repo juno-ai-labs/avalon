@@ -17,7 +17,7 @@ import {
   ModelPluginIdSchema,
   TimestampSchema,
   WorkstreamSchema,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";

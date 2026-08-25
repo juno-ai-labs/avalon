@@ -1,4 +1,4 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { describe, expect, it, vi } from 'vitest';
 import type { IdentityAuthContext } from '../src/env';
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from '../src/telemetry/api-emitter';

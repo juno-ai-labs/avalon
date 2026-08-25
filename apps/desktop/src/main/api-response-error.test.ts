@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AvalonApiResponseError,
+  RallyApiResponseError,
   definitivelyInvalidatesStoredCredential,
   readJsonBody,
   refreshFailureIsTerminal,
@@ -43,8 +43,8 @@ describe('desktop API response errors', () => {
   it('preserves the HTTP status when an error response has no JSON message', async () => {
     const error = await responseError(new Response('not-json', { status: 500 }));
 
-    expect(error).toBeInstanceOf(AvalonApiResponseError);
-    expect(error.message).toBe('Avalon authentication failed (500)');
+    expect(error).toBeInstanceOf(RallyApiResponseError);
+    expect(error.message).toBe('Rally authentication failed (500)');
     expect(error.status).toBe(500);
   });
 });

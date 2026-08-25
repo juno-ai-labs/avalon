@@ -9,8 +9,8 @@ import {
   type BlockDashboardPreference,
   type UpdateBlockDashboardPreferenceRequest,
   type UpdateBlockDashboardRequest,
-} from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+} from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 
 import { BlockDashboardControlRequestSchema } from "../durable-objects/block-dashboard-protocol";

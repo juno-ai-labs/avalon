@@ -3,8 +3,8 @@ import type {
   HarnessTool,
   HarnessToolContext,
   HarnessToolResult,
-} from "@avalon/agent-harness";
-import type { ToolDefinition } from "@avalon/contracts";
+} from "@rally/agent-harness";
+import type { ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 
 export const TERMINAL_PLUGIN_ID = "avalon:terminal";

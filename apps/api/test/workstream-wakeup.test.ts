@@ -4,14 +4,14 @@ import {
   asWorkspaceId,
   asWorkstreamId,
   readStructuredFailure,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH,
   type WorkstreamWorkflowInput,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";

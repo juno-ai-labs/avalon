@@ -2,7 +2,7 @@ import type {
   InferenceAttemptEvent,
   InferenceRequestEvent,
   StructuredModelDiagnostic,
-} from "@avalon/agent-harness";
+} from "@rally/agent-harness";
 import { z } from "zod";
 
 import type { Env } from "../env";

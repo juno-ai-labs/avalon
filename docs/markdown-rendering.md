@@ -1,6 +1,6 @@
 # Rendering markdown in the desktop client
 
-Almost everything Avalon shows a person is markdown a model wrote: a work-stream
+Almost everything Rally shows a person is markdown a model wrote: a work-stream
 turn, a HyperSight block, a meeting briefing, a note, an automation's overview.
 All of it goes through one component and one block of CSS. This document covers
 that renderer — what it adds on top of `react-markdown`, what a surface hosting
@@ -181,7 +181,7 @@ cannot be written this way is a sign it is not a typography override.
   that, into inert text. If one ever reached the DOM as an `href`, a model would
   be choosing a destination.
 - **A connector chip requires this render's token.** Without it the link is text
-  someone wrote rather than a mention Avalon minted, and it renders as a
+  someone wrote rather than a mention Rally minted, and it renders as a
   fallback span.
 
 ## Boundary
@@ -210,7 +210,7 @@ in its input and no `rehype-raw` is configured, so markup in the source is text.
 
 Markdown rendered anywhere other than the desktop renderer is a different
 problem with different constraints, and is deliberately not shared with this:
-Avalon's outbound email has one shared converter,
+Rally's outbound email has one shared converter,
 `apps/api/src/services/email-markdown.ts`, for the reason
 [`digests.md`](digests.md) records — a general markdown library emits far more
 than an email client will honour. Every email surface renders through that one,
@@ -258,10 +258,10 @@ Two source guards and two component suites cover different failures — none
 subsumes the others.
 
 ```bash
-pnpm --filter @avalon/desktop exec vitest run src/renderer/styles/app.css.node.test.ts
-pnpm --filter @avalon/desktop exec vitest run src/renderer/components/markdown-renderer.node.test.ts
-pnpm --filter @avalon/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
-pnpm --filter @avalon/desktop exec vitest run src/renderer/components/attachments.test.tsx
+pnpm --filter @rally/desktop exec vitest run src/renderer/styles/app.css.node.test.ts
+pnpm --filter @rally/desktop exec vitest run src/renderer/components/markdown-renderer.node.test.ts
+pnpm --filter @rally/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
+pnpm --filter @rally/desktop exec vitest run src/renderer/components/attachments.test.tsx
 ```
 
 Both guards are `.node.test.ts` files: they read source off disk with `node:fs`,
@@ -337,7 +337,7 @@ an attached file's bytes are not a model's to fix. And every `person:` href now
 survives `urlTransform` so the `a` component can decide it: a real id resolves
 to a chip, anything else renders as `span.mention-text-fallback`.
 
-**Why:** Several of the models Avalon routes to write TeX when they want a
+**Why:** Several of the models Rally routes to write TeX when they want a
 symbol, and this renderer has never rendered any — so the delimiters and the
 command name were shown to people verbatim, in the surface they read most. The
 repair is shared rather than local because the digest email had the identical
@@ -413,7 +413,7 @@ Shipped in #258.
 
 ### 2026-08-13 — A saved message is this renderer's DOM, rendered off-screen
 
-**What changed:** Saving one of Avalon's turns as a picture or a PDF renders
+**What changed:** Saving one of Rally's turns as a picture or a PDF renders
 `MarkdownBody` into a detached React root and takes its markup, rather than
 sending the markdown anywhere to be rendered again. An eighth call site, and the
 first that never mounts in the document.

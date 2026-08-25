@@ -14,12 +14,12 @@ import {
   type Resource,
   type Workstream,
   type WorkstreamDetail,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import type {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
   UpdateWorkstreamRequestSchema,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { z } from "zod";
 
 import { substreamAgentName } from "../durable-objects/names";

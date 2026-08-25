@@ -1,4 +1,4 @@
-import { parseSlackEventEnvelope, verifySlackRequest } from "@avalon/connectors";
+import { parseSlackEventEnvelope, verifySlackRequest } from "@rally/connectors";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";

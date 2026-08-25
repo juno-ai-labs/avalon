@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Avalon theme",
+  "title": "Rally theme",
   "description": "One appearance, as values for the token paths in registry.json. Shaped after a VS Code colour theme: a little metadata and one flat map of dotted keys.",
   "type": "object",
   "required": [

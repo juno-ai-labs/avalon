@@ -1,5 +1,5 @@
 {
-  "name": "avalon-crashpad-fixture",
+  "name": "rally-crashpad-fixture",
   "version": "1.0.0",
   "private": true,
   "main": "main.cjs"

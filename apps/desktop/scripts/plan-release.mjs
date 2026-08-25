@@ -50,7 +50,7 @@ const repositoryDirectory = resolve(desktopDirectory, '../..');
 //
 // The watermark is the commit the release *built* — the version bump — but the
 // record naming it lands as a later commit on main, so it is always in the diff
-// that follows. Real history shows it exactly: `c3a547b "Record Avalon 1.33.0
+// that follows. Real history shows it exactly: `c3a547b "Record Rally 1.33.0
 // release config"` has the recorded watermark `f4e66c6` as its direct parent.
 // Without this, the diff is never empty, the skip below is dead code, and a
 // re-planned release cuts an empty minor.
@@ -127,7 +127,7 @@ function gitOutput(args) {
  *
  * `actions/checkout` hands this job the commit that triggered the run, but a
  * run that waited in the release queue was triggered long before it got the
- * slot — and the release ahead of it pushes `Record Avalon <version> release
+ * slot — and the release ahead of it pushes `Record Rally <version> release
  * config` to main as its last act. Planning from the trigger therefore reads a
  * record that predates a release which has already shipped, and cuts that
  * version a second time. Its tag is already pushed by then, so the run dies at

@@ -48,7 +48,7 @@ export function applicationMenuTemplate(
   const updateItem = updateMenuItem(options.updateStatus, options.actions);
   // macOS keeps Close Window in File and never in Window, so Electron's
   // `windowMenu` role — which carries `close` on every other platform — leaves
-  // darwin without one. Avalon has no other File items, and this menu is the
+  // darwin without one. Rally has no other File items, and this menu is the
   // only place a key equivalent can come from: without it Command-W is unbound
   // and the Settings and meeting windows can be closed only by their
   // traffic-light button, which is the gesture Apple's guidelines name first.
@@ -85,7 +85,7 @@ export function applicationMenuTemplate(
     { role: 'windowMenu' },
     {
       role: 'help',
-      submenu: [{ label: 'Avalon website', click: options.actions.openWebsite }],
+      submenu: [{ label: 'Rally website', click: options.actions.openWebsite }],
     },
   ];
 }

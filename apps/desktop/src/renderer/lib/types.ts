@@ -9,7 +9,7 @@ import type {
   TerminalWorkspaceSettings as ContractTerminalWorkspaceSettings,
   TerminalNetworkPolicyPreview as ContractTerminalNetworkPolicyPreview,
   TerminalWorkstreamState as ContractTerminalWorkstreamState,
-} from '@avalon/contracts';
+} from '@rally/contracts';
 
 /** The OpenRouter model ids a composer may pin work to. Re-exported so the
  *  renderer keeps one import site for the shapes it speaks to the API in. */
@@ -98,7 +98,7 @@ export interface AutomationSummary {
 export interface WorkstreamSummary {
   id: string;
   title: string;
-  /** `naming` while Avalon is choosing the title; the title is a placeholder. */
+  /** `naming` while Rally is choosing the title; the title is a placeholder. */
   titleStatus: 'naming' | 'automatic' | 'settled';
   objective?: string;
   emailAddress?: string;
@@ -215,7 +215,7 @@ export interface ToolEventData {
   status: 'started' | 'completed' | 'failed' | 'ambiguous';
   durationMs?: number;
   toolType?: string;
-  /** The single plugin that owns this tool; absent for Avalon-owned tools. */
+  /** The single plugin that owns this tool; absent for Rally-owned tools. */
   plugin?: AutomationPluginActivity;
   input?: unknown;
   output?: unknown;
@@ -486,7 +486,7 @@ export interface WorkOpportunity {
   sourceLabel: string;
 }
 
-/** Every run always lands in Avalon; these are the extra frozen destinations. */
+/** Every run always lands in Rally; these are the extra frozen destinations. */
 export type AutomationDeliveryTargetType = 'slack_agent_dm' | 'email';
 
 export interface AutomationDeliveryChoice {
@@ -496,7 +496,7 @@ export interface AutomationDeliveryChoice {
 }
 
 export interface AutomationCreateOptions {
-  /** Overrides the scope Avalon suggested for the draft. */
+  /** Overrides the scope Rally suggested for the draft. */
   scope?: AutomationScope;
   delivery?: AutomationDeliveryChoice;
   /**

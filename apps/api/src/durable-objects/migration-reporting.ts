@@ -50,7 +50,7 @@ import {
   type DurableObjectMigrationFailure,
   type DurableObjectMigrationReport,
   type DurableObjectMigrationStatus,
-} from "@avalon/contracts/durable-object-migrations";
+} from "@rally/contracts/durable-object-migrations";
 import type { Env } from "../env";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logStructuredEvent } from "../observability/logger";

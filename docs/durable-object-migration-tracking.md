@@ -1,6 +1,6 @@
 # Durable Object migration tracking
 
-Avalon runs five Durable Object classes across two regional Workers, and each
+Rally runs five Durable Object classes across two regional Workers, and each
 object applies its own SQLite migration history in its constructor. Nothing in
 Cloudflare's account model can answer the question that follows from that:
 **which objects are on which schema version, and which of them are broken?** A
@@ -426,7 +426,7 @@ failed migration is still a code change and a deploy, described in
 
 The tracker holds no workspace product data: no messages, no names, no member
 identities. The one identity it stores is the Access email of the operator who
-started a run, and that is an Avalon operator's address rather than anything a
+started a run, and that is a Rally operator's address rather than anything a
 workspace owns. It is not a general telemetry sink —
 [`telemetry.md`](telemetry.md) owns that — and adding a product signal to a
 report is out of scope by design.
@@ -477,10 +477,10 @@ banner carrying the error.
 
 | Suite | Covers |
 | --- | --- |
-| `pnpm --filter @avalon/migration-tracker test` | The registry's SQL and derived statuses, the queue consumer's acknowledgement, dedupe, and out-of-order behavior, the sweep against a `fetch` double, Access verification against a locally generated key, and the site's routes and escaping. `dispatch.test.ts` covers the fan-out against the real registry and queue doubles: routing by script name, per-region grouping, an unbound region, a send that fails partway, the 100-message batch, and the run cap. |
-| `pnpm --filter @avalon/api test:workers` (`test-workers/migration-reporting.test.ts`) | The reporter, in workerd against real Durable Object storage: first report, silence on an unchanged wake, a new report after a build change, applied versions, the failure path, retry after refusal, and the two "cannot break the object" cases. |
-| `pnpm --filter @avalon/api test:workers` (`test-workers/forced-migration.test.ts`) | `forceMigration` through a real Durable Object stub, its two identity guards, the unconditional report, and the consumer's ack/retry contract. |
-| `pnpm --filter @avalon/contracts test` | The report contract, the command contract, the opaque-name guard, and the queue-name predicates. |
+| `pnpm --filter @rally/migration-tracker test` | The registry's SQL and derived statuses, the queue consumer's acknowledgement, dedupe, and out-of-order behavior, the sweep against a `fetch` double, Access verification against a locally generated key, and the site's routes and escaping. `dispatch.test.ts` covers the fan-out against the real registry and queue doubles: routing by script name, per-region grouping, an unbound region, a send that fails partway, the 100-message batch, and the run cap. |
+| `pnpm --filter @rally/api test:workers` (`test-workers/migration-reporting.test.ts`) | The reporter, in workerd against real Durable Object storage: first report, silence on an unchanged wake, a new report after a build change, applied versions, the failure path, retry after refusal, and the two "cannot break the object" cases. |
+| `pnpm --filter @rally/api test:workers` (`test-workers/forced-migration.test.ts`) | `forceMigration` through a real Durable Object stub, its two identity guards, the unconditional report, and the consumer's ack/retry contract. |
+| `pnpm --filter @rally/contracts test` | The report contract, the command contract, the opaque-name guard, and the queue-name predicates. |
 
 Traps:
 
@@ -602,10 +602,10 @@ contract.
 ## Security and trust model
 
 The site sits behind **Cloudflare Access**, configured with Google as the login
-method and an `email_domain` policy for Avalon's Workspace domain — both of which
-Access supports directly, which is why the tracker does not reuse Avalon's own
+method and an `email_domain` policy for Rally's Workspace domain — both of which
+Access supports directly, which is why the tracker does not reuse Rally's own
 Google OAuth. Reusing it would mint operator sessions out of the product's user
-identity system and leave any account that can sign in to Avalon one
+identity system and leave any account that can sign in to Rally one
 authorization bug away from the fleet's schema state.
 
 The Worker does not trust the proxy's header alone. It verifies the
@@ -1194,7 +1194,7 @@ Worker on a merge to `main` touching `apps/migration-tracker/` or the shared
 report contract, and `scripts/check-migration-tracker-health.mjs` verifies the
 result against the live account afterwards.
 
-**Why:** the tracker was the one Avalon surface with no deployment workflow, so
+**Why:** the tracker was the one Rally surface with no deployment workflow, so
 the subsystem was not live until somebody remembered to run
 `pnpm deploy:migration-tracker` from a laptop. That is a bad property for a
 Worker whose whole job is to be watching when a deploy goes wrong. It is a
@@ -1319,7 +1319,7 @@ only at the moment it applies one.
   matters: the queue's retry and dead-letter queue are a better home for exactly
   that report, and ten seconds of batch latency is nothing to a monitor. See
   [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md).
-- *Reusing Avalon's Google OAuth for the site.* Access already supports Google as
+- *Reusing Rally's Google OAuth for the site.* Access already supports Google as
   a login method and `email_domain` policies, so reusing the product's identity
   system would add an authorization surface without adding a capability, and
   would put the operator boundary inside the product.

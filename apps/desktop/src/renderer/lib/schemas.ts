@@ -1,4 +1,4 @@
-import { AutomationPluginActivitySchema } from '@avalon/contracts';
+import { AutomationPluginActivitySchema } from '@rally/contracts';
 import { z } from 'zod';
 
 const scopeSchema = z.enum(['you', 'workspace']);

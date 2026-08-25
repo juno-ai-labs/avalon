@@ -25,7 +25,7 @@ import {
 const temporaryDirectories: string[] = [];
 
 async function temporaryUserDataDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-session-file-'));
+  const directory = await mkdtemp(join(tmpdir(), 'rally-session-file-'));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -42,10 +42,10 @@ describe('desktop session file', () => {
     await writeStoredProfileFile(userDataDirectory, Buffer.from('encrypted-profile'));
 
     expect(storedAuthFilePath(userDataDirectory)).toBe(
-      join(userDataDirectory, 'avalon-data', 'desktop-auth.bin'),
+      join(userDataDirectory, 'rally-data', 'desktop-auth.bin'),
     );
     expect(storedProfileFilePath(userDataDirectory)).toBe(
-      join(userDataDirectory, 'avalon-data', 'desktop-profile.bin'),
+      join(userDataDirectory, 'rally-data', 'desktop-profile.bin'),
     );
     await expect(readStoredAuthFile(userDataDirectory)).resolves.toEqual(Buffer.from('encrypted-auth'));
     await expect(readStoredProfileFile(userDataDirectory)).resolves.toEqual(Buffer.from('encrypted-profile'));
@@ -58,7 +58,7 @@ describe('desktop session file', () => {
     await writeStoredSessionFile(userDataDirectory, encrypted);
 
     expect(storedSessionFilePath(userDataDirectory)).toBe(
-      join(userDataDirectory, 'avalon-data', 'desktop-session.bin'),
+      join(userDataDirectory, 'rally-data', 'desktop-session.bin'),
     );
     await expect(readFile(storedSessionFilePath(userDataDirectory))).resolves.toEqual(encrypted);
     expect((await stat(storedSessionDirectory(userDataDirectory))).mode & 0o777).toBe(0o700);

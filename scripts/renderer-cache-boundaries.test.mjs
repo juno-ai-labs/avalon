@@ -15,8 +15,8 @@ function lint(source, enabled) {
       parser: tseslint.parser,
       parserOptions: { sourceType: "module" },
     },
-    plugins: { avalon: { rules } },
-    rules: { [`avalon/${enabled}`]: "error" },
+    plugins: { rally: { rules } },
+    rules: { [`rally/${enabled}`]: "error" },
   });
 }
 

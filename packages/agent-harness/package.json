@@ -1,5 +1,5 @@
 {
-  "name": "@avalon/agent-harness",
+  "name": "@rally/agent-harness",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@avalon/contracts": "workspace:*",
+    "@rally/contracts": "workspace:*",
     "@juno-ai/bind": "13.0.0",
     "eventsource-parser": "latest",
     "openai": "^6.49.0",

@@ -1,4 +1,4 @@
-import { ProductFeatureFlagKeySchema } from '@avalon/contracts';
+import { ProductFeatureFlagKeySchema } from '@rally/contracts';
 import { describe, expect, it } from 'vitest';
 import { MANAGED_FLAGS, ManagedFlagUpdateSchema } from '../src/protocol';
 

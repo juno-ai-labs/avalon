@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Region } from "@avalon/contracts";
+import type { Region } from "@rally/contracts";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import {

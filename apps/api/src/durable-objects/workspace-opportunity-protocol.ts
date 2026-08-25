@@ -1,5 +1,5 @@
-import { IdSchema, RegionSchema, UserIdSchema, WorkspaceIdSchema } from "@avalon/contracts";
-import { TELEMETRY_CONNECTOR_TYPES } from "@avalon/contracts/telemetry";
+import { IdSchema, RegionSchema, UserIdSchema, WorkspaceIdSchema } from "@rally/contracts";
+import { TELEMETRY_CONNECTOR_TYPES } from "@rally/contracts/telemetry";
 import { z } from "zod";
 
 import { WorkspaceConnectorEventSchema } from "./workspace-connector-event-protocol";

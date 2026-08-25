@@ -1,4 +1,4 @@
-import { AGENT_MODEL_OVERRIDES, type AgentModelOverride } from '@avalon/contracts';
+import { AGENT_MODEL_OVERRIDES, type AgentModelOverride } from '@rally/contracts';
 
 /** Whether a served model id is one the selector's closed list admits. */
 function isAgentModelOverride(model: string): model is AgentModelOverride {

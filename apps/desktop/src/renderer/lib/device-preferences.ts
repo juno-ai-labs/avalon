@@ -1,9 +1,9 @@
 import { parseThemeChoice, type ThemeChoice } from '../../common/themes';
 import type { Region } from './types';
 
-export const DEVICE_PREFERENCES_STORAGE_KEY = 'avalon:device-preferences';
-const LEGACY_REGION_STORAGE_KEY = 'avalon:selected-region';
-const LEGACY_WORKSPACE_NAME_STORAGE_KEY = 'avalon:workspace-name';
+export const DEVICE_PREFERENCES_STORAGE_KEY = 'rally:device-preferences';
+const LEGACY_REGION_STORAGE_KEY = 'rally:selected-region';
+const LEGACY_WORKSPACE_NAME_STORAGE_KEY = 'rally:workspace-name';
 
 export interface DevicePreferences {
   version: 1;

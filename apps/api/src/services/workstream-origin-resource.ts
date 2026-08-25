@@ -4,10 +4,10 @@ import {
   type AuthorizedConnectorConnection,
   type ConnectorOriginActivity,
   type ConnectorOriginLocator,
-} from "@avalon/connectors";
-import type { ConnectorOriginResource } from "@avalon/contracts";
-import { ConnectorOriginResourceSchema } from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+} from "@rally/connectors";
+import type { ConnectorOriginResource } from "@rally/contracts";
+import { ConnectorOriginResourceSchema } from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 
 import type { Env } from "../env";
 import { connectorRegistryForEnv } from "../lib/connector-registry";

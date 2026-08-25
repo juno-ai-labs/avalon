@@ -103,7 +103,7 @@ routing feedback.
 - **`digestible` is a prior here, never a verdict.** The flag answers "should
   somebody be told this on a schedule", and three unrelated noes are spelled the
   same way: *not news* (a check run finishing), *would render badly in a digest*
-  (the generic webhook, whose payload Avalon cannot parse), and *too many events
+  (the generic webhook, whose payload Rally cannot parse), and *too many events
   per piece of news* (Drive's change feed reporting every save). Only the first
   says anything about relevance to a work stream — a Google Doc being edited is
   prime context and a poor digest line. Treating the flag as a veto silently
@@ -259,8 +259,8 @@ object in `test-workers/durable-object-runtime.test.ts`. The stub in the Node
 file answers eligibility and ordering only, deliberately.
 
 ```bash
-pnpm --filter @avalon/api exec vitest run test/activity-contextual-routing.test.ts
-pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts \
+pnpm --filter @rally/api exec vitest run test/activity-contextual-routing.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts \
   test-workers/durable-object-runtime.test.ts
 ```
 
@@ -518,7 +518,7 @@ reverted before shipping, and the reasoning is worth keeping because it is
 seductive: a card *is* a stronger interruption than a digest line, so the
 inference that it deserves at least as strong a declaration feels airtight. It is
 wrong because `digestible` encodes three different noes and only one of them is
-about relevance. `generic_webhook` declares `digestible: []` because Avalon
+about relevance. `generic_webhook` declares `digestible: []` because Rally
 cannot parse an arbitrary payload well enough to render it into somebody's
 morning email — and it is the connector [PRD flow 4](e2e.md#prd-flow-4--contextual-routing)
 uses to test contextual routing, so the gate broke the feature's own acceptance

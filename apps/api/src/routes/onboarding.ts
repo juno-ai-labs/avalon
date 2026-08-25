@@ -1,3 +1,4 @@
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { zValidator } from "../middleware/validation";
 import {
   ActivateWorkspaceRequestSchema,
@@ -9,7 +10,7 @@ import {
   asUserId,
   asWorkspaceId,
   type Session,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { HonoAppEnv, IdentityAuthContext } from "../env";
@@ -82,7 +83,7 @@ onboardingRoutes.get("/", async (c) =>
 onboardingRoutes.post("/workspace", zValidator("json", CreateWorkspaceRequestSchema), async (c) => {
   const body = c.req.valid("json");
   const auth = getIdentityAuth(c);
-  const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
+  const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
   try {
     const session = SessionSchema.parse(await new PlatformOnboardingService(c.env, auth)
       .createWorkspace(body.name, body.region, c.req.raw.cf));
@@ -102,7 +103,7 @@ onboardingRoutes.post(
   async (c) => {
     const body = c.req.valid("json");
     const auth = getIdentityAuth(c);
-    const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
+    const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
     try {
       const session = SessionSchema.parse(await new PlatformOnboardingService(c.env, auth)
         .activate(body.region, body.workspaceId));
@@ -124,7 +125,7 @@ onboardingRoutes.post(
   async (c) => {
     const auth = getIdentityAuth(c);
     const region = c.req.valid("json").region;
-    const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
+    const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
     try {
       const session = SessionSchema.parse(await new PlatformOnboardingService(c.env, auth)
         .acceptInvitation(c.req.valid("param").id, region));

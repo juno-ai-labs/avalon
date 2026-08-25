@@ -1,4 +1,4 @@
-import { IdSchema } from "@avalon/contracts";
+import { IdSchema } from "@rally/contracts";
 import { Hono } from "hono";
 import { z } from "zod";
 

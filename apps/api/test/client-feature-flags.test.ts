@@ -1,5 +1,5 @@
-import { asUserId, asWorkspaceId, type UserId, type WorkspaceId } from "@avalon/contracts";
-import { CONTROL_TOWER_REFRESH_SECONDS } from "@avalon/contracts";
+import { asUserId, asWorkspaceId, type UserId, type WorkspaceId } from "@rally/contracts";
+import { CONTROL_TOWER_REFRESH_SECONDS } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
 import type { Env, IdentityAuthContext } from "../src/env";
@@ -358,14 +358,14 @@ describe("GET /feature-flags", () => {
       ...envWithAccounts(flags),
       ALLOWED_ORIGINS: "app://avalon",
       APP_ENV: "development",
-      AVALON_DEV_AUTH: "true",
+      RALLY_DEV_AUTH: "true",
     });
   }
 
   function asStaff(): HeadersInit {
     return {
-      "x-avalon-dev-user-id": staffUserId,
-      "x-avalon-dev-workspace-id": workspaceId,
+      "x-rally-dev-user-id": staffUserId,
+      "x-rally-dev-workspace-id": workspaceId,
     };
   }
 

@@ -16,9 +16,9 @@ import { uuidV7 } from './telemetry';
  *
  * What makes the two halves joinable is the ids. Each line carries the
  * correlation values the Worker records as span attributes for the same flow —
- * the request id sent as `x-request-id` (`avalon.request.id`), the socket
- * ticket id (`avalon.socket.ticket_id`), the client message id
- * (`avalon.message.client_id`). `docs/performance-tracing.md` holds the flows
+ * the request id sent as `x-request-id` (`rally.request.id`), the socket
+ * ticket id (`rally.socket.ticket_id`), the client message id
+ * (`rally.message.client_id`). `docs/performance-tracing.md` holds the flows
  * and the queries.
  *
  * Nothing here is sent anywhere. Work-stream text and attachment names never
@@ -174,7 +174,7 @@ export function startPerfTrace(flow: PerfFlow, options: PerfTraceOptions = {}): 
 /**
  * The id the desktop stamps on one HTTP request. The regional Worker accepts it
  * as `x-request-id`, echoes it, and records it on that request's span as
- * `avalon.request.id` — so a slow call seen here is one attribute filter away
+ * `rally.request.id` — so a slow call seen here is one attribute filter away
  * in the trace, rather than a search by timestamp.
  */
 export function newRequestId(): string {

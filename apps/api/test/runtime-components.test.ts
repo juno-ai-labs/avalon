@@ -1,6 +1,6 @@
-import { asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ServerSocketEventSchema } from "@avalon/contracts";
+import { ServerSocketEventSchema } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 

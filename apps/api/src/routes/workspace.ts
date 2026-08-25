@@ -14,7 +14,7 @@ import {
   TerminalNetworkPolicyPreviewSchema,
   PreviewTerminalNetworkPolicyRequestSchema,
   ApplyTerminalNetworkPolicyRequestSchema,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";

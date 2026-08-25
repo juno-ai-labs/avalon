@@ -1,5 +1,5 @@
-import { asWorkspaceId } from "@avalon/contracts";
-import { nowIso } from "@avalon/db";
+import { asWorkspaceId } from "@rally/contracts";
+import { nowIso } from "@rally/db";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";

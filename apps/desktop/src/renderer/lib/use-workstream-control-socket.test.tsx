@@ -1,5 +1,5 @@
-import type { BlockDashboardPreference, WorkstreamControlMetadata } from '@avalon/contracts';
-import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
+import type { BlockDashboardPreference, WorkstreamControlMetadata } from '@rally/contracts';
+import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
@@ -99,7 +99,7 @@ function metadata(revision: number, overrides: Partial<WorkstreamControlMetadata
     title: 'Authoritative title',
     description: 'Authoritative description',
     preview: 'Preview',
-    emailAddress: 'workstream@automation.with-avalon.com',
+    emailAddress: 'workstream@automation.rallywith.ai',
     originType: 'ad_hoc',
     createdByUserId: '00000000-0000-7000-8000-000000000013',
     automationSubscriptionId: null,
@@ -166,7 +166,7 @@ describe('useWorkstreamControlSocket', () => {
       systemKind: 'digest',
     })]);
     const getWorkstreamControlSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
       ticket: 'control-ticket',
       protocols: socketTicketProtocols('control-ticket'),
     }));
@@ -215,7 +215,7 @@ describe('useWorkstreamControlSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkstreamControlSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
       ticket: 'control-ticket',
       protocols: socketTicketProtocols('control-ticket'),
     }));
@@ -242,7 +242,7 @@ describe('useWorkstreamControlSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkstreamControlSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
       ticket: 'control-ticket',
       protocols: socketTicketProtocols('control-ticket'),
     }));
@@ -290,7 +290,7 @@ describe('useWorkstreamControlSocket', () => {
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary()]);
     const getWorkstreamControlSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
       ticket: 'control-ticket',
       protocols: socketTicketProtocols('control-ticket'),
     }));
@@ -317,7 +317,7 @@ describe('useWorkstreamControlSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkstreamControlSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
       ticket: 'control-ticket',
       protocols: socketTicketProtocols('control-ticket'),
     }));
@@ -356,7 +356,7 @@ describe('useWorkstreamControlSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const getWorkstreamControlSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
       ticket: 'control-ticket',
       protocols: socketTicketProtocols('control-ticket'),
     }));

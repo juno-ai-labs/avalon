@@ -1,10 +1,10 @@
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import {
   loadVisibleWorkstreamResourceInventory,
   type VisibleWorkstreamResourceRow,
 } from "../src/services/workstream-resource-visibility";
-import type { HarnessCompactionCheckpoint } from "@avalon/agent-harness";
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+import type { HarnessCompactionCheckpoint } from "@rally/agent-harness";
+import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import {
   CHECKPOINT_TEMPLATE_VERSION,
   renderWorkstreamResourceInventory,

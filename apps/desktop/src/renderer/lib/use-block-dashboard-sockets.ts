@@ -3,15 +3,15 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   type BlockDashboard,
   type BlockDashboardBlockRun,
-} from '@avalon/contracts';
+} from '@rally/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
 import { logWarn } from '../../common/logger';
-import type { AvalonApi } from './api';
+import type { RallyApi } from './api';
 import { realtimeSocketTelemetry, type RealtimeSocketTelemetry } from './socket-telemetry';
 
-type BlockDashboardBlockSocketApi = Pick<AvalonApi, 'getBlockDashboardBlockSocketTicket'>;
+type BlockDashboardBlockSocketApi = Pick<RallyApi, 'getBlockDashboardBlockSocketTicket'>;
 const HEARTBEAT_MS = 50_000;
 const PONG_TIMEOUT_MS = 15_000;
 const STABLE_CONNECTION_MS = 10_000;
@@ -212,7 +212,7 @@ export function useBlockDashboardSockets(
               if (!protocolWarningReported) {
                 protocolWarningReported = true;
                 logWarn(
-                  'avalon',
+                  'rally',
                   'Ignored invalid BlockDashboardAgent socket event',
                   event.success ? 'block_id_mismatch' : event.error.issues,
                 );
@@ -233,7 +233,7 @@ export function useBlockDashboardSockets(
             if (!protocolWarningReported) {
               protocolWarningReported = true;
               logWarn(
-                'avalon',
+                'rally',
                 'Ignored unreadable BlockDashboardAgent socket event',
                 error instanceof Error ? error.message : 'unknown',
               );

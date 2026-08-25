@@ -567,8 +567,8 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm test:scripts
-pnpm --filter @avalon/api build
-pnpm --filter @avalon/api build:eu
+pnpm --filter @rally/api build
+pnpm --filter @rally/api build:eu
 ```
 
 Also run the desktop release invariants if a desktop release file or script was

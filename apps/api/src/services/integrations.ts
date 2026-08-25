@@ -46,8 +46,8 @@ import {
   type PluginAuthorizationOccasion,
   type StructuredModelDiagnostic,
   toolActivityName,
-} from "@avalon/agent-harness";
-import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
+} from "@rally/agent-harness";
+import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
   ElicitationSchema,
   ModelPluginIdSchema,
@@ -74,8 +74,8 @@ import {
   type ToolDefinition,
   type WorkstreamCompactionFence,
   type WorkstreamWorkflowInput,
-} from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+} from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 import {
   connectorCapabilitySupportsScope,
   ConnectorError,
@@ -86,7 +86,7 @@ import {
   type ConnectorConnectionContext,
   type ConnectorToolContext,
   type ResolvedConnectorAdapter,
-} from "@avalon/connectors";
+} from "@rally/connectors";
 import { z } from "zod";
 import { substreamAgentName, workspaceDOName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
@@ -473,7 +473,7 @@ function workstreamHarnessTerminalResult(input: {
       ...durableMessage,
       error: {
         code: "ambiguous_external_write",
-        message: "An external action's outcome could not be confirmed, so Avalon stopped instead of repeating it",
+        message: "An external action's outcome could not be confirmed, so Rally stopped instead of repeating it",
       },
     };
   }
@@ -494,7 +494,7 @@ function workstreamHarnessTerminalResult(input: {
       code: outcome.failure?.code ?? "harness_execution_failed",
       message: outcome.failure
         ? memberSafeHarnessFailureMessage(outcome.failure.code)
-        : "Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support",
+        : "Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support",
     },
   };
 }
@@ -588,7 +588,7 @@ class AttachmentGroundingGuard {
       .sort((left, right) => left.toolCallId.localeCompare(right.toolCallId));
     return [
       "## Attachment content unverified",
-      "Avalon could not verify the attachment content needed for this answer. No values from the affected attachments are included or inferred.",
+      "Rally could not verify the attachment content needed for this answer. No values from the affected attachments are included or inferred.",
       ...failures.map((failure) => failure.resourceIds.length > 0
         ? `- Resource ${failure.resourceIds.join(", ")} via ${failure.toolName} failed (${failure.errorCode}; tool call ${failure.toolCallId}).`
         : `- Attachment tool call ${failure.toolCallId} via ${failure.toolName} failed (${failure.errorCode}); its resource identity could not be recovered.`),

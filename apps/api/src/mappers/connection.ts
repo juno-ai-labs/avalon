@@ -1,4 +1,4 @@
-import { ConnectionSchema, type Connection } from "@avalon/contracts";
+import { ConnectionSchema, type Connection } from "@rally/contracts";
 import { z } from "zod";
 
 const ConnectionRowSchema = z.object({

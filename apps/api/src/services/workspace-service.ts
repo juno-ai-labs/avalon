@@ -6,8 +6,8 @@ import {
   type WorkspaceInvitation,
   type WorkspaceInvitationPreview,
   type WorkspaceInvitationRole,
-} from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+} from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { randomToken, sha256 } from "../lib/crypto";

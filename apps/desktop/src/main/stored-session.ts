@@ -6,8 +6,8 @@ import {
   RegionSchema,
   TimestampSchema,
   type Session,
-} from '@avalon/contracts';
-import { HttpUrlSchema } from '@avalon/contracts/url-schemas';
+} from '@rally/contracts';
+import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 import { z } from 'zod';
 
 const PACIFIC_TIMEZONE = 'America/Los_Angeles';

@@ -1,9 +1,9 @@
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
-import type { HarnessTool, HarnessToolResult } from "@avalon/agent-harness";
+import type { HarnessTool, HarnessToolResult } from "@rally/agent-harness";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";

@@ -1,3 +1,4 @@
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
@@ -24,7 +25,7 @@ import {
   type User,
   type WorkstreamDetail,
   type WorkstreamWorkflowInput,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { z } from "zod";
 
 import {
@@ -983,8 +984,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async publishEvent(input: SubstreamPublishedEvent): Promise<DurableObjectRpcResult> {
     await this.initialized;
     const headers = new Headers({ "content-type": "application/json" });
-    headers.set("x-avalon-workspace-id", input.workspaceId);
-    headers.set("x-avalon-workstream-id", input.workstreamId);
+    headers.set(RALLY_HEADERS.WORKSPACE_ID, input.workspaceId);
+    headers.set(RALLY_HEADERS.WORKSTREAM_ID, input.workstreamId);
     return responseToRpcResult(await this.acceptEvent(new Request(
       "https://substream.internal/internal/events",
       {
@@ -3041,8 +3042,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-avalon-workspace-id": attachment.workspaceId,
-          "x-avalon-workstream-id": attachment.workstreamId,
+          [RALLY_HEADERS.WORKSPACE_ID]: attachment.workspaceId,
+          [RALLY_HEADERS.WORKSTREAM_ID]: attachment.workstreamId,
         },
         body: JSON.stringify(event),
       },
@@ -3108,7 +3109,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   private async socketAuth(attachment: Pick<SocketAttachment, "sessionId" | "userId" | "workspaceId">): Promise<AuthContext | null> {
     const role = this.env.APP_ENV === "development"
-      && this.env.AVALON_DEV_AUTH === "true"
+      && this.env.RALLY_DEV_AUTH === "true"
       && attachment.sessionId === "development"
       ? await this.activeMembership(attachment.workspaceId, attachment.userId)
       : await this.env.DB.prepare(
@@ -3466,15 +3467,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       })
       .safeParse({
         workspaceId:
-          request.headers.get("x-avalon-workspace-id") ?? url.searchParams.get("workspaceId"),
+          readRallyHeader(request.headers, RALLY_HEADERS.WORKSPACE_ID) ?? url.searchParams.get("workspaceId"),
         workstreamId:
-          request.headers.get("x-avalon-workstream-id") ?? url.searchParams.get("workstreamId"),
+          readRallyHeader(request.headers, RALLY_HEADERS.WORKSTREAM_ID) ?? url.searchParams.get("workstreamId"),
         substreamId:
-          request.headers.get("x-avalon-substream-id") ?? url.searchParams.get("substreamId"),
-        userId: request.headers.get("x-avalon-user-id") ?? url.searchParams.get("userId"),
-        sessionId: request.headers.get("x-avalon-session-id"),
-        ticketId: request.headers.get("x-avalon-socket-ticket-id"),
-        ticketExpiresAt: request.headers.get("x-avalon-socket-ticket-expires-at"),
+          readRallyHeader(request.headers, RALLY_HEADERS.SUBSTREAM_ID) ?? url.searchParams.get("substreamId"),
+        userId: readRallyHeader(request.headers, RALLY_HEADERS.USER_ID) ?? url.searchParams.get("userId"),
+        sessionId: readRallyHeader(request.headers, RALLY_HEADERS.SESSION_ID) ?? null,
+        ticketId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_ID) ?? null,
+        ticketExpiresAt: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT) ?? null,
         afterSequence: url.searchParams.get("afterSequence") ?? 0
       });
 
@@ -3601,8 +3602,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
 
     const requestIdentity = RoomIdentitySchema.safeParse({
-      workspaceId: request.headers.get("x-avalon-workspace-id"),
-      workstreamId: request.headers.get("x-avalon-workstream-id"),
+      workspaceId: readRallyHeader(request.headers, RALLY_HEADERS.WORKSPACE_ID) ?? null,
+      workstreamId: readRallyHeader(request.headers, RALLY_HEADERS.WORKSTREAM_ID) ?? null,
     });
     if (!requestIdentity.success) {
       return jsonResponse({ error: "invalid_room_identity" }, 400);

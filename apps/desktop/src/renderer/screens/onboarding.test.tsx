@@ -35,14 +35,14 @@ const sessionState = vi.hoisted(() => ({
     appVersion: 'test',
     isPackaged: true,
     platform: 'darwin',
-    api: { global: 'https://api.with-avalon.com', eu: 'https://eu.api.with-avalon.com' },
+    api: { global: 'https://api.rallywith.ai', eu: 'https://eu.api.rallywith.ai' },
     devAuthEnabled: false,
   },
   selectRegion: vi.fn(),
   session: {
     accessToken: 'access-token-longer-than-twenty-characters',
     expiresAt: '2026-08-02T00:00:00.000Z',
-    apiBaseUrl: 'https://api.with-avalon.com',
+    apiBaseUrl: 'https://api.rallywith.ai',
     user: { id: 'user-1', email: 'adam@example.com', name: 'Adam' },
     workspace: null,
   } as DesktopSession,
@@ -60,7 +60,7 @@ vi.mock('../lib/telemetry', () => ({
 const invitation: PendingWorkspaceInvitation = {
   id: '00000000-0000-7000-8000-000000000009',
   workspaceId: '00000000-0000-7000-8000-000000000010',
-  workspaceName: 'Avalon Studio',
+  workspaceName: 'Rally Studio',
   region: 'eu',
   email: 'adam@example.com',
   role: 'member',
@@ -117,12 +117,12 @@ describe('identity-first onboarding screens', () => {
     expect(screen.getByText('US-Jurisdiction storage')).toBeVisible();
     expect(screen.getByText('EU-jurisdiction storage')).toBeVisible();
     expect(screen.getByText('This choice controls only where workspace data is stored and cannot be changed later.')).toBeVisible();
-    expect(screen.queryByText(/Cloudflare storage|regional routing|Your Avalon sign-in stays the same/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Cloudflare storage|regional routing|Your Rally sign-in stays the same/u)).not.toBeInTheDocument();
     expect(screen.queryByText('Unavailable for EU region (at this time, subject to change based on providers)')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('radio', { name: /European Union/u }));
     expect(screen.getByText('Unavailable for EU region (at this time, subject to change based on providers)')).toBeVisible();
-    expect(screen.getByRole('list')).toHaveTextContent('Avalon agent: Terminal access');
+    expect(screen.getByRole('list')).toHaveTextContent('Rally agent: Terminal access');
 
     fireEvent.click(screen.getByRole('radio', { name: /Global/u }));
     expect(screen.queryByText('Unavailable for EU region (at this time, subject to change based on providers)')).not.toBeInTheDocument();

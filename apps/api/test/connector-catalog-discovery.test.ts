@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createConnectorRegistry } from "@avalon/connectors";
+import { createConnectorRegistry } from "@rally/connectors";
 import { __integrationTesting } from "../src/services/integrations";
 
 /**

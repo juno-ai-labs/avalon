@@ -1,4 +1,4 @@
-import { TelemetryEnvelopeSchema, type TelemetryEnvelope } from "@avalon/contracts/telemetry";
+import { TelemetryEnvelopeSchema, type TelemetryEnvelope } from "@rally/contracts/telemetry";
 import type { Env } from "../env";
 import {
   sendPostHogBatch,

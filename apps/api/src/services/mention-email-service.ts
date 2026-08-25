@@ -1,4 +1,4 @@
-import { workstreamCanonicalUrl, type Region } from "@avalon/contracts";
+import { workstreamCanonicalUrl, type Region } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { escapeHtml, sendResendEmail, singleLine } from "./resend";

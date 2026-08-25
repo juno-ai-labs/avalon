@@ -1,4 +1,4 @@
-import { ConnectorError } from "@avalon/connectors";
+import { ConnectorError } from "@rally/connectors";
 import { z } from "zod";
 import { ApiError } from "./api-error";
 

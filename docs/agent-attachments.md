@@ -39,7 +39,7 @@ source of truth for retry, replay, and compaction recovery.
 
 ### Kind and schema selection
 
-Avalon classifies an attachment into exactly one of `image`, `markdown`, `pdf`,
+Rally classifies an attachment into exactly one of `image`, `markdown`, `pdf`,
 `document`, `spreadsheet`, `presentation`, `text`, or `other`. A verified MIME
 type wins. A sanitized final filename extension participates only when MIME is
 missing or a generic binary type. The model selects a natural-language kind in
@@ -56,7 +56,7 @@ Zod schema because the harness does not enforce provider-facing JSON Schema.
 ### Continuations and recovery
 
 An attachment cursor contains a version, purpose, expiry, principal identity,
-owning scope, and operation-specific state. Avalon signs it using a key derived
+owning scope, and operation-specific state. Rally signs it using a key derived
 for the attachment-cursor purpose from the regional Worker's configured session
 signing secret. A cursor presented to another operation, principal, or scope is
 the same bounded `invalid_cursor` failure as a malformed or tampered value;
@@ -69,7 +69,7 @@ The presence of a suggestion never executes it automatically.
 
 ### Durable projection boundary
 
-Every human message attachment now carries one Avalon-generated JSON manifest
+Every human message attachment now carries one Rally-generated JSON manifest
 entry with its stable resource ID, filename, verified MIME, byte count, natural
 kind, content mode, derivative state, bounded error code, and inline state.
 Historical turns keep the manifest but never replay attachment bytes. A current
@@ -130,13 +130,13 @@ rebuilds those parts from the selected regional derivative. Missing visual bytes
 invalidate the receipt and re-execute the safe read; they never degrade to stale
 JSON without pixels. `workstream_summarize_resource` makes one isolated inference
 over at most 80,000 characters sampled across the derivative. The model selects
-Avalon-generated source IDs, which the server maps to exact ranges rather than
+Rally-generated source IDs, which the server maps to exact ranges rather than
 trusting model-authored offsets. All model-authored strings are capped, and a
 derivative beyond the reader budget explicitly returns `partial` coverage.
 
 ### Compaction rediscovery
 
-After the LLM produces its continuation summary, Avalon appends current visible
+After the LLM produces its continuation summary, Rally appends current visible
 resource and message-attachment totals plus non-empty groups for the same eight
 natural-language kinds used by the list tool. The aggregate comes from a grouped
 query using the shared sidebar visibility predicate, not the summary. It contains no name, ID, MIME
@@ -146,7 +146,7 @@ entries remain discoverable by paging `workstream_list_resources` until
 
 The stored checkpoint contains the raw LLM summary plus the execution-principal
 key and authorized resource-inventory revision captured by an O(1) read before
-summarization. Avalon runs the grouped inventory query once when rendering the
+summarization. Rally runs the grouped inventory query once when rendering the
 appendix, verifies the revision there, and includes it in the conditional
 SubstreamAgent SQL statement that persists the checkpoint. Replay uses
 the summary only for an exact scope match; attachment, detachment, deletion,
@@ -157,7 +157,7 @@ the aggregate supplements that working set rather than replacing it.
 
 ### Automation-draft hydration
 
-When a compiler request includes attachments, Avalon freezes the unique resource
+When a compiler request includes attachments, Rally freezes the unique resource
 IDs after verifying that every row is a draft upload owned by the requesting
 user in the current workspace. The preloaded automation architect receives the
 complete manifest plus read, search, view, and summarize definitions under
@@ -687,7 +687,7 @@ one error for every archive failure. It is safe but not diagnosable; the eight-
 byte signature is sufficient to distinguish the unsupported-encryption class
 without attempting to decrypt or exposing content.
 
-**Consequences:** Avalon still does not request or handle document passwords.
+**Consequences:** Rally still does not request or handle document passwords.
 Adding decryption would require a separate consent and secret-handling contract;
 it must not weaken archive expansion limits or log the password.
 
@@ -871,7 +871,7 @@ Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
 
 ### 2026-08-12 — Complete derivatives replace trigger-specific conversion
 
-**What changed:** Avalon can now lazily create complete, reusable UTF-8,
+**What changed:** Rally can now lazily create complete, reusable UTF-8,
 semantic Office, and page-delimited PDF derivatives with a bounded range/term
 index. Regional D1 conditionally claims work and atomically selects finished R2
 objects; unchanged source and extractor versions reuse the current result.
@@ -923,7 +923,7 @@ Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
 
 ### 2026-08-12 — Attachment contracts are centralized before runtime cutover
 
-**What changed:** Avalon now has one natural-language attachment-kind registry,
+**What changed:** Rally now has one natural-language attachment-kind registry,
 strict argument and success schemas for the complete attachment tool family,
 bounded self-healing failure data, authenticated scoped cursors, and explicit
 transcript prose for the future wire names. Runtime projection remains on the

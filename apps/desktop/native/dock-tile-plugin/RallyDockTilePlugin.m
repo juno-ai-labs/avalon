@@ -1,8 +1,8 @@
 #import <Cocoa/Cocoa.h>
 
-static NSString *const AvalonApplicationIconNotification = @"app.avalon.desktop.application-icon-changed";
+static NSString *const RallyApplicationIconNotification = @"ai.rallywith.desktop.application-icon-changed";
 
-@interface AvalonDockTilePlugin : NSObject <NSDockTilePlugIn> {
+@interface RallyDockTilePlugin : NSObject <NSDockTilePlugIn> {
  @private
   NSDockTile *_dockTile;
 }
@@ -10,7 +10,7 @@ static NSString *const AvalonApplicationIconNotification = @"app.avalon.desktop.
 @property(nonatomic, strong) NSImageView *imageView;
 @end
 
-@implementation AvalonDockTilePlugin
+@implementation RallyDockTilePlugin
 
 @synthesize dockTile = _dockTile;
 
@@ -20,7 +20,7 @@ static NSString *const AvalonApplicationIconNotification = @"app.avalon.desktop.
     [[NSDistributedNotificationCenter defaultCenter]
         addObserver:self
            selector:@selector(applicationIconChanged:)
-               name:AvalonApplicationIconNotification
+               name:RallyApplicationIconNotification
              object:nil
  suspensionBehavior:NSNotificationSuspensionBehaviorDeliverImmediately];
   }
@@ -45,7 +45,7 @@ static NSString *const AvalonApplicationIconNotification = @"app.avalon.desktop.
   NSString *applicationSupport = NSSearchPathForDirectoriesInDomains(
       NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject;
   NSString *preferencePath = [applicationSupport
-      stringByAppendingPathComponent:@"Avalon/application-icon.json"];
+      stringByAppendingPathComponent:@"Rally/application-icon.json"];
   NSData *encoded = [NSData dataWithContentsOfFile:preferencePath];
   if (!encoded) return nil;
 

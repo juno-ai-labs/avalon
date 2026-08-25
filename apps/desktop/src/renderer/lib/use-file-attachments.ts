@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, type AvalonApi } from './api';
+import { ApiError, type RallyApi } from './api';
 import {
   type CachedDraftAttachment,
   deleteDraftAttachments,
@@ -28,7 +28,7 @@ export interface PendingAttachment {
 const MAX_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 25_000_000;
 const IMAGE_FILE_PATTERN = /\.(?:avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/iu;
-const DISCONNECTED_ERROR = 'Avalon is not connected. Try again after reconnecting.';
+const DISCONNECTED_ERROR = 'Rally is not connected. Try again after reconnecting.';
 const UNSAVED_ERROR = 'This device is out of room to hold attachments, so they will be lost if you quit before sending.';
 
 const DELETE_RETRY_DELAYS_MS = [0, 250, 1_250] as const;
@@ -37,7 +37,7 @@ const DELETE_RETRY_DELAYS_MS = [0, 250, 1_250] as const;
 const NO_ATTACHMENTS: PendingAttachment[] = [];
 
 /** The attachment draft owns only upload and draft cleanup operations. */
-export type FileAttachmentsApi = Pick<AvalonApi, 'deleteDraftResource' | 'uploadResource'>;
+export type FileAttachmentsApi = Pick<RallyApi, 'deleteDraftResource' | 'uploadResource'>;
 
 /** Expired drafts are swept once per application run, not once per composer. */
 let prunedThisSession = false;
@@ -78,7 +78,7 @@ function resourceFromLocalDraft(attachment: PendingAttachment): WorkstreamResour
     id: attachment.localId,
     title: attachment.file.name,
     resourceType: 'uploaded_file',
-    provider: 'avalon_upload',
+    provider: 'rally_upload',
     mimeType: attachment.file.type || 'application/octet-stream',
     watchEnabled: false,
     watchStatus: 'unsupported',
@@ -105,7 +105,7 @@ function restoredAttachment(cached: CachedDraftAttachment, connected: boolean): 
 
 /**
  * Owns the composer's pending attachments and mirrors them into the local draft
- * cache under `draftKey`, so navigating away or restarting Avalon leaves the
+ * cache under `draftKey`, so navigating away or restarting Rally leaves the
  * files exactly where the user left them. Sending or removing an attachment
  * clears its cached copy.
  */
@@ -255,7 +255,7 @@ export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: str
         if (attachment.status === 'uploading') void upload(attachment, key);
       }
     }).catch(() => {
-      setError('Avalon could not fingerprint the selected file. Try attaching it again.');
+      setError('Rally could not fingerprint the selected file. Try attaching it again.');
     }).finally(() => {
       setFingerprinting((current) => Math.max(0, current - 1));
     });

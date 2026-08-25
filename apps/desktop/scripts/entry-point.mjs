@@ -8,7 +8,7 @@
 // a release script imports from outside this folder would resolve to the
 // committed copy in that worktree rather than the one under test — passing or
 // failing on the wrong code, which is the exact trap that test already warns
-// about for the scripts themselves. The `avalon/no-raw-entry-point-check` lint
+// about for the scripts themselves. The `rally/no-raw-entry-point-check` lint
 // rule holds both copies to the same idiom, so the duplication cannot drift
 // back into the bug.
 

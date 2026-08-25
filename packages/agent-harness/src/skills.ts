@@ -17,7 +17,7 @@ import {
   MAXIMUM_FAILURE_AVAILABLE_VALUES,
   MAXIMUM_FAILURE_VALUE_LENGTH,
   type ToolDefinition,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import type { HarnessSkill, HarnessTool, HarnessToolResult } from "./index";
 
 /**

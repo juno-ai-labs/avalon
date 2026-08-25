@@ -2,15 +2,15 @@ import { resolve } from 'node:path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 
-const developmentScriptSourceMarker = '__AVALON_DEVELOPMENT_SCRIPT_SOURCE__';
+const developmentScriptSourceMarker = '__RALLY_DEVELOPMENT_SCRIPT_SOURCE__';
 
 const rendererContentSecurityPolicy = {
-  name: 'avalon-renderer-content-security-policy',
+  name: 'rally-renderer-content-security-policy',
   transformIndexHtml: {
     order: 'pre' as const,
     handler(html: string, context: { server?: unknown }): string {
       if (!html.includes(developmentScriptSourceMarker)) {
-        throw new Error('Avalon renderer CSP marker is missing');
+        throw new Error('Rally renderer CSP marker is missing');
       }
       // React Fast Refresh injects a small inline bootstrap only while Vite's
       // development server is active. Packaged HTML remains strict.
@@ -22,7 +22,7 @@ const rendererContentSecurityPolicy = {
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@avalon/contracts'] })],
+    plugins: [externalizeDepsPlugin({ exclude: ['@rally/contracts'] })],
     build: {
       sourcemap: true,
     },

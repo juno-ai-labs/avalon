@@ -1,7 +1,7 @@
 import type {
   InferenceAttemptEvent,
   InferenceRequestEvent,
-} from "@avalon/agent-harness";
+} from "@rally/agent-harness";
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import {

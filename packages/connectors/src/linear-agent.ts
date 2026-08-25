@@ -1,5 +1,5 @@
-import type { ConnectorSurfaceRuntimeStatus } from "@avalon/contracts";
-import { httpsUrlSchema } from "@avalon/contracts/url-schemas";
+import type { ConnectorSurfaceRuntimeStatus } from "@rally/contracts";
+import { httpsUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 import {
   booleanValue,

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AutomationDraft } from "@avalon/contracts";
+import type { AutomationDraft } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import {
   renderActivityRoutingMessages,

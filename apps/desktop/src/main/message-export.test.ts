@@ -135,7 +135,7 @@ describe('the exported document', () => {
     const html = messageExportDocument({ format: 'image', contentHtml: '<p>Hello</p>', logoDataUrl: LOGO });
 
     expect(html).toContain('<div class="markdown-body"><p>Hello</p></div>');
-    expect(html).toContain('Saved from Avalon');
+    expect(html).toContain('Saved from Rally');
     expect(html).toContain(`-webkit-mask: url('${LOGO}')`);
     // The splash is the card's own background; a picture has no page to bleed to.
     expect(html).not.toContain('export-sheet');
@@ -150,7 +150,7 @@ describe('the exported document', () => {
     expect(html).toContain('-webkit-box-decoration-break: clone');
     expect(html).not.toContain('<div class="export-signature">');
     expect(messageExportFooter(LOGO)).toContain(`src="${LOGO}"`);
-    expect(messageExportFooter(LOGO)).toContain('Saved from Avalon');
+    expect(messageExportFooter(LOGO)).toContain('Saved from Rally');
   });
 
   /**
@@ -253,7 +253,7 @@ describe('saving a message', () => {
 
     expect(test.state.captures).toEqual([]);
     expect(test.state.prints).toHaveLength(1);
-    expect(test.state.prints[0]?.footerHtml).toContain('Saved from Avalon');
+    expect(test.state.prints[0]?.footerHtml).toContain('Saved from Rally');
     expect(test.state.prints[0]?.margins.bottom).toBeGreaterThan(test.state.prints[0]!.margins.top);
     expect(test.state.written[0]?.path).toBe('/home/ada/Downloads/pipeline-2026-08-13.pdf');
   });

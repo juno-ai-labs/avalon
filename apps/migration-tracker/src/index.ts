@@ -22,7 +22,7 @@
 import {
   DurableObjectMigrationReportSchema,
   type DurableObjectMigrationReport,
-} from "@avalon/contracts/durable-object-migrations";
+} from "@rally/contracts/durable-object-migrations";
 import { app, registry } from "./app";
 import type { Env } from "./env";
 import { sweepInventory } from "./inventory";

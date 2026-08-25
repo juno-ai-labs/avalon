@@ -1,12 +1,12 @@
-import { CreateWorkstreamRequestSchema, asWorkstreamId } from "@avalon/contracts";
+import { CreateWorkstreamRequestSchema, asWorkstreamId } from "@rally/contracts";
 import type {
   ExecutionPrincipal,
   Scope,
   SlackOriginContext,
   SlackSearchAuthorization,
   Workstream,
-} from "@avalon/contracts";
-import { newId } from "@avalon/db";
+} from "@rally/contracts";
+import { newId } from "@rally/db";
 import type { z } from "zod";
 
 import { workspaceDOName, workstreamDOName, substreamAgentName } from "../durable-objects/names";

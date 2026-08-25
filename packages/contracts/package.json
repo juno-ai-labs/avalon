@@ -1,5 +1,5 @@
 {
-  "name": "@avalon/contracts",
+  "name": "@rally/contracts",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,6 +8,7 @@
     "./desktop-deep-link": "./src/desktop-deep-link.ts",
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
     "./durable-object-migrations": "./src/durable-object-migrations.ts",
+    "./http-headers": "./src/http-headers.ts",
     "./socket-tickets": "./src/socket-tickets.ts",
     "./telemetry": "./src/telemetry.ts",
     "./workstream-links": "./src/workstream-links.ts",

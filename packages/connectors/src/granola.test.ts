@@ -1,4 +1,4 @@
-import { asWorkspaceId } from "@avalon/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import {
   createGranolaConnector,

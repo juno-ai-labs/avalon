@@ -15,7 +15,7 @@ const CONTRACT: ObjectPortContract<WorkstreamResourceStorage, ResourceOperation>
   operations: RESOURCE_OPERATIONS,
   dispatch: (stub, request) => stub.executeResourceOperation(request),
   failureCode: "resource_operation_failed",
-  failureMessage: "Avalon's resource authority rejected an internal request. Retry after the application and service versions are aligned.",
+  failureMessage: "Rally's resource authority rejected an internal request. Retry after the application and service versions are aligned.",
 };
 
 export function createResourcePortFactory(

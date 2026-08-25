@@ -1,7 +1,7 @@
 import {
   TELEMETRY_APPLICATION_ICON_IDS,
   type TelemetryApplicationIconId,
-} from '@avalon/contracts/telemetry';
+} from '@rally/contracts/telemetry';
 
 const applicationIconLabels: Record<TelemetryApplicationIconId, string> = {
   light: 'Light',

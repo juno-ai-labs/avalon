@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarDays, Clock3, Mail, MessageSquare, Plus, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import type { AvalonApi } from '../lib/api';
+import type { RallyApi } from '../lib/api';
 import type {
   AutomationDeliveryTargetType,
   DigestSchedule,
   WorkstreamConnection,
 } from '../lib/types';
-import { AvalonMark, Button, InlineError, LoadingState } from './primitives';
+import { RallyMark, Button, InlineError, LoadingState } from './primitives';
 
 /** Sunday first, matching `Date#getDay` and every calendar in the product. */
 const WEEKDAYS = [
@@ -29,7 +29,7 @@ const DAY_PRESETS = [
 const MAX_TIMES = 12;
 
 /** The settings surface depends on this pair, not the entire renderer client. */
-export type DigestSettingsApi = Pick<AvalonApi, 'getDigestSchedule' | 'updateDigestSchedule'>;
+export type DigestSettingsApi = Pick<RallyApi, 'getDigestSchedule' | 'updateDigestSchedule'>;
 
 export function minutesToLabel(minuteOfDay: number): string {
   const hour = Math.floor(minuteOfDay / 60);
@@ -223,7 +223,7 @@ export function DigestSettings({
             <small>
               {draft.enabled && saved.nextRunAt
                 ? `Next one ${instantInTimezone(saved.nextRunAt, saved.timezone)}.`
-                : 'Avalon writes it at the times you choose and sends it where you choose.'}
+                : 'Rally writes it at the times you choose and sends it where you choose.'}
             </small>
           </span>
           <span className="settings-toggle">
@@ -327,7 +327,7 @@ export function DigestSettings({
           <span className="settings-row-icon"><Mail aria-hidden="true" size={18} /></span>
           <span className="settings-row-copy">
             <strong>Email</strong>
-            <small>Sent to your Avalon account address.</small>
+            <small>Sent to your Rally account address.</small>
           </span>
           <span className="settings-toggle">
             <input
@@ -360,7 +360,7 @@ export function DigestSettings({
         })}
         {deliveryConnections.length === 0 && (
           <div className="settings-preference-row">
-            <span className="settings-row-icon"><AvalonMark /></span>
+            <span className="settings-row-icon"><RallyMark /></span>
             <span className="settings-row-copy">
               <strong>Somewhere else</strong>
               <small>Connect a tool that can message you — like Slack — and it will appear here.</small>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { toolResultMessage } from "@juno-ai/bind/plugins";
-import { readStructuredFailure } from "@avalon/contracts";
+import { readStructuredFailure } from "@rally/contracts";
 import { hasAvalonToolProse, toolActivityName } from "./tool-activity";
 
 const drive = { pluginId: "plugin_google_2", displayName: "Google Drive · Work" };

@@ -67,7 +67,7 @@ The events that notify today:
 - **A notice carries codes, counts, and opaque ids only.** Workspace and job
   ids, error codes, attempt counts, alarm kinds and keys. Never a prompt, a
   message body, connector content, a person's name or email, or a workspace
-  name — this text leaves Avalon for a third party, and the channel may be
+  name — this text leaves Rally for a third party, and the channel may be
   shared by both regions. The same rule `telemetry_operations_snapshot` keeps.
 - **The token travels in a header, never in a URL.** The platform's automatic
   tracing records every outbound fetch's `url.full`, and Global exports those
@@ -102,7 +102,7 @@ delivery outcome log rows. Exposes `notifyOps`, `renderOpsNotification`, and
 nothing else in the Worker.
 
 Any Worker or Durable Object code path that has just logged something an
-operator should act on may call it. It is deliberately *not* the Avalon Slack
+operator should act on may call it. It is deliberately *not* the Rally Slack
 app: that app is a product surface with a connection lifecycle of its own, and
 on 2026-08-22 the thing that had stopped working *was* the Slack connector. An
 operator channel must not depend on the path it may be reporting on. The
@@ -179,32 +179,32 @@ right to post as the operator app wherever it is a member — which is why the
 app is granted `chat:write` alone and invited to one channel, and why the token
 is sent in a header rather than a URL: outbound URLs are recorded by automatic
 tracing and exported, and headers are not. The content rule under *Invariants*
-is the other half: the channel is outside Avalon's trust boundary, so a notice
+is the other half: the channel is outside Rally's trust boundary, so a notice
 is treated as a log line handed to a third party, and EU-originated notices
 carry opaque ids only.
 
 ## Operations
 
-Create a small internal Slack app — "Avalon Ops" — with the `chat:write` bot
+Create a small internal Slack app — "Rally Ops" — with the `chat:write` bot
 scope and nothing else, install it to the workspace, create the operator
-channel, and invite the app to it (`/invite @Avalon Ops`; without this Slack
+channel, and invite the app to it (`/invite @Rally Ops`; without this Slack
 answers `not_in_channel`). Then set the bot token and the channel id in each
 region. Wrangler authenticates with the Cloudflare token in `.env.local`, the
 way every other deployment command in `package.json` does:
 
 ```bash
-pnpm exec dotenv -e .env.local -- pnpm --filter @avalon/api exec wrangler secret put OPS_SLACK_BOT_TOKEN --config wrangler.global.jsonc
+pnpm exec dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler secret put OPS_SLACK_BOT_TOKEN --config wrangler.global.jsonc
 ```
 
 ```bash
-pnpm exec dotenv -e .env.local -- pnpm --filter @avalon/api exec wrangler secret put OPS_SLACK_CHANNEL_ID --config wrangler.global.jsonc
+pnpm exec dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler secret put OPS_SLACK_CHANNEL_ID --config wrangler.global.jsonc
 ```
 
 and the same two with `--config wrangler.eu.jsonc`. `GET /health` then reports
 `opsNotifications: configured`; one secret without the other reports it half
 configured, and the notifier posts nothing until both are set. Rotating the
 token is a `secret put` of the new one and a revocation of the old in the
-app's settings; nothing in Avalon caches it. The events above are the whole
+app's settings; nothing in Rally caches it. The events above are the whole
 contract — adding one means adding a row to that table and a test that proves
 it posts once.
 
@@ -218,7 +218,7 @@ gated-alarm report every scheduling object's failure and stall hooks share, at
 the third consecutive attempt, and a Slack ingress job reaching its attempt
 ceiling.
 
-**Why:** On 2026-08-22 two `@Avalon` mentions died on `session_revoked`, and the
+**Why:** On 2026-08-22 two `@Rally` mentions died on `session_revoked`, and the
 workspace's alarm then hot-looped for hours writing an error row a second. Both
 were on record in Workers Logs from the first minute, and neither was seen
 until someone opened the logs for a different reason. The repository's standing
@@ -226,7 +226,7 @@ answer — let the platform's own failures be the monitoring — assumes a failu
 somebody will notice; a log row nobody is reading is not one. This is the
 smallest thing that turns those two rows into a message.
 
-**Considered and rejected:** Posting through the Avalon Slack app's own bot
+**Considered and rejected:** Posting through the Rally Slack app's own bot
 token: the incident was in the Slack connector, and the alert path cannot share
 its failure modes. A Slack incoming webhook — the first draft: its credential
 is the URL path, the platform's automatic tracing records every outbound fetch

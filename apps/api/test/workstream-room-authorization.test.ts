@@ -1,4 +1,4 @@
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -233,9 +233,9 @@ function publish(room: SubstreamAgent, event: Record<string, unknown>): Promise<
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-avalon-workspace-id": WORKSPACE,
-      "x-avalon-workstream-id": WORKSTREAM,
-      "x-avalon-substream-id": "0",
+      "x-rally-workspace-id": WORKSPACE,
+      "x-rally-workstream-id": WORKSTREAM,
+      "x-rally-substream-id": "0",
     },
     body: JSON.stringify(event),
   }));
@@ -253,13 +253,13 @@ function connectAs(room: SubstreamAgent, userId: string): Promise<Response> {
   return room.fetch(new Request("https://room.internal/socket", {
     headers: {
       Upgrade: "websocket",
-      "x-avalon-workspace-id": WORKSPACE,
-      "x-avalon-workstream-id": WORKSTREAM,
-      "x-avalon-substream-id": "0",
-      "x-avalon-user-id": userId,
-      "x-avalon-session-id": "test-session",
-      "x-avalon-socket-ticket-id": "3f1b0f4a-59cb-4f5f-8d1e-6d3e5a2a9c11",
-      "x-avalon-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) - 1),
+      "x-rally-workspace-id": WORKSPACE,
+      "x-rally-workstream-id": WORKSTREAM,
+      "x-rally-substream-id": "0",
+      "x-rally-user-id": userId,
+      "x-rally-session-id": "test-session",
+      "x-rally-socket-ticket-id": "3f1b0f4a-59cb-4f5f-8d1e-6d3e5a2a9c11",
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) - 1),
     },
   }));
 }
@@ -322,8 +322,8 @@ describe("who the work-stream room lets connect", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-avalon-workspace-id": WORKSPACE,
-          "x-avalon-workstream-id": WORKSTREAM,
+          "x-rally-workspace-id": WORKSPACE,
+          "x-rally-workstream-id": WORKSTREAM,
         },
         body: JSON.stringify({ type: "harness_status_changed", status: "running" }),
       },

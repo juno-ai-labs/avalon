@@ -69,7 +69,7 @@ describe('useTextClamped', () => {
   it('reports text that fits within the clamp as whole', () => {
     stubHeights({ clientHeight: 82, scrollHeight: 82 });
 
-    render(<Subject text="Avalon woke this work stream up as scheduled." />);
+    render(<Subject text="Rally woke this work stream up as scheduled." />);
 
     expect(screen.getByRole('status')).toHaveTextContent('whole');
   });

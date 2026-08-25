@@ -12,7 +12,7 @@ afterEach(async () => {
 });
 
 async function root(): Promise<string> {
-  const path = await mkdtemp(join(tmpdir(), 'avalon-launch-marker-'));
+  const path = await mkdtemp(join(tmpdir(), 'rally-launch-marker-'));
   roots.push(path);
   return path;
 }

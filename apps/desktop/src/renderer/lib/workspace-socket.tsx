@@ -12,7 +12,7 @@ import {
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
   type WorkspaceWorkstreamPageEvent,
-} from '@avalon/contracts';
+} from '@rally/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   createContext,
@@ -24,7 +24,7 @@ import {
   useState,
   type PropsWithChildren,
 } from 'react';
-import { ApiError, mapAutomationSummary, mapMessage, mapWorkstreamSummary, type AvalonApi } from './api';
+import { ApiError, mapAutomationSummary, mapMessage, mapWorkstreamSummary, type RallyApi } from './api';
 import { uuidV7 } from './telemetry';
 import { desktopBridge } from './platform';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
@@ -40,7 +40,7 @@ import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY 
 
 type CreateMessageCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
-type WorkspaceSocketApi = Pick<AvalonApi, 'getWorkspaceSocketTicket'>;
+type WorkspaceSocketApi = Pick<RallyApi, 'getWorkspaceSocketTicket'>;
 export type WorkspaceSocketState = 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
 
 /** One page of the work-stream directory, as every caller here receives it. */
@@ -492,7 +492,7 @@ export function WorkspaceSocketProvider({
               )
               : event.code === WORKSPACE_SOCKET_INVALID_MESSAGE_CODE
                 ? new ApiError(
-                  'Avalon could not complete this action because its realtime command was invalid. Restart the app and try again.',
+                  'Rally could not complete this action because its realtime command was invalid. Restart the app and try again.',
                   400,
                   'workspace_socket_invalid_message',
                 )

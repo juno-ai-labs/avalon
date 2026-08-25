@@ -48,7 +48,7 @@ class ErrorBoundary extends Component<PropsWithChildren, { error: Error | null }
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
-    logError('avalon', 'renderer error boundary caught an error', error, info.componentStack);
+    logError('rally', 'renderer error boundary caught an error', error, info.componentStack);
     reportJavascriptError(error, 'react_boundary');
   }
 
@@ -58,9 +58,9 @@ class ErrorBoundary extends Component<PropsWithChildren, { error: Error | null }
         <main className="fatal-error-screen window-drag">
           <section className="fatal-error-card window-no-drag">
             <AlertTriangle aria-hidden="true" size={22} />
-            <h1>Avalon needs to reopen this view</h1>
+            <h1>Rally needs to reopen this view</h1>
             <p>{this.state.error.message}</p>
-            <Button className="button-primary" onClick={() => window.location.reload()}>Reload Avalon</Button>
+            <Button className="button-primary" onClick={() => window.location.reload()}>Reload Rally</Button>
           </section>
         </main>
       );
@@ -88,7 +88,7 @@ function ServiceSetupState({
       <section className="service-setup-card window-no-drag">
         <span className="setup-icon"><Cable size={22} /></span>
         <p className="eyebrow">{isNetwork ? 'Service unavailable' : 'Setup required'}</p>
-        <h1>{isNetwork ? 'Avalon cannot reach this region' : 'The regional service is not ready'}</h1>
+        <h1>{isNetwork ? 'Rally cannot reach this region' : 'The regional service is not ready'}</h1>
         <p>{error.message}</p>
         <dl>
           <div><dt>Region</dt><dd>{displayRegion === 'eu' ? 'European Union' : 'Global'}</dd></div>
@@ -113,7 +113,7 @@ function NotFoundScreen(): React.JSX.Element {
       <div className="screen-drag-strip window-drag" />
       <EmptyState
         action={<Button onClick={() => { window.location.hash = '#/workstreams/new'; }}>Go to new work stream</Button>}
-        description="This Avalon view does not exist or is no longer available."
+        description="This Rally view does not exist or is no longer available."
         title="Nothing here"
       />
     </div>
@@ -257,7 +257,7 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
     setActivatingWorkspaceId(workspace.id);
     setActivationError(null);
     void activateWorkspace(workspace.region, workspace.id, operationId).catch((error: unknown) => {
-      setActivationError(error instanceof Error ? error : new Error('Avalon could not open this organization.'));
+      setActivationError(error instanceof Error ? error : new Error('Rally could not open this organization.'));
     });
   }, [activateWorkspace, activatingWorkspaceId, onboarding.data?.workspace]);
 

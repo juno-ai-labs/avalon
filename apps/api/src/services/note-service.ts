@@ -1,4 +1,4 @@
-import { newId, nowIso } from "@avalon/db";
+import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type {
   AppendNoteTranscriptSegmentRequest,
@@ -7,7 +7,7 @@ import type {
   NoteSummary,
   NoteTranscriptSegment,
   UpdateNoteRequest,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
 import { sha256Hex } from "../lib/crypto";

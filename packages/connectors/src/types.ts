@@ -1,7 +1,7 @@
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ConnectorOriginResourceSchema,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import type {
   ConnectorActivityFilterField,
   ConnectorActivityTriggerDescriptor,
@@ -13,7 +13,7 @@ import type {
   NormalizedActivity,
   Scope,
   ToolDefinition,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import type { ZodError, ZodType } from "zod";
 
 /** Marks one polled activity as withheld from digests by its own stream. */

@@ -1,6 +1,6 @@
 # Regionalization
 
-Avalon runs the same Worker source twice — as `avalon-api-global` and
+Rally runs the same Worker source twice — as `avalon-api-global` and
 `avalon-api-eu` — with separate D1, R2, Durable Object namespaces, keys, and
 secrets. A workspace picks one region when it is created and never moves. This
 document owns that boundary: which single endpoint every user still shares, what
@@ -37,7 +37,7 @@ bridges, or any code that selects a Durable Object namespace.
 
 ### The V1 boundary
 
-Every user signs in once through the Global Avalon identity endpoint. After
+Every user signs in once through the Global Rally identity endpoint. After
 authentication, the Global control plane uses an authenticated named Worker RPC
 binding to discover workspace memberships and email-bound pending invitations in
 Global and EU. An existing member activates that workspace immediately. A user
@@ -219,7 +219,7 @@ See [`public-site-telemetry.md`](public-site-telemetry.md).
 - **Repositories never choose a region from a user-controlled object ID.** Every
   service receives a fixed regional dependency container; the region comes from the
   deployment and the session, never from the request body.
-- **Every workspace-scoped Avalon Durable Object stub is created by
+- **Every workspace-scoped Rally Durable Object stub is created by
   `durableObjectStubForWorkspace`.** Staging and production derive IDs from
   `jurisdiction("us")` for Global and `jurisdiction("eu")` for EU, then apply
   the affinity persisted by the workspace's Global binding and regional D1 row.
@@ -311,7 +311,7 @@ here.
 
 ## Testing
 
-Under `apps/api`, run with `pnpm --filter @avalon/api exec vitest run <path>`
+Under `apps/api`, run with `pnpm --filter @rally/api exec vitest run <path>`
 (paths are package-relative):
 
 | Suite | Covers |
@@ -597,7 +597,7 @@ in-memory page epoch and the existing named EU telemetry bridge.
 
 **Why:** The desktop's capability bootstrap assumes an epoch already exists.
 Applying that order to a website would read or mint a persistent identifier
-before Avalon knew whether the visitor belonged to the EU internal path.
+before Rally knew whether the visitor belonged to the EU internal path.
 
 **Considered and rejected:** One Global browser identity for all locations,
 persisting an EU identity in `localStorage`, and using a disposable bootstrap as
