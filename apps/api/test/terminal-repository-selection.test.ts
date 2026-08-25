@@ -23,6 +23,8 @@ import {
   workstreamObjectRun,
   testResourcePortFactory,
   testTerminalPortFactory,
+  seedWorkstreamObjectParticipant,
+  applyWorkstreamObjectRootFields,
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 

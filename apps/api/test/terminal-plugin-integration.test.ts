@@ -16,6 +16,7 @@ import {
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
+  seedWorkstreamObjectParticipant,
 } from "./helpers/durable-authority";
 
 const W = asWorkspaceId("30000000-0000-4000-8000-000000000001");
