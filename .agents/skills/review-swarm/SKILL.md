@@ -502,11 +502,12 @@ typically P0/P1.
 
 A staff-level engineer judging whether this change — and the code it lands in —
 carries more machinery than the product it serves. [`AGENTS.md`](../../../AGENTS.md)'s
-[Where we are](../../../AGENTS.md#where-we-are) is the mandate;
-[`docs/adding-security-defensive-and-other-limits.md`](../../../docs/adding-security-defensive-and-other-limits.md)
-and [`docs/choosing-queues-or-rpc.md`](../../../docs/choosing-queues-or-rpc.md)
-("Do not over-engineer", "Deciding without measurement") are where the repository
-has already argued most of this out. You know this smell; what follows is the
+[Where we are](../../../AGENTS.md#where-we-are) is the mandate. Two documents have
+argued most of the rest out already, each in a named section worth reading before you
+form a view: [`choosing-queues-or-rpc.md`](../../../docs/choosing-queues-or-rpc.md)
+under "Do not over-engineer" and "Deciding without measurement", and
+[`adding-security-defensive-and-other-limits.md`](../../../docs/adding-security-defensive-and-other-limits.md)
+under "Premature limits are not preferred". You know this smell; what follows is the
 context you cannot get from the diff, not a checklist to walk.
 
 **The situation.** Avalon is seed-stage: no load history, no metrics stack, no
