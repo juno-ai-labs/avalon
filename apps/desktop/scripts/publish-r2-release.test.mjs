@@ -323,3 +323,18 @@ test('allows a full artifact transfer to exceed the timeout while bytes keep arr
     url: 'https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-1.147.0.dmg',
   });
 });
+
+test('preserves an HTTP failure when response-body cancellation also fails', async () => {
+  await assert.rejects(
+    verifyPublicReleaseArtifactHash({
+      expectedHash: 'unused',
+      fetchImplementation: async () => new Response(new ReadableStream({
+        cancel() { throw new Error('cancel failed'); },
+      }), { status: 503 }),
+      idleTimeoutMilliseconds: 200,
+      sleepImplementation: async () => undefined,
+      url: 'https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-1.147.0.dmg',
+    }),
+    /HTTP 503/u,
+  );
+});

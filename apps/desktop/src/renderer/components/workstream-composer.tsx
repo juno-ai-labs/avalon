@@ -59,6 +59,7 @@ const BASE_COMMANDS: ComposerCommand[] = [
   { id: 'attach', label: 'attach', description: 'Choose a file to attach' },
   { id: 'clear', label: 'clear', description: 'Clear this draft' },
 ];
+
 export function WorkstreamComposer({
   api,
   workstream,
