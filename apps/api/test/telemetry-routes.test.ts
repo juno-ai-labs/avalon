@@ -39,6 +39,15 @@ describe('telemetry HTTP bounds', () => {
     expect(coarseTelemetryRoute('US', '1')).toEqual({
       route: 'eu', routingBasis: 'ip_geolocation',
     });
+    expect(coarseTelemetryRoute('US', true)).toEqual({
+      route: 'eu', routingBasis: 'ip_geolocation',
+    });
+    expect(coarseTelemetryRoute('DE', '0')).toEqual({
+      route: 'eu', routingBasis: 'ip_geolocation',
+    });
+    expect(coarseTelemetryRoute('US', false)).toEqual({
+      route: 'global', routingBasis: 'ip_geolocation',
+    });
     expect(coarseTelemetryRoute(undefined)).toEqual({
       route: 'global', routingBasis: 'geolocation_fallback',
     });
@@ -71,6 +80,32 @@ describe('telemetry HTTP bounds', () => {
     await expect(cloudflareEu.json()).resolves.toMatchObject({
       route: 'eu', routingBasis: 'ip_geolocation',
     });
+  });
+
+  it('uses Cloudflare affirmative EU classification for a tokenless bootstrap', async () => {
+    const database = migratedSqliteDatabase();
+    const environment = createTestEnv({
+      AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: sqliteD1(database),
+      TELEMETRY_CAPABILITY_SIGNING_KEY: 'independent-global-capability-key',
+    });
+    const bootstrapRequest = new Request('https://api.rallywith.ai/telemetry/bootstrap', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        anonymousEpochId: '018f22f2-4c22-7abc-8def-0123456789ce',
+      }),
+    });
+    Object.defineProperty(bootstrapRequest, 'cf', {
+      value: { country: 'US', isEUCountry: '1' },
+    });
+
+    const response = await publicApp().request(bootstrapRequest, undefined, environment);
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      route: 'eu', routingBasis: 'ip_geolocation',
+    });
+    database.close();
   });
 
   it('binds bootstrap to the signed route decision when Cloudflare country changes', async () => {

@@ -275,7 +275,7 @@ rather than assertions.
 
 **What changed:** Every public HTML surface, Trust Center contact, desktop
 handoff label, canonical tag, and social unfurl now emits Rally and
-`rallywith.ai`. The public mark path is `/brand/rally-mark.svg`. The site still
+`rallywith.ai`. The public mark path is `/brand/rally-mark.png`. The site still
 serves both zones, accepts both desktop schemes, permits both packaged renderer
 origins, and retains the already-published installer manifest exactly as issued.
 
