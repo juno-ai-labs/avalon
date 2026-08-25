@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 
-export const DEFAULT_NOTION_INGRESS_BASE_URL = "https://notion.with-avalon.com";
+export const DEFAULT_NOTION_INGRESS_BASE_URL = "https://notion.rallywith.ai";
 
 /**
  * Host helpers for the shared Notion ingress.

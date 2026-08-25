@@ -4,15 +4,17 @@
   "distribution": "public",
   "display": {
     "description": "Bring Linear issues, projects, documents, and delegated agent work into Avalon workstreams.",
-    "iconUrl": "https://with-avalon.com/brand/avalon-mark.png"
+    "iconUrl": "https://rallywith.ai/brand/avalon-mark.png"
   },
   "developer": {
     "name": "Juno AI Labs"
   },
   "oauth": {
     "client_name": "Avalon",
-    "client_uri": "https://with-avalon.com",
+    "client_uri": "https://rallywith.ai",
     "redirect_uris": [
+      "https://api.rallywith.ai/connections/linear/callback",
+      "https://eu.api.rallywith.ai/connections/linear/callback",
       "https://api.with-avalon.com/connections/linear/callback",
       "https://eu.api.with-avalon.com/connections/linear/callback"
     ],
@@ -22,7 +24,7 @@
   },
   "webhook": {
     "enabled": true,
-    "url": "https://linear.with-avalon.com/ingest/linear",
+    "url": "https://linear.rallywith.ai/ingest/linear",
     "resourceTypes": [
       "AgentSessionEvent",
       "AppUserNotification",

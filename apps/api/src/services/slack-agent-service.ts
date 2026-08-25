@@ -27,6 +27,7 @@ import {
 import {
   ExternalActorSchema,
   SlackIngressQueueMessageSchema,
+  LEGACY_WORKSTREAM_LINK_ORIGINS,
   SlackOriginContextSchema,
   SlackSearchAuthorizationSchema,
   TriggerDefinitionSchema,
@@ -2878,10 +2879,16 @@ export class SlackAgentService {
     const linkedWorkstreams = new Map<string, string>();
     for (const link of links) {
       if (typeof link.url !== "string" || linkedWorkstreams.size >= SLACK_UNFURL_MAX_LINKS) continue;
-      // Slack only delivers link_shared for the app's registered unfurl domain,
-      // so only the HTTPS shapes below can ever arrive here. The shared parser
-      // still accepts the raw deep link, and it never throws on a malformed URL.
-      const workstreamId = parseWorkstreamLink(link.url, { webBaseUrl: this.env.PUBLIC_WEB_BASE_URL });
+      // Slack only delivers link_shared for the app's registered unfurl
+      // domains, so only the HTTPS shapes below can ever arrive here. It
+      // registers *both* site domains, and it does not know which one a link
+      // sitting in channel history was minted on — so both are accepted, or
+      // every already-shared Avalon link would be delivered here and silently
+      // dropped. The shared parser still accepts the raw deep link, and it
+      // never throws on a malformed URL.
+      const workstreamId = parseWorkstreamLink(link.url, {
+        webBaseUrl: [this.env.PUBLIC_WEB_BASE_URL, ...LEGACY_WORKSTREAM_LINK_ORIGINS],
+      });
       if (workstreamId) linkedWorkstreams.set(link.url, workstreamId);
     }
     if (linkedWorkstreams.size === 0) return;
@@ -3910,7 +3917,7 @@ function unlinkedHome(): Record<string, unknown>[] {
     { type: "divider" },
     { type: "section", text: { type: "mrkdwn", text: "*Try now*\n• Summarize this thread and propose next steps\n• Investigate this issue with workspace tools\n• Draft a status update for this channel\n\nAfter connecting: create personal automations such as “Check my Gmail every morning and send my top 3 emails here.”" } },
     { type: "context", elements: [{ type: "mrkdwn", text: "Avalon Agent features require paid Slack and Avalon plans." }] },
-    { type: "context", elements: [{ type: "mrkdwn", text: "AI can make mistakes. Review important actions. <https://with-avalon.com/privacy|Privacy> · <https://with-avalon.com/support|Help>" }] },
+    { type: "context", elements: [{ type: "mrkdwn", text: "AI can make mistakes. Review important actions. <https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/support|Help>" }] },
   ];
 }
 
@@ -3919,7 +3926,7 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
     { type: "header", text: { type: "plain_text", text: `Welcome, ${name}`.slice(0, 150) } },
     { type: "actions", elements: [
       { type: "button", style: "primary", text: { type: "plain_text", text: "Start a task" }, action_id: "avalon_start_task" },
-      { type: "button", text: { type: "plain_text", text: "Create automation" }, url: desktopHandoffUrl(webBase, "avalon://automations/new"), action_id: "avalon_create_automation" },
+      { type: "button", text: { type: "plain_text", text: "Create automation" }, url: desktopHandoffUrl(webBase, "rallywithai://automations/new"), action_id: "avalon_create_automation" },
       { type: "button", text: { type: "plain_text", text: "Notifications" }, action_id: "avalon_preferences" },
     ] },
     { type: "divider" },
@@ -3949,14 +3956,14 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
   for (const automation of automations) blocks.push({ type: "section", text: { type: "mrkdwn", text: `*${escapeMrkdwn(String(automation.name))}* · ${escapeMrkdwn(String(automation.status))}\n${automation.next_run_at ? `Next run: ${escapeMrkdwn(String(automation.next_run_at))}` : "No scheduled run"}` } });
   blocks.push(
     { type: "divider" },
-    { type: "section", text: { type: "mrkdwn", text: `*Personal Slack tools*\n${personalSlack ? `${personalSlack.status === "healthy" ? ":large_green_circle:" : ":warning:"} ${escapeMrkdwn(personalSlack.display_name)} · ${escapeMrkdwn(personalSlack.status)}` : "Not connected — connecting your Avalon account normally does this too. Finish it to let Avalon search and act in Slack with your own permissions."}` }, accessory: { type: "button", text: { type: "plain_text", text: personalSlack ? "Manage" : "Finish connecting" }, url: desktopHandoffUrl(webBase, "avalon://settings/connections"), action_id: "avalon_open_personal_tools" } },
+    { type: "section", text: { type: "mrkdwn", text: `*Personal Slack tools*\n${personalSlack ? `${personalSlack.status === "healthy" ? ":large_green_circle:" : ":warning:"} ${escapeMrkdwn(personalSlack.display_name)} · ${escapeMrkdwn(personalSlack.status)}` : "Not connected — connecting your Avalon account normally does this too. Finish it to let Avalon search and act in Slack with your own permissions."}` }, accessory: { type: "button", text: { type: "plain_text", text: personalSlack ? "Manage" : "Finish connecting" }, url: desktopHandoffUrl(webBase, "rallywithai://settings/connections"), action_id: "avalon_open_personal_tools" } },
   );
   if (administration) blocks.push(
     { type: "divider" },
     { type: "header", text: { type: "plain_text", text: "Workspace administration" } },
-    { type: "section", text: { type: "mrkdwn", text: `Slack workspace ${escapeMrkdwn(administration.teamId)} · ${administration.status === "healthy" ? ":large_green_circle: Healthy" : ":warning: Needs attention"}` }, accessory: { type: "button", text: { type: "plain_text", text: "Manage" }, url: desktopHandoffUrl(webBase, "avalon://settings/connections"), action_id: "avalon_open_admin" } },
+    { type: "section", text: { type: "mrkdwn", text: `Slack workspace ${escapeMrkdwn(administration.teamId)} · ${administration.status === "healthy" ? ":large_green_circle: Healthy" : ":warning: Needs attention"}` }, accessory: { type: "button", text: { type: "plain_text", text: "Manage" }, url: desktopHandoffUrl(webBase, "rallywithai://settings/connections"), action_id: "avalon_open_admin" } },
   );
-  blocks.push({ type: "divider" }, { type: "context", elements: [{ type: "mrkdwn", text: "Avalon Agent features require paid Slack and Avalon plans. Personal Slack tools use your own Slack permissions when connected. <https://with-avalon.com/privacy|Privacy> · <https://with-avalon.com/support|Support>" }] });
+  blocks.push({ type: "divider" }, { type: "context", elements: [{ type: "mrkdwn", text: "Avalon Agent features require paid Slack and Avalon plans. Personal Slack tools use your own Slack permissions when connected. <https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/support|Support>" }] });
   return blocks;
 }
 

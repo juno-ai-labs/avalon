@@ -9,7 +9,19 @@
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
   },
+  // Rally is canonical — every link the site emits and every canonical tag it
+  // serves points at it. The Avalon pair stays attached because the addresses
+  // already circulating are not ours to reissue: search results, Slack unfurls,
+  // signature blocks, and the provider manifests that are switched by hand.
   "routes": [
+    {
+      "pattern": "rallywith.ai",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.rallywith.ai",
+      "custom_domain": true
+    },
     {
       "pattern": "with-avalon.com",
       "custom_domain": true

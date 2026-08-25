@@ -87,7 +87,7 @@ export async function sendWorkspaceInvitationResolutionEmail(
   const verb = invitation.outcome === "accepted" ? "accepted" : "declined";
   const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
   const regionLabel = invitation.region === "eu" ? "European Union" : "Global";
-  const desktopUrl = "avalon://settings/workspace";
+  const desktopUrl = "rallywithai://settings/workspace";
   const subject = `${actor} ${verb} your invitation to ${workspaceName}`;
   const actorWithEmail = actor.toLowerCase() === invitation.inviteeEmail.toLowerCase()
     ? actor

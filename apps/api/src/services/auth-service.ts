@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify, SignJWT } from "jose";
 import { newId, nowIso } from "@avalon/db";
 import { asUserId, asWorkspaceId, type Region, type Session } from "@avalon/contracts";
+import { isDesktopDeepLinkProtocol } from "@avalon/contracts/desktop-deep-link";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { publishSessionRevocations, type RevokedSessionRow } from "./access-revocation";
@@ -100,10 +101,29 @@ export async function verifyAccessToken(env: Env, token: string): Promise<Omit<I
   }
 }
 
+/**
+ * The desktop return URI, checked against the one destination this deployment
+ * will send a completed sign-in to.
+ *
+ * Host and path are pinned to the configured value; the *scheme* is not, and
+ * deliberately. A build shipped before the rename registered only `avalon:` and
+ * sends it here as `returnUri` — it cannot be made to send anything else — so
+ * pinning the scheme to `DESKTOP_DEEP_LINK_URI` would fail every one of those
+ * clients at `POST /auth/google/start` with `invalid_return_uri`, before OAuth
+ * begins. The caller's own scheme is returned rather than the configured one,
+ * so the completion lands in the scheme that calling build actually claimed.
+ *
+ * This is the "widen what is read" half of the rule in `docs/domain-migration.md`.
+ * It narrows again when the legacy scheme leaves `DESKTOP_DEEP_LINK_PROTOCOLS`.
+ */
 function allowedReturnUri(env: Env, candidate: string | undefined): string {
   const expected = new URL(env.DESKTOP_DEEP_LINK_URI);
   const value = new URL(candidate ?? env.DESKTOP_DEEP_LINK_URI);
-  if (value.protocol !== expected.protocol || value.host !== expected.host || value.pathname !== expected.pathname) {
+  if (
+    !isDesktopDeepLinkProtocol(value.protocol)
+    || value.host !== expected.host
+    || value.pathname !== expected.pathname
+  ) {
     throw new ApiError(422, "invalid_return_uri", "The desktop return URI is not allowed");
   }
   return value.toString();

@@ -12,13 +12,19 @@ files:
   - out/**/*
   - "!out/**/*.map"
   - package.json
+# Both schemes are declared so a build that replaces an older install keeps
+# answering the `avalon://` links already circulating. `rallywithai` is the one
+# every surface mints; `avalon` is registered and never emitted.
 protocols:
-  - name: Avalon desktop authentication
+  - name: Rally desktop authentication
+    schemes:
+      - rallywithai
+  - name: Avalon desktop authentication (legacy)
     schemes:
       - avalon
 publish:
   - provider: generic
-    url: https://downloads.with-avalon.com/stable/darwin/arm64
+    url: https://downloads.rallywith.ai/stable/darwin/arm64
 mac:
   icon: resources/icon.icon
   extraFiles:

@@ -56,7 +56,7 @@ describe('renderer semantic telemetry helpers', () => {
     const error = new TypeError('private customer value');
     error.stack = `TypeError: private customer value
       at render (file:///Users/person/customer/.vite/renderer/index.js?token=secret:123:45)
-      at run (app://avalon/assets/vendor.js:8:9)`;
+      at run (app://rallywithai/assets/vendor.js:8:9)`;
 
     expect(javascriptErrorCandidate(error, 'react_boundary')).toEqual({
       process: 'renderer',
@@ -75,7 +75,7 @@ describe('renderer semantic telemetry helpers', () => {
     const report = vi.fn(async () => undefined);
     desktopBridge.mockReturnValue({ reportJavascriptError: report });
     const error = new Error('private transport detail');
-    error.stack = 'Error: private transport detail\n at send (app://avalon/assets/index.js:10:2)';
+    error.stack = 'Error: private transport detail\n at send (app://rallywithai/assets/index.js:10:2)';
 
     reportJavascriptError(error, 'network_error');
     reportJavascriptError(error, 'network_error');
@@ -103,7 +103,7 @@ describe('renderer semantic telemetry helpers', () => {
     desktopBridge.mockReturnValue({ reportJavascriptError: report });
     const errorAtSameFrame = (): Error => {
       const error = new Error('private transport detail');
-      error.stack = 'Error: private transport detail\n at send (app://avalon/assets/throttle.js:20:2)';
+      error.stack = 'Error: private transport detail\n at send (app://rallywithai/assets/throttle.js:20:2)';
       return error;
     };
 
@@ -121,7 +121,7 @@ describe('renderer semantic telemetry helpers', () => {
     desktopBridge.mockReturnValue({ reportJavascriptError: report });
     const errorAtSameFrame = (): Error => {
       const error = new Error('private transport detail');
-      error.stack = 'Error: private transport detail\n at send (app://avalon/assets/upgrade.js:20:2)';
+      error.stack = 'Error: private transport detail\n at send (app://rallywithai/assets/upgrade.js:20:2)';
       return error;
     };
     const laterCrash = errorAtSameFrame();
@@ -148,7 +148,7 @@ describe('renderer semantic telemetry helpers', () => {
       operationId: '018f22f2-4c22-7abc-8def-0123456789ab',
     })).not.toThrow();
     const error = new TypeError('private');
-    error.stack = 'TypeError: private\n at render (app://avalon/assets/index.js:1:2)';
+    error.stack = 'TypeError: private\n at render (app://rallywithai/assets/index.js:1:2)';
     expect(() => reportJavascriptError(error, 'type_error')).not.toThrow();
   });
 });

@@ -102,7 +102,7 @@ async function main() {
     ran: "22 Aug 2026",
     outcomeStatus: options.outcome,
     body: options.outcome === "completed" ? body : "Avalon could not reach the news source.",
-    workstreamUrl: "https://with-avalon.com/app/workstreams/018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902",
+    workstreamUrl: "https://rallywith.ai/app/workstreams/018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902",
   });
 
   mkdirSync(options.out, { recursive: true });

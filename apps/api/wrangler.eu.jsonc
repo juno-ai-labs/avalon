@@ -11,28 +11,28 @@
     "APP_VERSION": "0.24.0",
     "AVALON_REGION": "eu",
     "AVALON_DEV_AUTH": "false",
-    "PUBLIC_API_BASE_URL": "https://eu.api.with-avalon.com",
-    "PUBLIC_WEB_BASE_URL": "https://with-avalon.com",
-    "GITHUB_INGRESS_BASE_URL": "https://github.with-avalon.com",
-    "LINEAR_INGRESS_BASE_URL": "https://linear.with-avalon.com",
-    "NOTION_INGRESS_BASE_URL": "https://notion.with-avalon.com",
-    "SLACK_INGRESS_BASE_URL": "https://slack.with-avalon.com",
+    "PUBLIC_API_BASE_URL": "https://eu.api.rallywith.ai",
+    "PUBLIC_WEB_BASE_URL": "https://rallywith.ai",
+    "GITHUB_INGRESS_BASE_URL": "https://github.rallywith.ai",
+    "LINEAR_INGRESS_BASE_URL": "https://linear.rallywith.ai",
+    "NOTION_INGRESS_BASE_URL": "https://notion.rallywith.ai",
+    "SLACK_INGRESS_BASE_URL": "https://slack.rallywith.ai",
     "DAYTONA_API_URL": "https://app.daytona.io/api",
     "DAYTONA_TARGET": "us",
     "DAYTONA_TERMINAL_SNAPSHOT": "daytona-small",
     "TERMINAL_REGION_CAPABILITY": "unsupported",
     "TERMINAL_EMERGENCY_DISABLED": "false",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
-    "ALLOWED_ORIGINS": "app://avalon",
-    "DESKTOP_DEEP_LINK_URI": "avalon://auth/complete",
+    "ALLOWED_ORIGINS": "app://rallywithai,app://avalon",
+    "DESKTOP_DEEP_LINK_URI": "rallywithai://auth/complete",
     "OPENROUTER_PRIMARY_MODEL": "x-ai/grok-4.3",
     "OPENROUTER_FALLBACK_MODELS": "google/gemini-3.6-flash",
     "OPENROUTER_CLASSIFIER_MODEL": "google/gemini-2.5-flash-lite",
     "OPENROUTER_STRUCTURED_MODEL": "google/gemini-2.5-flash-lite",
     "OPENROUTER_AUTOMATION_MODEL": "x-ai/grok-4.5",
-    "RESEND_FROM_EMAIL": "Avalon <invites@with-avalon.com>",
-    "RESEND_NOTIFICATION_FROM_EMAIL": "Avalon <notifications@with-avalon.com>",
-    "WORKSTREAM_EMAIL_DOMAIN": "automation.with-avalon.com",
+    "RESEND_FROM_EMAIL": "Avalon <invites@rallywith.ai>",
+    "RESEND_NOTIFICATION_FROM_EMAIL": "Avalon <notifications@rallywith.ai>",
+    "WORKSTREAM_EMAIL_DOMAIN": "automation.rallywith.ai",
     "CONNECTOR_CREDENTIALS_KEY_VERSION": "1",
     "HARNESS_MAX_PLUGIN_CATALOG_TOKENS": "2500",
     "HARNESS_CHILD_MAX_MODEL_ITERATIONS": "4",
@@ -74,7 +74,12 @@
   "vectorize": [
     { "binding": "MEMORY_INDEX", "index_name": "avalon-eu-memory" }
   ],
+  // Rally is canonical; the Avalon host stays attached for desktop builds that
+  // shipped with it compiled in. `eu.api.rallywith.ai` is two labels deep, so
+  // the zone's Universal pack does not cover it — see `docs/runbook.md`, which
+  // records the ACM pack that must be active before this route is deployed.
   "routes": [
+    { "pattern": "eu.api.rallywith.ai", "custom_domain": true },
     { "pattern": "eu.api.with-avalon.com", "custom_domain": true }
   ],
   "triggers": { "crons": ["*/5 * * * *"] },

@@ -4,7 +4,7 @@
   "commit": "5f0cfb613fdbf666efe41ee525d98edc6bcd5932",
   "platform": "macOS",
   "architecture": "Apple silicon",
-  "downloadBaseUrl": "https://downloads.with-avalon.com",
+  "downloadBaseUrl": "https://downloads.rallywith.ai",
   "bucket": "avalon-desktop-releases",
   "prefix": "stable/darwin/arm64",
   "files": {

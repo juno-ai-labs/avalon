@@ -49,12 +49,12 @@ applying for directory review.
 
 The single app registers both regional OAuth callbacks:
 
-- `https://api.with-avalon.com/connections/linear/callback`
-- `https://eu.api.with-avalon.com/connections/linear/callback`
+- `https://api.rallywith.ai/connections/linear/callback`
+- `https://eu.api.rallywith.ai/connections/linear/callback`
 
 It has one webhook:
 
-- `https://linear.with-avalon.com/ingest/linear`
+- `https://linear.rallywith.ai/ingest/linear`
 
 OAuth state sends each callback directly to the workspace's chosen regional
 Worker. The shared webhook ingress verifies Linear's exact signed bytes, reads only

@@ -1,7 +1,7 @@
 # Work-stream and automation email addresses
 
 Every work stream and every automation subscription receives one permanent address
-at `automation.with-avalon.com`, generated from a frozen vocabulary and reserved in
+at `automation.rallywith.ai`, generated from a frozen vocabulary and reserved in
 a single Global registry that both regions share. An address is never recomputed,
 never recycled, and never reassigned — a deleted owner leaves a tombstone rather
 than freeing the name, so a stale sender can never reach a different work stream.
@@ -38,7 +38,7 @@ and must contain three different words. The noun is either the surname of a
 deceased scientist or an animal name. For example:
 
 ```text
-luminous-tidal-structured-curie@automation.with-avalon.com
+luminous-tidal-structured-curie@automation.rallywith.ai
 ```
 
 V1 contains 128 adjectives and 512 nouns: 256 scientist surnames and 256 animal
@@ -334,7 +334,7 @@ sunbird, terrapin, waxbill
 - **Its order is fixed.** The rows are rendered into the system prefix, which is
   re-rendered every turn and must be byte-identical across a retry; nothing
   constrains the order two rows come back in.
-- **The result email carries a canonical HTTPS link, never `avalon://`.** Mail
+- **The result email carries a canonical HTTPS link, never `rallywithai://`.** Mail
   clients do not linkify a custom scheme, and most readers of a briefing are on a
   phone with no desktop app — see [`workstream-links.md`](workstream-links.md).
 - **The outbound email destination is the literal address frozen when the target
@@ -420,6 +420,38 @@ hashes remain; changing the words after them is not.
 
 ## Changelog
 
+### 2026-08-25 — New addresses are minted on automation.rallywith.ai; the old domain keeps receiving
+
+**What changed:** `WORKSTREAM_EMAIL_DOMAIN` is `automation.rallywith.ai`, and
+`automation.with-avalon.com` joined a `LEGACY_WORKSTREAM_EMAIL_DOMAINS` list that
+inbound routing still accepts. The domain a message arrived on is carried through
+to the owning region instead of being replaced with the configured one.
+
+**Why:** The rebrand to Rally moves every public hostname, and this one cannot be
+switched. An address here is stored per work stream rather than derived, so
+renaming the domain does not move the addresses already issued — and unlike a URL
+we mint, those live in other people's mail clients, contacts, and forwarding
+rules. Refusing them would discard real mail, and a discarded message looks
+exactly like nobody having written. Routing was already keyed by local part, so
+accepting a second domain costs a set membership test.
+
+Carrying the arriving domain through matters because the address is attached to
+the work stream and shown back to the reader. Substituting the canonical domain
+would have recorded that the sender wrote to an address they did not use.
+
+**Considered and rejected:** Rewriting the stored addresses to the new domain in a
+migration, the way `0021` corrected a typo. That comparison does not hold: `0021`
+repaired a domain that had never accepted mail, so no address on it was in
+circulation. These are, and rewriting them would break every sender at once with
+no way to tell them.
+
+**Consequences:** `configuredEmailDomain` now validates the configured value
+against the accepted set rather than one literal, so a typo is still refused —
+that guard is load-bearing and must not relax to a shape check. A domain leaves
+the legacy list only when inbound mail to it has stopped; nothing measures that
+automatically. `automation.with-avalon.com` must keep its MX record and its
+Resend webhook for as long as it is on the list. See
+[`domain-migration.md`](domain-migration.md).
 ### 2026-08-24 — Inbound mail inherits the generated work stream's privacy
 
 **What changed:** Every automation-email run creates a personal work stream and

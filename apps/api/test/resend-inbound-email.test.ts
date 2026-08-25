@@ -14,7 +14,8 @@ import { createCloudflareTestBinding, createTestD1Result, createTestDurableObjec
 const NOW = Date.parse("2026-08-02T18:00:00.000Z");
 const SECRET_BYTES = new TextEncoder().encode("avalon-resend-webhook-test-secret-v1");
 const WEBHOOK_SECRET = `whsec_${bytesToBase64(SECRET_BYTES)}`;
-const DOMAIN = "automation.with-avalon.com";
+const DOMAIN = "automation.rallywith.ai";
+const LEGACY_DOMAIN = "automation.with-avalon.com";
 const LOCAL_PART = "bright-steady-luminous-curie";
 const EMAIL_ADDRESS = `${LOCAL_PART}@${DOMAIN}`;
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000001";
@@ -821,14 +822,21 @@ describe("regional Resend email ingestion", () => {
 
 describe("Resend text normalization", () => {
   it("extracts only the exact Avalon local part and removes active HTML content", () => {
-    expect(__resendInboundEmailTesting.localPartForRecipient(
+    const accepted = __resendInboundEmailTesting.acceptedEmailDomains(DOMAIN);
+    expect(__resendInboundEmailTesting.recipientAddress(
       `Name <${EMAIL_ADDRESS}>`,
-      DOMAIN,
-    )).toBe(LOCAL_PART);
-    expect(__resendInboundEmailTesting.localPartForRecipient(
+      accepted,
+    )).toEqual({ localPart: LOCAL_PART, domain: DOMAIN });
+    expect(__resendInboundEmailTesting.recipientAddress(
       `${LOCAL_PART}@sub.${DOMAIN}`,
-      DOMAIN,
+      accepted,
     )).toBeNull();
+    // An address issued before the rename still resolves, and reports the
+    // domain it arrived on rather than the one new addresses are minted with.
+    expect(__resendInboundEmailTesting.recipientAddress(
+      `${LOCAL_PART}@${LEGACY_DOMAIN}`,
+      accepted,
+    )).toEqual({ localPart: LOCAL_PART, domain: LEGACY_DOMAIN });
     expect(__resendInboundEmailTesting.htmlToSafeText(
       "<script>alert(1)</script><p>Safe &amp; sound</p>",
     )).toContain("Safe & sound");
