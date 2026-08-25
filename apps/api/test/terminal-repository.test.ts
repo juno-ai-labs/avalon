@@ -201,6 +201,8 @@ describe("Terminal repository publication", () => {
       command: expect.stringContaining("printf 'export GIT_SSL_CAINFO=%q\\n' \"$GIT_SSL_CAINFO\" >> '/workspace/.rally/session.env'"),
     }));
     const bootstrapCommand = vi.mocked(provider.runCommand).mock.calls.at(-1)?.[1].command ?? "";
+    expect(bootstrapCommand).toContain("git config user.name 'Rally Agent'");
+    expect(bootstrapCommand).toContain("git config user.email 'rally-agent@users.noreply.github.com'");
     expect(bootstrapCommand.indexOf('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'))
       .toBeLessThan(bootstrapCommand.indexOf("clone --no-checkout"));
     expect(workstreamObjectGet(

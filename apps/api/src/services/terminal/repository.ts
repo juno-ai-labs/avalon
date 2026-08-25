@@ -247,8 +247,8 @@ export async function bootstrapTerminalRepository(
     "  rm -rf /workspace/repository.tmp",
     "fi",
     `git config ${shellQuote(canonicalHeader)} "Authorization: Basic $GITHUB_READ_BASIC"`,
-    "git config user.name 'Avalon Agent'",
-    "git config user.email 'avalon-agent@users.noreply.github.com'",
+    "git config user.name 'Rally Agent'",
+    "git config user.email 'rally-agent@users.noreply.github.com'",
     "git config push.default current",
     ...(alreadyBootstrapped ? [] : [
       "git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'",
@@ -256,7 +256,7 @@ export async function bootstrapTerminalRepository(
     ]),
     ...(alreadyBootstrapped ? [
       `if ! git checkout ${shellQuote(selection.headRef)}; then`,
-      `  printf '%s\n' ${shellQuote(`Avalon could not restore ${selection.headRef}; inspect git status and finish or abort the active Git operation before pushing.`)} >&2`,
+      `  printf '%s\n' ${shellQuote(`Rally could not restore ${selection.headRef}; inspect git status and finish or abort the active Git operation before pushing.`)} >&2`,
       "fi",
     ] : [
       `if git show-ref --verify --quiet ${shellQuote(`refs/heads/${selection.headRef}`)}; then`,
@@ -452,7 +452,7 @@ export function createTerminalRepositoryPublisher(
       const status = await runInspection(provider, sandbox.providerSandboxId, "status", "git status --porcelain=v1 --untracked-files=all");
       if (status.exitCode !== 0) throw new TerminalToolError("repository_unavailable", "The sandbox root is not a usable Git repository. Inspect `git status` and repair it before publishing.", { reason: "Run git status, repair the repository state, and retry publication." });
       if (status.stdout.trim()) {
-        throw new TerminalToolError("working_tree_dirty", "The repository has uncommitted changes. Review them, commit the intended files on the Avalon branch, then retry publish_branch_and_pr.", { reason: "Commit or discard every intended working-tree change before retrying." });
+        throw new TerminalToolError("working_tree_dirty", "The repository has uncommitted changes. Review them, commit the intended files on the Rally branch, then retry publish_branch_and_pr.", { reason: "Commit or discard every intended working-tree change before retrying." });
       }
       const branch = await runInspection(provider, sandbox.providerSandboxId, "branch", "git branch --show-current");
       if (branch.exitCode !== 0 || branch.stdout.trim() !== selection.headRef) {
@@ -553,7 +553,7 @@ export function createTerminalRepositoryPublisher(
           let outcome: "created" | "updated" = "created";
           if (pullRequest) {
             if (pullRequest.state !== "open") {
-              throw new TerminalToolError("publication_target_closed", "The convergent pull request is already closed or merged. Avalon will not reopen it or create a duplicate branch; select a fresh work stream for a new pull request.");
+              throw new TerminalToolError("publication_target_closed", "The convergent pull request is already closed or merged. Rally will not reopen it or create a duplicate branch; select a fresh work stream for a new pull request.");
             }
             pullRequest = await gateway.updatePullRequest(selection, token.accessToken, pullRequest.number, input, context.signal);
             outcome = "updated";
@@ -561,7 +561,7 @@ export function createTerminalRepositoryPublisher(
             pullRequest = await gateway.createPullRequest(selection, token.accessToken, input, context.signal);
           }
           if (pullRequest.state !== "open" || pullRequest.headSha !== published.publishedSha) {
-            throw new TerminalToolError("publication_conflict", "GitHub did not confirm the expected open pull request head. Retry publication so Avalon can reconcile the exact branch and PR.", { reason: "Retry the same publication receipt so Avalon can reconcile the branch and pull request." });
+            throw new TerminalToolError("publication_conflict", "GitHub did not confirm the expected open pull request head. Retry publication so Rally can reconcile the exact branch and PR.", { reason: "Retry the same publication receipt so Rally can reconcile the branch and pull request." });
           }
           await terminal.completePublication({
             effectIntentId,
@@ -614,7 +614,7 @@ function githubHeaders(token: string): HeadersInit {
     authorization: `Bearer ${token}`,
     "content-type": "application/json",
     "x-github-api-version": "2022-11-28",
-    "user-agent": "Avalon-Terminal-Publisher",
+    "user-agent": "Rally-Terminal-Publisher",
   };
 }
 
@@ -682,7 +682,7 @@ export function createGitHubRestPublicationGateway(env: Env): TerminalGitHubPubl
     },
     async mintWriteToken(selection, signal) {
       const config = githubConnectorConfig(env);
-      if (!config) throw new TerminalToolError("github_unavailable", "The regional Avalon GitHub App is not configured.");
+      if (!config) throw new TerminalToolError("github_unavailable", "The regional Rally GitHub App is not configured.");
       const installationId = await installation(selection);
       const jwt = await createGitHubAppJwt({ clientId: config.clientId, privateKey: config.privateKey });
       const repositoryName = selection.repositoryFullName.split("/")[1]!;
@@ -743,7 +743,7 @@ export function createGitHubRestReadGateway(env: Env): TerminalGitHubReadGateway
     verifyRepositoryIdentity: verifyGitHubRepositoryIdentity,
     async mintRepositoryToken(selection, access, signal) {
       const config = githubConnectorConfig(env);
-      if (!config) throw new TerminalToolError("github_unavailable", "The regional Avalon GitHub App is not configured.");
+      if (!config) throw new TerminalToolError("github_unavailable", "The regional Rally GitHub App is not configured.");
       const row = await env.DB.prepare(
         `SELECT provider_account_id FROM connector_connections
           WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status = 'healthy'`,
