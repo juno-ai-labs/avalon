@@ -14,7 +14,7 @@ export {};
  * hands off to the desktop app, which applies the viewer's own permissions.
  */
 function initializeWorkstreamHandoff(): void {
-  const button = document.querySelector<HTMLAnchorElement>('#open-avalon');
+  const button = document.querySelector<HTMLAnchorElement>('#open-rally');
   const title = document.querySelector<HTMLElement>('#workstream-title');
   const status = document.querySelector<HTMLElement>('#workstream-status');
   const help = document.querySelector<HTMLElement>('#workstream-help');

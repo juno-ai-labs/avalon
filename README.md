@@ -52,7 +52,7 @@ Settings also offers **Google Mail + Calendar** and **Google Drive + Docs + Shee
 
 ## Brand
 
-The canonical woven Rally mark is generated into `assets/brand/avalon-mark.png` and copied to desktop and site surfaces by `scripts/generate-brand-assets.py`. The macOS app uses the native Icon Composer asset at `apps/desktop/resources/icon.icon`, allowing the system to own its enclosure, effects, and appearance treatment; a generated ICNS remains only for the DMG volume. Read the desktop application icon documentation before changing the artwork. Brand primary is `#CEDC00`; secondary is `#47C7FC`.
+The canonical woven Rally mark is generated into `assets/brand/rally-mark.png` and copied to desktop and site surfaces by `scripts/generate-brand-assets.py`. The macOS app uses the native Icon Composer asset at `apps/desktop/resources/icon.icon`, allowing the system to own its enclosure, effects, and appearance treatment; a generated ICNS remains only for the DMG volume. Read the desktop application icon documentation before changing the artwork. Brand primary is `#CEDC00`; secondary is `#47C7FC`.
 
 ## Quality commands
 

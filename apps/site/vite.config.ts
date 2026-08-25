@@ -13,25 +13,25 @@ const rootPackage = JSON.parse(readFileSync(new URL('../../package.json', import
 
 export default defineConfig(async () => {
   const desktopRelease = parseDesktopReleaseConfig(desktopReleaseValue);
-  const publication = process.env.AVALON_RELEASE_DISCOVERY === '1'
+  const publication = process.env.RALLY_RELEASE_DISCOVERY === '1'
     ? await discoverDesktopRelease(desktopRelease)
     : undefined;
   return {
     define: {
-      __AVALON_SITE_RELEASE__: JSON.stringify(`site+${rootPackage.version}`),
-      __AVALON_SITE_BUILD__: JSON.stringify(process.env.CF_PAGES_COMMIT_SHA?.slice(0, 40) ?? rootPackage.version),
+      __RALLY_SITE_RELEASE__: JSON.stringify(`site+${rootPackage.version}`),
+      __RALLY_SITE_BUILD__: JSON.stringify(process.env.CF_PAGES_COMMIT_SHA?.slice(0, 40) ?? rootPackage.version),
     },
     plugins: [
       {
-        name: 'avalon-desktop-release',
+        name: 'rally-desktop-release',
         transformIndexHtml(html: string) {
-          return html.includes('<!-- avalon-desktop-release:start -->')
+          return html.includes('<!-- rally-desktop-release:start -->')
             ? renderDesktopRelease(html, desktopRelease, publication)
             : html;
         },
       },
       {
-        name: 'avalon-site-telemetry',
+        name: 'rally-site-telemetry',
         transformIndexHtml: {
           order: 'pre',
           handler: () => [{

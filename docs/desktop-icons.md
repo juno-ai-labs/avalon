@@ -13,7 +13,7 @@ Rally has a native adaptive default icon and eight user-selectable static icons:
 | `apps/desktop/.native-build/app-icons/*.icns` | Generated static renditions compiled by Apple's `actool` and shipped for Finder and the Dock plug-in. |
 | `apps/desktop/.native-build/RallyDockTilePlugin.docktileplugin` | Generated, signed `NSDockTilePlugIn` that keeps the selected icon in the Dock when Rally is not running. |
 | `apps/desktop/native/set-application-icon.js` | AppKit bridge that updates Finder and refreshes the Dock icon cache. |
-| `apps/desktop/resources/menu-bar/avalonTemplate.png` (+ `@2x`) | Generated macOS template image for the menu bar status item. Black plus alpha only; macOS owns its colour. [`menu-bar.md`](menu-bar.md) owns how it is used. |
+| `apps/desktop/resources/menu-bar/rallyTemplate.png` (+ `@2x`) | Generated macOS template image for the menu bar status item. Black plus alpha only; macOS owns its colour. [`menu-bar.md`](menu-bar.md) owns how it is used. |
 | `apps/desktop/resources/icon.icns` | Legacy, pre-masked DMG volume icon. It is not the app icon source. |
 
 With no saved choice, macOS renders `icon.icon`, selects its appearance, and applies the current enclosure and platform effects. Selecting an icon in Settings writes only an allowlisted identifier to `~/Library/Application Support/Rally/application-icon.json`. Packaged launches intentionally keep this app-level preference in the canonical directory even when Chromium is started with `--user-data-dir`, because the out-of-process Dock plugin cannot see that switch. Package smoke tests retain an isolated override.
@@ -50,7 +50,7 @@ The renderer preview uses generated 128×128 copies and CSS rounding only to rep
 
 ## Change the current Rally icon
 
-1. Update `assets/brand/avalon-mark-source.png` or the colors/composition in `scripts/generate-brand-assets.py`.
+1. Update `assets/brand/rally-mark-source.png` or the colors/composition in `scripts/generate-brand-assets.py`.
 2. Regenerate the derived assets from the repository root:
 
    ```text

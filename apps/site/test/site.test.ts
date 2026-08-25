@@ -36,10 +36,10 @@ function unpublishedReleaseFixture(): Record<string, unknown> {
 }
 
 describe('public Rally site', () => {
-  it('presents Avalon as a desktop product without exposing an app sign-in surface', () => {
+  it('presents Rally as a desktop product without exposing an app sign-in surface', () => {
     const page = readProjectFile('index.html');
 
-    expect(page).toContain('Desktop preview for macOS');
+    expect(page).toContain('Desktop preview');
     expect(page).toContain('currently ships as a macOS desktop product');
     expect(page).toContain('not a browser version');
     expect(page).not.toMatch(/<form\b/i);
@@ -47,33 +47,18 @@ describe('public Rally site', () => {
     expect(page).toContain('<script type="module" src="/src/landing.ts"></script>');
   });
 
-  it('shuffles four complete landing designs while keeping each landscape paired to its theme', () => {
+  it('ships one deliberate Bauhaus/Braun direction with the Rally palette and tennis-seam motif', () => {
     const page = readProjectFile('index.html');
-    const initializer = readProjectFile('public/landing-init.js');
-    const script = readProjectFile('src/landing.ts');
     const styles = readProjectFile('src/styles.css');
-    const themes = ['runway', 'valley', 'proof', 'afterlight'];
-    const names = ['Warp', 'Mesh', 'Trace', 'Orbit'];
-    const initializerPosition = page.indexOf('<script src="/landing-init.js"></script>');
-    const stylesheetPosition = page.indexOf('<link rel="stylesheet" href="/src/styles.css" />');
-
-    for (const theme of themes) {
-      expect(page).toContain(`data-theme-panel="${theme}"`);
-      expect(page).toContain(`data-theme-select="${theme}"`);
-      expect(script).toContain(`"${theme}"`);
-      expect(styles).toContain(`html[data-theme='${theme}']`);
-    }
-    expect(page).toContain('data-theme-panel="runway" data-active aria-hidden="false"');
-    expect(page).toContain('data-theme-select="runway" aria-label="Use Warp design" aria-pressed="true"');
-    expect(initializer).toContain("root.dataset.themeReady = ''");
-    expect(initializerPosition).toBeGreaterThan(-1);
-    expect(stylesheetPosition).toBeGreaterThan(-1);
-    expect(initializerPosition).toBeLessThan(stylesheetPosition);
-    expect(styles).toContain("url('/concepts/biomes/high-desert.webp')");
-    expect(styles).toContain("url('/concepts/biomes/boreal-wetland.webp')");
-    expect(styles).toContain("url('/concepts/biomes/volcanic-coast.webp')");
-    expect(styles).toContain("url('/concepts/biomes/alpine-tundra.webp')");
-    for (const name of names) expect(page).toContain(name);
+    expect(page).toContain('AI is<br /><em>multiplayer</em><br />now.');
+    expect(page).toContain('See Rally in play');
+    expect(page).toContain('class="rally-seam"');
+    expect(styles).toContain('--paper:#f0efe8');
+    expect(styles).toContain('--blue:#47c7fc');
+    expect(styles).toContain('--volt:#cedc00');
+    expect(styles).toContain('--orange:#ff6337');
+    expect(styles).toContain('.rally-home .rally-button-dark:hover{background:var(--volt);border-color:var(--black);color:var(--black)}');
+    expect(page).not.toContain('data-theme-select');
   });
 
   it('keeps content visible without scripts and hides the decorative workspace mock', () => {
@@ -83,10 +68,16 @@ describe('public Rally site', () => {
     expect(styles).toContain('.reveal { opacity: 1; transform: none; }');
     expect(styles).toContain('html.js .reveal { opacity: 0;');
     expect(styles).toContain('html.js .reveal.is-visible { opacity: 1;');
-    expect(page).toContain('<div class="workspace-grid" aria-hidden="true" inert>');
+    expect(page).toContain('<div class="rally-app-body" aria-hidden="true" inert>');
+    expect(page.indexOf('<script src="/landing-init.js"></script>')).toBeLessThan(
+      page.indexOf('<link rel="stylesheet" href="/src/styles.css" />'),
+    );
+    expect(readProjectFile('public/landing-init.js')).toContain(
+      "document.documentElement.classList.add('js');",
+    );
   });
 
-  it('defines responsive behavior for every public surface and a readable mobile comparison', () => {
+  it('defines responsive behavior for every public surface', () => {
     const publicPages = [
       'index.html',
       'concepts/index.html',
@@ -107,7 +98,6 @@ describe('public Rally site', () => {
       'auth/desktop/index.html',
       '404.html',
     ];
-    const page = readProjectFile('index.html');
     const styles = readProjectFile('src/styles.css');
 
     for (const path of publicPages) {
@@ -115,24 +105,18 @@ describe('public Rally site', () => {
         '<meta name="viewport" content="width=device-width, initial-scale=1.0" />',
       );
     }
-    expect(page.match(/data-label="Avalon"/gu)).toHaveLength(5);
-    expect(page.match(/data-label="Chat-only AI"/gu)).toHaveLength(5);
-    expect(page.match(/data-label="Task automation"/gu)).toHaveLength(5);
-    expect(styles).toContain('@media(max-width:820px)');
+    expect(styles).toContain('@media(max-width:1050px)');
     expect(styles).toContain('@media(max-width:720px)');
-    expect(styles).toContain('.comparison-row.comparison-head{display:none}');
-    expect(styles).toContain('content:attr(data-label)');
-    expect(styles).toContain('.header-download{min-height:44px}');
+    expect(styles).toContain('.rally-hero h1{font-size:clamp(3.9rem,18vw,5.5rem)}');
     expect(styles).toContain('.legal-nav a{align-items:center;display:flex;min-height:40px}');
   });
 
-  it('keeps Avalon inherent instead of presenting it as a removable participant', () => {
+  it('keeps Rally inherent instead of presenting it as a removable participant', () => {
     const page = readProjectFile('index.html');
 
-    expect(page).toContain('2 participants');
-    expect(page).not.toContain('3 participants');
-    expect(page).not.toContain('avalon-chip');
-    expect(page).not.toMatch(/person-chip[^>]*>[^<]*Avalon/i);
+    expect(page).toContain('2 people · Rally included');
+    expect(page).not.toContain('3 people · Rally included');
+    expect(page).not.toContain('rally-chip');
   });
 
   it('uses the canonical brand mark and current brand palette on every public surface', () => {
@@ -161,37 +145,46 @@ describe('public Rally site', () => {
       icons: Array<{ src: string }>;
     };
 
+    expect(pages[0]).toContain('class="rally-symbol"');
+    expect(pages[0]).toContain('/brand/rally-mark.png');
+    for (const page of pages.slice(1)) {
+      expect(page).toContain('/brand/rally-mark.png');
+    }
     for (const page of pages) {
-      expect(page).toContain('/brand/avalon-mark.png');
+      expect(page).not.toMatch(/Avalon|with-avalon|avalon-mark/iu);
+      expect(page).not.toContain('/brand/rally-mark.svg');
       expect(page).toContain('/favicon.png');
       expect(page).not.toContain('✣');
       expect(page).not.toContain('/favicon.svg');
     }
     expect(styles).toContain('--brand-primary: #cedc00');
     expect(styles).toContain('--brand-secondary: #47c7fc');
-    expect(styles).not.toContain('--orange:');
+    expect(styles).toContain('--orange:#ff6337');
     expect(manifest.theme_color).toBe('#111210');
     expect(manifest.background_color).toBe('#111210');
     expect(manifest.icons.map(({ src }) => src)).toEqual(['/favicon.png', '/apple-touch-icon.png']);
-    expect(existsSync(new URL('../public/brand/avalon-mark.png', import.meta.url))).toBe(true);
+    expect(existsSync(new URL('../public/brand/rally-mark.png', import.meta.url))).toBe(true);
+    expect(existsSync(new URL('../public/brand/rally-mark.svg', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../public/brand/avalon-mark.png', import.meta.url))).toBe(false);
     expect(existsSync(new URL('../public/favicon.png', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/apple-touch-icon.png', import.meta.url))).toBe(true);
-    expect(existsSync(new URL('../public/og.png', import.meta.url))).toBe(true);
-    const socialCard = new URL('../public/og-2026.jpg', import.meta.url);
+    const socialCard = new URL('../public/rally-social.jpg', import.meta.url);
     expect(existsSync(socialCard)).toBe(true);
     expect(statSync(socialCard).size).toBeLessThan(200_000);
-
-    for (const path of [
-      'public/concepts/biomes/alpine-tundra.webp',
-      'public/concepts/biomes/boreal-wetland.webp',
-      'public/concepts/biomes/high-desert.webp',
-      'public/concepts/biomes/volcanic-coast.webp',
-      'public/concepts/horizon-organic-panorama.webp',
-    ]) {
-      const landscape = new URL(`../${path}`, import.meta.url);
-      expect(existsSync(landscape), `${path} should exist`).toBe(true);
-      expect(statSync(landscape).size, `${path} should stay below 350 KB`).toBeLessThan(350_000);
-    }
+    expect(existsSync(new URL('../public/og.png', import.meta.url))).toBe(false);
+    const generator = readFileSync(
+      new URL('../../../scripts/generate-brand-assets.py', import.meta.url),
+      'utf8',
+    );
+    expect(generator).toContain('rally-mark-source.png');
+    expect(generator).toContain('rally-social.jpg');
+    expect(generator).not.toMatch(/Avalon|avalon-mark|avalonTemplate/u);
+    const migrationGuide = readFileSync(
+      new URL('../../../docs/domain-migration.md', import.meta.url),
+      'utf8',
+    );
+    expect(migrationGuide).toContain('/brand/rally-mark.png');
+    expect(migrationGuide).not.toContain('/brand/rally-mark.svg');
   });
 
   it('keeps the shared invitation, auth handoff, and not-found surfaces styled and functional', () => {
@@ -220,11 +213,11 @@ describe('public Rally site', () => {
     }
   });
 
-  it('uses the same recency-only work-stream heading as the desktop sidebar', () => {
+  it('uses the same attention-first work-stream heading as the desktop sidebar', () => {
     const page = readProjectFile('index.html');
 
-    expect(page).toContain('<p>Last hour</p>');
-    expect(page).not.toContain('<p>Today</p>');
+    expect(page).toContain('<p>Waiting for you</p>');
+    expect(page).not.toContain('<p>Unread</p>');
   });
 
   it('uses the official black Apple logo in the primary macOS call to action', () => {
@@ -233,6 +226,10 @@ describe('public Rally site', () => {
     expect(page).toContain('src="/brand/apple-logo.svg"');
     expect(page).not.toContain('<span class="apple-mark"');
     expect(existsSync(new URL('../public/brand/apple-logo.svg', import.meta.url))).toBe(true);
+    const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
+    expect(renderDesktopRelease(page, release)).toContain(
+      '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" />',
+    );
   });
 
   it('publishes the verified installer while keeping the source template free of stale release links', () => {
@@ -386,13 +383,15 @@ describe('public Rally site', () => {
     expect(wrangler.preview_urls).toBe(false);
     expect(headers).toContain("script-src 'self'");
     expect(headers).toContain("frame-ancestors 'none'");
+    expect(headers).toMatch(/\/rally-social\.jpg\n {2}Cache-Control: public, max-age=86400/u);
+    expect(headers).not.toContain('/og.png');
   });
 
   it('provides a private desktop invitation handoff without sending the token to the server', () => {
     const page = readProjectFile('invite/index.html');
     const script = readProjectFile('src/invite.ts');
 
-    expect(page).toContain('Continue in the Avalon app');
+    expect(page).toContain('Continue in the Rally app');
     expect(page).toContain('noindex, nofollow');
     expect(script).toContain('window.location.hash');
     expect(script).toContain("new URL('rallywithai://invitations/accept')");
@@ -404,7 +403,7 @@ describe('public Rally site', () => {
     const page = readProjectFile('slack/link/index.html');
     const script = readProjectFile('src/slack-link.ts');
 
-    expect(page).toContain('Continue in the Avalon app');
+    expect(page).toContain('Continue in the Rally app');
     expect(page).toContain('noindex, nofollow');
     expect(script).toContain('window.location.hash');
     expect(script).toContain("new URL('rallywithai://slack/link')");
@@ -436,7 +435,7 @@ describe('public Rally site', () => {
     expect(handoff).not.toContain('window.location.search');
   });
 
-  it('publishes a complete, cross-linked trust center from every landing design', () => {
+  it('publishes a complete, cross-linked Rally Trust Center', () => {
     const landing = readProjectFile('index.html');
     const sitemap = readProjectFile('public/sitemap.xml');
     const policies = [
@@ -446,7 +445,7 @@ describe('public Rally site', () => {
       ['dpa/index.html', '/dpa', 'Data Processing Addendum'],
       ['subprocessors/index.html', '/subprocessors', 'Sub-processors'],
       ['cookies/index.html', '/cookies', 'Cookie &amp; Tracking Notice'],
-      ['security/index.html', '/security', 'Security Policy'],
+      ['security/index.html', '/security', 'Trust Center'],
     ] as const;
 
     for (const [, route] of policies) {
@@ -475,7 +474,28 @@ describe('public Rally site', () => {
     expect(readProjectFile('subprocessors/index.html')).toContain('Cloudflare, Inc.');
     expect(readProjectFile('cookies/index.html')).toContain('uses bounded first-party product analytics');
     expect(readProjectFile('cookies/index.html')).toContain('uses no persistent browser analytics identifier');
+    expect(readProjectFile('cookies/index.html')).toContain("does not load PostHog's browser SDK");
     expect(readProjectFile('security/index.html')).toContain('context isolation');
+    expect(readProjectFile('security/index.html')).not.toContain('Request access');
+    expect(readProjectFile('security/index.html')).not.toContain('SOC 2');
+    expect(readProjectFile('security/index.html')).not.toContain('<i aria-label="Implemented">');
+    expect(readProjectFile('security/index.html').match(/role="img" aria-label="Implemented"/gu)).toHaveLength(7);
+    const [landingContent, landingFooter] = landing.split('<footer class="rally-footer">');
+    expect(landingContent).not.toContain('/security/');
+    expect(landingFooter).toContain('<a href="/security/">Trust Center</a>');
+  });
+
+  it('uses Rally grammar and Trust Center naming on every public page', () => {
+    const pages = [
+      'index.html', 'invite/index.html', 'slack/index.html', 'terms/index.html',
+      'privacy/index.html', 'acceptable-use/index.html', 'dpa/index.html',
+      'subprocessors/index.html', 'cookies/index.html', 'security/index.html',
+    ];
+    for (const path of pages) {
+      const page = readProjectFile(path);
+      expect(page, path).not.toMatch(/\b[Aa]n Rally\b/u);
+      expect(page, path).not.toContain('>Security Policy<');
+    }
   });
 
   it('routes site telemetry before choosing whether an anonymous browser identifier may persist', () => {
@@ -547,7 +567,7 @@ describe('public Rally site', () => {
     const page = readProjectFile('auth/desktop/index.html');
     const script = readProjectFile('src/auth-handoff.ts');
     expect(page).toContain('Secure desktop handoff');
-    expect(page).toContain('id="open-avalon"');
+    expect(page).toContain('id="open-rally"');
     expect(page).toContain('noindex, nofollow');
     expect(script).toContain('window.location.hash');
     expect(script).toContain('window.history.replaceState');
@@ -567,7 +587,7 @@ describe('canonical work-stream links', () => {
     // path resolve at all. Losing it turns every shared link into a 404.
     expect(redirects).toContain('/app/workstreams/*  /app/workstreams/  200');
     expect(config).toContain('app/workstreams/index.html');
-    expect(page).toContain('id="open-avalon"');
+    expect(page).toContain('id="open-rally"');
     expect(page).toContain('noindex, nofollow');
     expect(page).toContain('<script type="module" src="/src/workstream-link.ts"></script>');
   });
