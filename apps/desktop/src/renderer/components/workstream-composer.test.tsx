@@ -6,6 +6,7 @@ import type { MentionIdentity } from '../lib/api';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import { clearAllDrafts } from '../lib/draft-cache';
+import { mentionOptionCopy } from '../test/mention-option-copy';
 import { WorkstreamComposer } from './workstream-composer';
 
 // The composer shows the work stream's model only while Application →
@@ -86,14 +87,6 @@ function renderComposer(
       />
     </Tooltip.Provider>,
   );
-}
-
-function mentionOptionCopy(option: HTMLElement): { badge: string | null; description: string | null; label: string | null } {
-  return {
-    badge: option.querySelector('.badge')?.textContent ?? null,
-    description: option.querySelector('small')?.textContent ?? null,
-    label: option.querySelector('strong')?.textContent ?? null,
-  };
 }
 
 describe('WorkstreamComposer mention confirmation', () => {

@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { clearAllDrafts } from '../lib/draft-cache';
+import { mentionOptionCopy } from '../test/mention-option-copy';
 import { NewWorkstreamScreen } from './new-workstream';
 
 const api = vi.hoisted(() => ({
@@ -124,14 +125,6 @@ function renderScreen(): QueryClient {
     </Tooltip.Provider>,
   );
   return queryClient;
-}
-
-function mentionOptionCopy(option: HTMLElement): { badge: string | null; description: string | null; label: string | null } {
-  return {
-    badge: option.querySelector('.badge')?.textContent ?? null,
-    description: option.querySelector('small')?.textContent ?? null,
-    label: option.querySelector('strong')?.textContent ?? null,
-  };
 }
 
 describe('New work-stream home', () => {
