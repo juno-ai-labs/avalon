@@ -93,11 +93,15 @@ interface ResendInboundEnvBindings {
 }
 
 interface EmailRouteRow {
-  local_part: string;
+  email_address: string;
   region: Region;
   workspace_id: string;
   workstream_id: string | null;
   automation_subscription_id: string | null;
+}
+
+interface LegacyEmailRouteRow extends Omit<EmailRouteRow, "email_address"> {
+  local_part: string;
 }
 
 interface WebhookReceiptRow {
@@ -280,16 +284,16 @@ export class ResendInboundEmailRoutingService {
     }
 
     const domains = acceptedEmailDomains(this.bindings().WORKSTREAM_EMAIL_DOMAIN);
-    // Keyed by local part because that is what the routing table is keyed by,
-    // holding the domain each one arrived on so the region is told the address
-    // the sender used rather than the one this deployment would have minted.
-    const arrivedOn = new Map<string, string>();
+    // The whole normalized address is the routing identity. Two accepted or
+    // future custom domains may safely use the same local part for different
+    // owners, so discarding the domain here would make the route ambiguous.
+    const recipientAddresses = new Map<string, string>();
     for (const recipient of data.to) {
       const match = recipientAddress(recipient, domains);
-      if (match && !arrivedOn.has(match.localPart)) arrivedOn.set(match.localPart, match.domain);
+      if (match) recipientAddresses.set(`${match.localPart}@${match.domain}`, match.localPart);
     }
-    const localParts = [...arrivedOn.keys()];
-    if (localParts.length > MAX_ROUTED_RECIPIENTS) {
+    const addresses = [...recipientAddresses.keys()];
+    if (addresses.length > MAX_ROUTED_RECIPIENTS) {
       await this.env.DB.prepare(
         `UPDATE resend_webhook_receipts
          SET routed_at = ?, error_json = ?
@@ -302,19 +306,29 @@ export class ResendInboundEmailRoutingService {
       return { accepted: true, duplicate: false, ignored: true, routedCount: 0 };
     }
 
-    const routes = dedupeRoutes(await Promise.all(localParts.map((localPart) =>
-      this.env.DB.prepare(
+    const fullAddressRegistry = await this.registryUsesFullAddresses();
+    const routes = dedupeRoutes(await Promise.all(addresses.map(async (emailAddress) => {
+      if (!fullAddressRegistry) {
+        const legacy = await this.env.DB.prepare(
+          `SELECT local_part, region, workspace_id, workstream_id, automation_subscription_id
+           FROM workstream_email_routes
+           WHERE local_part = ? COLLATE NOCASE
+           LIMIT 1`,
+        ).bind(recipientAddresses.get(emailAddress)!).first<LegacyEmailRouteRow>();
+        return legacy ? { ...legacy, email_address: emailAddress } : null;
+      }
+      return this.env.DB.prepare(
         // No status filter: Global records that the address is taken and to
         // whom, nothing about whether mail is welcome today. The region decides
         // that from the owner's own row when the message lands, which it does
         // regardless — filtering here only ever duplicated it, and the two
         // could disagree.
-        `SELECT local_part, region, workspace_id, workstream_id, automation_subscription_id
+        `SELECT email_address, region, workspace_id, workstream_id, automation_subscription_id
          FROM workstream_email_routes
-         WHERE local_part = ? COLLATE NOCASE
+         WHERE email_address = ? COLLATE NOCASE
          LIMIT 1`,
-      ).bind(localPart).first<EmailRouteRow>()
-    )));
+      ).bind(emailAddress).first<EmailRouteRow>();
+    })));
 
     const dispatches = await Promise.allSettled(routes.map((route) => {
       const target = route.automation_subscription_id
@@ -327,12 +341,8 @@ export class ResendInboundEmailRoutingService {
         region: route.region,
         workspaceId: route.workspace_id,
         ...target,
-        localPart: route.local_part.toLowerCase(),
-        // `arrivedOn` is what produced the local parts these routes were looked
-        // up by, so it always holds this one. Indexing rather than defaulting
-        // keeps that guarantee visible instead of implying a route could arrive
-        // without a recorded domain.
-        emailAddress: `${route.local_part.toLowerCase()}@${arrivedOn.get(route.local_part.toLowerCase())!}`,
+        localPart: route.email_address.slice(0, route.email_address.lastIndexOf("@")).toLowerCase(),
+        emailAddress: route.email_address.toLowerCase(),
       });
     }));
     const failures = dispatches.filter((result): result is PromiseRejectedResult => result.status === "rejected");
@@ -377,6 +387,14 @@ export class ResendInboundEmailRoutingService {
       return unwrapRegionalResult(await bridge.ingestResendEmail(input));
     }
     throw new ApiError(503, "email_region_unavailable", `The ${region} inbound-email service is unavailable`);
+  }
+
+  private async registryUsesFullAddresses(): Promise<boolean> {
+    const column = await this.env.DB.prepare(
+      `SELECT name FROM pragma_table_info('workstream_email_routes')
+       WHERE name = 'email_address'`,
+    ).first<{ name: string }>();
+    return column?.name === "email_address";
   }
 
   private async recordGlobalFailure(svixId: string, code: string): Promise<void> {
@@ -1347,8 +1365,8 @@ function configuredEmailDomain(value: string | undefined): string {
  *
  * Wider than the minting domain, and has to be: an address issued before the
  * rename is the one printed in the sender's mail client, and it keeps arriving
- * long after nothing new carries it. Routing is by local part, so an old
- * address resolves through the same table as a new one.
+ * long after nothing new carries it. The full address is looked up exactly, so
+ * accepting both domains does not collapse their local-part namespaces.
  */
 function acceptedEmailDomains(value: string | undefined): ReadonlySet<string> {
   configuredEmailDomain(value);

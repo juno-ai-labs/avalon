@@ -40,6 +40,7 @@ test('applies destructive D1 retirements only after compatible Workers deploy', 
   assert.ok(retireGlobal < health, 'health must inspect the final schema');
   assert.match(workflow, /0090_drop_legacy_product_tables\.sql/u);
   assert.match(workflow, /0094_retire_agent_inference_payload_ledger\.sql/u);
+  assert.match(workflow, /0097_email_routes_use_full_address\.sql/u);
   assert.equal(
     workflow.match(/classify-pending-d1-migrations\.mjs/gu)?.length,
     2,
