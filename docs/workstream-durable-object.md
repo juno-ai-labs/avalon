@@ -1063,6 +1063,51 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-25 — Two atomicities a per-item conversion dropped
+
+**What changed:** `createRun` claims its `automation_runs` row before it
+provisions the work stream, and `admitConnectorAudience` seats its whole
+audience through one `admitParticipants` operation instead of `Promise.all` of
+per-member admissions. `admitParticipant`, the plural form and `adoptCreator`
+share one private `seat`.
+
+**Why:** both are the same mistake in two places. A routed batch is atomic
+across everything it names, and converting it statement by statement into
+separate awaits gives that up silently — the code reads fine and every test
+passes, because nothing fails partway through in a test.
+
+`createRun` provisioned first. Two requests carrying one idempotency key both
+pass the lookup that precedes them; the loser's insert hits the unique index,
+and `controlRunInserted` is still false at that point, so the compensation block
+below does nothing. What is left is a work stream in a sidebar, with a
+`listing_epoch` bump and a reserved email address, for a run that does not
+exist and never will. Claiming the control row first makes its unique keys the
+thing that decides who provisions, before anything visible has been written.
+`main` had this order, and the activity consumer in this same stack kept it;
+only this path lost it.
+
+The audience is worse than a lost write, because what it loses is an
+*announcement*. Admitting five members as five operations and throwing on the
+fourth leaves three seated. The retry recomputes who is new against a roster
+that now contains those three, so they fall out of the newly-admitted set and
+their `participant_joined` is never published — and nothing anywhere records
+that it wasn't. One transaction restores what the batch had.
+
+**What a future change has to respect:** `admitParticipants` returns the rows it
+wrote rather than letting the caller read them back. The read was not merely a
+round trip — between the writes and it, a removal can land, and the audience
+would then publish a joining for somebody no longer on the work stream, or drop
+one who is. A caller that needs to know what a write did should be told by the
+write.
+
+The storage class keeps its own `transactionSync` even though every write
+dispatched through `/internal/identity` is already inside
+`commitWithRegionalEffects`'s transaction. That redundancy is deliberate: the
+class is a unit whose atomicity should not depend on which caller reached it.
+It does mean a test driving the endpoint cannot distinguish the two, so the
+workerd spec proves the property the caller depends on — the operation seats all
+or none — rather than which layer provides it.
+
 ### 2026-08-25 — The last two compatibility views, and what a migration is
 
 **What changed:** migration 26 drops `_runtime_workstreams`,
