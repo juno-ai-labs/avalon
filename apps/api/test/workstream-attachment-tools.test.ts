@@ -67,15 +67,15 @@ function fixture(options: { images?: ImagesBinding; ai?: Ai } = {}) {
   // router, so the env's DB is that router rather than the raw regional shim.
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
-  seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstreams (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status, last_activity_at, created_at, updated_at)
-     VALUES (?, ?, 'Attachments', 'Read safely', 'ad_hoc', ?, 'running', '2026-01-01', '2026-01-01', '2026-01-01')`,
-    WORKSTREAM_ID,
-    WORKSPACE_ID,
-    USER_ID,
-  );
+  seedWorkstreamObjectRoot(objectStore, {
+    workstreamId: WORKSTREAM_ID,
+    workspaceId: WORKSPACE_ID,
+    title: "Attachments",
+    description: "Read safely",
+    originType: "ad_hoc",
+    createdByUserId: USER_ID,
+    exactState: "running",
+  });
   workstreamObjectRun(
     objectStore,
     `INSERT INTO harness_runs (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)

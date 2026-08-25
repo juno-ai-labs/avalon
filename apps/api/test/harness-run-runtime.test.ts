@@ -184,16 +184,17 @@ function fixture(options: RuntimeFixtureOptions = {}): RuntimeFixture {
   // the same compat port the runtime uses.
   const objectDatabase = testWorkstreamObjectStore();
   openDatabases.push(objectDatabase);
-  seedWorkstreamObjectRoot(objectDatabase, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+  seedWorkstreamObjectRoot(objectDatabase, {
+    workstreamId: WORKSTREAM_ID,
+    workspaceId: WORKSPACE_ID,
+    title: "Runtime",
+    description: "Runtime",
+    originType: "ad_hoc",
+    createdByUserId: "user-runtime",
+    exactState: "idle",
+  });
   const object = objectFacade(objectDatabase);
   const statementBatchSizes: number[] = [];
-  object.exec(`
-    INSERT INTO workstreams
-      (id, workspace_id, title, objective, origin_type, created_by_user_id,
-       harness_status, last_activity_at, created_at, updated_at)
-    VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}', 'Runtime', 'Runtime', 'ad_hoc', 'user-runtime',
-            'idle', '2026-01-01', '2026-01-01', '2026-01-01')
-  `);
   // Seeded 'scheduled', not 'running': the object permits one mutating run per
   // substream (`runs_mutating_substream_uq`), so two pre-claimed running rows
   // could not coexist — and claiming is what moves a run to running anyway.
@@ -424,11 +425,12 @@ describe("durable harness attempt runtime", () => {
     // earlier — so this asserts the append moved it forward rather than pinning
     // a value the caller no longer supplies.
     const published = sqlite.object.prepare(
-      `SELECT latest_attention_sequence_number, last_activity_at
-       FROM workstreams WHERE id = ?`,
-    ).get(WORKSTREAM_ID) as { latest_attention_sequence_number: number; last_activity_at: string };
-    expect(published.latest_attention_sequence_number).toBe(1);
-    expect(Date.parse(published.last_activity_at)).toBeGreaterThanOrEqual(beforePublish);
+      `SELECT next_attention_ordinal, last_people_activity_at FROM workstream WHERE id = 1`,
+    ).get() as { next_attention_ordinal: number; last_people_activity_at: number };
+    // The object's counter, one ahead of what the retired view rendered as
+    // `latest_attention_sequence_number`.
+    expect(published.next_attention_ordinal).toBe(2);
+    expect(published.last_people_activity_at).toBeGreaterThanOrEqual(beforePublish);
 
     expect(await terminalizeHarnessAttempt(sqlite.runs, sqlite.messages, input(RUN_ONE), first.lease, {
       status: "completed",
@@ -448,8 +450,8 @@ describe("durable harness attempt runtime", () => {
     });
     expect(second.state).toBe("claimed");
     expect(sqlite.object.prepare(
-      "SELECT harness_status FROM workstreams WHERE id = ?",
-    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "running" });
+      "SELECT exact_state FROM workstream WHERE id = 1",
+    ).get()).toEqual({ exact_state: "running" });
   });
 
   it("runs HyperSight blocks beside each other and the interactive executor, without workstream state", async () => {
@@ -465,7 +467,7 @@ describe("durable harness attempt runtime", () => {
       "UPDATE runs SET origin = 'block_dashboard_block', status = 'admitted'",
     );
     sqlite.object.exec(`
-      UPDATE workstreams SET harness_status = 'idle' WHERE id = '${WORKSTREAM_ID}';
+      UPDATE workstream SET exact_state = 'idle' WHERE id = 1;
       INSERT INTO harness_runs
         (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
       VALUES
@@ -495,8 +497,8 @@ describe("durable harness attempt runtime", () => {
     })).state).toBe("claimed");
     // A block run never moves the member-facing work stream state.
     expect(sqlite.object.prepare(
-      "SELECT harness_status FROM workstreams WHERE id = ?",
-    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "idle" });
+      "SELECT exact_state FROM workstream WHERE id = 1",
+    ).get()).toEqual({ exact_state: "idle" });
 
     // A block run terminalizes against its persisted HyperSight result rather
     // than a transcript message.
@@ -520,8 +522,8 @@ describe("durable harness attempt runtime", () => {
       status: "completed",
     }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
     expect(sqlite.object.prepare(
-      "SELECT harness_status FROM workstreams WHERE id = ?",
-    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "idle" });
+      "SELECT exact_state FROM workstream WHERE id = 1",
+    ).get()).toEqual({ exact_state: "idle" });
 
     // The interactive executor claims while a block run (RUN_TWO) still holds
     // its lease — the interactive fence ignores block-origin actives — and a
@@ -532,8 +534,8 @@ describe("durable harness attempt runtime", () => {
     });
     expect(interactive.state).toBe("claimed");
     expect(sqlite.object.prepare(
-      "SELECT harness_status FROM workstreams WHERE id = ?",
-    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "running" });
+      "SELECT exact_state FROM workstream WHERE id = 1",
+    ).get()).toEqual({ exact_state: "running" });
     expect((await claimHarnessAttempt(sqlite.runs, input(runFour), {
       attemptId: "attempt-block-dashboard-four",
       owner: "owner-block-dashboard-four",
@@ -571,8 +573,8 @@ describe("durable harness attempt runtime", () => {
       sqlite.blocks,
     )).resolves.toBe("terminalized");
     expect(sqlite.object.prepare(
-      "SELECT harness_status FROM workstreams WHERE id = ?",
-    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "running" });
+      "SELECT exact_state FROM workstream WHERE id = 1",
+    ).get()).toEqual({ exact_state: "running" });
 
     const replacement = await claimHarnessAttempt(sqlite.runs, input(RUN_TWO), {
       attemptId: "attempt-replacement",
@@ -594,7 +596,7 @@ describe("durable harness attempt runtime", () => {
       "UPDATE runs SET origin = 'block_dashboard_block', status = 'admitted', model = 'x-ai/grok-4.3' WHERE run_id = ?",
     ).run(RUN_ONE);
     sqlite.object.exec(`
-      UPDATE workstreams SET harness_status = 'completed' WHERE id = '${WORKSTREAM_ID}';
+      UPDATE workstream SET exact_state = 'completed' WHERE id = 1;
       -- The object's own columns. The compat views that projected id,
       -- workspace_id and ISO timestamps are gone, so a fixture written in that
       -- vocabulary would be seeding the thing this slice deleted.
@@ -615,8 +617,8 @@ describe("durable harness attempt runtime", () => {
     });
     if (claim.state !== "claimed") throw new Error("expected claimed HyperSight attempt");
     expect(sqlite.object.prepare(
-      "SELECT harness_status FROM workstreams WHERE id = ?",
-    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "completed" });
+      "SELECT exact_state FROM workstream WHERE id = 1",
+    ).get()).toEqual({ exact_state: "completed" });
     sqlite.object.prepare(
       "UPDATE block_dashboard_block_runs SET status = 'completed', markdown = '# Current view' WHERE run_id = ?",
     ).run(RUN_ONE);
@@ -634,8 +636,8 @@ describe("durable harness attempt runtime", () => {
       "SELECT status, final_message_id FROM harness_runs WHERE id = ?",
     ).get(RUN_ONE)).toEqual({ status: "completed", final_message_id: null });
     expect(sqlite.object.prepare(
-      "SELECT harness_status FROM workstreams WHERE id = ?",
-    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "completed" });
+      "SELECT exact_state FROM workstream WHERE id = 1",
+    ).get()).toEqual({ exact_state: "completed" });
   });
 
   it("fences final-message writes and recovers a final persisted before terminalization", async () => {
@@ -792,8 +794,8 @@ describe("durable harness attempt runtime", () => {
       "SELECT COUNT(*) AS count FROM run_lifecycle_events WHERE run_id = ? AND event_key = 'terminal'",
     ).get(RUN_TWO)).toEqual({ count: 1 });
     expect(sqlite.object.prepare(
-      "SELECT harness_status FROM workstreams WHERE id = ?",
-    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "running" });
+      "SELECT exact_state FROM workstream WHERE id = 1",
+    ).get()).toEqual({ exact_state: "running" });
   });
 
   it("never claims a run cancelled before lease acquisition", async () => {
@@ -2883,8 +2885,8 @@ describe("durable harness attempt runtime", () => {
       lease_owner: null,
     });
     expect(sqlite.object.prepare(
-      "SELECT harness_status FROM workstreams WHERE id = ?",
-    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "idle" });
+      "SELECT exact_state FROM workstream WHERE id = 1",
+    ).get()).toEqual({ exact_state: "idle" });
     expect(sqlite.object.prepare(
       "SELECT effect_intent_id, status, output_ref, error_json FROM tool_effects WHERE run_id = ? ORDER BY effect_intent_id",
     ).all(RUN_ONE)).toEqual([
@@ -4560,8 +4562,8 @@ describe("inline child-run durability", () => {
       automationDatabase: sqlite.binding,
     })).toEqual([child.childInput.harnessRunId]);
     expect(sqlite.object.prepare(
-      "SELECT harness_status FROM workstreams WHERE id = ?",
-    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "running" });
+      "SELECT exact_state FROM workstream WHERE id = 1",
+    ).get()).toEqual({ exact_state: "running" });
     expect(sqlite.database.prepare(
       "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = 'automation-run-child'",
     ).get()).toEqual({ status: "running", completed_at: null, result_summary: null });
@@ -4767,8 +4769,8 @@ describe("inline child-run durability", () => {
         },
       });
     expect(sqlite.object.prepare(
-      "SELECT harness_status FROM workstreams WHERE id = ?",
-    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "running" });
+      "SELECT exact_state FROM workstream WHERE id = 1",
+    ).get()).toEqual({ exact_state: "running" });
   });
 
   it("repairs a HyperSight orphan while reaping a run that has no block of its own", async () => {

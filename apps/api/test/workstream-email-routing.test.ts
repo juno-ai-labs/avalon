@@ -18,6 +18,7 @@ import {
   testIdentityOperationStub,
   testWorkstreamObjectStore,
   workstreamObjectRun,
+  applyWorkstreamObjectRootFields,
 } from "./helpers/durable-authority";
 
 const openStores: DatabaseSync[] = [];
@@ -226,12 +227,9 @@ describe("WorkstreamEmailRoutingService", () => {
     // Archiving the owner closes the route without Global being told: the
     // refusal is read from the work stream itself, which is the same row the
     // inbound path consults.
-    workstreamObjectRun(
-      database.objectStore,
-      "UPDATE workstreams SET archived_at = ? WHERE id = ?",
-      "2026-08-03T00:00:00.000Z",
-      input.workstreamId,
-    );
+    applyWorkstreamObjectRootFields(database.objectStore, {
+      archivedAt: Date.parse("2026-08-03T00:00:00.000Z"),
+    });
     await expect(service.activateWorkstreamRoute(input)).rejects.toMatchObject({
       status: 409,
       code: "workstream_email_owner_archived",
@@ -660,14 +658,9 @@ function seedWorkstreamOwner(
   seedWorkstreamObjectRoot(database.objectStore, {
     workstreamId: input.workstreamId,
     workspaceId: input.workspaceId,
-  });
-  workstreamObjectRun(
-    database.objectStore,
-    `UPDATE workstreams SET email_address = ?, email_route_status = 'reserved',
-       updated_at = '2026-08-02T00:00:00.000Z' WHERE id = ?`,
     emailAddress,
-    input.workstreamId,
-  );
+    emailRouteStatus: "reserved",
+  }, Date.parse("2026-08-02T00:00:00.000Z"));
 }
 
 function existingRoute(
