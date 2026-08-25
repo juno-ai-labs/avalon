@@ -38,6 +38,13 @@ const applicationSettings = vi.hoisted(() => ({
   current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false },
   listeners: new Set<(settings: unknown) => void>(),
 }));
+const featureFlags = vi.hoisted(() => ({
+  current: { suggestedWorkEnabled: true },
+}));
+
+vi.mock('../lib/use-client-feature-flags', () => ({
+  useClientFeatureFlags: () => ({ data: featureFlags.current }),
+}));
 
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
@@ -123,6 +130,7 @@ describe('New work-stream home', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false };
+    featureFlags.current = { suggestedWorkEnabled: true };
     applicationSettings.listeners.clear();
     await clearAllDrafts();
     vi.stubGlobal('ResizeObserver', class {
@@ -158,6 +166,16 @@ describe('New work-stream home', () => {
       contentAvailable: true,
       sizeBytes: 5,
     });
+  });
+
+  it('does not query or render Suggested Work while Suggested Work Enabled is false', async () => {
+    featureFlags.current = { suggestedWorkEnabled: false };
+
+    renderScreen();
+
+    expect(await screen.findByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
+    expect(api.getWorkOpportunities).not.toHaveBeenCalled();
   });
 
   it('leaves out the work streams that ask this person for nothing', async () => {

@@ -1,0 +1,91 @@
+name: Deploy Avalon Ace
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/ace/**"
+      - "apps/migration-tracker/src/access.ts"
+      - "packages/contracts/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "scripts/ensure-cloudflare-queues.mjs"
+      - "scripts/ensure-cloudflare-queues.test.mjs"
+      - "scripts/wrangler-config.mjs"
+      - ".github/workflows/deploy-ace.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-ace
+  cancel-in-progress: false
+  queue: single
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: api-production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ACE_FLAGSHIP_API_TOKEN: ${{ secrets.ACE_FLAGSHIP_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Check out the revision being deployed
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Require Cloudflare deployment credentials
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "CLOUDFLARE_API_TOKEN secret is not set"; exit 1; }
+          test -n "${ACE_FLAGSHIP_API_TOKEN:-}" || { echo "ACE_FLAGSHIP_API_TOKEN secret is not set"; exit 1; }
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo "CLOUDFLARE_ACCOUNT_ID variable is not set"; exit 1; }
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify the merged revision
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm --filter @avalon/ace test
+          pnpm --filter @avalon/ace build
+          pnpm test:scripts
+
+      - name: Ensure every declared Queue exists
+        run: node scripts/ensure-cloudflare-queues.mjs
+
+      # This one command is the complete Ace release transaction. It clones the
+      # migration site's Access policy into an Ace-specific application,
+      # ensures both off-by-default Flagship flags, injects the returned Access
+      # audience, deploys the Worker/assets/consumer, and installs the dedicated
+      # Flagship-only runtime token as an encrypted Worker secret.
+      - name: Provision and deploy Ace
+        run: pnpm --filter @avalon/ace deploy
+
+      - name: Verify Cloudflare Access protects Ace
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' https://ace.internal.rallywith.ai/)"
+            if [ "$status" = "302" ]; then exit 0; fi
+            echo "Attempt $attempt returned HTTP $status; waiting for deployment propagation"
+            sleep 10
+          done
+          echo "Ace did not redirect an unauthenticated request through Cloudflare Access" >&2
+          exit 1

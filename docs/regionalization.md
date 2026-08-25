@@ -81,6 +81,7 @@ The same Worker source is deployed twice:
 | Notion connection ingress | one redirect URI and one webhook subscription, plus the Notion-workspace-to-region directory | authorization code and exact signed delivery forwarded through named Worker RPC; token exchange, credentials, and payloads stay in EU |
 | Work-stream email registry | one authoritative, case-insensitive reservation table for every region | no local allocator; reservations and status changes use the Global named RPC binding |
 | Terminal workspaces | independently gated Daytona target; regional D1/R2/GitHub App services | independently gated Daytona target; no Global fallback or bridge |
+| Product-flag delivery | Ace reads Global D1 and sends opaque workspace IDs to the Global product-flag Queue | Ace reads EU D1 and sends opaque workspace IDs to the EU product-flag Queue; the EU Worker alone addresses EU WorkspaceDOs |
 
 Queues and Workflows carry region plus opaque record IDs, never sensitive payload
 bodies. Every service receives a fixed regional dependency container; repositories
@@ -97,6 +98,19 @@ before archive staging and has no inference Queue or Pipeline binding; it never
 falls back to the Global table.
 [`inference-lakehouse.md`](inference-lakehouse.md) owns the full record and
 provisioning contract.
+
+Ace is the one internal control plane that reads both regional workspace
+directories. An Access-authorized directory search transiently brings matching
+EU names, full email addresses, workspace names, slugs, and opaque IDs into the
+shared Ace Worker and operator's browser; Ace neither persists those results nor
+writes names or full addresses to Flagship. Its shared change Queue carries only
+a product flag key. The Ace consumer reads workspace IDs directly from each D1
+and emits the key plus opaque workspace ID to that region's Queue. From there
+the regional API and WorkspaceDO evaluate against regional
+identity/membership data. Effective values, memberships, product content, and
+socket state never cross through Ace; the one global Flagship application sees
+only the already-approved targeting attributes listed in
+[`feature-flags.md`](feature-flags.md).
 
 ### The shared ingresses
 
@@ -173,7 +187,10 @@ See [`public-site-telemetry.md`](public-site-telemetry.md).
 
 ## Invariants
 
-- **Global reaches EU only through named Worker RPC service bindings.** The EU
+- **Product runtimes reach EU only through named Worker RPC service bindings.**
+  Ace's Access-gated operator directory is the explicit administrative
+  exception: its Worker has a direct EU D1 binding for transient user/workspace
+  search and flag fan-out enumeration. The EU
   regional identity bridge is a named service entrypoint, not a public HTTP route,
   and no bridge is ever exposed as one. An HTTP internal bridge would put the
   region boundary on the open internet with nothing but a shared secret on it.
@@ -352,6 +369,47 @@ these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
+
+### 2026-08-24 — Ace's operator directory is named as a regional exception
+
+**What changed:** The boundary now explicitly records that Ace directly reads
+EU D1 and transiently exposes matching directory fields to an authorized
+operator, while its queue fan-out continues to carry only opaque IDs and a flag
+key.
+
+**Why:** The earlier text claimed names and full email addresses never crossed
+regions even though Ace's configured EU D1 binding and directory route did
+exactly that. A regional guarantee must describe the deployed read path, not
+only the notification payload.
+
+**Considered and rejected:** Describing Ace as an RPC-only product runtime. Ace
+is a shared internal administrative plane with an explicit direct-directory
+requirement; hiding that distinction would preserve the contradiction.
+
+**Consequences:** Product/API regional access remains RPC-only. Any expansion of
+Ace beyond transient directory lookup and opaque fan-out is a new residency
+decision and must update this exception rather than inherit it silently.
+
+### 2026-08-24 — Ace fans product-flag keys into regional ownership
+
+**What changed:** The shared Ace consumer reads each D1 workspace directory and
+splits key-only messages onto Global and EU queues. Each regional API addresses
+only its own WorkspaceDO namespace and evaluates each user's value locally.
+
+**Why:** One Flagship application controls both regions, but workspace identity,
+membership, objects, and sockets remain regional. A single consumer cannot bind
+both regional namespaces, and sending effective values would cross a
+user-specific answer out of its authority.
+
+**Considered and rejected:** A Global Worker bridge into EU would make an
+internal rollout depend on a cross-region RPC and expose EU workspace delivery
+to the Global runtime. Duplicating Flagship per region would require two
+configurations that are intended to be identical.
+
+**Consequences:** Ace may read both D1 directories for internal lookup and
+fan-out, but regional queue bodies remain opaque and each regional Worker is the
+only caller of its objects. Earlier reasoning in this document predates the
+running changelog and was not reconstructed.
 
 ### 2026-08-24 — EU inference analytics are deferred
 

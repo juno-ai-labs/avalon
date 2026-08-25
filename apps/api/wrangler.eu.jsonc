@@ -220,6 +220,13 @@
         "dead_letter_queue": "avalon-eu-access-revocations-dead-letter"
       },
       {
+        "queue": "avalon-eu-product-feature-flags",
+        "max_batch_size": 100,
+        "max_batch_timeout": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-eu-product-feature-flags-dead-letter"
+      },
+      {
         "queue": "avalon-eu-migration-commands",
         // Matches Global; the reasoning is recorded there.
         "max_batch_size": 100,

@@ -39,6 +39,7 @@ import {
 import type { AutomationActivitySource, AutomationRunSummary, WorkstreamConnection } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { InspectorRail } from '../components/inspector-rail';
 import { AvalonMark, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal, OpeningState, StatusDot } from '../components/primitives';
 
@@ -113,6 +114,8 @@ function RunRow({ run, onOpen }: { run: AutomationRunSummary; onOpen: () => void
 export function AutomationOverviewScreen(): React.JSX.Element {
   const { id = '' } = useParams();
   const { api, session } = useAppSession();
+  const featureFlags = useClientFeatureFlags(api);
+  const workspaceTemplatesEnabled = featureFlags.data?.automationWorkspaceTemplatesEnabled === true;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const openRail = useUiStore((state) => state.openRail);
@@ -142,6 +145,12 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   useEffect(() => {
     setAutomationEmailCopyState('idle');
   }, [id]);
+
+  useEffect(() => {
+    if (workspaceTemplatesEnabled) return;
+    setShareOpen(false);
+    setUpdateOpen(false);
+  }, [workspaceTemplatesEnabled]);
 
   useEffect(() => {
     if (automationEmailCopyState === 'idle') return;
@@ -379,7 +388,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
         <div className="automation-overview-actions window-no-drag">
           <IconButton label="Open runs inspector" onClick={() => openRail('runs')}><PanelRight size={15} /></IconButton>
           <Button onClick={() => setEditOpen(true)}><Edit3 size={14} /> Edit</Button>
-          <Button onClick={() => setShareOpen(true)}><Share2 size={14} /> Share</Button>
+          {workspaceTemplatesEnabled && <Button onClick={() => setShareOpen(true)}><Share2 size={14} /> Share</Button>}
           <Button
             disabled={statusMutation.isPending}
             onClick={() => statusMutation.mutate(detail.status === 'paused' ? 'resume' : 'pause')}
@@ -483,7 +492,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
           </aside>
 
           <div className="automation-main-column">
-            {detail.templateUpdate && (
+            {workspaceTemplatesEnabled && detail.templateUpdate && (
               <section className="automation-update-banner" aria-label="Template update available">
                 <span className="automation-update-icon"><Sparkles aria-hidden="true" size={15} /></span>
                 <span className="automation-update-copy">
@@ -521,7 +530,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
 
       <InspectorRail onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)} runs={detail.runs} />
 
-      <Modal
+      {workspaceTemplatesEnabled && <Modal
         description="Review the workspace template changes. Nothing changes for this automation until you adopt the new version."
         footer={detail.templateUpdate ? (
           <>
@@ -598,7 +607,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
             {adoptUpdate.error && <InlineError>{adoptUpdate.error.message}</InlineError>}
           </div>
         )}
-      </Modal>
+      </Modal>}
 
       <Modal
         description="Update the natural-language instructions used to assemble each run’s context."
@@ -629,7 +638,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
         {update.error && <InlineError>{update.error.message}</InlineError>}
       </Modal>
 
-      <Modal
+      {workspaceTemplatesEnabled && <Modal
         description="Publishing creates a versioned workspace template. Coworkers bind their own connections when they subscribe."
         footer={
           <>
@@ -643,7 +652,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
       >
         {share.data ? <div className="success-message"><ShieldCheck size={17} /><span><strong>Template published</strong><small>Coworkers can now find it inside New automation.</small></span></div> : <p className="modal-copy">Credentials and personal overrides are never copied into a template.</p>}
         {share.error && <InlineError>{share.error.message}</InlineError>}
-      </Modal>
+      </Modal>}
 
       <Modal
         footer={

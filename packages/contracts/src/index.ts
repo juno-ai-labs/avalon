@@ -283,6 +283,14 @@ export const CONTROL_TOWER_REFRESH_SECONDS = {
 export const ClientFeatureFlagsSchema = z.object({
   /** Whether Application → Developer may be offered on this device. */
   developerSettings: z.boolean().default(false),
+  /** Whether HyperSight surfaces are shown in Electron for this person. */
+  hypersightEnabled: z.boolean().default(false),
+  /** Whether meeting-recording actions are shown in Electron for this person. */
+  meetingRecordingEnabled: z.boolean().default(false),
+  /** Whether Suggested Work surfaces are shown in Electron for this person. */
+  suggestedWorkEnabled: z.boolean().default(false),
+  /** Whether workspace-template surfaces are shown in Electron for this person. */
+  automationWorkspaceTemplatesEnabled: z.boolean().default(false),
   /**
    * Control Tower's refresh cadence in seconds. `catch` rather than a bare
    * bound: a value outside the range is a provisioning mistake, and degrading
@@ -295,6 +303,19 @@ export const ClientFeatureFlagsSchema = z.object({
     .catch(CONTROL_TOWER_REFRESH_SECONDS.default)
     .default(CONTROL_TOWER_REFRESH_SECONDS.default)
 });
+
+/** Product flags Ace is allowed to manage and publish to connected clients. */
+export const ProductFeatureFlagKeySchema = z.enum([
+  "hypersight-enabled",
+  "meeting-recording-enabled",
+  "suggested-work-enabled",
+  "automation-workspace-templates-enabled",
+]);
+export const ProductFeatureFlagFanoutMessageSchema = z.object({
+  kind: z.literal("product_feature_flag_changed"),
+  flagKey: ProductFeatureFlagKeySchema,
+  workspaceId: IdSchema,
+}).strict();
 
 export const ParticipantSchema = z.object({
   user: UserSchema,
@@ -1804,6 +1825,8 @@ export const WorkspaceSocketSyncEventSchema = z.object({
   topics: z.array(WorkspaceSyncTopicSchema),
   reason: z.enum(["initial", "change", "history_unavailable", "resume"]),
   sidebar: WorkspaceSidebarSchema.optional(),
+  /** Per-viewer values, present only on the private answer to subscribe. */
+  featureFlags: ClientFeatureFlagsSchema.optional(),
 }).strict().superRefine((event, context) => {
   if (event.topics.length === 0 && event.sidebar === undefined) {
     context.addIssue({
@@ -1819,7 +1842,26 @@ export const WorkspaceSocketSyncEventSchema = z.object({
       message: "a resume exists to carry the sidebar",
     });
   }
+  if (event.featureFlags !== undefined && event.sidebar === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["featureFlags"],
+      message: "feature flags may appear only on the private subscribe answer",
+    });
+  }
 });
+
+/**
+ * User-specific flags sent outside the workspace waterline. Two people in one
+ * WorkspaceDO can match different Flagship rules, so these values must never
+ * ride the common `workspace_sync` event.
+ */
+export const WorkspaceFeatureFlagsEventSchema = z.object({
+  type: z.literal("workspace_feature_flags"),
+  occurredAt: TimestampSchema,
+  changedFlag: ProductFeatureFlagKeySchema.nullable(),
+  flags: ClientFeatureFlagsSchema,
+}).strict();
 
 /**
  * One sidebar list and the version WorkspaceDO stamped on it.
@@ -1966,6 +2008,7 @@ export const WorkstreamControlSocketEventSchema = z.discriminatedUnion("type", [
 export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
 export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
 export type WorkspaceSocketSyncEvent = z.infer<typeof WorkspaceSocketSyncEventSchema>;
+export type WorkspaceFeatureFlagsEvent = z.infer<typeof WorkspaceFeatureFlagsEventSchema>;
 export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
 export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
 export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
@@ -2844,6 +2887,8 @@ export type OnboardingRegionRequest = z.infer<typeof OnboardingRegionRequestSche
 export type ActivateWorkspaceRequest = z.infer<typeof ActivateWorkspaceRequestSchema>;
 export type WorkspaceInvitationRole = z.infer<typeof WorkspaceInvitationRoleSchema>;
 export type ClientFeatureFlags = z.infer<typeof ClientFeatureFlagsSchema>;
+export type ProductFeatureFlagKey = z.infer<typeof ProductFeatureFlagKeySchema>;
+export type ProductFeatureFlagFanoutMessage = z.infer<typeof ProductFeatureFlagFanoutMessageSchema>;
 export type Workstream = z.infer<typeof WorkstreamSchema>;
 export type WorkstreamDetail = z.infer<typeof WorkstreamDetailSchema>;
 export type WorkstreamBoot = z.infer<typeof WorkstreamBootSchema>;

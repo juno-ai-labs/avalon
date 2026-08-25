@@ -2,7 +2,7 @@ import type { DesktopSettingsSection } from './settings';
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
 import type { ThemeChoice } from './themes';
 import type { MessageExportRequest, MessageExportResult } from './message-export';
-import type { TelemetryEventProperties } from '@avalon/contracts';
+import type { ClientFeatureFlags, TelemetryEventProperties } from '@avalon/contracts';
 
 export type AvalonRegion = 'global' | 'eu';
 
@@ -378,4 +378,6 @@ export interface AvalonDesktopBridge {
   consumePendingDeepLinks: () => Promise<DesktopDeepLinkNavigation[]>;
   onDeepLink: (listener: (navigation: DesktopDeepLinkNavigation) => void) => () => void;
   onSessionChanged: (listener: (session: DesktopSession | null) => void) => () => void;
+  /** Mirrors a signed server answer into main-process-only surfaces such as the menu bar. */
+  observeClientFeatureFlags: (flags: ClientFeatureFlags) => Promise<void>;
 }

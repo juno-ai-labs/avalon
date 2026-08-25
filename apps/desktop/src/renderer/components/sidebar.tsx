@@ -58,6 +58,8 @@ interface SidebarProps {
   /** Ask for the next page. Called when the scroll approaches the bottom. */
   onLoadMoreWorkstreams?: () => void;
   loading?: boolean;
+  meetingRecordingAvailable?: boolean;
+  automationWorkspaceTemplatesAvailable?: boolean;
   onArchiveDraftAutomation: (automation: AutomationSummary) => Promise<void>;
   onArchiveNote: (note: NoteSummary) => Promise<void>;
   onChangeNoteScope: (note: NoteSummary, scope: 'personal' | 'workspace') => Promise<void>;
@@ -298,12 +300,14 @@ function useOpenDraftId(): string | null {
 
 function AutomationRow({
   automation,
+  automationWorkspaceTemplatesAvailable,
   debugEnabled,
   onArchiveDraft,
   onDelete,
   onRunNow,
 }: {
   automation: AutomationSummary;
+  automationWorkspaceTemplatesAvailable: boolean;
   debugEnabled: boolean;
   onArchiveDraft: (automation: AutomationSummary) => void;
   onDelete: (automation: AutomationSummary) => void;
@@ -345,9 +349,11 @@ function AutomationRow({
           >
             <Play aria-hidden="true" size={16} /> Run now
           </ContextMenu.Item>
-          <ContextMenu.Item className="menu-item">
-            <FileStack aria-hidden="true" size={16} /> Turn into template
-          </ContextMenu.Item>
+          {automationWorkspaceTemplatesAvailable && (
+            <ContextMenu.Item className="menu-item">
+              <FileStack aria-hidden="true" size={16} /> Turn into template
+            </ContextMenu.Item>
+          )}
           {debugEnabled && (
             <CopyResourceIdItem
               contentType="automation_id"
@@ -757,6 +763,8 @@ export function Sidebar({
   notes = [],
   workstreams,
   loading,
+  meetingRecordingAvailable = false,
+  automationWorkspaceTemplatesAvailable = false,
   onArchiveDraftAutomation,
   onArchiveNote,
   onChangeNoteScope,
@@ -1349,10 +1357,12 @@ export function Sidebar({
               <Plus aria-hidden="true" size={15} />
               <span>New automation</span>
             </NavLink>
-            <button className="sidebar-action" onClick={() => void onOpenMeetingNotes()} type="button">
-              <Mic2 aria-hidden="true" size={15} />
-              <span>New meeting/notes</span>
-            </button>
+            {meetingRecordingAvailable && (
+              <button className="sidebar-action" onClick={() => void onOpenMeetingNotes()} type="button">
+                <Mic2 aria-hidden="true" size={15} />
+                <span>New meeting/notes</span>
+              </button>
+            )}
           </div>
 
           <section className="sidebar-section" aria-labelledby="automations-heading">
@@ -1368,6 +1378,7 @@ export function Sidebar({
                 {orderedAutomations.map((automation) => (
                   <AutomationRow
                     automation={automation}
+                    automationWorkspaceTemplatesAvailable={automationWorkspaceTemplatesAvailable}
                     debugEnabled={debugEnabled}
                     key={automation.id}
                     onArchiveDraft={(target) => {
