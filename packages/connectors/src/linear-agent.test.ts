@@ -127,7 +127,7 @@ describe("Linear native agent protocol", () => {
       agentActivityId: ACTIVITY_ID,
     });
     expect(executeGraphql).toHaveBeenCalledWith(
-      expect.stringContaining("agentActivityCreate"),
+      expect.stringContaining("RallyLinearAgentActivityCreate"),
       { input: activity },
       undefined,
     );
@@ -171,7 +171,7 @@ describe("Linear native agent protocol", () => {
       reactionId: REACTION_ID,
     });
     expect(executeGraphql).toHaveBeenCalledWith(
-      expect.stringContaining("reactionCreate"),
+      expect.stringContaining("RallyLinearAgentAcknowledge"),
       { input: acknowledgement },
       context.signal,
     );
@@ -242,6 +242,8 @@ describe("Linear native agent protocol", () => {
         { content: "Implement the change", status: "inProgress" },
       ] },
     });
+    expect(executeGraphql.mock.calls[0]?.[0]).toContain("RallyLinearAgentSessionUpdate");
+    expect(executeGraphql.mock.calls[1]?.[0]).toContain("RallyLinearAgentSessionUpdate");
   });
 
   it("creates proactive sessions on issues through the same runtime-only protocol", async () => {
@@ -254,7 +256,7 @@ describe("Linear native agent protocol", () => {
       issueId: "AVA-42",
       externalUrls: [{ label: "Open in Avalon", url: "https://with-avalon.com/workstreams/abc" }],
     })).resolves.toEqual({ success: true, agentSessionId: SESSION_ID, status: "pending" });
-    expect(executeGraphql.mock.calls[0]?.[0]).toContain("agentSessionCreateOnIssue");
+    expect(executeGraphql.mock.calls[0]?.[0]).toContain("RallyLinearAgentSessionCreate");
   });
 
   it("treats GraphQL errors on HTTP 200 as provider failures", async () => {

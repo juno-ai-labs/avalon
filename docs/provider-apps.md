@@ -170,6 +170,23 @@ webhook URL `https://linear.rallywith.ai/ingest/linear`. It is the
 production-safe resource configuration and intentionally does not subscribe to
 `AgentSessionEvent` or `AppUserNotification`.
 
+The existing production registration keeps its client ID, client secret, signing
+secret, installation base, scopes, and event selections. Its public registration
+must match this table:
+
+| Setting | Value |
+| --- | --- |
+| Name | Rally |
+| Developer | Juno AI Labs |
+| Developer URL | `https://rallywith.ai` |
+| Description | Match `display.description` in [`linear.json`](../config/provider-apps/linear.json) |
+| Redirect URIs | Both `rallywith.ai` callbacks followed by both `with-avalon.com` compatibility callbacks from `linear.json` |
+| Webhook URL | `https://linear.rallywith.ai/ingest/linear` |
+| Publicly available | Enabled |
+
+The compatibility callbacks remain registered during the domain migration. Do
+not create a second app or rotate credentials for this public-identity change.
+
 Rally uses Authorization Code with PKCE S256. The same public app requests
 `actor=user` for a personal, owner-only connection and `actor=app` for a workspace
 connection whose capabilities roll down to every Rally workspace member. The
@@ -193,8 +210,10 @@ personal token before creating an owner-only activity.
 Store the same client ID, client secret, and webhook signing secret in both
 regional Workers. `linear-native-agent.preview.json` is a later configuration
 snapshot for that **same app**, applied only after the native-session acceptance
-gate passes. [`linear-integration.md`](linear-integration.md) owns the protocol,
-surface model, event matrix, and that gate.
+gate passes—not a separate preview registration. Its Rally name and description
+already match the live app; its preview-only scopes and events remain unapplied
+until that gate passes. [`linear-integration.md`](linear-integration.md) owns the
+protocol, surface model, event matrix, and that gate.
 
 ### Notion public connection
 
@@ -205,6 +224,10 @@ MCP OAuth discovery and dynamic client registration for each authorization,
 with PKCE and the shared
 `https://notion.rallywith.ai/connections/notion/callback` redirect. The DCR
 client and rotating credentials are encrypted in the member's owning region.
+New dynamic registrations identify the OAuth client as `Rally`, and every new
+hosted-MCP session sends `clientInfo.name = "Rally"`. Existing encrypted DCR
+client IDs, refresh tokens, and connection records remain valid; they are reused
+until the provider itself requires a new registration or authorization.
 The public connection below is still required for the separate workspace bot
 and webhook mode. The API registers personal Notion even when the public client
 ID and secret are absent; attempting workspace authorization in that state fails
@@ -254,6 +277,13 @@ Notion's **Verify subscription** dialog. Neither command prints the nonce, URL,
 or verification token. The copy command refuses until the encrypted row is linked
 to the current consumed nonce and its plaintext hash matches that nonce's token
 binding. The token then signs every later `X-Notion-Signature`.
+
+Notion does not allow an existing subscription's URL to be edited. To move an
+active compatibility-host subscription, first prepare the fresh Rally URL, then
+delete and recreate the subscription with the same API version and event
+selection, and complete the verification flow above. The compatibility ingress
+remains served until that cutover; deleting first without a prepared URL creates
+an avoidable delivery gap.
 
 ### Slack app
 
@@ -402,6 +432,31 @@ repository. What can be:
   what this document says. A change here that is not exercised there is unverified.
 
 ## Changelog
+
+### 2026-08-25 — Linear and Notion registrations moved without new app identities
+
+**What changed:** The registration guide now records the live Rally identity for
+the existing Linear app and Notion public connection. Linear keeps both legacy
+callbacks while its canonical webhook and public metadata move to Rally. New
+Notion hosted-MCP dynamic registrations and sessions identify as Rally. Moving an
+active Notion webhook is documented as a prepared delete-and-recreate cutover
+because Notion makes the subscription URL immutable.
+
+**Why:** Provider dashboards, consent screens, and request logs were still
+publishing Avalon even though the product and canonical ingress hosts are Rally.
+The identity update must not be mistaken for authority to rotate credentials,
+replace existing installations, or drop compatibility callbacks.
+
+**Considered and rejected:** Creating new Linear or Notion apps. That would split
+installations, credentials, webhook delivery, and OAuth state for a cosmetic
+rename. Deleting the Notion webhook before preparing its one-use setup URL was
+also rejected because it lengthens the delivery gap with no benefit.
+
+**Consequences:** Existing OAuth grants and encrypted hosted-MCP credentials stay
+valid. Linear may be edited in place. Notion's public metadata may be edited in
+place, but its webhook host changes only through the explicit recreate and
+verification flow. The reasoning behind provider-app decisions before the
+existing changelog began was not reconstructed.
 
 ### 2026-08-25 — The GitHub App registration became Rally With AI
 

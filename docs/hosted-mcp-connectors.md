@@ -94,6 +94,13 @@ add, remove, or reshape a tool without a Rally release. Execution opens a new
 session and lists tools before `tools/call`; a tool removed between activation
 and use therefore fails closed instead of forwarding an unadvertised name.
 
+Rally is the client identity at both protocol boundaries: dynamic OAuth client
+registration defaults `client_name` to `Rally`, and MCP initialization sends
+`clientInfo.name = "Rally"`. Provider adapters may override DCR metadata only
+when a provider contract requires it. Existing encrypted client registrations
+and tokens are not rewritten; the default applies when registering a new client,
+while every newly opened MCP session uses the Rally initialization identity.
+
 ### Current scope splits
 
 | Provider | Personal connection | Workspace connection |
@@ -238,6 +245,30 @@ current `tools/list` response when a formerly working prompt loses a tool—do n
 patch a historical snapshot into Rally.
 
 ## Changelog
+
+### 2026-08-25 — The Rally client identity is pinned as one hosted-MCP contract
+
+**What changed:** The broader agent-identity cut-over in #301 changed dynamic
+client registration and MCP initialization from Avalon to Rally. This follow-up
+uses shared name/version constants for those two boundaries and adds exact tests
+for both. The identity is shared across Granola, Slack, and Notion hosted-MCP
+sessions; only a provider-specific declaration can override DCR metadata.
+
+**Why:** Duplicated, unasserted identity literals could let authorization records
+and active-session logs drift back to two names even after the runtime rename.
+One constant and assertions at both protocol boundaries make that drift fail the
+connector suite.
+
+**Considered and rejected:** Re-registering every stored OAuth client or forcing
+every member to reconnect. Existing provider-issued client IDs and refresh tokens
+remain valid and contain authority that a display-name change does not justify
+discarding.
+
+**Consequences:** New dynamic registrations and new MCP sessions display Rally.
+Existing encrypted credentials continue to refresh normally, so the change does
+not rotate secrets or revoke connections.
+
+Shipped in #307; the runtime rename first landed in #301.
 
 ### 2026-08-16 — The remote-schema repair defers to the sanitizer
 
