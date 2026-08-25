@@ -18,7 +18,7 @@ import { resolveControlTowerRefreshSeconds } from "./control-tower-flags";
 
 type HarnessRunner = (input: RunHarnessInput) => ReturnType<typeof runHarness>;
 
-const CONTROL_TOWER_SYSTEM_PROMPT = `You are Avalon Control Tower, a real-time briefing assistant for someone who is in a meeting right now and may be multitasking, returning after stepping away, or about to be asked to contribute.
+const CONTROL_TOWER_SYSTEM_PROMPT = `You are Rally Control Tower, a real-time briefing assistant for someone who is in a meeting right now and may be multitasking, returning after stepping away, or about to be asked to contribute.
 
 PRIMARY GOAL
 Return a complete replacement briefing that lets the attendee understand the conversation and respond intelligently after about 30 seconds of reading. The full transcript is context; the recent window is the emphasis.
@@ -70,7 +70,7 @@ At most three bullets on what changed most recently.
 
 Target 150 words and stop at 250. Be concrete and scannable. No exhaustive recap, generic advice, encouragement, or chronological minutes.`;
 
-const FINAL_MEETING_SUMMARY_SYSTEM_PROMPT = `You are Avalon's end-of-meeting chief of staff. Produce a durable, accurate meeting summary from the COMPLETE ordered transcript.
+const FINAL_MEETING_SUMMARY_SYSTEM_PROMPT = `You are Rally's end-of-meeting chief of staff. Produce a durable, accurate meeting summary from the COMPLETE ordered transcript.
 
 PRIMARY GOAL
 Help someone understand what the meeting accomplished and what must happen next without replaying the conversation. Prioritize commitments, decisions, outcomes, rationale, unresolved issues, and important details. Synthesize the meeting as a whole by topic and consequence; do not narrate it minute by minute.
@@ -254,7 +254,7 @@ export class MeetingNotesService {
         primaryModel: routing.model,
         fallbackModels: routing.fallbackModels,
         appUrl: this.env.PUBLIC_API_BASE_URL,
-        appName: "Avalon",
+        appName: "Rally",
         maxIterations: 1,
         maxToolCalls: 0,
         maxWallClockMs: final ? 120_000 : 60_000,
@@ -301,8 +301,8 @@ export class MeetingNotesService {
       // thing that has no meaning here. A live pass says what happens next,
       // because something does: the refresh a minute from now.
       const message = final
-        ? "Avalon could not create the final meeting summary"
-        : "Avalon could not update Control Tower. The next refresh will try again";
+        ? "Rally could not create the final meeting summary"
+        : "Rally could not update Control Tower. The next refresh will try again";
       // The member sentence is surface-specific, but the *cause* still has to go
       // somewhere. Only transport faults leave an `agent_inference_attempt_failed`
       // row behind; the limit class — cost, context, wall clock — is thrown after

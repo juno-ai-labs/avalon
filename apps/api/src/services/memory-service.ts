@@ -349,7 +349,7 @@ async function embedQuery(env: Env, query: string): Promise<number[]> {
   if (!env.AI) throw new Error("memory_embedding_binding_unavailable");
   const output = await env.AI.run(MEMORY_EMBEDDING_MODEL, {
     queries: [query],
-    instruction: "Retrieve durable facts and preferences relevant to the current Avalon task.",
+    instruction: "Retrieve durable facts and preferences relevant to the current Rally task.",
   });
   const embedding = output.data?.[0];
   if (!embedding?.length) throw new Error("memory_query_embedding_empty");

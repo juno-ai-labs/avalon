@@ -296,7 +296,7 @@ export function createTerminalRepositorySelector(
       if (!replaced) {
         throw new TerminalToolError(
           "sandbox_busy",
-          "The Terminal workspace changed while its repository was being replaced. Retry checkout so Avalon can reconcile the current sandbox generation.",
+          "The Terminal workspace changed while its repository was being replaced. Retry checkout so Rally can reconcile the current sandbox generation.",
           { reason: "Retry repository checkout against the current Terminal workspace generation." },
         );
       }

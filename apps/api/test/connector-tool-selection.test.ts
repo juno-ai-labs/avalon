@@ -809,7 +809,7 @@ describe("connector tools selected for harness runs", () => {
     // The files plugin's examples are checked against its schemas too, so an
     // example cannot outlive the parameter it demonstrates.
     expect(drive?.systemMessage).toContain("Worked examples:");
-    expect(drive?.systemMessage).toContain("writableByAvalon");
+    expect(drive?.systemMessage).toContain("writableByRally");
     expect(workedExampleCallsAgainstSchemas({
       modelId: drive!.modelId,
       systemMessage: drive!.systemMessage,
@@ -823,7 +823,7 @@ describe("connector tools selected for harness runs", () => {
     expect(drive?.searchAliases).toEqual(expect.arrayContaining(["drive", "files", "docs", "sheets"]));
     expect(drive?.systemMessage).toContain("use the Drive search tool");
     expect(drive?.systemMessage).toContain("do not substitute public web search");
-    expect(drive?.systemMessage).toContain("writableByAvalon=true");
+    expect(drive?.systemMessage).toContain("writableByRally=true");
     expect(drive?.systemMessage).not.toContain("Gmail search");
     expect(drive?.tools.map((tool) => tool.definition.name)).toEqual(GOOGLE_WORKSPACE_TOOLS);
   });

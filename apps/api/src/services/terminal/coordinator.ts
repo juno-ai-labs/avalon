@@ -262,7 +262,7 @@ export class TerminalSandboxCoordinator {
       if (row.sandboxId) await this.provider.stopSandbox(row.sandboxId).catch(() => undefined);
       throw new TerminalToolError(
         "network_policy_unverified",
-        "The workspace Terminal network policy changed during sandbox startup. Avalon stopped the sandbox; retry after the new policy is verified.",
+        "The workspace Terminal network policy changed during sandbox startup. Rally stopped the sandbox; retry after the new policy is verified.",
         { reason: "Wait for the network-policy change to finish, then retry the same tool." },
       );
     }
@@ -602,8 +602,8 @@ export class TerminalSandboxCoordinator {
         });
         throw new TerminalToolError(
           "sandbox_unavailable",
-          "Daytona did not confirm sandbox creation. Retry the Terminal tool; Avalon will reconcile the stable sandbox name before creating another.",
-          { reason: "Retry once so Avalon can reconcile the stable sandbox name before creating another." },
+          "Daytona did not confirm sandbox creation. Retry the Terminal tool; Rally will reconcile the stable sandbox name before creating another.",
+          { reason: "Retry once so Rally can reconcile the stable sandbox name before creating another." },
         );
       }
     }
