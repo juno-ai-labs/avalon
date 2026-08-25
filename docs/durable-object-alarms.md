@@ -37,10 +37,12 @@ takes the earliest of both:
   with a due instant, an optional repeat interval, and its own retry gate. Use
   this when the thing being scheduled has an identity that can succeed or fail
   on its own: one automation, one resource watch, one agent timer.
-- **A derived instant** — `nextDerivedAlarmAt(now)`, computed from the object's
-  own tables. Use this when the due time already lives in a table with its own
-  writers and no separate identity is needed: an outbox's `MIN(not_before)`, the
-  oldest activity event plus its retention, an in-memory keep-alive lease.
+- **Derived instants** — `nextDerivedAlarmCandidates(now)`, computed from the
+  object's own tables. Use these when due times already live in tables with
+  their own writers and no separate identity is needed: each outbox's
+  `MIN(not_before)`, the oldest activity event plus its retention, an in-memory
+  keep-alive lease. Every independent lane is returned so an overdue one cannot
+  hide a real future deadline during the pre-work recovery arm.
 
 The rule of thumb: if it can fail in a way that should hold *it* back without
 holding anything else back, it is an entry. If it is "the earliest row in this
@@ -48,21 +50,23 @@ table", it is derived.
 
 ### Arming
 
-`armNextAlarm()` computes `min(store.nextDueAt(), nextDerivedAlarmAt(now))`,
-floors it at `now + 1`, and sets the alarm to exactly that — deleting the alarm
-outright when neither source has anything. It is *exact*, not lowering-only:
+`armNextAlarm()` computes the minimum across the store and every derived
+candidate, floors an overdue answer at `now + 1`, and sets the alarm to exactly
+that — deleting the alarm outright when neither source has anything. It is
+*exact*, not lowering-only:
 a helper that only ever pulls an alarm in cannot take one back when the row that
 justified it is cancelled, and cannot push one out when a target is deferred.
 It writes only when the value actually changes, so a re-arm that concludes
 nothing moved costs one `getAlarm`.
 
 The pre-work durability arm supplies one exception to that floor: a reason that
-is already due is parked at `now + SCHEDULED_ALARM_RETRY_BASE_MS` (one minute),
-while any genuinely future reason keeps its exact earlier instant. The source
-rows are not changed, so the parked alarm can rediscover work if the current
-continuation is cancelled; a normal completion replaces it with the exact
-post-work answer. This uses the retry horizon the module already owns rather
-than adding a second recovery timeout.
+is already due is parked at `now + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS`
+(two seconds), while any genuinely future reason keeps its exact earlier
+instant. The source rows are not changed, so the parked alarm can rediscover
+work if the current continuation is cancelled; a normal completion replaces it
+with the exact post-work answer. Two seconds mirrors Cloudflare's documented
+first retry for a thrown Durable Object alarm rather than inventing an
+Avalon-owned wait for the cancellation case the runtime cannot observe.
 
 **Every path that changes the list re-arms.** `scheduleAlarm`,
 `cancelScheduledAlarm`, `cancelScheduledAlarmKind`, and
@@ -84,13 +88,14 @@ before a full re-arm.
 2. **Re-arm for recovery** through `armAlarmBeforeDueWork()`, before anything
    awaited. A cancelled invocation neither throws nor runs a `finally`, so an
    object that re-arms only at the end of its handler can be left with no
-   wake-up at all. Already-due work is parked one retry horizon out instead of
-   at the next millisecond, avoiding a second immediately due alarm while this
-   invocation is still running; a real future deadline earlier than that wins.
+   wake-up at all. Already-due work is parked one recovery horizon out instead
+   of at the next millisecond, avoiding a second immediately due alarm while
+   this invocation is still running; a real future deadline earlier than that
+   wins.
 3. Ask `scheduledAlarmDeferral(now)` whether the whole alarm should be held —
    the regional-authority gate. A deferral sets the alarm *outright* to the
-   recheck instant, because the re-arm in step 2 usually points at an instant
-   already past.
+   recheck instant, because the recovery wake from step 2 can be earlier and
+   only moving the alarm out prevents re-entry while the region stays closed.
 4. Drain every entry whose effective instant had come **as of the instant this
    alarm started**, up to `SCHEDULED_ALARM_DRAIN_LIMIT` (100), each through
    `runScheduledAlarm(entry)`. The instant is snapshotted rather than re-read
@@ -195,10 +200,10 @@ derived source has no way to carry that distinction.
 
 - **An object never derives its alarm outside this base.** A second derivation
   of "the earliest thing" will disagree with the base's, and the disagreement
-  shows up as work that silently never runs. Three call sites do still arm
-  directly, and all three are deliberate. `SubstreamAgent.armAlarmDuringRunDrain`
-  is the base's own hook and is described under *Firing*: the run lane is the one
-  derived reason whose worker is this alarm. `enqueueAgentRun` and
+  shows up as work that silently never runs. `SubstreamAgent.armAlarmDuringRunDrain`
+  uses the base with an explicit candidate override described under *Firing*:
+  the run lane is the one derived reason whose worker is this alarm. Two call
+  sites do still arm directly, and both are deliberate. `enqueueAgentRun` and
   `WorkstreamObjectStore.enqueueRegionalEffect` each set an *immediate* alarm
   the instant they commit durable work, so an isolate that dies before the full
   re-arm cannot strand it. Both can only pull the alarm in, never push it out,
@@ -331,8 +336,8 @@ time moved, go reconcile" entry points.
   runtime retries a thrown handler six times with its own backoff. Independently,
   because step 2 re-arms before any awaited work, a throw or cancellation after
   that point still leaves a wake-up armed. Already-due work is rediscovered no
-  later than the one-minute recovery horizon unless an earlier real deadline
-  wakes the object first.
+  later than Cloudflare's two-second first-retry horizon unless an earlier real
+  deadline wakes the object first.
 
 ## Data model
 
@@ -406,10 +411,12 @@ a failing target a free immediate attempt.
 ### 2026-08-24 — The durability re-arm is a recovery wake, not an immediate duplicate
 
 **What changed:** The base pre-work arm now maps only already-due stored or
-derived reasons to the existing one-minute retry horizon. A genuinely future
-reason keeps its exact earlier deadline, and the post-work arm still replaces
-the recovery wake with the exact next answer. `SubstreamAgent` keeps its
-run-drain-specific heartbeat arm.
+derived reasons to Cloudflare's documented two-second first alarm-retry
+horizon. A genuinely future reason keeps its exact earlier deadline, and the
+post-work arm still replaces the recovery wake with the exact next answer.
+Derived reasons are exposed as separate candidates so an overdue lane cannot
+hide a future one. `SubstreamAgent` routes its run-drain-specific candidate set
+through the same arming logic, including stored timers after the overdue head.
 
 **Why:** During an alarm handler Cloudflare reports no armed alarm until the
 handler calls `setAlarm` again. The old exact pre-arm therefore saw the row the
@@ -426,13 +433,18 @@ does not throw or reach a `finally`, so an object that arms only after work can
 lose its sole wake while its source rows still say work is due. Applying a
 minimum delay to every `armNextAlarm` call was also rejected because overflow
 and work that becomes due during a slow handler need the exact immediate
-post-work wake.
+post-work wake. Reusing the scheduler's one-minute handler-failure backoff was
+also rejected: cancellation recovery is a separate wait, and this repository
+does not choose such bounds by analogy. Cloudflare's published first alarm
+retry supplies the platform value instead.
 
-**Consequences:** Cancellation recovery is bounded by the scheduler's existing
-first retry horizon rather than one millisecond, unless a real future deadline
+**Consequences:** Cancellation recovery is bounded by Cloudflare's two-second
+first-retry horizon rather than one millisecond, unless a real future deadline
 wakes the object sooner. Recovery does not increment an entry's failure attempt
 or mutate its retry gate. Future changes must preserve both halves: arm before
-the first await, but do not re-arm already-serviced work immediately.
+the first await, but do not re-arm already-serviced work immediately, and do
+not collapse independent derived lanes before classifying them as overdue or
+future.
 
 ### 2026-08-24 — Scheduler idempotency is not a member-facing directory read
 

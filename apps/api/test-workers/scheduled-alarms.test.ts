@@ -13,10 +13,14 @@ import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts"
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { substreamAgentName, workspaceDOName } from "../src/durable-objects/names";
 import {
+  substreamAgentName,
+  workspaceDOName,
+  workstreamDOName,
+} from "../src/durable-objects/names";
+import {
+  SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
   SCHEDULED_ALARM_DRAIN_LIMIT,
-  SCHEDULED_ALARM_RETRY_BASE_MS,
   ScheduledAlarmStore,
   scheduledAlarmRetryDelay,
   type ScheduledAlarm,
@@ -24,6 +28,7 @@ import {
   type ScheduledAlarmRun,
 } from "../src/durable-objects/scheduled-alarms";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import type { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import { workstreamRegionalEffectHash } from "../src/durable-objects/workstream-regional-effect";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000a1");
@@ -46,13 +51,14 @@ interface AlarmScheduling {
   cancelScheduledAlarm(kind: string, key: string): Promise<boolean>;
   armNextAlarm(): Promise<number | null>;
   armAlarmBeforeDueWork(now: number): Promise<unknown>;
+  armAlarmDuringRunDrain(now: number): Promise<void>;
   drainDueScheduledAlarms(now: number): Promise<ScheduledAlarmRun[]>;
   gateStalledScheduledAlarms(ran: readonly ScheduledAlarmRun[], now: number): void;
   runScheduledAlarm(alarm: ScheduledAlarm): Promise<ScheduledAlarmOutcome>;
   onScheduledAlarmStalled(alarm: ScheduledAlarm, attempt: number): void;
 }
 
-function scheduling(instance: WorkspaceDO): AlarmScheduling {
+function scheduling(instance: unknown): AlarmScheduling {
   return instance as unknown as AlarmScheduling;
 }
 
@@ -166,7 +172,9 @@ describe("the shared Durable Object alarm list", () => {
       // later wake recovers a cancelled continuation. The old exact pre-arm
       // used `now + 1`, creating a second alarm invocation that the successful
       // handler's final re-arm immediately replaced and Cloudflare cancelled.
-      expect(await state.storage.getAlarm()).toBe(now + SCHEDULED_ALARM_RETRY_BASE_MS);
+      expect(await state.storage.getAlarm()).toBe(
+        now + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
+      );
       expect(store.get("schedule", "overdue")?.dueAt).toBe(now - 60_000);
     });
   });
@@ -177,9 +185,67 @@ describe("the shared Durable Object alarm list", () => {
     await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
       const store = new ScheduledAlarmStore(state.storage.sql);
       const now = Date.now();
-      const future = now + SCHEDULED_ALARM_RETRY_BASE_MS / 2;
+      const future = now + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS / 2;
       store.schedule({ kind: "schedule", key: "overdue", dueAt: now - 60_000 }, now);
       store.schedule({ kind: "schedule", key: "future", dueAt: future }, now);
+
+      await scheduling(instance).armAlarmBeforeDueWork(now);
+
+      expect(await state.storage.getAlarm()).toBe(future);
+    });
+  });
+
+  it("parks an overdue workspace retention sweep instead of normalizing it to now", async () => {
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO workspace_activity_events
+           (event_id, event_type, subject_type, subject_id, subject_sequence_number,
+            actor_type, actor_user_id, actor_label, title, body, canonical_url,
+            audience_kind, audience_user_id, audience_workstream_id, digestible,
+            occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json)
+         VALUES ('expired-retention', 'test', 'workspace', NULL, NULL,
+                 'system', NULL, '', 'Expired', '', NULL,
+                 'workspace', NULL, NULL, 0,
+                 0, 0, 'test', NULL, 'expired-retention', '{}')`,
+      );
+      const now = Date.now();
+
+      await scheduling(instance).armAlarmBeforeDueWork(now);
+
+      expect(await state.storage.getAlarm()).toBe(
+        now + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
+      );
+    });
+  });
+
+  it("keeps a future WorkstreamDO lane visible behind an overdue derived lane", async () => {
+    const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await stub.fetch("https://workstream.test/health");
+
+    await runInDurableObject(stub, async (instance: WorkstreamDO, state) => {
+      const now = Date.now();
+      const future = now + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS / 2;
+      state.storage.sql.exec(
+        `INSERT INTO block_dashboard_source_refresh_outbox
+           (id, trigger_sequence, attempts, not_before, created_at, updated_at)
+         VALUES (1, 1, 0, ?, ?, ?)`,
+        now - 60_000,
+        now,
+        now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO durable_outbox
+           (message_id, partition_key, source_version, source_epoch, effect_kind,
+            payload_json, payload_hash, state, attempts, not_before, created_at)
+         VALUES ('future-effect', 'common', 1, 1, 'directory_common',
+                 '{}', 'future-effect-hash', 'pending', 0, ?, ?)`,
+        future,
+        now,
+      );
 
       await scheduling(instance).armAlarmBeforeDueWork(now);
 
@@ -761,6 +827,33 @@ describe("a workspace's schedule", () => {
 });
 
 describe("an agent's own wake-ups", () => {
+  it("keeps a future timer visible behind an overdue timer during a run drain", async () => {
+    await seedOpenAuthority();
+    const agent = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await agent.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    });
+
+    await runInDurableObject(agent, async (instance, state) => {
+      const now = Date.now();
+      const future = now + 1_000;
+      const store = new ScheduledAlarmStore(state.storage.sql);
+      store.schedule({ kind: "agent_timer", key: "overdue", dueAt: now - 60_000 }, now);
+      store.schedule({ kind: "agent_timer", key: "future", dueAt: future }, now);
+
+      await scheduling(instance).armAlarmDuringRunDrain(now);
+
+      // The drain-owned recovery wake is later than this real future timer.
+      // Collapsing the stored list to its overdue minimum used to floor the
+      // result at `now + 1` and hide this deadline.
+      expect(await state.storage.getAlarm()).toBe(future);
+    });
+  });
+
   it("indexes every pending wake-up so one alarm can fire them all", async () => {
     await seedOpenAuthority();
     const agent = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
