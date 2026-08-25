@@ -31,7 +31,7 @@ export async function createR2ReleaseLockClient({
       response.ok
       && body?.success === true
       && body.result?.status === 'active'
-      && /^[0-9a-f]{32}$/u.test(body.result?.id)
+      && /^[0-9a-f]{32}$/iu.test(body.result?.id)
     ) {
       tokenId = body.result.id;
       break;
@@ -71,8 +71,9 @@ export async function withR2ReleaseLock({
   owner = randomUUID(),
   reportCleanupFailure = console.error,
 }) {
+  let lockEtag;
   try {
-    await client.send(new PutObjectCommand({
+    const acquired = await client.send(new PutObjectCommand({
       Body: owner,
       Bucket: bucket,
       CacheControl: 'no-store',
@@ -80,6 +81,10 @@ export async function withR2ReleaseLock({
       IfNoneMatch: '*',
       Key: key,
     }));
+    if (typeof acquired.ETag !== 'string' || acquired.ETag.length === 0) {
+      throw new Error('R2 did not return an ETag for the acquired lock');
+    }
+    lockEtag = acquired.ETag;
   } catch (error) {
     if (isConditionalConflict(error)) {
       const status = error?.$metadata?.httpStatusCode ?? 'unknown';
@@ -103,6 +108,19 @@ export async function withR2ReleaseLock({
 
   let releaseError;
   try {
+    // R2 does not support conditional DeleteObject. First replace this owner's
+    // generation with a tombstone under If-Match, then delete it. If an
+    // operator recovered the lock and another publisher acquired it while this
+    // process was paused, the conditional replacement fails and this owner can
+    // never delete the newer generation.
+    await client.send(new PutObjectCommand({
+      Body: `released:${owner}`,
+      Bucket: bucket,
+      CacheControl: 'no-store',
+      ContentType: 'text/plain; charset=utf-8',
+      IfMatch: lockEtag,
+      Key: key,
+    }));
     await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
   } catch (error) {
     releaseError = new Error(

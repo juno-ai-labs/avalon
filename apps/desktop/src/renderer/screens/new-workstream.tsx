@@ -7,6 +7,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import { formatRelative, workstreamMarkerStatus, workstreamNeedsAttention } from '../lib/format';
+import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
 import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
@@ -37,8 +38,6 @@ interface CreateWorkstreamInput {
    */
   startedAt: string;
 }
-
-const PERSON_MENTION_TYPE = 'Person';
 
 /**
  * What the screen shows between pressing enter and the work stream existing.
