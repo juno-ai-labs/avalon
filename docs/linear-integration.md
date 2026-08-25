@@ -287,9 +287,28 @@ Before applying for Linear Integration Directory review:
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
-the decisions above — beyond the reasons already written inline, and beyond
-Linear's own published contracts, which are linked rather than reproduced — was not
-recorded here and was not reconstructed. The next substantial change to the Linear
-integration starts the record, and that entry is that change, written in full.
+### 2026-08-25 — The provider manifest completed Linear's Rally identity cut-over
+
+**What changed:** Both checked-in manifests and the live production registration
+now publish Rally descriptions and client names. The broader agent-identity
+cut-over in #301 had already changed the native-agent capability and all 24
+resource and agent GraphQL operation names; this follow-up adds exact assertions
+for those provider-visible names. The same production app, callbacks, scopes,
+webhook resource events, client credentials, and signing secret remain in place.
+
+**Why:** Linear exposes the manifest identity to installers and GraphQL operation
+names in its request logs. Leaving either surface on Avalon made one integration
+present two product identities even after its canonical webhook host moved.
+
+**Considered and rejected:** Creating a replacement Linear app or changing the
+OAuth/event contract alongside the rename. Either would introduce new authority,
+installation, and delivery behavior unrelated to the public-identity correction.
+
+**Consequences:** Existing authorizations and webhook routing remain valid, and
+the four compatibility/canonical callbacks continue to cover the domain migration.
+The preview manifest remains a later update to that same app rather than a second
+registration, and its preview-only scopes and events remain gated. The reasoning
+behind the integration before this entry, beyond the rationale already written
+inline, was not recorded or reconstructed.
+
+Shipped in #307; the runtime rename first landed in #301.
