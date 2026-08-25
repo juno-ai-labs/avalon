@@ -136,20 +136,13 @@ export async function withR2ReleaseLock({
   owner = randomUUID(),
   reportCleanupFailure = console.error,
 }) {
-  let lockEtag;
-  try {
-    const acquired = await acquireR2ReleaseLock({ bucket, client, key, owner });
-    if (typeof acquired.ETag !== 'string' || acquired.ETag.length === 0) {
-      throw new Error('R2 did not return an ETag for the acquired lock');
-    }
-    lockEtag = acquired.ETag;
-  } catch (error) {
-    if (isConditionalConflict(error)) {
-      throw lockHeldError({ bucket, error, key });
-    }
-    if (error instanceof Error && error.message.includes(`r2://${bucket}/${key}`)) throw error;
-    throw new Error(`Could not acquire the desktop release lock at r2://${bucket}/${key}`, { cause: error });
+  const acquired = await acquireR2ReleaseLock({ bucket, client, key, owner });
+  if (typeof acquired.ETag !== 'string' || acquired.ETag.length === 0) {
+    throw new Error(
+      `Could not acquire the desktop release lock at r2://${bucket}/${key}: R2 returned no ETag`,
+    );
   }
+  const lockEtag = acquired.ETag;
 
   let operationError;
   let operationFailed = false;
