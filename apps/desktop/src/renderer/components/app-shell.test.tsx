@@ -8,6 +8,7 @@ import {
   applyPinnedWorkstreamsIfCurrent,
   backgroundRealtimeWorkstreamIds,
   openWorkstreamId,
+  RUNNING_HARNESS_STATUSES,
   showsAutomation,
 } from './app-shell';
 
@@ -48,6 +49,24 @@ describe('openWorkstreamId', () => {
     expect(openWorkstreamId('/workstreams/new')).toBeNull();
     expect(openWorkstreamId('/automations/abc')).toBeNull();
     expect(openWorkstreamId(`/workstreams/${workstreamId}/settings`)).toBeNull();
+  });
+});
+
+describe('RUNNING_HARNESS_STATUSES', () => {
+  // Which states get a stop before the archive. Archiving takes away every
+  // surface that could stop a run afterwards — `authorize` refuses an archived
+  // work stream, so the stop route and the transcript both 404 — so a state
+  // missing from this set is a run left burning with nothing left to reach it.
+  it('covers every state that still has a run to stop', () => {
+    expect([...RUNNING_HARNESS_STATUSES].sort()).toEqual(['needs_input', 'running', 'scheduled']);
+  });
+
+  it('leaves the finished states alone, so an idle row costs no request', () => {
+    // `needs_input` is in the set rather than out of it: the run is parked for a
+    // person who cannot answer once the row is gone from their sidebar.
+    for (const status of ['completed', 'failed', 'stopped'] as const) {
+      expect(RUNNING_HARNESS_STATUSES.has(status)).toBe(false);
+    }
   });
 });
 
