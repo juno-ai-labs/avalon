@@ -1063,6 +1063,53 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-25 — The four system producers provision through the object
+
+**What changed:** `WorkstreamIdentityStorage.provision` is the operation the
+four system bootstrap batches become, reached from the Worker as
+`provisionWorkstreamObject`. The digest run service, the schedule executor, the
+activity consumer and the automation service no longer write `workstreams` or
+`workstream_participants` through the compatibility views; the automation
+service's opening message goes to the transcript port and its root run to the
+harness-run port, and the activity consumer's root run does too.
+
+**Why:** these were the last writers of `_runtime_workstreams` and
+`_runtime_workstream_participants` on a creation path, and every one of them
+was a batch that had to know things the object owns — that
+`next_sequence_number` is 2 when an opening message is coming, that
+`latest_attention_sequence_number` is 1, that a fifth `UPDATE` has to follow
+the insert to set `automation_run_id`. The transcript authority takes the
+sequence number and advances both counters itself, so no producer states them.
+
+Not folded into `WorkstreamObjectCreationService`: that is the member path and
+it requires an opening message, a first part and a first run. Three of these
+four producers create an empty work stream and two create no run at all, so
+sharing one entry would make each of that path's invariants conditional.
+
+Atomicity is what this trades, and it is worth naming. The routed batch was
+atomic across tables the object now owns separately — but it was never atomic
+with the regional `automation_runs` row beside it, which is why the
+compensation path in `createRun` exists at all. Three authoritative writes plus
+that same compensation is the guarantee the code already had, expressed where a
+failure is visible.
+
+One behaviour changes on purpose: the activity consumer's batch stamped
+`harness_status = 'running'` on a work stream whose only run it was inserting
+as `scheduled`. The provision writes `scheduled`, and the object moves itself
+to running when the run actually starts. The pre-stamp was a Worker's guess
+about a run that had not been dispatched yet, and a state the object can derive
+is not one a caller should assert.
+
+**What a future change has to respect:** `provision` is idempotent on replay,
+keyed on the bootstrap's own `runtime_bootstrap` reason code — a producer that
+dies between `bootstrapRuntimeAuthority` and this call retries both, and a
+second write would reset counters a first run may have advanced. Its email
+columns are `COALESCE`d rather than overwritten, because the digest and
+activity batches never named them and `email_route_status` is `NOT NULL`. And
+it is a storage class rather than statements inline in a service so the Node
+suite's agent double runs the real write; a double that modelled it would be
+the second implementation, and the model is what drifts.
+
 ### 2026-08-24 — The lifecycle-event migration is 24, and the fifth collision
 
 **What changed:** `runLifecycleAuthorityPromotion` is object schema migration

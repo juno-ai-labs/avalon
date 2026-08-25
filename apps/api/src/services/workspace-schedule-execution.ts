@@ -23,6 +23,7 @@ import {
   RegionSchema,
   WorkstreamWorkflowInputSchema,
   asWorkspaceId,
+  asWorkstreamId,
   type ConnectorPollWorkflowInput,
   type ExecutionPrincipal,
   type Workstream,
@@ -61,6 +62,7 @@ import { WorkstreamEmailRoutingService } from "./workstream-email-routing-servic
 import { reapSettledWorkspaceNotificationIntents } from "./workstream-regional-effect-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
+  provisionWorkstreamObject,
   workstreamExecutionEnvironment,
 } from "./workstream-runtime-database";
 import type { ScheduledAlarmOutcome } from "../durable-objects/scheduled-alarms";
@@ -672,40 +674,31 @@ async function startAutomation(
         workspaceId: schedule.workspace_id,
         workstreamId,
       });
-      await executionEnv.DB.batch([
-        executionEnv.DB.prepare(
-          `INSERT INTO workstreams (
-           id, workspace_id, title, objective, email_address, email_route_status, origin_type,
-           created_by_user_id, automation_subscription_id, automation_run_id,
-           planned_for, harness_status, last_activity_at, created_at, updated_at, archived_at,
-           model_override, scope
-         ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', ?6, ?7, NULL, ?8,
-                   'scheduled', ?9, ?9, ?9, NULL, ?10, 'personal')`,
-        ).bind(
-          workstreamId,
-          schedule.workspace_id,
-          source.template_name,
-          source.template_description || source.instructions,
-          emailRoute.emailAddress,
-          source.audience_user_id,
-          subscriptionId,
-          schedule.next_run_at,
-          timestamp,
-          // The automation's pin follows every run it produces, not only the
-          // ones `AutomationService.createRun` builds. `ensureHarnessRun`
-          // below resolves the model from this row, so copying it here is
-          // what makes a scheduled run honour the choice.
-          automationModelOverride(ctx.env, source.model_override, {
-            workspaceId: schedule.workspace_id,
-            automationSubscriptionId: subscriptionId,
-          }),
-        ),
-        executionEnv.DB.prepare(
-          `INSERT INTO workstream_participants
-             (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
-           VALUES (?1, ?2, ?2, 'creator', ?3, NULL)`,
-        ).bind(workstreamId, source.audience_user_id, timestamp),
-      ]);
+      await provisionWorkstreamObject(workspaceEnv, {
+        workspaceId: asWorkspaceId(schedule.workspace_id),
+        workstreamId: asWorkstreamId(workstreamId),
+        title: source.template_name,
+        objective: source.template_description || source.instructions,
+        scope: "personal",
+        originType: "automation",
+        createdByUserId: source.audience_user_id,
+        participantUserIds: [source.audience_user_id],
+        harnessStatus: "scheduled",
+        emailAddress: emailRoute.emailAddress,
+        emailRouteStatus: "reserved",
+        systemKind: null,
+        automationSubscriptionId: subscriptionId,
+        automationRunId: null,
+        plannedFor: Date.parse(schedule.next_run_at),
+        // The automation's pin follows every run it produces, not only the
+        // ones `AutomationService.createRun` builds. `ensureHarnessRun` below
+        // resolves the model from this row, so writing it here is what makes a
+        // scheduled run honour the choice.
+        modelOverride: automationModelOverride(ctx.env, source.model_override, {
+          workspaceId: schedule.workspace_id,
+          automationSubscriptionId: subscriptionId,
+        }),
+      });
     }
 
     const inserted = await workspaceEnv.DB.prepare(
