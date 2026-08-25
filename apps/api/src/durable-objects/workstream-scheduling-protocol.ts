@@ -43,6 +43,8 @@ const DISPATCHED_OPERATIONS = [
   "oldestOpenElicitation",
   "openElicitationCount",
   "elicitationExistsForRun",
+  "openElicitation",
+  "answerElicitationExternally",
 ] as const satisfies readonly SchedulingOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */

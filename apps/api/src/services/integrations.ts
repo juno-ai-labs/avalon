@@ -6726,16 +6726,6 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           context.providerIdempotencyKey,
         );
         const id = await coreWriteEntityId("elicitation", input, providerIdempotencyKey);
-        const existing = await createSchedulingObjectPort(env, input.workspaceId, input.workstreamId)
-          .elicitationExistsForRun({ elicitationId: id, runId: input.harnessRunId });
-        if (existing) {
-          return {
-            output: { elicitationId: id },
-            summary: "Requested human input",
-            providerOperationId: id,
-            halt: "needs_input" as const,
-          };
-        }
         const at = nowIso();
         const elicitation = {
           id, workstreamId: input.workstreamId, harnessRunId: input.harnessRunId,
@@ -6744,64 +6734,34 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           targetUserId: null, status: "open" as const, answer: null,
           answeredByUserId: null, createdAt: at, answeredAt: null,
         };
-        await env.DB.batch([
-          env.DB.prepare(
-            `INSERT INTO elicitations
-             (id, workspace_id, workstream_id, harness_run_id, prompt, response_type,
-              options_json, minimum_selections, maximum_selections, target_user_id,
-              status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
-             ON CONFLICT(id) DO NOTHING`,
-          ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId, args.prompt, args.responseType, JSON.stringify(args.options), args.minimumSelections, args.maximumSelections, null, at),
-          env.DB.prepare(
-            `INSERT INTO messages
-             (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-              message_type, text_content, structured_content_json, sequence_number, created_at, edited_at)
-             SELECT ?, ?, ?, w.id, 'agent', NULL, 'elicitation', '', ?, w.next_sequence_number, ?, NULL
-             FROM workstreams w
-             WHERE w.id = ? AND w.workspace_id = ?
-               AND EXISTS (
-                 SELECT 1 FROM elicitations e
-                 WHERE e.id = ? AND e.workstream_id = w.id AND e.workspace_id = w.workspace_id
-               )
-             ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
-          ).bind(
-            id,
-            `elicitation:${id}`,
-            input.workspaceId,
-            JSON.stringify({ kind: "elicitation", elicitation }),
-            at,
-            input.workstreamId,
-            input.workspaceId,
-            id,
-          ),
-          env.DB.prepare(
-            `UPDATE workstreams
-             SET next_sequence_number = next_sequence_number + 1,
-                 latest_attention_sequence_number = next_sequence_number,
-                 harness_status = 'needs_input', last_activity_at = ?, updated_at = ?
-             WHERE id = ? AND workspace_id = ?
-               AND EXISTS (
-                 SELECT 1 FROM messages
-                 WHERE id = ? AND workstream_id = ? AND workspace_id = ?
-               )
-               AND next_sequence_number = (
-                 SELECT sequence_number FROM messages
-                 WHERE id = ? AND workstream_id = ? AND workspace_id = ?
-               )`,
-          ).bind(
-            at,
-            at,
-            input.workstreamId,
-            input.workspaceId,
-            id,
-            input.workstreamId,
-            input.workspaceId,
-            id,
-            input.workstreamId,
-            input.workspaceId,
-          ),
-        ]);
+        // The replay check used to be a read of its own in front of the batch,
+        // because the batch could not both ask and act. It is the operation's
+        // first statement now, so a retried receipt is answered by the write
+        // that would have collided rather than by a read that might have raced
+        // it. The question is durable either way; only the event and the
+        // telemetry are skipped, because the first attempt already sent them.
+        const opened = await createSchedulingObjectPort(env, input.workspaceId, input.workstreamId)
+          .openElicitation({
+            elicitationId: id,
+            runId: input.harnessRunId,
+            prompt: args.prompt,
+            responseType: args.responseType,
+            optionsJson: JSON.stringify(args.options),
+            minimumSelections: args.minimumSelections,
+            maximumSelections: args.maximumSelections,
+            targetUserId: null,
+            messageId: id,
+            structuredContentJson: JSON.stringify({ kind: "elicitation", elicitation }),
+            now: Date.parse(at),
+          });
+        if (opened.outcome === "exists") {
+          return {
+            output: { elicitationId: id },
+            summary: "Requested human input",
+            providerOperationId: id,
+            halt: "needs_input" as const,
+          };
+        }
         await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, { type: "elicitation_created", elicitation });
         await emitProductUsageTelemetry(env, {
           workspaceId: input.workspaceId,

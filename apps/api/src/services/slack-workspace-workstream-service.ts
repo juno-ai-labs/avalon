@@ -25,10 +25,7 @@ import {
   attachWorkstreamOriginResource,
   type OriginResourceDescriptor,
 } from "./workstream-origin-resource";
-import {
-  bootstrapWorkstreamRuntimeEnvironment,
-  workstreamExecutionEnvironment,
-} from "./workstream-runtime-database";
+import { bootstrapWorkstreamRuntimeEnvironment } from "./workstream-runtime-database";
 
 const OpenElicitationRowSchema = z.object({
   id: z.string().min(1),
@@ -225,7 +222,6 @@ export class SlackWorkspaceWorkstreamService {
   }
 
   async answerOpenElicitation(workstreamId: string, input: SlackExternalMessageInput) {
-    const executionEnv = await workstreamExecutionEnvironment(this.env, this.workspaceId, workstreamId);
     const clientMessageId = input.clientMessageId.slice(0, 120);
     // The replay check only needs to know whether the row is there, so it reads
     // the row rather than a fully assembled message.
@@ -269,62 +265,24 @@ export class SlackWorkspaceWorkstreamService {
       createdAt: elicitation.created_at,
       answeredAt: at,
     };
-    const results = await executionEnv.DB.batch([
-      executionEnv.DB.prepare(
-        `UPDATE elicitations
-         SET status = 'answered', answer_json = ?, answered_by_user_id = NULL,
-             answered_by_external_actor_json = ?, answered_at = ?
-         WHERE id = ? AND workspace_id = ? AND workstream_id = ? AND status = 'open'`,
-      ).bind(
-        JSON.stringify(answer),
-        JSON.stringify(actor),
-        at,
-        elicitation.id,
-        this.workspaceId,
-        workstreamId,
-      ),
-      executionEnv.DB.prepare(
-        `INSERT INTO messages
-         (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-          message_type, text_content, structured_content_json, sequence_number, created_at,
-          external_actor_json)
-         SELECT ?, ?, ?, w.id, 'external', NULL, 'elicitation', '', ?,
-                w.next_sequence_number, ?, ?
-         FROM workstreams w
-         WHERE w.id = ? AND w.workspace_id = ?
-           AND EXISTS (
-             SELECT 1 FROM elicitations e
-             WHERE e.id = ? AND e.workspace_id = w.workspace_id AND e.workstream_id = w.id
-               AND e.status = 'answered' AND e.answered_at = ?
-               AND e.answered_by_external_actor_json = ?
-           )
-         ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
-      ).bind(
-        responseMessageId,
-        clientMessageId,
-        this.workspaceId,
-        JSON.stringify({ kind: "elicitation_response", elicitation: persistedElicitation }),
-        at,
-        JSON.stringify(actor),
-        workstreamId,
-        this.workspaceId,
-        elicitation.id,
-        at,
-        JSON.stringify(actor),
-      ),
-      executionEnv.DB.prepare(
-        `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1,
-           latest_attention_sequence_number = next_sequence_number,
-           last_activity_at = ?, updated_at = ?
-         WHERE id = ? AND workspace_id = ?
-           AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`,
-      ).bind(at, at, workstreamId, this.workspaceId, responseMessageId),
-    ]);
-    if (Number(results[0]?.meta.changes ?? 0) !== 1) {
+    const answered = await scheduling.answerElicitationExternally({
+      elicitationId: elicitation.id,
+      answerJson: JSON.stringify(answer),
+      externalActorJson: JSON.stringify(actor),
+      messageId: responseMessageId,
+      clientMessageId,
+      structuredContentJson: JSON.stringify({
+        kind: "elicitation_response",
+        elicitation: persistedElicitation,
+      }),
+      now: Date.parse(at),
+    });
+    // The routed batch fenced its update on `status = 'open'` and read
+    // `meta.changes` to find out whether it had won the race; losing it is an
+    // ordinary outcome, and the authority names it rather than reporting a
+    // row count for the caller to interpret.
+    if (answered.outcome === "already_answered") {
       throw new ApiError(409, "elicitation_already_answered", "This question was answered by someone else");
-    }
-    if (Number(results[1]?.meta.changes ?? 0) !== 1) {
-      throw new ApiError(500, "elicitation_response_write_failed", "The response could not be stored");
     }
     const remaining = await scheduling.openElicitationCount();
     const harnessRunId = remaining === 0
