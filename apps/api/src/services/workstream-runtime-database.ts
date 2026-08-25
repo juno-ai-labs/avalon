@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { substreamAgentName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
+import type { SubstreamRuntimeProvisionRequest } from "../durable-objects/substream-agent";
 import type { WorkstreamRuntimeSqlResult } from "../durable-objects/workstream-runtime-sql";
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import type { Env } from "../env";
@@ -464,6 +465,42 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
     throw new Error(typeof body?.error === "string" ? body.error : "workstream_runtime_bootstrap_failed");
   }
   return withWorkstreamRuntimeDatabase(env, workspaceId, workstreamId);
+}
+
+/**
+ * Write what a system-provisioned work stream is, on the object that owns it.
+ *
+ * The other half of {@link bootstrapWorkstreamRuntimeEnvironment}: that opens an
+ * empty authoritative object, and this says what the work stream is and who can
+ * see it. The four producers that create a work stream nobody typed into —
+ * automation, a schedule, an activity, a digest — used to write those rows as a
+ * routed batch against `_runtime_workstreams` and `_runtime_workstream_participants`.
+ *
+ * Not `WorkstreamObjectCreationService`, which is the member path: it requires
+ * an opening message and produces a first run, and three of these four have
+ * neither at creation time.
+ */
+export async function provisionWorkstreamObject(
+  env: Env,
+  input: SubstreamRuntimeProvisionRequest,
+): Promise<void> {
+  const stub = await durableObjectStubForWorkspace(
+    env,
+    env.SUBSTREAM_AGENTS,
+    input.workspaceId,
+    substreamAgentName(
+      env.AVALON_REGION,
+      asWorkspaceId(input.workspaceId),
+      asWorkstreamId(input.workstreamId),
+    ),
+  );
+  const response = await stub.provisionRuntime(input);
+  if (response.status < 200 || response.status >= 300) {
+    const body = rpcResultBody(response) as { error?: unknown } | null;
+    throw new Error(
+      typeof body?.error === "string" ? body.error : "workstream_provision_failed",
+    );
+  }
 }
 
 /** Escape hatch for an explicitly regional half of a cross-authority operation. */

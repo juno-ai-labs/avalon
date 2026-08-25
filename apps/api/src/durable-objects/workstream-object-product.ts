@@ -58,6 +58,7 @@ import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
 } from "../services/workspace-runtime-database";
+import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
 import type { WorkstreamObjectStore } from "./workstream-object-storage";
 
 type SqlRow = Record<string, SqlStorageValue>;
@@ -377,6 +378,63 @@ export class WorkstreamObjectProductService {
       input.generation,
       now,
       now,
+    );
+  }
+
+  /**
+   * The product half of a system producer's bootstrap.
+   *
+   * `bootstrapRuntimeAuthority` above opens an empty authoritative object; this
+   * writes what the work stream *is* — its title, its origin, its creator, and
+   * the members who can see it. Split that way because the two halves have
+   * different callers: the runtime bootstrap is reached by anything that needs
+   * an object at all, and this only by the four producers that create a work
+   * stream nobody typed into.
+   *
+   * Deliberately not `initialize`, which is the member path. That method
+   * requires an opening message and writes the first part, the first run and
+   * the creator's attention row, leaving `next_sequence_number` at 2. A work
+   * stream provisioned for an automation, a schedule or a digest has none of
+   * those yet — content arrives on its first run — so sharing one method would
+   * make every one of those invariants conditional, and a counter that is
+   * sometimes 1 and sometimes 2 is how the transcript's ordering breaks. It
+   * also keeps `initialize`'s `auth.userId === creatorUserId` check where it
+   * is rather than widening it to admit a system caller.
+   *
+   * Idempotent on replay: a producer that crashed between the runtime
+   * bootstrap and this call retries the whole pair, and the row is already
+   * authoritative by then. Re-running the write would reset counters a first
+   * run may already have advanced, so a root that has left `runtime_bootstrap`
+   * answers `provisioned` without touching anything.
+   */
+  async provisionWorkstream(input: {
+    workspaceId: string;
+    workstreamId: string;
+    title: string;
+    objective: string;
+    scope: string;
+    originType: string;
+    createdByUserId: string;
+    participantUserIds: readonly string[];
+    harnessStatus: string;
+    emailAddress: string | null;
+    emailRouteStatus: string | null;
+    systemKind: string | null;
+    automationSubscriptionId: string | null;
+    automationRunId: string | null;
+    plannedFor: number | null;
+    modelOverride: string | null;
+    now: number;
+  }): Promise<{ outcome: "provisioned" | "already_provisioned" }> {
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== input.workspaceId
+      || identity.workstreamId !== input.workstreamId) {
+      throw new Error("workstream_provision_identity_mismatch");
+    }
+    return this.commitRuntimeMutation(
+      () => new WorkstreamIdentityStorage(this.storage).provision(input),
+      true,
     );
   }
 
