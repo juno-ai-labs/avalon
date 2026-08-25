@@ -436,6 +436,10 @@ describe("runtime component invariants", () => {
       type: "replay",
       events: [firstEvent],
     });
+    expect(planSocketReplay(4, 12, 8, [event], false)).toEqual({
+      type: "resync_required",
+      reason: "history_unavailable",
+    });
   });
 
   it("checkpoints the exact active stream for subscribers joining mid-response", () => {

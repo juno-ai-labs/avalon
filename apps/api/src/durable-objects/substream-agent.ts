@@ -505,7 +505,7 @@ export function distinctNonParticipantViewers<T extends { userId: string; connec
 export type SocketReplayPlan =
   | { type: "snapshot"; reason: "initial" | "history_unavailable" }
   | { type: "replay"; events: ServerSocketEvent[] }
-  | { type: "resync_required"; reason: "sequence_ahead" };
+  | { type: "resync_required"; reason: "history_unavailable" | "sequence_ahead" };
 
 /**
  * The replay window intentionally lives only in object memory. Persisting every
@@ -520,9 +520,9 @@ export function planSocketReplay(
   currentSequence: number,
   replayFloorSequence: number | null,
   recentEvents: readonly ServerSocketEvent[],
-  allowInitialSnapshot = true,
+  allowSnapshot = true,
 ): SocketReplayPlan {
-  if (afterSequence === 0 && allowInitialSnapshot) {
+  if (afterSequence === 0 && allowSnapshot) {
     return { type: "snapshot", reason: "initial" };
   }
   if (afterSequence > currentSequence) {
@@ -530,11 +530,15 @@ export function planSocketReplay(
   }
   if (afterSequence === currentSequence) return { type: "replay", events: [] };
   if (replayFloorSequence === null || afterSequence < replayFloorSequence) {
-    return { type: "snapshot", reason: "history_unavailable" };
+    return allowSnapshot
+      ? { type: "snapshot", reason: "history_unavailable" }
+      : { type: "resync_required", reason: "history_unavailable" };
   }
   const events = recentEvents.filter((event) => event.sequence > afterSequence);
   if (events.length === 0 || events.at(-1)?.sequence !== currentSequence) {
-    return { type: "snapshot", reason: "history_unavailable" };
+    return allowSnapshot
+      ? { type: "snapshot", reason: "history_unavailable" }
+      : { type: "resync_required", reason: "history_unavailable" };
   }
   return { type: "replay", events };
 }
@@ -2848,15 +2852,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           "rally.socket.after_sequence": afterSequence,
         },
       }, async (span) => {
-        await this.fulfillSubscription(
+        const subscribed = await this.fulfillSubscription(
           socket,
           attachment.workspaceId,
           attachment.workstreamId,
           afterSequence,
           span,
         );
-        await span.step("workstream.room.socket.broadcast_presence", () =>
-          this.broadcastPresence(attachment.workspaceId, attachment.workstreamId));
+        if (subscribed) {
+          await span.step("workstream.room.socket.broadcast_presence", () =>
+            this.broadcastPresence(attachment.workspaceId, attachment.workstreamId));
+        }
       });
       return;
     }
@@ -2933,12 +2939,22 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       snapshotInFlight: true,
     } satisfies SocketAttachment);
     try {
-      await this.fulfillSubscription(
+      const subscribed = await this.fulfillSubscription(
         socket,
         attachment.workspaceId,
         attachment.workstreamId,
         0,
       );
+      if (!subscribed) {
+        const current = this.readAttachment(socket);
+        if (current) {
+          socket.serializeAttachment({
+            ...current,
+            snapshotInFlight: false,
+          } satisfies SocketAttachment);
+        }
+        return;
+      }
       // `fulfillSubscription` re-marks the socket subscribed; only the
       // in-flight flag is this method's to clear.
       const current = this.readAttachment(socket);
@@ -2949,7 +2965,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // Put the viewer back in the room rather than leaving it silently out of
       // every future broadcast. It still holds usable state, and a reader that
       // stops receiving frames has no way to tell that from a quiet work
-      // stream. `sendSnapshot` reports its own failure to the client.
+      // stream. An ordinary delivery exception is different from the handled
+      // snapshot fallback, which returns above after sending `resync_required`.
       //
       // Restored from the attachment as it stands, not the copy captured before
       // the call: `fulfillSubscription` may have recorded progress before
@@ -3848,7 +3865,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     workstreamId: string,
     afterSequence: number,
     span: FlowSpan = noFlowSpan,
-  ): Promise<void> {
+  ): Promise<boolean> {
     let deliveredThrough = await span.step("workstream.room.subscribe.current_sequence", () =>
       this.currentSequence());
     const plan = planSocketReplay(
@@ -3866,29 +3883,33 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       ...(plan.type === "snapshot" ? { "rally.subscribe.snapshot_reason": plan.reason } : {}),
       ...(plan.type === "replay" ? { "rally.subscribe.replay_event_count": plan.events.length } : {}),
     });
-    await span.step("workstream.room.subscribe.deliver", () =>
+    const delivered = await span.step("workstream.room.subscribe.deliver", () =>
       this.deliverReplayPlan(socket, workspaceId, workstreamId, deliveredThrough, plan, span));
+    if (!delivered) return false;
 
-    // Loading an initial snapshot awaits object storage and can yield to a concurrently
-    // published event. Keep this socket out of broadcasts until a second,
-    // in-memory catch-up closes that bootstrap race.
+    // Loading a snapshot awaits object storage and can yield to a concurrently
+    // published event. Keep this socket out of broadcasts until one in-memory
+    // catch-up closes that race. The catch-up may replay or resync, but never
+    // assemble a second snapshot whose own wait would need a third stage.
     const catchUpSequence = await span.step("workstream.room.subscribe.catch_up_sequence", () =>
       this.currentSequence());
     if (catchUpSequence > deliveredThrough) {
       span.setAttributes({ "rally.subscribe.catch_up_events": catchUpSequence - deliveredThrough });
-      await span.step("workstream.room.subscribe.deliver_catch_up", () => this.deliverReplayPlan(
-        socket,
-        workspaceId,
-        workstreamId,
-        catchUpSequence,
-        planSocketReplay(
-          deliveredThrough,
+      const caughtUp = await span.step("workstream.room.subscribe.deliver_catch_up", () =>
+        this.deliverReplayPlan(
+          socket,
+          workspaceId,
+          workstreamId,
           catchUpSequence,
-          this.replayFloorSequence,
-          this.recentEvents,
-          false,
-        ),
-      ));
+          planSocketReplay(
+            deliveredThrough,
+            catchUpSequence,
+            this.replayFloorSequence,
+            this.recentEvents,
+            false,
+          ),
+        ));
+      if (!caughtUp) return false;
       deliveredThrough = catchUpSequence;
     }
 
@@ -3899,6 +3920,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       afterSequence: deliveredThrough,
       subscribed: true,
     } satisfies SocketAttachment);
+    return true;
   }
 
   private async deliverReplayPlan(
@@ -3908,22 +3930,42 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     currentSequence: number,
     plan: SocketReplayPlan,
     span: FlowSpan = noFlowSpan,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (plan.type === "snapshot") {
-      await this.sendSnapshot(socket, workspaceId, workstreamId, currentSequence, span);
-      return;
+      const delivered = await this.sendSnapshot(
+        socket,
+        workspaceId,
+        workstreamId,
+        plan.reason,
+        currentSequence,
+        span,
+      );
+      if (delivered) return true;
+      this.sendResyncRequired(socket, currentSequence, "history_unavailable");
+      return false;
     }
     if (plan.type === "replay") {
       for (const event of plan.events) socket.send(JSON.stringify(event));
-      return;
+      return true;
     }
+    this.sendResyncRequired(socket, currentSequence, plan.reason);
+    return false;
+  }
+
+  private sendResyncRequired(
+    socket: WebSocket,
+    currentSequence: number,
+    reason: "history_unavailable" | "sequence_ahead",
+  ): void {
     const event = ServerSocketEventSchema.parse({
       type: "resync_required",
       sequence: currentSequence,
       occurredAt: new Date().toISOString(),
-      reason: plan.reason,
+      reason,
       latestSequence: currentSequence,
-      activeStreams: [],
+      activeStreams: reason === "history_unavailable"
+        ? this.objectStore.activeStreamCheckpoints()
+        : [],
       activeCompaction: this.objectStore.activeCompaction(),
     });
     socket.send(JSON.stringify(event));
@@ -3933,9 +3975,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     socket: WebSocket,
     workspaceId: string,
     workstreamId: string,
+    reason: "initial" | "history_unavailable",
     knownSequence?: number,
     span: FlowSpan = noFlowSpan,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       const attachment = this.readAttachment(socket);
       if (!attachment) throw new Error("Missing connection identity while loading snapshot");
@@ -3952,7 +3995,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // uses. The detail above already carries presence, which `boot` cannot
       // know about, so its own copy is discarded rather than re-read here.
       const boot = await span.step("workstream.room.snapshot.transcript", () =>
-        this.product.bootFeeds(auth, workstream.firstUnreadSequenceNumber));
+        this.product.bootFeeds(
+          auth,
+          reason === "initial" ? workstream.firstUnreadSequenceNumber : null,
+        ));
       const messageFeed = { ...boot.messageFeed, items: [...boot.messageFeed.items] };
       // Copied, not aliased: the cap below has to be able to shrink this one too.
       const resumeFeed = boot.resumeFeed
@@ -4027,9 +4073,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         "rally.snapshot.trims": trims,
       });
       socket.send(encoded);
+      return true;
     } catch {
       span.setError("snapshot_unavailable");
-      this.sendError(socket, "snapshot_unavailable", "Canonical work-stream state is unavailable.");
+      return false;
     }
   }
 

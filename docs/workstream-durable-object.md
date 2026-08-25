@@ -465,18 +465,25 @@ canonical product state is invalid.
 2. A cursor at the durable sequence needs no frames; a cursor behind it receives
    replay when the complete interval is still in memory.
 3. A cursor behind the durable sequence with an absent or incomplete replay
-   interval receives a canonical snapshot at the durable sequence on the same
-   socket. `history_unavailable` is the internal snapshot reason recorded in
-   `rally.subscribe.snapshot_reason`; it is not a `resync_required` wire frame.
+   interval normally receives a canonical snapshot at the durable sequence on
+   the same socket. `history_unavailable` is the internal snapshot reason
+   recorded in `rally.subscribe.snapshot_reason`. If that snapshot cannot be
+   assembled, the same reason becomes the explicit `resync_required` fallback.
 4. A cursor ahead of the durable sequence receives `resync_required` with reason
    `sequence_ahead`. The current desktop cursor guard would reject a
    lower-sequence snapshot, so this case alone recovers over HTTP.
 
 Snapshot delivery follows the subscribe race boundary: the socket remains
-unsubscribed while canonical detail, transcript windows, active output, and
-compaction state are assembled; the child then replays anything published
-during assembly before serializing the attachment as subscribed. The next
-presence event and every later feed frame use the same open connection.
+unsubscribed while canonical detail, the newest transcript window, active
+output, and compaction state are assembled. Only an initial snapshot also
+carries the reader's older unread window; a recovery snapshot must not make a
+fresh renderer hook mistake repair for arrival and roll the transcript back.
+The child then replays anything published during assembly before serializing
+the attachment as subscribed. There is exactly one catch-up stage: if its replay
+window has already overflowed, the child retains the old cursor and returns
+`resync_required` rather than assembling a second snapshot with an unclosed
+race. The same fallback applies when snapshot assembly fails. Otherwise the
+next presence event and every later frame use the same open connection.
 
 The correct workaround for hibernation loss is therefore to fall back from the
 memory replay optimization to the child's canonical snapshot path. Do not close
@@ -486,8 +493,9 @@ can itself publish subscribe/close presence events, advance the durable cursor,
 and recreate the same gap after the next activation; persisting the cache turns
 an optimization into a write-ahead event log; suppressing one event producer
 leaves every other replayable event exposed. Any future change to this recovery
-must preserve canonical snapshot contents, the post-snapshot catch-up, and the
-separate `sequence_ahead` compatibility case.
+must preserve canonical snapshot contents, the one-stage post-snapshot
+catch-up, failure without cursor advancement, and the separate
+`sequence_ahead` compatibility case.
 
 The renderer may animate a received text batch one token at a time; that
 presentation trick does not change durable text or cursor semantics.
@@ -1104,10 +1112,11 @@ directory write at all.
 
 **What changed:** When a resume cursor is behind the durable room sequence but
 the memory-only replay events are unavailable or incomplete, SubstreamAgent now
-serves its canonical snapshot and admits the same socket. Only
-`sequence_ahead` returns `resync_required`. The streaming/reconnect contract now
-records exactly which hibernation state survives, the four replay-plan outcomes,
-and the workarounds that would recreate or merely hide the failure.
+serves its canonical snapshot and admits the same socket. `sequence_ahead` and
+a snapshot/catch-up failure return `resync_required` without advancing the
+attachment cursor. The streaming/reconnect contract now records exactly which
+hibernation state survives, the replay-plan outcomes, and the workarounds that
+would recreate or merely hide the failure.
 
 **Why:** A hibernated object preserves WebSocket attachments and SQLite but not
 class memory. The old response turned that expected state into a reconnect loop:
@@ -1119,9 +1128,11 @@ ephemeral frame. Suppressing presence avoids one producer but leaves the same
 failure for every other replayable event. The snapshot path already reads the
 child's canonical authorities and already performs a post-assembly catch-up.
 
-**Consequences:** Replay loss costs snapshot assembly but no disconnect. Traces
-record `rally.subscribe.snapshot_reason = history_unavailable`, and the
-sequence-ahead compatibility path remains an HTTP resync.
+**Consequences:** Ordinary replay loss costs snapshot assembly but no
+disconnect. Repair snapshots omit the reader's old unread window. Snapshot
+failure or catch-up overflow retains the old cursor and falls back through
+`history_unavailable`; traces record the attempted snapshot reason, and the
+sequence-ahead compatibility path remains a separate HTTP resync.
 
 ### 2026-08-25 — Identity decides locality, and an object declares what it owns
 
