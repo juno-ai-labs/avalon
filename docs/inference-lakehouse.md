@@ -113,8 +113,10 @@ The API deployment does all resource work before migrations or Worker upload:
 Later merges run the same path. Existing resources are read back and compared to
 the manifest; immutable schema, sink, or SQL drift fails the deployment rather
 than creating a parallel table or silently dropping fields. No resource requires
-a dashboard or laptop step. The existing deployment token must have Workers R2
-Storage Admin Read & Write, Pipelines, Queues, and Worker deployment permissions.
+a dashboard or laptop step. The existing account-owned deployment token must have
+Workers R2 Storage Admin Read & Write, Object Read & Write on
+`avalon-eu-inference-lakehouse`, Pipelines, Queues, and Worker deployment
+permissions.
 Its token value is installed in a newly created Global Data Catalog sink. For the
 EU R2 sink, the token ID becomes the S3 access key and the SHA-256 of the token
 value becomes its secret access key, as Cloudflare's R2 API-token contract
@@ -289,6 +291,29 @@ while retaining queryable columns. Revisit it only with real storage cost or a
 decided retention policy, not a speculative cache or aggregation layer.
 
 ## Changelog
+
+### 2026-08-24 — Account-owned deployment tokens use their owning verifier
+
+**What changed:** Merge provisioning now resolves the deployment token's S3
+access-key ID through the account-owned token verification endpoint first and
+falls back to user-token verification only when the credential is user-owned.
+The production credential contract also names EU bucket-item Object Read &
+Write separately from account-level R2 administration.
+
+**Why:** Production uses an account-owned R2 API token. The user-token verifier
+can accept that bearer credential without being the authoritative owner lookup;
+using its returned identity produced an invalid R2 access key and made Pipeline
+sink creation fail with `422 / 1012: invalid account id` even after the required
+bucket-item permission was present.
+
+**Considered and rejected:** Copying a second long-lived R2 secret into GitHub.
+That would add a manual bootstrap and a second rotation path even though the
+existing account-owned deployment credential is already registered for R2 and
+can be scoped to the EU lakehouse bucket.
+
+**Consequences:** First-merge provisioning remains non-interactive, account and
+user deployment tokens both retain explicit coverage, and rotating the existing
+credential still triggers the immutable sink identity guard.
 
 ### 2026-08-24 — Sink creation leaves account ownership to the API path
 

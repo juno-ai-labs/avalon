@@ -259,6 +259,10 @@ Use a custom token restricted to the Avalon Cloudflare account and the `with-ava
 - Account: R2 Admin Read & Write — used by the inference-lakehouse preflight to
   create the regional buckets and Global catalog, and as the non-interactive
   credential source for the Global Catalog and EU R2 sinks
+- R2 bucket `avalon-eu-inference-lakehouse`: Object Read & Write — the EU
+  Pipeline sink uses the account-owned deployment token as an S3 credential,
+  whose bucket-item permission is distinct from the account-level R2
+  administration permission
 - Account: Pipelines Write/Edit — to create and inspect the regional stream,
   sink, and pipeline; Worker ingestion itself uses the generated binding
 - Account: Queues Write/Edit — to attach a consumer on deploy and for the

@@ -50,16 +50,15 @@ function accountDouble({ tokenOwner = 'user' } = {}) {
     requests.push(request);
 
     if (url.pathname === '/client/v4/user/tokens/verify') {
-      if (tokenOwner === 'account') {
+      return success({ id: userTokenId, status: 'active' });
+    }
+    if (path === '/tokens/verify') {
+      if (tokenOwner === 'user') {
         return Response.json(
-          { success: false, errors: [{ code: 1000, message: 'account-owned token' }] },
+          { success: false, errors: [{ code: 1000, message: 'user-owned token' }] },
           { status: 403 },
         );
       }
-      return success({ id: tokenId, status: 'active' });
-    }
-    if (path === '/tokens/verify') {
-      assert.equal(tokenOwner, 'account');
       return success({ id: tokenId, status: 'active' });
     }
 
@@ -224,7 +223,8 @@ test('account-owned deployment tokens provision the direct R2 sink without a use
   await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
   const euSink = [...account.entities.sinks.values()].find((sink) => sink.type === 'r2');
   assert.equal(euSink.config.credentials.access_key_id, accountTokenId);
-  assert.ok(account.requests.some((request) => request.path === '/tokens/verify'));
+  assert.equal(account.requests[0].path, '/tokens/verify');
+  assert.equal(account.requests.some((request) => request.path === '/user/tokens/verify'), false);
 });
 
 test('immutable EU sink drift stops deployment', async () => {
@@ -247,7 +247,7 @@ test('immutable EU sink drift stops deployment', async () => {
 });
 
 test('deployment credential replacement stops before creating conflicting immutable sinks', async () => {
-  const account = accountDouble();
+  const account = accountDouble({ tokenOwner: 'account' });
   await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
   account.setTokenId('c'.repeat(32));
 
