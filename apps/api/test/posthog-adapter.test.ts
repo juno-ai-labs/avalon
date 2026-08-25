@@ -15,7 +15,7 @@ import {
 const WEB_BASE = { webBaseUrl: "https://rallywith.ai" };
 
 const event: TelemetryEnvelope = {
-  schema: "com.rally.telemetry.event",
+  schema: "ai.rallywith.telemetry.event",
   schemaVersion: 1,
   eventId: "018f22f2-4c22-7abc-8def-0123456789ab",
   name: "workspace_create_completed",
