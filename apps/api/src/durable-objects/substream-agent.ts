@@ -701,7 +701,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // of the constructor, and the store is built inside the callback below it.
     if (!this.objectStore) return null;
     // Guarded like every other object's name read. A throw here would not stay
-    // local: the thunk runs inside `durableObjectSelf`, so a missing table would
+    // local: the thunk runs inside `durableObjectSelfForId`, so a missing table would
     // take down *every* `SUBSTREAM_AGENTS` resolution this object makes,
     // including the sibling calls that have nothing to do with self-recognition.
     try {
