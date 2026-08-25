@@ -110,28 +110,21 @@ async function fixture(input?: {
   const residentResourceAttacher = vi.fn(async (request: WorkstreamRuntimeResourceAttachment) => {
     recordRuntimeResourceAttachment(request);
   });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstreams
-       (id, workspace_id, title, objective, origin_type, created_by_user_id,
-        harness_status, email_address, last_activity_at, created_at, updated_at)
-     VALUES (?, ?, 'Repo', 'Repo', 'ad_hoc', ?, 'running', ?, '2026-08-13', '2026-08-13', '2026-08-13')`,
-    S,
-    W,
-    U,
-    input?.emailAddress === null
+  applyWorkstreamObjectRootFields(objectStore, {
+    title: "Repo",
+    description: "Repo",
+    originType: "ad_hoc",
+    createdByUserId: U,
+    exactState: "running",
+    emailAddress: input?.emailAddress === null
       ? null
       : input?.emailAddress ?? "bright-coastal-exact-heron@automation.with-avalon.com",
-  );
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstream_participants
-       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
-     VALUES (?, ?, ?, 'creator', '2026-08-13')`,
-    S,
-    U,
-    U,
-  );
+  }, Date.parse("2026-08-13T00:00:00.000Z"));
+  seedWorkstreamObjectParticipant(objectStore, {
+    userId: U,
+    participationReason: "creator",
+    addedAt: Date.parse("2026-08-13T00:00:00.000Z"),
+  });
   workstreamObjectRun(
     objectStore,
     `INSERT INTO harness_runs

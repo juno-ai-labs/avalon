@@ -92,15 +92,11 @@ describe("Terminal Bind integration", () => {
     const { objectStore, env, input } = fixture("supported");
     const messageId = "30000000-0000-4000-8000-000000000005";
     const connectionId = "30000000-0000-4000-8000-000000000006";
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO workstream_participants
-         (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
-       VALUES (?, ?, ?, 'creator', '2026-08-13')`,
-      S,
-      U,
-      U,
-    );
+    seedWorkstreamObjectParticipant(objectStore, {
+      userId: U,
+      participationReason: "creator",
+      addedAt: Date.parse("2026-08-13T00:00:00.000Z"),
+    });
     workstreamObjectRun(
       objectStore,
       `INSERT INTO messages
