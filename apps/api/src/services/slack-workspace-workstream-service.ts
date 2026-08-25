@@ -8,7 +8,7 @@ import {
   type SlackOriginContext,
   type SlackSearchAuthorization,
 } from "@avalon/contracts";
-import { createDatabase, newId, nowIso } from "@avalon/db";
+import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 
 import type { Env } from "../env";
@@ -25,7 +25,10 @@ import {
   attachWorkstreamOriginResource,
   type OriginResourceDescriptor,
 } from "./workstream-origin-resource";
-import { bootstrapWorkstreamRuntimeEnvironment } from "./workstream-runtime-database";
+import {
+  bootstrapWorkstreamRuntimeEnvironment,
+  provisionWorkstreamObject,
+} from "./workstream-runtime-database";
 
 const OpenElicitationRowSchema = z.object({
   id: z.string().min(1),
@@ -91,21 +94,49 @@ export class SlackWorkspaceWorkstreamService {
       this.workspaceId,
       workstreamId,
     );
-    const database = createDatabase(executionEnv.DB);
-    const created = await database.workstreams.create({
-      id: workstreamId,
+    // The repository's `create` batched the root, its participants and the
+    // opening message through the retired compatibility views, and had to
+    // state `next_sequence_number = 2` and `latest_attention_sequence_number
+    // = 1` itself because the message rode in the same batch. Each half is its
+    // own authority's now, and the transcript takes its own sequence number.
+    const at = Date.now();
+    const creatorUserId = input.creatorUserId ?? null;
+    await provisionWorkstreamObject(this.env, {
       workspaceId: this.workspaceId,
+      workstreamId,
       title,
       titleStatus: input.title == null ? "naming" : "settled",
       objective: input.objective,
+      scope: input.scope ?? "personal",
+      originType: "ad_hoc",
+      createdByUserId: creatorUserId,
+      participantUserIds: [
+        ...new Set([...(creatorUserId ? [creatorUserId] : []), ...(input.participantUserIds ?? [])]),
+      ],
+      harnessStatus: "running",
       emailAddress: emailRoute.emailAddress,
-      creatorUserId: input.creatorUserId ?? null,
-      openingAuthor: { type: "external", actor },
-      openingMessage: input.text,
-      clientMessageId: input.clientMessageId,
-      participantUserIds: input.participantUserIds ?? [],
-      ...(input.scope ? { scope: input.scope } : {}),
+      emailRouteStatus: "reserved",
+      systemKind: null,
+      automationSubscriptionId: null,
+      automationRunId: null,
+      plannedFor: null,
+      modelOverride: null,
+      now: at,
     });
+    const openingMessageId = newId();
+    await createMessageObjectPort(this.env, this.workspaceId, workstreamId).appendMessage({
+      messageId: openingMessageId,
+      clientMessageId: input.clientMessageId,
+      authorType: "external",
+      authorUserId: null,
+      externalActorJson: JSON.stringify(actor),
+      messageType: "text",
+      text: input.text,
+      structuredContentJson: null,
+      producedByRunId: null,
+      now: at,
+    });
+    const created = { workstream: { id: workstreamId, createdByUserId: creatorUserId } };
     await recordWorkstreamCreatedTelemetry(this.env, {
       workspaceId: this.workspaceId,
       workstreamId: created.workstream.id,
@@ -149,7 +180,7 @@ export class SlackWorkspaceWorkstreamService {
     const harnessRunId = await launchWorkstreamHarness(this.env, {
       workspaceId: this.workspaceId,
       workstreamId: asWorkstreamId(created.workstream.id),
-      triggerMessageId: created.messageId,
+      triggerMessageId: openingMessageId,
       origin: "slack_workspace_opening_message",
       executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
       slackOrigin: input.slackOrigin,

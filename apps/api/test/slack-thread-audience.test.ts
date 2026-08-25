@@ -16,7 +16,6 @@ import {
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  workstreamObjectAll,
   workstreamObjectParticipantRows,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";

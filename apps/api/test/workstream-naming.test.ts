@@ -16,7 +16,6 @@ import {
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  workstreamObjectGet,
   workstreamObjectRun,
   applyWorkstreamObjectRootFields,
   workstreamObjectRootRow,

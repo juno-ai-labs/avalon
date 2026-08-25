@@ -19,59 +19,12 @@ describe("database primitives", () => {
     await expect(db.activities.claim(newId())).resolves.toBe(true);
   });
 
-  it("preserves active participant provenance and only resets it on reactivation", async () => {
-    const run = vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } });
-    const statement = { bind: vi.fn().mockReturnThis(), run };
-    const prepare = vi.fn().mockReturnValue(statement);
-    const db = createDatabase({ prepare, batch: vi.fn() } as never);
-
-    await db.workstreams.addParticipant(newId(), newId(), newId(), newId(), "message");
-
-    const sql = String(prepare.mock.calls[0]?.[0]);
-    expect(sql).toContain("WHEN workstream_participants.removed_at IS NOT NULL");
-    expect(sql).toContain("ELSE workstream_participants.participation_reason");
-    expect(sql).toContain("ELSE workstream_participants.joined_at");
-  });
-
-  it("returns the committed initial work-stream shape without a retired-schema read", async () => {
-    const statement = { bind: vi.fn().mockReturnThis() };
-    const prepare = vi.fn().mockReturnValue(statement);
-    const batch = vi.fn(async (statements: unknown[]) => (
-      statements.map(() => ({ success: true }))
-    ));
-    const db = createDatabase({ prepare, batch } as never);
-    const id = newId();
-    const workspaceId = newId();
-    const creatorUserId = newId();
-
-    const created = await db.workstreams.create({
-      id,
-      workspaceId,
-      title: "Finish the D1 retirement",
-      titleStatus: "settled",
-      objective: "Keep product state in Durable Objects",
-      emailAddress: "finish@example.com",
-      creatorUserId,
-      openingAuthor: { type: "human", userId: creatorUserId },
-      openingMessage: "Finish it",
-      clientMessageId: newId(),
-      participantUserIds: [],
-      scope: "workspace",
-    });
-
-    expect(created.workstream).toMatchObject({
-      id,
-      workspaceId,
-      title: "Finish the D1 retirement",
-      objective: "Keep product state in Durable Objects",
-      createdByUserId: creatorUserId,
-      harnessStatus: "running",
-      latestAttentionSequenceNumber: 1,
-      nextPendingWakeup: null,
-    });
-    expect(batch).toHaveBeenCalledOnce();
-    expect(prepare.mock.calls.map(([sql]) => String(sql)).join("\n"))
-      .not.toMatch(/LEFT JOIN workstream_wakeups|automation_subscriptions/u);
-  });
+  // Two tests were here: one over `workstreams.addParticipant`'s upsert text
+  // and one over `workstreams.create`'s committed shape. Both covered the
+  // repository's writes through the retired compatibility views, and both
+  // moved with the code — the participant re-add is
+  // `workstream-object-schema.test.ts`'s "makes a re-add through the identity
+  // authority unseen again", and the creation shape is what the identity
+  // authority's own workerd specs assert.
 
 });

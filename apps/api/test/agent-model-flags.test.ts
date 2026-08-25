@@ -23,7 +23,6 @@ import {
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  workstreamObjectRun,
 } from "./helpers/durable-authority";
 
 /**
@@ -84,7 +83,7 @@ const SEEDED_WORKSTREAM_ID = "00000000-0000-4000-8000-000000000052";
  */
 const openDatabases: DatabaseSync[] = [];
 
-function seededEnv(env: Env): Env {
+function seededEnv(env: Env, modelOverride: string | null = null): Env {
   const database = preRetirementProductSqliteDatabase();
   // Closed by `afterEach` rather than by the caller: a failing assertion throws
   // past any close at the end of a case and leaks the handle into the rest of
@@ -123,6 +122,7 @@ function seededEnv(env: Env): Env {
     originType: "ad_hoc",
     createdByUserId: "00000000-0000-4000-8000-000000000011",
     scope: "workspace",
+    modelOverride,
   }, Date.parse(at));
   return createTestEnv({
     ...env,
@@ -142,15 +142,10 @@ function seededEnv(env: Env): Env {
  * fails here instead of being answered by a stub that ignores both.
  */
 async function envWithOverride(env: Env, modelOverride: string | null): Promise<Env> {
-  const seeded = seededEnv(env);
-  // Through the runtime port, for the reason the doc comment gives: the pin is
-  // the work stream object's column now, so a write that went regional would be
-  // answered by a table the resolver no longer reads.
-  await withWorkstreamRuntimeDatabase(seeded, SEEDED_WORKSPACE_ID, SEEDED_WORKSTREAM_ID).DB
-    .prepare("UPDATE workstreams SET model_override = ? WHERE id = ? AND workspace_id = ?")
-    .bind(modelOverride, SEEDED_WORKSTREAM_ID, SEEDED_WORKSPACE_ID)
-    .run();
-  return seeded;
+  // Stated when the object is seeded, for the reason the doc comment gives:
+  // the pin is the work stream object's column now, so a write that went
+  // regional would be answered by a table the resolver no longer reads.
+  return seededEnv(env, modelOverride);
 }
 
 describe("agent model flags", () => {
