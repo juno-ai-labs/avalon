@@ -79,8 +79,11 @@ function jurisdictionHeaders(region) {
 }
 
 function assertManifest(manifest) {
-  if (manifest.schemaVersion !== 2 || manifest.binding !== 'INFERENCE_LAKEHOUSE') {
+  if (manifest.schemaVersion !== 3 || manifest.binding !== 'INFERENCE_LAKEHOUSE') {
     throw new Error('Unsupported inference lakehouse manifest version or binding');
+  }
+  if (!['account', 'user'].includes(manifest.deploymentTokenOwner)) {
+    throw new Error('Inference lakehouse manifest must declare its deployment token owner');
   }
   for (const name of [manifest.namespace, manifest.table]) {
     if (!SAFE_PIPELINE_ENTITY.test(name)) throw new Error(`Unsafe Data Catalog name: ${name}`);
@@ -221,16 +224,10 @@ function assertSink(sink, expected, manifest, accountId) {
   }
 }
 
-async function deploymentTokenId(client) {
-  let verifiedToken;
-  try {
-    verifiedToken = await apiRequestUrl(client, '/user/tokens/verify');
-  } catch (error) {
-    if (!(error instanceof CloudflareApiError) || ![400, 401, 403, 404].includes(error.status)) {
-      throw error;
-    }
-    verifiedToken = await apiRequest(client, '/tokens/verify');
-  }
+async function deploymentTokenId(client, tokenOwner) {
+  const verifiedToken = tokenOwner === 'account'
+    ? await apiRequest(client, '/tokens/verify')
+    : await apiRequestUrl(client, '/user/tokens/verify');
   if (!SAFE_TOKEN_ID.test(verifiedToken?.id ?? '')) {
     throw new Error('Cloudflare did not return a valid deployment token ID for the inference sinks');
   }
@@ -401,7 +398,7 @@ export async function ensureInferenceLakehouse(options = {}) {
   const manifest = options.manifest ?? await loadInferenceLakehouseManifest();
   assertManifest(manifest);
   const client = { accountId, token, fetchImpl };
-  client.tokenId = await deploymentTokenId(client);
+  client.tokenId = await deploymentTokenId(client, manifest.deploymentTokenOwner);
   const resources = {};
 
   for (const regionName of REGIONS) {

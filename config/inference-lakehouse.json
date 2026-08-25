@@ -1,6 +1,7 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "binding": "INFERENCE_LAKEHOUSE",
+  "deploymentTokenOwner": "account",
   "namespace": "avalon",
   "table": "llm_inference",
   "streamSchema": "config/inference-lakehouse-stream-schema.json",
