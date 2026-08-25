@@ -1,7 +1,5 @@
 import { reportSiteAction } from './telemetry';
 
-document.documentElement.classList.add('js');
-
 const header = document.querySelector<HTMLElement>('.rally-header');
 const revealItems = document.querySelectorAll<HTMLElement>('.reveal');
 

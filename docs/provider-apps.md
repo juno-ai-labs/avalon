@@ -105,7 +105,7 @@ was not actually granted.
 ### GitHub App
 
 Register `github.json` as one public GitHub App installable on any account. Upload
-`assets/brand/avalon-mark.png`, enable expiring user-to-server tokens, keep SSL
+`assets/brand/rally-mark.png`, enable expiring user-to-server tokens, keep SSL
 verification enabled, and leave device flow and OAuth-during-installation disabled.
 Keep **Redirect on update** disabled: repository-selection changes arrive through
 `installation_repositories`, while the setup URL accepts only one-use Rally
@@ -212,7 +212,7 @@ both regions:
 | Redirect URI | `https://notion.rallywith.ai/connections/notion/callback` |
 | Webhook URL | Run `pnpm notion:webhook:prepare` and paste the URL it copies |
 
-An Rally workspace owner or administrator initiates installation. The authorize
+A Rally workspace owner or administrator initiates installation. The authorize
 URL deliberately uses Notion's `owner=user`, because public OAuth needs a human
 approver and page picker; do not change that parameter to model Rally scope.
 Rally stores the resulting bot grant as a workspace connection with no user
@@ -227,7 +227,7 @@ which routes each callback and delivery to the owning region;
 before registration. [`notion-ingress.md`](notion-ingress.md) owns that design.
 
 Use the read, insert, update, comment-read, and comment-insert capabilities and
-upload `assets/brand/avalon-mark.png`. A public Notion connection can be installed
+upload `assets/brand/rally-mark.png`. A public Notion connection can be installed
 into any workspace permitted by its immutable installation scope. Marketplace
 publication is a separate, optional review.
 
