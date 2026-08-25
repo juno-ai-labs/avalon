@@ -45,6 +45,7 @@ import {
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
+  provisionWorkstreamObject,
   workstreamExecutionEnvironment,
 } from "../services/workstream-runtime-database";
 import { SlackAgentService } from "../services/slack-agent-service";
@@ -812,7 +813,7 @@ async function startActivityAutomation(
       workstreamId,
     });
     // The automation's pin follows the work streams its runs create. The work
-    // stream is written in the same batch as its harness run, so the pin cannot
+    // stream is provisioned below, alongside its harness run, so the pin cannot
     // be read back from the row yet — it is the value being written beside it.
     const modelOverride = automationModelOverride(env, subscription.model_override, {
       workspaceId: activity.workspace_id,
@@ -839,48 +840,45 @@ async function startActivityAutomation(
     const inserted = await runStatement.run();
     const controlRunInserted = (inserted.meta.changes ?? 0) > 0;
     try {
-      await executionEnv.DB.batch([
-      executionEnv.DB.prepare(
-        `INSERT INTO workstreams (
-           id, workspace_id, title, objective, email_address, email_route_status, origin_type, created_by_user_id,
-           automation_subscription_id, automation_run_id, planned_for, harness_status,
-           next_sequence_number, last_activity_at, created_at, updated_at, archived_at, model_override, scope
-         ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', ?6, ?7, NULL, NULL, 'running', 1, ?8, ?8, ?8, NULL, ?9, 'personal')`
-      ).bind(
-        workstreamId,
-        activity.workspace_id,
-        `${subscription.template_name}: ${activity.title}`.slice(0, 180),
-        subscription.template_description,
-        emailRoute.emailAddress,
-        audienceUserId,
-        subscription.id,
-        now,
-        modelOverride
-      ),
-      executionEnv.DB.prepare(
-        `INSERT INTO workstream_participants
-           (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
-         VALUES (?1, ?2, ?2, 'creator', ?3, NULL)`,
-      ).bind(workstreamId, audienceUserId, now),
-      executionEnv.DB.prepare(
-        `INSERT INTO harness_runs (
-           id, workspace_id, workstream_id, origin, execution_principal_json,
-           workflow_instance_id, parent_harness_run_id, status, started_at, completed_at,
-           model, usage_json, error_json, created_at
-         ) VALUES (?1, ?2, ?3, 'automation_activity', ?4, NULL, NULL, 'scheduled', ?5,
-                   NULL, ?6, '{}', NULL, ?5)`
-      ).bind(
-        harnessRunId,
+      await provisionWorkstreamObject(env, {
+        workspaceId: asWorkspaceId(activity.workspace_id),
+        workstreamId: asWorkstreamId(workstreamId),
+        title: `${subscription.template_name}: ${activity.title}`.slice(0, 180),
+        objective: subscription.template_description,
+        scope: "personal",
+        originType: "automation",
+        createdByUserId: audienceUserId,
+        participantUserIds: [audienceUserId],
+        harnessStatus: "scheduled",
+        emailAddress: emailRoute.emailAddress,
+        emailRouteStatus: "reserved",
+        systemKind: null,
+        automationSubscriptionId: subscription.id,
+        // The routed batch wrote this as a fifth statement, a bare `UPDATE`
+        // after the insert that had just written the same row. It is one field
+        // of what the work stream is, so it is provisioned with the rest.
+        automationRunId: runId,
+        plannedFor: null,
+        modelOverride: modelOverride,
+        now: Date.parse(now),
+      });
+      await createHarnessRunObjectPort(
+        executionEnv,
         activity.workspace_id,
         workstreamId,
-        JSON.stringify(principal),
-        now,
-        model
-      ),
-      executionEnv.DB.prepare(
-        `UPDATE workstreams SET automation_run_id = ?1 WHERE id = ?2 AND workspace_id = ?3`
-      ).bind(runId, workstreamId, activity.workspace_id)
-      ]);
+      ).admitRun({
+        runId: harnessRunId,
+        origin: "automation_activity",
+        executionPrincipalJson: JSON.stringify(principal),
+        status: "admitted",
+        startedAt: Date.parse(now),
+        model,
+        triggerPartId: null,
+        parentRunId: null,
+        supersedeActive: false,
+        expectedLatestRunId: null,
+        now: Date.parse(now),
+      });
     } catch (error) {
       if (controlRunInserted) {
         try {

@@ -9,6 +9,7 @@ import { preRetirementProductSqliteDatabase, sqliteD1 } from './helpers/sqlite-d
 import {
   executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectRun,
   seedToolReceipt,
@@ -75,19 +76,17 @@ describe('authoritative run outcome telemetry', () => {
     // since migration 0090; the emitter is handed a routed environment the way
     // both production callers hand it one.
     const objectStore = testWorkstreamObjectStore();
-    seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId });
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO workstreams
-         (id, workspace_id, title, objective, origin_type, created_by_user_id,
-          automation_subscription_id, automation_run_id, created_at, updated_at, last_activity_at)
-       VALUES (?, ?, 'Run', 'Run', 'automation', ?, '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903',
-               '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904', '2026-08-12T20:00:00.000Z',
-               '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z')`,
+    seedWorkstreamObjectRoot(objectStore, {
       workstreamId,
       workspaceId,
-      userId,
-    );
+      title: "Run",
+      description: "Run",
+      originType: "automation",
+      createdByUserId: userId,
+      automationSubscriptionId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903",
+      automationRunId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904",
+    }, Date.parse("2026-08-12T20:00:00.000Z"));
+
     workstreamObjectRun(
       objectStore,
       `INSERT INTO harness_runs
@@ -133,6 +132,10 @@ describe('authoritative run outcome telemetry', () => {
     });
     const env = createTestEnv({
       DB: sqliteD1(database),
+      // The work stream's automation run was a `JOIN workstreams` inside the
+      // statement below; it is the identity authority's read now, answered by
+      // the real storage class over the same object store this fixture seeds.
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
       AVALON_REGION: 'global',
       APP_ENV: 'production',
       APP_VERSION: '1.96.0',

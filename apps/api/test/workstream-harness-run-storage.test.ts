@@ -1046,3 +1046,111 @@ describe("admitting a root run", () => {
       .toEqual({ outcome: "exists" });
   });
 });
+
+describe("publishing a run's final message", () => {
+  const publish = {
+    messageId: "00000000-0000-7000-8000-0000000000c1",
+    text: "Here is what I found.",
+    hostOutcomeStatus: "completed",
+    eventPayloadJson: '{"finalMessageId":"m"}',
+    lifecycleEventId: "event-final",
+    allowCancellationRequested: false,
+  };
+
+  function claimed() {
+    const opened = open();
+    seedRun(opened.sql, RUN);
+    opened.storage.claimAttempt({
+      ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-claim",
+    });
+    return opened;
+  }
+
+  it("appends the transcript row and records that it did, in one transaction", () => {
+    const { storage, sql } = claimed();
+
+    expect(storage.publishFinalMessage({ ...fence, runId: RUN, ...publish }))
+      .toEqual({ outcome: "published", sequenceNumber: 1 });
+    expect(sql.exec(
+      `SELECT author_type, message_type, content, client_message_id, produced_by_run_id
+         FROM parts WHERE id = ?`,
+      publish.messageId,
+    ).one()).toMatchObject({
+      author_type: "agent",
+      message_type: "text",
+      content: "Here is what I found.",
+      client_message_id: `harness:${RUN}`,
+      produced_by_run_id: RUN,
+    });
+    // The lifecycle event is what every later reader joins against. The routed
+    // version wrote it as a second statement that re-read `messages` to check
+    // the first had landed.
+    expect(storage.lifecycleEvent({ runId: RUN, eventKey: "final_message" }))
+      .toMatchObject({ event_type: "final_message_persisted", status: "completed" });
+  });
+
+  it("moves the transcript counters the append consumed", () => {
+    const { storage, sql } = claimed();
+
+    storage.publishFinalMessage({ ...fence, runId: RUN, ...publish });
+
+    // The routed batch's third statement also assigned
+    // `latest_attention_sequence_number`, which was never a column — the view
+    // derived it and its trigger ignored the assignment. What it really did is
+    // this, and `appendMessage` already did it.
+    expect(sql.exec(
+      `SELECT next_sequence_number, next_attention_ordinal, last_people_activity_at
+         FROM workstream WHERE id = 1`,
+    ).one()).toMatchObject({
+      next_sequence_number: 2,
+      next_attention_ordinal: 2,
+      last_people_activity_at: NOW,
+    });
+  });
+
+  it("refuses an attempt that no longer holds the run", () => {
+    const { storage, sql } = claimed();
+
+    expect(storage.publishFinalMessage({
+      ...fence, runId: RUN, owner: "someone-else", ...publish,
+    })).toEqual({ outcome: "ownership_lost" });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM parts WHERE id = ?`, publish.messageId).one())
+      .toEqual({ count: 0 });
+    expect(storage.lifecycleEvent({ runId: RUN, eventKey: "final_message" })).toBeUndefined();
+  });
+
+  it("refuses an ordinary publish once cancellation was requested", () => {
+    const { storage, sql } = claimed();
+    sql.exec(`UPDATE runs SET cancellation_requested_at = ? WHERE run_id = ?`, NOW, RUN);
+
+    // A run asked to stop must not go on to report a completed answer.
+    expect(storage.publishFinalMessage({ ...fence, runId: RUN, ...publish }))
+      .toEqual({ outcome: "ownership_lost" });
+  });
+
+  it("lets a stopped run publish what it had already written", () => {
+    const { storage, sql } = claimed();
+    sql.exec(`UPDATE runs SET cancellation_requested_at = ? WHERE run_id = ?`, NOW, RUN);
+
+    // The member asked it to stop, not to vanish: whatever the model had
+    // produced by then is still theirs to read. Same exemption, and the same
+    // reason, as `assertHarnessToolSettlementOwned`.
+    expect(storage.publishFinalMessage({
+      ...fence, runId: RUN, ...publish,
+      hostOutcomeStatus: "stopped", allowCancellationRequested: true,
+    })).toMatchObject({ outcome: "published" });
+  });
+
+  it("replays rather than writing a second message for the same run", () => {
+    const { storage, sql } = claimed();
+    storage.publishFinalMessage({ ...fence, runId: RUN, ...publish });
+
+    expect(storage.publishFinalMessage({
+      ...fence, runId: RUN, ...publish,
+      messageId: "00000000-0000-7000-8000-0000000000c2",
+      lifecycleEventId: "event-final-2",
+    })).toEqual({ outcome: "replayed", sequenceNumber: 1 });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM parts WHERE substream_id = '0'`).one())
+      .toEqual({ count: 1 });
+  });
+});

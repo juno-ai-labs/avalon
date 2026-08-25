@@ -2322,23 +2322,19 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(JSON.parse(String((await subscribed).data))).toMatchObject({ type: "workspace_sync" });
     const push = nextMessage(socket);
 
-    // Exactly the statement the naming service issues once the model answers,
-    // through the port it issues it on.
-    const named = await child.executeRuntimeSql({
+    // Exactly the operation the naming service issues once the model answers,
+    // through the port it issues it on. It was a routed `UPDATE workstreams`
+    // fenced on `title_status`; the identity authority holds that fence now
+    // and answers `renamed` or `superseded` rather than a row count.
+    const named = await child.executeIdentityOperation({
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      requestId: "00000000-0000-7000-8000-000000000408",
-      statements: [{
-        sql: `UPDATE workstreams SET title = COALESCE(?, title), title_status = ?, updated_at = ?
-               WHERE id = ? AND workspace_id = ? AND title_status = ?`,
-        params: [
-          "Avalon pricing conversation",
-          "automatic",
-          new Date().toISOString(),
-          WORKSTREAM_ID,
-          WORKSPACE_ID,
-          "naming",
-        ],
+      operation: "rename",
+      args: [{
+        title: "Avalon pricing conversation",
+        from: "naming",
+        to: "automatic",
+        now: Date.now(),
       }],
     });
     expect(named.status).toBe(200);

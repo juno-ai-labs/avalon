@@ -23,6 +23,7 @@ import {
   HARNESS_RUN_OPERATIONS,
   type HarnessRunObjectPort,
 } from "../../src/durable-objects/workstream-harness-run-protocol";
+import { WorkstreamIdentityStorage } from "../../src/durable-objects/workstream-identity-storage";
 import { WorkstreamResourceStorage } from "../../src/durable-objects/workstream-resource-storage";
 import {
   RESOURCE_OPERATIONS,
@@ -134,16 +135,61 @@ export function testWorkstreamObjectStore(): DatabaseSync {
 }
 
 /**
- * Give the object the identity root and main substream every routed statement
- * requires: the compat views join `workstream` id = 1 for the workspace and
+ * What a fixture says a work stream *is*, in the object's own columns.
+ *
+ * Every field is optional and every name is the object's, not the retired
+ * `_runtime_workstreams` view's: `description` rather than `objective`,
+ * `exactState` rather than the `harnessStatus` bucket, unix milliseconds
+ * rather than ISO-8601. A fixture that wants the published shape crosses at
+ * its own assertion, which is where the two vocabularies meet everywhere else.
+ */
+export interface WorkstreamObjectRootFields {
+  title?: string;
+  description?: string;
+  descriptionSource?: "authored" | "derived";
+  titleStatus?: "naming" | "automatic" | "settled";
+  scope?: "personal" | "workspace";
+  exactState?: string;
+  stateReasonCode?: string;
+  originType?: string;
+  systemKind?: string | null;
+  createdByUserId?: string | null;
+  automationSubscriptionId?: string | null;
+  automationRunId?: string | null;
+  createdFromOpportunityId?: string | null;
+  plannedFor?: number | null;
+  emailAddress?: string | null;
+  emailRouteStatus?: string;
+  modelOverride?: string | null;
+  archivedAt?: number | null;
+  nextSequenceNumber?: number;
+  nextAttentionOrdinal?: number;
+  lastPeopleActivityAt?: number;
+}
+
+/**
+ * Give the object the identity root and main substream every operation
+ * requires: the storage classes read `workstream` id = 1 for the workspace and
  * workstream keys, and run rows hang off substream '0'. Mirrors the workerd
  * fixture in `test-workers/helpers/substream-fixture.ts`, which cannot be
- * imported from the node-side suite. Idempotent; an existing root is left
- * untouched so identity mismatches surface instead of being overwritten.
+ * imported from the node-side suite.
+ *
+ * Product state is stated here rather than written by a second statement.
+ * Fixtures used to seed this root and then `INSERT INTO workstreams (…)`,
+ * letting the compatibility trigger translate the old vocabulary into an
+ * `UPDATE` of the row that had just been created — two statements for one
+ * fact, and the reason nineteen call sites named a view instead of a table.
+ * With the view retired there is nothing to translate, so the fixture says
+ * what it means. Same shape and same reasoning as {@link seedToolReceipt}.
+ *
+ * The identity keys stay idempotent: an existing root keeps its workspace and
+ * workstream ids so a mismatch surfaces instead of being overwritten. Product
+ * fields are applied on every call, because a fixture that states them is
+ * describing the work stream it wants rather than racing another writer.
  */
 export function seedWorkstreamObjectRoot(
   database: DatabaseSync,
-  ids: { workstreamId: string; workspaceId: string },
+  ids: { workstreamId: string; workspaceId: string } & WorkstreamObjectRootFields,
   now = Date.parse("2026-01-02T00:00:00.000Z"),
 ): void {
   database.prepare(
@@ -173,6 +219,120 @@ export function seedWorkstreamObjectRoot(
     `INSERT INTO substream_agent_identity (id, external_substream_id, created_at, updated_at)
      VALUES (1, '0', ?, ?) ON CONFLICT(id) DO NOTHING`,
   ).run(now, now);
+  applyWorkstreamObjectRootFields(database, ids, now);
+}
+
+/** The object columns each fixture field writes, in one place. */
+const ROOT_FIELD_COLUMNS: ReadonlyArray<[keyof WorkstreamObjectRootFields, string]> = [
+  ["title", "title"],
+  ["description", "description"],
+  ["descriptionSource", "description_source"],
+  ["titleStatus", "title_status"],
+  ["scope", "scope"],
+  ["exactState", "exact_state"],
+  ["stateReasonCode", "state_reason_code"],
+  ["originType", "origin_type"],
+  ["systemKind", "system_kind"],
+  ["createdByUserId", "created_by_user_id"],
+  ["automationSubscriptionId", "automation_subscription_id"],
+  ["automationRunId", "automation_run_id"],
+  ["createdFromOpportunityId", "created_from_opportunity_id"],
+  ["plannedFor", "planned_for"],
+  ["emailAddress", "email_address"],
+  ["emailRouteStatus", "email_route_status"],
+  ["modelOverride", "model_override"],
+  ["archivedAt", "archived_at"],
+  ["nextSequenceNumber", "next_sequence_number"],
+  ["nextAttentionOrdinal", "next_attention_ordinal"],
+  ["lastPeopleActivityAt", "last_people_activity_at"],
+];
+
+/**
+ * Write the product fields a fixture stated onto an already-seeded root.
+ *
+ * Exported so a test can move a work stream mid-run — a title settling, a work
+ * stream being archived — without restating the identity it was seeded with.
+ * `undefined` leaves a column alone; `null` writes NULL, which is the whole
+ * point for the nullable ones.
+ */
+export function applyWorkstreamObjectRootFields(
+  database: DatabaseSync,
+  fields: WorkstreamObjectRootFields,
+  now = Date.parse("2026-01-02T00:00:00.000Z"),
+): void {
+  const assignments: string[] = [];
+  const values: Array<string | number | null> = [];
+  for (const [field, column] of ROOT_FIELD_COLUMNS) {
+    const value = fields[field];
+    if (value === undefined) continue;
+    assignments.push(`${column} = ?`);
+    values.push(value);
+  }
+  if (assignments.length === 0) return;
+  database.prepare(
+    `UPDATE workstream SET ${assignments.join(", ")}, updated_at = ? WHERE id = 1`,
+  ).run(...values, now);
+}
+
+/**
+ * Seat one participant, in the object's own vocabulary.
+ *
+ * The retired `_runtime_workstream_participants` view renamed nothing but
+ * `joined_at`, and invented `status` and `participant_epoch` — two `NOT NULL`
+ * columns the old vocabulary never carried, which its trigger filled in. With
+ * the view gone the invention happens here, once, where it can be read.
+ */
+export function seedWorkstreamObjectParticipant(
+  database: DatabaseSync,
+  participant: {
+    userId: string;
+    participationReason?: "creator" | "explicit" | "message" | "elicitation" | "action";
+    addedByUserId?: string | null;
+    addedAt?: number;
+    removedAt?: number | null;
+  },
+  now = Date.parse("2026-01-02T00:00:00.000Z"),
+): void {
+  const addedAt = participant.addedAt ?? now;
+  const removedAt = participant.removedAt ?? null;
+  database.prepare(
+    `INSERT INTO participants
+       (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+        added_at, removed_at, first_opened_at, updated_at)
+     VALUES (?, ?, ?, ?, 0, ?, ?, NULL, ?)
+     ON CONFLICT(user_id) DO UPDATE SET
+       participation_reason = excluded.participation_reason,
+       added_by_user_id = excluded.added_by_user_id,
+       status = excluded.status,
+       added_at = excluded.added_at,
+       removed_at = excluded.removed_at,
+       updated_at = excluded.updated_at`,
+  ).run(
+    participant.userId,
+    participant.participationReason ?? "explicit",
+    participant.addedByUserId ?? participant.userId,
+    removedAt === null ? "active" : "removed",
+    addedAt,
+    removedAt,
+    now,
+  );
+}
+
+/** The root row a fixture wrote, in the object's own columns. */
+export function workstreamObjectRootRow<T extends Record<string, string | number | null>>(
+  database: DatabaseSync,
+  columns: string,
+): T {
+  return database.prepare(`SELECT ${columns} FROM workstream WHERE id = 1`).get() as T;
+}
+
+/** The seated participants a fixture wrote, oldest first. */
+export function workstreamObjectParticipantRows<
+  T extends Record<string, string | number | null>,
+>(database: DatabaseSync, columns = "user_id, participation_reason, added_by_user_id, added_at, removed_at"): T[] {
+  return database.prepare(
+    `SELECT ${columns} FROM participants ORDER BY added_at, user_id`,
+  ).all() as T[];
 }
 
 /**
@@ -442,6 +602,32 @@ function isWorkstreamObjectStore(database: DatabaseSync): boolean {
   return database.prepare(
     `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workstream'`,
   ).get() !== undefined;
+}
+
+/**
+ * The agent stub's identity endpoint, over one object database.
+ *
+ * Exported so a test with its own hand-built agent stub gets the *real*
+ * `WorkstreamIdentityStorage` for these operations rather than a second model
+ * of the root row. The provision's write in particular is the whole point of
+ * the operation, and a double that reproduced it by hand is the one that
+ * drifts.
+ */
+export function testIdentityOperationStub(
+  database: DatabaseSync,
+): (input: { operation: string; args: unknown[] }) => { status: number; bodyJson: string } {
+  return (input) => {
+    const storage = new WorkstreamIdentityStorage(
+      createCloudflareTestBinding<DurableObjectStorage>({
+        getAlarm: async () => null,
+        setAlarm: async () => undefined,
+        transactionSync: (body: () => unknown) => body(),
+        sql: objectSqlStorage(database),
+      }),
+    ) as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const value = storage[input.operation]!.apply(storage, input.args);
+    return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
+  };
 }
 
 /**
@@ -781,9 +967,25 @@ export function testSubstreamAgentsBinding(
       // Production's bootstrap opens the object and writes its identity root;
       // seeding here is that same admission, so a creation flow's first routed
       // statement finds the root the way it would in the real object.
-      storeFor(input.workstreamId, input.workspaceId);
+      const store = storeFor(input.workstreamId, input.workspaceId);
+      // And it stamps the reason code, as `bootstrapRuntimeAuthority` does.
+      // `provisionWorkstream` keys its replay guard on that value, so a double
+      // that left the shared fixture's `seeded` in place would make every
+      // provision look like a replay and write nothing.
+      store.prepare(
+        `UPDATE workstream
+            SET authority_mode = 'authoritative', exact_state = 'idle',
+                state_reason_code = 'runtime_bootstrap'
+          WHERE id = 1 AND state_reason_code = 'seeded'`,
+      ).run();
       return { status: 200, bodyJson: "{}" };
     }),
+    executeIdentityOperation: vi.fn((input: {
+      workspaceId: string;
+      workstreamId: string;
+      operation: string;
+      args: unknown[];
+    }) => testIdentityOperationStub(storeFor(input.workstreamId, input.workspaceId))(input)),
     refreshTimerAlarm: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
     flushEffectsToWorkstreamDO: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
     handleProductRequest: vi.fn((request: { operation: string } & Record<string, unknown>) => {

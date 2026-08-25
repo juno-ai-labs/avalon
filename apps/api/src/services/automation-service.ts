@@ -1,5 +1,5 @@
 import { newId, nowIso } from "@avalon/db";
-import { AutomationDraftStateSchema, TriggerDefinitionSchema, asHarnessRunId, asUserId, asWorkstreamId } from "@avalon/contracts";
+import { AutomationDraftStateSchema, TriggerDefinitionSchema, asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import type {
   HarnessRunId,
   WorkspaceId,
@@ -56,12 +56,14 @@ import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { publishedRunStatus } from "../runtime/harness-run-runtime";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
+  provisionWorkstreamObject,
   workstreamExecutionEnvironment,
 } from "./workstream-runtime-database";
 import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
 } from "./workspace-runtime-database";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 type CreateAutomationInput = z.infer<typeof CreateAutomationRequestSchema>;
 type TriggerDefinition = z.infer<typeof TriggerDefinitionSchema>;
@@ -1183,18 +1185,9 @@ export class AutomationService {
            AND status = 'scheduled' AND started_at IS NULL`,
       ).bind(at, this.auth.workspaceId, id),
     ];
-    await Promise.all(plannedWorkstreamIds.map(async (workstreamId) => {
-      const executionEnv = await workstreamExecutionEnvironment(
-        this.env,
-        this.auth.workspaceId,
-        workstreamId,
-      );
-      await executionEnv.DB.prepare(
-        `UPDATE workstreams SET archived_at = ?, updated_at = ?
-          WHERE workspace_id = ? AND id = ? AND harness_status = 'scheduled'
-            AND archived_at IS NULL`,
-      ).bind(at, at, this.auth.workspaceId, workstreamId).run();
-    }));
+    await Promise.all(plannedWorkstreamIds.map((workstreamId) =>
+      createIdentityObjectPort(this.env, this.auth.workspaceId, workstreamId)
+        .archiveScheduledWorkstream({ now: Date.parse(at) })));
     await this.env.DB.batch(regionalStatements);
     // No route to close. The address stays claimed forever — that is the point
     // of the Global ledger — and mail to it is refused by the same checks that
@@ -1591,24 +1584,13 @@ export class AutomationService {
     );
     let controlRunInserted = false;
     try {
-      const statements = [
-        executionEnv.DB.prepare(
-          // Every automation run is a private work stream. The member who
-          // starts it is both its durable creator and its initial participant,
-          // so every later read uses the ordinary work-stream visibility rule.
-          `INSERT INTO workstreams
-           (id, workspace_id, title, objective, email_address, email_route_status, origin_type,
-            created_by_user_id, automation_subscription_id,
-            automation_run_id, planned_for, harness_status, next_sequence_number,
-            latest_attention_sequence_number, last_activity_at, created_at, updated_at, model_override, scope)
-           VALUES (?, ?, ?, ?, ?, 'reserved', 'automation', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'personal')`,
-        ).bind(workstreamId, this.auth.workspaceId, String(subscription.name), String(subscription.description), emailRoute.emailAddress, this.auth.userId, subscription.id, runId, plannedFor, "scheduled", openingInput ? 2 : 1, openingInput ? 1 : 0, at, at, at, modelOverride),
-        executionEnv.DB.prepare(
-          `INSERT INTO workstream_participants
-             (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
-           VALUES (?, ?, ?, 'creator', ?, NULL)`,
-        ).bind(workstreamId, this.auth.userId, this.auth.userId, at),
-      ];
+      // The control row is claimed first, so the unique keys on it — the
+      // idempotency key and the subscription's planned-for slot — decide who
+      // provisions before anything visible exists. Two concurrent requests
+      // sharing a key both pass the lookup above; the loser fails here, with
+      // nothing object-side to compensate, and falls through to the existing
+      // run below. Provisioning first would leave it an orphaned sidebar entry
+      // and a permanently reserved email address for a run that never was.
       const runStatement = this.env.DB.prepare(
         `INSERT INTO automation_runs
          (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
@@ -1619,34 +1601,78 @@ export class AutomationService {
       // run and resource links below belong to the newly bootstrapped object.
       const inserted = await runStatement.run();
       controlRunInserted = (inserted.meta.changes ?? 0) > 0;
+      // Every automation run is a private work stream. The member who starts
+      // it is both its durable creator and its initial participant, so every
+      // later read uses the ordinary work-stream visibility rule.
+      await provisionWorkstreamObject(this.env, {
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        workstreamId: asWorkstreamId(workstreamId),
+        title: String(subscription.name),
+        objective: String(subscription.description),
+        scope: "personal",
+        originType: "automation",
+        createdByUserId: this.auth.userId,
+        participantUserIds: [this.auth.userId],
+        harnessStatus: "scheduled",
+        emailAddress: emailRoute.emailAddress,
+        emailRouteStatus: "reserved",
+        systemKind: null,
+        automationSubscriptionId: String(subscription.id),
+        automationRunId: runId,
+        plannedFor: plannedFor === null ? null : Date.parse(plannedFor),
+        modelOverride,
+        now: Date.parse(at),
+      });
       if (openingInput && triggerMessageId) {
-        statements.push(
-          executionEnv.DB.prepare(
-            `INSERT INTO messages
-             (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-              message_type, text_content, structured_content_json, sequence_number, created_at, edited_at)
-             VALUES (?, ?, ?, ?, 'system', NULL, 'system', ?, ?, 1, ?, NULL)`,
-          ).bind(triggerMessageId, openingInput.clientMessageId, this.auth.workspaceId, workstreamId, openingInput.textContent, JSON.stringify(openingInput.structuredContent), at),
-        );
+        // The routed batch wrote `sequence_number = 1` and set the root's
+        // counters to 2 in the same statement set. The transcript authority
+        // takes the number and advances the counters itself, so the opening
+        // message no longer depends on its writer having guessed both.
+        await createMessageObjectPort(
+          executionEnv,
+          this.auth.workspaceId,
+          workstreamId,
+        ).appendMessage({
+          messageId: triggerMessageId,
+          clientMessageId: openingInput.clientMessageId,
+          authorType: "system",
+          authorUserId: null,
+          externalActorJson: null,
+          messageType: "system",
+          text: openingInput.textContent,
+          structuredContentJson: JSON.stringify(openingInput.structuredContent),
+          producedByRunId: null,
+          now: Date.parse(at),
+        });
       }
       if (start) {
-        // The work stream is created in this same batch, so its override cannot
-        // be read back yet — it is the value being written just above.
+        // The work stream is provisioned just above, and its override is the
+        // value that write carries, so it cannot be read back off the row yet.
         const model = modelOverride ?? await scheduledWorkstreamModel(executionEnv, {
           workspaceId: this.auth.workspaceId,
           workstreamId,
         });
-        statements.push(executionEnv.DB.prepare(
-          `INSERT INTO harness_runs
-           (id, workspace_id, workstream_id, origin, execution_principal_json,
-            status, started_at, model, created_at, trigger_message_id)
-           VALUES (?, ?, ?, 'automation_run', ?, 'scheduled', NULL, ?, ?, ?)`,
-          // The same id the workflow is launched with below. A run that records
-          // a different trigger than it ran against is one `retry` replays
-          // against the wrong window.
-        ).bind(harnessRunId, this.auth.workspaceId, workstreamId, JSON.stringify(principal), model, at, triggerMessageId));
+        // The same id the workflow is launched with below. A run that records
+        // a different trigger than it ran against is one `retry` replays
+        // against the wrong window.
+        await createHarnessRunObjectPort(
+          executionEnv,
+          this.auth.workspaceId,
+          workstreamId,
+        ).admitRun({
+          runId: harnessRunId,
+          origin: "automation_run",
+          executionPrincipalJson: JSON.stringify(principal),
+          status: "admitted",
+          startedAt: null,
+          model,
+          triggerPartId: triggerMessageId ?? null,
+          parentRunId: null,
+          supersedeActive: false,
+          expectedLatestRunId: null,
+          now: Date.parse(at),
+        });
       }
-      await executionEnv.DB.batch(statements);
       // The child authority now exists. Later attachment/telemetry failures
       // must not compensate the control row away from a real work stream.
       controlRunInserted = false;

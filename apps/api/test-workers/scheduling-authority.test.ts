@@ -76,6 +76,44 @@ function seedRun(state: DurableObjectState): void {
   );
 }
 
+const ELICITATION = "00000000-0000-7000-8000-0000000000el";
+const ACTOR = JSON.stringify({
+  provider: "slack",
+  providerAccountId: "T123",
+  providerUserId: "U456",
+  displayName: "Taylor",
+  avatarUrl: null,
+});
+
+function elicitation(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    elicitationId: ELICITATION,
+    runId: RUN,
+    prompt: "Which environment?",
+    responseType: "text",
+    optionsJson: "[]",
+    minimumSelections: 0,
+    maximumSelections: null,
+    targetUserId: null,
+    messageId: "00000000-0000-7000-8000-0000000000m1",
+    structuredContentJson: JSON.stringify({ kind: "elicitation" }),
+    now: 2,
+    ...overrides,
+  };
+}
+
+function answer(clientMessageId: string): Record<string, unknown> {
+  return {
+    elicitationId: ELICITATION,
+    answerJson: JSON.stringify("staging"),
+    externalActorJson: ACTOR,
+    messageId: `00000000-0000-7000-8000-${clientMessageId.slice(-8).padStart(12, "0")}`,
+    clientMessageId,
+    structuredContentJson: JSON.stringify({ kind: "elicitation_response" }),
+    now: 3,
+  };
+}
+
 function wakeup(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     wakeupId: "00000000-0000-7000-8000-00000000wk01",
@@ -346,6 +384,83 @@ describe("scheduling authority on real workerd", () => {
       expect(state.storage.sql.exec(
         `SELECT COUNT(*) AS count FROM plugin_activation_hints`,
       ).one().count).toBe(0);
+    });
+  });
+
+  it("writes the question, its transcript part and needs_input in one step", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      seedRun(state);
+    });
+
+    const opened = await scheduling(stub, "openElicitation", elicitation());
+
+    expect(opened.value).toEqual({ outcome: "opened", sequenceNumber: 1 });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT status, run_id FROM elicitation_requests`,
+      ).toArray()).toEqual([{ status: "pending", run_id: RUN }]);
+      // The part and the counters it consumed. The routed batch numbered the
+      // part from a subquery and then fenced its own counter update on having
+      // taken that number; here one transaction does both, so the part's
+      // sequence and the root's next one cannot disagree.
+      expect(state.storage.sql.exec(
+        `SELECT sequence_number, attention_ordinal, author_type, message_type
+           FROM parts WHERE client_message_id = 'elicitation:' || ?`,
+        ELICITATION,
+      ).toArray()).toEqual([{
+        sequence_number: 1,
+        attention_ordinal: 1,
+        author_type: "agent",
+        message_type: "elicitation",
+      }]);
+      expect(state.storage.sql.exec(
+        `SELECT exact_state, state_reason_code, next_sequence_number, next_attention_ordinal
+           FROM workstream WHERE id = 1`,
+      ).one()).toMatchObject({
+        exact_state: "needs_input",
+        state_reason_code: "runtime_needs_input",
+        next_sequence_number: 2,
+        next_attention_ordinal: 2,
+      });
+    });
+  });
+
+  it("answers a question once, and tells the loser of the race that it lost", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      seedRun(state);
+    });
+    await scheduling(stub, "openElicitation", elicitation());
+
+    const first = await scheduling(stub, "answerElicitationExternally", answer("event:first"));
+    const second = await scheduling(stub, "answerElicitationExternally", answer("event:second"));
+
+    // The routed update fenced on `status = 'open'` and the caller read
+    // `meta.changes` to learn whether it had won. Losing is an ordinary
+    // outcome — somebody else answered first — and the second attempt must
+    // leave both the row and the transcript exactly as the winner left them.
+    expect(first.value).toEqual({ outcome: "answered", sequenceNumber: 2 });
+    expect(second.value).toEqual({ outcome: "already_answered", sequenceNumber: null });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT status, answer_json, external_actor_json FROM elicitation_requests`,
+      ).toArray()).toEqual([{
+        status: "answered",
+        answer_json: JSON.stringify("staging"),
+        external_actor_json: ACTOR,
+      }]);
+      expect(state.storage.sql.exec(
+        `SELECT client_message_id FROM parts WHERE message_type = 'elicitation'
+          ORDER BY sequence_number`,
+      ).toArray()).toEqual([
+        { client_message_id: `elicitation:${ELICITATION}` },
+        { client_message_id: "event:first" },
+      ]);
     });
   });
 
