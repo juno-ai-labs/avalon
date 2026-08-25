@@ -99,17 +99,39 @@ const installedConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
 ]);
 
 function ConnectorButton({
+  label,
   tooltip,
   disabled = false,
+  onClick,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { tooltip: string }): React.JSX.Element {
-  const button = <Button disabled={disabled} {...props} />;
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; tooltip: string }): React.JSX.Element {
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const button = (
+    <Button
+      {...props}
+      aria-hidden={disabled || undefined}
+      aria-label={label}
+      disabled={disabled}
+      onClick={(event) => {
+        setTooltipOpen(false);
+        onClick?.(event);
+      }}
+    />
+  );
   return (
-    <Tooltip.Root delayDuration={300}>
+    <Tooltip.Root delayDuration={300} onOpenChange={setTooltipOpen} open={tooltipOpen}>
       <Tooltip.Trigger asChild>
-        {disabled
-          ? <span className="provider-action-tooltip-trigger" tabIndex={0}>{button}</span>
-          : button}
+        {disabled ? (
+          <span
+            aria-disabled="true"
+            aria-label={label}
+            className="provider-action-tooltip-trigger"
+            role="button"
+            tabIndex={0}
+          >
+            {button}
+          </span>
+        ) : button}
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content className="tooltip settings-connection-tooltip" side="top" sideOffset={6}>
@@ -126,17 +148,24 @@ function ConnectionIconAction({
   tooltip,
   icon,
   disabled = false,
+  onClick,
   ...props
 }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'aria-label'> & {
   label: string;
   tooltip: string;
   icon: ReactNode;
 }): React.JSX.Element {
+  const [tooltipOpen, setTooltipOpen] = useState(false);
   const button = (
     <button
+      aria-hidden={disabled || undefined}
       aria-label={label}
       className="settings-icon-action"
       disabled={disabled}
+      onClick={(event) => {
+        setTooltipOpen(false);
+        onClick?.(event);
+      }}
       type="button"
       {...props}
     >
@@ -144,11 +173,19 @@ function ConnectionIconAction({
     </button>
   );
   return (
-    <Tooltip.Root delayDuration={300}>
+    <Tooltip.Root delayDuration={300} onOpenChange={setTooltipOpen} open={tooltipOpen}>
       <Tooltip.Trigger asChild>
-        {disabled
-          ? <span className="settings-icon-tooltip-trigger" tabIndex={0}>{button}</span>
-          : button}
+        {disabled ? (
+          <span
+            aria-disabled="true"
+            aria-label={label}
+            className="settings-icon-tooltip-trigger"
+            role="button"
+            tabIndex={0}
+          >
+            {button}
+          </span>
+        ) : button}
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content className="tooltip settings-connection-tooltip" side="top" sideOffset={6}>
@@ -316,13 +353,29 @@ function providerHasConnection(
   provider: (typeof connectorProviders)[number],
   connections: WorkstreamConnection[],
 ): boolean {
-  const capabilities = [
-    ...provider.capabilities,
-    ...('personalCapabilities' in provider ? provider.personalCapabilities : []),
-  ];
+  return provider.scopes.some((scope) => providerHasConnectionForScope(provider, connections, scope));
+}
+
+function providerHasConnectionForScope(
+  provider: (typeof connectorProviders)[number],
+  connections: WorkstreamConnection[],
+  scope: 'you' | 'workspace',
+): boolean {
+  const capabilities = providerCapabilitiesForScope(provider, scope);
   return connections.some((connection) =>
     connection.connectorType === provider.provider &&
+    connection.scope === scope &&
     (capabilities.length === 0 || capabilities.some((capability) => connection.capabilities?.includes(capability))),
+  );
+}
+
+function providerHasAvailableUnconnectedScope(
+  provider: (typeof connectorProviders)[number],
+  connections: WorkstreamConnection[],
+  isAdmin: boolean,
+): boolean {
+  return provider.scopes.some((scope) =>
+    (scope === 'you' || isAdmin) && !providerHasConnectionForScope(provider, connections, scope),
   );
 }
 
@@ -804,7 +857,9 @@ export function WorkspaceSettingsScreen({
   const visibleProviders = connectorProviders.filter((provider) => {
     const connected = providerHasConnection(provider, connections.data ?? []);
     if (connectionFilter === 'connected') return connected;
-    if (connectionFilter === 'not_connected') return !connected;
+    if (connectionFilter === 'not_connected') {
+      return providerHasAvailableUnconnectedScope(provider, connections.data ?? [], isAdmin);
+    }
     return true;
   });
   useEffect(() => {
@@ -1392,13 +1447,18 @@ export function WorkspaceSettingsScreen({
                                         tooltip="Refresh this webhook by replacing its signing secret."
                                       />
                                     )}
-                                    <ConnectionIconAction
-                                      disabled={disconnectConnection.isPending}
-                                      icon={<Trash2 aria-hidden="true" size={14} />}
-                                      label={`Delete ${connection.displayName}`}
-                                      onClick={() => setDisconnectTarget(connection)}
-                                      tooltip="Delete this connection from Rally."
-                                    />
+                                    {(connection.scope === 'you' || isAdmin) && (
+                                      <ConnectionIconAction
+                                        disabled={disconnectConnection.isPending}
+                                        icon={<Trash2 aria-hidden="true" size={14} />}
+                                        label={`Delete ${connection.displayName}`}
+                                        onClick={() => {
+                                          disconnectConnection.reset();
+                                          setDisconnectTarget(connection);
+                                        }}
+                                        tooltip="Delete this connection from Rally."
+                                      />
+                                    )}
                                   </span>
                                 </td>
                               </tr>
@@ -1472,6 +1532,7 @@ export function WorkspaceSettingsScreen({
                               {provider.scopes.includes('you' as never) && (
                                 <ConnectorButton
                                   disabled={personalConnectDisabled}
+                                  label="Connect for me"
                                   onClick={() => {
                                     if (provider.provider === 'generic_webhook') {
                                       setWebhookModalScope('you');
@@ -1485,13 +1546,13 @@ export function WorkspaceSettingsScreen({
                                     }
                                     connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') });
                                   }}
-                                  title={personalConnectTitle}
                                   tooltip={`Only you can use this connection; it acts with your provider identity.${personalConnectTitle ? ` ${personalConnectTitle}` : ''}`}
                                 >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : 'Connect for me'}</ConnectorButton>
                               )}
                             {provider.scopes.includes('workspace' as never) && isAdmin && (
                               <ConnectorButton
                                 disabled={workspaceConnectDisabled}
+                                label="Connect workspace"
                                 onClick={() => {
                                   if (provider.provider === 'granola') {
                                     setGranolaWorkspaceModalOpen(true);
@@ -1509,7 +1570,6 @@ export function WorkspaceSettingsScreen({
                                   }
                                   connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: providerCapabilitiesForScope(provider, 'workspace') });
                                 }}
-                                title={workspaceConnectTitle}
                                 tooltip={`Everyone in this workspace can use this connection; it acts for the workspace.${workspaceConnectTitle ? ` ${workspaceConnectTitle}` : ''}`}
                               >
                                 Connect workspace
@@ -1523,8 +1583,8 @@ export function WorkspaceSettingsScreen({
                   </div>
                 </div>
                 {connectorOAuthMessage && <p className="settings-oauth-status" role="status"><Check aria-hidden="true" size={14} />{connectorOAuthMessage}</p>}
-                {(connectorOAuthError || connections.error || connectorCatalog.error || connectProvider.error || createGranolaWorkspaceConnection.error || createWebhookConnection.error || rotateWebhookSecret.error || reconnectConnection.error || disconnectConnection.error) && (
-                  <InlineError>{connectorOAuthError ?? connections.error?.message ?? connectorCatalog.error?.message ?? connectProvider.error?.message ?? createGranolaWorkspaceConnection.error?.message ?? createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message ?? reconnectConnection.error?.message ?? disconnectConnection.error?.message}</InlineError>
+                {(connectorOAuthError || connections.error || connectorCatalog.error || connectProvider.error || createGranolaWorkspaceConnection.error || createWebhookConnection.error || rotateWebhookSecret.error || reconnectConnection.error) && (
+                  <InlineError>{connectorOAuthError ?? connections.error?.message ?? connectorCatalog.error?.message ?? connectProvider.error?.message ?? createGranolaWorkspaceConnection.error?.message ?? createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message ?? reconnectConnection.error?.message}</InlineError>
                 )}
               </section>
             )}
@@ -1918,7 +1978,13 @@ export function WorkspaceSettingsScreen({
             <Button className="button-primary" onClick={() => setWebhookModalScope(null)}>Done</Button>
           ) : (
             <>
-              <Button ref={webhookRefreshCancelRef} onClick={() => setWebhookModalScope(null)}>Cancel</Button>
+              <Button
+                disabled={createWebhookConnection.isPending || rotateWebhookSecret.isPending}
+                ref={webhookRefreshCancelRef}
+                onClick={() => setWebhookModalScope(null)}
+              >
+                Cancel
+              </Button>
               {webhookRotationTarget ? (
                 <Button
                   className="button-primary"
@@ -2097,7 +2163,10 @@ export function WorkspaceSettingsScreen({
             <>
               <Button
                 disabled={disconnectConnection.isPending}
-                onClick={() => setDisconnectTarget(null)}
+                onClick={() => {
+                  setDisconnectTarget(null);
+                  disconnectConnection.reset();
+                }}
                 ref={disconnectCancelRef}
               >
                 Cancel
@@ -2116,11 +2185,16 @@ export function WorkspaceSettingsScreen({
           )}
           initialFocusRef={disconnectCancelRef}
           onOpenChange={(open) => {
-            if (!open && !disconnectConnection.isPending) setDisconnectTarget(null);
+            if (!open && !disconnectConnection.isPending) {
+              setDisconnectTarget(null);
+              disconnectConnection.reset();
+            }
           }}
           open={Boolean(disconnectTarget)}
           title={`Delete ${disconnectTarget?.displayName ?? 'this connection'}?`}
-        />
+        >
+          {disconnectConnection.error && <InlineError>{disconnectConnection.error.message}</InlineError>}
+        </Modal>
       </div>
     </div>
   );

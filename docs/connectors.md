@@ -418,7 +418,7 @@ X-Rally-Signature: t=<seconds>,v1=<hex HMAC-SHA256 of "<seconds>.<raw body>">
 
 Rally validates time, signature, replay receipt, body schema, scope, and dedupe key before normalizing an activity. Transcript providers can use this connector, but the product must not label it a native Granola integration.
 
-Settings exposes personal and administrator-only workspace webhook creation. Creation accepts an idempotency key so a retried response returns the same endpoint and still-current one-time secret. Owners can rotate a webhook secret later; rotation keeps the endpoint stable and invalidates the old secret immediately.
+Settings exposes personal and administrator-only workspace webhook creation. Creation accepts an idempotency key so a retried response returns the same endpoint and still-current one-time secret. The regional API lets the owner of a personal webhook rotate its secret and requires an administrator for a workspace webhook; desktop Settings deliberately narrows every visible Refresh action to workspace administrators. Rotation keeps the endpoint stable and invalidates the old secret immediately, so Settings cannot let its confirmation dialog close while the replacement secret is still being requested.
 
 The request body must be a JSON object no larger than the regional provider-webhook limit. The supported fields are:
 
@@ -767,6 +767,16 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-25 — Connection management makes scope and consequences explicit
+
+**What changed:** Desktop Settings separates personal and workspace credentials, defaults the provider catalog to scopes that remain unconnected, explains each connect scope in a tooltip, and requires confirmation before refresh or deletion. Refresh stays administrator-only in the desktop for both scopes; workspace deletion is likewise hidden from members to match the regional API's modification boundary. Pending webhook creation or secret rotation holds the dialog open so its one-time secret cannot be lost.
+
+**Why:** A single mixed credential list obscured who could use a connection, while provider-level filtering hid an uninstalled personal or workspace scope as soon as the other scope existed. Immediate refresh and delete controls also made disruptive credential changes too easy to trigger, and closing a pending webhook request could strand the only copy of a newly issued secret.
+
+**Considered and rejected:** Keeping one table with scope subtitles, treating any provider connection as fully connected, and exposing personal refresh to non-admin members were rejected. The first two retain the ambiguity this UI is meant to remove; the last conflicts with the product requirement that desktop refresh controls are administrator-only, even though the regional API still authorizes the owner of a personal connection.
+
+**What a future change has to respect:** “Not connected” is scope-aware: a dual-scope provider remains actionable until every scope the current viewer can install has a matching connection. Any mutation that returns a one-time credential must keep its result surface open until that credential is shown, and modal-owned failures must render inside the modal rather than behind its overlay.
 
 ### 2026-08-24 — Public activity fans into private admission contexts
 

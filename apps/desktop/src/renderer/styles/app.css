@@ -2084,8 +2084,7 @@ pre {
 .invite-link-result strong { color: var(--av-sys-color-success-base); font-size: 11px; }
 .invite-link-result small { color: var(--av-sys-color-success-soft); font-size: 9.5px; margin-top: 2px; }
 .invitation-list { display: grid; margin-top: 10px; }
-.invitation-list .empty-state,
-.settings-connection-list .empty-state { min-height: 96px; }
+.invitation-list .empty-state { min-height: 96px; }
 .invitation-row {
   align-items: center;
   border-bottom: 1px solid var(--av-sys-color-border-subtle);

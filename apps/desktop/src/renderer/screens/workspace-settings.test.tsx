@@ -244,6 +244,7 @@ describe('Workspace settings', () => {
       signingSecret: 'whsec_rotated-secret',
       signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
     });
+    api.disconnectConnection.mockResolvedValue(undefined);
     api.startProviderConnection.mockResolvedValue({
       url: 'https://accounts.google.com/o/oauth2/v2/auth?state=opaque',
       attemptId: 'a'.repeat(43),
@@ -663,6 +664,32 @@ describe('Workspace settings', () => {
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
       'Everyone in this workspace can use this connection; it acts for the workspace.',
     );
+    fireEvent.blur(workspaceButton);
+    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
+  });
+
+  it('gives disabled connector tooltip triggers a name and disabled semantics', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000010',
+      connectorType: 'google',
+      scope: 'workspace',
+      displayName: 'Google Drive · Rally',
+      capabilities: ['drive.read'],
+      status: 'healthy',
+    }]);
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
+    expect(driveCard).not.toBeNull();
+    const workspaceButton = within(driveCard!).getByRole('button', { name: 'Connect workspace' });
+    await waitFor(() => expect(workspaceButton).toHaveAttribute('aria-disabled', 'true'));
+    expect(workspaceButton).toHaveAccessibleName('Connect workspace');
+
+    fireEvent.focus(workspaceButton);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'Everyone in this workspace can use this connection; it acts for the workspace. A Google Drive + Docs + Sheets workspace connection is already installed. Manage it above.',
+    );
   });
 
   it('offers personal Notion MCP separately from the shared workspace bot connection', async () => {
@@ -808,7 +835,7 @@ describe('Workspace settings', () => {
 
     await waitFor(() => expect(
       screen.getByRole('button', { name: 'Refresh Google · adam@example.com' }),
-    ).toBeDisabled());
+    ).toHaveAttribute('aria-disabled', 'true'));
     await act(async () => resolveReconnect({
       url: 'https://accounts.google.com/o/oauth2/v2/auth?state=opaque',
       attemptId: 'b'.repeat(43),
@@ -840,7 +867,8 @@ describe('Workspace settings', () => {
     fireEvent.click(within(mailCard!).getByRole('button', { name: 'Connect for me' }));
 
     expect(await within(mailCard!).findByText('Waiting…')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Refresh Google · adam@example.com' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Refresh Google · adam@example.com' }))
+      .toHaveAttribute('aria-disabled', 'true');
   });
 
   it('offers personal and workspace Linear authorization without granting agent identity personally', async () => {
@@ -1008,8 +1036,11 @@ describe('Workspace settings', () => {
     expect(xCard).not.toBeNull();
     expect(within(xCard!).getByText('Unavailable')).toBeVisible();
     const connect = within(xCard!).getByRole('button', { name: 'Connect workspace' });
-    expect(connect).toBeDisabled();
-    expect(connect).toHaveAttribute('title', 'Public X via TwitterAPI.io is not configured in this Rally region.');
+    expect(connect).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.focus(connect);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'Everyone in this workspace can use this connection; it acts for the workspace. Public X via TwitterAPI.io is not configured in this Rally region.',
+    );
   });
 
   it('disables duplicate workspace X connections', async () => {
@@ -1031,11 +1062,7 @@ describe('Workspace settings', () => {
     expect(within(xCard!).queryByRole('button', { name: 'Connect for me' })).not.toBeInTheDocument();
     const workspaceButton = within(xCard!).getByRole('button', { name: 'Connect workspace' });
     await waitFor(() => {
-      expect(workspaceButton).toBeDisabled();
-      expect(workspaceButton).toHaveAttribute(
-        'title',
-        'A Public X via TwitterAPI.io workspace connection is already installed. Manage it above.',
-      );
+      expect(workspaceButton).toHaveAttribute('aria-disabled', 'true');
     });
     expect(screen.queryByRole('button', { name: 'Refresh X' })).not.toBeInTheDocument();
   });
@@ -1063,11 +1090,7 @@ describe('Workspace settings', () => {
       });
       expect(within(slackCard!).queryByRole('button', { name: 'Connect another workspace' })).not.toBeInTheDocument();
       const workspaceButton = within(slackCard!).getByRole('button', { name: 'Connect workspace' });
-      await waitFor(() => expect(workspaceButton).toBeDisabled());
-      expect(workspaceButton).toHaveAttribute(
-        'title',
-        'A Slack workspace connection is already installed. Manage it above.',
-      );
+      await waitFor(() => expect(workspaceButton).toHaveAttribute('aria-disabled', 'true'));
       fireEvent.click(workspaceButton);
       expect(api.startProviderConnection).not.toHaveBeenCalled();
     },
@@ -1120,11 +1143,7 @@ describe('Workspace settings', () => {
       // The catalog query gates enablement; `findByText` resolves before it.
       await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
       const workspaceButton = within(linearCard!).getByRole('button', { name: 'Connect workspace' });
-      await waitFor(() => expect(workspaceButton).toBeDisabled());
-      expect(workspaceButton).toHaveAttribute(
-        'title',
-        'A Linear workspace connection is already installed. Manage it above.',
-      );
+      await waitFor(() => expect(workspaceButton).toHaveAttribute('aria-disabled', 'true'));
       fireEvent.click(workspaceButton);
       expect(api.startProviderConnection).not.toHaveBeenCalled();
     },
@@ -1156,7 +1175,7 @@ describe('Workspace settings', () => {
     ));
   });
 
-  it('uses provider-level workspace connection detection without blocking personal authorization', async () => {
+  it('keeps providers with an installable missing scope in Not connected', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000013',
       connectorType: 'google',
@@ -1175,11 +1194,11 @@ describe('Workspace settings', () => {
 
     renderSettings();
     openSettingsSection('Connections');
-    fireEvent.click(screen.getByRole('button', { name: 'All' }));
 
     const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
     expect(driveCard).not.toBeNull();
-    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect workspace' })).toBeDisabled());
+    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect workspace' }))
+      .toHaveAttribute('aria-disabled', 'true'));
     await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
 
     const linearCard = screen.getByText('Linear').closest('article');
@@ -1255,11 +1274,16 @@ describe('Workspace settings', () => {
     ));
 
     fireEvent.click(screen.getByRole('button', { name: 'Connected' }));
-    expect(screen.getByText('Google Mail + Calendar')).toBeVisible();
+    await waitFor(() => expect(screen.getByText('Google Mail + Calendar')).toBeVisible());
     expect(screen.queryByText('Google Drive + Docs + Sheets')).not.toBeInTheDocument();
   });
 
   it('renders generic webhooks in the installed list', async () => {
+    let resolveRotation!: (value: {
+      endpoint: string;
+      signingSecret: string;
+      signatureFormat: string;
+    }) => void;
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000099',
       connectorType: 'generic_webhook',
@@ -1268,12 +1292,16 @@ describe('Workspace settings', () => {
       capabilities: [],
       status: 'healthy',
     }]);
+    api.rotateWebhookSecret.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveRotation = resolve;
+    }));
     renderSettings();
     openSettingsSection('Connections');
     fireEvent.click(screen.getByRole('button', { name: 'All' }));
 
     const rotateButton = await screen.findByRole('button', { name: 'Refresh Inbound webhook' });
     expect(screen.getByRole('table', { name: 'Workspace connections' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Workspace connections' }).parentElement).toHaveTextContent('1');
     expect(screen.getAllByText('Inbound webhook')).toHaveLength(2);
     expect(rotateButton).toBeVisible();
     fireEvent.focus(rotateButton);
@@ -1283,10 +1311,24 @@ describe('Workspace settings', () => {
     fireEvent.click(rotateButton);
     const dialog = screen.getByRole('dialog', { name: 'Refresh Inbound webhook?' });
     expect(api.rotateWebhookSecret).not.toHaveBeenCalled();
+    const cancelButton = within(dialog).getByRole('button', { name: 'Cancel' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
     await waitFor(() => expect(api.rotateWebhookSecret).toHaveBeenCalledWith(
       '00000000-0000-7000-8000-000000000099',
     ));
+    expect(cancelButton).toBeDisabled();
+    fireEvent.click(cancelButton);
+    expect(dialog).toBeVisible();
+
+    await act(async () => resolveRotation({
+      endpoint: 'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
+      signingSecret: 'whsec_rotated-secret',
+      signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
+    }));
+    expect(await within(dialog).findByLabelText('Webhook endpoint')).toHaveValue(
+      'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
+    );
+    expect(within(dialog).getByLabelText('Webhook signing secret')).toHaveValue('whsec_rotated-secret');
   });
 
   it('hides connection refresh actions from non-admin members', async () => {
@@ -1297,14 +1339,51 @@ describe('Workspace settings', () => {
       displayName: 'Google · sam@example.com',
       capabilities: ['drive.read'],
       status: 'healthy',
+    }, {
+      id: '00000000-0000-7000-8000-000000000011',
+      connectorType: 'linear',
+      scope: 'workspace',
+      displayName: 'Linear · Rally',
+      capabilities: ['linear.read'],
+      status: 'healthy',
     }]);
 
     renderSettings({ ...workspace, currentUser: member });
     openSettingsSection('Connections');
 
     expect(await screen.findByText('Google · sam@example.com')).toBeVisible();
+    expect(screen.getByText('Linear · Rally')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Refresh Google · sam@example.com' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Refresh Linear · Rally' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete Google · sam@example.com' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Delete Linear · Rally' })).not.toBeInTheDocument();
+  });
+
+  it('shows deletion failures inside the confirmation dialog', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000010',
+      connectorType: 'google',
+      scope: 'you',
+      displayName: 'Google · adam@example.com',
+      capabilities: ['drive.read'],
+      status: 'healthy',
+    }]);
+    api.disconnectConnection.mockRejectedValueOnce(new ApiError(
+      'The connection could not be deleted. Try again.',
+      503,
+      'connection_delete_failed',
+    ));
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const deleteButton = await screen.findByRole('button', { name: 'Delete Google · adam@example.com' });
+    fireEvent.click(deleteButton);
+    const dialog = screen.getByRole('dialog', { name: 'Delete Google · adam@example.com?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
+
+    expect(await within(dialog).findByText('The connection could not be deleted. Try again.')).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeEnabled();
+    expect(within(dialog).getByRole('button', { name: 'Continue' })).toBeEnabled();
   });
 
   it('shows the immutable EU region and lets an owner create, copy, and revoke an invite', async () => {
