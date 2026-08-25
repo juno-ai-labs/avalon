@@ -99,7 +99,7 @@ Request-scoped attachment tools may be added directly to the preloaded automatio
 
 The compiler narrates while it researches, and the composer streams that narration. `compileAutomation` emits `started` once for the whole compile, a `thinking` frame per inference request, a `tool` row per discovery call, and `delta` frames carrying the architect's own text: the plan it states alongside its first tool calls, and a progress update every three or four calls after that. The `# Narration` section of the compiler policy owns what belongs in that text — settled sentences about the automation, never a question, never internal deliberation, never a tool or field name — and the submission turn is the one turn that carries none of it, because Rally renders the settled result from the saved draft and the elicitation instead. Narration accumulates into one composer bubble across turns, so the compiler tracks what earlier turns settled: a route restart replays only its own turn, and the reset frame restores the earlier updates rather than clearing text the reader has already seen.
 
-The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone stays null through the draft and into storage, and is resolved against the automation's own owner and scope when its `schedules` row is derived; an explicit trigger timezone wins there. Null is the distinction that makes the resolution possible at all — a default filled in at compile time is indistinguishable from a zone the person named, and answers for the scope the compiler guessed rather than the one the automation was created with. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Because most of what makes a submission *ready* is a cross-field refinement no JSON Schema can state — a binding key, an inspected plugin, one declared prefilter event type — `automation_submit_draft` supplies `AutomationDraftSchema` as the tool's code-authored refinement, so a rejected submission comes back to the model as the named field rather than as an external fault. Invalid structured output gets one sanitized repair attempt, then `502 model_output_invalid` with a request ID.
+The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone stays null through the draft and into storage, and is resolved against the automation's own owner and scope when its `schedules` row is derived; an explicit trigger timezone wins there. Null is the distinction that makes the resolution possible at all — a default filled in at compile time is indistinguishable from a zone the person named, and answers for the scope the compiler guessed rather than the one the automation was created with. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Because most of what makes a submission *ready* is a cross-field refinement no JSON Schema can state — a binding key, an inspected plugin, one declared prefilter event type — `automation_submit_draft` supplies `normalizeAutomationDraft` and `AutomationDraftSchema` — one shared parse, used by both its executor and its `validateInput` — so a rejected submission comes back to the model as the named field rather than as an external fault. The normalize step is half of that: it is what decodes the JSON-string fields at all. Structured output the compiler cannot parse becomes `502 model_output_invalid` with a request ID; the repair pass belongs to `client.structured`, which this path does not use.
 
 ### Connection plugins and authority narrowing
 
@@ -685,7 +685,7 @@ outputs, summaries, token content, and provider responses remain excluded.
 | `apps/api/test/agent-inference-logging.test.ts` | That no legacy D1/R2 path remains and provider refusals stay content-free in Workers Logs. |
 | `apps/api/test/inference-lakehouse.test.ts` | Exact request/attempt archival, pointer integrity, Pipeline delivery, and oversized-record preservation. |
 | `packages/db/test/agent-inference-retirement-migration.test.ts` | Migration 0094 removes the regional payload-log table and workspace preference while preserving workspace rows and foreign-key integrity. |
-| `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, `toolActivityName`, and the transport retry — that a fallback-less plan re-executes and re-sends **identical bytes**, that an exhausted budget and a refused endpoint each get their own provider code, that a 400 gets neither a retry nor the provider's name, and the backoff curve, `Retry-After` preference, and clamp as a pure function. |
+| `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, `toolActivityName`, and the transport retry — that a fallback-less plan re-executes and re-sends **identical bytes**, that an exhausted budget and a refused endpoint each get their own provider code, that a 400 gets neither a retry nor the provider's name, and the backoff curve, `Retry-After` preference, and clamp as a pure function., and the automation compiler's submission loop — the correction a refused draft is answered with, and the argument-validation classification behind it. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/harness-run-runtime.test.ts` — the
@@ -713,12 +713,17 @@ silently return every test to the shared key while each still passes alone.
 
 ### 2026-08-25 — A rejected automation draft names the field, instead of telling the model not to change it
 
-**What changed:** `automation_submit_draft` supplies a `validateInput` that
-re-runs `normalizeAutomationDraft` and `AutomationDraftSchema` — the same parse
-its executor runs. The submission JSON Schema also states the one requirement it
-had left to the refinement: a ready `semantic_activity` trigger's
-`deterministicPrefilter` declares exactly one normalized event type as
-`{"eventType":"…"}`.
+**What changed:** `automation_submit_draft`, `web_search`, `web_fetch`, and
+`memory_search` each supply a `validateInput` re-running the schema their
+executor throws from. For the draft tool that parse is now one shared
+`parseAutomationSubmission`, so the normalize step and the schema cannot drift
+apart between the hook and the executor. The submission JSON Schema and the
+compiler policy both state the requirement behind this failure: a ready
+`semantic_activity` trigger's `deterministicPrefilter` names one declared event
+type. A prefilter string that is not a JSON object is handed to the schema
+rather than coerced to `{}`. `HarnessTool.validateInput`'s own docstring now
+says when declaring one is mandatory, and `bind-runtime` calls the hook inside a
+`try`.
 
 **Why:** the tool's declared `inputSchema` accepts a draft its executor then
 rejects, because everything that decides readiness — the binding key, the
@@ -744,11 +749,17 @@ result the *next* provider request carries names
 `triggers[0].deterministicPrefilter.eventType` with the refinement's own
 sentence, arrives as `kind: "validation"`, and does not carry the
 "instead of changing the arguments" advice — then that the corrected
-resubmission compiles. Removing the hook fails it on the received text, which is
-the production sentence verbatim.
+resubmission compiles. Removing the hook fails it on `kind`, then on that text.
+`packages/contracts/src/index.test.ts` pins the path *and* the message of all
+six readiness refinements, which became the compiler's correction vocabulary the
+moment this change made them reachable; a refinement whose path is wrong names a
+field the model cannot find, which is this same loop under another name. The
+prefilter pass-through and the schema sentence each have their own case.
 
 **What a future change has to respect:** a tool whose executor parses with a
 schema stricter than the one it advertises owes the runtime a `validateInput`.
+The omission is invisible — it produces no error log distinguishable from a hard
+failure, which is why three tools carried it into production unnoticed.
 Without it, its own contract's failures are attributed to somebody else's system
 and the model is actively steered away from the fix. The refinement passed here
 must stay the same parse the executor runs; two parses that can disagree would
@@ -764,11 +775,19 @@ surfaces later — `POST /automations` refuses the same draft with
 Create button. *Leaving the submission schema's wording alone* now that
 the correction loop works — one recoverable round trip per draft is still a round
 trip, and the requirement was invisible to a model reading the field's own
-contract. *Saying it in the compiler policy too*: the schema is rendered into a
-user-role message on the first turn and again in the failsafe reminder, so the
-model already reads it twice per compile, and the policy's fixed overhead is
-within 61 bytes of the bound `prompts.test.ts` holds it to — a second copy of a
-rule is the prose creep that bound exists to catch.
+contract. *Adding* the rule to the compiler policy as a second sentence: that
+was written and reverted at +124 bytes against 63 of headroom. What went in
+instead is a correction, not an addition. Policy already carried a vaguer first
+copy — "a declared deterministic prefilter", which beside its
+`connector_activity` sibling's "only declared deterministic filter *fields*"
+reads as *declared by the plugin*, so `{}` satisfied it. Two statements of one
+rule drift into a contradiction, and this pair already had; the fix is to
+correct the stale one, at +22 bytes, not to leave it standing beside an accurate
+one elsewhere. *Throwing `formatToolArgumentValidationError`'s text from the
+executor* instead of declaring the hook — one line, and the model would see the
+same field names, but it routes around the classifier: the failure would still
+be reported as `kind: "external"`, so the wire contract and the telemetry would
+both say the provider's data was bad.
 
 ### 2026-08-25 — A platform refusal stops being the asking port's fault
 
