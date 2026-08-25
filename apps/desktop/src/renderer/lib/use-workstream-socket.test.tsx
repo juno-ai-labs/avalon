@@ -1,4 +1,4 @@
-import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
+import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
@@ -297,7 +297,7 @@ describe('useWorkstreamSocket', () => {
     workspaceCreateMessage.mockResolvedValue(savedMessage);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -335,7 +335,7 @@ describe('useWorkstreamSocket', () => {
     const startedAt = '2026-08-18T12:00:00.000Z';
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -411,7 +411,7 @@ describe('useWorkstreamSocket', () => {
     const messageId = '00000000-0000-7000-8000-000000000622';
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -487,7 +487,7 @@ describe('useWorkstreamSocket', () => {
     });
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -665,7 +665,7 @@ describe('useWorkstreamSocket', () => {
     setCachedWorkstreams(queryClient, [summary]);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -1073,7 +1073,7 @@ describe('useWorkstreamSocket', () => {
     };
     queryClient.setQueryData(['messages', workstreamId], [humanMessage]);
     const getSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
       ticket: 'socket-ticket',
       protocols: socketTicketProtocols('socket-ticket'),
     }));
@@ -1267,7 +1267,7 @@ describe('useWorkstreamSocket', () => {
     const messageId = '00000000-0000-7000-8000-000000000702';
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -1319,7 +1319,7 @@ describe('useWorkstreamSocket', () => {
     const messageId = '00000000-0000-7000-8000-000000000712';
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -1371,7 +1371,7 @@ describe('useWorkstreamSocket', () => {
     const messageId = '00000000-0000-7000-8000-000000000732';
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -1478,7 +1478,7 @@ describe('useWorkstreamSocket', () => {
     const harnessRunId = '00000000-0000-7000-8000-000000000063';
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -1610,7 +1610,7 @@ describe('useWorkstreamSocket', () => {
     queryClient.setQueryData(['block-dashboard-preference', workstreamId], { visible: false, updatedAt: null });
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -1641,11 +1641,11 @@ describe('useWorkstreamSocket', () => {
     expect(queryClient.getQueryState(['block-dashboard', workstreamId])?.isInvalidated).toBe(true);
   });
 
-  it('shows the name Avalon gives a work stream in its header and its sidebar row', async () => {
+  it('shows the name Rally gives a work stream in its header and its sidebar row', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000401';
-    const provisional = 'Create an email draft to Danny from Mucker that shares the avalon download link';
+    const provisional = 'Create an email draft to Danny from Mucker that shares the rally download link';
     queryClient.setQueryData(['workstream', workstreamId], {
       id: workstreamId,
       title: provisional,
@@ -1658,7 +1658,7 @@ describe('useWorkstreamSocket', () => {
     ] as WorkstreamSummary[]);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -1672,16 +1672,16 @@ describe('useWorkstreamSocket', () => {
       type: 'workstream_renamed',
       sequence: 1,
       occurredAt: '2026-08-11T09:00:01.000Z',
-      title: 'Avalon download link email to Danny',
+      title: 'Rally download link email to Danny',
       titleStatus: 'automatic',
     }));
 
     // The event settles the skeleton as well as the text: `automatic` is a
     // name, just one a later pass may still improve on.
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
-      .toMatchObject({ title: 'Avalon download link email to Danny', titleStatus: 'automatic' });
+      .toMatchObject({ title: 'Rally download link email to Danny', titleStatus: 'automatic' });
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
-      { id: workstreamId, title: 'Avalon download link email to Danny', titleStatus: 'automatic' },
+      { id: workstreamId, title: 'Rally download link email to Danny', titleStatus: 'automatic' },
       { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
     ]);
   });
@@ -1702,7 +1702,7 @@ describe('useWorkstreamSocket', () => {
     ] as WorkstreamSummary[]);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -1748,7 +1748,7 @@ describe('useWorkstreamSocket', () => {
     ] as WorkstreamSummary[]);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -1786,7 +1786,7 @@ describe('useWorkstreamSocket', () => {
     const workstreamId = '00000000-7000-7000-8000-000000000407';
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -1831,7 +1831,7 @@ describe('useWorkstreamSocket', () => {
     });
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -1904,7 +1904,7 @@ describe('useWorkstreamSocket', () => {
     ]);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -1968,7 +1968,7 @@ describe('useWorkstreamSocket', () => {
     };
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -2035,7 +2035,7 @@ describe('useWorkstreamSocket', () => {
       messageType: 'tool_event',
       createdAt: '2026-07-31T19:20:00.000Z',
       realtimeOrder: { anchorSequenceNumber: 4, eventSequence: 8, placement: 'before_anchor' },
-      toolEvent: { id: invocationId, name: 'avalon.ask', status: 'started' },
+      toolEvent: { id: invocationId, name: 'rally.ask', status: 'started' },
     };
     const wireToolMessage = wireTextMessage({
       id: invocationId,
@@ -2048,7 +2048,7 @@ describe('useWorkstreamSocket', () => {
           id: invocationId,
           harnessRunId: '00000000-0000-7000-8000-000000000113',
           toolCallId: 'call-ask',
-          toolName: 'avalon.ask',
+          toolName: 'rally.ask',
           activityName: null,
           connectionId: null,
           plugin: null,
@@ -2074,7 +2074,7 @@ describe('useWorkstreamSocket', () => {
       attentionSequenceNumber: null,
       toolEvent: {
         id: invocationId,
-        name: 'avalon.ask',
+        name: 'rally.ask',
         summary: 'Which repository?',
         status: 'completed',
         input: 'Which repository?',
@@ -2083,7 +2083,7 @@ describe('useWorkstreamSocket', () => {
     queryClient.setQueryData(['messages', workstreamId], [staleTool]);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -2121,7 +2121,7 @@ describe('useWorkstreamSocket', () => {
     const workstreamId = '00000000-0000-7000-8000-000000000151';
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -2181,7 +2181,7 @@ describe('useWorkstreamSocket', () => {
     const messageId = '00000000-0000-7000-8000-000000000122';
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -2259,7 +2259,7 @@ describe('useWorkstreamSocket', () => {
     const workstreamId = '00000000-0000-7000-8000-000000000131';
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -2309,7 +2309,7 @@ describe('useWorkstreamSocket', () => {
     const workstreamId = '00000000-0000-7000-8000-000000000141';
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -2338,7 +2338,7 @@ describe('useWorkstreamSocket', () => {
   it('resets the replay sequence when the selected workstream changes', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const getSocketTicket = vi.fn(async (workstreamId: string) => ({
-      url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
       ticket: 'socket-ticket',
       protocols: socketTicketProtocols('socket-ticket'),
     }));
@@ -2375,7 +2375,7 @@ describe('useWorkstreamSocket', () => {
     const harnessRunId = '00000000-0000-7000-8000-000000000404';
     const api = socketApiWith({
       getSocketTicket: vi.fn(async (workstreamId: string) => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
@@ -2517,7 +2517,7 @@ describe('useWorkstreamSocket', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const getSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/workstreams/workstream-one',
+      url: 'wss://api.rally.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
     const api = socketApiWith({ getSocketTicket });
@@ -2556,7 +2556,7 @@ describe('useWorkstreamSocket', () => {
     let online = false;
     vi.spyOn(window.navigator, 'onLine', 'get').mockImplementation(() => online);
     const getSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/workstreams/workstream-one',
+      url: 'wss://api.rally.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
     const api = socketApiWith({ getSocketTicket });
@@ -2581,7 +2581,7 @@ describe('useWorkstreamSocket', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const getSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/workstreams/workstream-one',
+      url: 'wss://api.rally.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
     const api = socketApiWith({
@@ -2632,7 +2632,7 @@ describe('useWorkstreamSocket', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const getSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/workstreams/workstream-one',
+      url: 'wss://api.rally.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
     const api = socketApiWith({
@@ -2682,7 +2682,7 @@ describe('useWorkstreamSocket', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const getSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/workstreams/workstream-one',
+      url: 'wss://api.rally.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
     const api = socketApiWith({ getSocketTicket });
@@ -2714,7 +2714,7 @@ describe('useWorkstreamSocket', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const getSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/workstreams/workstream-one',
+      url: 'wss://api.rally.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
     const api = socketApiWith({ getSocketTicket });
@@ -2760,7 +2760,7 @@ describe('useWorkstreamSocket', () => {
       debugRow,
     ]);
     const getSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.avalon.test/workstreams/workstream-one',
+      url: 'wss://api.rally.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
     const canonicalWorkstream = workstreamBoot({

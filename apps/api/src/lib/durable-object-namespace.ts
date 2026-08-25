@@ -1,4 +1,4 @@
-import type { Region } from "@avalon/contracts";
+import type { Region } from "@rally/contracts";
 import type { DurableObject as RpcDurableObject } from "cloudflare:workers";
 
 import type { Env } from "../env";

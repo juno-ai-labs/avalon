@@ -108,10 +108,10 @@ reviewed as a new boundary.
 
 ## Testing
 
-`pnpm --filter @avalon/ace test` covers Access failure, same-origin mutation,
+`pnpm --filter @rally/ace test` covers Access failure, same-origin mutation,
 the exact Flagship-and-Queue write contract, the safe attribute vocabulary,
-operators, nesting, and regional fan-out. `pnpm --filter @avalon/ace typecheck`
-checks both browser and Worker programs; `pnpm --filter @avalon/ace build`
+operators, nesting, and regional fan-out. `pnpm --filter @rally/ace typecheck`
+checks both browser and Worker programs; `pnpm --filter @rally/ace build`
 builds the Vite client and performs a Wrangler dry run. API workerd tests cover
 the real Queue dispatch and Durable Object WebSocket behavior. Desktop tests
 cover the fail-closed product gates and live socket cache replacement.
@@ -203,7 +203,7 @@ deployment gate and only expected propagation failures are retried.
 ### 2026-08-25 — Merge deployment invokes Ace's package script explicitly
 
 **What changed:** The Ace deployment workflow now runs
-`pnpm --filter @avalon/ace run deploy`, and its deployment contract pins that
+`pnpm --filter @rally/ace run deploy`, and its deployment contract pins that
 exact command.
 
 **Why:** pnpm reserves `deploy` as a CLI command. Without `run`, the first

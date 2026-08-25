@@ -22,7 +22,7 @@
 // Reading a remote workspace means exporting its D1 first, because Wrangler holds
 // those credentials and this script does not. Pass the dump straight in — it is
 // loaded into memory, so no sqlite3 CLI is needed and nothing is written back:
-//   pnpm --filter @avalon/api exec wrangler d1 export DB --remote \
+//   pnpm --filter @rally/api exec wrangler d1 export DB --remote \
 //     --config wrangler.global.jsonc --output /tmp/global.sql
 //   pnpm exec tsx scripts/preview-digest-email.mjs --sql /tmp/global.sql
 

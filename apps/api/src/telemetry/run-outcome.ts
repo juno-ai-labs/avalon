@@ -1,4 +1,4 @@
-import { asUserId, type UserId, type WorkspaceId } from '@avalon/contracts';
+import { asUserId, type UserId, type WorkspaceId } from '@rally/contracts';
 import type { Env, IdentityAuthContext } from '../env';
 import { withWorkspaceRuntimeDatabase } from '../services/workspace-runtime-database';
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from './api-emitter';

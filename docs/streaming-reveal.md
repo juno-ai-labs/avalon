@@ -139,9 +139,9 @@ narration through a different surface and is deliberately not paced by this.
 
 ## Testing
 
-- `pnpm --filter @avalon/desktop exec vitest run src/renderer/lib/streaming-reveal.test.ts`
+- `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/streaming-reveal.test.ts`
   — the arithmetic and state transitions, pure.
-- `pnpm --filter @avalon/desktop exec vitest run src/renderer/lib/use-workstream-socket.test.tsx`
+- `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-workstream-socket.test.tsx`
   — the loop against the hook: text held back then revealed across frames,
   instant reveal while hidden, the retry clamp, and the pre-pacing suites now
   driven through `stubAnimationFrames()`, whose `flush` pumps queued frames

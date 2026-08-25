@@ -1,6 +1,6 @@
 # Development environment
 
-How to get Avalon fully running — the API Workers, the local database, and the
+How to get Rally fully running — the API Workers, the local database, and the
 Electron desktop client — on a workstation or inside an agent sandbox.
 
 AI coding agents: read this at the start of every session before running a setup
@@ -47,7 +47,7 @@ pnpm env:sync
 ```
 
 `scripts/sync-dev-env.mjs` defaults `APP_ENV=development` and
-`AVALON_DEV_AUTH=true` and generates stable per-region signing and encryption
+`RALLY_DEV_AUTH=true` and generates stable per-region signing and encryption
 material, so the API runs without an `.env.local` at all. Copy the example file
 when you want provider keys, or when you are running the desktop client — the
 renderer reads `VITE_API_GLOBAL_URL` and `VITE_API_EU_URL` from it.
@@ -168,7 +168,7 @@ attach a browser driver.
 ```bash
 xvfb-run -a --server-args="-screen 0 1440x900x24" \
   pnpm exec dotenv -e .env.local -- \
-  pnpm --filter @avalon/desktop exec electron-vite dev --noSandbox --remoteDebuggingPort=9222
+  pnpm --filter @rally/desktop exec electron-vite dev --noSandbox --remoteDebuggingPort=9222
 ```
 
 `--noSandbox` and `--remoteDebuggingPort` are **electron-vite's** CLI options,
@@ -225,7 +225,7 @@ workspace with its work streams, automations, and onboarding checklist.
   `/substreams/0` — the work-stream socket carries metadata, the substream
   socket carries the transcript — and dispatch `MessageEvent`s onto it carrying
   `stream_started` and then `stream_delta` frames in the shape
-  `@avalon/contracts` accepts. Two traps: `sequence` must exceed the room's
+  `@rally/contracts` accepts. Two traps: `sequence` must exceed the room's
   current one or `applyEvent` discards the frame as replay, and an in-page
   `setInterval` is throttled to once a second when the window is occluded, so
   drive the tokens from the CDP side and call `Page.bringToFront` first. A

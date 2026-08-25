@@ -20,7 +20,7 @@
  * means a run does not have to be *recognized* to reach storage it is already
  * holding.
  */
-import type { WorkspaceId, WorkstreamId } from "@avalon/contracts";
+import type { WorkspaceId, WorkstreamId } from "@rally/contracts";
 
 import type { Env } from "../env";
 // Type-only, so the value import in the other direction stays a one-way edge:

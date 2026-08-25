@@ -1,5 +1,5 @@
 /**
- * The contract behind the **Image** and **PDF** buttons under one of Avalon's
+ * The contract behind the **Image** and **PDF** buttons under one of Rally's
  * messages. The renderer turns the message's markdown into HTML with the same
  * component the feed uses; the main process lays that HTML out on a card,
  * renders it with Chromium, and writes the file the person chose.
@@ -14,7 +14,7 @@ export interface MessageExportRequest {
   /**
    * The message's markdown, already rendered to HTML by `MarkdownBody`. It is
    * sent as HTML rather than as markdown because there is exactly one markdown
-   * renderer in Avalon and it lives in the renderer process — see
+   * renderer in Rally and it lives in the renderer process — see
    * [`docs/markdown-rendering.md`](../../../../docs/markdown-rendering.md).
    * It never carries script: `react-markdown` renders markup in its input as
    * text, and the export window runs the document under a policy that forbids
@@ -29,7 +29,7 @@ export interface MessageExportRequest {
    */
   fileName: string;
   /**
-   * The Avalon mark as a `data:image/png;base64,…` URL, read by the renderer out
+   * The Rally mark as a `data:image/png;base64,…` URL, read by the renderer out
    * of its own bundle. It travels with the request because the mark is a hashed
    * Vite asset the main process has no stable path to, in development or inside
    * an asar archive.
@@ -66,7 +66,7 @@ export function messageExportDate(now: Date): string {
 /**
  * Turns a message's text into the file name stem offered in the save dialog:
  * the first line that carries words, stripped of markdown punctuation and
- * slugified. Falls back to `avalon-message`, which is also what an image made
+ * slugified. Falls back to `rally-message`, which is also what an image made
  * entirely of a table or a code block is called.
  */
 export function messageExportFileName(text: string, savedOn: string): string {
@@ -83,5 +83,5 @@ export function messageExportFileName(text: string, savedOn: string): string {
     .replaceAll(/^-+|-+$/gu, '')
     .slice(0, 48)
     .replaceAll(/-+$/gu, '');
-  return `${slug || 'avalon-message'}-${savedOn}`;
+  return `${slug || 'rally-message'}-${savedOn}`;
 }

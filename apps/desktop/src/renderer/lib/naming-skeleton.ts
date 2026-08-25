@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
+import { WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 
 /** What every surface that renders a title skeleton needs to decide. */
 export interface NameableWorkstream {

@@ -1,6 +1,6 @@
 {
   "$schema": "./registry.schema.json",
-  "description": "Every token an Avalon theme may set. A theme file supplies values for these paths and no others.",
+  "description": "Every token a Rally theme may set. A theme file supplies values for these paths and no others.",
   "groups": {
     "ref.color.neutral": "The neutral ramp, ordered by contrast against the surface rather than by lightness, so a step means the same thing whichever way round a theme runs. Fills at the faint end, text at the strong end.",
     "ref.color.line": "The line ramp. Borders are not faint fills: a theme that draws with space needs to flatten its lines without erasing the fills that share a contrast level with them.",
@@ -8,7 +8,7 @@
     "sys.color.surface": "The named surfaces. Declared outright by each theme because their relationship inverts between light and dark \u2014 a dark theme makes a control recede by darkening it, a light theme by greying it.",
     "sys.color.text": "Text tones, strongest to faintest.",
     "sys.color.border": "The three borders the stylesheet names directly; each resolves to a step on the line ramp.",
-    "sys.color.brand": "Avalon's own colour. `ink` is the brand drawn as a mark or a label on an ordinary surface, which is a different question from `base`: the chartreuse is a fine fill on white and an illegible label on it.",
+    "sys.color.brand": "Rally's own colour. `ink` is the brand drawn as a mark or a label on an ordinary surface, which is a different question from `base`: the chartreuse is a fine fill on white and an illegible label on it.",
     "sys.color.accent": "The hue for links, focus and selection.",
     "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control \u2014 a switch that is on, a selected preset \u2014 which is neither the vivid hue nor the wash.",
     "sys.color.warning": "Attention short of failure.",

@@ -1,8 +1,8 @@
-import type { UserId, WorkspaceId } from '@avalon/contracts';
+import type { UserId, WorkspaceId } from '@rally/contracts';
 import type {
   TelemetryEventName,
   TelemetryEventProperties,
-} from '@avalon/contracts/telemetry';
+} from '@rally/contracts/telemetry';
 import type { Env, IdentityAuthContext } from '../env';
 import {
   apiTelemetryEnvelope,

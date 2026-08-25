@@ -1,5 +1,5 @@
-import { TELEMETRY_CONNECTOR_TYPES } from "@avalon/contracts";
-import { createConnectorRegistry, type ConnectorRegistry } from "@avalon/connectors";
+import { TELEMETRY_CONNECTOR_TYPES } from "@rally/contracts";
+import { createConnectorRegistry, type ConnectorRegistry } from "@rally/connectors";
 
 /**
  * One fully-configured connector registry for the tests that walk every

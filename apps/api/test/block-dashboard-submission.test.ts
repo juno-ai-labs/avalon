@@ -6,9 +6,9 @@ import { describe, expect, it } from "vitest";
 import {
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILL_TOOL_DEFINITIONS,
-} from "@avalon/agent-harness";
-import type { HarnessPlugin } from "@avalon/agent-harness";
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+} from "@rally/agent-harness";
+import type { HarnessPlugin } from "@rally/agent-harness";
+import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../src/services/integrations";
 import {
   workstreamRunLimits,

@@ -1,4 +1,4 @@
-import { newId } from '@avalon/db';
+import { newId } from '@rally/db';
 import { z } from 'zod';
 import type { Env } from '../env';
 import { ApiError } from '../lib/api-error';

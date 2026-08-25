@@ -1,4 +1,4 @@
-import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
+import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import type { SocketTicket } from './types';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

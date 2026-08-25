@@ -1,12 +1,12 @@
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { SlackOriginContext } from "@avalon/contracts";
+import type { SlackOriginContext } from "@rally/contracts";
 import type { AuthContext, Env } from "../src/env";
 import type * as NamingService from "../src/services/workstream-naming-service";
-import { authorizedConnection, type AuthorizedConnectorConnection } from "@avalon/connectors";
+import { authorizedConnection, type AuthorizedConnectorConnection } from "@rally/connectors";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   openWorkstreamAuthorityForTest,

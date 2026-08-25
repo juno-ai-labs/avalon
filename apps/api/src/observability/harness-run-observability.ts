@@ -1,4 +1,4 @@
-import type { HarnessOutcome } from "@avalon/agent-harness";
+import type { HarnessOutcome } from "@rally/agent-harness";
 import { z } from "zod";
 
 import type { Env } from "../env";

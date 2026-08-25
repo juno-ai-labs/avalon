@@ -5,13 +5,13 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>AvalonDockTilePlugin</string>
+  <string>RallyDockTilePlugin</string>
   <key>CFBundleIdentifier</key>
-  <string>app.avalon.desktop.dock-tile-plugin</string>
+  <string>ai.rallywith.desktop.dock-tile-plugin</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>Avalon Dock Tile Plugin</string>
+  <string>Rally Dock Tile Plugin</string>
   <key>CFBundlePackageType</key>
   <string>BNDL</string>
   <key>CFBundleShortVersionString</key>
@@ -21,6 +21,6 @@
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>NSPrincipalClass</key>
-  <string>AvalonDockTilePlugin</string>
+  <string>RallyDockTilePlugin</string>
 </dict>
 </plist>

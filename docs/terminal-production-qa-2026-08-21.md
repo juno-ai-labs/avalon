@@ -80,7 +80,7 @@ two-way cold-start concurrency pass with health checks.
 
 ## 2026-08-22 Global concurrency, alarms, subagents, and timeout acceptance
 
-The signed-in production desktop updated to Avalon 1.132.0, then exercised the
+The signed-in production desktop updated to Rally 1.132.0, then exercised the
 Global Worker deployed from main revision
 `5c830bf7fb23dbb19277ccca662f79c3454acc5b` by successful deployment run
 `32601569285`. A read-only Worker tail correlated every fresh work stream with
@@ -251,7 +251,7 @@ Regression evidence is recorded in real-workerd and Node tests. The new heartbea
 ## Environment
 
 - Date: 2026-08-21, approximately 12:15–13:04 PDT.
-- Desktop: production `/Applications/Avalon.app`, version 1.121.0.
+- Desktop: production `/Applications/Rally.app`, version 1.121.0.
 - API: `avalon-api-global`, application version 0.24.0.
 - Worker deployment version: `532796e3-718c-4471-b1ad-b6eb38a182f2`, deployed at 2026-08-21 12:35 PDT.
 - Current main: `c9bba244c9ea5de5a43333b65ebe9dc85397cf23`, “Give Terminal a typed port onto its own tables, and retire six reader-less ones” (PR #212).

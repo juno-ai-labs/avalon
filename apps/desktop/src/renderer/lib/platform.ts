@@ -1,5 +1,5 @@
 import type {
-  AvalonDesktopBridge,
+  RallyDesktopBridge,
   DesktopApplicationSettings,
   DesktopAuthAttempt,
   DesktopSession,
@@ -63,7 +63,7 @@ function randomBase64Url(size: number): string {
 
 async function createBrowserAuthAttempt(apiBaseUrl: string, region: 'global' | 'eu'): Promise<DesktopAuthAttempt> {
   if (region !== 'global' || normalizeApiBaseUrl(apiBaseUrl) !== normalizeApiBaseUrl(browserGlobalApiBaseUrl())) {
-    throw new Error('Avalon sign-in must use the Global identity service.');
+    throw new Error('Rally sign-in must use the Global identity service.');
   }
   browserAuthAttempts.clear();
   const now = Date.now();
@@ -103,7 +103,7 @@ async function browserSessionRequest(
   if (!response.ok) throw new Error(`Authentication failed (${response.status})`);
   const raw = await response.json() as DesktopSession & { refreshToken: string };
   if (normalizeApiBaseUrl(raw.apiBaseUrl) !== normalizeApiBaseUrl(apiBaseUrl)) {
-    throw new Error('Avalon rejected a session issued for an unexpected service.');
+    throw new Error('Rally rejected a session issued for an unexpected service.');
   }
   validate?.(raw);
   return installBrowserSession(raw, apiBaseUrl);
@@ -181,12 +181,12 @@ async function browserOnboardingSession(
     || (expected.workspaceId !== undefined && raw.workspace.id !== expected.workspaceId)
     || (identityEmail !== undefined && raw.user.email.toLocaleLowerCase('en-US') !== identityEmail)
   ) {
-    throw new Error('Avalon rejected a workspace session that did not match this organization request.');
+    throw new Error('Rally rejected a workspace session that did not match this organization request.');
   }
   return installBrowserSession(raw, browserGlobalApiBaseUrl());
 }
 
-const browserBridge: AvalonDesktopBridge = {
+const browserBridge: RallyDesktopBridge = {
   async getRuntimeConfig() {
     return {
       appVersion: 'development',
@@ -206,7 +206,7 @@ const browserBridge: AvalonDesktopBridge = {
   async setLockdownMode(enabled) {
     // Nothing to announce: enabling throws here, and disabling is already the
     // only state this bridge has. Debug enabled below is the mutable one.
-    if (enabled) throw new Error('Lockdown mode is available only in the Avalon desktop app.');
+    if (enabled) throw new Error('Lockdown mode is available only in the Rally desktop app.');
     return { ...browserApplicationSettings };
   },
   async setDebugEnabled(enabled) {
@@ -219,13 +219,13 @@ const browserBridge: AvalonDesktopBridge = {
     return { ...browserApplicationSettings };
   },
   async setMenuBarEnabled() {
-    throw new Error('The menu bar item is available only in the Avalon desktop app.');
+    throw new Error('The menu bar item is available only in the Rally desktop app.');
   },
   async setLaunchAtLogin() {
-    throw new Error('Opening at login is available only in the Avalon desktop app.');
+    throw new Error('Opening at login is available only in the Rally desktop app.');
   },
   async setProductAnalyticsEnabled() {
-    throw new Error('Product analytics is managed in the Avalon desktop app.');
+    throw new Error('Product analytics is managed in the Rally desktop app.');
   },
   async reportTelemetryScreen() {
     // Public-site/browser telemetry is outside this feature's V1 scope.
@@ -288,7 +288,7 @@ const browserBridge: AvalonDesktopBridge = {
       || !/^[A-Za-z0-9_-]{20,500}$/u.test(input.ticket)
       || !/^[A-Za-z0-9_-]{43}$/u.test(input.attemptId)
     ) {
-      throw new Error('Avalon sign-in must use the Global identity service.');
+      throw new Error('Rally sign-in must use the Global identity service.');
     }
     const attempt = browserAuthAttempts.get(input.attemptId);
     if (
@@ -311,10 +311,10 @@ const browserBridge: AvalonDesktopBridge = {
       },
       (identitySession) => {
         if (browserAuthAttempts.get(input.attemptId) !== attempt) {
-          throw new Error('A newer Avalon sign-in attempt replaced this callback.');
+          throw new Error('A newer Rally sign-in attempt replaced this callback.');
         }
         if (identitySession.workspace) {
-          throw new Error('Avalon sign-in returned a workspace before platform discovery.');
+          throw new Error('Rally sign-in returned a workspace before platform discovery.');
         }
       },
     );
@@ -369,7 +369,7 @@ const browserBridge: AvalonDesktopBridge = {
   async exportMessage() {
     // Rendering a card and choosing where it goes are both main-process work.
     // A browser has neither, and the buttons that call this are hidden there.
-    throw new Error('Saving a message needs the Avalon desktop application.');
+    throw new Error('Saving a message needs the Rally desktop application.');
   },
   async openExternal(url) {
     window.open(url, '_blank', 'noopener,noreferrer');
@@ -403,7 +403,7 @@ const browserBridge: AvalonDesktopBridge = {
     return { microphone: 'unknown', systemAudio: 'unknown' };
   },
   async startMeetingSystemAudioCapture() {
-    throw new Error('Native computer audio capture is available only in the Avalon desktop app.');
+    throw new Error('Native computer audio capture is available only in the Rally desktop app.');
   },
   async stopMeetingSystemAudioCapture() {
     // No native capture exists in a browser tab.
@@ -413,7 +413,7 @@ const browserBridge: AvalonDesktopBridge = {
   },
   async openMeetingAudioSettings() {
     // Browser permission recovery is owned by the browser chrome rather than
-    // an operating-system settings pane Avalon can open directly.
+    // an operating-system settings pane Rally can open directly.
   },
   onMeetingCloseRequested() {
     return () => undefined;
@@ -433,10 +433,10 @@ const browserBridge: AvalonDesktopBridge = {
   },
 };
 
-export function desktopBridge(): AvalonDesktopBridge {
-  if (window.avalon) return window.avalon;
+export function desktopBridge(): RallyDesktopBridge {
+  if (window.rally) return window.rally;
   if (window.location.protocol === 'http:' || window.location.protocol === 'https:') return browserBridge;
-  throw new Error('Avalon desktop services did not load. Reopen the application.');
+  throw new Error('Rally desktop services did not load. Reopen the application.');
 }
 
 /**
@@ -445,5 +445,5 @@ export function desktopBridge(): AvalonDesktopBridge {
  * that they are absent rather than present and failing.
  */
 export function desktopServicesAvailable(): boolean {
-  return Boolean(window.avalon);
+  return Boolean(window.rally);
 }

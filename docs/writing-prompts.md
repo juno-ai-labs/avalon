@@ -1,6 +1,6 @@
 # Writing a system prompt
 
-This is the **authoring guide** for the prompt text Avalon sends to a model —
+This is the **authoring guide** for the prompt text Rally sends to a model —
 the standing policy a run starts from, the classifier prompts that decide
 routing, and the catalogs rendered into the system prefix. For how a prompt is
 assembled, frozen, and cached across a run, read
@@ -193,7 +193,7 @@ describes how to work assumes a person is present to end the work.
 ### 12. Layer authority explicitly
 
 This one has no analogue in the sibling docs, because tools and skills inherit
-it from the prompt. Avalon's authority is four layers: platform policy, then
+it from the prompt. Rally's authority is four layers: platform policy, then
 authorized work-stream and automation configuration, then the current human
 request, then explicitly untrusted provider, resource, and tool data. The
 rendering is what makes the layering real:

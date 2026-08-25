@@ -134,11 +134,11 @@ test('an object named by the live manifest cannot be replaced by the next releas
 });
 
 test('mac update feed parser requires a local checksummed artifact', () => {
-  const feed = parseMacUpdateFeed(`version: 1.2.3\nfiles:\n  - url: Avalon-1.2.3-mac-arm64.zip\n    sha512: YWJjZA==\n    size: 42\npath: Avalon-1.2.3-mac-arm64.zip\n`);
+  const feed = parseMacUpdateFeed(`version: 1.2.3\nfiles:\n  - url: Rally-1.2.3-mac-arm64.zip\n    sha512: YWJjZA==\n    size: 42\npath: Rally-1.2.3-mac-arm64.zip\n`);
   assert.deepEqual(feed, {
     version: '1.2.3',
-    files: [{ url: 'Avalon-1.2.3-mac-arm64.zip', sha512: 'YWJjZA==', size: 42 }],
-    file: { url: 'Avalon-1.2.3-mac-arm64.zip', sha512: 'YWJjZA==', size: 42 },
+    files: [{ url: 'Rally-1.2.3-mac-arm64.zip', sha512: 'YWJjZA==', size: 42 }],
+    file: { url: 'Rally-1.2.3-mac-arm64.zip', sha512: 'YWJjZA==', size: 42 },
   });
   assert.throws(
     () => parseMacUpdateFeed(`version: 1.2.3\nfiles:\n  - url: https://elsewhere.invalid/a.zip\n    sha512: YWJjZA==\n    size: 42\n`),
@@ -147,9 +147,9 @@ test('mac update feed parser requires a local checksummed artifact', () => {
 });
 
 test('release verification rejects stale metadata in a secondary feed file', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-feed-verification-test-'));
-  const zipName = 'Avalon-1.2.3-mac-arm64.zip';
-  const dmgName = 'Avalon-1.2.3-mac-arm64.dmg';
+  const directory = await mkdtemp(join(tmpdir(), 'rally-feed-verification-test-'));
+  const zipName = 'Rally-1.2.3-mac-arm64.zip';
+  const dmgName = 'Rally-1.2.3-mac-arm64.dmg';
   try {
     await Promise.all([
       writeFile(join(directory, zipName), 'zip bytes'),
@@ -166,7 +166,7 @@ test('release verification rejects stale metadata in a secondary feed file', asy
           ],
         },
       }),
-      /SHA-512 mismatch for Avalon-1\.2\.3-mac-arm64\.dmg/u,
+      /SHA-512 mismatch for Rally-1\.2\.3-mac-arm64\.dmg/u,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -176,6 +176,6 @@ test('release verification rejects stale metadata in a secondary feed file', asy
 test('release prefixes and content types are deterministic', () => {
   assert.equal(normalizeReleasePrefix('/stable/darwin/arm64/'), 'stable/darwin/arm64');
   assert.throws(() => normalizeReleasePrefix('../stable'), /Invalid release prefix/u);
-  assert.equal(releaseContentType('Avalon.dmg'), 'application/x-apple-diskimage');
+  assert.equal(releaseContentType('Rally.dmg'), 'application/x-apple-diskimage');
   assert.equal(releaseContentType('latest-mac.yml'), 'application/yaml; charset=utf-8');
 });

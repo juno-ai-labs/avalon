@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TELEMETRY_BATCH_MAX_BYTES } from '@avalon/contracts/telemetry';
+import { TELEMETRY_BATCH_MAX_BYTES } from '@rally/contracts/telemetry';
 import type { HonoAppEnv } from '../src/env';
 import { errorHandler } from '../src/middleware/errors';
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from '../src/routes/telemetry';
@@ -250,7 +250,7 @@ describe('telemetry HTTP bounds', () => {
     }));
     form.set('dump', new File([new TextEncoder().encode('MDMP')], 'report.dmp'));
     const accepted = await publicApp().request('/telemetry/crashes/anonymous', {
-      method: 'POST', headers: { 'x-avalon-telemetry-capability': bootstrap.capability }, body: form,
+      method: 'POST', headers: { 'x-rally-telemetry-capability': bootstrap.capability }, body: form,
     }, environment);
     expect(accepted.status).toBe(202);
     await expect(accepted.json()).resolves.toMatchObject({ result: 'accepted' });
@@ -260,7 +260,7 @@ describe('telemetry HTTP bounds', () => {
     invalid.set('metadata', '{}');
     invalid.set('dump', new File([new TextEncoder().encode('MDMP')], 'report.dmp'));
     const rejected = await publicApp().request('/telemetry/crashes/anonymous', {
-      method: 'POST', headers: { 'x-avalon-telemetry-capability': bootstrap.capability }, body: invalid,
+      method: 'POST', headers: { 'x-rally-telemetry-capability': bootstrap.capability }, body: invalid,
     }, environment);
     expect(rejected.status).toBe(400);
     expect(put).toHaveBeenCalledOnce();
@@ -281,7 +281,7 @@ describe('telemetry HTTP bounds', () => {
       VALUES ('00000000-0000-7000-8000-0000000000d2', '00000000-0000-7000-8000-0000000000d1', 'owner', 'active', '2026-08-01T00:00:00.000Z');
     `);
     const environment = createTestEnv({
-      AVALON_REGION: 'global', APP_ENV: 'development', AVALON_DEV_AUTH: 'true',
+      AVALON_REGION: 'global', APP_ENV: 'development', RALLY_DEV_AUTH: 'true',
       LOG_LEVEL: 'error', DB: sqliteD1(database),
     });
     const body = JSON.stringify({ events: [{
@@ -302,8 +302,8 @@ describe('telemetry HTTP bounds', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-avalon-dev-user-id': '00000000-0000-7000-8000-0000000000d1',
-        'x-avalon-dev-workspace-id': '00000000-0000-7000-8000-0000000000d2',
+        'x-rally-dev-user-id': '00000000-0000-7000-8000-0000000000d1',
+        'x-rally-dev-workspace-id': '00000000-0000-7000-8000-0000000000d2',
       },
       body,
     }, environment);
@@ -316,8 +316,8 @@ describe('telemetry HTTP bounds', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-avalon-dev-user-id': '00000000-0000-7000-8000-0000000000d1',
-        'x-avalon-dev-workspace-id': '00000000-0000-7000-8000-0000000000d2',
+        'x-rally-dev-user-id': '00000000-0000-7000-8000-0000000000d1',
+        'x-rally-dev-workspace-id': '00000000-0000-7000-8000-0000000000d2',
       },
       body: JSON.stringify({ events: [{
         schema: 'com.avalon.telemetry.event', schemaVersion: 1,
@@ -338,8 +338,8 @@ describe('telemetry HTTP bounds', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-avalon-dev-user-id': '00000000-0000-7000-8000-0000000000d1',
-        'x-avalon-dev-workspace-id': '00000000-0000-7000-8000-0000000000d2',
+        'x-rally-dev-user-id': '00000000-0000-7000-8000-0000000000d1',
+        'x-rally-dev-workspace-id': '00000000-0000-7000-8000-0000000000d2',
       },
       body: JSON.stringify({ events: [{
         schema: 'com.avalon.telemetry.event', schemaVersion: 1,

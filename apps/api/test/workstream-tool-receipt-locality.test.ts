@@ -26,7 +26,7 @@ import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-o
 import { WorkstreamToolReceiptStorage } from "../src/durable-objects/workstream-tool-receipt-storage";
 import type { Env } from "../src/env";
 import { createToolReceiptObjectPort } from "../src/runtime/tool-receipt-port";
-import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 

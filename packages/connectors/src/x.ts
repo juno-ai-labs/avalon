@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@avalon/contracts";
+import type { ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 import {
   booleanValue,

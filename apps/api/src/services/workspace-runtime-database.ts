@@ -3,7 +3,7 @@ import { z } from "zod";
 import { workspaceDOName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { WorkspaceRuntimeSqlResult } from "../durable-objects/workspace-runtime-sql";
-import { asWorkspaceId } from "@avalon/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import type { Env } from "../env";
 import { referencesWorkstreamAuthorityTable } from "./workstream-runtime-database";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";

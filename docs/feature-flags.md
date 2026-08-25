@@ -1,6 +1,6 @@
 # Feature flags
 
-Avalon evaluates feature flags with [Cloudflare Flagship](https://developers.cloudflare.com/flagship/)
+Rally evaluates feature flags with [Cloudflare Flagship](https://developers.cloudflare.com/flagship/)
 through the `FLAGS` binding on both regional Workers. The binding owns two
 things: which OpenRouter model each agent runs on, and which client-visible
 features the desktop is allowed to offer. Read this document before adding a
@@ -67,7 +67,7 @@ out to a percentage of workspaces before it reaches all of them.
 
 The Worker variables stay. They are the checked-in default that every agent
 falls back to, so the deployed configuration remains readable in the repository
-and Avalon keeps running unchanged when Flagship is unreachable.
+and Rally keeps running unchanged when Flagship is unreachable.
 
 ### One flag per agent
 
@@ -199,7 +199,7 @@ is a distinct agent, and the whole point of giving it a flag was that it can be
 moved on its own.
 
 The set of ids a pin may name is closed — `AGENT_MODEL_OVERRIDES` in
-`@avalon/contracts` — because a pin bypasses the rollout, so what it can reach
+`@rally/contracts` — because a pin bypasses the rollout, so what it can reach
 is a reviewed product decision rather than whatever string a client sends. The
 API validates it on write and again on read, which is what lets a model be
 retired from the list without a migration: the work streams still naming it log
@@ -461,7 +461,7 @@ The fields are not all the same kind of answer, and the response schema says so.
 The five Boolean features default to off. `controlTowerRefreshSeconds`
 is a setting with no off: it defaults to the cadence the client would have used
 anyway, and both ends read that number from one definition —
-`CONTROL_TOWER_REFRESH_SECONDS` in `@avalon/contracts` — so an unreachable
+`CONTROL_TOWER_REFRESH_SECONDS` in `@rally/contracts` — so an unreachable
 Flagship, an older service, and the desktop fallback cannot disagree. The
 resolver clamps what Flagship serves to that range before serving it, because
 every refresh is an inference: a flag typed in milliseconds would otherwise turn
@@ -552,7 +552,7 @@ flag change takes to reach a running app. The poll lives in the **main
 process**, not a renderer, because that is where `application-settings.json` and
 the session are, and because both windows then read one answer instead of each
 deciding for itself. It is a poll rather than a socket: the only realtime
-channel Avalon has is the per-work-stream room, which a device without a work
+channel Rally has is the per-work-stream room, which a device without a work
 stream open is not connected to, and a flag change is not worth a second
 channel. A sign-in re-asks immediately rather than waiting out the interval; a
 sign-out closes the section on the way past.
@@ -635,7 +635,7 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   webhook or Queue notification surface; a dashboard edit changes evaluation
   but cannot wake connected Avalon clients.
 - **The cadence has one definition** — `CONTROL_TOWER_REFRESH_SECONDS` in
-  `@avalon/contracts` — read by the resolver, the service default, and the desktop
+  `@rally/contracts` — read by the resolver, the service default, and the desktop
   fallback, and the resolver clamps what Flagship serves to that range before
   serving it. Every refresh is an inference; a flag typed in milliseconds would
   otherwise turn one meeting into thousands of runs.
@@ -746,7 +746,7 @@ correctly provisioned flag.
 | `apps/api/test/workstream-row-contracts.test.ts` | That the stored pin is re-validated on read, and that a retired model reads as unpinned rather than failing the response. |
 
 Run one with
-`pnpm --filter @avalon/api exec vitest run test/agent-model-flags.test.ts` — the
+`pnpm --filter @rally/api exec vitest run test/agent-model-flags.test.ts` — the
 path is package-relative.
 
 Two traps. Flagship is unreachable in local development and test, which is the

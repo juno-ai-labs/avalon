@@ -1,4 +1,4 @@
-import type { HarnessOutcome } from "@avalon/agent-harness";
+import type { HarnessOutcome } from "@rally/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";

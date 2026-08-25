@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
-  AvalonDesktopBridge,
+  RallyDesktopBridge,
   DesktopDeepLinkEntrypoint,
   DesktopDeepLinkNavigation,
   DesktopSession,
@@ -15,13 +15,13 @@ import {
 } from './app-session';
 import { clearAllDrafts, readDraftText, writeDraftText } from './draft-cache';
 import { useDraftText } from './use-draft-text';
-import type { AvalonApi } from './api';
+import type { RallyApi } from './api';
 import { readDevicePreferences } from './device-preferences';
 import { consumeSurfaceEntrypoint } from './telemetry';
 
 let deepLinkListener: ((navigation: DesktopDeepLinkNavigation) => void) | null = null;
 let sessionListener: ((session: DesktopSession | null) => void) | null = null;
-let observedApi: AvalonApi | null = null;
+let observedApi: RallyApi | null = null;
 let observedSignOutIfCleared: (() => Promise<void>) | null = null;
 const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
@@ -43,7 +43,7 @@ const bridge = vi.hoisted(() => ({
   openSettings: vi.fn(),
   refreshSession: vi.fn(),
   reportTelemetryProductIntent: vi.fn(),
-}) satisfies AppSessionDesktopBridge & Pick<AvalonDesktopBridge, 'reportTelemetryProductIntent'>);
+}) satisfies AppSessionDesktopBridge & Pick<RallyDesktopBridge, 'reportTelemetryProductIntent'>);
 
 vi.mock('./platform', () => ({ desktopBridge: () => bridge }));
 
@@ -52,7 +52,7 @@ const futureExpiry = new Date(Date.now() + 60 * 60_000).toISOString();
 const euSession: DesktopSession = {
   accessToken: 'access-token-longer-than-twenty-characters',
   expiresAt: futureExpiry,
-  apiBaseUrl: 'https://eu.api.with-avalon.com',
+  apiBaseUrl: 'https://eu.api.rallywith.ai',
   user: { id: 'user-1', email: 'invitee@example.com', name: 'Invitee' },
   workspace: {
     id: 'workspace-eu',
@@ -64,7 +64,7 @@ const euSession: DesktopSession = {
 
 const globalIdentitySession: DesktopSession = {
   ...euSession,
-  apiBaseUrl: 'https://api.with-avalon.com',
+  apiBaseUrl: 'https://api.rallywith.ai',
   workspace: null,
 };
 
@@ -124,10 +124,10 @@ function resetDesktopBridge(): void {
     isPackaged: true,
     platform: 'darwin',
     api: {
-      global: 'https://api.with-avalon.com',
-      eu: 'https://eu.api.with-avalon.com',
+      global: 'https://api.rallywith.ai',
+      eu: 'https://eu.api.rallywith.ai',
     },
-    webBaseUrl: 'https://with-avalon.com',
+    webBaseUrl: 'https://rallywith.ai',
     devAuthEnabled: false,
   });
   bridge.getSession.mockResolvedValue(null);
@@ -173,20 +173,51 @@ describe('single-platform desktop identity routing', () => {
   beforeEach(resetDesktopBridge);
 
   it('accepts a callback only from the Global identity service', async () => {
-    window.localStorage.setItem('avalon:selected-region', 'eu');
+    window.localStorage.setItem('rally:selected-region', 'eu');
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
-    await dispatchDeepLink(`avalon://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'a'.repeat(43)}`);
+    await dispatchDeepLink(`rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'a'.repeat(43)}`);
 
     await waitFor(() => expect(bridge.exchangeDesktopTicket).toHaveBeenCalledWith({
-      apiBaseUrl: 'https://api.with-avalon.com',
+      apiBaseUrl: 'https://api.rallywith.ai',
       region: 'global',
       ticket: 'single-use-ticket-long-enough',
       attemptId: 'a'.repeat(43),
     }));
     expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
     expect(readDevicePreferences().selectedRegion).toBe('global');
-    expect(window.localStorage.getItem('avalon:selected-region')).toBeNull();
+    expect(window.localStorage.getItem('rally:selected-region')).toBeNull();
+  });
+
+  it('accepts a sign-in callback on the superseded avalon scheme', async () => {
+    // A build shipped before the rename registered `avalon:` alone, and the
+    // links it minted are still in inboxes. The main process forwards them; the
+    // renderer has to route them by the same list rather than one literal.
+    renderProvider();
+    expect(await screen.findByText('global:signed-out')).toBeVisible();
+    await dispatchDeepLink(`avalon://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'c'.repeat(43)}`);
+
+    await waitFor(() => expect(bridge.exchangeDesktopTicket).toHaveBeenCalledWith({
+      apiBaseUrl: 'https://api.rallywith.ai',
+      region: 'global',
+      ticket: 'single-use-ticket-long-enough',
+      attemptId: 'c'.repeat(43),
+    }));
+    expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
+  });
+
+  it('opens settings from a link minted in either scheme', async () => {
+    // Routing is by the shared scheme list, so the current scheme and the
+    // superseded one reach the same handler. Settings is the case with no
+    // session gate in front of it, which isolates the scheme decision.
+    renderProvider();
+    await screen.findByText('global:signed-out');
+
+    await dispatchDeepLink('rallywithai://settings/connections');
+    await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
+
+    await dispatchDeepLink('avalon://settings/workspace');
+    await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('workspace'));
   });
 
   it('does not drain a cold-start OAuth callback until runtime endpoints are loaded', async () => {
@@ -196,7 +227,7 @@ describe('single-platform desktop identity routing', () => {
     }));
     bridge.consumePendingDeepLinks.mockResolvedValueOnce([
       {
-        url: `avalon://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'b'.repeat(43)}`,
+        url: `rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'b'.repeat(43)}`,
         entrypoint: 'deep_link',
       },
     ]);
@@ -209,15 +240,15 @@ describe('single-platform desktop identity routing', () => {
       isPackaged: true,
       platform: 'darwin',
       api: {
-        global: 'https://api.with-avalon.com',
-        eu: 'https://eu.api.with-avalon.com',
+        global: 'https://api.rallywith.ai',
+        eu: 'https://eu.api.rallywith.ai',
       },
-      webBaseUrl: 'https://with-avalon.com',
+      webBaseUrl: 'https://rallywith.ai',
       devAuthEnabled: false,
     }));
 
     await waitFor(() => expect(bridge.exchangeDesktopTicket).toHaveBeenCalledWith({
-      apiBaseUrl: 'https://api.with-avalon.com',
+      apiBaseUrl: 'https://api.rallywith.ai',
       region: 'global',
       ticket: 'single-use-ticket-long-enough',
       attemptId: 'b'.repeat(43),
@@ -319,7 +350,7 @@ describe('single-platform desktop identity routing', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
       const authorization = new Headers(init?.headers).get('Authorization');
       return Promise.resolve(authorization === `Bearer ${renewedSession.accessToken}`
-        ? new Response(JSON.stringify({ url: 'wss://api.with-avalon.com/socket', ticket: 'socket-ticket' }))
+        ? new Response(JSON.stringify({ url: 'wss://api.rallywith.ai/socket', ticket: 'socket-ticket' }))
         : new Response(JSON.stringify({ error: { code: 'invalid_session' } }), { status: 401 }));
     });
 
@@ -338,7 +369,7 @@ describe('single-platform desktop identity routing', () => {
   it('rejects a regional authentication callback instead of creating a second login surface', async () => {
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
-    await dispatchDeepLink(`avalon://auth/complete?ticket=single-use-ticket-long-enough&region=eu&attempt=${'a'.repeat(43)}`);
+    await dispatchDeepLink(`rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=eu&attempt=${'a'.repeat(43)}`);
 
     expect(bridge.exchangeDesktopTicket).not.toHaveBeenCalled();
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('identity service');
@@ -349,11 +380,11 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
     await dispatchDeepLink(
-      'avalon://invitations/accept?token=private-invitation-token-long-enough&region=eu',
+      'rallywithai://invitations/accept?token=private-invitation-token-long-enough&region=eu',
     );
 
     expect(await screen.findByText('global:invite')).toBeVisible();
-    expect(screen.getByTestId('invitation-api')).toHaveTextContent('https://eu.api.with-avalon.com');
+    expect(screen.getByTestId('invitation-api')).toHaveTextContent('https://eu.api.rallywith.ai');
     expect(readDevicePreferences().selectedRegion).toBe('global');
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['workspace-onboarding'] });
     invalidate.mockRestore();
@@ -362,18 +393,18 @@ describe('single-platform desktop identity routing', () => {
   it('previews a cross-region invitation on its own API without moving the active session', async () => {
     const globalSession: DesktopSession = {
       ...euSession,
-      apiBaseUrl: 'https://api.with-avalon.com',
+      apiBaseUrl: 'https://api.rallywith.ai',
       workspace: { ...euSession.workspace!, id: 'workspace-global', name: 'Global Research', region: 'global' },
     };
     bridge.getSession.mockResolvedValue(globalSession);
     renderProvider();
     expect(await screen.findByText('global:Global Research')).toBeVisible();
     await dispatchDeepLink(
-      'avalon://invitations/accept?token=private-invitation-token-long-enough&region=eu',
+      'rallywithai://invitations/accept?token=private-invitation-token-long-enough&region=eu',
     );
 
     expect(await screen.findByText('global:invite')).toBeVisible();
-    expect(screen.getByTestId('invitation-api')).toHaveTextContent('https://eu.api.with-avalon.com');
+    expect(screen.getByTestId('invitation-api')).toHaveTextContent('https://eu.api.rallywith.ai');
     expect(readDevicePreferences().selectedRegion).toBe('global');
   });
 
@@ -509,7 +540,7 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
     await dispatchDeepLink(
-      `avalon://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
+      `rallywithai://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
     );
 
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['connections'] }));
@@ -527,7 +558,7 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
     await dispatchDeepLink(
-      `avalon://auth/complete?provider=linear&region=eu&attempt=${'a'.repeat(43)}&status=denied&error=oauth_denied`,
+      `rallywithai://auth/complete?provider=linear&region=eu&attempt=${'a'.repeat(43)}&status=denied&error=oauth_denied`,
     );
 
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('Linear authorization was cancelled');
@@ -547,12 +578,12 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
     await dispatchDeepLink(
-      'avalon://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected',
+      'rallywithai://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected',
     );
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
 
     await dispatchDeepLink(
-      `avalon://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
+      `rallywithai://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
     );
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
   });
@@ -565,7 +596,7 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
     await dispatchDeepLink(
-      `avalon://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
+      `rallywithai://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
     );
 
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
@@ -599,22 +630,22 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
 
-    await dispatchDeepLink(`avalon://slack/link?token=${'a'.repeat(43)}`);
+    await dispatchDeepLink(`rallywithai://slack/link?token=${'a'.repeat(43)}`);
 
     await waitFor(() => expect(fetchRequest).toHaveBeenCalledTimes(3));
     const [previewUrl, previewInit] = fetchRequest.mock.calls[0]!;
     const [linkUrl, linkInit] = fetchRequest.mock.calls[1]!;
     const [startUrl, startInit] = fetchRequest.mock.calls[2]!;
-    expect(previewUrl).toBe('https://eu.api.with-avalon.com/connections/slack/link/preview');
-    expect(linkUrl).toBe('https://eu.api.with-avalon.com/connections/slack/link');
-    expect(startUrl).toBe('https://eu.api.with-avalon.com/connections/slack/start?telemetryVersion=2');
+    expect(previewUrl).toBe('https://eu.api.rallywith.ai/connections/slack/link/preview');
+    expect(linkUrl).toBe('https://eu.api.rallywith.ai/connections/slack/link');
+    expect(startUrl).toBe('https://eu.api.rallywith.ai/connections/slack/start?telemetryVersion=2');
     expect(new Headers(previewInit?.headers).get('authorization')).toBe(`Bearer ${euSession.accessToken}`);
     expect(previewInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
     expect(linkInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
     expect(JSON.parse(String(startInit?.body))).toMatchObject({ scope: 'personal' });
     expect(confirm).toHaveBeenCalledWith(
-      'Connect Slack user U01234567 from Acme to your Avalon account, '
-      + 'and let Avalon search and act in Slack as you?',
+      'Connect Slack user U01234567 from Acme to your Rally account, '
+      + 'and let Rally search and act in Slack as you?',
     );
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
     await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledWith(
@@ -649,7 +680,7 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
 
-    await dispatchDeepLink(`avalon://slack/link?token=${'a'.repeat(43)}`);
+    await dispatchDeepLink(`rallywithai://slack/link?token=${'a'.repeat(43)}`);
 
     await waitFor(() => expect(screen.getByTestId('deep-link-error')).toHaveTextContent(
       /Slack was linked, but personal Slack tools could not be connected/u,
@@ -672,7 +703,7 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
 
-    await dispatchDeepLink(`avalon://slack/link?token=${'a'.repeat(43)}`);
+    await dispatchDeepLink(`rallywithai://slack/link?token=${'a'.repeat(43)}`);
 
     await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
     expect(fetchRequest).toHaveBeenCalledTimes(1);
@@ -696,7 +727,7 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
 
-    await dispatchDeepLink('avalon://settings/workspace');
+    await dispatchDeepLink('rallywithai://settings/workspace');
 
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('workspace'));
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
@@ -716,10 +747,10 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
 
-    await dispatchDeepLink('avalon://settings/connections');
+    await dispatchDeepLink('rallywithai://settings/connections');
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
 
-    await dispatchDeepLink('avalon://automations/new');
+    await dispatchDeepLink('rallywithai://automations/new');
     await waitFor(() => expect(window.location.hash).toBe('#/automations/new'));
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
@@ -737,7 +768,7 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
 
-    await dispatchDeepLink('avalon://notes/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30');
+    await dispatchDeepLink('rallywithai://notes/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30');
 
     await waitFor(() => expect(window.location.hash).toBe('#/notes/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30'));
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
@@ -757,12 +788,12 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
     const before = window.location.hash;
 
-    await dispatchDeepLink('avalon://notes/not-a-note');
+    await dispatchDeepLink('rallywithai://notes/not-a-note');
 
     // Signing in again does nothing about a link that names no note, so saying
     // so would send someone to a remedy that cannot work.
     await waitFor(() => expect(screen.getByTestId('deep-link-error'))
-      .toHaveTextContent('Avalon could not open that note link.'));
+      .toHaveTextContent('Rally could not open that note link.'));
     expect(window.location.hash).toBe(before);
   });
 
@@ -771,7 +802,7 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('global:signed-out')).toBeVisible();
     const before = window.location.hash;
 
-    await dispatchDeepLink('avalon://notes/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30');
+    await dispatchDeepLink('rallywithai://notes/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30');
 
     await waitFor(() => expect(screen.getByTestId('deep-link-error'))
       .toHaveTextContent('Sign in before opening this note.'));
@@ -791,7 +822,7 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
 
-    await dispatchDeepLink('avalon://workstreams/new', 'menu_bar');
+    await dispatchDeepLink('rallywithai://workstreams/new', 'menu_bar');
 
     // `/new` has to be read before the identifier branch, which would otherwise
     // measure it against the UUID pattern and reject it.
@@ -801,9 +832,9 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it.each([
-    'avalon://settings/workspace?section=connections',
-    'avalon://settings/Workspace',
-    'avalon://automations/new?template=unknown',
+    'rallywithai://settings/workspace?section=connections',
+    'rallywithai://settings/Workspace',
+    'rallywithai://automations/new?template=unknown',
   ])('rejects a non-canonical settings deep link: %s', async (rawUrl) => {
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,

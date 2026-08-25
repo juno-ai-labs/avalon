@@ -1,7 +1,7 @@
 import {
   TELEMETRY_CONNECTOR_TYPES,
   type TelemetryConnectorType,
-} from "@avalon/contracts/telemetry";
+} from "@rally/contracts/telemetry";
 
 import { uuidV7 } from "../lib/uuid-v7";
 import type {

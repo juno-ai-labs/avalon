@@ -42,7 +42,7 @@ const nextVersionId = '00000000-0000-7000-8000-000000000011';
 const detail: AutomationDetail = {
   id: automationId,
   name: 'Weekly brief',
-  emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
+  emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
   description: 'A concise weekly status brief.',
   scope: 'you',
   status: 'active',
@@ -237,7 +237,7 @@ describe('Automation template updates', () => {
         scope: 'workspace',
         status: 'healthy',
         capabilities: ['slack.agent'],
-        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM.' },
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Rally Agent DM.' },
       },
     ]);
     api.getAutomation.mockResolvedValue({
@@ -294,7 +294,7 @@ describe('Automation template updates', () => {
         scope: 'workspace',
         status: 'healthy',
         capabilities: ['slack.agent'],
-        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM.' },
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Rally Agent DM.' },
       },
       {
         id: 'connection-slack-2',
@@ -304,7 +304,7 @@ describe('Automation template updates', () => {
         scope: 'personal',
         status: 'healthy',
         capabilities: ['slack.agent'],
-        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM.' },
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Rally Agent DM.' },
       },
     ]);
     api.getAutomation.mockResolvedValue({
@@ -339,16 +339,16 @@ describe('Automation template updates', () => {
   it('shows the permanent email trigger and copies it from an icon button', async () => {
     renderScreen();
 
-    const emailAddress = await screen.findByText('luminous-tidal-structured-curie@automation.with-avalon.com');
+    const emailAddress = await screen.findByText('luminous-tidal-structured-curie@automation.rallywith.ai');
     expect(emailAddress).toBeVisible();
     expect(emailAddress).toHaveClass('automation-email-value');
-    expect(screen.getByText('Email this address from your Avalon account email to start a new work stream.')).toBeVisible();
+    expect(screen.getByText('Email this address from your Rally account email to start a new work stream.')).toBeVisible();
 
     const copyButton = screen.getByRole('button', { name: 'Copy automation email' });
     expect(copyButton).toHaveAttribute('title', 'Copy automation email');
-    expect(copyButton).not.toHaveTextContent('luminous-tidal-structured-curie@automation.with-avalon.com');
+    expect(copyButton).not.toHaveTextContent('luminous-tidal-structured-curie@automation.rallywith.ai');
     fireEvent.click(copyButton);
-    expect(copyText).toHaveBeenCalledWith('luminous-tidal-structured-curie@automation.with-avalon.com');
+    expect(copyText).toHaveBeenCalledWith('luminous-tidal-structured-curie@automation.rallywith.ai');
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent('Automation email address copied.');
     });

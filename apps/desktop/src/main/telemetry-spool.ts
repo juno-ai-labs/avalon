@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { TelemetryEnvelopeSchema, type TelemetryEnvelope } from '@avalon/contracts';
+import { TelemetryEnvelopeSchema, type TelemetryEnvelope } from '@rally/contracts';
 import { z } from 'zod';
 
 const LOCAL_RETENTION_MS = 14 * 24 * 60 * 60 * 1_000;

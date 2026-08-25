@@ -2,7 +2,7 @@ import {
   WorkspaceSyncTopicSchema,
   asWorkspaceId,
   type WorkspaceSyncTopic,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";

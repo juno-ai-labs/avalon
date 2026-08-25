@@ -1,4 +1,4 @@
-import { ConnectorError, slackApi } from "@avalon/connectors";
+import { ConnectorError, slackApi } from "@rally/connectors";
 import { z } from "zod";
 
 import { sha256 } from "../lib/crypto";

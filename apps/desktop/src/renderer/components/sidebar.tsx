@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
+import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import { formatDateTime, formatRelative, groupActivityItems, workstreamMarkerStatus } from '../lib/format';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
@@ -164,7 +164,7 @@ const onboardingItems = [
   {
     id: 'connect-tools',
     title: 'Connect your tools',
-    description: 'Bring Linear, GitHub, and Google Workspace into Avalon',
+    description: 'Bring Linear, GitHub, and Google Workspace into Rally',
   },
   {
     id: 'create-automation',
@@ -190,7 +190,7 @@ function OnboardingChecklist(): React.JSX.Element {
   return (
     <section className="onboarding-checklist" aria-labelledby="onboarding-checklist-heading">
       <header>
-        <h2 id="onboarding-checklist-heading">Get started with Avalon</h2>
+        <h2 id="onboarding-checklist-heading">Get started with Rally</h2>
         <span>{completedCount} / {onboardingItems.length}</span>
       </header>
       <div
@@ -1324,7 +1324,7 @@ export function Sidebar({
         <Menu size={17} />
       </IconButton>
       {sidebarOpen && <button aria-label="Close navigation" className="sidebar-scrim" onClick={() => setSidebarOpen(false)} type="button" />}
-      <aside aria-label="Avalon navigation" className={clsx('sidebar', sidebarOpen && 'is-mobile-open', resizing && 'is-resizing')}>
+      <aside aria-label="Rally navigation" className={clsx('sidebar', sidebarOpen && 'is-mobile-open', resizing && 'is-resizing')}>
         <div className="sidebar-titlebar window-drag">
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
@@ -1646,7 +1646,7 @@ export function Sidebar({
       >
         <p className="modal-copy">
           <strong>{archiveNoteTarget?.title}</strong> leaves the sidebar, stops being offered as a
-          resource, and stops reaching the agent. Its transcript is kept, but Avalon has no way to
+          resource, and stops reaching the agent. Its transcript is kept, but Rally has no way to
           bring the note back yet.
         </p>
       </Modal>

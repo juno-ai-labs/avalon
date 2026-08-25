@@ -53,7 +53,7 @@ std::string FourCharacterCode(OSStatus status) {
 
 std::string StatusMessage(const char* operation, OSStatus status) {
   if (status == kAudioDevicePermissionsError) {
-    return "Computer audio access is blocked. Allow Avalon in System Settings > Privacy & Security > Screen & System Audio Recording, under System Audio Recording Only, then try again.";
+    return "Computer audio access is blocked. Allow Rally in System Settings > Privacy & Security > Screen & System Audio Recording, under System Audio Recording Only, then try again.";
   }
   return std::string(operation) + " failed (Core Audio " + FourCharacterCode(status)
       + ", " + std::to_string(status) + ").";
@@ -220,7 +220,7 @@ OSStatus StartCoreAudioTap() API_AVAILABLE(macos(14.2)) {
   @autoreleasepool {
     CATapDescription* description = [[CATapDescription alloc]
         initStereoGlobalTapButExcludeProcesses:@[]];
-    description.name = @"Avalon Meeting System Audio";
+    description.name = @"Rally Meeting System Audio";
     description.privateTap = YES;
     description.muteBehavior = CATapUnmuted;
 
@@ -246,14 +246,14 @@ OSStatus StartCoreAudioTap() API_AVAILABLE(macos(14.2)) {
       return kAudioHardwareUnsupportedOperationError;
     }
 
-    NSString* aggregateUID = [NSString stringWithFormat:@"app.avalon.desktop.system-audio.%@",
+    NSString* aggregateUID = [NSString stringWithFormat:@"ai.rallywith.desktop.system-audio.%@",
                                                         NSUUID.UUID.UUIDString];
     NSDictionary* tapEntry = @{
       @(kAudioSubTapUIDKey): tapUID,
       @(kAudioSubTapDriftCompensationKey): @YES,
     };
     NSDictionary* aggregateDescription = @{
-      @(kAudioAggregateDeviceNameKey): @"Avalon Meeting System Audio",
+      @(kAudioAggregateDeviceNameKey): @"Rally Meeting System Audio",
       @(kAudioAggregateDeviceUIDKey): aggregateUID,
       @(kAudioAggregateDeviceTapListKey): @[tapEntry],
       @(kAudioAggregateDeviceIsPrivateKey): @YES,
@@ -314,7 +314,7 @@ napi_value Start(napi_env env, napi_callback_info info) {
   napi_value resourceName;
   napi_create_string_utf8(
       env,
-      "AvalonSystemAudio",
+      "RallySystemAudio",
       NAPI_AUTO_LENGTH,
       &resourceName);
   napi_threadsafe_function threadsafeFunction = nullptr;
@@ -331,7 +331,7 @@ napi_value Start(napi_env env, napi_callback_info info) {
       CallJavaScript,
       &threadsafeFunction);
   if (createStatus != napi_ok) {
-    ThrowError(env, "Avalon could not initialize its computer audio callback.");
+    ThrowError(env, "Rally could not initialize its computer audio callback.");
     return nullptr;
   }
   audioThreadsafeFunction.store(threadsafeFunction, std::memory_order_release);
@@ -359,7 +359,7 @@ napi_value Start(napi_env env, napi_callback_info info) {
 napi_value Stop(napi_env env, napi_callback_info) {
   std::lock_guard<std::mutex> guard(captureMutex);
   if (!StopCaptureLocked(true)) {
-    ThrowError(env, "Avalon could not drain the final computer-audio samples.");
+    ThrowError(env, "Rally could not drain the final computer-audio samples.");
     return nullptr;
   }
   napi_value undefined;

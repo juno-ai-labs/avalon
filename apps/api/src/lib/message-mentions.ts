@@ -1,4 +1,4 @@
-import type { Message } from "@avalon/contracts";
+import type { Message } from "@rally/contracts";
 
 type Mention = Message["mentions"][number];
 

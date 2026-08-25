@@ -1,4 +1,4 @@
-import { newId } from "@avalon/db";
+import { newId } from "@rally/db";
 import {
   createTerminalPortFactory,
   type TerminalPortFactory,

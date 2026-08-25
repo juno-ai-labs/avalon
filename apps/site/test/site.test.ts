@@ -35,7 +35,7 @@ function unpublishedReleaseFixture(): Record<string, unknown> {
   };
 }
 
-describe('public Avalon site', () => {
+describe('public Rally site', () => {
   it('presents Avalon as a desktop product without exposing an app sign-in surface', () => {
     const page = readProjectFile('index.html');
 
@@ -252,7 +252,7 @@ describe('public Avalon site', () => {
     );
     expect(page).not.toMatch(/href="[^"]+\.(?:dmg|zip)"/i);
     expect(page).toContain('Downloads opening soon');
-    expect(renderDesktopRelease(page, release)).toContain('Download Avalon for macOS');
+    expect(renderDesktopRelease(page, release)).toContain('Download Rally for macOS');
     expect(renderDesktopRelease(page, release)).not.toContain('Preview 0.1.0');
   });
 
@@ -278,7 +278,7 @@ describe('public Avalon site', () => {
     expect(rendered).toContain(
       'href="https://downloads.rallywith.ai/stable/darwin/arm64/Avalon.dmg"',
     );
-    expect(rendered).toContain('Download Avalon for macOS');
+    expect(rendered).toContain('Download Rally for macOS');
     expect(rendered).not.toContain('Downloads opening soon');
   });
 
@@ -319,7 +319,7 @@ describe('public Avalon site', () => {
     expect(desktopDmgUrl(release, publication)).toBe(
       'https://downloads.rallywith.ai/stable/darwin/arm64/Avalon.dmg',
     );
-    expect(renderDesktopRelease(page, release, publication)).toContain('Download Avalon for macOS');
+    expect(renderDesktopRelease(page, release, publication)).toContain('Download Rally for macOS');
   });
 
   it('keeps a genuinely missing release unpublished but rejects inconsistent promotion state', async () => {

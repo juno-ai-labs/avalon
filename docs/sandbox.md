@@ -1,13 +1,13 @@
 # Claude Code remote sandbox
 
-Avalon's agent sessions run in an ephemeral Linux container with no persistent
+Rally's agent sessions run in an ephemeral Linux container with no persistent
 state and no Cloudflare credentials. This document is the authoritative
 definition of that environment: the setup script, the network policy, and the
 version parity we expect against CI and production. For the day-to-day commands
 that bring the application up inside it, read
 [the development environment guide](dev-environment.md).
 
-Set up one environment. Avalon needs no database server, so unlike a
+Set up one environment. Rally needs no database server, so unlike a
 PostgreSQL-backed project there is no second environment to maintain.
 
 ## `avalon-node22`
@@ -19,7 +19,7 @@ PostgreSQL-backed project there is no second environment to maintain.
 The Worker talks to a long list of provider APIs, and a restricted policy denies
 each of them at the CONNECT tunnel with an opaque `403`, which surfaces as an
 unrelated-looking client error rather than a network message. If the policy must
-be narrowed, the hosts Avalon actually reaches are:
+be narrowed, the hosts Rally actually reaches are:
 
 | Host | Used by |
 | --- | --- |

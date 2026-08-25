@@ -1,5 +1,5 @@
-import type { WorkspaceId, WorkstreamId } from "@avalon/contracts";
-import { newId } from "@avalon/db";
+import type { WorkspaceId, WorkstreamId } from "@rally/contracts";
+import { newId } from "@rally/db";
 import { substreamAgentName } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
 import type { ContentAudience } from "../lib/audience-containment";

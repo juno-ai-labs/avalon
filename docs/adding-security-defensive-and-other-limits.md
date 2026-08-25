@@ -1,6 +1,6 @@
 # Adding security, defensive, and other limits
 
-Read this before adding any limit to Avalon — a maximum payload size, an item or
+Read this before adding any limit to Rally — a maximum payload size, an item or
 depth cap, a retry ceiling, a concurrency cap, a timeout, a cooldown, a
 quarantine window, a page size, a threshold. [What this
 covers](#what-this-covers) sorts them into four kinds and says who picks each
@@ -12,7 +12,7 @@ number.**
 
 The number is not an implementation detail. It decides which abuse we accept,
 which cost we agree to pay, and which real user gets cut off on a bad day — and
-Avalon has no load history, no metrics stack, and no capacity model to appeal to
+Rally has no load history, no metrics stack, and no capacity model to appeal to
 ([`AGENTS.md`](../AGENTS.md#where-we-are),
 [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md#deciding-without-measurement)).
 A defensive number invented by whoever happened to be writing the guard is a
@@ -75,7 +75,7 @@ free and it is not neutral. It is a branch to maintain, a rejection to surface, 
 test to keep honest, and a number that outlives everyone who understood it — and
 its characteristic failure is not letting an attacker through, it is cutting off
 a legitimate user on a day nobody was watching, for a threat that never arrived.
-Avalon builds for the product that exists ([`AGENTS.md`](../AGENTS.md#where-we-are));
+Rally builds for the product that exists ([`AGENTS.md`](../AGENTS.md#where-we-are));
 that applies to guards as much as to features.
 
 Add one only when you can write down all four of these, in the constant's comment

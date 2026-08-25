@@ -2,7 +2,7 @@ import {
   ATTACHMENT_KIND_ENTRIES,
   classifyAttachmentKind,
   type ExecutionPrincipal,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
 import {
   loadVisibleWorkstreamResourceInventory,

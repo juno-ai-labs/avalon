@@ -1,5 +1,5 @@
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
-import { AutomationDraftStreamEventSchema } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { AutomationDraftStreamEventSchema } from "@rally/contracts";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HonoAppEnv } from "../src/env";

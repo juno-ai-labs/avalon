@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { notarytoolCredentialArgs } from './apple-notarization.mjs';
 import { writeBlockmap } from './blockmap.mjs';
-import { AVALON_APPLE_TEAM_ID, sha512File } from './release-lib.mjs';
+import { RALLY_APPLE_TEAM_ID, sha512File } from './release-lib.mjs';
 
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -41,7 +41,7 @@ export function selectDeveloperIdIdentity(identityOutput, qualifier = '') {
     .map((match) => ({ hash: match[1].toUpperCase(), name: match[2] }))
     .filter(
       (identity) => identity.name.startsWith('Developer ID Application:')
-        && identity.name.endsWith(`(${AVALON_APPLE_TEAM_ID})`),
+        && identity.name.endsWith(`(${RALLY_APPLE_TEAM_ID})`),
     );
   const requested = qualifier
     .trim()
@@ -55,7 +55,7 @@ export function selectDeveloperIdIdentity(identityOutput, qualifier = '') {
     : identities;
   if (matching.length !== 1) {
     throw new Error(
-      `Expected exactly one Developer ID Application identity for team ${AVALON_APPLE_TEAM_ID}`
+      `Expected exactly one Developer ID Application identity for team ${RALLY_APPLE_TEAM_ID}`
         + `${requested ? ` matching CSC_NAME=${requested}` : ''}; found ${matching.length}`,
     );
   }
@@ -63,9 +63,9 @@ export function selectDeveloperIdIdentity(identityOutput, qualifier = '') {
 }
 
 function releaseDate(environment = process.env) {
-  if (environment.AVALON_RELEASE_DATE) {
-    const date = new Date(environment.AVALON_RELEASE_DATE);
-    if (Number.isNaN(date.valueOf())) throw new Error('AVALON_RELEASE_DATE must be an ISO-8601 date');
+  if (environment.RALLY_RELEASE_DATE) {
+    const date = new Date(environment.RALLY_RELEASE_DATE);
+    if (Number.isNaN(date.valueOf())) throw new Error('RALLY_RELEASE_DATE must be an ISO-8601 date');
     return date.toISOString();
   }
   if (environment.SOURCE_DATE_EPOCH) {

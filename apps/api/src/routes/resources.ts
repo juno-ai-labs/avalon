@@ -1,7 +1,8 @@
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
-import { IdSchema, ResourceSchema } from "@avalon/contracts";
-import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
+import { IdSchema, ResourceSchema } from "@rally/contracts";
+import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -47,7 +48,7 @@ resourceRoutes.post("/upload", async (c) => {
   const file = body.file;
   if (!(file instanceof File)) throw new ApiError(422, "file_required", "A file field is required");
   const title = typeof body.title === "string" ? body.title : undefined;
-  const draftId = IdSchema.safeParse(c.req.header("X-Avalon-Draft-Id"));
+  const draftId = IdSchema.safeParse(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.DRAFT_ID));
   if (!draftId.success) throw new ApiError(422, "draft_id_required", "A valid draft attachment ID is required");
   return c.json(ResourceSchema.parse(
     await new ResourceService(c.env, getAuth(c)).upload(file, title, draftId.data)), 201);

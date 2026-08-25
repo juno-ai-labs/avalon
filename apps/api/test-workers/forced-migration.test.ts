@@ -15,11 +15,11 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { asWorkspaceId } from "@avalon/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import type {
   DurableObjectMigrationCommand,
   DurableObjectMigrationReport,
-} from "@avalon/contracts/durable-object-migrations";
+} from "@rally/contracts/durable-object-migrations";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 import {

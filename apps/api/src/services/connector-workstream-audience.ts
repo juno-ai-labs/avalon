@@ -1,4 +1,4 @@
-import { ParticipantSchema, type ExternalActor, type Scope } from "@avalon/contracts";
+import { ParticipantSchema, type ExternalActor, type Scope } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { logWarn } from "../observability/logger";

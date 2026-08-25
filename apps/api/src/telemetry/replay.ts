@@ -1,5 +1,5 @@
-import { TelemetryEnvelopeSchema } from '@avalon/contracts/telemetry';
-import { newId } from '@avalon/db';
+import { TelemetryEnvelopeSchema } from '@rally/contracts/telemetry';
+import { newId } from '@rally/db';
 import { z } from 'zod';
 import type { Env } from '../env';
 import type { TelemetryOperatorPrincipal } from './operator-auth';

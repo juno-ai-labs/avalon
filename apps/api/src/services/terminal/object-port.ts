@@ -1,4 +1,4 @@
-import { asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import { substreamAgentName } from "../../durable-objects/names";
 import { rpcResultBody } from "../../durable-objects/rpc-result";

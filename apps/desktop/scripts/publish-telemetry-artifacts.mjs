@@ -208,10 +208,10 @@ async function findPackagedApplication(sourceDesktopDirectory) {
   const releaseDirectory = join(sourceDesktopDirectory, 'release');
   const entries = await readdir(releaseDirectory, { recursive: true, withFileTypes: true });
   const applications = entries
-    .filter((entry) => entry.isDirectory() && entry.name === 'Avalon.app')
+    .filter((entry) => entry.isDirectory() && entry.name === 'Rally.app')
     .map((entry) => join(entry.parentPath, entry.name));
   if (applications.length !== 1) {
-    throw new Error(`Expected one packaged Avalon.app, found ${applications.length}`);
+    throw new Error(`Expected one packaged Rally.app, found ${applications.length}`);
   }
   return applications[0];
 }
@@ -276,15 +276,15 @@ export async function publishTelemetryArtifacts(options = {}) {
   // tree that the release job never published.
   const buildId = release;
   const buckets = [
-    { name: required('AVALON_GLOBAL_TELEMETRY_R2_BUCKET', environment), jurisdiction: 'default' },
-    { name: required('AVALON_EU_TELEMETRY_R2_BUCKET', environment), jurisdiction: 'eu' },
+    { name: required('RALLY_GLOBAL_TELEMETRY_R2_BUCKET', environment), jurisdiction: 'default' },
+    { name: required('RALLY_EU_TELEMETRY_R2_BUCKET', environment), jurisdiction: 'eu' },
   ];
   for (const bucket of buckets) assertSafePart(bucket.name, 'R2 bucket');
   if (new Set(buckets.map(({ name }) => name)).size !== 2) {
     throw new Error('Global and EU telemetry artifacts require distinct buckets');
   }
 
-  const temporaryDirectory = await mkdtemp(join(temporaryRoot, 'avalon-telemetry-artifacts-'));
+  const temporaryDirectory = await mkdtemp(join(temporaryRoot, 'rally-telemetry-artifacts-'));
   try {
     const maps = (await filesBelow(join(sourceDesktopDirectory, 'out'))).filter((path) => path.endsWith('.map'));
     const allowedProcesses = new Set(['main', 'preload', 'renderer']);

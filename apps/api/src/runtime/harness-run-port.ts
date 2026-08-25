@@ -18,7 +18,7 @@ const CONTRACT: ObjectPortContract<WorkstreamHarnessRunStorage, HarnessRunOperat
   operations: HARNESS_RUN_OPERATIONS,
   dispatch: (stub, request) => stub.executeHarnessRunOperation(request),
   failureCode: "harness_run_operation_failed",
-  failureMessage: "Avalon's harness-run authority rejected an internal request. Retry after the application and service versions are aligned.",
+  failureMessage: "Rally's harness-run authority rejected an internal request. Retry after the application and service versions are aligned.",
 };
 
 export function createHarnessRunPortFactory(

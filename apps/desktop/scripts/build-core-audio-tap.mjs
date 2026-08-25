@@ -11,7 +11,7 @@ const outputPath = join(desktopDirectory, '.native-build', 'system-audio-tap.nod
 const nodeIncludeDirectory = resolve(dirname(process.execPath), '../include/node');
 
 if (process.platform !== 'darwin' || process.arch !== 'arm64') {
-  throw new Error('The Avalon Core Audio tap must be built on arm64 macOS.');
+  throw new Error('The Rally Core Audio tap must be built on arm64 macOS.');
 }
 await access(join(nodeIncludeDirectory, 'node_api.h'));
 await mkdir(dirname(outputPath), { recursive: true });

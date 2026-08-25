@@ -1,9 +1,9 @@
 # Cloudflare logging and tracing
 
 What the Workers platform does for observability on its own, what it gives us an
-API for, and what it does not do — so that a change to Avalon's diagnostics is
+API for, and what it does not do — so that a change to Rally's diagnostics is
 made against the platform's actual behavior rather than against an assumption
-about it. [`performance-tracing.md`](performance-tracing.md) is the Avalon
+about it. [`performance-tracing.md`](performance-tracing.md) is the Rally
 subsystem built on top of this; [`runbook.md`](runbook.md#observability-views-and-retention)
 is where the operational views and log conventions live. This document is the
 reference for the platform underneath both.
@@ -71,7 +71,7 @@ and written; there are separate spans for the legacy KV storage API and for
 with Cloudflare's extensions under `cloudflare.*`, and binding data is
 hierarchical: `cloudflare.[binding].query.*`, `cloudflare.[binding].response.*`.
 
-**This is the reason Avalon installs no OpenTelemetry package.** An SDK would
+**This is the reason Rally installs no OpenTelemetry package.** An SDK would
 add an exporter and an async-context shim to reproduce what is already running,
 and its spans would form a second graph that the platform's D1 and Durable
 Object spans do not appear in.
@@ -82,7 +82,7 @@ Object spans do not appear in.
 [Spans and attributes](https://developers.cloudflare.com/workers/observability/traces/spans-and-attributes/)
 last updated 10 June 2026.*
 
-Two automatic attributes carry query payloads, and Avalon's do contain member
+Two automatic attributes carry query payloads, and Rally's do contain member
 content:
 
 - **`db.query.text`** on every D1 span, and on `durable_object_storage_exec`.
@@ -172,7 +172,7 @@ The span object is deliberately small:
 Cloudflare lists four things as not yet supported, all "planned for a future
 release": manual parent/child wiring, a bulk `setAttributes()`, **any access to
 the trace or span id**, and `setOutcome()` for span status. The last two shape
-Avalon's code directly — a status travels as `otel.status_code` and `error.type`
+Rally's code directly — a status travels as `otel.status_code` and `error.type`
 attributes instead, and nothing here can read or forge a trace id.
 
 ### Known limitations that change how code is written
@@ -219,7 +219,7 @@ be filtered on.
 
 An **invocation log** is emitted per request in addition to anything the code
 logs — identifiable by `$cloudflare.$metadata.type = "cf-worker-event"`, and
-disableable with `observability.logs.invocation_logs = false`. Avalon leaves it
+disableable with `observability.logs.invocation_logs = false`. Rally leaves it
 on; it is what carries the request and response metadata the `http_request` row
 does not.
 
@@ -230,7 +230,7 @@ per day**, after which Cloudflare applies a 1% head sample for the rest of the
 day, so an unrelated Worker's log storm degrades ours. Head sampling is
 `head_sampling_rate` between 0 and 1, defaulting to 1, and **logs and traces can
 be sampled independently** — `observability.head_sampling_rate` and
-`observability.traces.head_sampling_rate`. Avalon sets 1 for both in both
+`observability.traces.head_sampling_rate`. Rally sets 1 for both in both
 regions.
 
 ### Exporting to a third party
@@ -267,7 +267,7 @@ Global Worker export while the EU Worker does not, from one account.
 
 ## Boundary
 
-This document describes the platform. It does not decide what Avalon traces —
+This document describes the platform. It does not decide what Rally traces —
 that is [`performance-tracing.md`](performance-tracing.md) — nor what it logs
 and how those rows are queried, which is
 [`runbook.md`](runbook.md#observability-views-and-retention). It does not cover
@@ -288,13 +288,13 @@ pipeline's. "PostHog" alone is no longer enough to say which path is meant.
   allowance as each log event**: 20 million a month included on Workers Paid,
   $0.60 per additional million, 200,000 a day on Free. A custom span is
   therefore exactly as expensive as a log row, which is worth knowing before
-  reaching for either. Avalon runs at `head_sampling_rate: 1` for both in both
+  reaching for either. Rally runs at `head_sampling_rate: 1` for both in both
   regions and adds roughly a dozen custom spans to a work-stream create on top
   of the platform's own, so lowering the sampling rate — separately for logs and
   traces, which the config allows — is the lever if the bill becomes the
   constraint, not deleting spans.
 - **Beta naming.** A rename by Cloudflare breaks a saved query, not a
-  deployment. Prefer filtering on Avalon's own `avalon.*` attributes, which we
+  deployment. Prefer filtering on Rally's own `avalon.*` attributes, which we
   control, over `cloudflare.*` ones, which we do not.
 - **Logs are truncated at 256 KB** and retained 7 days, and the account-wide
   5-billion-a-day ceiling drops everything to a 1% sample for the rest of that
@@ -347,7 +347,7 @@ Shipped in #207.
 Workers observability platform does, as read from its documentation on this
 date.
 
-**Why:** Avalon's first custom-span instrumentation was written three times
+**Why:** Rally's first custom-span instrumentation was written three times
 before it was written correctly. The first attempt added a hand-rolled OpenTelemetry
 layer — W3C trace ids, `traceparent` propagation, a span record per phase — all
 of which the platform already does, and none of which would have joined the
@@ -361,7 +361,7 @@ here rather than left to be rediscovered.
 
 **Considered and rejected:** Folding this into
 [`performance-tracing.md`](performance-tracing.md). That document is about three
-Avalon flows and is edited whenever they change; this one is about a third
+Rally flows and is edited whenever they change; this one is about a third
 party's platform and is edited when that platform changes, which is a different
 cadence and a different reason. Keeping them together would have meant a beta
 rename by Cloudflare editing a document about work-stream creation.

@@ -134,7 +134,7 @@ through Cloudflare's authenticated HTTP APIs as documented in the
 
 ## Testing
 
-`pnpm --filter @avalon/api exec vitest run test/analytics-lakehouse.test.ts`
+`pnpm --filter @rally/api exec vitest run test/analytics-lakehouse.test.ts`
 covers client-shaped capture, complete record mapping, direct-ID exclusion,
 queue failure recovery, delivery state, and EU non-export against the checked-in
 D1 migrations. `node --test scripts/ensure-cloudflare-inference-lakehouse.test.mjs

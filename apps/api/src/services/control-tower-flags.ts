@@ -1,4 +1,4 @@
-import { CONTROL_TOWER_REFRESH_SECONDS } from "@avalon/contracts";
+import { CONTROL_TOWER_REFRESH_SECONDS } from "@rally/contracts";
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";

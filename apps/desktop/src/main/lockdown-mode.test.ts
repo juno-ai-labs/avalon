@@ -27,7 +27,7 @@ import {
 const temporaryDirectories: string[] = [];
 
 async function temporaryUserDataDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-lockdown-mode-'));
+  const directory = await mkdtemp(join(tmpdir(), 'rally-lockdown-mode-'));
   temporaryDirectories.push(directory);
   return directory;
 }

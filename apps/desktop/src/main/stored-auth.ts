@@ -7,7 +7,7 @@ import {
   WorkspaceSchema,
   type Region,
   type Session,
-} from '@avalon/contracts';
+} from '@rally/contracts';
 import { z } from 'zod';
 
 const storedAuthSchema = z.object({

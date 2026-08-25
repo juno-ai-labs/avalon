@@ -23,7 +23,7 @@ resource metadata, and one exact GitHub repository from connector-authorized
 discovery. With full repository access it may use standard `git` and `gh`
 commands. It cannot choose sandbox identity or lifecycle, snapshot, network
 policy, provider repository identity, credential permissions, retention, or
-resource limits. Avalon prepares the intended branch and the prompt directs the
+resource limits. Rally prepares the intended branch and the prompt directs the
 model to stay on it; GitHub does not technically scope the token to that ref.
 
 ## Plugin activation and prompt
@@ -35,7 +35,7 @@ user, or server-side feature flag. Bind's normal plugin selection loads the
 descriptor for requests that call for bounded sandbox work; selection does not
 change the tool family or start a sandbox.
 
-A regional emergency circuit breaker is checked when Avalon acquires a new
+A regional emergency circuit breaker is checked when Rally acquires a new
 sandbox lease or starts publication, not when Bind registers or selects the
 plugin. A blocked call returns `sandbox_unavailable` with an optional operator
 retry delay; the complete tool family remains visible.
@@ -78,7 +78,7 @@ The model receives production-harness-shaped primitives, not Daytona APIs:
 | `import_resource` | automatic: `resourceId`; explicit: `resourceId`, `destinationPath`, `overwrite?` | Authorized original at a sandbox path with source hash | `write` / `record_before_execute`; reconcile resource visibility, destination hash, and source hash |
 | `run_command` | `command`, `cwd?`, `timeoutMs?`, `description?` | One final exit result; Bind may suspend while it runs | `write` / `record_before_execute`; reconcile stable Daytona task |
 | `checkout_repository` | `repositoryFullName`, `requiredRemoteAccess?` | Immutable repository identity, fixed refs, effective remote access, and optional recovery resource | `write` / `record_before_execute`; reconcile completed receipt and recovery resource before sandbox replacement |
-| `publish_resource` | `filePath`, `displayName?`, `description?` | Attached Avalon resource identity, classification, hash, and canonical address | `write` / `provider_key`; stable receipt-derived resource ID and current visibility check |
+| `publish_resource` | `filePath`, `displayName?`, `description?` | Attached Rally resource identity, classification, hash, and canonical address | `write` / `provider_key`; stable receipt-derived resource ID and current visibility check |
 | `publish_branch_and_pr` | `title`, `body` | Published commit, PR number, canonical URL | `write` / `record_before_execute`; reconcile exact ref and head/base PR |
 
 Paths and `cwd` are relative to the repository root or scratch root and are
@@ -150,7 +150,7 @@ exact-match recovery, nonzero command exit, and publication repair.
 
 ## Snapshot contract and package behavior
 
-The managed `daytona-small` snapshot plus Avalon's idempotent compatibility bootstrap contains:
+The managed `daytona-small` snapshot plus Rally's idempotent compatibility bootstrap contains:
 
 - Bash, POSIX `sh`, and standard Unix utilities;
 - Daytona's current Python 3 with `venv`, `pip`, and `uv`;
@@ -221,7 +221,7 @@ work is cancelled, the sandbox is stopped, the provider setting is applied and
 verified, and the next tool explicitly starts the sandbox. If the provider cannot
 confirm the policy, the sandbox remains stopped with `network_policy_unavailable`.
 
-At 30-day expiry Avalon persists bounded inline command output and publishes any
+At 30-day expiry Rally persists bounded inline command output and publishes any
 complete retained log or non-empty final diff through the existing generated-
 resource path, alongside other published resources, publication receipts, and
 visible activity. It then deletes the sandbox and per-sandbox secrets. It does
@@ -269,7 +269,7 @@ durable retry boundary without a second orchestration subsystem.
 
 The adapter stores a bounded head and tail inline. The complete bounded result
 may live in the internal regional receipt object, which is not a user download.
-When Avalon exposes a complete participant-facing log and returns
+When Rally exposes a complete participant-facing log and returns
 `outputResourceId`, it publishes a generated text resource through the PR #144
 path below instead of leaking that receipt reference. Output over the total cap
 kills the task with `output_limit_exceeded`. ANSI/control sequences, token
@@ -285,7 +285,7 @@ generic receipt label and does not launch a second command automatically.
 
 This section preserves the source-level tool-design research that informed the
 contracts above. It is intentionally more detailed than the launch surface: the
-point is to retain production lessons even when Avalon chooses not to expose the
+point is to retain production lessons even when Rally chooses not to expose the
 same primitive.
 
 The evidence was refreshed on 2026-08-12. “Documented” means first-party product
@@ -357,7 +357,7 @@ A short command returns an exit code. A command still running when the wait
 budget expires returns `session_id`; `write_stdin` can then send input or fetch
 later output from that exact process. This is useful evidence about model
 familiarity with a small command envelope and an explicit continuation handle,
-but it is not copied into Avalon as a public session protocol.
+but it is not copied into Rally as a public session protocol.
 
 #### File discovery and edits
 
@@ -422,12 +422,12 @@ access; approval policy decides when an attempted boundary crossing may proceed
 Codex cloud separates a networked setup phase from an offline-by-default agent
 phase. Agent internet access can be off, unrestricted, or constrained by domain
 and HTTP method, with a common-dependency preset. This separation is a direct
-precedent for Avalon's managed snapshot compatibility contract plus workspace network policy
+precedent for Rally's managed snapshot compatibility contract plus workspace network policy
 ([internet access](https://learn.chatgpt.com/docs/cloud/internet-access)).
 
-#### Avalon decision
+#### Rally decision
 
-Avalon keeps the small non-interactive command envelope, explicit working
+Rally keeps the small non-interactive command envelope, explicit working
 directory, structured edit surface, ordinary Git/GitHub CLIs, OS isolation, and
 separate approval/authority layer. It does not expose `session_id`,
 `write_stdin`, or a PTY at launch. Bind owns continuation and returns one final
@@ -470,7 +470,7 @@ For a dev server or watch build, the model can set `run_in_background: true`.
 Claude Code exposes task UI to list or stop those commands, and its newer
 `Monitor` tool can turn each stdout line from a selective script into an event.
 Those local-session affordances explain why its model may understand background
-task IDs; they do not require Avalon to expose polling.
+task IDs; they do not require Rally to expose polling.
 
 #### File discovery and edits
 
@@ -548,9 +548,9 @@ also exposes Agent, LSP, plan mode, task scheduling, MCP, skills, hooks, and
 worktree controls above this core
 ([sandboxing](https://code.claude.com/docs/en/sandboxing)).
 
-#### Avalon decision
+#### Rally decision
 
-Avalon adopts ranged reads, exact-match edits, explicit full writes, bounded
+Rally adopts ranged reads, exact-match edits, explicit full writes, bounded
 output with a recoverable complete form, and the separation between worktree
 orchestration and Git commands. It relies on a single active mutating Terminal
 run, atomic exact-match/context checks, and internal reconciliation hashes rather
@@ -719,10 +719,10 @@ an explicit warning that mode-level file restrictions are not a security
 boundary unless shell writes are constrained too
 ([plan mode](https://docs.x.ai/build/features/plan-mode)).
 
-#### Avalon decision
+#### Rally decision
 
-Avalon's `run_command` fields deliberately align with Grok Build without
-producing the redundant wire name `terminal_run_terminal_cmd`. Avalon keeps the
+Rally's `run_command` fields deliberately align with Grok Build without
+producing the redundant wire name `terminal_run_terminal_cmd`. Rally keeps the
 streamed provider implementation, output accounting,
 task cancellation, and completion notification on the host side. It rejects a
 model-visible background flag, task IDs, polling, and monitors at launch because
@@ -761,7 +761,7 @@ is a bounded tail; if truncated, the full output is saved and the result returns
 
 OpenCode does not expose a background-process/task-poll protocol in this shell
 contract. A long command occupies the tool call until exit, timeout, or abort.
-That simpler model is closer to Avalon's final-result contract than a local TUI
+That simpler model is closer to Rally's final-result contract than a local TUI
 task manager.
 
 #### File discovery and edits
@@ -851,16 +851,16 @@ fires after the same tool call repeats three times, reflecting another common
 production failure: a model can mistake an unchanged error or truncated preview
 for progress.
 
-#### Avalon decision
+#### Rally decision
 
-Avalon adopts `command`/`workdir`/timeout geometry, explicit dedicated file
+Rally adopts `command`/`workdir`/timeout geometry, explicit dedicated file
 tools, exact editing, saved complete output, ordinary `git`/`gh`, and clear
 prompt instructions about Git side effects. It does not adopt permissive host
 execution or treat shell-pattern approval as the authorization boundary.
 Daytona supplies the process boundary; Bind supplies current capability,
 receipt, replay, and external-write policy.
 
-### Cross-harness decisions retained for Avalon
+### Cross-harness decisions retained for Rally
 
 The repeated structures are more important than any single vendor's spelling:
 
@@ -876,9 +876,9 @@ The repeated structures are more important than any single vendor's spelling:
    truncation causes retries and duplicated side effects.
 4. **Git stays a CLI; authority does not.** Local branches, commits, diffs,
    rebases, and bundles use ordinary Git. Read-only GitHub inspection may use
-   `gh`. Remote branch/PR publication remains Avalon's typed, host-side action.
+   `gh`. Remote branch/PR publication remains Rally's typed, host-side action.
 5. **Process completion is a host concern.** Local coding harnesses benefit from
-   background IDs, PTYs, and polling because a person is attached. Avalon uses a
+   background IDs, PTYs, and polling because a person is attached. Rally uses a
    Daytona task plus Bind suspension and one completion wake; the model sees one
    final result.
 6. **Permissions and isolation are different layers.** Command-pattern prompts
@@ -890,7 +890,7 @@ The repeated structures are more important than any single vendor's spelling:
    advertised canonical shape stays singular and strict.
 8. **Higher-level orchestration stays above shell.** Worktrees, plans, resources,
    subagents, schedules, monitors, and PR review are separate harness concerns.
-   Avalon exposes only those that fit a shared durable work stream rather than
+   Rally exposes only those that fit a shared durable work stream rather than
    cloning an entire coding IDE.
 
 ## Repository bootstrap and read authorization
@@ -907,7 +907,7 @@ Bootstrap performs:
    `Authorization: Basic <placeholder>` extra header;
 5. clone/fetch without a token in the URL, environment, command, credential
    helper, or Git config; and
-6. reuse Avalon's adjective-adjective-adjective-noun naming scheme, record the
+6. reuse Rally's adjective-adjective-adjective-noun naming scheme, record the
    branch, restore its remote head when present or create it at the recorded base
    for full access, set its upstream, and check it out before returning control.
 
@@ -957,7 +957,7 @@ tools, then executes as follows:
    existing title/body if one exists. Verify its head SHA, persist the result, and
    return the canonical URL.
 
-Before step 4, Avalon creates a durable publication record keyed by tool
+Before step 4, Rally creates a durable publication record keyed by tool
 invocation and canonical request. Repository/head/base uniqueness converges all
 publications on one PR while allowing a later authorized invocation to update its
 title or body. A lost response resumes from provider state: matching remote
@@ -983,7 +983,7 @@ The launch design directly maps product modes to Daytona:
 - `full_internet`: clear the sandbox domain allow-list, subject to Daytona
   organization-level restrictions.
 
-Avalon does not set `networkAllowList`, `outboundProxyUrl`, or a combined custom
+Rally does not set `networkAllowList`, `outboundProxyUrl`, or a combined custom
 gateway. Domain and CIDR lists are mutually exclusive in Daytona; CIDR is deferred
 instead of emulating their union.
 

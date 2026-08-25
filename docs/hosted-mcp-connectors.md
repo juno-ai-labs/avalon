@@ -1,9 +1,9 @@
 # Hosted MCP connectors
 
-The hosted-MCP module turns a remote Streamable HTTP MCP server into an Avalon
+The hosted-MCP module turns a remote Streamable HTTP MCP server into a Rally
 personal connector without copying the server's tool catalog into source. The
 server remains authoritative for tool names, descriptions, and JSON Schemas;
-Avalon owns OAuth, tenancy, activation, safety classification, write confirmation,
+Rally owns OAuth, tenancy, activation, safety classification, write confirmation,
 receipts, credential rotation, and transport limits.
 
 Use this document when adding a hosted MCP provider or changing how a live MCP
@@ -67,7 +67,7 @@ for live tools.
 
 ### Discovery and activation
 
-The model first sees only Avalon's trusted connector catalog entry. The API
+The model first sees only Rally's trusted connector catalog entry. The API
 creates the deferred credential plugin with no model tools and a `loadTools`
 callback. When the model calls `load_plugin`, the harness reauthorizes the
 connection, calls the callback, and only then persists activation and exposes
@@ -78,19 +78,19 @@ restoration stays inactive instead of aborting the run with a missing hash.
 
 The callback enters the credential door, refreshes when necessary, initializes
 one MCP session, sends `notifications/initialized`, follows every `tools/list`
-cursor, and closes the session when the server assigned an ID. Avalon preserves
+cursor, and closes the session when the server assigned an ID. Rally preserves
 the server's object-shaped input schema. Remote annotations are parsed as bounded metadata but
-never lower Avalon's safety policy. A remote name already valid under Avalon's lowercase
+never lower Rally's safety policy. A remote name already valid under Rally's lowercase
 canonical-name contract stays unchanged; any other name gets a deterministic
 internal alias. The dynamic definition separately retains the exact remote
 operation name, and execution requires that exact name to remain present.
-Model-facing names then receive Avalon's normal connector prefix and identifier
+Model-facing names then receive Rally's normal connector prefix and identifier
 normalization.
 
 One run caches the loaded surface in both Bind's active registry and the
 host-owned plugin object from which read-only inline-child authority is narrowed.
 A later run discovers again, so a server can
-add, remove, or reshape a tool without an Avalon release. Execution opens a new
+add, remove, or reshape a tool without a Rally release. Execution opens a new
 session and lists tools before `tools/call`; a tool removed between activation
 and use therefore fails closed instead of forwarding an unadvertised name.
 
@@ -114,11 +114,11 @@ and use therefore fails closed instead of forwarding an unadvertised name.
 - **The frozen connection grant still bounds every live tool.** A discovered
   definition receives exactly one capability already granted to that
   connection and valid for its scope. Remote metadata can change a schema; it
-  cannot widen Avalon tenancy or capability scope.
+  cannot widen Rally tenancy or capability scope.
 - **Every provider-authored tool is a confirmed write.** MCP annotations are
   hints, not contracts, so even `readOnlyHint: true` cannot bypass confirmation
   or a record-before-execute receipt. A future read classification must come
-  from a separate Avalon-authored policy; guessing from names or trusting a
+  from a separate Rally-authored policy; guessing from names or trusting a
   provider hint can turn a newly introduced mutation into an unconfirmed action.
 - **A remote schema may not sink the request it arrives in.** A hosted server's
   `inputSchema` reaches the model verbatim, and a root `anyOf`/`oneOf` branch xAI
@@ -138,10 +138,10 @@ and use therefore fails closed instead of forwarding an unadvertised name.
   `dynamic_tool_root_union_repaired`. It repairs rather than rejects because
   refusing the tool spends the person's capability on a judgement about a
   provider's schema dialect, and the remote server validates its own arguments
-  regardless. This is deliberately the *only* schema rewrite Avalon performs;
+  regardless. This is deliberately the *only* schema rewrite Rally performs;
   Bind's sanitizer owns every other dialect difference. The measured rule and its limits live in
   [`agent-tools.md`](agent-tools.md#mechanics--where-the-rules-are-enforced).
-- **The remote name is forwarded exactly.** Avalon may need a safe internal
+- **The remote name is forwarded exactly.** Rally may need a safe internal
   alias for a name outside its canonical-name grammar, but `tools/call` receives
   the original value retained at activation. A later operation whose raw name
   equals that alias cannot inherit the confirmed call, and a fresh catalog with
@@ -156,7 +156,7 @@ This module owns standards-based hosted-MCP OAuth helpers, transport, live tool
 conversion, and deferred exposure to Bind. It exposes `createHostedMcpPassthrough`
 to adapters and `loadTools` to the harness.
 
-It does not decide which Avalon member or workspace may use a connection, store
+It does not decide which Rally member or workspace may use a connection, store
 credentials, persist activations or receipts, interpret provider content, or
 define a provider's workspace API/webhook behavior. Those remain with the
 connection service, credential door, harness host, and provider adapter as
@@ -168,11 +168,11 @@ described in [`connectors.md`](connectors.md) and
 | Condition | Result |
 | --- | --- |
 | Discovery, refresh, or MCP initialization fails during `load_plugin` | The load returns `plugin_tools_unavailable`; no activation or partial tool surface is exposed. |
-| Server returns no compatible tools | The plugin load fails. Avalon does not activate an empty dynamic plugin. |
+| Server returns no compatible tools | The plugin load fails. Rally does not activate an empty dynamic plugin. |
 | A tool input schema is not object-shaped | Discovery fails before model exposure. |
 | More than 128 tools or 20 cursor pages | Discovery fails with `payload_too_large`. |
 | One input schema exceeds 100 KB | Discovery fails before model exposure. |
-| Two names collide after model-wire normalization | The whole surface fails closed; Avalon does not choose one. |
+| Two names collide after model-wire normalization | The whole surface fails closed; Rally does not choose one. |
 | A tool disappears before execution | The fresh pre-call list cannot find it and the call is rejected. |
 | MCP response exceeds the provider's configured cap | The request fails rather than truncating protocol JSON. The shared default is 2 MB. |
 | Tool output contains large or deeply nested values | Strings are bounded at 80,000 characters, collections at 200 entries per level, and nesting at eight levels before entering the transcript. |
@@ -193,7 +193,7 @@ session lifecycle, exact forwarding, path-aware OAuth discovery, DCR, PKCE,
 exchange, and refresh:
 
 ```bash
-pnpm --filter @avalon/connectors exec vitest run src/hosted-mcp.test.ts
+pnpm --filter @rally/connectors exec vitest run src/hosted-mcp.test.ts
 ```
 
 `packages/agent-harness/src/index.test.ts` proves that a deferred dynamic tool
@@ -216,8 +216,8 @@ the owning region before token exchange and storage.
 
 Provider tool descriptions, JSON Schemas, annotations, and results are
 untrusted remote input. They may shape only the bounded active tool definition
-and result; annotations cannot select Avalon mode or idempotency, and none of
-them enter Avalon's standing system policy or connector catalog prose. Provider
+and result; annotations cannot select Rally mode or idempotency, and none of
+them enter Rally's standing system policy or connector catalog prose. Provider
 content returned by a tool remains untrusted evidence under the connector's
 static system message.
 
@@ -235,7 +235,7 @@ building an automation creator catalog. Interactive `load_plugin` reports the
 bounded `plugin_tools_unavailable` result; use the connection test to distinguish
 credential failure from an MCP protocol/surface failure. Inspect the provider's
 current `tools/list` response when a formerly working prompt loses a tool—do not
-patch a historical snapshot into Avalon.
+patch a historical snapshot into Rally.
 
 ## Changelog
 
@@ -276,9 +276,9 @@ rewritten.
 **Why:** the same defect that took every x-ai call in the fleet down for three
 days was reachable from any hosted MCP server, and worse from there. xAI answers
 a root union with a non-object branch with a 400 covering the **whole request**,
-so one third-party tool's schema fails every *other* tool in the run, Avalon's
+so one third-party tool's schema fails every *other* tool in the run, Rally's
 core tools included — on a connection the person set up correctly, from a server
-Avalon does not control. The first-party half of that fix is a build-time guard
+Rally does not control. The first-party half of that fix is a build-time guard
 over authored schemas; it cannot see a schema that arrives at run time, and no
 test can. The rule had to be enforced where the schema enters instead.
 
@@ -291,9 +291,9 @@ models; adding `type: "object"` to the branches instead passes xAI but the
 sanitizer then strips their `required` anyway, so it buys nothing.
 
 It lives in `validateDynamicConnectorTools` rather than in the connector adapter
-because that is Avalon's host-side gate — every dynamic source (Slack, Granola,
+because that is Rally's host-side gate — every dynamic source (Slack, Granola,
 Notion) funnels through it — and because putting it in `hosted-mcp.ts` would make
-`packages/connectors` depend on `@avalon/agent-harness` for one import. A future
+`packages/connectors` depend on `@rally/agent-harness` for one import. A future
 change must keep it the only schema rewrite here: the value of "the remote schema
 is forwarded as authored" is that a second rewrite is a second place for a
 provider's contract to silently diverge from what the model was shown.
@@ -322,7 +322,7 @@ not make a hint an authorization guarantee.
 
 **Consequences:** Hosted-MCP reads currently ask for confirmation and are not
 available to read-only inline children. A future lower-friction read path needs
-an independent Avalon-authored policy source. Metadata discovery may issue one
+an independent Rally-authored policy source. Metadata discovery may issue one
 extra 404 request when a server publishes only the root fallback. Hosted MCP
 schemas must declare a top-level object, and a pre-call catalog collision blocks
 the call rather than choosing by provider list order.
@@ -331,7 +331,7 @@ Shipped in the pull request for this change.
 
 ### 2026-08-12 — Hosted MCP servers own their live tool surfaces
 
-**What changed:** Avalon gained one hosted-MCP abstraction for OAuth discovery,
+**What changed:** Rally gained one hosted-MCP abstraction for OAuth discovery,
 DCR, PKCE, rotating credentials, Streamable HTTP sessions, live tool discovery,
 and exact call forwarding. Granola, Slack, and Notion personal connections use
 that live surface; Notion's official MCP server is now the personal counterpart
@@ -339,7 +339,7 @@ to its workspace bot connection.
 
 **Why:** Granola and Slack exposed code-authored tool lists derived from one
 observed server response. Those lists were snapshots of providers that can add,
-remove, or reshape tools without an Avalon release, so the model could be told a
+remove, or reshape tools without a Rally release, so the model could be told a
 tool existed after the server removed it or never learn a tool the server added.
 Adding Notion by copying its documented list would have repeated the same
 failure and made every future MCP connector another custom transport.
@@ -356,4 +356,4 @@ tool catalog, and tool changes take effect on the next activation. A dynamic
 plugin can fail to load when its server returns a malformed or colliding surface,
 which is deliberately safer than exposing a partial guess. Future changes must
 keep the static catalog trusted, preserve confirmation/receipts, and never turn
-remote tool metadata into new Avalon authority.
+remote tool metadata into new Rally authority.

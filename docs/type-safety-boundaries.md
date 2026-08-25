@@ -1,6 +1,6 @@
 # Type-safety boundaries
 
-Avalon keeps compile-time contracts meaningful by making every deliberate type
+Rally keeps compile-time contracts meaningful by making every deliberate type
 escape local and reviewable. Production values are parsed or converted at
 runtime boundaries; application test doubles implement the smallest capability
 their subject consumes; partial Cloudflare bindings are created by typed test
@@ -24,7 +24,7 @@ Code crossing a real wire or SDK boundary converts each union member explicitly
 or parses unknown data with a schema. `WorkstreamWakeupRowSchema`, for example,
 parses D1 rows rather than telling the compiler what D1 returned.
 
-Tests may not erase a value to `unknown` and then assert an Avalon-owned imported
+Tests may not erase a value to `unknown` and then assert a Rally-owned imported
 type. A subject declares a small exported capability such as
 `CredentialRefreshAdapter`, `AppSessionDesktopBridge`, or `AutoUpdaterPort`, and
 the fixture uses `satisfies` or implements that port. A return-type change on a
@@ -78,7 +78,7 @@ not every use of TypeScript's `as` syntax.
 
 The lint rules are syntax-aware but not a replacement for TypeScript's semantic
 checker. An application type must be imported from a relative module or an
-`@avalon/*` package for the mock rule to recognize it. Capability aliases should
+`@rally/*` package for the mock rule to recognize it. Capability aliases should
 therefore stay exported and imported rather than duplicated structurally in a
 test.
 
@@ -117,7 +117,7 @@ conversion boundaries.
 **Why:** A socket reconciliation wrote the page-shaped result of
 `getWorkstreams()` into a cache whose readers expected an array. React Query's
 key does not carry its value type, and the socket tests asserted partial objects
-through `as unknown as AvalonApi`; both the bad cache write and the changed API
+through `as unknown as RallyApi`; both the bad cache write and the changed API
 return type therefore compiled. The same audit found hundreds of assertions to
 Cloudflare runtime interfaces and several broad application mocks capable of
 hiding the next contract change.

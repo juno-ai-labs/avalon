@@ -1,8 +1,8 @@
 import {
   renderActivityRoutingMessages,
   renderSemanticTriggerMessages,
-} from "@avalon/agent-harness";
-import { ConnectorError, connectorOriginUrl, connectorRetryAfterMs } from "@avalon/connectors";
+} from "@rally/agent-harness";
+import { ConnectorError, connectorOriginUrl, connectorRetryAfterMs } from "@rally/connectors";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ActivityQueueMessageSchema,
@@ -16,7 +16,7 @@ import {
   type Message as AvalonMessage,
   type WorkspaceId,
   type WorkstreamWorkflowInput
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { z } from "zod";
 
 import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/workstream-regional-effect";

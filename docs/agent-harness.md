@@ -1,6 +1,6 @@
 # Agent harness
 
-Avalon's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. After the work-stream authority cutover, the owning `SubstreamAgent` Durable Object hosts the complete work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-work-stream products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Non-workstream loops and pre-cutover drain may still use Cloudflare Workflows.
+Rally's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. After the work-stream authority cutover, the owning `SubstreamAgent` Durable Object hosts the complete work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-work-stream products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Non-workstream loops and pre-cutover drain may still use Cloudflare Workflows.
 
 Each run is one server-side, tool-using loop inherent to a work stream. It is not a participant, separate persona, terminal, or general code-execution environment.
 
@@ -28,7 +28,7 @@ internal `block_dashboard` / `BlockDashboardAgent` name.
 
 ### Addressing
 
-Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Avalon/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered. Uncertain messages invoke only when an active task or explicit tool context exists. The label is not exposed in the UI.
+Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered. Uncertain messages invoke only when an active task or explicit tool context exists. The label is not exposed in the UI.
 
 ### Naming
 
@@ -67,15 +67,15 @@ A run records the message it was triggered by in `harness_runs.trigger_message_i
 
 The trigger's two jobs come apart on a retry, and `transcriptFenceMessageId` is what separates them. As *identity* the trigger is what admits a suggested-work brief or an inbound email to the model at all; as *bound* it is the newest message the run may see. A retry has to keep the first and move the second, or replaying the failed run would hide anything said since it failed — including the correction a teammate posts *because* it failed, which starts no run of its own when the work stream has other participants and the message was not for the agent. The fence is resolved once at launch and travels in the durable workflow input, never re-read at projection time: an attempt that replays must read the same window it read the first time. Absent, the trigger is the bound, which is correct for every run a message started.
 
-After admission Avalon validates the execution principal and persists an immutable, canonically hashed run scope: principal, eligible connection IDs and capabilities, trigger policy, routing and prompt versions, tool-surface hash, and limits. A replay must reproduce that scope. Connections installed or expanded later cannot enter it; subsequent membership, ownership, grant, disablement, and policy checks may only remove authority.
+After admission Rally validates the execution principal and persists an immutable, canonically hashed run scope: principal, eligible connection IDs and capabilities, trigger policy, routing and prompt versions, tool-surface hash, and limits. A replay must reproduce that scope. Connections installed or expanded later cannot enter it; subsequent membership, ownership, grant, disablement, and policy checks may only remove authority.
 
 ### Context and stable prompts
 
-Context is assembled for the execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. Automation runs also receive the pinned template name/version, instructions, expected outputs, default behavior, subscription overrides, and the active destinations Avalon will deliver the result to. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
+Context is assembled for the execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. Automation runs also receive the pinned template name/version, instructions, expected outputs, default behavior, subscription overrides, and the active destinations Rally will deliver the result to. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
 
 Attached resources are exposed as an authorized index and hydrated lazily through tools. Full workspace history, unrelated resources, and another participant's private connector data are excluded.
 
-All base prompts are rendered by typed, dependency-free functions in `@avalon/agent-harness`, and the prompt version is frozen with the run. Per-run time, reason, IDs, and trigger evidence are user-role messages rather than mutations of the system prefix, so retries and route fallbacks see stable policy. Bind validates the transcript before inference and heals dangling or orphaned tool-protocol rows; Avalon records diagnostics without adding provider-controlled text to the system prompt.
+All base prompts are rendered by typed, dependency-free functions in `@rally/agent-harness`, and the prompt version is frozen with the run. Per-run time, reason, IDs, and trigger evidence are user-role messages rather than mutations of the system prefix, so retries and route fallbacks see stable policy. Bind validates the transcript before inference and heals dangling or orphaned tool-protocol rows; Rally records diagnostics without adding provider-controlled text to the system prompt.
 
 Prompt authority is layered as platform policy, authorized work-stream and automation configuration, current human instructions, then explicitly untrusted provider/resource/tool data. Both the work-stream agent and automation architect receive a compact, stable-ID-sorted catalog derived only from their already-authorized plugin registry and partitioned into `Currently active` and `Available to load`. Loading a plugin adds its static code-authored guidance under `Active Plugin Instructions` and exposes its exact typed tools on the next model turn. The catalog is stated as capability rather than as a suggestion, because the tools visible on any given turn are only the ones already loaded: an available plugin can answer a question, so consulting the catalog is part of searching, and asking a person for something a listed plugin could look up is a claim that it is unavailable rather than a request for missing input. The automation architect may use those real connector tools to inspect live provider context while drafting; it prefers reads and never performs a provider write merely to test a proposed automation. Remote account labels, resources, and provider content never become trusted plugin prose. User-authored automation draft state remains user-role context.
 
@@ -87,23 +87,23 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Interactive multi-round work starts with a short plan and reports meaningful phase changes. Headless runs skip progress narration. Completions lead with the outcome, evidence, and blockers; private reasoning is never emitted.
 
-An automation run's final message is what Avalon delivers, so the run is told which destinations Avalon will send it to and told to drop every recipient matching one before it sends anything of its own. Without that, an automation asked to email its owner does the sending as well as Avalon and the owner receives it twice. The destinations travel in the automation context as `resultDelivery`, filtered by the predicate each channel's own sender uses, and the rule is a `# Result delivery` section rendered only when that list is non-empty — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) owns the delivery itself.
+An automation run's final message is what Rally delivers, so the run is told which destinations Rally will send it to and told to drop every recipient matching one before it sends anything of its own. Without that, an automation asked to email its owner does the sending as well as Rally and the owner receives it twice. The destinations travel in the automation context as `resultDelivery`, filtered by the predicate each channel's own sender uses, and the rule is a `# Result delivery` section rendered only when that list is non-empty — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) owns the delivery itself.
 
-Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — the character itself is typed instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). The rule exists because no Avalon surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
+Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — the character itself is typed instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). The rule exists because no Rally surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
 
 ### Automation compilation
 
-Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. A destination Avalon delivers to is described rather than instructed: the compiler never writes a provider send for one, because Avalon sends the result there itself. Which destinations the owner asked for is a required field of the submit-draft schema, `requestedDelivery`, closed to the two Avalon offers — the create screen selects from it rather than re-reading the draft's prose. It records what was asked and never what was inferred: a briefing *about* somebody's inbox is not a request to be emailed, a send aimed at a third party is not a request for the owner, and a request to be "sent the result" that names no channel resolves to nothing rather than to a guess.
+Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. A destination Rally delivers to is described rather than instructed: the compiler never writes a provider send for one, because Rally sends the result there itself. Which destinations the owner asked for is a required field of the submit-draft schema, `requestedDelivery`, closed to the two Rally offers — the create screen selects from it rather than re-reading the draft's prose. It records what was asked and never what was inferred: a briefing *about* somebody's inbox is not a request to be emailed, a send aimed at a third party is not a request for the owner, and a request to be "sent the result" that names no channel resolves to nothing rather than to a guess.
 
 Request-scoped attachment tools may be added directly to the preloaded automation architect. They inherit its `automation_*` wire prefix and are not catalog-loaded connector capabilities. The API host freezes their admitted resource IDs and owns every authorization recheck; the harness only exposes the supplied strict tools for that compiler run.
 
-The compiler narrates while it researches, and the composer streams that narration. `compileAutomation` emits `started` once for the whole compile, a `thinking` frame per inference request, a `tool` row per discovery call, and `delta` frames carrying the architect's own text: the plan it states alongside its first tool calls, and a progress update every three or four calls after that. The `# Narration` section of the compiler policy owns what belongs in that text — settled sentences about the automation, never a question, never internal deliberation, never a tool or field name — and the submission turn is the one turn that carries none of it, because Avalon renders the settled result from the saved draft and the elicitation instead. Narration accumulates into one composer bubble across turns, so the compiler tracks what earlier turns settled: a route restart replays only its own turn, and the reset frame restores the earlier updates rather than clearing text the reader has already seen.
+The compiler narrates while it researches, and the composer streams that narration. `compileAutomation` emits `started` once for the whole compile, a `thinking` frame per inference request, a `tool` row per discovery call, and `delta` frames carrying the architect's own text: the plan it states alongside its first tool calls, and a progress update every three or four calls after that. The `# Narration` section of the compiler policy owns what belongs in that text — settled sentences about the automation, never a question, never internal deliberation, never a tool or field name — and the submission turn is the one turn that carries none of it, because Rally renders the settled result from the saved draft and the elicitation instead. Narration accumulates into one composer bubble across turns, so the compiler tracks what earlier turns settled: a route restart replays only its own turn, and the reset frame restores the earlier updates rather than clearing text the reader has already seen.
 
 The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone resolves from the personal user or workspace according to scope; an explicit trigger timezone wins. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Invalid structured output gets one sanitized repair attempt, then `502 model_output_invalid` with a request ID.
 
 ### Connection plugins and authority narrowing
 
-Every connector adapter supplies a static agent-plugin descriptor whose provider type and code-authored tool order must match its manifest. At run start Avalon creates one Bind plugin per eligible installed connection, identified as `connection:<uuid>` with a stable hashed wire prefix. Its tools are narrowed to the connection's frozen grants and run policy:
+Every connector adapter supplies a static agent-plugin descriptor whose provider type and code-authored tool order must match its manifest. At run start Rally creates one Bind plugin per eligible installed connection, identified as `connection:<uuid>` with a stable hashed wire prefix. Its tools are narrowed to the connection's frozen grants and run policy:
 
 - Ad-hoc runs may include workspace connections and the initiating user's personal connections that a person has not disabled. A stored `needs_reconnect` no longer removes a connection from a run — see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
 - Automation runs include explicitly bound connection/capability pairs and eligible connections attached through work-stream resources. Attached connections remain limited to the immutable grants frozen for the run.
@@ -137,9 +137,9 @@ repository/publication checks remain executor preconditions rather than scopes.
 The sandbox lifecycle and authority fence are owned by
 [`terminal-workspaces.md`](terminal-workspaces.md), not by Bind.
 
-Loading never widens the frozen scope. At run start, before credential decryption, before every tool call, and between model turns, Avalon revalidates the execution principal, work-stream state, automation subscription and pinned template version, trigger evidence and status, connection identity/scope/owner, current grants, capability, and whether a person has disabled it. Revocation drops a plugin. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
+Loading never widens the frozen scope. At run start, before credential decryption, before every tool call, and between model turns, Rally revalidates the execution principal, work-stream state, automation subscription and pinned template version, trigger evidence and status, connection identity/scope/owner, current grants, capability, and whether a person has disabled it. Revocation drops a plugin. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
 
-Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference, and is answered from Avalon's own records: the principal, the work stream, the automation authority, the connection's identity, scope, owner, grants, and disablement are what that check exists to catch, and all of them are already known here. Asking the provider instead would spend a round trip per active plugin per turn to rediscover them, and on a connector whose health check writes it would repeat that write. A credential the provider has since refused therefore surfaces on the next tool call rather than between turns — which is the right place, since that is where a provider call was going to happen anyway.
+Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference, and is answered from Rally's own records: the principal, the work stream, the automation authority, the connection's identity, scope, owner, grants, and disablement are what that check exists to catch, and all of them are already known here. Asking the provider instead would spend a round trip per active plugin per turn to rediscover them, and on a connector whose health check writes it would repeat that write. A credential the provider has since refused therefore surfaces on the next tool call rather than between turns — which is the right place, since that is where a provider call was going to happen anyway.
 
 Revalidation answers with one of three verdicts, and the third one is the point of having them. `authorized` activates; `denied` is a decision about authority — a revoked credential, a withdrawn grant, an owner who no longer holds the connection — and reaches the model as `plugin_not_authorized`; `indeterminate` means the host could not reach a decision at all, because the provider timed out, the transport failed, or the health check answered something that says nothing about this run's authority. Both non-authorized verdicts leave the plugin inactive, so the distinction costs the run nothing, and it is what stops a provider hiccup from being reported as a permission problem: an `indeterminate` load returns `plugin_authorization_unavailable`, and the host logs `connector_plugin_reauthorization_failed` with the connection and the underlying cause rather than discarding it. An adapter distinguishes the two the same way, through `reconnectRequired` on its health result. A verdict must never be derived from a swallowed exception — a failure to verify is not a denial, and reporting it as one sends a run off to explain a permission problem that may not exist.
 
@@ -160,9 +160,9 @@ The always-active `avalon_skills` plugin owns two globally named controls. `load
 
 **Loading a skill grants no authority.** Where a skill declares an owner plugin it is offered only to a run whose scope already includes that plugin — the eligible plugin ids are handed to the skill registry, which drops the rest before the catalog is built — and loading it *names* the plugin for the model to load separately rather than activating it: an auto-activation would let a document issue a capability grant. Skill bodies are also not trusted prose about the world — they are workspace-authored instructions, and are wrapped in a `<skill_content name=…>` element so the model can tell them apart from platform policy and from one another.
 
-Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Avalon measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
+Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships three skills of its own (`BUILT_IN_SKILLS` in `@avalon/agent-harness`), for a host with no library yet: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The latter two are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships three skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The latter two are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
 All three are offered to every run the API starts — ad-hoc, automation, HyperSight block, and inline child alike. Nothing is withheld by surface. A skill is advice, and what a surface may *do* is settled in the tool loop: HyperSight and inline children both compose `rejectToolModesBeforeCall(["write"], …)` into their `beforeToolCall`, so a write-mode tool is refused before it runs no matter what the model has read. Withholding a skill from those two would hide the advice without removing any authority, and would silently hide the next, more general skill along with the mail and calendar ones. Offering is not activation: a run sees only the catalog line until it loads one, and loading grants no authority. It is an ordinary `HarnessSkill` and not a second source: a host still chooses to put it in `skills`, and the frozen-scope rule is unchanged. It is authored in TypeScript rather than as a `SKILL.md` because the harness runs in `workerd`, where there is no filesystem to read one from at startup.
 
@@ -195,7 +195,7 @@ The canonical `request_elicitation` tool belongs to `avalon:core` and is rendere
 
 ### Durable receipts and terminal state
 
-Each tool call receives a stable Avalon receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. A tool that starts work outside Avalon keys it to `HarnessToolContext.effectIntentId` instead, which the host resolves through `resolveToolEffectIntentId` after `tool_started` and which names the stored receipt row rather than the call: the row is created once and kept, so a resumed attempt reattaches to the effect it already started instead of starting a second one. Before the Durable Object authority cutover, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. After cutover, the owning `SubstreamAgent` stores those records in `tool_effects` and `tool_effect_checkpoints`; the protocol and receipt identity do not change. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to the current regional work-stream authority before Bind can observe it.
+Each tool call receives a stable Rally receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. A tool that starts work outside Rally keys it to `HarnessToolContext.effectIntentId` instead, which the host resolves through `resolveToolEffectIntentId` after `tool_started` and which names the stored receipt row rather than the call: the row is created once and kept, so a resumed attempt reattaches to the effect it already started instead of starting a second one. Before the Durable Object authority cutover, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. After cutover, the owning `SubstreamAgent` stores those records in `tool_effects` and `tool_effect_checkpoints`; the protocol and receipt identity do not change. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to the current regional work-stream authority before Bind can observe it.
 
 Before the input hash or any host hook sees arguments, the harness walks the
 tool's provider-facing JSON Schema and normalizes a string only where the field
@@ -292,11 +292,11 @@ Each agent's default model and its fallback stages are one Cloudflare Flagship f
 
 Standalone structured-output agents enter through `runStructuredInference`. The gateway resolves the role's flag, constructs the provider client, combines any caller cancellation with a two-minute ceiling, and emits redacted diagnostics for every request, repair, validation, fallback, and completion stage. ESLint prevents API feature modules from constructing `OpenRouterClient`, reading model-selection variables directly, or removing the gateway's signal and diagnostic hooks. The harness package has a separate portability boundary: production sources cannot import database, connector, API, or Node-only implementations and cannot read `process`; host capabilities arrive through explicit ports.
 
-OpenRouter routing is deterministic and versioned. Empty completions and truncated tool calls receive a bounded same-endpoint defect retry. Other fallback-eligible failures traverse configured model stages under Bind's classified failure policy and a workspace-scoped circuit breaker; cancellation and host failures do not route onward. Because Avalon's stream is retractable, a later attempt explicitly resets partial text instead of concatenating two answers.
+OpenRouter routing is deterministic and versioned. Empty completions and truncated tool calls receive a bounded same-endpoint defect retry. Other fallback-eligible failures traverse configured model stages under Bind's classified failure policy and a workspace-scoped circuit breaker; cancellation and host failures do not route onward. Because Rally's stream is retractable, a later attempt explicitly resets partial text instead of concatenating two answers.
 
 The Bind/OpenAI/OpenRouter boundary is converted member by member rather than
 asserted through `unknown`. Model content parts and function tools are mapped to
-Avalon's wire types, unsupported tool variants fail at the boundary, and input
+Rally's wire types, unsupported tool variants fail at the boundary, and input
 audio admits only the `wav` and `mp3` formats the SDK contract supports. This
 keeps an SDK union or return-shape change visible to the compiler instead of
 letting it emerge later in a provider request.
@@ -342,7 +342,7 @@ A row's icon is the plugin that **owns** the tool being called, and nothing
 else. In the compiler, that owner comes from the `automation:` prefix on the
 Bind plugin id; in a work stream, it is resolved from
 `tool_invocations.connection_id`, which already records the connector that ran
-the tool. Tools Avalon owns — web research, plugin discovery, memory, tables,
+the tool. Tools Rally owns — web research, plugin discovery, memory, tables,
 work-stream reads — have no connector behind them and carry no plugin icon.
 Both the contract's `ToolInvocation.plugin` and the compiler's `tool` stream
 event hold a single nullable plugin, so a row with several icons cannot be
@@ -351,10 +351,10 @@ without claiming any of them ran the tool.
 
 A row's label is prose from `toolActivityName` in
 [`packages/agent-harness/src/tool-activity.ts`](../packages/agent-harness/src/tool-activity.ts),
-never a raw wire name. Tools Avalon owns have their own phrasing per lifecycle
+never a raw wire name. Tools Rally owns have their own phrasing per lifecycle
 state; a connector tool is named after the connector that owns it, matching the
 icon beside it; an unrecognized tool degrades to a humanized wire name rather
-than a snake_case symbol. Adding an Avalon tool means adding its prose there.
+than a snake_case symbol. Adding a Rally tool means adding its prose there.
 `ToolInvocation.activityName` carries the result to the desktop, which falls
 back to the raw tool name only for rows persisted before the field existed.
 
@@ -377,7 +377,7 @@ A HyperSight block run is the same harness with a different terminal product: it
 
 It is read-only, by the same `rejectToolModesBeforeCall(["write"], …)` hook the inline children use, and it cannot pause — a run that reaches `needs_input` fails with `block_dashboard_input_unavailable`, because there is no one to answer.
 
-Its output is a tool call. The block is exactly the `markdown` argument passed to the `avalon:block-dashboard` plugin's `submit_block`, and assistant text is discarded. Taking the block from the run's trailing text instead made every preamble, apology, and "here is the block:" part of the dashboard; an argument with a schema cannot drift that way. The tool is `mode: "read"` — it settles Avalon's own record and reaches no provider, the same reason the automation architect's draft submission is a read — so the write ban above does not lock the run out of its own output.
+Its output is a tool call. The block is exactly the `markdown` argument passed to the `avalon:block-dashboard` plugin's `submit_block`, and assistant text is discarded. Taking the block from the run's trailing text instead made every preamble, apology, and "here is the block:" part of the dashboard; an argument with a schema cannot drift that way. The tool is `mode: "read"` — it settles Rally's own record and reaches no provider, the same reason the automation architect's draft submission is a read — so the write ban above does not lock the run out of its own output.
 
 A turn that would end without that call gets one `onTurnWouldEnd` message asking for it, and only one: a block that will not submit twice running is a failed block, and nagging further only spends the run's ceilings. If it still never submits, the run is recorded `failed` with `block_dashboard_block_not_submitted` rather than completed-and-empty, so a block that renders nothing says why.
 
@@ -389,7 +389,7 @@ the measured distributions rather than assumed in advance.
 
 ### Durable inline subagents
 
-The root harness exposes `workstream_run_subagent` through the default-loaded `avalon:workstream` plugin for several independent, substantial read-only investigations. Avalon follows Monad's useful delegation shape while preserving Avalon-specific durable authority:
+The root harness exposes `workstream_run_subagent` through the default-loaded `avalon:workstream` plugin for several independent, substantial read-only investigations. Rally follows Monad's useful delegation shape while preserving Rally-specific durable authority:
 
 - A child is an inline Bind run, not an autonomous participant. It receives one self-contained objective and a narrowed subset of plugins already authorized and active in the parent run.
 - Child admission is atomically keyed by the parent's stable tool-call receipt. Duplicate calls replay the same durable result, and a child can never widen the parent's frozen scope.
@@ -454,13 +454,13 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
 ## Invariants
 
 - **One predicate decides both the transport retry and the failure code**, so the
-  failures Avalon retries are exactly the ones it names as the provider's.
-  Splitting them lets a member be told Avalon broke for an outage Avalon had just
+  failures Rally retries are exactly the ones it names as the provider's.
+  Splitting them lets a member be told Rally broke for an outage Rally had just
   spent a retry on, which is the pairing that made the original incident hard to
   read.
-- **A request Avalon owns is never named as the provider's.** A 400 is our
+- **A request Rally owns is never named as the provider's.** A 400 is our
   request shape and 401/402/403 are our credential and credit; they stay
-  `harness_execution_failed`, and `provider_circuit_open` says only that Avalon
+  `harness_execution_failed`, and `provider_circuit_open` says only that Rally
   stopped calling — never why — because the breaker opens on those too. Widening
   the provider arm to cover them points an operator at the wrong system.
 - **A retry never replays output a reader has already seen.** The transport retry
@@ -572,7 +572,7 @@ This document owns the run: how one is admitted, what authority it is frozen wit
 how the loop executes and records tool calls, and how it terminalizes. **Bind** owns
 transcript healing, plugin and skill activation, turn and tool iteration,
 completion-defect recovery, epoch-aware streaming, and classified route traversal.
-**Avalon** owns authorization, regional persistence, admission, accounting, and
+**Rally** owns authorization, regional persistence, admission, accounting, and
 terminal state.
 
 It does not own:
@@ -598,7 +598,7 @@ and general child participants remain deferred product work.
 
 ## Failure modes and limits
 
-Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
+Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The Bind loop runs inside a long-lived `SubstreamAgent` operation, so an `AbortSignal.timeout()` left armed after a fast tool call retains dead timer work and can keep the isolate active after useful work ended. The rule and its incident are [`runbook.md`](runbook.md).
 
@@ -616,7 +616,7 @@ whole-file read.
 
 Bounded callers use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceeded`, `run_tool_call_limit_exceeded`, and `run_cost_limit_exceeded` when one of their explicit ceilings is reached. Those codes remain in the public failure contract so historical runs and bounded subsystems stay readable. A limit never silently reinterprets a write as successful.
 
-When every route candidate answers with a transport fault the provider owns — no response, a 408, a 429, or a 5xx — the run fails as `provider_unavailable`, kind `provider`, and not as `harness_execution_failed`. When the circuit breaker had already opened and no request went out at all, the run fails as `provider_circuit_open`, also kind `provider`: Bind's executor reports that as `no_viable_endpoints` carrying no error, and letting that emptiness fall through to the generic bucket reinstated the misattribution during exactly the minute an outage was worst — the first run in a workspace named accurately, every run behind it blamed on Avalon. The two codes stay separate because the breaker opens on 401/402/403 as readily as on a 5xx, so a refusal cannot be attributed to the provider without knowing why it opened, which the breaker does not record. The distinction is the whole point of the code: `harness_execution_failed` means Avalon's own defect and gives a member no reason to try again, so filing an upstream outage under it sends whoever reads the failure to the wrong system. A 400 stays generic, because the request shape is ours; 401, 402, and 403 stay generic too, because the credential or the credit is ours. A refusal from the platform Avalon runs *on* is neither: Cloudflare bounds how deep one request may recurse through Workers and how many subrequests one invocation may make, and enforces both by refusing whichever call asks next — a D1 read, a Durable Object hop, a fetch. That run fails as `platform_limit_exceeded`, kind `platform`, decided in `FatalHarnessPortError` from the platform's own wording rather than at the call site, because the port that happened to ask is in no position to know. Filing it under that port's code is not a naming quibble: on 2026-08-24 a work stream died reporting `tool_receipt_persistence_failed` when nothing about the receipt had failed, and the investigation started in the receipt authority. Bind's `isRetriableAttemptError` is the authority for the split, minus completion defects, which are the model answering badly rather than the provider failing to answer.
+When every route candidate answers with a transport fault the provider owns — no response, a 408, a 429, or a 5xx — the run fails as `provider_unavailable`, kind `provider`, and not as `harness_execution_failed`. When the circuit breaker had already opened and no request went out at all, the run fails as `provider_circuit_open`, also kind `provider`: Bind's executor reports that as `no_viable_endpoints` carrying no error, and letting that emptiness fall through to the generic bucket reinstated the misattribution during exactly the minute an outage was worst — the first run in a workspace named accurately, every run behind it blamed on Rally. The two codes stay separate because the breaker opens on 401/402/403 as readily as on a 5xx, so a refusal cannot be attributed to the provider without knowing why it opened, which the breaker does not record. The distinction is the whole point of the code: `harness_execution_failed` means Rally’s own defect and gives a member no reason to try again, so filing an upstream outage under it sends whoever reads the failure to the wrong system. A 400 stays generic, because the request shape is ours; 401, 402, and 403 stay generic too, because the credential or the credit is ours. A refusal from the platform Rally runs *on* is neither: Cloudflare bounds how deep one request may recurse through Workers and how many subrequests one invocation may make, and enforces both by refusing whichever call asks next — a D1 read, a Durable Object hop, a fetch. That run fails as `platform_limit_exceeded`, kind `platform`, decided in `FatalHarnessPortError` from the platform's own wording rather than at the call site, because the port that happened to ask is in no position to know. Filing it under that port's code is not a naming quibble: on 2026-08-24 a work stream died reporting `tool_receipt_persistence_failed` when nothing about the receipt had failed, and the investigation started in the receipt authority. Bind's `isRetriableAttemptError` is the authority for the split, minus completion defects, which are the model answering badly rather than the provider failing to answer.
 
 Before that failure is reached, the harness re-executes the **whole route plan** up to `transportRetries` times, which the work-stream host and the inline child set from `HARNESS_TRANSPORT_RETRIES` (declared as `1` in both regional Wrangler configs; `0` disables it, which is why it is read through `countEnv` rather than `numericEnv` — the latter rejects zero). The wait is a clamped backoff honouring `Retry-After` up to `TRANSPORT_RETRY_MAX_DELAY_MS`, and it is skipped entirely when the run's remaining wall clock cannot hold the wait plus a **worst-case replay of the whole plan** — every candidate, each able to spend its establishment timeout and then its time-to-first-token timeout, because the stream watchdog only opens once the response head lands. Reserving less lets a bounded caller's retry manufacture the deadline it defers to, and the outage is then reported as `run_wall_time_limit_exceeded`. Root work-stream runs set no wall clock and are unaffected; a 90s inline child effectively declines the retry, which is the honest answer for a budget that cannot hold a second pass. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a work stream pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt appends to the owning execution object's `inference_attempts` ledger and emits its own lakehouse terminal record, so a retried turn is visible as more than one attempt sharing a `turn_id`.
 
@@ -636,7 +636,7 @@ A `record_before_execute` write instead becomes `ambiguous_external_write` and
 terminates the run without retry guidance, because the provider may have applied
 the mutation before its response failed validation.
 
-The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `resourceId`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`, `attachmentKind`, and `suggestedCall` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into every later lossless inference request record. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
+The harness reads that half by shape through `readStructuredFailure` in `@rally/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `resourceId`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`, `attachmentKind`, and `suggestedCall` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into every later lossless inference request record. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
 
 Hosted inference capture has one path for Global workspaces: the always-on Global lakehouse. It records exact request and terminal-attempt events through Global R2, Queue, Pipeline, and Data Catalog; the workspace preference, request-only `agent-inference/` writer, and regional D1 index no longer exist. EU inference analytics are intentionally deferred, so EU provider calls have no lakehouse archive or cross-region fallback. Capture remains best-effort and cannot fail an agent run. Reading a captured Global record back is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
 
@@ -684,7 +684,7 @@ outputs, summaries, token content, and provider responses remain excluded.
 | `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, `toolActivityName`, and the transport retry — that a fallback-less plan re-executes and re-sends **identical bytes**, that an exhausted budget and a refused endpoint each get their own provider code, that a 400 gets neither a retry nor the provider's name, and the backoff curve, `Retry-After` preference, and clamp as a pure function. |
 
 Run one with
-`pnpm --filter @avalon/api exec vitest run test/harness-run-runtime.test.ts` — the
+`pnpm --filter @rally/api exec vitest run test/harness-run-runtime.test.ts` — the
 path is package-relative.
 
 Four traps. The prompts are byte-stable and golden-hashed, so an edit fails the
@@ -922,7 +922,7 @@ plain-text label, that TeX and math delimiters are never written, that a
 literal backslash belongs only in code formatting, and that a dollar sign in
 prose is plain text.
 
-**Why:** models routed through OpenRouter emit TeX for symbols, and no Avalon
+**Why:** models routed through OpenRouter emit TeX for symbols, and no Rally
 surface renders it. The display-side normalizer
 ([`model-text-normalization.md`](model-text-normalization.md)) repairs what
 arrives anyway; the prompt half is the only half that also fixes the copy that
@@ -971,7 +971,7 @@ built-in formatting recipe; if that guidance is wanted back it belongs in a
 skill, which needs the compiler given a skill surface first — `compileAutomation`
 does not pass `skills` to `runHarness` today. Anything reading `requestedDelivery`
 must keep treating it as a *request*: it is model output, it selects among
-Avalon's own fixed channels, and it never carries an address.
+Rally's own fixed channels, and it never carries an address.
 
 ### 2026-08-23 — Terminal receipt reconciliation survives a transient object failure
 
@@ -1159,10 +1159,10 @@ is accepted or race that dependency past a successor's preliminary replan check.
 New inference callers must add their source to the typed union and the D1 check
 in the same change.
 
-### 2026-08-22 — A run is told what Avalon will deliver for it
+### 2026-08-22 — A run is told what Rally will deliver for it
 
 **What changed:** The automation prompt context carries the active destinations
-Avalon delivers the run's result to, and the standing behavior policy forbids
+Rally delivers the run's result to, and the standing behavior policy forbids
 sending a copy of that result to one of them. The compiler policy says the same
 from the other side: a destination is described, never instructed as a provider
 send.
@@ -1196,7 +1196,7 @@ resumed attempt across a deploy.
 dispatch — after the `tool_started` event, before the tool runs — and forwards
 the answer on the context.
 
-**Why:** A tool that starts work outside Avalon has to name that work with
+**Why:** A tool that starts work outside Rally has to name that work with
 something a resumed attempt will recognize. Until now the one tool that needed
 it, Terminal, queried the host's `tool_invocations` table for its own receipt
 id: a subsystem reading another's table for an answer the host had in hand.
@@ -1205,7 +1205,7 @@ id: a subsystem reading another's table for an answer the host had in hand.
 That coordinate is stable across a resume, but the receipt row it maps to is
 created once and kept, so the derived id would diverge from the one an
 interrupted attempt already used — exactly the case the identity exists to
-handle. Also rejected: returning it from `persistToolExecutionPlan`. Avalon's
+handle. Also rejected: returning it from `persistToolExecutionPlan`. Rally's
 host does that work while handling `tool_started` rather than through that
 port, so the return value would reach nobody.
 
@@ -1331,7 +1331,7 @@ fails before model inference.
 **What changed:** Stable block IDs now resolve to `BlockDashboardAgent`
 instances. WorkstreamDO durably fans out configured runs, each block agent uses
 main `SubstreamAgent("0")` as its fenced source/runtime ledger, and result
-versions settle back into WorkstreamDO. Both agent classes share Avalon's
+versions settle back into WorkstreamDO. Both agent classes share Rally's
 custom keep-alive and drain primitives; Bind remains the loop implementation.
 
 **Why:** HyperSight loops can be long and must recover independently, but a
@@ -1596,7 +1596,7 @@ provider still loses the constraint; giving each branch `type: "object"` alone
 passes xAI but the sanitizer then strips the `required` anyway, so the constraint
 is lost silently — the only structural form that both passes and survives is a
 full object schema per branch, which is what the attachment tools already use;
-teaching Avalon to post-process Bind's output would fork the sanitizer. The
+teaching Rally to post-process Bind's output would fork the sanitizer. The
 weakened-branch check asserts *constraint removed* rather than *unsatisfiable*
 deliberately — satisfiability needs a solver, and a branch the sanitizer weakened
 is a discarded constraint whether or not some instance still validates.
@@ -1607,7 +1607,7 @@ two checks distinct — collapsing them loses exactly the distinction the
 measurement bought — and keep the named-surface assertion, because the walk's
 weak point is a tool it never reaches rather than one it judges wrongly. Three
 surfaces are not in any registry and were missing from the first cut: the
-Firecrawl web pair, which `createAvalonTools` omits entirely without a
+Firecrawl web pair, which `createRallyTools` omits entirely without a
 `FIRECRAWL_API_KEY`, and the automation architect's four tools and the HyperSight
 submission tool, both built against run state. A lower-bound count cannot notice
 any of them leaving; asserting the names can.
@@ -1706,7 +1706,7 @@ the next provider or the fallback model. `pinnedModelRouting` gives an override
 no fallbacks on purpose, so there was neither, and the disposition matrix
 deliberately withholds a same-endpoint budget from a fault it expects to
 traverse away from. Nothing was left. The gap was not in Bind's ordering — it was
-that Avalon never implemented the host-side retry `isRetriableAttemptError`
+that Rally never implemented the host-side retry `isRetriableAttemptError`
 exists to prompt.
 
 The pin itself was not relaxed, and must not be: an override is a request to
@@ -1719,9 +1719,9 @@ The second half is a diagnostic debt the first half would otherwise have hidden.
 The exhaustion path rethrew the transport's own error verbatim — right for
 preserving a message, but it dropped the classification, so the outer catch saw
 an unrecognized error and filed an upstream outage as `harness_execution_failed`:
-*"The Avalon harness could not complete this run."* The member was told Avalon
+*"The Rally harness could not complete this run."* The member was told Rally
 broke, and the only way to learn otherwise was the raw-inference runbook. One
-predicate now decides both the retry and the code, so the failures Avalon retries
+predicate now decides both the retry and the code, so the failures Rally retries
 are exactly the failures it names as the provider's, and the two lists cannot
 drift apart.
 
@@ -1741,7 +1741,7 @@ failures. The breaker is also process-local (Bind's own `circuit-breaker.d.ts`
 says so), so that ceiling is per-isolate and the fleet-wide request volume during
 an outage is a multiple of it; real fleet-wide protection would need D1 or a
 Durable Object and is not what this is. Do not widen `isProviderTransportFailure` to cover 400,
-401, 402, or 403: those are Avalon's request shape and Avalon's credentials, a
+401, 402, or 403: those are Rally's request shape and Rally's credentials, a
 repeat cannot fix them, and naming them as the provider's would point an operator
 at the wrong system. Meeting notes' live pass sets the budget to 0 on purpose;
 its one-minute cadence is worth more than any single briefing.
@@ -1905,7 +1905,7 @@ Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
 ### 2026-08-12 — Compaction summaries fail closed across authorization changes
 
 **What changed:** The harness exposes a required host preparation boundary before
-the compaction summary call. Avalon uses it to capture resource authorization,
+the compaction summary call. Rally uses it to capture resource authorization,
 then verifies that scope after the call, before persistence, and on replay.
 
 **Why:** The summary itself may preserve attachment IDs and conclusions, so
@@ -2037,7 +2037,7 @@ hash when a prior activation hint was persisted before Bind could call
 construction. That could produce a different surface from the one the parent
 activated and would spend another provider call while freezing child authority.
 
-**Consequences:** Any dynamic adapter that returns Avalon-classified read tools
+**Consequences:** Any dynamic adapter that returns Rally-classified read tools
 can pass that exact activated subset to a child. Hosted MCP currently classifies
 all provider-authored tools as writes, so its tools remain excluded by the
 child's independent read-only policy. A dynamic provider failure while restoring
@@ -2054,7 +2054,7 @@ the loaded tools only after reauthorization, loads them once per run, and uses
 the same persistence, policy, execution, and receipt path as static tools.
 
 **Why:** Hosted MCP servers own tool catalogs that can change independently of
-Avalon and can vary by account. Resolving every eligible connection at run start
+Rally and can vary by account. Resolving every eligible connection at run start
 would waste provider calls on plugins the model never uses; resolving after
 activation would expose an activation that had no callable surface.
 
@@ -2074,7 +2074,7 @@ Shipped in the pull request for this change.
 ### 2026-08-12 — The provider SDK boundary is converted, not asserted
 
 **What changed:** Bind's OpenAI-compatible messages and tools are explicitly
-converted to Avalon's `ModelMessageContentPart` and `ModelRequestTool` wire
+converted to Rally's `ModelMessageContentPart` and `ModelRequestTool` wire
 types. The four production `as unknown as` assertions in the adapter are gone;
 unsupported custom tools fail immediately and input audio is restricted to the
 SDK-supported `wav` and `mp3` formats.
@@ -2085,7 +2085,7 @@ failure: an upstream SDK can add a union member or alter a field while the
 double assertion continues to compile. Because the inference payload is also
 optionally persisted for diagnostics, silently passing a new shape through
 would make both provider behavior and its recorded account disagree with the
-types Avalon exposes.
+types Rally exposes.
 
 **Considered and rejected:** Keeping the assertions behind a named generic
 adapter. That would improve searchability but still accept every future SDK
@@ -2423,7 +2423,7 @@ retraction.
 **Why:** Creating an automation was silent. The architect researches for a
 minute or more, and the only thing the transcript showed for all of it was a
 column of near-identical tool rows — "Reviewed GitHub", "Reviewed GitHub" —
-under a spinner counting seconds. Nothing said what Avalon had understood the
+under a spinner counting seconds. Nothing said what Rally had understood the
 request to be, what it was looking for, or that it had changed course when a
 connector turned out to be missing, so a compile that was working looked
 indistinguishable from one that was stuck.

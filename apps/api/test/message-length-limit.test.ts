@@ -21,7 +21,7 @@ import {
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 

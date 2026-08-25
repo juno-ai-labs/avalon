@@ -1,4 +1,4 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -190,7 +190,7 @@ describe("launching a run against the open authority", () => {
     })).rejects.toMatchObject({
       status: 503,
       code: "workflow_unavailable",
-      message: "The Avalon harness could not be started",
+      message: "The Rally harness could not be started",
     });
 
     const objectStore = objectStores.get(workstreamId);
@@ -204,7 +204,7 @@ describe("launching a run against the open authority", () => {
     expect(row.status).toBe("failed");
     expect(JSON.parse(row.error_json)).toEqual({
       code: "workflow_unavailable",
-      message: "Avalon could not start this run",
+      message: "Rally could not start this run",
     });
     expect(row.error_json).not.toContain(diagnostic);
     expect(consoleError).toHaveBeenCalledWith(expect.objectContaining({

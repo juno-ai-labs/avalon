@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { AutomationSummary, NoteSummary } from "@avalon/contracts";
+import type { AutomationSummary, NoteSummary } from "@rally/contracts";
 
 /**
  * The two workspace-authority reads the sidebar opens with, in one place.

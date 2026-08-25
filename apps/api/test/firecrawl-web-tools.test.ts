@@ -1,6 +1,6 @@
-import { asWorkspaceId } from "@avalon/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { Env } from "../src/env";
 import {
   FIRECRAWL_CACHE_MAX_AGE_MS,

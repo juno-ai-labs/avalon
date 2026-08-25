@@ -9,7 +9,7 @@ import {
   type AgentCompactionState,
   type ActiveStreamCheckpoint,
   type ServerSocketEvent,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { z } from "zod";
 
 import { uuidV7 } from "../lib/uuid-v7";

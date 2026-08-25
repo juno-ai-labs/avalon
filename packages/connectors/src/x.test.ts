@@ -1,4 +1,4 @@
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import { createXConnector, XCapabilities } from "./x";
 import type { FetchLike } from "./provider-utils";

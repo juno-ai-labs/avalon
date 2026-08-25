@@ -7,7 +7,7 @@
  * SQL, so they are proved here against the checked-in statements rather than in
  * the workers suite. `docs/durable-object-alarms.md` is the module document.
  */
-import { asWorkspaceId } from "@avalon/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 

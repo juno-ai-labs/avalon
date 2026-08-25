@@ -12,7 +12,7 @@
  * `integrations.ts` and the firing side lives in `workstream-service.ts`, so
  * neither of those has to import the other through here.
  */
-import type { ExecutionPrincipal } from "@avalon/contracts";
+import type { ExecutionPrincipal } from "@rally/contracts";
 import {
   ExecutionPrincipalSchema,
   MAXIMUM_FAILURE_AVAILABLE_VALUES,
@@ -20,8 +20,8 @@ import {
   asSubstreamId,
   asWorkspaceId,
   asWorkstreamId,
-} from "@avalon/contracts";
-import { newId } from "@avalon/db";
+} from "@rally/contracts";
+import { newId } from "@rally/db";
 import { z } from "zod";
 
 import type { Env } from "../env";

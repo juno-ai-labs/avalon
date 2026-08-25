@@ -28,10 +28,10 @@ import {
   type HarnessRunId,
   type WorkspaceId,
   type WorkstreamId,
-} from "@avalon/contracts";
-import type { AddressingContextMessage } from "@avalon/agent-harness";
-import { truncateUtf16Safe } from "@avalon/contracts/text";
-import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
+} from "@rally/contracts";
+import type { AddressingContextMessage } from "@rally/agent-harness";
+import { truncateUtf16Safe } from "@rally/contracts/text";
+import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";

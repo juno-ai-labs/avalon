@@ -1,6 +1,6 @@
 # Choosing between a Queue and RPC
 
-Avalon's Workers and Durable Objects talk to each other two ways: a **Cloudflare
+Rally's Workers and Durable Objects talk to each other two ways: a **Cloudflare
 Queue**, where the sender writes a message and walks away, and **Workers RPC**
 over a service binding or a Durable Object stub, where the caller invokes a
 method and waits for what comes back. This document says which to reach for.
@@ -43,7 +43,7 @@ watching.** An overloaded Queue produces a backlog and eventually a dead-letter
 queue with messages in it — a binary, zero-setup signal that something is wrong.
 An overloaded synchronous hop produces latency and timeouts smeared across
 unrelated requests, which presents as "the product feels slow today" and is
-diagnosable only with tooling Avalon does not have. Prefer the failure you will
+diagnosable only with tooling Rally does not have. Prefer the failure you will
 notice.
 
 ## You must use RPC when
@@ -136,14 +136,14 @@ check. Those are worth naming precisely, because naming them is what stops the
 requirement from spreading to everything nearby.
 
 And when a Queue is right but the default window is too slow, **tune the window
-before you abandon the mechanism.** Avalon's activity queue runs at
+before you abandon the mechanism.** Rally's activity queue runs at
 `max_batch_timeout: 1` for exactly this reason: at five seconds a Slack unfurl
 appeared six seconds after the message, which was a real complaint with a real
 user story behind it. The fix was one second, not a service binding.
 
 ### Deciding without measurement
 
-Avalon has no load history, no queue-depth dashboard, and no capacity model. A
+Rally has no load history, no queue-depth dashboard, and no capacity model. A
 rule in this document that said "measure it first" would be a rule nobody could
 follow: it would either block the decision indefinitely or get waved through with
 a guess wearing the costume of data. So **none of the criteria here depend on
@@ -187,7 +187,7 @@ against a published number, written down where the next person can check it.
 
 ## What a Queue makes you handle
 
-These are consequences of the platform, not of Avalon, and every consumer has to
+These are consequences of the platform, not of Rally, and every consumer has to
 account for them:
 
 - **Delivery is at-least-once.** A message can arrive twice. The consumer needs a
@@ -251,7 +251,7 @@ wrong when everyone is converging on one.
 
 ## Splitting per region
 
-Avalon deploys the same Worker twice, as Global and EU, with separate D1, R2,
+Rally deploys the same Worker twice, as Global and EU, with separate D1, R2,
 Durable Object namespaces, keys, and secrets. So every hop raises a second
 question after the mechanism is chosen: **one resource for both regions, or one
 per region?** `avalon-global-activities` and `avalon-eu-activities` are split.
@@ -284,7 +284,7 @@ step, bought for nothing.
 - **One region's volume alone approaches a per-resource ceiling.** Settle this
   with [arithmetic, not a dashboard](#deciding-without-measurement): estimate
   messages per user action times users, compare against 5,000 a second, and put
-  the sum in a comment. At Avalon's size the answer is almost always no by
+  the sum in a comment. At Rally's size the answer is almost always no by
   several orders of magnitude.
 
 ### No-go — share one resource when all of these hold
@@ -323,7 +323,7 @@ clearest available demonstration of that.
   regions and region selection stays deployment configuration rather than
   application logic. Never branch on region in code to pick a binding.
 - **Keep the consumer configuration identical unless there is a reason**, and
-  record the reason where it diverges. Avalon's EU activity consumer carries the
+  record the reason where it diverges. Rally's EU activity consumer carries the
   comment `Matches Global; the reasoning is recorded there` — that one line is
   what stops the two drifting apart silently.
 - **Never let a regional consumer reach into the other region's stores.** A
@@ -354,7 +354,7 @@ clearest available demonstration of that.
 
 A service binding does not have a per-region shape to choose — it names a script,
 and the regional deployment names a different script. The equivalent question is
-whether the call crosses the boundary at all, and Avalon's answer is that it may,
+whether the call crosses the boundary at all, and Rally's answer is that it may,
 through a small number of named bridges that parse their argument at the hop
 against `apps/api/src/lib/rpc-contracts.ts`. Adding a cross-region RPC is a
 change to that boundary and belongs in
@@ -412,9 +412,9 @@ that list — which is where to look first. For what a deploy would actually
 carry, the dry-run builds print the resolved bindings per surface:
 
 ```text
-pnpm --filter @avalon/api build      # global
-pnpm --filter @avalon/api build:eu
-pnpm --filter @avalon/migration-tracker build
+pnpm --filter @rally/api build      # global
+pnpm --filter @rally/api build:eu
+pnpm --filter @rally/migration-tracker build
 ```
 
 ### What none of that checks
@@ -511,7 +511,7 @@ whether you have chosen the wrong mechanism and are now paying to reimplement th
 right one, or whether you have chosen the right one and are paying to distrust
 it.
 
-## Where Avalon stands today
+## Where Rally stands today
 
 | Hop | Mechanism | Regional shape | Why |
 | --- | --- | --- | --- |

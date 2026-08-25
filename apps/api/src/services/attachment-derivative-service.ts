@@ -1,4 +1,4 @@
-import { classifyAttachmentKind } from "@avalon/contracts";
+import { classifyAttachmentKind } from "@rally/contracts";
 import { unzipSync } from "fflate";
 
 export const ATTACHMENT_TEXT_EXTRACTOR_VERSION = "attachment-text-v2";

@@ -1,5 +1,5 @@
-import { asUserId } from "@avalon/contracts";
-import type { HarnessToolContext } from "@avalon/agent-harness";
+import { asUserId } from "@rally/contracts";
+import type { HarnessToolContext } from "@rally/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { encryptString, sha256Hex } from "../src/lib/crypto";

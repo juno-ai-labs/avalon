@@ -135,7 +135,7 @@ the existing, correct guard — it just was not extended to 2a–2d.
 `refreshAgentTimerAlarm` (`workstream-wakeup-service.ts:645`) resolves the owning
 agent and calls `refreshTimerAlarm`, whose handler validates identity and then
 calls `this.scheduleNextAlarm()`. The agent's timer tools call it three times
-inside `createAvalonTools` (`integrations.ts:6419`, `:6467`, `:6579`), which runs
+inside `createRallyTools` (`integrations.ts:6419`, `:6467`, `:6579`), which runs
 inside the harness, which runs inside the agent.
 
 **Effect.** A round trip to reach a private method on the object making the call.

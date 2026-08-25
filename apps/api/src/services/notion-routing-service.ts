@@ -3,8 +3,8 @@ import {
   readNotionWebhookVerificationToken,
   verifyNotionWebhook,
   type VerifiedNotionWebhook,
-} from "@avalon/connectors";
-import type { Region } from "@avalon/contracts";
+} from "@rally/connectors";
+import type { Region } from "@rally/contracts";
 import type { Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";

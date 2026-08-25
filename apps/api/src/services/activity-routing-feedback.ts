@@ -1,4 +1,4 @@
-import type { WorkspaceId } from "@avalon/contracts";
+import type { WorkspaceId } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";

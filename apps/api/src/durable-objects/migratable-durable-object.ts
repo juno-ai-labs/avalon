@@ -19,7 +19,7 @@
  * `docs/durable-object-migration-tracking.md` owns the subsystem on both sides
  * of this file — the report going out, and the command coming in.
  */
-import type { DurableObjectMigrationCommand } from "@avalon/contracts/durable-object-migrations";
+import type { DurableObjectMigrationCommand } from "@rally/contracts/durable-object-migrations";
 import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "../env";

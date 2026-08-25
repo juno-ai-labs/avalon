@@ -1,5 +1,5 @@
-import type { ToolDefinition } from "@avalon/contracts";
-import { HttpsUrlSchema } from "@avalon/contracts/url-schemas";
+import type { ToolDefinition } from "@rally/contracts";
+import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 import {
   base64,

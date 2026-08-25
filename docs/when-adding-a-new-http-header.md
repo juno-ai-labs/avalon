@@ -6,13 +6,25 @@ CORS before the request reaches the Worker.
 
 ## Request headers
 
-1. Add the header at its renderer request site. Shared API mutations normally use
-   `apps/desktop/src/renderer/lib/api.ts`.
-2. Add the lowercase header name to `securityMiddleware()`'s `allowHeaders` list
-   in `apps/api/src/middleware/request-context.ts`.
+0. Name it on the product prefix and add it to `RALLY_HEADERS` in
+   `packages/contracts/src/http-headers.ts`. Never write the string literal at a
+   request or read site: a header on that prefix has a superseded `x-avalon-`
+   spelling that installed builds still send, and going through the constant is
+   what makes both resolve. `docs/domain-migration.md` owns why.
+1. Add the header at its renderer request site, keyed by the constant. Shared API
+   mutations normally use `apps/desktop/src/renderer/lib/api.ts`.
+2. Read it on the Worker with `readRallyHeader`, never `c.req.header("…")`
+   directly, and spread `rallyHeaderAliases(RALLY_HEADERS.…)` into
+   `securityMiddleware()`'s `allowHeaders` list in
+   `apps/api/src/middleware/request-context.ts` so both spellings are admitted.
+   The browser matches `Access-Control-Request-Headers` literally, so a list
+   holding only the current spelling rejects every pre-rename build at the
+   preflight — before any route code runs, and therefore with no request log.
 3. Add it to `access-control-request-headers` in the desktop mutation preflight in
    `apps/api/test/security-and-config.test.ts`, then assert that the returned
-   `Access-Control-Allow-Headers` contains it.
+   `Access-Control-Allow-Headers` contains both spellings. If the header carries
+   authority or changes routing, add a reading-side case to
+   `apps/api/test/legacy-header-compatibility.test.ts` as well.
 4. Keep the client, Worker allowlist, and regression test in the same pull
    request. The middleware is shared by Global and EU; do not add a wildcard or a
    region-specific bypass.
@@ -34,7 +46,7 @@ test. Do not expose a response header merely because it exists on the wire.
 Run the focused API suite:
 
 ```bash
-pnpm --filter @avalon/api exec vitest run test/security-and-config.test.ts
+pnpm --filter @rally/api exec vitest run test/security-and-config.test.ts
 ```
 
 For a hosted endpoint, verify the real browser preflight shape before releasing:

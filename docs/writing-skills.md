@@ -11,7 +11,7 @@ A skill is **prompt content**. Once loaded, its body is rendered verbatim into
 the system prompt's `# Active Skill Instructions` section, and its catalog line
 sits in the `# Skills` section that every skill in the run's frozen scope
 contributes to. So a skill is reviewed with the same rigor as any other prompt
-text in `@avalon/agent-harness`: clarity, the right altitude, no internal
+text in `@rally/agent-harness`: clarity, the right altitude, no internal
 contradictions, byte-stable in the cacheable prefix.
 
 The reference exemplar is `deep-research` in
@@ -21,7 +21,7 @@ Read it before writing your own — most of what follows is distilled from it.
 ## The bar: a medium-sized model, at two moments
 
 A skill is read by a model **twice**, and it has to work both times for a
-**medium-sized model**, not just the strongest one in the routing stage. Avalon
+**medium-sized model**, not just the strongest one in the routing stage. Rally
 routes each agent through a Cloudflare Flagship flag and falls back through
 configured model stages ([`feature-flags.md`](feature-flags.md)), so the model
 that reads your skill is not always the one you tested on. Holding both moments

@@ -1,4 +1,4 @@
-import type { TelemetryEnvelope } from "@avalon/contracts/telemetry";
+import type { TelemetryEnvelope } from "@rally/contracts/telemetry";
 import { PostHog } from "posthog-node";
 
 const APPROVED_POSTHOG_ORIGINS = new Set([

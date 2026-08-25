@@ -1,4 +1,4 @@
-import { AgentModelOverrideSchema, type AgentModelOverride } from "@avalon/contracts";
+import { AgentModelOverrideSchema, type AgentModelOverride } from "@rally/contracts";
 import { z } from "zod";
 import { BLOCK_DASHBOARD_MODEL, type Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";

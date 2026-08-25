@@ -1,9 +1,9 @@
-import { asHarnessRunId, asWorkstreamId } from "@avalon/contracts";
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asHarnessRunId, asWorkstreamId } from "@rally/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../src/services/integrations";
 import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "../src/services/attachment-derivative-service";
 import { createAutomationDraftAttachmentTools } from "../src/services/automation-draft-attachment-tools";

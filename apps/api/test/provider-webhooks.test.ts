@@ -1,5 +1,5 @@
-import type { ConnectorConnectionContext, ConnectorError } from "@avalon/connectors";
-import type { Scope } from "@avalon/contracts";
+import type { ConnectorConnectionContext, ConnectorError } from "@rally/connectors";
+import type { Scope } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { decryptString, encryptString, sha256 } from "../src/lib/crypto";

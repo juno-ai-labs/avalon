@@ -13,7 +13,7 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { DurableObjectMigrationCommand } from "@avalon/contracts/durable-object-migrations";
+import type { DurableObjectMigrationCommand } from "@rally/contracts/durable-object-migrations";
 
 import { dispatchableRegions, dispatchMigrationRun } from "../src/dispatch";
 import type { Env } from "../src/env";

@@ -1,6 +1,6 @@
-import { asUserId } from "@avalon/contracts";
+import { asUserId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
-import type { AutomationDraft } from "@avalon/contracts";
+import type { AutomationDraft } from "@rally/contracts";
 import { z } from "zod";
 import {
   TRANSPORT_RETRY_MAX_DELAY_MS,

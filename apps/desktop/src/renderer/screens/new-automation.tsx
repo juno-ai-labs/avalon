@@ -23,7 +23,7 @@ import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
 import { MarkdownBody, MessageBlock } from '../components/workstream-blocks';
-import { AvalonMark, Badge, Button, EmptyState, IconButton, InlineError } from '../components/primitives';
+import { RallyMark, Badge, Button, EmptyState, IconButton, InlineError } from '../components/primitives';
 import { withSuggestedPrompts } from '../components/suggested-prompts';
 import { useAppSession } from '../lib/app-session';
 import { ApiError } from '../lib/api';
@@ -424,7 +424,7 @@ function DeliveryChoice({
 /**
  * What the draft itself said about where the result goes.
  *
- * Avalon sends the result to the destinations chosen here and the run sends
+ * Rally sends the result to the destinations chosen here and the run sends
  * nothing, so a draft that promises to email or message somebody and lands on a
  * screen with no destination ticked is an automation that quietly delivers
  * nowhere. The sentence names what was asked for; the boxes below are what
@@ -515,9 +515,9 @@ function DraftSummary({
         <ul>
           <DeliveryChoice
             checked
-            description="Every run is saved to its own Avalon work stream."
-            icon={<AvalonMark />}
-            label="Avalon"
+            description="Every run is saved to its own Rally work stream."
+            icon={<RallyMark />}
+            label="Rally"
             locked
           />
           {scope === 'you' && ownerEmail && (
@@ -542,7 +542,7 @@ function DraftSummary({
         </ul>
       </section>
       <footer>
-        <span>Avalon preloads the plugins this draft needs, and never widens their runtime authority.</span>
+        <span>Rally preloads the plugins this draft needs, and never widens their runtime authority.</span>
         <Button
           className="button-primary"
           disabled={creating || activitySources.some((source) => !activitySourcePluginIds[source.bindingKey])}
@@ -624,14 +624,14 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
    */
   const followStreamRef = useRef(true);
   /**
-   * The offset Avalon's own follow last scrolled to, which is what makes the
+   * The offset Rally's own follow last scrolled to, which is what makes the
    * threshold below safe to keep tight. A scroll event is dispatched at frame
    * time, not when the offset is assigned, so by the time the follow's own
    * event arrives more narration has usually landed and the surface is
    * hundreds of pixels short of a bottom that moved after the assignment.
    * Measuring that as the reader scrolling up unpins the follow on its own
    * scroll — the feature switching itself off a second into a compile. An
-   * event that reports this offset is Avalon's; anything else is the reader's.
+   * event that reports this offset is Rally's; anything else is the reader's.
    */
   const autoScrollTopRef = useRef(-1);
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -839,12 +839,12 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     });
   };
 
-  // Avalon's suggestion is the default; the creator can still redirect the
+  // Rally's suggestion is the default; the creator can still redirect the
   // automation, and only an administrator may make it a workspace automation.
   const scopeChangeAllowed = session?.workspace?.role === 'owner' || session?.workspace?.role === 'admin';
   const scope: AutomationScope = scopeOverride ?? draft?.summary?.scope ?? 'you';
 
-  // Keyed on the scope in force, not the one Avalon suggested: a workspace
+  // Keyed on the scope in force, not the one Rally suggested: a workspace
   // automation cannot preload a coworker's personal plugin, and switching back
   // to You has to restore the personal picks it dropped. The creator has no
   // control to recover them by hand.
@@ -888,7 +888,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
 
   const deliveryDraftKey = draft ? `${draft.draftId}:${draft.summary?.scope ?? 'pending'}` : '';
   // The email box starts ticked when the draft's own outputs promise an emailed
-  // result. Avalon is the only sender now — the run is forbidden to mail the
+  // result. Rally is the only sender now — the run is forbidden to mail the
   // result itself — so leaving it off by default turns "email me every morning"
   // into an automation that emails nobody, on the path where the reader agrees
   // with everything on screen and presses Create.
@@ -1250,24 +1250,24 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
               // and a message sent against it starts a second draft while the
               // first is still on screen in the sidebar.
               <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
-                <AvalonMark />
+                <RallyMark />
                 <p className="eyebrow">Draft automation</p>
                 <h1 id="automation-builder-heading">This draft could not be opened</h1>
-                <p>{resumedDraft.error instanceof ApiError ? resumedDraft.error.message : 'Avalon could not load this conversation.'}</p>
+                <p>{resumedDraft.error instanceof ApiError ? resumedDraft.error.message : 'Rally could not load this conversation.'}</p>
                 <Button className="button-secondary" onClick={() => void resumedDraft.refetch()}>Try again</Button>
               </section>
             ) : resumeDraftId !== null && !draft ? (
               <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
-                <AvalonMark />
+                <RallyMark />
                 <p className="eyebrow">Draft automation</p>
                 <h1 id="automation-builder-heading">Opening this draft…</h1>
               </section>
             ) : turns.length === 0 && !draft ? (
               <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
-                <AvalonMark />
+                <RallyMark />
                 <p className="eyebrow">Create an automation</p>
                 <h1 id="automation-builder-heading">What should happen automatically?</h1>
-                <p>Describe the outcome. Avalon can research your plugins and will ask for the details it needs.</p>
+                <p>Describe the outcome. Rally can research your plugins and will ask for the details it needs.</p>
                 <AutomationSuggestedPrompts onSelect={(example) => submit(example, 'suggested_prompt')} />
                 {workspaceTemplatesEnabled && (
                   <button className="template-path" onClick={() => setTemplatesOpen(true)} type="button">Use a workspace template <ChevronRight size={13} /></button>
@@ -1311,7 +1311,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                   // Trimmed, not just non-empty: an abandoned first turn
                   // resets to '' and a model that opens a narration turn with
                   // a bare newline sends whitespace before it sends a word.
-                  // Either would render as Avalon having said something blank.
+                  // Either would render as Rally having said something blank.
                   streamingText.trim().length > 0
                     ? <AutomationMessageBlock message={automationTextMessage('automation-streaming', 'agent', streamingText, true)} />
                     : turns.some((turn) => turn.messageType === 'thought' && turn.thoughtEvent?.status === 'started')

@@ -1,6 +1,6 @@
 # Data model
 
-Avalon's regional data is split by declared authority. D1 is the thin regional
+Rally's regional data is split by declared authority. D1 is the thin regional
 control plane: it owns workspace/member/user identity, object and connector
 ingress routing, migration coordination, global-provider handoff receipts, and
 operational audit/telemetry. `WorkspaceDO` owns every workspace-scoped product
@@ -127,7 +127,7 @@ hash-checked RPCs rather than cross-object SQL joins.
   which is what lets an automatic rewrite weigh a deliberate line differently from
   a copied opening message. `title_status` is the same question for the title:
   `naming` while the naming agent is choosing the first one and the stored title
-  is a placeholder clients render as a skeleton, `automatic` once Avalon has named
+  is a placeholder clients render as a skeleton, `automatic` once Rally has named
   it and one later pass may still replace it, `settled` when a person named it, a
   caller supplied it, or that pass has run.
 - Object-local `description_refresh_state` holds one row per work stream: the last
@@ -509,7 +509,7 @@ no projection fallback when that object is unavailable.
   copies its results to, one row per `target_type`. A `slack_agent_dm` row carries
   the selected Slack installation and linked Slack user; an `email` row carries the
   owner's account address as it stood when the automation was saved and no
-  connector connection. A per-type `CHECK` keeps the two shapes from mixing. Avalon
+  connector connection. A per-type `CHECK` keeps the two shapes from mixing. Rally
   itself is never a row — every run already owns a work stream.
 - `slack_unfurled_links` records which Slack message carries which work-stream
   link, plus a hash of the attachment posted on it, so a posted unfurl card is
@@ -687,7 +687,7 @@ has a document, and the column notes above point at it rather than restating it:
 
 ## Testing
 
-`pnpm --filter @avalon/db test` is the suite that covers the schema itself:
+`pnpm --filter @rally/db test` is the suite that covers the schema itself:
 
 - `packages/db/test/baseline-migration.test.ts` replays every `.sql` file in
   `packages/db/migrations/` in sorted order into an in-memory `node:sqlite`
@@ -906,7 +906,7 @@ a subsumed migration is edited or a file is inserted below the boundary — the
 manifest digest covers the file list *and* the contents. A test asserting that
 `0037` leaves a particular column therefore could not catch a regression the
 digest does not catch first: the file it describes cannot change. What the suite
-did still cost was runtime — it was most of `pnpm --filter @avalon/db test`,
+did still cost was runtime — it was most of `pnpm --filter @rally/db test`,
 which drops from ~24s to ~3s.
 
 **The alternative that was rejected:** keeping the ~14 tests that assert on
@@ -945,7 +945,7 @@ fail-closed reason. The resolved scope also joins the `workstream_create_receipt
 request hash, so two creates under one `clientMessageId` that resolved different
 audiences are two requests rather than one.
 
-**Why:** Work started in Avalon was published to the whole workspace on
+**Why:** Work started in Rally was published to the whole workspace on
 creation, and the person who started it had to notice and close it. The default
 now matches what a work stream is when nobody has said otherwise: the creator,
 the people they named, and nobody else. The same change repairs a real leak the
@@ -1738,7 +1738,7 @@ sandbox, task, import, network-policy, repository-selection, publication-grant,
 and convergent-publication rows with work-stream/workspace guards and unique
 replay keys.
 
-**Why:** Daytona persistence cannot be Avalon's authorization or retry ledger.
+**Why:** Daytona persistence cannot be Rally's authorization or retry ledger.
 Sandbox creation, command submission, egress mutation, and GitHub writes all
 have ambiguous provider outcomes that require durable regional intent and
 receipts independent of provider state.
