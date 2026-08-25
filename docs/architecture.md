@@ -484,7 +484,7 @@ correlated diagnosis. [`runbook.md`](runbook.md#root-run-analytics) owns the
 positional dataset schema and sampling-aware queries.
 
 Daytona platform timings use a second fixed-grain dataset,
-`rally_terminal_operations`. One content-free point measures provider create,
+`avalon_terminal_operations`. One content-free point measures provider create,
 managed-image bootstrap, manifest verification, stopped warming, or archived
 restore. Keeping platform operations out of `avalon_agent_runs` lets sampling
 and percentiles answer image/cold-start questions without pretending a provider
@@ -1347,7 +1347,7 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 ### 2026-08-13 — Daytona platform timing uses its own analytics grain
 
 **What changed:** The two API Workers bind `TERMINAL_ANALYTICS` to
-`rally_terminal_operations`. The Terminal provider emits one versioned,
+`avalon_terminal_operations`. The Terminal provider emits one versioned,
 content-free point for each create, bootstrap, or start operation, with separate
 phase durations and no tenant or provider-operation identifier.
 

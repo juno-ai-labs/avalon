@@ -87,7 +87,7 @@ Two properties of `step` decide how a flow has to be written:
   one. Every awaited call inside a flow therefore belongs inside a step — an
   unstepped `await` does not go unmeasured, it silently inflates its neighbour
   and makes `slowest_step` name the wrong thing.
-- **`rally.flow` and `avalon.component` are repeated onto every step span.**
+- **`rally.flow` and `rally.component` are repeated onto every step span.**
   OpenTelemetry does not inherit attributes from a parent, so a step span
   without them cannot be filtered or grouped by the flow it belongs to. The
   identity attributes are deliberately not repeated: they are many, the step
@@ -139,7 +139,7 @@ under `avalon.`, so it can never collide with a convention added later:
 | Attribute | Meaning |
 | --- | --- |
 | `rally.flow` | `workstream_create`, `workstream_open`, or `workstream_message_send`. |
-| `avalon.component` | Which participant emitted it: `api`, `api_socket`, `substream_do`, `workspace_do`. |
+| `rally.component` | Which participant emitted it: `api`, `api_socket`, `substream_do`, `workspace_do`. |
 | `rally.workspace.id`, `rally.workstream.id`, `rally.substream.id` | The identifiers a slow trace has to be attributable to. |
 | `rally.request.id` | The desktop's `x-request-id`. |
 | `rally.analytics.person_id`, `rally.analytics.workspace_id` | What PostHog knows the same person and workspace as. See [Joining a system span to a product event](#joining-a-system-span-to-a-product-event). |
@@ -608,7 +608,7 @@ rather than inflating the step after them.
 
 Also in this pass: `rally.snapshot.bytes` reports UTF-8 bytes rather than
 `String.length`, carried in a variable so the trim loop encodes once per
-iteration instead of twice; `step` repeats `rally.flow` and `avalon.component`
+iteration instead of twice; `step` repeats `rally.flow` and `rally.component`
 onto each child span, because OpenTelemetry does not inherit attributes and a
 step that lacks them cannot be grouped by its flow; the renderer's create trace
 reports `navigation_requested` rather than `navigated` and ends a superseded

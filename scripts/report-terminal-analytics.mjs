@@ -1,6 +1,6 @@
 import { isEntryPoint } from "./entry-point.mjs";
 
-const DATASET = "rally_terminal_operations";
+const DATASET = "avalon_terminal_operations";
 const SCHEMA_VERSION = "terminal_platform_v1";
 
 export function parseTerminalAnalyticsArguments(arguments_) {

@@ -1509,7 +1509,9 @@ export class SlackAgentService {
   private async dispatchEvent(teamId: string, envelope: SlackIngressEnvelope, bodyHash: string): Promise<void> {
     const event = envelope.event!;
     const type = String(event.type ?? "");
-    if (type === "rally_public_channel_sync") {
+    // A chunked sync enqueued before the rename is still in the queue with the
+    // superseded type; refusing it stops that sync silently partway through.
+    if (type === "rally_public_channel_sync" || type === "avalon_public_channel_sync") {
       const connection = await this.connectionForTeam(teamId);
       let summary;
       try {
