@@ -1,4 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { ClientFeatureFlagsSchema } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
@@ -30,6 +31,7 @@ const api = vi.hoisted(() => ({
   applyTerminalNetworkPolicy: vi.fn(),
   getDigestSchedule: vi.fn(),
   updateDigestSchedule: vi.fn(),
+  clientFeatureFlags: vi.fn(),
 }));
 const copyText = vi.hoisted(() => vi.fn());
 const openExternal = vi.hoisted(() => vi.fn());
@@ -162,6 +164,10 @@ describe('Workspace settings', () => {
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
+    // Every existing test in this file was written before digestsEnabled
+    // existed and expects the section to be there; a test that cares about it
+    // being hidden overrides this with its own resolved value.
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({}));
     api.getGitHubRepositoryAccessSettings.mockResolvedValue({
       connectionId: '00000000-0000-7000-8000-000000000020',
       connectionName: 'GitHub · Rally',
@@ -1742,6 +1748,7 @@ describe('Closing the settings window with Escape', () => {
     api.getWorkspaceInvitations.mockResolvedValue([]);
     api.getConnections.mockResolvedValue([]);
     api.getAvailableConnectorTypes.mockResolvedValue([]);
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({}));
     api.getDigestSchedule.mockResolvedValue({
       id: '00000000-0000-4000-8000-000000000001',
       enabled: true,
@@ -1807,6 +1814,17 @@ describe('Closing the settings window with Escape', () => {
     fireEvent.change(email, { target: { value: '' } });
     fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('hides the Digest section entirely when digestsEnabled resolves false', async () => {
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ digestsEnabled: false }));
+    renderSettings();
+
+    const navigation = await screen.findByRole('navigation', { name: 'Settings sections' });
+    await waitFor(() => expect(within(navigation).queryByRole('button', { name: 'Digest' })).toBeNull());
+    // Nothing about the person's own saved digest changed, so nothing here
+    // explains the absence — it simply is not one of the sections offered.
+    expect(within(navigation).getByRole('button', { name: 'Account' })).toBeInTheDocument();
   });
 
   it('closes over a digest time, which is a picker rather than a draft', async () => {

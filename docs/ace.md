@@ -60,10 +60,10 @@ reconnect is the reconciliation path.
   `true` has one unambiguous meaning in Flagship, Ace, logs, and client code.
 - The product features default to false in the shared client schema. No network
   response, stale cache, missing field, Flagship error, or older API enables one.
-  `digests-enabled` is the one managed flag outside that schema: no client ever
-  reads it, and it is provisioned **on**, because a digest already sends by
-  default for every existing person — see
-  [`digests.md`](digests.md#the-run).
+  `digests-enabled` is the one field in that schema that defaults **true**
+  instead: it is provisioned **on**, because a digest already sends by default
+  for every existing person, and Electron reads it to decide whether to show
+  the Digest settings section — see [`digests.md`](digests.md#the-run).
 - The account-wide and regional Queue messages never carry a flag value. Values
   are user-specific and are evaluated in the owning WorkspaceDO after Flagship
   propagation; carrying one value would leak one audience's answer to another.
@@ -194,6 +194,40 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-08-25 — digests-enabled becomes client-visible after all
+
+**What changed:** `digestsEnabled` joined `ClientFeatureFlagsSchema`, resolved
+in `client-feature-flags.ts` through the same `resolveDigestsEnabled` the
+scheduler already called. Electron reads it to hide the Digest settings
+section entirely when it resolves `false`, rather than leaving the section
+visible and quietly ineffective.
+
+**Why:** The entry below this one said "Electron never reads it" as a
+deliberate, considered boundary — nothing about the flag needed a value
+pushed to a connected client, so crossing that boundary looked like
+unnecessary scope. That boundary did not survive contact with the actual
+question an operator asked next: if someone's digest is turned off from
+outside their control, should their settings screen keep claiming it is on?
+Leaving the section visible and silently ineffective was worse than the
+scope of teaching the client to ask.
+
+**Considered and rejected:** A bespoke "is it off for the workspace" check
+combined with "is it off for the user" in the settings screen. Rejected for
+the reason already established for the delivery side: there is one
+evaluation per (person, workspace), not two to combine, and the settings
+screen calls the identical function the scheduler calls rather than
+re-deriving the answer.
+
+**Consequences:** The fan-out this flag was already paying for on every Ace
+save — previously a harmless no-op, since nothing consumed it — now has a
+real client effect. `digestsEnabled` is the second field in
+`ClientFeatureFlagsSchema` that does not default `false`, after
+`controlTowerRefreshSeconds`, and for a different reason: a cadence has no
+off, while this is a feature whose off state is the exception an operator
+opts someone into. A missing workspace (no organization chosen yet) reads as
+`true` — there is nothing to evaluate against, and that gap should never
+read as "hidden."
 
 ### 2026-08-25 — Ace manages a fifth flag, its first that is not presentation-only
 
