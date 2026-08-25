@@ -69,15 +69,11 @@ function fixture(message = "Please publish these changes and open a pull request
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstream_participants
-       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
-     VALUES (?, ?, ?, 'creator', '2026-08-13')`,
-    S,
-    U,
-    U,
-  );
+  seedWorkstreamObjectParticipant(objectStore, {
+    userId: U,
+    participationReason: "creator",
+    addedAt: Date.parse("2026-08-13T00:00:00.000Z"),
+  });
   workstreamObjectRun(
     objectStore,
     `INSERT INTO terminal_repository
@@ -523,12 +519,11 @@ describe("Terminal repository publication", () => {
       workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
       executionPrincipal: { type: "user", userId: U },
     }, new Date(Date.now() - 1_000));
-    workstreamObjectRun(
-      removed.objectStore,
-      "UPDATE workstream_participants SET removed_at = '2026-08-13' WHERE workstream_id = ? AND user_id = ?",
-      S,
-      U,
-    );
+    seedWorkstreamObjectParticipant(removed.objectStore, {
+      userId: U,
+      participationReason: "creator",
+      removedAt: Date.parse("2026-08-13T00:00:00.000Z"),
+    });
 
     await expect(createTerminalRepositoryPublisher(removed.env, removed.gateway).publishBranchAndPr(
       removed.context, { title: "Ship", body: "" },
