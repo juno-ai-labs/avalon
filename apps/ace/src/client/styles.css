@@ -57,6 +57,10 @@ h3 { font-size: 14px; margin: 0 0 6px; }
 .rule-card { padding: 0 19px 18px; }
 .rule-card > header { align-items: center; border-bottom: 1px solid #eceae5; display: flex; gap: 9px; min-height: 48px; }
 .rule-number { align-items: center; background: #112b43; border-radius: 50%; color: white; display: flex; font-size: 10px; font-weight: 800; height: 21px; justify-content: center; width: 21px; }
+.rule-handle { align-items: center; color: #9aa1a8; cursor: grab; display: flex; font-size: 14px; height: 21px; justify-content: center; width: 16px; }
+.rule-handle:hover { color: #5a6672; }
+.rule-handle:active { cursor: grabbing; }
+.rule-card.dragging { opacity: .45; }
 .rule-card header strong { font-size: 12px; }
 .quiet { background: transparent; border: 0; color: #8a6460; font-size: 10px; margin-left: auto; }
 .condition-group { border-left: 2px solid #e7e3dc; margin-top: 14px; padding-left: 14px; }

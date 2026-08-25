@@ -56,6 +56,13 @@ export function initialDirectoryLookup(condition: Pick<AceCondition, 'value'>): 
   return String(condition.value ?? '');
 }
 
+export function reorderRules<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+  const next = items.slice();
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, moved!);
+  return next;
+}
+
 export function SimpleConditionEditor({ condition, onChange, onRemove }: {
   condition: SimpleCondition; onChange: (condition: AceCondition) => void; onRemove?: () => void;
 }): React.JSX.Element {
@@ -167,8 +174,10 @@ function ConditionEditor({ condition, depth, onChange, onRemove }: {
   </div>;
 }
 
-function RuleEditor({ rule, index, onChange, onRemove }: {
-  rule: Rule; index: number; onChange: (rule: Rule) => void; onRemove: () => void;
+function RuleEditor({ rule, index, dragging, onChange, onRemove, onDragStart, onDragEnd, onDragOver, onDrop }: {
+  rule: Rule; index: number; dragging: boolean; onChange: (rule: Rule) => void; onRemove: () => void;
+  onDragStart: () => void; onDragEnd: () => void;
+  onDragOver: (event: React.DragEvent) => void; onDrop: (event: React.DragEvent) => void;
 }): React.JSX.Element {
   const rootCondition: AceCondition = rule.conditions.length === 1 && isGroup(rule.conditions[0]!)
     ? rule.conditions[0]!
@@ -180,8 +189,11 @@ function RuleEditor({ rule, index, onChange, onRemove }: {
       : [conditions],
   });
   return (
-    <Panel className="rule-card">
-      <header><span className="rule-number">{index + 1}</span><strong>Target rule</strong><Button variant="quiet" onClick={onRemove} type="button">Remove rule</Button></header>
+    <Panel className={`rule-card${dragging ? ' dragging' : ''}`} onDragOver={onDragOver} onDrop={onDrop}>
+      <header>
+        <span aria-label={`Reorder rule ${index + 1}`} className="rule-handle" draggable onDragEnd={onDragEnd} onDragStart={onDragStart} role="button">⠿</span>
+        <span className="rule-number">{index + 1}</span><strong>Target rule</strong><Button variant="quiet" onClick={onRemove} type="button">Remove rule</Button>
+      </header>
       <ConditionEditor condition={rootCondition} depth={1} onChange={setRootCondition} />
       <div className="rule-result"><span>Then serve</span><SegmentedControl onChange={(value) => onChange({ ...rule, serve_variation: value })} options={['on', 'off'] as const} value={rule.serve_variation} /><Field className="rollout" label="Rollout"><input min="0" max="100" type="number" value={rule.rollout?.percentage ?? 100} onChange={(event) => onChange({ ...rule, rollout: { percentage: Number(event.target.value), attribute: rule.rollout?.attribute ?? 'userPlatformId' } })} /><b>%</b></Field><Field className="bucket" label="Sticky by"><select value={rule.rollout?.attribute ?? 'userPlatformId'} onChange={(event) => onChange({ ...rule, rollout: { percentage: rule.rollout?.percentage ?? 100, attribute: event.target.value } })}>{FLAG_ATTRIBUTES.map((attribute) => <option key={attribute.key} value={attribute.key}>{attribute.label}</option>)}</select></Field></div>
     </Panel>
@@ -195,6 +207,7 @@ function App(): React.JSX.Element {
   const [flagshipConnected, setFlagshipConnected] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
+  const [draggedRuleIndex, setDraggedRuleIndex] = useState<number | null>(null);
 
   useEffect(() => {
     void Promise.all([
@@ -253,7 +266,23 @@ function App(): React.JSX.Element {
     <main className="flag-editor"><header className="editor-header"><div><p>Feature flag</p><h2>{definition.label}</h2><code>{selected.key}</code></div><Button variant="primary" disabled={saving || flagshipConnected !== true} onClick={() => void save()} type="button">{saving ? 'Saving…' : 'Save changes'}</Button></header>
       <section className="default-section"><div><h3>Default</h3><p>The value for anyone who does not match a targeting rule.</p></div><div className="flag-controls"><Field label="Flag status"><SegmentedControl onChange={(value) => updateSelected({ enabled: value === 'enabled' })} options={['enabled', 'paused'] as const} value={selected.enabled === false ? 'paused' : 'enabled'} /></Field><Field label="Default value"><SegmentedControl large onChange={(value) => updateSelected({ default_variation: value })} options={['off', 'on'] as const} value={selected.default_variation ?? definition.defaultVariation} /></Field></div></section>
       <section className="targeting"><div className="section-title"><div><h3>Targeting rules</h3><p>Rules run from top to bottom. The first match wins. Nest AND/OR groups for precise audiences.</p></div><button className="add" onClick={() => updateSelected({ rules: [...(selected.rules ?? []), { priority: (selected.rules ?? []).length + 1, conditions: [newSimpleCondition()], serve_variation: 'on', rollout: { percentage: 100, attribute: 'userPlatformId' } }] })} type="button">＋ Add rule</button></div>
-        <div className="rule-stack">{(selected.rules ?? []).map((rule, index) => <RuleEditor index={index} key={index} rule={rule} onChange={(next) => updateSelected({ rules: (selected.rules ?? []).map((candidate, candidateIndex) => candidateIndex === index ? next : candidate) })} onRemove={() => updateSelected({ rules: (selected.rules ?? []).filter((_, candidateIndex) => candidateIndex !== index) })} />)}
+        <div className="rule-stack">{(selected.rules ?? []).map((rule, index) => <RuleEditor
+          dragging={draggedRuleIndex === index}
+          index={index}
+          key={index}
+          onChange={(next) => updateSelected({ rules: (selected.rules ?? []).map((candidate, candidateIndex) => candidateIndex === index ? next : candidate) })}
+          onDragEnd={() => setDraggedRuleIndex(null)}
+          onDragOver={(event) => event.preventDefault()}
+          onDragStart={() => setDraggedRuleIndex(index)}
+          onDrop={(event) => {
+            event.preventDefault();
+            if (draggedRuleIndex !== null && draggedRuleIndex !== index) {
+              updateSelected({ rules: reorderRules(selected.rules ?? [], draggedRuleIndex, index) });
+            }
+          }}
+          onRemove={() => updateSelected({ rules: (selected.rules ?? []).filter((_, candidateIndex) => candidateIndex !== index) })}
+          rule={rule}
+        />)}
           {(selected.rules ?? []).length === 0 && <EmptyState title="No targeting rules" description="Everyone receives the default value." />}
         </div><div className="unmatched"><span>↓</span><div><strong>Unmatched users stay {selected.default_variation === 'on' ? 'on' : 'off'}.</strong><small>Every change is evaluated by Flagship per person and workspace.</small></div></div>{status && <p className="save-status" role="status">{status}</p>}
       </section>
