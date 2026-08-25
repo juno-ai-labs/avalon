@@ -751,6 +751,20 @@ This document predates the [module document](module-documents.md) convention and
 had no changelog until the entries below; the reasoning behind everything above them
 was not recorded and is not reconstructed here.
 
+### 2026-08-25 — The directory contact moved to Rally help
+
+**What changed:** Slack's public app-directory `support_email` now uses
+`help@rallywith.ai`, matching the Rally site and the product owner's single
+catch-all policy.
+
+**Why:** The earlier Rally cut-over intentionally kept
+`support@with-avalon.com` until a receiving Rally alias was confirmed; printing
+an unmonitored address would have created a support outage. With
+`help@rallywith.ai` confirmed as the operational catch-all, retaining the Avalon
+address would instead split external communication across two role identities.
+This changes provider metadata only; applying it still requires the App Manifest
+editor cut-over described below.
+
 ### 2026-08-25 — The Slack app is Rally: `@Rally`, `/rally`
 
 **What changed:** `config/provider-apps/slack.json` now registers the app and bot
@@ -775,9 +789,9 @@ Avalon prefixes remain accepted inbound.
 
 Deliberately unchanged: the two superseded OAuth redirect URLs and the
 `with-avalon.com` entry in `unfurl_domains`, both of which keep links and
-callbacks minted before the rename working. `support_email` remains
-`support@with-avalon.com` until the mailbox itself moves; changing a printed
-address before it can receive mail would turn the rebrand into a support outage.
+callbacks minted before the rename working. This historical entry originally
+held `support_email` on `support@with-avalon.com`; the newer changelog entry
+records why that hold is now closed.
 
 The shortcut `callback_id`s moved in #294 and are inert: a Slack shortcut carries
 no action id, so nothing in the ingress compares against them. The bot rename is

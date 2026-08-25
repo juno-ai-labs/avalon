@@ -498,7 +498,7 @@ describe('public Rally site', () => {
     }
   });
 
-  it('uses help@rallywith.ai as the only role-based public contact', () => {
+  it('uses help@rallywith.ai as the only role-based public contact and preserves triage subjects', () => {
     const publicHtmlPaths = readdirSync(new URL('../', import.meta.url), {
       encoding: 'utf8',
       recursive: true,
@@ -506,6 +506,7 @@ describe('public Rally site', () => {
       && !path.startsWith('dist/')
       && !path.startsWith('node_modules/'));
     const publicAddresses = new Set<string>();
+    const publicMailtoTargets = new Set<string>();
 
     for (const path of publicHtmlPaths) {
       const page = readProjectFile(path);
@@ -515,9 +516,14 @@ describe('public Rally site', () => {
         publicAddresses.add(normalizedAddress);
         expect(normalizedAddress, path).toBe('help@rallywith.ai');
       }
+      for (const target of page.match(/mailto:[^"\s]+/gu) ?? []) {
+        publicMailtoTargets.add(target);
+        expect(target, path).toMatch(/^mailto:help@rallywith\.ai\?subject=[^&"\s]+$/u);
+      }
     }
 
     expect(publicAddresses).toEqual(new Set(['help@rallywith.ai']));
+    expect(publicMailtoTargets.size).toBeGreaterThan(0);
   });
 
   it('routes site telemetry before choosing whether an anonymous browser identifier may persist', () => {
