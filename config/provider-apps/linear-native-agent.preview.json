@@ -3,14 +3,14 @@
   "schemaVersion": "1.0.0",
   "distribution": "public",
   "display": {
-    "description": "Bring Linear issues, projects, documents, and delegated agent work into Avalon workstreams.",
+    "description": "Bring Linear issues, projects, documents, and delegated agent work into Rally work streams.",
     "iconUrl": "https://rallywith.ai/brand/rally-mark.png"
   },
   "developer": {
     "name": "Juno AI Labs"
   },
   "oauth": {
-    "client_name": "Avalon",
+    "client_name": "Rally",
     "client_uri": "https://rallywith.ai",
     "redirect_uris": [
       "https://api.rallywith.ai/connections/linear/callback",

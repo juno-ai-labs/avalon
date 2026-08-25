@@ -20,6 +20,8 @@ import {
 
 export const HOSTED_MCP_PROTOCOL_VERSION = "2025-06-18";
 
+const HOSTED_MCP_CLIENT_NAME = "Rally";
+const HOSTED_MCP_CLIENT_VERSION = "1.0.0";
 const DEFAULT_RESPONSE_BYTES = 2_000_000;
 const MAX_TOOL_COUNT = 128;
 const MAX_TOOL_PAGES = 20;
@@ -114,7 +116,7 @@ export interface HostedMcpOAuthConfig {
   clientUri?: string;
   /** Exact origins trusted to receive OAuth requests and client credentials. */
   allowedAuthorizationOrigins?: readonly string[];
-  /** Extra scopes Avalon requires even when protected-resource metadata omits them. */
+  /** Extra scopes Rally requires even when protected-resource metadata omits them. */
   additionalScopes?: readonly string[];
   fetch?: FetchLike;
   maxResponseBytes?: number;
@@ -179,7 +181,7 @@ export interface AuthorizedHostedMcpPassthrough extends HostedMcpPassthrough {
  * Build the complete live-tool half of a hosted-MCP connector.
  *
  * The server remains authoritative for names, descriptions, schemas, and tool
- * additions/removals. Avalon contributes only its authorization capability and
+ * additions/removals. Rally contributes only its authorization capability and
  * conservative execution policy. Provider annotations remain model hints, not
  * authorization facts, so every dynamic tool receives write confirmation and a
  * durable record-before-execute receipt.
@@ -385,7 +387,7 @@ export async function beginHostedMcpAuthorization(
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify({
-        client_name: config.clientName ?? "Rally",
+        client_name: config.clientName ?? HOSTED_MCP_CLIENT_NAME,
         ...(config.clientUri ? { client_uri: config.clientUri } : {}),
         redirect_uris: [normalizeHttpsUrl(config.redirectUri)],
         grant_types: ["authorization_code", "refresh_token"],
@@ -505,7 +507,7 @@ export async function callHostedMcpTool(
     const tools = await listSessionTools(input, session);
     // Re-run the activation-time collision checks against the fresh catalog.
     // The caller supplies the exact provider operation captured at activation;
-    // a different remote tool that happens to equal its Avalon alias must never
+    // a different remote tool that happens to equal its Rally alias must never
     // inherit the already-confirmed call.
     hostedMcpToolDefinitions(tools, "hosted_mcp.execution");
     const tool = tools.find((candidate) => candidate.name === input.name);
@@ -553,7 +555,7 @@ async function withHostedMcpSession<T>(
       params: {
         protocolVersion: HOSTED_MCP_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: "Rally", version: "1.0.0" },
+        clientInfo: { name: HOSTED_MCP_CLIENT_NAME, version: HOSTED_MCP_CLIENT_VERSION },
       },
     }, false));
     if (initialized.protocolVersion !== HOSTED_MCP_PROTOCOL_VERSION) {
