@@ -402,11 +402,6 @@ interface CompactionCheckpointRow extends Record<string, SqlStorageValue> {
 
 const textEncoder = new TextEncoder();
 
-function minimumTimestamp(...timestamps: Array<number | null>): number | null {
-  const present = timestamps.filter((timestamp): timestamp is number => timestamp !== null);
-  return present.length === 0 ? null : Math.min(...present);
-}
-
 /**
  * Whether this event can have taken somebody's read access away.
  *
@@ -3728,13 +3723,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     };
   }
 
-  protected override armAlarmBeforeDueWork(): Promise<unknown> {
+  protected override armAlarmBeforeDueWork(now: number): Promise<unknown> {
     // Delivery consumes the alarm, so until this returns the object has no
     // wake-up at all. Everything below it awaits the network, and a cancelled
     // continuation never settles — it does not throw, so a `finally` would not
     // run either. Arming first is what makes the sweep floor a floor rather
     // than something reachable only when the work it guards already succeeded.
-    return this.armAlarmDuringRunDrain();
+    return this.armAlarmDuringRunDrain(now);
   }
 
   protected override armAlarmAfterDueWork(): Promise<unknown> {
@@ -3751,15 +3746,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * the entry index rather than `workstream_wakeups` so this and the base agree
    * on when the next timer is due.
    */
-  private async armAlarmDuringRunDrain(): Promise<void> {
-    const now = Date.now();
-    const dueAt = minimumTimestamp(
-      this.objectStore.nextRegionalEffectDueAt(),
-      this.objectStore.nextBlockDashboardDueAt(),
-      this.scheduledAlarms.nextDueAt(),
-      now + KEEP_ALIVE_INTERVAL_MS,
-    );
-    await this.state.storage.setAlarm(Math.max(now + 1, dueAt ?? now + KEEP_ALIVE_INTERVAL_MS));
+  private async armAlarmDuringRunDrain(now: number = Date.now()): Promise<void> {
+    await this.armNextAlarm({
+      now,
+      overdueAt: now + KEEP_ALIVE_INTERVAL_MS,
+      derivedCandidates: [
+        this.objectStore.nextRegionalEffectDueAt(),
+        this.objectStore.nextBlockDashboardDueAt(),
+        now + KEEP_ALIVE_INTERVAL_MS,
+      ],
+    });
   }
 
   /**
@@ -3772,11 +3768,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * In-memory knowledge that a drain is running belongs to deduplication, not
    * to scheduling.
    */
-  private nextRunDispatchAt(): number | null {
+  private nextRunDispatchAt(now: number = Date.now()): number | null {
     return nextAgentRunDispatchWakeUpAt(
       this.state.storage.sql,
       SUBSTREAM_AGENT_RUN_DISPATCHES,
-      Date.now(),
+      now,
     );
   }
 
@@ -3789,13 +3785,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * queue behind it. The keep-alive is not a row at all — it is an in-memory
    * lease held only while a run is streaming — so it stays derived.
    */
-  protected override nextDerivedAlarmAt(now: number): number | null {
-    const durableDueAt = minimumTimestamp(
+  protected override nextDerivedAlarmCandidates(now: number): readonly number[] {
+    const candidates: Array<number | null> = [
       this.objectStore.nextRegionalEffectDueAt(),
       this.objectStore.nextBlockDashboardDueAt(),
-      this.nextRunDispatchAt(),
-    );
-    return this.keepAliveLease.alarmDueAt(durableDueAt, now, KEEP_ALIVE_INTERVAL_MS);
+      this.nextRunDispatchAt(now),
+    ];
+    if (this.keepAliveLease.active) candidates.push(now + KEEP_ALIVE_INTERVAL_MS);
+    return candidates.filter((candidate): candidate is number => candidate !== null);
   }
 
   private async fulfillSubscription(
