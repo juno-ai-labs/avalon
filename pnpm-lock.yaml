@@ -265,7 +265,7 @@ importers:
         version: 5.0.15(@types/react@19.2.18)(react@19.2.8)
     devDependencies:
       '@aws-sdk/client-s3':
-        specifier: 3.1108.0
+        specifier: latest
         version: 3.1108.0
       '@testing-library/jest-dom':
         specifier: latest
