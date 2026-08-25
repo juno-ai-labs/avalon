@@ -1262,18 +1262,19 @@ describe('Sidebar work-stream markers', () => {
 
     const row = screen.getByRole('link', { name: /Quarterly planning/u });
     fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive work stream' }));
 
     // Cancelling is the whole point of confirming: a right-click that landed a
     // row away from where it was aimed must not have archived anything.
     const dialog = await screen.findByRole('dialog', { name: 'Archive work stream' });
+    expect(within(dialog).getByText('Quarterly planning')).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive work stream' }))
       .not.toBeInTheDocument());
     expect(onArchiveWorkstream).not.toHaveBeenCalled();
 
     fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive work stream' }));
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive work stream' }))
       .getByRole('button', { name: 'Archive' }));
 
@@ -1288,9 +1289,9 @@ describe('Sidebar work-stream markers', () => {
 
   it('reports a work-stream archive the server rejected instead of failing silently', async () => {
     const onArchiveWorkstream = vi.fn(async () => {
-      throw new Error('Work stream is still running');
+      throw new Error('The work stream could not be reached.');
     });
-    const target = workstream('archive-me', 'Quarterly planning', 'running');
+    const target = workstream('archive-me', 'Quarterly planning', 'completed');
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1309,12 +1310,16 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
       clientX: 120, clientY: 90,
     });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive work stream' }));
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive work stream' }))
       .getByRole('button', { name: 'Archive' }));
 
     const failure = await screen.findByRole('dialog', { name: 'Work stream could not be archived' });
-    expect(within(failure).getByText('Work stream is still running')).toBeVisible();
+    expect(within(failure).getByText('The work stream could not be reached.')).toBeVisible();
+    // The copy line, not only the message: it is the sentence that tells the
+    // reader the row survived, which is the whole reason this dialog exists.
+    expect(within(failure).getByText('The work stream is still in the sidebar. Try again in a moment.'))
+      .toBeVisible();
 
     fireEvent.click(within(failure).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Work stream could not be archived' }))
@@ -1352,7 +1357,7 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Pin' })).toBeVisible();
-    expect(screen.getByRole('menuitem', { name: 'Archive' })).toHaveClass('menu-item-danger');
+    expect(screen.getByRole('menuitem', { name: 'Archive work stream' })).toHaveClass('menu-item-danger');
     fireEvent.click(screen.getByRole('menuitem', { name: 'Mark as unread' }));
     await waitFor(() => expect(onMarkWorkstreamUnread).toHaveBeenCalledWith(target));
     await waitFor(() => expect(reportTelemetryProductIntent).toHaveBeenCalledWith({

@@ -17,6 +17,19 @@ interface AppShellProps extends PropsWithChildren {
   workspace: Workspace;
 }
 
+/**
+ * The states in which a work stream still has a run to stop.
+ *
+ * Wider than `'running'` alone: a `scheduled` run has been admitted and is
+ * about to start, and a `needs_input` one is parked waiting for a person who
+ * will not be able to answer it once the work stream is archived. `stopHarness`
+ * is a no-op when no run matches, so a row that has already finished costs one
+ * request and changes nothing.
+ */
+export const RUNNING_HARNESS_STATUSES: ReadonlySet<WorkstreamSummary['harnessStatus']> = new Set([
+  'scheduled', 'running', 'needs_input',
+]);
+
 export function backgroundRealtimeWorkstreamIds(
   activeWorkstreamId: string | null,
   workstreams: WorkstreamSummary[] | undefined,
@@ -266,6 +279,21 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // was never sent — the one outcome the confirmation's failure dialog
           // exists to prevent, and a false product event besides.
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          // Stopped before it is archived, because archiving takes away every
+          // surface that could stop it afterwards: `authorize` refuses an
+          // archived work stream, so `POST /:id/stop` and the transcript both
+          // 404 the moment this lands, and the row is gone from the sidebar.
+          // Left alone, a run would keep calling tools and spending against a
+          // work stream nobody can open — while the dialog just said it stopped
+          // reaching the agent.
+          //
+          // Two requests with no transaction between them, deliberately in this
+          // order: a stop that fails leaves the work stream exactly as it was,
+          // which is the recoverable direction. The reverse would archive first
+          // and strand the run it could no longer reach.
+          if (RUNNING_HARNESS_STATUSES.has(workstream.harnessStatus)) {
+            await api.stopHarness(workstream.id);
+          }
           await api.archiveWorkstream(workstream.id);
           // No list invalidation and no cache patch: WorkstreamDO answers this
           // write with a directory tombstone, and `applyVersionedWorkstreamState`
@@ -277,8 +305,16 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // Leaving the screen is this handler's, though. The socket removes the
           // query but not the route, so the reader would be left on a work stream
           // the API no longer serves. Replacing rather than pushing, so Back
-          // cannot return to it — the way an archived note and a deleted
-          // automation both leave.
+          // cannot return to it — as a deleted automation leaves, and
+          // deliberately not as the archived note above does: that one pushes,
+          // so Back returns to a note the API will refuse.
+          // The one thing that cannot wait for the tombstone. With the socket
+          // down the PATCH still succeeds, so the row stays until reconnect and
+          // clicking it would serve this cached transcript for a work stream the
+          // API now refuses. Idempotent with the tombstone, which removes the
+          // same key, and safe against a later frame: the state store only
+          // merges a detail entry `if (detail)`.
+          queryClient.removeQueries({ queryKey: ['workstream', workstream.id], exact: true });
           if (openWorkstreamId(location.pathname) === workstream.id) {
             void navigate('/workstreams/new', { replace: true });
           }
