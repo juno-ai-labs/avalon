@@ -247,8 +247,8 @@ export async function bootstrapTerminalRepository(
     "  rm -rf /workspace/repository.tmp",
     "fi",
     `git config ${shellQuote(canonicalHeader)} "Authorization: Basic $GITHUB_READ_BASIC"`,
-    "git config user.name 'Avalon Agent'",
-    "git config user.email 'avalon-agent@users.noreply.github.com'",
+    "git config user.name 'Rally Agent'",
+    "git config user.email 'rally-agent@users.noreply.github.com'",
     "git config push.default current",
     ...(alreadyBootstrapped ? [] : [
       "git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'",
@@ -614,7 +614,7 @@ function githubHeaders(token: string): HeadersInit {
     authorization: `Bearer ${token}`,
     "content-type": "application/json",
     "x-github-api-version": "2022-11-28",
-    "user-agent": "Avalon-Terminal-Publisher",
+    "user-agent": "Rally-Terminal-Publisher",
   };
 }
 
@@ -682,7 +682,7 @@ export function createGitHubRestPublicationGateway(env: Env): TerminalGitHubPubl
     },
     async mintWriteToken(selection, signal) {
       const config = githubConnectorConfig(env);
-      if (!config) throw new TerminalToolError("github_unavailable", "The regional Avalon GitHub App is not configured.");
+      if (!config) throw new TerminalToolError("github_unavailable", "The regional Rally GitHub App is not configured.");
       const installationId = await installation(selection);
       const jwt = await createGitHubAppJwt({ clientId: config.clientId, privateKey: config.privateKey });
       const repositoryName = selection.repositoryFullName.split("/")[1]!;
@@ -743,7 +743,7 @@ export function createGitHubRestReadGateway(env: Env): TerminalGitHubReadGateway
     verifyRepositoryIdentity: verifyGitHubRepositoryIdentity,
     async mintRepositoryToken(selection, access, signal) {
       const config = githubConnectorConfig(env);
-      if (!config) throw new TerminalToolError("github_unavailable", "The regional Avalon GitHub App is not configured.");
+      if (!config) throw new TerminalToolError("github_unavailable", "The regional Rally GitHub App is not configured.");
       const row = await env.DB.prepare(
         `SELECT provider_account_id FROM connector_connections
           WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status = 'healthy'`,

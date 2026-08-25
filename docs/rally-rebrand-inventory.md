@@ -72,6 +72,7 @@ below from being read as bigger than it is.
 | Renderer origin | `app://rallywithai` | `app://avalon` still admitted by `ALLOWED_ORIGINS` (50 occurrences) |
 | Telemetry envelope | Rally identifiers | superseded Avalon identifiers still parsed |
 | Desktop userData / session dirs | `rally-data` and the canonical userData path | superseded directories adopted once at launch |
+| GitHub App and provider request identity | `Rally With AI`, Rally request metadata, and `Rally Agent` commits | existing and new work-stream head refs remain `avalon/<slug>`; the prefix is stored and visible on GitHub, so moving it requires an explicit compatibility plan that continues accepting in-flight refs |
 
 Everything in that table is a *deliberate* Avalon reference. It is compatibility
 surface with a documented retirement condition, not rename debt.
@@ -342,11 +343,14 @@ Tower failure notices `Avalon could not create the final meeting summary` /
 `Avalon could not update Control Tower` remain.
 
 **Identity sent to third parties.** `appName: "Avalon"` becomes the `X-Title`
-header on every inference request (3 call sites); the GitHub connector sends
-`user-agent: Avalon-GitHub-Connector`; hosted MCP registers `client_name` and
-`clientInfo.name` as `Avalon`. Also 25 GraphQL operation names — `AvalonReadIssue`,
-`AvalonSearchIssues`, `AvalonLinearAgentSessionCreate` — which appear in Linear's
-own request logs.
+header on every inference request (3 call sites); hosted MCP registers
+`client_name` and `clientInfo.name` as `Avalon`. Also 25 GraphQL operation names —
+`AvalonReadIssue`, `AvalonSearchIssues`, `AvalonLinearAgentSessionCreate` — which
+appear in Linear's own request logs. The GitHub App identity, connector and
+Terminal publisher user agents, pinned-repository GraphQL query, and commit author
+moved in the GitHub provider cut-over. Generic Terminal model-facing prose and the
+stored `avalon/<slug>` branch namespace remain for section 9 and a compatibility
+plan respectively.
 
 **One string here must not change.** `avalon-core-write-v1` in
 `integrations.ts` is the seed of a hash that derives durable provider
@@ -366,6 +370,30 @@ It belongs to section 1, not here.
   which is not the same as the order the work should happen in.
 
 ## Changelog
+
+### 2026-08-25 — The GitHub App and request identity moved as one slice
+
+The existing production App was renamed to `Rally With AI`; its description,
+homepage, canonical callbacks, setup and webhook hosts, logo provenance, and live
+slug now write Rally while the four callback entries retain the two compatibility
+hosts. The same change moved the connector, Terminal catalog and publisher user
+agents, pinned-repository GraphQL operation, Git commit author, and GitHub App
+configuration errors. Those are the App, request-metadata, and commit surfaces;
+generic Terminal model-facing prose remains in section 9.
+
+GitHub still displays the `avalon/<slug>` namespace on every work-stream branch.
+That head ref is stored and reused across runs, and existing work streams may have
+an in-flight local or remote branch. Renaming the generator without first accepting
+both forms would strand that state, so this slice records the prefix as deliberate
+compatibility rather than treating an App rename as authority to change it.
+
+The App ID, client credentials, private keys, webhook secret, installation ID,
+repository selection, permissions, and events deliberately stayed fixed. The
+slug could not: GitHub removed the old public URL on rename, so both regional
+`GITHUB_APP_SLUG` secrets moved to `rally-with-ai` before the source change. The
+manifest records Contents write because Terminal `full_access` depends on that
+installed ceiling; treating the old read-only documentation as the target would
+have broken Git pushes rather than completed a rename.
 
 ### 2026-08-25 — Rally help became the sole published catch-all
 

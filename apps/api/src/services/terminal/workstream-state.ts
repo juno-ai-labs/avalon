@@ -206,7 +206,7 @@ function headers(token: string): HeadersInit {
     authorization: `Bearer ${token}`,
     "content-type": "application/json",
     "x-github-api-version": "2022-11-28",
-    "user-agent": "Avalon-Terminal-Catalog",
+    "user-agent": "Rally-Terminal-Catalog",
   };
 }
 
@@ -249,7 +249,7 @@ export function createGitHubTerminalCatalogGateway(env: Env): TerminalRepository
   }
   async function installationToken(connection: GitHubConnection, signal: AbortSignal): Promise<string> {
     const config = githubConnectorConfig(env);
-    if (!config) throw new ApiError(503, "github_app_unavailable", "The regional Avalon GitHub App is not configured.");
+    if (!config) throw new ApiError(503, "github_app_unavailable", "The regional Rally GitHub App is not configured.");
     const jwt = await createGitHubAppJwt({ clientId: config.clientId, privateKey: config.privateKey });
     const value = await responseValue(await fetch(`${api}/app/installations/${connection.provider_account_id}/access_tokens`, {
       method: "POST",
@@ -294,7 +294,7 @@ export function createGitHubTerminalCatalogGateway(env: Env): TerminalRepository
       config: parseRecord(connection.config_json),
     };
     const connectorConfig = githubConnectorConfig(env);
-    if (!connectorConfig) throw new ApiError(503, "github_app_unavailable", "The regional Avalon GitHub App is not configured.");
+    if (!connectorConfig) throw new ApiError(503, "github_app_unavailable", "The regional Rally GitHub App is not configured.");
     const discovered = await withAuthorizedConnection(
       env,
       { connection: context, adapter: connectorRegistryForEnv(env).get("github"), signal },
