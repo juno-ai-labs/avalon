@@ -123,11 +123,21 @@ export function localWorkstreamAuthority<K extends WorkstreamAuthority>(
 /**
  * Whether this object is the authority for the work stream being run.
  *
- * One rule, because the endpoints enforce one rule: every one of them refuses
- * anything but an identity match on both ids in the main child, and a local
- * path that answered where an endpoint would refuse would serve a work stream's
- * state out of the wrong object — a far worse failure than the round trip it
- * saves. Exported and pure so the rule is checked rather than reasoned about.
+ * This is the *routing* half of `objectPortRefusal` and deliberately not all of
+ * it: every endpoint refuses anything but an identity match on both ids in the
+ * main child, and a local path that answered where an endpoint would refuse
+ * would serve a work stream's state out of the wrong object — a far worse
+ * failure than the round trip it saves. Exported and pure so the rule is checked
+ * rather than reasoned about.
+ *
+ * The other half — `isAuthoritative()`, which is `authority_mode` and a
+ * generation above zero — is deliberately absent here, because this is answered
+ * once when the environment is derived and that fence has to hold per call: an
+ * object quarantined mid-run would otherwise keep its local authorities for the
+ * rest of the run while the wire path had started refusing. It is evaluated
+ * where it can be evaluated at call time, in the endpoint body each installed
+ * executor runs. Which is the same reason an executor is an endpoint and never a
+ * storage instance.
  *
  * Both substream ids are compared, not one: `substreamId` is the run being
  * dispatched and `externalSubstreamId` is what this object durably is. A
