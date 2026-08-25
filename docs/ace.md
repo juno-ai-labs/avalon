@@ -188,12 +188,13 @@ When a save succeeds but clients do not change, inspect in order:
 
 ## Changelog
 
-### 2026-08-25 — Merge deployment follows the complete runtime boundary only
+### 2026-08-25 — Ace merge deployment follows its runtime boundary only
 
 **What changed:** The merge-to-main path filter now follows the shared
 TypeScript configuration and the Queue provisioner's transitive entry-point
-helper. It excludes Ace tests, contract tests, and the Queue provisioner's test
-file, while an exact deployment-contract assertion pins the complete list.
+helper. It excludes Ace tests and contract tests, and drops the Queue
+provisioner's test file from the include list, while an exact
+deployment-contract assertion pins the complete list.
 
 **Why:** The old list could leave production on a bundle built under an older
 compiler configuration or defer a deployment-helper change until an unrelated
@@ -204,7 +205,10 @@ merge even though the only matching file was a Queue provisioner test.
 Wrangler configuration as an Ace deployment input. CI owns test validation, and
 the API and migration-tracker workflows already provision the Queue declarations
 their own runtime changes introduce; redeploying an unchanged Ace Worker adds no
-repair.
+repair. Expanding this Ace correction into an audit of the API,
+migration-tracker, and site path filters was also rejected as separate module
+scope; this entry makes no claim that those workflows have the same complete
+boundary.
 
 **Consequences:** A runtime-relevant merge cannot miss Ace through these known
 shared inputs, while a test-only merge no longer performs a credentialed
