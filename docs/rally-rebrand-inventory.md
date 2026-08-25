@@ -117,6 +117,14 @@ infrastructure name and left alone.
   `avalon-migration-reports`.
 - **Lakehouse / catalog names**: `avalon.analytics_events`,
   `avalon_agent_runs`, `avalon-global-inference-lakehouse`.
+- **Analytics Engine datasets**: `avalon_agent_runs` and
+  `avalon_terminal_operations`, bound as `RUN_ANALYTICS` and
+  `TERMINAL_ANALYTICS`. These read as ordinary snake-case identifiers rather
+  than `avalon-` resource names, which is exactly how one of them was swept
+  into section 3 by mistake and had to be reverted. Changing `dataset` on a
+  binding does not rename anything at Cloudflare — it starts writing to a new,
+  empty dataset, and unlike a PostHog event name there is no destination-side
+  alias for an Analytics Engine dataset.
 - Declared in `apps/api/wrangler.{global,eu,test}.jsonc`,
   `apps/{site,ace,migration-tracker,release-retention}/wrangler*.jsonc`,
   `config/{analytics,inference}-lakehouse.json`, and asserted by the
@@ -136,9 +144,11 @@ renaming the emitter does not move a dashboard.
 | Identifier | Now | Consumer action still outstanding |
 | --- | --- | --- |
 | Analytics event names (55 distinct) | `rally_*` | PostHog dashboards, saved insights, and cohorts still query `avalon_*`. Alias the old names at the destination or the charts go flat. |
+| PostHog person properties (10) | `rally_*`, `first_rally_release` | **Worse than an event rename, and not aliasable.** An event that stops being emitted makes a chart go flat, which is visible. A person property that stops being written stays on every existing profile at its last value forever, so a cohort or filter on `avalon_lockdown_mode_enabled` keeps returning a frozen answer that reads as live. Rebuild those cohorts on the `rally_*` names. |
+| PostHog `$app_name`, `$lib` | `Rally`, `rally-regional-telemetry` | Both appear on every event. Moved with `$app_namespace` so the three are not half-renamed. |
 | OpenTelemetry span attributes (68 distinct) | `rally.*` | Saved trace queries filtering `avalon.*` stop matching. Traces are short-lived, so this ages out on its own. |
 | PostHog app namespace | `app.rally.desktop` | Partitions existing desktop events from new ones under `$app_namespace`. |
-| Plugin ids (16 distinct) | `rally:*`, `rally_*`, `rally.skills` | None — resolved through `AVALON_*_PLUGIN_ID` env vars, whose *names* are section 4 and unchanged. |
+| Plugin ids (16 distinct) | `rally:*`, `rally_*`, `rally.skills` | `plugin_activation_hints.plugin_id` in the work-stream Durable Object stores canonical ids, so every existing work stream loses its preload hints once — a soft optimization that re-populates on the next activation. `run_plugin_activations` also stores them; a lookup miss re-authorizes rather than throwing. The `AVALON_*_PLUGIN_ID` env var *names* are section 4 and unchanged. |
 | Capability names | `rally.block-dashboard.submit` and siblings | None — model-facing, minted per run. |
 | Socket ticket sentinel | `rally.ticket.v1` | None. `avalon.ticket.v1` is accepted inbound and echoed back; see below. |
 | Public-site anonymous epoch key | `rally.site.anonymous-epoch.v1` | A returning visitor gets a fresh anonymous epoch once. |
@@ -210,6 +220,13 @@ Environment variables and Worker bindings: **~950 occurrences, 277 files**.
 - **Symbolication binary** — `/usr/local/bin/rally-symbolicate`. Self-contained:
   `apps/api/crash-symbolicator/Dockerfile` builds it and the callers and tests
   in this repository are its only consumers.
+- **Daytona task names** — `avalon-path-*`, `avalon-publish-*`, `avalon-write-*`,
+  `avalon-bootstrap-*`, `avalon-final-diff-*`, `avalon-import-*` and the rest,
+  in `terminal/runtime.ts`, `repository.ts`, `lifecycle.ts`, and
+  `resource-bridge.ts`. **Not renamed.** They are per-operation identifiers
+  visible only in Daytona's own dashboard and logs, they match no shape the
+  sweep keys on, and moving them buys nothing a reader of those logs needs.
+  Listed so the next pass does not re-discover them as an oversight.
 - **Publisher session names** — `rally-publisher-<key>`, and the
   `/tmp/rally-publisher-home` Git home beside it. Minted per operation, so
   nothing outlives the rename.
@@ -346,6 +363,44 @@ It belongs to section 1, not here.
   which is not the same as the order the work should happen in.
 
 ## Changelog
+
+### 2026-08-25 — What the sweep's verification could not see
+
+Review of #294 found six misses. All of them are one mechanism failing in two
+directions, and the mechanism is worth stating plainly because every remaining
+section will be worked the same way.
+
+The sweep keyed on the *shape* of an identifier with a blocklist, and verified
+itself by counting the blocklisted strings before and after. **That proves the
+blocklist held. It cannot prove the blocklist was complete, and it cannot see a
+string that should have moved and did not.** Both failure modes occurred:
+
+*Should not have moved, and did.* `avalon_terminal_operations` is an
+account-level Analytics Engine dataset — section 2, out of scope — sitting one
+line below `avalon_agent_runs`, which was blocklisted. It matched the snake
+shape and went through. Changing `dataset` on a binding does not rename
+anything at Cloudflare; it starts writing to a new empty dataset, with no
+destination-side alias available. Reverted, and section 2 now names both
+datasets so the next pass does not have to notice the asymmetry itself.
+
+*Should have moved, and did not.* `avalon.component` was blocked by the
+blocklist entry `com`, which existed for `with-avalon.com` and was compared
+with `startsWith`. It is on the base attributes of every span, so the rename
+left `rally.flow` and `avalon.component` on the same span — the exact split the
+change set out to close. A blocklist compared by prefix must be anchored, or it
+silently swallows every identifier that begins with a shorter blocked one.
+
+*Neither shape nor blocklist.* `.avalon` directory paths and
+`avalon-development-...`-style literals match none of the three shapes, so they
+were hand-edited — and `mkdir -p /workspace/.avalon` in `repository.ts`, the
+`.avalon` tar excludes in `lifecycle.ts`, and the `install -d` operand were each
+missed one at a time. Hand-editing has no verification step at all, which is
+what made these the least visible of the six.
+
+The rule for the sections still outstanding: an exclusion check proves the
+blocklist held and nothing more. Pair it with a positive check — after the
+sweep, every remaining occurrence of the old name is enumerated and each one
+individually explained — because that is the only pass that sees a miss.
 
 ### 2026-08-25 — Section 9 gains the plugin system messages it missed
 

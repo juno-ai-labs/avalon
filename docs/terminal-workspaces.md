@@ -379,7 +379,7 @@ revocation/expiry. The trusted publisher uses a separate ephemeral sandbox and
 credential. Logs include IDs, state, error code, duration, and byte counts—not
 commands, output, diffs, tokens, or resource contents.
 
-The account-level `rally_terminal_operations` Analytics Engine dataset is even
+The account-level `avalon_terminal_operations` Analytics Engine dataset is even
 narrower: it contains operation, outcome, Rally region, configured snapshot,
 source lifecycle state, failed phase, release identity, phase durations, and the
 fixed names of compatibility tools installed. It contains no workspace,
@@ -1222,7 +1222,7 @@ risking isolate exhaustion.
 
 **What changed:** Provider create, compatibility bootstrap, manifest
 verification, stopped warming, and archived restore now produce separate
-content-free timing dimensions in the dedicated `rally_terminal_operations`
+content-free timing dimensions in the dedicated `avalon_terminal_operations`
 Analytics Engine dataset. The managed bootstrap reports only the allowlisted
 tool names it actually installed. `pnpm terminal:analytics` prints the observed
 window, weighted latency percentiles, outcomes, installed gaps, and the sample

@@ -233,7 +233,7 @@ export async function bootstrapTerminalRepository(
   ].map(shellQuote).join(" ");
   const command = [
     "set -euo pipefail",
-    "mkdir -p /workspace/.avalon",
+    "mkdir -p /workspace/.rally",
     `printf '%s\\n' ${sessionExports} > /workspace/.rally/session.env`,
     "chmod 600 /workspace/.rally/session.env",
     ...terminalGitCaSetupCommands({

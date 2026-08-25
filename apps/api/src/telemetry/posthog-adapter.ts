@@ -5,9 +5,9 @@ const APPROVED_POSTHOG_ORIGINS = new Set([
   "https://us.i.posthog.com",
   "https://us.posthog.com",
 ]);
-const POSTHOG_APP_NAME = "Avalon";
+const POSTHOG_APP_NAME = "Rally";
 const POSTHOG_APP_NAMESPACE = "app.rally.desktop";
-const POSTHOG_LIBRARY = "avalon-regional-telemetry";
+const POSTHOG_LIBRARY = "rally-regional-telemetry";
 const POSTHOG_LIBRARY_VERSION = "1";
 
 export interface GlobalTelemetryDeliveryRow {
@@ -285,7 +285,7 @@ export function mapPostHogCapture(
       ...(envelope.source === "api" ? { $is_server: true } : {}),
       $process_person_profile: !personless,
       $is_identified: !personless,
-      ...(!personless ? { $set_once: { first_avalon_release: envelope.context.release } } : {}),
+      ...(!personless ? { $set_once: { first_rally_release: envelope.context.release } } : {}),
       ...(settingsPersonProperties ? { $set: settingsPersonProperties } : {}),
       ...(desktopSource ? desktopApplicationContext({
         release: envelope.context.release,
