@@ -1155,7 +1155,13 @@ port carrying the platform's wording and expects `platform_limit_exceeded`.
 never withheld — fixes this window and leaves routing keyed on a lookup that can
 fail. *Keeping the fatal check in the name-based resolvers* — after id
 recognition they cannot produce a self-address, so a check there is unreachable
-code that cannot be tested. *Installing each authority's storage* rather than its endpoint — the first shape
+code that cannot be tested. `durableObjectStubById` had one for the same reason
+and it is gone: its `durableObjectSelfForId` call and the refusal walk the same
+registrations under the same two conditions, so the refusal could never fire,
+and unreachable code shaped like a guard is worse than no guard because the next
+reader counts it as one. The refusal stays in `durableObjectStubForRegion`,
+which answers nothing locally first and is the one function every stub in the
+repository comes from. *Installing each authority's storage* rather than its endpoint — the first shape
 this took, and wrong: an endpoint is not a thin wrapper around its table. It
 refuses a request against an object whose `authority_mode` is no longer
 `authoritative`, runs a mutating operation inside `commitRuntimeMutation` so the
@@ -2636,7 +2642,7 @@ assigned inside the `blockConcurrencyWhile` callback.
 
 In practice workerd queues external requests behind that callback, so this is
 unlikely to have been reachable — but an in-isolate self-call reaches the method
-through a stub returned by `durableObjectSelf`, and that path does not
+through a stub returned by `durableObjectSelfForId`, and that path does not
 necessarily queue the same way. No test asserts the difference, because an
 honest one would need `blockConcurrencyWhile` not to queue; the value here is
 the restored invariant, not an observable change.

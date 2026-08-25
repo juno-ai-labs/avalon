@@ -81,7 +81,7 @@ interface RegisteredSelf {
   id: DurableObjectId;
   /**
    * The stand-in stub, kept opaque because the registry is heterogeneous. The
-   * namespace identity check in {@link durableObjectSelf} is what recovers the
+   * namespace identity check in {@link durableObjectSelfForId} is what recovers the
    * type: only the binding this stub was built for can match it.
    */
   stub: unknown;

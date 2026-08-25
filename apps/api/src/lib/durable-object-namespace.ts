@@ -260,7 +260,12 @@ export function durableObjectStubById<T extends RpcDurableObject | undefined = u
   const id = regionalNamespace.idFromString(objectId);
   const self = durableObjectSelfForId(env, namespace, id);
   if (self) return self;
-  refuseSelfAddressedStub(env, namespace, id, "object_id", null);
+  // No `refuseSelfAddressedStub` here, unlike `durableObjectStubForRegion`.
+  // The two predicates are the same walk of the same registrations, so a
+  // refusal below a self-check that already returned is unreachable by
+  // construction — and unreachable code that looks like a guard is worse than
+  // no guard, because the next reader counts it as one. The refusal belongs
+  // where nothing has answered locally first, which is that resolver.
   return regionalNamespace.get(id);
 }
 
