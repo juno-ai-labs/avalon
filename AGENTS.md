@@ -4,6 +4,15 @@ This is the project-wide rule sheet for AI coding agents, exposed as `CLAUDE.md`
 through a symlink. Keep it short: it is read in full at the start of every
 session, so detail belongs in `docs/` behind a pointer.
 
+## Names
+
+**Rally** is the product. **Avalon** is its internal code name, carried over from
+the prototype — it is not a user-facing name, and prose that uses it as one is
+stale. **Juno AI Labs Inc** (informally **Juno Labs**) is the company. Avalon
+still appears throughout the tree; what it is coupled to, and what is
+deliberately not being renamed, is in
+[`docs/rally-rebrand-inventory.md`](docs/rally-rebrand-inventory.md).
+
 ## Where we are
 
 **Rally is a seed-stage startup iterating quickly, and the right engineering
