@@ -224,12 +224,12 @@ function assertSink(sink, expected, manifest, accountId) {
 async function deploymentTokenId(client) {
   let verifiedToken;
   try {
-    verifiedToken = await apiRequestUrl(client, '/user/tokens/verify');
+    verifiedToken = await apiRequest(client, '/tokens/verify');
   } catch (error) {
     if (!(error instanceof CloudflareApiError) || ![400, 401, 403, 404].includes(error.status)) {
       throw error;
     }
-    verifiedToken = await apiRequest(client, '/tokens/verify');
+    verifiedToken = await apiRequestUrl(client, '/user/tokens/verify');
   }
   if (!SAFE_TOKEN_ID.test(verifiedToken?.id ?? '')) {
     throw new Error('Cloudflare did not return a valid deployment token ID for the inference sinks');
