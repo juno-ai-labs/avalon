@@ -271,17 +271,29 @@ function escapeHtml(value: string): string {
  * published, point it straight at the verified installer instead — nobody
  * who already decided to download should be routed through a second click
  * on the button the download section renders for the same release.
+ *
+ * Only the marked anchor's `href` is rewritten; everything else between the
+ * markers — classes, icon, label, arrow, any future attribute — passes
+ * through byte-for-byte from `index.html`, so that file stays the source of
+ * truth for the button's markup instead of a second copy living here. A
+ * missing or malformed marker pair (either marker absent, or the end marker
+ * before the start) is a safe no-op, matching the disabled-by-default
+ * template a reader of the source sees.
  */
 function renderHeroDownloadCta(html: string, href: string | null): string {
   const start = html.indexOf(heroCtaStartMarker);
   if (start === -1) return html;
   const end = html.indexOf(heroCtaEndMarker);
-  if (end === -1 || end <= start) {
-    throw new Error('Desktop hero CTA markers are missing or malformed.');
-  }
+  if (end === -1 || end <= start) return html;
+  const segmentStart = start + heroCtaStartMarker.length;
+  const segment = html.slice(segmentStart, end);
   const anchorHref = escapeHtml(href ?? '#download');
-  const markup = `${heroCtaStartMarker}<a class="rally-button rally-button-dark button-primary" href="${anchorHref}"><img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a>${heroCtaEndMarker}`;
-  return `${html.slice(0, start)}${markup}${html.slice(end + heroCtaEndMarker.length)}`;
+  const hrefAttribute = /\bhref="[^"]*"/u;
+  if (!hrefAttribute.test(segment)) {
+    throw new Error('Desktop hero CTA markup is missing its href attribute.');
+  }
+  const rewrittenSegment = segment.replace(hrefAttribute, `href="${anchorHref}"`);
+  return `${html.slice(0, segmentStart)}${rewrittenSegment}${html.slice(end)}`;
 }
 
 export function renderDesktopRelease(
