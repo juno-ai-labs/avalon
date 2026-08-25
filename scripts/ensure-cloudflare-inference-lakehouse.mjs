@@ -5,10 +5,11 @@
  * Pipelines resources are named and idempotently discovered, but a Worker
  * binding requires the stream's generated ID. Keeping that ID in a committed
  * Wrangler file would make first deployment manual. This preflight instead
- * creates the bucket, catalog, stream, sink, and pipeline from one manifest,
+ * creates the bucket, optional catalog, stream, sink, and pipeline from one manifest,
  * verifies immutable existing resources, and writes ignored configs beside the
  * originals so every relative Wrangler path keeps the same meaning.
  */
+import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +22,11 @@ const manifestPath = join(repositoryDirectory, 'config/inference-lakehouse.json'
 const API_BASE = 'https://api.cloudflare.com/client/v4';
 const SAFE_BUCKET = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u;
 const SAFE_PIPELINE_ENTITY = /^[a-z][a-z0-9_]{2,127}$/u;
+const SAFE_TOKEN_ID = /^[a-f0-9]{32}$/u;
 const REGIONS = ['eu', 'global'];
+// These are policy guards for the approved EU residency layout, not defaults.
+const EU_PARQUET_PATH = 'avalon/llm_inference';
+const EU_PARQUET_PARTITIONING = 'year=%Y/month=%m/day=%d/hour=%H';
 
 class CloudflareApiError extends Error {
   constructor(message, { status, codes = [] } = {}) {
@@ -38,12 +43,12 @@ function required(name, environment) {
   return value;
 }
 
-async function apiRequest({ accountId, token, fetchImpl }, path, init = {}) {
+async function apiRequestUrl({ token, fetchImpl }, path, init = {}) {
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${token}`);
   if (init.body !== undefined) headers.set('Content-Type', 'application/json');
   const response = await fetchImpl(
-    `${API_BASE}/accounts/${encodeURIComponent(accountId)}${path}`,
+    `${API_BASE}${path}`,
     { ...init, headers },
   );
   const body = await response.json().catch(() => null);
@@ -53,6 +58,14 @@ async function apiRequest({ accountId, token, fetchImpl }, path, init = {}) {
   throw new CloudflareApiError(
     `Cloudflare ${init.method ?? 'GET'} ${path} failed with HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
     { status: response.status, codes: errors.map((error) => error.code) },
+  );
+}
+
+async function apiRequest(client, path, init = {}) {
+  return apiRequestUrl(
+    client,
+    `/accounts/${encodeURIComponent(client.accountId)}${path}`,
+    init,
   );
 }
 
@@ -66,7 +79,7 @@ function jurisdictionHeaders(region) {
 }
 
 function assertManifest(manifest) {
-  if (manifest.schemaVersion !== 1 || manifest.binding !== 'INFERENCE_LAKEHOUSE') {
+  if (manifest.schemaVersion !== 2 || manifest.binding !== 'INFERENCE_LAKEHOUSE') {
     throw new Error('Unsupported inference lakehouse manifest version or binding');
   }
   for (const name of [manifest.namespace, manifest.table]) {
@@ -87,6 +100,16 @@ function assertManifest(manifest) {
     }
     if (region.jurisdiction !== (regionName === 'eu' ? 'eu' : 'default')) {
       throw new Error(`${regionName} lakehouse has the wrong R2 jurisdiction`);
+    }
+    const expectedSinkType = regionName === 'eu' ? 'r2' : 'r2_data_catalog';
+    if (region.sinkType !== expectedSinkType) {
+      throw new Error(`${regionName} lakehouse must use the ${expectedSinkType} sink`);
+    }
+    if (
+      regionName === 'eu'
+      && (region.path !== EU_PARQUET_PATH || region.partitioning !== EU_PARQUET_PARTITIONING)
+    ) {
+      throw new Error('EU lakehouse must use the checked-in Parquet path and UTC partitioning');
     }
   }
   return manifest;
@@ -178,21 +201,81 @@ function assertStream(stream, expectedName, expectedSchema) {
   }
 }
 
-function assertSink(sink, expected, manifest) {
-  if (sink.name !== expected.sink || sink.type !== 'r2_data_catalog') {
+function assertSink(sink, expected, manifest, accountId) {
+  if (sink.name !== expected.sink || sink.type !== expected.sinkType) {
     throw new Error(`${expected.sink} has the wrong name or sink type`);
   }
-  if (
-    sink.config?.bucket !== expected.bucket
-    || sink.config?.namespace !== manifest.namespace
-    || sink.config?.table_name !== manifest.table
+  const destinationDrifted = expected.sinkType === 'r2_data_catalog'
+    ? sink.config?.namespace !== manifest.namespace || sink.config?.table_name !== manifest.table
+    : sink.config?.jurisdiction !== expected.jurisdiction
+      || sink.config?.path !== expected.path
+      || sink.config?.partitioning?.time_pattern !== expected.partitioning;
+  if (sink.config?.account_id !== accountId
+    || sink.config?.bucket !== expected.bucket
     || sink.config?.rolling_policy?.interval_seconds !== 300
-  ) {
+    || destinationDrifted) {
     throw new Error(`${expected.sink} destination or rolling policy drifted; sinks are immutable`);
   }
   if (sink.format?.type !== 'parquet' || sink.format?.compression !== 'zstd') {
     throw new Error(`${expected.sink} must write zstd-compressed Parquet`);
   }
+}
+
+async function deploymentTokenId(client) {
+  let verifiedToken;
+  try {
+    verifiedToken = await apiRequestUrl(client, '/user/tokens/verify');
+  } catch (error) {
+    if (!(error instanceof CloudflareApiError) || ![400, 401, 403, 404].includes(error.status)) {
+      throw error;
+    }
+    verifiedToken = await apiRequest(client, '/tokens/verify');
+  }
+  if (!SAFE_TOKEN_ID.test(verifiedToken?.id ?? '')) {
+    throw new Error('Cloudflare did not return a valid deployment token ID for the inference sinks');
+  }
+  return verifiedToken.id;
+}
+
+function credentialBoundSinkName(region, tokenId) {
+  const tokenFingerprint = createHash('sha256').update(tokenId).digest('hex');
+  const name = `${region.sink}_credential_${tokenFingerprint}`;
+  if (!SAFE_PIPELINE_ENTITY.test(name)) {
+    throw new Error(`${region.sink} produces an unsafe credential-bound sink name`);
+  }
+  return name;
+}
+
+function r2SinkCredentials(client) {
+  return {
+    access_key_id: client.tokenId,
+    secret_access_key: createHash('sha256').update(client.token).digest('hex'),
+  };
+}
+
+function newSinkConfig(client, region, manifest) {
+  if (region.sinkType === 'r2_data_catalog') {
+    return {
+      account_id: client.accountId,
+      bucket: region.bucket,
+      namespace: manifest.namespace,
+      table_name: manifest.table,
+      token: client.token,
+      rolling_policy: { interval_seconds: 300 },
+    };
+  }
+  if (region.sinkType !== 'r2') {
+    throw new Error(`Unsupported inference lakehouse sink type: ${region.sinkType}`);
+  }
+  return {
+    account_id: client.accountId,
+    bucket: region.bucket,
+    jurisdiction: region.jurisdiction,
+    path: region.path,
+    partitioning: { time_pattern: region.partitioning },
+    credentials: r2SinkCredentials(client),
+    rolling_policy: { interval_seconds: 300 },
+  };
 }
 
 function normalizedSql(value) {
@@ -211,6 +294,23 @@ async function namedEntity(client, kind, name) {
   if (matches.length > 1) throw new Error(`Cloudflare returned duplicate ${kind} named ${name}`);
   const match = matches[0];
   return match ? apiRequest(client, `/pipelines/v1/${kind}/${match.id}`) : null;
+}
+
+async function credentialBoundSink(client, region, desiredName) {
+  const result = await apiRequest(client, '/pipelines/v1/sinks?per_page=100');
+  const prefix = `${region.sink}_credential_`;
+  const matches = (Array.isArray(result) ? result : []).filter((entry) =>
+    entry.name === region.sink || entry.name.startsWith(prefix));
+  if (matches.length > 1) {
+    throw new Error(`Cloudflare returned multiple credential-bound sinks for ${region.sink}`);
+  }
+  const match = matches[0];
+  if (match && match.name !== desiredName) {
+    throw new Error(
+      `${region.sink} uses a different deployment credential; sinks are immutable`,
+    );
+  }
+  return match ? apiRequest(client, `/pipelines/v1/sinks/${match.id}`) : null;
 }
 
 async function ensureStream(client, region, schema, create, log) {
@@ -235,35 +335,31 @@ async function ensureStream(client, region, schema, create, log) {
   return stream;
 }
 
-async function ensureSink(client, region, manifest, token, create, log) {
-  let sink = await namedEntity(client, 'sinks', region.sink);
+async function ensureSink(client, region, manifest, create, log) {
+  const sinkName = credentialBoundSinkName(region, client.tokenId);
+  const expected = { ...region, sink: sinkName };
+  let sink = await credentialBoundSink(client, region, sinkName);
   if (!sink) {
-    if (!create) throw new Error(`Missing inference Data Catalog sink: ${region.sink}`);
+    if (!create) throw new Error(`Missing inference Pipeline sink: ${sinkName}`);
     sink = await apiRequest(client, '/pipelines/v1/sinks', {
       method: 'POST',
       body: JSON.stringify({
-        name: region.sink,
-        type: 'r2_data_catalog',
+        name: sinkName,
+        type: region.sinkType,
         format: { type: 'parquet', compression: 'zstd' },
-        config: {
-          bucket: region.bucket,
-          namespace: manifest.namespace,
-          table_name: manifest.table,
-          token,
-          rolling_policy: { interval_seconds: 300 },
-        },
+        config: newSinkConfig(client, region, manifest),
       }),
     });
-    log(`Created inference Data Catalog sink: ${region.sink} (${sink.id})`);
+    log(`Created inference ${region.sinkType} sink: ${sinkName} (${sink.id})`);
   } else {
-    log(`Inference Data Catalog sink present: ${region.sink} (${sink.id})`);
+    log(`Inference ${region.sinkType} sink present: ${sinkName} (${sink.id})`);
   }
-  assertSink(sink, region, manifest);
+  assertSink(sink, expected, manifest, client.accountId);
   return sink;
 }
 
-async function ensurePipeline(client, region, create, log) {
-  const sql = `INSERT INTO ${region.sink} SELECT * FROM ${region.stream};`;
+async function ensurePipeline(client, region, sink, create, log) {
+  const sql = `INSERT INTO ${sink.name} SELECT * FROM ${region.stream};`;
   let pipeline = await namedEntity(client, 'pipelines', region.pipeline);
   if (!pipeline) {
     if (!create) throw new Error(`Missing inference Pipeline: ${region.pipeline}`);
@@ -307,15 +403,18 @@ export async function ensureInferenceLakehouse(options = {}) {
   const manifest = options.manifest ?? await loadInferenceLakehouseManifest();
   assertManifest(manifest);
   const client = { accountId, token, fetchImpl };
+  client.tokenId = await deploymentTokenId(client);
   const resources = {};
 
   for (const regionName of REGIONS) {
     const region = manifest.regions[regionName];
     await ensureBucket(client, regionName, region, create, log);
-    await ensureCatalog(client, regionName, region, create, log);
+    if (region.sinkType === 'r2_data_catalog') {
+      await ensureCatalog(client, regionName, region, create, log);
+    }
     const stream = await ensureStream(client, region, manifest.streamSchema, create, log);
-    const sink = await ensureSink(client, region, manifest, token, create, log);
-    const pipeline = await ensurePipeline(client, region, create, log);
+    const sink = await ensureSink(client, region, manifest, create, log);
+    const pipeline = await ensurePipeline(client, region, sink, create, log);
     resources[regionName] = { stream, sink, pipeline };
   }
 

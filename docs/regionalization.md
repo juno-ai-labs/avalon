@@ -72,7 +72,7 @@ The same Worker source is deployed twice:
 | D1 | global database | EU-jurisdiction database |
 | Agent memory vectors | `avalon-global-memory` Vectorize index | `avalon-eu-memory` Vectorize index |
 | R2 | global bucket | EU-jurisdiction bucket |
-| Inference lakehouse | Global payload archive, Queue, Pipeline stream/sink, and default-jurisdiction R2 Data Catalog | EU payload archive, Queue, Pipeline stream/sink, and EU-jurisdiction R2 Data Catalog |
+| Inference lakehouse | Global payload archive, Queue, Pipeline stream/sink, and default-jurisdiction R2 Data Catalog | EU payload archive, Queue, Pipeline stream, and EU-jurisdiction R2 Parquet sink |
 | Telemetry R2 | dedicated `avalon-global-telemetry` bucket | dedicated `avalon-eu-telemetry` bucket with EU jurisdiction |
 | Durable Objects | `jurisdiction("us")`, workspace affinity `wnam` or `enam` | `jurisdiction("eu")`, workspace affinity `weur` or `eeur` |
 | Secrets | global key set | independent EU key set |
@@ -89,10 +89,12 @@ cannot choose a region from user-controlled object IDs.
 Inference analytics follows that rule by archiving the sensitive record in the
 regional payload bucket first and putting only its object key, byte count, and
 SHA-256 on the regional Queue. The same regional Worker validates and sends the
-record through its generated Pipeline stream binding to that region's R2 Data
-Catalog. There is no shared inference queue, bucket, stream, sink, table, or
-query surface. [`inference-lakehouse.md`](inference-lakehouse.md) owns the full
-record and provisioning contract.
+record through its generated Pipeline stream binding. Global writes to R2 Data
+Catalog; EU writes the same typed Parquet directly to its EU-jurisdiction R2
+bucket because Cloudflare Data Catalog cannot target that jurisdiction. There
+is no shared inference queue, bucket, stream, sink, table, or query surface.
+[`inference-lakehouse.md`](inference-lakehouse.md) owns the full record and
+provisioning contract.
 
 ### The shared ingresses
 
@@ -348,6 +350,28 @@ these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
+
+### 2026-08-24 — EU inference analytics stays in EU without Data Catalog
+
+**What changed:** The EU inference Pipeline now writes typed Parquet directly
+to its EU-jurisdiction R2 bucket; Global retains its default-jurisdiction Data
+Catalog/Iceberg sink. Main-branch deployment creates both region-specific chains
+without an approval, copied sink credential, or dashboard step.
+
+**Why:** Production provisioning established that Cloudflare R2 Data Catalog is
+unavailable for non-default-jurisdiction buckets and that its sink cannot cross
+jurisdictions. The original two-Catalog design therefore could not preserve the
+declared EU storage boundary.
+
+**Considered and rejected:** A default-jurisdiction EU analytics bucket was
+rejected because it would make the regional name cosmetic while storing prompt
+and response content outside the chosen jurisdiction. A shared Global table was
+rejected for the same reason.
+
+**Consequences:** Both regions retain complete typed analytical rows, but only
+Global supports R2 SQL/Iceberg operations. EU incident response uses the R2
+Object API against bounded UTC Parquet partitions. No code may silently route an
+EU query or failed EU delivery to Global.
 
 ### 2026-08-24 — Inference analytics leaves regional D1
 

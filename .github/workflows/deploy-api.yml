@@ -15,7 +15,8 @@ name: Deploy Avalon API
 # unrelated regional resource creation, confirming each configured D1 ID belongs
 # to its intended region, and setting the regional Worker secrets. The
 # preflights below do create every Queue and the complete regional inference
-# lakehouses, including generated Pipeline bindings.
+# lakehouses: Global Data Catalog, EU-jurisdiction Parquet, and both generated
+# Pipeline bindings.
 #
 # Merging to main deploys both regions and applies pending migrations without a
 # human in the loop. The api-production environment exists to scope the
