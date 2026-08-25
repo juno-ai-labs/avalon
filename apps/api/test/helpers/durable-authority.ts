@@ -458,6 +458,32 @@ function isWorkstreamObjectStore(database: DatabaseSync): boolean {
  * Run dispatch is recorded instead of executed. Pair with
  * {@link openWorkstreamAuthorityForTest}.
  */
+/**
+ * The agent stub's identity endpoint, over one object database.
+ *
+ * Exported so a test with its own hand-built agent stub gets the *real*
+ * `WorkstreamIdentityStorage` for these operations rather than a second model
+ * of the root row. The provision's write in particular is the whole point of
+ * the operation, and a double that reproduced it by hand is the one that
+ * drifts.
+ */
+export function testIdentityOperationStub(
+  database: DatabaseSync,
+): (input: { operation: string; args: unknown[] }) => { status: number; bodyJson: string } {
+  return (input) => {
+    const storage = new WorkstreamIdentityStorage(
+      createCloudflareTestBinding<DurableObjectStorage>({
+        getAlarm: async () => null,
+        setAlarm: async () => undefined,
+        transactionSync: (body: () => unknown) => body(),
+        sql: objectSqlStorage(database),
+      }),
+    ) as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const value = storage[input.operation]!.apply(storage, input.args);
+    return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
+  };
+}
+
 export function testSubstreamAgentsBinding(
   database: DatabaseSync,
   options: SubstreamAgentsStubOptions = {},
@@ -800,22 +826,7 @@ export function testSubstreamAgentsBinding(
       workstreamId: string;
       operation: string;
       args: unknown[];
-    }) => {
-      // The real storage class, not a model of it. The provision's write is
-      // the whole point of the operation, and a double that reproduced it by
-      // hand would be the second implementation that drifts.
-      const store = storeFor(input.workstreamId, input.workspaceId);
-      const storage = new WorkstreamIdentityStorage(
-        createCloudflareTestBinding<DurableObjectStorage>({
-          getAlarm: async () => null,
-          setAlarm: async () => undefined,
-          transactionSync: (body: () => unknown) => body(),
-          sql: objectSqlStorage(store),
-        }),
-      ) as unknown as Record<string, (...args: unknown[]) => unknown>;
-      const value = storage[input.operation]!.apply(storage, input.args);
-      return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
-    }),
+    }) => testIdentityOperationStub(storeFor(input.workstreamId, input.workspaceId))(input)),
     refreshTimerAlarm: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
     flushEffectsToWorkstreamDO: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
     handleProductRequest: vi.fn((request: { operation: string } & Record<string, unknown>) => {

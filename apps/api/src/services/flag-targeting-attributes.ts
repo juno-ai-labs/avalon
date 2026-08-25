@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
-import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import { createIdentityObjectPort } from "../runtime/identity-port";
+import type { IdentityRow } from "../durable-objects/workstream-identity-storage";
 
 /**
  * The subject a flag is being evaluated for: whatever identifiers the caller
@@ -204,6 +205,42 @@ async function loadRow<T>(
   }
 }
 
+/**
+ * The work stream's identity, through its authority, with `loadRow`'s contract.
+ *
+ * The five columns this needs used to be a `SELECT` handed to `loadRow`, which
+ * exists to keep "no such row" and "the read failed" apart — a targeting fact
+ * that cannot be read must not read as absent, because a flag would then
+ * evaluate against a subject Avalon never described. The port throws where the
+ * statement threw, so the distinction survives the move; only the statement is
+ * gone.
+ */
+async function loadIdentity(
+  env: Env,
+  subject: FlagTargetingSubject,
+  workstreamId: string,
+): Promise<LoadOutcome<IdentityRow>> {
+  // The workspace was a binding on the retired statement, where a missing one
+  // simply matched nothing. It addresses the object here, so an evaluation
+  // that does not know its workspace cannot ask — and that is "no read", not
+  // "no such work stream".
+  if (subject.workspaceId === undefined) return { value: null, failed: true };
+  try {
+    const value = await createIdentityObjectPort(env, subject.workspaceId, workstreamId)
+      .identity();
+    return { value: value ?? null, failed: false };
+  } catch (error) {
+    logStructuredEvent(env, "warn", "flag_targeting_attributes_unavailable", {
+      entity: "workstream",
+      workspace_id: subject.workspaceId,
+      workstream_id: subject.workstreamId,
+      user_id: subject.userId,
+      error_name: error instanceof Error ? error.name : "UnknownError",
+    });
+    return { value: null, failed: true };
+  }
+}
+
 /** Maps a read's outcome onto facts, keeping "no such row" and "no read" apart. */
 function mapped<Row, Facts>(
   outcome: LoadOutcome<Row>,
@@ -272,35 +309,11 @@ async function userFacts(env: Env, subject: FlagTargetingSubject, userId: string
 async function workstreamFacts(env: Env, subject: FlagTargetingSubject, workstreamId: string) {
   return cached(workstreamCache, "workstream", workstreamId, async () => {
     if (!subject.workspaceId) return { value: null, failed: false };
-    let executionEnv: Env;
-    try {
-      executionEnv = await workstreamExecutionEnvironment(env, subject.workspaceId, workstreamId);
-    } catch (error) {
-      logStructuredEvent(env, "warn", "flag_targeting_attributes_unavailable", {
-        entity: "workstream",
-        workspace_id: subject.workspaceId,
-        workstream_id: subject.workstreamId,
-        user_id: subject.userId,
-        error_name: error instanceof Error ? error.name : "UnknownError",
-      });
-      return { value: null, failed: true };
-    }
-    const outcome = await loadRow<{
-      origin_type: string;
-      scope: string;
-      system_kind: string | null;
-      created_by_user_id: string | null;
-      created_from_opportunity_id: string | null;
-    }>(
-      executionEnv,
-      subject,
-      "workstream",
-      `SELECT s.origin_type, s.scope, s.system_kind, s.created_by_user_id,
-              s.created_from_opportunity_id
-         FROM workstreams s
-        WHERE s.id = ?1 AND s.workspace_id = ?2`,
-      [workstreamId, subject.workspaceId],
-    );
+    // Opening the runtime environment was a step of its own, because the read
+    // that followed was a statement that had to be routed. The port addresses
+    // the object itself, so a failure to reach it is `loadIdentity`'s to report
+    // rather than a second try/catch logging the same event above it.
+    const outcome = await loadIdentity(env, subject, workstreamId);
     if (!outcome.value) return { value: null, failed: outcome.failed };
     const creator = outcome.value.created_by_user_id
       ? await loadRow<{ email: string }>(

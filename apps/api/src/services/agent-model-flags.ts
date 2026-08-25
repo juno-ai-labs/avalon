@@ -7,6 +7,7 @@ import {
   type FlagTargetingAttributes,
   type FlagTargetingSubject,
 } from "./flag-targeting-attributes";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
  * Every distinct model-using agent in Avalon. Each one owns a Flagship flag
@@ -367,9 +368,8 @@ export async function resolveWorkstreamModelRouting(
   env: Env,
   context: { workspaceId: string; workstreamId: string },
 ): Promise<AgentModelRouting> {
-  const row = await env.DB.prepare(
-    "SELECT model_override FROM workstreams WHERE id = ? AND workspace_id = ?",
-  ).bind(context.workstreamId, context.workspaceId).first<{ model_override: string | null }>();
+  const row = await createIdentityObjectPort(env, context.workspaceId, context.workstreamId)
+    .identity();
   const override = agentModelOverride(row?.model_override);
   if (override) {
     logStructuredEvent(env, "debug", "workstream_model_override_applied", {

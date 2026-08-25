@@ -11,6 +11,7 @@ import {
   resourceTelemetryEventId,
   telemetryJourneyDuration,
 } from './product-usage';
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 export interface AgentToolStartedTelemetryInput {
   workspaceId: WorkspaceId;
@@ -150,18 +151,20 @@ export async function emitAgentToolTerminalTelemetry(
     `SELECT ti.effect_intent_id AS id, ti.run_id AS harness_run_id,
             ti.status, ti.started_at, ti.settled_at, ti.error_json,
             ti.execution_plan_json, hr.origin, hr.parent_tool_call_id,
-            hr.execution_principal_json,
-            w.automation_run_id
+            hr.execution_principal_json
        FROM tool_effects ti
        JOIN harness_runs hr ON hr.id = ti.run_id
-       JOIN workstreams w
-         ON w.id = hr.workstream_id AND w.workspace_id = hr.workspace_id
       WHERE ti.effect_intent_id = ? AND ti.run_id = ?`,
   ).bind(
     input.invocationId,
     input.harnessRunId,
   ).first<ToolTerminalRow>();
   if (!row || !['completed', 'failed', 'ambiguous'].includes(row.status)) return;
+  // The work stream's automation run was a third table in the join, and the
+  // only column this needed from it. It is the identity authority's row, asked
+  // for after the status gate rather than fetched for every receipt.
+  row.automation_run_id = (await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+    .identity())?.automation_run_id ?? null;
   // The automation lookup is workspace authority (the WorkspaceDO); the rows
   // above are work-stream authority, and no database holds both sides of the
   // old JOIN — which the swallowed telemetry errors hid.

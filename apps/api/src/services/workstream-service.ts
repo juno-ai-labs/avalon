@@ -54,6 +54,7 @@ import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
 import { withWorkstreamRuntimeDatabase } from "./workstream-runtime-database";
 import { rpcResultBody } from "../durable-objects/rpc-result";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
  * `descriptionSource` is the caller's assertion, never inferred from whether
@@ -352,9 +353,8 @@ export async function fireWorkstreamWakeup(
   // decisions, not failures, and retrying them would only reach the same answer.
   try {
     const principal = wakeupExecutionPrincipal(row);
-    const workstream = await env.DB.prepare(
-      `SELECT archived_at FROM workstreams WHERE id = ? AND workspace_id = ?`,
-    ).bind(row.workstream_id, row.workspace_id).first<{ archived_at: string | null }>();
+    const workstream = await createIdentityObjectPort(env, row.workspace_id, row.workstream_id)
+      .identity();
     if (!workstream || workstream.archived_at !== null) {
       // The work stream this wake-up belongs to is gone. Leave the row claimed:
       // there is nothing left to wake, and a retry cannot change that.

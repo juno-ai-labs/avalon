@@ -16,6 +16,7 @@ import { terminalGitCaSetupCommands, type TerminalSandboxProvider } from "./dayt
 import type { AcquiredTerminalSandbox } from "./coordinator";
 import type { TerminalRepositoryPublisher } from "./runtime";
 import { requireTerminalEffectIntent, TerminalToolError, type TerminalPublishedBranchAndPrOutput } from "./tools";
+import { createIdentityObjectPort } from "../../runtime/identity-port";
 
 const MAX_BUNDLE_BYTES = 50 * 1_048_576;
 const MAX_CHANGED_PATHS = 500;
@@ -504,10 +505,12 @@ export function createTerminalRepositoryPublisher(
       if (context.executionPrincipal.type !== "user") {
         throw new TerminalToolError("publication_not_authorized", "Publication requires a current human work-stream participant. Stop and ask a participant to request publication.");
       }
-      const participant = await env.DB.prepare(
-        `SELECT 1 AS present FROM workstream_participants
-          WHERE workstream_id = ? AND user_id = ? AND removed_at IS NULL`,
-      ).bind(context.workstreamId, context.executionPrincipal.userId).first<{ present: number }>();
+      const requesterUserId = context.executionPrincipal.userId;
+      const participant = (await createIdentityObjectPort(
+        env,
+        context.workspaceId,
+        context.workstreamId,
+      ).participants()).some((row) => row.user_id === requesterUserId);
       if (!participant) {
         throw new TerminalToolError("publication_not_authorized", "The participant who requested publication no longer belongs to this work stream. Stop and ask a current participant to request publication.");
       }

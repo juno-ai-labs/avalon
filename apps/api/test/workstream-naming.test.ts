@@ -421,7 +421,8 @@ describe("work-stream naming", () => {
     seedMessages(database, 40);
     const counted: string[] = [];
     const transcriptOperations: string[] = [];
-    const env = environment(database, [], transcriptOperations);
+    const identityOperations: string[] = [];
+    const env = environment(database, [], transcriptOperations, identityOperations);
     const settled = createTestEnv({
       ...env,
       DB: {
@@ -436,14 +437,15 @@ describe("work-stream naming", () => {
     await refreshWorkstreamName(settled, { workspaceId, workstreamId });
 
     // A settled work stream is the overwhelmingly common case, and this runs
-    // after every message and every run: the status has to be a `WHERE` clause
-    // rather than a check in JS after a transcript-wide count. The count used
-    // to ride in that same statement, bounded by its own `LIMIT`; it is a
-    // separate operation now, so the cheaper thing is provable — a settled work
-    // stream does not read the transcript at all.
-    expect(counted).toHaveLength(1);
-    expect(counted[0]).toContain("title_status IN ('naming', 'automatic')");
+    // after every message and every run: it has to decide from the work
+    // stream's own row and stop. The title status used to be a `WHERE` clause
+    // and the message count a subquery beside it in the same statement; both
+    // are separate operations now, which is what makes the cheap path provable
+    // rather than merely intended — one identity read, no transcript at all,
+    // and nothing about this work stream asked of regional D1.
+    expect(identityOperations).toEqual(["identity"]);
     expect(transcriptOperations).toEqual([]);
+    expect(counted.filter((sql) => /workstreams/u.test(sql))).toEqual([]);
   });
 
   it("writes a name a person would read rather than whatever the model returned", () => {
@@ -542,6 +544,7 @@ function environment(
   database: DatabaseSync,
   published: Array<Record<string, unknown>>,
   transcriptOperations: string[] = [],
+  identityOperations: string[] = [],
 ): Env {
   const objectStore = objectStoreOf(database);
   // The naming service reads its transcript through the message port, which
@@ -565,13 +568,14 @@ function environment(
       }
       return (id: DurableObjectId) => new Proxy(namespaceTarget.get(id), {
         get(target, property, receiver) {
-          if (property !== "executeMessageOperation") {
-            return Reflect.get(target, property, receiver);
-          }
+          const recorder = property === "executeMessageOperation" ? transcriptOperations
+            : property === "executeIdentityOperation" ? identityOperations
+              : null;
+          if (!recorder) return Reflect.get(target, property, receiver);
           const dispatch = Reflect.get(target, property, receiver) as
             (input: { operation: string }) => unknown;
           return (input: { operation: string }) => {
-            transcriptOperations.push(input.operation);
+            recorder.push(input.operation);
             return dispatch.call(target, input);
           };
         },

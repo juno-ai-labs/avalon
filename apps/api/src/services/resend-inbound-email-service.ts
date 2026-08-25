@@ -9,6 +9,7 @@ import { runAutomationFromInboundEmail } from "./automation-service";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 const RESEND_RECEIVED_EMAIL_URL = "https://api.resend.com/emails/receiving";
 const DEFAULT_WORKSTREAM_EMAIL_DOMAIN = "automation.with-avalon.com";
@@ -459,13 +460,20 @@ export class ResendRegionalEmailService {
       input.workstreamId,
     );
 
-    const workstream = await executionEnv.DB.prepare(
-      `SELECT id, workspace_id, email_address
-       FROM workstreams
-       WHERE id = ? AND workspace_id = ? AND archived_at IS NULL
-         AND email_address = ? COLLATE NOCASE
-       LIMIT 1`,
-    ).bind(input.workstreamId, input.workspaceId, input.emailAddress).first<LocalWorkstreamRow>();
+    // `COLLATE NOCASE` was the statement's; the comparison is a caller's now,
+    // and it is the same comparison — an address a person typed reaches this
+    // in whatever case they typed it.
+    const identity = await createIdentityObjectPort(this.env, input.workspaceId, input.workstreamId)
+      .identity();
+    const workstream: LocalWorkstreamRow | null = identity
+      && identity.archived_at === null
+      && identity.email_address?.toLowerCase() === input.emailAddress.toLowerCase()
+      ? {
+        id: identity.workstream_key,
+        workspace_id: identity.parent_workspace_key,
+        email_address: identity.email_address,
+      }
+      : null;
     if (!workstream) {
       throw new ApiError(404, "email_workstream_not_found", "The email address is not attached to an active work stream");
     }

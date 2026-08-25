@@ -9,6 +9,7 @@ import { preRetirementProductSqliteDatabase, sqliteD1 } from './helpers/sqlite-d
 import {
   executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectRun,
   seedToolReceipt,
@@ -133,6 +134,10 @@ describe('authoritative run outcome telemetry', () => {
     });
     const env = createTestEnv({
       DB: sqliteD1(database),
+      // The work stream's automation run was a `JOIN workstreams` inside the
+      // statement below; it is the identity authority's read now, answered by
+      // the real storage class over the same object store this fixture seeds.
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
       AVALON_REGION: 'global',
       APP_ENV: 'production',
       APP_VERSION: '1.96.0',

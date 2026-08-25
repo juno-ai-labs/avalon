@@ -194,6 +194,7 @@ import { transcriptLister } from "../runtime/message-projection";
 import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 import {
   admitInlineChildAttempt,
   assertInlineChildAttemptOwned,
@@ -1979,9 +1980,14 @@ export async function runWorkstreamHarness(
   // actual authority without copying connector/resource state into the agent.
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const runStartedAtMs = Date.now();
-  const workstream = await env.DB.prepare(
-    `SELECT title, objective FROM workstreams WHERE id = ? AND workspace_id = ? AND archived_at IS NULL`,
-  ).bind(input.workstreamId, input.workspaceId).first<{ title: string; objective: string }>();
+  // The archive gate was a `WHERE` clause because the read was a statement;
+  // it is a test on the row here, and the row carries the object's own column
+  // names — `description` is what the retired view called `objective`.
+  const identity = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+    .identity();
+  const workstream = identity && identity.archived_at === null
+    ? { title: identity.title, objective: identity.description }
+    : null;
   if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
   const initialRun = await createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId)
     .run({ runId: input.harnessRunId });
