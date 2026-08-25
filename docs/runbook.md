@@ -46,7 +46,13 @@ Create independent resource sets for `global` and `eu`:
 - The Worker, Durable Object namespaces, Workflows, and `CRASH_SYMBOLICATOR`
   Container declared in the regional Wrangler file
 
-One account-wide Flagship app, `avalon-api`, holds the agent model-routing flags and is bound by both regional Workers; it is not a per-region resource because a flag holds model ids rather than workspace data. Both regions do send it an evaluation context carrying workspace, work-stream, and user *attributes* — slugs, counts, ages, roles, origins, email domains — bounded by the rules in [`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
+One account-wide Flagship app, `avalon-api`, holds the agent model-routing and
+client product flags and is bound by both regional Workers; it is not a
+per-region resource because a flag holds configuration rather than workspace
+data. Both regions do send it an evaluation context carrying workspace,
+work-stream, and user *attributes* — slugs, counts, ages, roles, origins, email
+domains — bounded by the rules in
+[`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
 
 The checked-in regional Wrangler files reference the provisioned Avalon resources. If a database is intentionally recreated, update only that region's `database_id` and keep the EU R2 jurisdiction and every region-specific name intact.
 
@@ -63,7 +69,15 @@ stream ID. EU has no inference analytical chain by design. A missing general
 bucket is an infrastructure failure even if
 the Wrangler dry build and Worker binding are otherwise deployable.
 
-`avalon-api` and its seven per-agent flags are provisioned, and both regional Wrangler files carry the `app_id`; [the feature-flag document](feature-flags.md#provisioning) has the commands for rebuilding them in a fresh account. Each flag is seeded with the model ids already in the `OPENROUTER_*` variables, so the flags change nothing until one is edited. Keep the two in step afterwards — an agent whose flag is missing or unreadable falls back to the variables. Changing which OpenRouter model an agent runs on is a flag change, not a deploy.
+`avalon-api` and its per-agent flags are provisioned, and both regional Wrangler
+files carry the `app_id`; [the feature-flag
+document](feature-flags.md#provisioning) has the commands for rebuilding them in
+a fresh account. Each model flag is seeded with the ids already in the
+`OPENROUTER_*` variables. Ace automatically ensures the
+`hypersight-enabled`, `meeting-recording-enabled`, `suggested-work-enabled`, and
+`automation-workspace-templates-enabled` flags exist with an off default on
+every merge that deploys it. Changing their targeting happens in Ace rather
+than the Flagship dashboard so connected clients receive the Queue push.
 
 Set these shared Worker secrets separately in each regional deployment:
 
@@ -270,6 +284,9 @@ Use a custom token restricted to the Avalon Cloudflare account and the `rallywit
   `Flagship` in the dashboard's API-token editor. Read access alone lists apps
   but fails `wrangler flagship apps create` with `Authentication error [code:
   10000]`, and automatic provisioning on deploy fails the same way.
+- Account: Access Apps and Policies Write/Edit — Ace's deployment creates or
+  updates its Access application and copies the migration site's current policy
+  and identity-provider settings on every merge.
 - Zone `rallywith.ai`: Zone Read
 - Zone `rallywith.ai`: Workers Routes Write/Edit
 - Zone `with-avalon.com`: Zone Read
@@ -421,6 +438,32 @@ the Wrangler output showing both Cron Triggers and inspect Workers & Pages →
 `avalon-release-retention` → Cron Events after the next window. Alert on failed
 events, unexpected `dry-run` production reports, a non-five retained set, or any
 copy/delete count that does not match the plan.
+
+### Ace internal administration
+
+`deploy-ace.yml` is the complete Ace release. A matching merge to `main`
+validates the workspace, creates every declared Queue, clones the migration
+site's current Cloudflare Access policy into an Ace-specific application,
+ensures the two Enabled-named product flags exist off by default, deploys the
+Hono Worker and Vite assets at `ace.internal.rallywith.ai`, installs the
+Flagship-only credential as an encrypted secret, and verifies that an
+unauthenticated request enters Access. No dashboard or laptop step follows the
+merge.
+
+The API and desktop sides deploy from their existing workflows on the same
+merge: `packages/contracts/**` triggers both, `apps/api/**` triggers both
+regional Workers, and `apps/desktop/**` triggers the signed macOS release. The
+three workflows intentionally do not wait on one another. Queues retain an Ace
+change until a regional consumer is deployed, and both product flags remain off
+until every layer receives an explicit true.
+
+An Ace deployment that fails before Worker upload leaves the previous Ace
+version in place. If it created one of the flags first, that flag is still off
+and has no rules. If upload succeeds but the final Access probe fails, inspect
+the Ace Access application and `avalon-ace` Worker before retrying the workflow;
+the deploy script is idempotent. [`ace.md`](ace.md) owns the runtime recovery
+sequence and the rule that managed product flags are not edited directly in the
+Flagship dashboard.
 
 ### The Durable Object migration tracker
 
@@ -779,7 +822,13 @@ That commit is load-bearing rather than tidy bookkeeping. `plan-release.mjs` tre
 
 The site build only queries the live channel when the config is unpublished: `pnpm deploy` sets `AVALON_RELEASE_DISCOVERY=1`, and `discoverDesktopRelease` returns the configured version immediately when `published` is `true`, falling back to reading `latest-mac.yml` and verifying the canonical installer when it is not. That makes the committed config authoritative for a published channel, and it is why a standalone site deploy between a release and its recorded config would advertise the superseded version. The download link is the canonical `Avalon.dmg` regardless, so the failure is a wrong version string rather than a broken download. `scripts/check-site-release-config.mjs` runs in the site deployment and fails on that mismatch, naming the fix; an unreachable manifest is reported and passed over rather than blocking an unrelated copy change.
 
-Required repository configuration: secret `CLOUDFLARE_API_TOKEN` and variable `CLOUDFLARE_ACCOUNT_ID` in the `api-production` environment for the API deployment and in `site-production` for the site deployment, and the existing `desktop-release` environment for the macOS release. Worker secrets are never held by Actions; they are set per region with Wrangler.
+Required repository configuration: secret `CLOUDFLARE_API_TOKEN` and variable
+`CLOUDFLARE_ACCOUNT_ID` in the `api-production` environment for the API and Ace
+deployments and in `site-production` for the site deployment, plus the existing
+`desktop-release` environment for the macOS release. `api-production` also holds
+`ACE_FLAGSHIP_API_TOKEN`, restricted to Flagship Write on the Avalon account;
+the Ace workflow installs it as an encrypted Worker secret. Regional API Worker
+secrets are never held by Actions; they are set per region with Wrangler.
 
 Deployments cannot overlap. Each workflow declares a concurrency group, so a second run waits for the first to finish, and a burst of merges collapses to the newest commit: GitHub keeps only one run pending per group and drops the superseded ones. Runs already in progress are never cancelled, so a migration cannot be interrupted halfway. Each run deploys the commit that triggered it, not the tip of `main` at the time it starts.
 

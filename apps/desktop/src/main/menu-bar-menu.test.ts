@@ -26,12 +26,14 @@ function actions(): MenuBarActions {
 
 function template(
   content: Partial<MenuBarContent>,
-  overrides: { signedIn?: boolean; sectionHeaders?: boolean; actions?: MenuBarActions } = {},
+  overrides: { signedIn?: boolean; sectionHeaders?: boolean; actions?: MenuBarActions; meetingRecordingAvailable?: boolean; suggestedWorkAvailable?: boolean } = {},
 ): MenuItemConstructorOptions[] {
   return menuBarMenuTemplate({
     appName: 'Avalon',
     content: { ...emptyMenuBarContent, ...content },
     signedIn: overrides.signedIn ?? true,
+    meetingRecordingAvailable: overrides.meetingRecordingAvailable ?? true,
+    suggestedWorkAvailable: overrides.suggestedWorkAvailable ?? true,
     sectionHeaders: overrides.sectionHeaders ?? true,
     actions: overrides.actions ?? actions(),
   });
@@ -53,6 +55,23 @@ const workstreams = Array.from({ length: 7 }, (_value, index) => ({
 }));
 
 describe('menu bar menu', () => {
+  it('removes the meeting action when Meeting Recording Enabled is false', () => {
+    const items = template(emptyMenuBarContent, { meetingRecordingAvailable: false });
+
+    expect(labels(items)).not.toContain('New Meeting/Note');
+    expect(labels(items)).toContain('New Work Stream');
+  });
+
+  it('removes the Suggestions section when Suggested Work Enabled is false', () => {
+    const items = template({
+      suggestions: [{ id: 'opportunity-1', version: 1, label: 'Prepare the brief' }],
+    }, { suggestedWorkAvailable: false });
+
+    expect(labels(items)).not.toContain('Suggestions');
+    expect(labels(items)).not.toContain('Prepare the brief');
+    expect(labels(items)).toContain('Recent');
+  });
+
   it('orders the drop-down as the product contract describes it', () => {
     const items = template({
       suggestions: [

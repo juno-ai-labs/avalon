@@ -17,11 +17,17 @@ const api = vi.hoisted(() => ({
   updateAutomation: vi.fn(),
 }));
 const copyText = vi.hoisted(() => vi.fn());
+const featureFlags = vi.hoisted(() => ({
+  current: { automationWorkspaceTemplatesEnabled: true },
+}));
 
 vi.mock('../lib/app-session', () => ({
   useAppSession: () => ({ api, session: { user: { email: 'owner@example.com' } } }),
 }));
 vi.mock('../components/inspector-rail', () => ({ InspectorRail: () => null }));
+vi.mock('../lib/use-client-feature-flags', () => ({
+  useClientFeatureFlags: () => ({ data: featureFlags.current }),
+}));
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({ copyText }),
 }));
@@ -91,6 +97,7 @@ describe('Automation template updates', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     copyText.mockResolvedValue(undefined);
+    featureFlags.current = { automationWorkspaceTemplatesEnabled: true };
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
       unobserve(): void {}
@@ -108,6 +115,16 @@ describe('Automation template updates', () => {
       scheduleSummary: 'Every Monday',
       templateUpdate: undefined,
     });
+  });
+
+  it('hides publishing and update adoption while Automation Workspace Templates Enabled is false', async () => {
+    featureFlags.current = { automationWorkspaceTemplatesEnabled: false };
+
+    renderScreen();
+
+    expect(await screen.findByRole('heading', { name: 'Weekly brief' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Share' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Version 2 is available')).not.toBeInTheDocument();
   });
 
   it('uses the shared connecting state while the automation opens', () => {

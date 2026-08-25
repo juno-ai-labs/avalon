@@ -3,6 +3,7 @@ import {
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceSidebarListEventSchema,
+  WorkspaceFeatureFlagsEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
@@ -25,6 +26,8 @@ import {
 } from 'react';
 import { ApiError, mapAutomationSummary, mapMessage, mapWorkstreamSummary, type AvalonApi } from './api';
 import { uuidV7 } from './telemetry';
+import { desktopBridge } from './platform';
+import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import type { Message, WorkstreamSummary } from './types';
 import {
   applyVersionedWorkstreamState,
@@ -361,6 +364,10 @@ export function WorkspaceSocketProvider({
           }
           const sync = WorkspaceSocketSyncEventSchema.safeParse(decoded);
           if (sync.success) {
+            if (sync.data.featureFlags) {
+              queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, sync.data.featureFlags);
+              void desktopBridge().observeClientFeatureFlags(sync.data.featureFlags).catch(() => undefined);
+            }
             // Before the waterline guard, not after. The sidebar rides on the
             // answer to `subscribe`, and a resume where no topic moved carries
             // the waterline the client already has — so a guard that ran first
@@ -387,6 +394,12 @@ export function WorkspaceSocketProvider({
               if (topic === 'workstream_directory' && sync.data.sidebar && !directoryNeedsReconciling) continue;
               invalidateTopic(queryClient, topic);
             }
+            return;
+          }
+          const featureFlags = WorkspaceFeatureFlagsEventSchema.safeParse(decoded);
+          if (featureFlags.success) {
+            queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, featureFlags.data.flags);
+            void desktopBridge().observeClientFeatureFlags(featureFlags.data.flags).catch(() => undefined);
             return;
           }
           const workstreamPage = WorkspaceWorkstreamPageEventSchema.safeParse(decoded);

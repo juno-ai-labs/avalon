@@ -583,6 +583,7 @@ describe('Sidebar work-stream markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
+            automationWorkspaceTemplatesAvailable
             automations={[automation]}
             onRunAutomation={onRunAutomation}
             onSignOut={vi.fn()}
@@ -606,6 +607,28 @@ describe('Sidebar work-stream markers', () => {
     expect(reportTelemetryProductIntent).not.toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'automation_action_completed' }),
     );
+  });
+
+  it('removes the template action while Automation Workspace Templates Enabled is false', async () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automationWorkspaceTemplatesAvailable={false}
+            automations={[automation]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Run now' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Turn into template' })).not.toBeInTheDocument();
   });
 
   it('sinks drafts under the automations that run, newest draft first, and archives one from its menu', async () => {
@@ -788,6 +811,7 @@ describe('Sidebar work-stream markers', () => {
           <Sidebar
             {...defaultActions}
             automations={[]}
+            meetingRecordingAvailable
             onOpenMeetingNotes={onOpenMeetingNotes}
             onSignOut={vi.fn()}
             workspace={workspace}
@@ -799,6 +823,25 @@ describe('Sidebar work-stream markers', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'New meeting/notes' }));
     await waitFor(() => expect(onOpenMeetingNotes).toHaveBeenCalledTimes(1));
+  });
+
+  it('removes the meeting action when Meeting Recording Enabled is false', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            meetingRecordingAvailable={false}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole('button', { name: 'New meeting/notes' })).not.toBeInTheDocument();
   });
 
   it('sorts notes inline with work streams and opens them with a gray note marker', async () => {

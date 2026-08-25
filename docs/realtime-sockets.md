@@ -195,6 +195,16 @@ the sidebar: `initial` names every topic, so invalidating that one would send
 the client back for the page the same event just delivered — the round trip this
 payload exists to remove, reintroduced one line below it.
 
+That private subscribe answer also carries the complete effective client
+feature-flag object for the socket's user. The renderer applies it before the
+workspace waterline guard for the same reason it applies the sidebar first: a
+resume can legitimately repeat a workspace waterline while correcting a value
+that lives outside it. Live flag changes arrive as a separate
+`workspace_feature_flags` event with the changed key and the complete values.
+They are deliberately not a `workspace_sync` topic broadcast: two people in the
+same object may match different Flagship rules, so WorkspaceDO evaluates once
+per connected user and sends only to that user's sockets.
+
 The directory page in that payload deliberately excludes system work streams.
 Debug enabled is rare and engineers only, and the server does not hold the
 preference — it lives in the desktop's own application settings — so a viewer
@@ -490,6 +500,27 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-24 — Product feature flags reconcile privately on subscribe and push
+
+**What changed:** WorkspaceDO now evaluates the full client feature-flag
+contract per viewer on every subscribe and after each key-only product-flag RPC.
+The subscribe answer carries the values privately; later
+`workspace_feature_flags` events go only to sockets for the evaluated user.
+
+**Why:** A shared workspace broadcast cannot represent targeted answers for two
+different members, and a live-only push leaves a disconnected client stale.
+Putting current values on subscribe makes reconnect the reconciliation path
+without adding another socket or a permanent renderer poll.
+
+**Considered and rejected:** Carrying the new value in the Queue/RPC would make
+one audience's answer authoritative for everybody. Adding feature flags to the
+workspace waterline would persist and replay user-specific state through a
+workspace-wide log.
+
+**Consequences:** Feature flags are processed before the workspace waterline
+guard, the live event always replaces the complete flag object, and any future
+per-user socket state must stay off the common broadcast path.
 
 ### 2026-08-24 — Workspace socket closes stop impersonating access revocation
 

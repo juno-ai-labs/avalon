@@ -57,6 +57,7 @@ import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useTextClipped } from '../lib/use-text-clipped';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
 import { useBlockDashboardSockets } from '../lib/use-block-dashboard-sockets';
+import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   insertMessage,
@@ -280,6 +281,7 @@ export function WorkstreamHeader({
   workstream,
   socketState,
   blockDashboardOpen,
+  blockDashboardAvailable = false,
   blockDashboardPreferencePending,
   onAddParticipant,
   onOpenRail,
@@ -289,6 +291,7 @@ export function WorkstreamHeader({
   workstream: WorkstreamDetail;
   socketState: SocketState;
   blockDashboardOpen: boolean;
+  blockDashboardAvailable?: boolean;
   blockDashboardPreferencePending: boolean;
   onAddParticipant: () => void;
   onOpenRail: (variant: RailVariant) => void;
@@ -543,15 +546,17 @@ export function WorkstreamHeader({
         </button>
         {/* The two controls that own the right sidebar sit side by side, in the
             order the panels themselves are named. */}
-        <IconButton
-          className={clsx('panel-toggle', 'block-dashboard-toggle', blockDashboardOpen && 'is-active')}
-          aria-pressed={blockDashboardOpen}
-          disabled={blockDashboardPreferencePending}
-          label={blockDashboardOpen ? 'Hide HyperSight' : 'Show HyperSight'}
-          onClick={onToggleBlockDashboard}
-        >
-          <IconAugmentedReality size={16} stroke={1.7} />
-        </IconButton>
+        {blockDashboardAvailable && (
+          <IconButton
+            className={clsx('panel-toggle', 'block-dashboard-toggle', blockDashboardOpen && 'is-active')}
+            aria-pressed={blockDashboardOpen}
+            disabled={blockDashboardPreferencePending}
+            label={blockDashboardOpen ? 'Hide HyperSight' : 'Show HyperSight'}
+            onClick={onToggleBlockDashboard}
+          >
+            <IconAugmentedReality size={16} stroke={1.7} />
+          </IconButton>
+        )}
         <IconButton
           aria-pressed={showing('context')}
           className={clsx('panel-toggle', showing('context') && 'is-active')}
@@ -756,6 +761,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const { api, session } = useAppSession();
+  const featureFlags = useClientFeatureFlags(api);
   const queryClient = useQueryClient();
   const closeRail = useUiStore((state) => state.closeRail);
   const openRail = useUiStore((state) => state.openRail);
@@ -942,7 +948,8 @@ export function WorkstreamScreen(): React.JSX.Element {
     staleTime: Number.POSITIVE_INFINITY,
   });
   const blockDashboardPreferred = blockDashboardPreference.data?.visible ?? false;
-  const blockDashboardOpen = blockDashboardHoldsSidebar(blockDashboardPreferred, railOpen);
+  const blockDashboardOpen = featureFlags.data?.hypersightEnabled === true
+    && blockDashboardHoldsSidebar(blockDashboardPreferred, railOpen);
   // Handing the sidebar from one panel to the other keeps the panel that lost
   // it on screen a moment longer, fading out over the one that took it while
   // the slot animates between their two widths.
@@ -1613,6 +1620,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           nothing to hand focus back to when it closes. The write is optimistic;
           there is nothing to wait for. */}
       <WorkstreamHeader
+        blockDashboardAvailable={featureFlags.data?.hypersightEnabled === true}
         blockDashboardOpen={blockDashboardOpen}
         blockDashboardPreferencePending={blockDashboardPreference.isPending}
         onAddParticipant={() => setParticipantDialogOpen(true)}

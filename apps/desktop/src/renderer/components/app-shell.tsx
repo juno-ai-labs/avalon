@@ -6,6 +6,7 @@ import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { useWorkstreamSocket } from '../lib/use-workstream-socket';
+import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
@@ -196,6 +197,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     return true;
   };
   const notes = useSocketOwnedList<NoteSummary>(['notes']);
+  const featureFlags = useClientFeatureFlags(api);
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
   const backgroundRealtimeIds = backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams.data);
@@ -236,6 +238,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         // claiming an empty workspace when the socket cannot connect.
         loading={workstreams.data === undefined}
         notes={notes.data ?? []}
+        meetingRecordingAvailable={featureFlags.data?.meetingRecordingEnabled === true}
+        automationWorkspaceTemplatesAvailable={featureFlags.data?.automationWorkspaceTemplatesEnabled === true}
         onArchiveDraftAutomation={async (automation) => {
           if (!api) return;
           await api.archiveDraftAutomation(automation.id);

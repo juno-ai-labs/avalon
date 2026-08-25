@@ -48,6 +48,7 @@ export interface MenuBarContentDependencies {
   readonly requestJson: (path: string, init?: { method: 'POST'; body: unknown }) => Promise<unknown>;
   readonly onChange: (content: MenuBarContent) => void;
   readonly logWarning: (message: string, error: unknown) => void;
+  readonly suggestedWorkAvailable: () => boolean;
   /** Injected so the staleness window can be driven in tests. */
   readonly now?: () => number;
 }
@@ -141,7 +142,9 @@ export class MenuBarContentStore {
     // and the whole pinned list behind them.
     const [page, suggestions] = await Promise.all([
       this.load('recent work streams', `/workstreams?limit=${MENU_BAR_RECENT_LIMIT}`, MenuBarWorkstreamPageSchema),
-      this.load('suggested work streams', '/work-opportunities?limit=4', MenuBarOpportunityPageSchema),
+      !this.dependencies.suggestedWorkAvailable()
+        ? Promise.resolve({ items: [] })
+        : this.load('suggested work streams', '/work-opportunities?limit=4', MenuBarOpportunityPageSchema),
     ]);
     if (!page && !suggestions) return;
     // Sign-out, or a suggestion consumed, while this was on the wire. What came
@@ -217,6 +220,7 @@ export class MenuBarContentStore {
    * effect is keyed on the ids and versions, not on each render.
    */
   async recordImpressions(): Promise<void> {
+    if (!this.dependencies.suggestedWorkAvailable()) return;
     const shown = this.cached.suggestions;
     if (shown.length === 0) return;
     const impressions = shown.map((suggestion) => `${suggestion.id}:${suggestion.version}`).join('|');

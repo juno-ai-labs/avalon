@@ -141,6 +141,7 @@ function headerElement(
   workstream = headerWorkstream,
   overrides: {
     blockDashboardOpen?: boolean;
+    blockDashboardAvailable?: boolean;
     onRename?: (title: string) => Promise<void>;
     onToggleBlockDashboard?: () => void;
   } = {},
@@ -148,6 +149,7 @@ function headerElement(
   return (
     <Tooltip.Provider>
       <WorkstreamHeader
+        blockDashboardAvailable={overrides.blockDashboardAvailable ?? true}
         blockDashboardOpen={overrides.blockDashboardOpen ?? false}
         blockDashboardPreferencePending={false}
         onAddParticipant={vi.fn()}
@@ -251,6 +253,13 @@ describe('WorkstreamHeader origin affordances', () => {
 
     fireEvent.click(blockDashboard);
     expect(onToggleBlockDashboard).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the HyperSight control when HyperSight Enabled is false', () => {
+    renderWorkstreamHeader(headerWorkstream, { blockDashboardAvailable: false });
+
+    expect(screen.queryByRole('button', { name: /HyperSight/u })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Work-stream context' })).toBeVisible();
   });
 
   it('does not expose automation runs or an origin icon for ad-hoc work streams', async () => {

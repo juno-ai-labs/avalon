@@ -44,6 +44,7 @@ import { useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
+import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import type {
   AgentModelOverride,
@@ -556,6 +557,8 @@ function DraftSummary({
 
 export function NewAutomationScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { api, session } = useAppSession();
+  const featureFlags = useClientFeatureFlags(api);
+  const workspaceTemplatesEnabled = featureFlags.data?.automationWorkspaceTemplatesEnabled === true;
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const resumeDraftId = searchParams.get('draft');
@@ -640,6 +643,12 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const [initializedRecommendations, setInitializedRecommendations] = useState('');
   const [initializedActivitySources, setInitializedActivitySources] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
+
+  useEffect(() => {
+    if (workspaceTemplatesEnabled) return;
+    setTemplatesOpen(false);
+    setSelectedTemplate(null);
+  }, [workspaceTemplatesEnabled]);
   // Pins the work streams this automation's runs create, not the drafting
   // conversation above — the automation architect keeps its own flag.
   const [modelOverride, setModelOverride] = useState<AgentModelOverride | null>(null);
@@ -1194,7 +1203,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
         </DropdownMenu.Root>
       </div>
       <div className={clsx('automation-builder', (turns.length > 0 || draft) && 'has-conversation')}>
-        {templatesOpen ? (
+        {workspaceTemplatesEnabled && templatesOpen ? (
           <TemplateBrowser
             onBack={() => setTemplatesOpen(false)}
             onSelect={(template) => {
@@ -1260,7 +1269,9 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                 <h1 id="automation-builder-heading">What should happen automatically?</h1>
                 <p>Describe the outcome. Avalon can research your plugins and will ask for the details it needs.</p>
                 <AutomationSuggestedPrompts onSelect={(example) => submit(example, 'suggested_prompt')} />
-                <button className="template-path" onClick={() => setTemplatesOpen(true)} type="button">Use a workspace template <ChevronRight size={13} /></button>
+                {workspaceTemplatesEnabled && (
+                  <button className="template-path" onClick={() => setTemplatesOpen(true)} type="button">Use a workspace template <ChevronRight size={13} /></button>
+                )}
               </section>
             ) : (
               <div className="automation-chat-surface automation-conversation" aria-live="polite">

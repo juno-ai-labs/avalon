@@ -28,7 +28,7 @@ function workstreamPage(
   };
 }
 
-function harness(): Harness {
+function harness(suggestedWorkAvailable: () => boolean = () => true): Harness {
   let now = 1_000_000;
   const requestJson = vi.fn<MenuBarContentDependencies['requestJson']>();
   const onChange = vi.fn();
@@ -38,6 +38,7 @@ function harness(): Harness {
     onChange,
     logWarning,
     now: () => now,
+    suggestedWorkAvailable,
   });
   return {
     store,
@@ -66,6 +67,22 @@ beforeEach(() => {
 });
 
 describe('menu bar content', () => {
+  it('does not fetch or present suggestions while Suggested Work Enabled is false', async () => {
+    subject = harness(() => false);
+    respond(subject.requestJson, {
+      '/workstreams': workstreamPage([{ id: 'a', title: 'Acme renewal' }]),
+      '/work-opportunities/o1/start': { workstream: { id: 'created' } },
+    });
+
+    await subject.store.refresh();
+
+    expect(subject.requestJson).toHaveBeenCalledTimes(1);
+    expect(subject.requestJson).not.toHaveBeenCalledWith(expect.stringContaining('/work-opportunities'));
+    expect(subject.store.content().suggestions).toEqual([]);
+    await expect(subject.store.startSuggestion({ id: 'o1', version: 1, label: 'Reply to Dana' }))
+      .resolves.toBe('created');
+  });
+
   it('reads the five most recent work streams and everything Avalon suggests', async () => {
     respond(subject.requestJson, {
       '/workstreams': workstreamPage([
