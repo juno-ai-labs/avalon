@@ -20,9 +20,7 @@ export function Field({ label, children, className = '', ...props }: PropsWithCh
   return <label {...props} className={className}><span>{label}</span>{children}</label>;
 }
 
-export function Panel({ children, className = '', ...props }: PropsWithChildren<HTMLAttributes<HTMLElement> & {
-  className?: string;
-}>): React.JSX.Element {
+export function Panel({ children, className = '', ...props }: PropsWithChildren<HTMLAttributes<HTMLElement>>): React.JSX.Element {
   return <article {...props} className={`ace-panel${className ? ` ${className}` : ''}`}>{children}</article>;
 }
 
