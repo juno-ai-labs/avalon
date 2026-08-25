@@ -63,9 +63,9 @@ import {
   insertMessage,
   nextTranscriptSequence,
   reconcileCanonicalTranscript,
-  useWorkstreamSocket,
   type SocketState,
 } from '../lib/use-workstream-socket';
+import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
@@ -999,7 +999,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && resourceDialogOpen),
     staleTime: 15_000,
   });
-  const socketConnection = useWorkstreamSocket(
+  const socketConnection = useRetainedWorkstreamSocket(
     api,
     id,
     workstream.isSuccess && messages.isSuccess,

@@ -19,6 +19,11 @@ import {
   useWorkstreamSocket,
   type WorkstreamSocketApi,
 } from './use-workstream-socket';
+import {
+  RECENT_WORKSTREAM_SOCKET_RETENTION_MS,
+  WorkstreamSocketPool,
+  useRetainedWorkstreamSocket,
+} from './workstream-socket-pool';
 import { WorkstreamSocketResumeProvider } from './workstream-socket-resume';
 
 const workspaceCreateMessage = vi.hoisted(() => vi.fn());
@@ -277,6 +282,105 @@ afterEach(() => {
 });
 
 describe('useWorkstreamSocket', () => {
+  it('keeps the connection object stable when none of its fields changed', () => {
+    const api = socketApiWith({});
+    const { result, rerender } = renderHook(
+      () => useWorkstreamSocket(api, '00000000-0000-7000-8000-000000000620', false),
+      { wrapper: createWrapper() },
+    );
+    const first = result.current;
+
+    rerender();
+
+    expect(result.current).toBe(first);
+  });
+
+  it('reuses the same socket when returning to a recently viewed work stream', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const firstWorkstreamId = '00000000-0000-7000-8000-000000000621';
+    const secondWorkstreamId = '00000000-0000-7000-8000-000000000622';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async (workstreamId: string) => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: `socket-ticket-${workstreamId}`,
+        protocols: socketTicketProtocols(`socket-ticket-${workstreamId}`),
+      })),
+    });
+    function ActiveConnection({ workstreamId }: { workstreamId: string }): React.JSX.Element {
+      const connection = useRetainedWorkstreamSocket(api, workstreamId, true);
+      return <div>{connection.state}</div>;
+    }
+    const view = render(
+      <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <ActiveConnection workstreamId={firstWorkstreamId} />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+    await flushPromises();
+    const firstSocket = FakeWebSocket.instances[0]!;
+    const firstClose = vi.spyOn(firstSocket, 'close');
+
+    view.rerender(
+      <WorkstreamSocketPool activeWorkstreamId={secondWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <ActiveConnection workstreamId={secondWorkstreamId} />
+      </WorkstreamSocketPool>,
+    );
+    await flushPromises();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(firstClose).not.toHaveBeenCalled();
+
+    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
+    view.rerender(
+      <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <ActiveConnection workstreamId={firstWorkstreamId} />
+      </WorkstreamSocketPool>,
+    );
+    await flushPromises();
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(firstClose).not.toHaveBeenCalled();
+  });
+
+  it('closes an idle recently viewed socket only after five minutes', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const firstWorkstreamId = '00000000-0000-7000-8000-000000000623';
+    const secondWorkstreamId = '00000000-0000-7000-8000-000000000624';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async (workstreamId: string) => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: `socket-ticket-${workstreamId}`,
+        protocols: socketTicketProtocols(`socket-ticket-${workstreamId}`),
+      })),
+    });
+    function ActiveConnection({ workstreamId }: { workstreamId: string }): React.JSX.Element {
+      const connection = useRetainedWorkstreamSocket(api, workstreamId, true);
+      return <div>{connection.state}</div>;
+    }
+    const view = render(
+      <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <ActiveConnection workstreamId={firstWorkstreamId} />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+    await flushPromises();
+    const firstSocket = FakeWebSocket.instances[0]!;
+    const firstClose = vi.spyOn(firstSocket, 'close');
+
+    view.rerender(
+      <WorkstreamSocketPool activeWorkstreamId={secondWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <ActiveConnection workstreamId={secondWorkstreamId} />
+      </WorkstreamSocketPool>,
+    );
+    await flushPromises();
+    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
+    expect(firstClose).not.toHaveBeenCalled();
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(firstClose).toHaveBeenCalledTimes(1);
+  });
+
   it('routes a message command through the shared workspace connection', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const workstreamId = '00000000-0000-7000-8000-000000000601';
