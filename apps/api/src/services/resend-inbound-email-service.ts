@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
+import { logWarn } from "../observability/logger";
 import {
   ACCEPTED_WORKSTREAM_EMAIL_DOMAINS,
   WORKSTREAM_EMAIL_DOMAIN,
@@ -24,6 +25,11 @@ const DEFAULT_AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR = 30;
 const MAX_ROUTED_RECIPIENTS = 16;
 const MAX_MESSAGE_TEXT_CHARACTERS = 100_000;
 const MAX_SUBJECT_CHARACTERS = 300;
+/** The only domains whose identities migration 0097 inferred from timestamps. */
+const MIGRATION_0097_PLATFORM_DOMAINS = new Set([
+  "automation.rallywith.ai",
+  "automation.with-avalon.com",
+]);
 
 const ResendEnvelopeSchema = z.object({
   type: z.string().min(1).max(120),
@@ -72,7 +78,7 @@ const RegionalEmailInputSchema = z.object({
   workstreamId: z.string().min(1).max(200).optional(),
   automationSubscriptionId: z.string().min(1).max(200).optional(),
   localPart: z.string().min(1).max(64).regex(/^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u),
-  emailAddress: z.string().email().max(320),
+  emailAddress: z.string().email().max(254),
 }).superRefine((input, context) => {
   const targetType = input.targetType ?? (input.automationSubscriptionId ? "automation" : "workstream");
   if (targetType === "workstream" && (!input.workstreamId || input.automationSubscriptionId)) {
@@ -317,7 +323,7 @@ export class ResendInboundEmailRoutingService {
         ).bind(recipientAddresses.get(emailAddress)!).first<LegacyEmailRouteRow>();
         return legacy ? { ...legacy, email_address: emailAddress } : null;
       }
-      return this.env.DB.prepare(
+      const exact = await this.env.DB.prepare(
         // No status filter: Global records that the address is taken and to
         // whom, nothing about whether mail is welcome today. The region decides
         // that from the owner's own row when the message lands, which it does
@@ -328,6 +334,8 @@ export class ResendInboundEmailRoutingService {
          WHERE email_address = ? COLLATE NOCASE
          LIMIT 1`,
       ).bind(emailAddress).first<EmailRouteRow>();
+      if (exact) return exact;
+      return this.migrationInferredRoute(emailAddress, recipientAddresses.get(emailAddress)!);
     })));
 
     const dispatches = await Promise.allSettled(routes.map((route) => {
@@ -395,6 +403,42 @@ export class ResendInboundEmailRoutingService {
        WHERE name = 'email_address'`,
     ).first<{ name: string }>();
     return column?.name === "email_address";
+  }
+
+  /**
+   * Safety net for a wrong timestamp inference in migration 0097.
+   *
+   * Before that migration the local part was the registry's case-insensitive
+   * primary key, so at most one migrated row can own it. The fallback is
+   * restricted to the two platform domains involved in that migration and to
+   * still-unverified rows; it cannot collapse a future custom domain's route.
+   */
+  private async migrationInferredRoute(
+    receivedAddress: string,
+    localPart: string,
+  ): Promise<EmailRouteRow | null> {
+    const receivedDomain = receivedAddress.slice(receivedAddress.lastIndexOf("@") + 1);
+    if (!MIGRATION_0097_PLATFORM_DOMAINS.has(receivedDomain)) return null;
+    const result = await this.env.DB.prepare(
+      `SELECT email_address, region, workspace_id, workstream_id, automation_subscription_id
+       FROM workstream_email_routes
+       WHERE address_source = 'migration'
+         AND substr(email_address, 1, instr(email_address, '@') - 1) = ? COLLATE NOCASE
+       LIMIT 2`,
+    ).bind(localPart).all<EmailRouteRow>();
+    const candidates = result.results.filter((candidate) => {
+      const storedDomain = candidate.email_address.slice(candidate.email_address.lastIndexOf("@") + 1);
+      return MIGRATION_0097_PLATFORM_DOMAINS.has(storedDomain);
+    });
+    if (candidates.length !== 1) return null;
+    const route = candidates[0]!;
+    logWarn(this.env, "email_route_migration_domain_fallback", {
+      destination_region: route.region,
+      target_type: route.automation_subscription_id ? "automation" : "workstream",
+    });
+    // Regional owner state is authoritative, so dispatch the address Resend
+    // actually received rather than the migration's incorrect inference.
+    return { ...route, email_address: receivedAddress };
   }
 
   private async recordGlobalFailure(svixId: string, code: string): Promise<void> {

@@ -94,12 +94,21 @@ address and then read that regional row, returning the address or refusing with
 `workstream_email_owner_archived` / `automation_not_active`. They are
 a gate, not a transition.
 
-The regional owner also stores the exact issued address. Reconciliation sends
+The regional owner also stores the exact issued address. Detail reconciliation sends
 that full value to Global; it never combines a persisted local part with the
 domain configured on the Worker today. Migration `0097` inferred the two domains
 for pre-existing claims at the Rally cutover boundary and tagged those rows as
 `address_source = 'migration'`. The owner may verify or correct such a row once,
 changing the source to `owner`; allocator- and owner-sourced claims are immutable.
+Until that verification, the inferred value is provisional rather than an issued
+tombstone. Correcting it frees only the unissued inference; the owner's actual
+address becomes the permanent tombstone.
+
+Automation sidebar snapshots return that regional address as stored and do not
+verify it against Global one row at a time. Detail reads perform reconciliation;
+keeping the list read regional avoids turning one sidebar snapshot into a batch
+of cross-region registry calls. Detail reconciliation deliberately fails closed
+when Global is unavailable so it cannot return an unverified address.
 
 **Each gate reads through the database that owns its row.** An automation's
 `status` and `lifecycle_state` come from the workspace facade, because
@@ -147,6 +156,11 @@ The Global webhook resolves the complete normalized recipient address. It does
 not discard the domain and query by local part. This keeps the legacy and Rally
 domains independent today and leaves the registry compatible with custom domains
 where the same generated local part may legitimately belong to another owner.
+An exact miss may fall back by local part only for a still-unverified migration
+row and only across the two platform domains migration `0097` inferred. The old
+schema made that local part globally unique. This prevents a bad cutoff inference
+from silently dropping mail without collapsing a future custom domain's namespace;
+the fallback emits `email_route_migration_domain_fallback` for operations.
 
 ### Outbound automation results
 
@@ -302,8 +316,10 @@ sunbird, terrapin, waxbill
   generation version.
 - **Issued addresses are persisted and never recomputed.** The stored address is
   authoritative; re-deriving one is how a vocabulary change would rewrite history.
-- **An address is never recycled.** A ledger row is a permanent tombstone, because
-  a stale sender must never reach a different work stream or automation.
+- **An issued address is never recycled.** Allocator- and owner-sourced ledger
+  rows are permanent tombstones, because a stale sender must never reach a
+  different work stream or automation. A migration inference becomes a tombstone
+  only after the regional owner verifies or corrects it.
 - **The Global ledger stores a claim, not a lifecycle.** Whether mail is accepted
   is re-derived regionally from the owner's own row at delivery. A second copy of
   that state in Global could only ever disagree with it.
@@ -458,7 +474,9 @@ addresses already saved outside Rally.
 **Consequences:** A domain is part of permanent route identity. Future custom
 domain support must make that domain accepted at ingress, but it does not require
 a registry redesign. Migration provenance is the only state that permits an
-address correction; after owner verification the tombstone is immutable.
+address correction; after owner verification the tombstone is immutable. The
+16-recipient ingress guard now counts complete addresses rather than deduplicated
+local parts, matching the number of independently resolved and dispatched routes.
 
 ### 2026-08-25 — New addresses are minted on automation.rallywith.ai; the old domain keeps receiving
 
