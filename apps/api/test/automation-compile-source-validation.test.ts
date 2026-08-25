@@ -1,4 +1,5 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { ConnectorError } from "@rally/connectors";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
@@ -103,5 +104,89 @@ describe("automation compile activity-source validation", () => {
       messages: [{ role: "user", content: "Summarize my day." }],
     }, "request-1")).rejects.toMatchObject({ status: 403, code: "workspace_access_denied" });
     expect(compileAutomationDraft).not.toHaveBeenCalled();
+  });
+
+  // The three tests below exercise `AutomationService.compile`'s
+  // `ConnectorError` → `ApiError` mapping in isolation, through a hand-built
+  // error rejected out of the mocked `compileAutomationDraft`. That proves
+  // the classification is correct for a given `ConnectorError` shape; it does
+  // not prove any real code path actually produces that shape here. The real,
+  // reachable path — a stored connection naming a `connector_type` this
+  // environment does not register — is covered unmocked in
+  // `automation-compile-connector-registry.test.ts`.
+  function connectorPrepare() {
+    return vi.fn((sql: string) => ({
+      bind: vi.fn(() => ({
+        first: vi.fn(async () => sql.includes("AS user_timezone")
+          ? { user_id: "user-1", user_timezone: "America/Los_Angeles", workspace_timezone: "UTC" }
+          : null),
+      })),
+    }));
+  }
+
+  it("maps a bare ConnectorError to a non-retryable, non-reconnect typed error", async () => {
+    compileAutomationDraft.mockRejectedValue(
+      new ConnectorError("unsupported_capability", "Connector is unavailable: slack"),
+    );
+    const service = new AutomationService(
+      createTestEnv({ DB: { prepare: connectorPrepare(), batch: vi.fn(async () => []) } }),
+      auth,
+    );
+
+    await expect(service.compile({
+      messages: [{ role: "user", content: "Check my Slack for anything unresolved." }],
+    }, "request-1")).rejects.toMatchObject({
+      status: 502,
+      code: "automation_connector_failed",
+      details: { connectorErrorCode: "unsupported_capability", retryable: false },
+    });
+  });
+
+  it("does not treat a bare 'unauthorized' code alone as reconnect-required", async () => {
+    // Matches the code `isReconnectRequiredConnectorError` also checks, but
+    // omits the `reconnectRequired` detail that function additionally
+    // requires — so this must NOT get the reconnect message. Guards against
+    // a future edit that reads only `error.code` again.
+    compileAutomationDraft.mockRejectedValue(
+      new ConnectorError("unauthorized", "Connector capability was revoked"),
+    );
+    const service = new AutomationService(
+      createTestEnv({ DB: { prepare: connectorPrepare(), batch: vi.fn(async () => []) } }),
+      auth,
+    );
+
+    await expect(service.compile({
+      messages: [{ role: "user", content: "Check my Slack for anything unresolved." }],
+    }, "request-1")).rejects.toMatchObject({
+      status: 502,
+      code: "automation_connector_failed",
+      message: expect.not.stringContaining("Reconnect"),
+      details: { connectorErrorCode: "unauthorized", retryable: false },
+    });
+  });
+
+  it("marks the exact reconnect-required ConnectorError shape as needing reconnection", async () => {
+    // The shape `withAuthorizedConnection` (connector-connection-access.ts)
+    // actually throws — `isReconnectRequiredConnectorError` requires both the
+    // code and this detail.
+    compileAutomationDraft.mockRejectedValue(
+      new ConnectorError("unauthorized", "This connector connection needs reconnecting", {
+        reconnectRequired: true,
+        reason: "revoked",
+      }),
+    );
+    const service = new AutomationService(
+      createTestEnv({ DB: { prepare: connectorPrepare(), batch: vi.fn(async () => []) } }),
+      auth,
+    );
+
+    await expect(service.compile({
+      messages: [{ role: "user", content: "Check my Slack for anything unresolved." }],
+    }, "request-1")).rejects.toMatchObject({
+      status: 502,
+      code: "automation_connector_failed",
+      message: expect.stringContaining("Reconnect"),
+      details: { connectorErrorCode: "unauthorized", retryable: false },
+    });
   });
 });
