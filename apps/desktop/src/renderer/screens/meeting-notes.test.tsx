@@ -264,12 +264,12 @@ describe('MeetingNotesScreen', () => {
 
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'End' })).toBeVisible();
 
     act(() => state.onTranscript?.('We agreed to launch Tuesday.'));
     expect(screen.getByText('We agreed to launch Tuesday.')).toBeVisible();
 
-    fireEvent.click(screen.getByRole('button', { name: 'End' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'End' }));
     await waitFor(() => expect(state.api.appendNoteTranscriptSegment).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
@@ -316,7 +316,7 @@ describe('MeetingNotesScreen', () => {
       kind: 'transcription_state_changed', noteId: expect.any(String), state: 'paused',
       visibility: 'private', audioSource: 'microphone_and_system',
     });
-    expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'End' })).toBeVisible();
 
     state.dictationState = 'paused';
     view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
@@ -328,7 +328,7 @@ describe('MeetingNotesScreen', () => {
       kind: 'transcription_state_changed', noteId: expect.any(String), state: 'resumed',
       visibility: 'private', audioSource: 'microphone_and_system',
     });
-    expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'End' })).toBeVisible();
   });
 
   it('waits for the native permission decision before marking the note as recording', async () => {
@@ -347,7 +347,7 @@ describe('MeetingNotesScreen', () => {
 
     await act(async () => permissionDecision.resolve({ microphone: 'granted', systemAudio: 'granted' }));
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
-    expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'End' })).toBeVisible();
   });
 
   it('waits for the final provider transcript, persistence, and summary before marking the note complete', async () => {
@@ -362,7 +362,7 @@ describe('MeetingNotesScreen', () => {
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
 
-    fireEvent.click(screen.getByRole('button', { name: 'End' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'End' }));
     expect(await screen.findByRole('button', { name: 'Finalizing…' })).toBeDisabled();
     expect(state.api.updateNote).not.toHaveBeenCalledWith(
       expect.any(String),
@@ -398,7 +398,7 @@ describe('MeetingNotesScreen', () => {
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
 
-    fireEvent.click(screen.getByRole('button', { name: 'End' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'End' }));
 
     await waitFor(() => expect(state.closeMeetingNotes).toHaveBeenCalledOnce());
     expect(state.reportTelemetryProductIntent).toHaveBeenCalledWith({
@@ -424,7 +424,7 @@ describe('MeetingNotesScreen', () => {
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
 
-    fireEvent.click(screen.getByRole('button', { name: 'End' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'End' }));
 
     // The note is marked complete either way — the recording really did end —
     // but nothing in the note screen can ask for the summary again, so closing
@@ -590,7 +590,7 @@ describe('MeetingNotesScreen', () => {
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
 
-    fireEvent.click(screen.getByRole('button', { name: 'End' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'End' }));
 
     // Closing here would take the only report of the failure with it. The
     // native close path is the one that must close regardless, because a window
@@ -703,7 +703,7 @@ describe('MeetingNotesScreen', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(state.stop).not.toHaveBeenCalled();
     expect(state.closeMeetingNotes).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'End' })).toBeVisible();
   });
 
   it('takes the question away when the recording ends underneath it', async () => {
@@ -756,7 +756,7 @@ describe('MeetingNotesScreen', () => {
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
 
-    fireEvent.click(screen.getByRole('button', { name: 'End' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'End' }));
 
     await waitFor(() => expect(state.api.generateNoteNotes).toHaveBeenCalledWith(
       expect.any(String),
@@ -795,7 +795,7 @@ describe('MeetingNotesScreen', () => {
     await screen.findByDisplayValue('Meeting notes');
 
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
-    expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'End' })).toBeVisible();
     expect(screen.getByRole('status')).toHaveTextContent('Recording microphone only');
     expect(screen.getByText('Listening to your microphone')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Open System Settings' }));
