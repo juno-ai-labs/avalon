@@ -112,6 +112,20 @@ author's zone when the author named one, and their own when nobody did.
 
 ## Invariants
 
+- **A readiness rule the model cannot read is a trap.** `AutomationDraftSchema`'s
+  refinements decide whether a draft is ready, and none of them can be expressed
+  in the JSON Schema the compiler shows the model — they are cross-field, and the
+  prefilter's lives inside an opaque JSON string. Each one is therefore stated
+  somewhere the model reads, and reaches it as a named field when it breaks,
+  because `automation_submit_draft` declares the same parse as its
+  `validateInput`. A refinement added with neither leaves the model able to fail
+  it and unable to learn why, which is how a compile reaches a state it cannot
+  leave. The refinements live in `@rally/contracts`, a package away from both
+  this document and the compiler, so a new one passes every test in its own
+  package while doing this. One is still unstated in everything the model reads:
+  memory-table names must be unique within an automation. It arrives as a named
+  field when it fails, which is the floor rather than the goal.
+
 - **A draft never runs.** Every path that starts a run — the scheduler alarm,
   activity matching, inbound email, a manual run — requires
   `status = 'active' AND lifecycle_state = 'visible'`. Adding a start path that
@@ -217,6 +231,16 @@ from the API, not a second renderer completion.
   compiler returns a draft, so a provider error, a timeout, or invalid model
   output leaves the previous turn as the saved state and the conversation on
   screen unchanged.
+- **A submission the draft schema rejects** is answered with the field that has
+  to change. `AutomationDraftSchema`'s refinements — a ready activity trigger's
+  binding key, its inspected plugin, one declared `deterministicPrefilter`
+  event type — are what decide readiness, and none of them can be stated in the
+  JSON Schema the model is shown, so the compiler hands the same parse to the
+  harness as the submit tool's code-authored refinement. Without it a rejection
+  reads as an external fault, the model is told to resubmit unchanged, and the
+  turn ends `automation_draft_not_submitted` — a `502` the person can only
+  answer by retrying into the same wall. [`agent-harness.md`](agent-harness.md)
+  owns the classification.
 - **A draft that cannot bind its activity source** is still saved, as a draft
   that is not ready with the reason as its follow-up question. That is the case
   someone most needs to come back to.
@@ -259,6 +283,8 @@ from the API, not a second renderer completion.
 | `apps/api/test/automation-lifecycle.test.ts` | Archival, and the refusal to archive an automation that runs. |
 | `apps/api/test/automation-compile-source-validation.test.ts` | An unbindable activity source still saving as a draft, and a hand-built `ConnectorError`'s mapping to a typed `ApiError` — reconnect-required only for the exact code-plus-detail shape `isReconnectRequiredConnectorError` checks, non-retryable otherwise. |
 | `apps/api/test/automation-compile-connector-registry.test.ts` | The mapping above against the real, unmocked `loadAutomationCreatorPluginCatalog`: a stored connection naming a `connector_type` this environment does not register reaches `AutomationService.compile`'s catch block and comes back as `automation_connector_failed`. |
+| `packages/agent-harness/src/index.test.ts` | The compiler's submission loop: the field a refused draft is answered with, and that a corrected resubmission compiles. |
+| `packages/contracts/src/index.test.ts` | Every readiness refinement's path and message — what the model is actually told when a draft is refused. |
 | `apps/desktop/src/renderer/screens/new-automation.test.tsx` | Resuming `?draft=`, the screen naming the draft it wrote, and the delivery choice a draft's `requestedDelivery` pre-selects. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | Draft ordering, the row's link, and the archive menu item. |
 | `packages/agent-harness/src/automation-compiler-wire-roundtrip.test.ts` | A regression pin, not a two-version-skew detector: the normalizer's trigger handling for an unnamed multi-time-daily calendar schedule surviving `AutomationDraftStreamEventSchema` and a JSON transport round trip. |
@@ -303,6 +329,47 @@ conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
 ## Changelog
+
+### 2026-08-25 — A rejected submission tells the compiler which field to fix
+
+**What changed:** `automation_submit_draft` hands the harness the same parse its
+executor runs as a code-authored refinement, so a submission the draft contract
+rejects comes back naming the field. The submission schema and the compiler
+policy both state the requirement that had been invisible: a ready
+`semantic_activity` trigger names one declared event type in its
+`deterministicPrefilter`. A prefilter string that is not a JSON object now
+reaches the schema instead of being coerced to `{}` — which had produced the
+same un-actionable rejection for a model that sent unquoted keys or a
+double-encoded string, and which silently dropped a filter the model wrote from
+a saved automation.
+
+**Why:** the compiler could reach a state it could not leave. The submit tool's
+advertised JSON Schema accepts a draft the same tool's executor then refuses,
+and with no refinement declared the harness read that refusal as a fault in
+somebody else's system — telling the model to retry without changing its
+arguments. On request `8592b3f1` the model complied four times over one missing
+`deterministicPrefilter.eventType`, the compile ended with no draft, and the
+person got "Avalon could not refine the automation draft. Try again" for a turn
+where trying again could not have helped. Nothing was written, so the loss was
+the turn rather than the draft — but a builder that answers a fixable mistake
+with an unfixable error is worse than one that saves a draft that is not ready.
+
+**How it is proved:** `packages/agent-harness/src/index.test.ts` asserts the
+correction the model receives names
+`triggers[0].deterministicPrefilter.eventType` and that the corrected
+resubmission compiles. `apps/api/test/automation-compile-source-validation.test.ts`
+still covers the neighbouring case, where a draft that cannot bind its source is
+saved as not ready rather than failing.
+
+**What a future change has to respect:** recorded above as an invariant, since
+the refinements live in another package and a changelog is not where a future
+change is checked.
+
+**Considered and rejected:** *Saving the rejected draft as not-ready* so the turn
+survives: the draft that arrived is the model's, not the person's, and storing a
+draft whose triggers were refused would put an unusable automation in the
+sidebar. The compiler's own not-ready path already exists for what the person
+still has to decide.
 
 ### 2026-08-25 — Review found the connector-error mapping below doesn't reach its motivating case
 

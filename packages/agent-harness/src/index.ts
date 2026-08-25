@@ -1016,7 +1016,12 @@ const automationDraftSubmissionJsonSchema = {
           },
           deterministicPrefilter: {
             type: ["string", "null"],
-            description: "A JSON-encoded object used before semantic classification."
+            // The one required key lives inside an opaque JSON string, so
+            // nothing else the model is shown can state it: the schema cannot
+            // constrain the encoded object, and the prose above says only that
+            // a prefilter is declared. Naming it here is what stops a ready
+            // semantic trigger being submitted without it.
+            description: "A JSON-encoded object of deterministic filters applied before semantic classification. A ready semantic_activity trigger must name exactly one declared event type from the plugin in suggestedSourcePluginId, as {\"eventType\": \"the.event.type\"}, optionally alongside that event's declared deterministic filter fields."
           },
           condition: { type: ["string", "null"] },
           resourceId: { type: ["string", "null"] }
@@ -1559,6 +1564,30 @@ export async function compileAutomation(input: {
     },
     {
       definition: AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS[3]!,
+      /**
+       * The draft's real contract is `AutomationDraftSchema`, and the parts of
+       * it that decide whether a submission is accepted — a ready activity
+       * trigger's binding key, its inspected plugin, its declared prefilter
+       * event type, unique memory-table names — are cross-field refinements no
+       * JSON Schema can state, so the declared `inputSchema` accepts arguments
+       * the executor then rejects.
+       *
+       * Without this hook the runtime sees arguments that match everything it
+       * was shown, files the executor's `ZodError` as downstream data
+       * validation, and hands the model "the tool could not validate its data;
+       * retry without changing the arguments". The model obeys: it resubmits
+       * the same draft, is refused identically, and the compile ends with no
+       * draft at all. That is request 8592b3f1 — four identical rejections of
+       * one missing `deterministicPrefilter.eventType`, then
+       * `automation_draft_not_submitted` and a 502 the person could only read
+       * as "try again". Re-running the same parse here is what turns that dead
+       * end into the named field, because it is the one signal that separates a
+       * correctable argument from an external fault.
+       */
+      validateInput: (raw) => {
+        const parsed = parseAutomationSubmission(raw);
+        return parsed.success ? null : parsed.error;
+      },
       execute: async (raw) => {
         await input.onDiagnostic?.({
           stage: "normalize",
@@ -1568,8 +1597,7 @@ export async function compileAutomation(input: {
           fallbackAttempt: 0,
           repairAttempt: 0,
         });
-        const normalized = normalizeAutomationDraft(raw);
-        const parsed = AutomationDraftSchema.safeParse(normalized);
+        const parsed = parseAutomationSubmission(raw);
         await input.onDiagnostic?.({
           stage: "validate",
           schemaName: "automation_draft",
@@ -2043,6 +2071,20 @@ function easyEnglishCurrentTime(
   ].join("\n");
 }
 
+/**
+ * The one parse a submitted draft gets.
+ *
+ * Both the executor and `validateInput` go through here, because the
+ * correction the model receives is only useful if it names a field the
+ * executor actually rejects. Two call sites that each normalized and parsed
+ * for themselves would be one edit away from disagreeing — and a correction
+ * naming a field the executor is fine with is the same unwinnable loop with a
+ * different field's name on it.
+ */
+function parseAutomationSubmission(raw: unknown): z.ZodSafeParseResult<AutomationDraft> {
+  return AutomationDraftSchema.safeParse(normalizeAutomationDraft(raw));
+}
+
 function normalizeAutomationDraft(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const draft = value as Record<string, unknown>;
@@ -2113,7 +2155,7 @@ function normalizeAutomationTrigger(value: unknown): unknown {
         connectorType: trigger.connectorType,
         sourceBindingKey: trigger.sourceBindingKey,
         suggestedSourcePluginId: trigger.suggestedSourcePluginId,
-        deterministicPrefilter: parseJsonObject(trigger.deterministicPrefilter),
+        deterministicPrefilter: jsonObjectOrRaw(trigger.deterministicPrefilter),
         condition: trigger.condition
       };
     case "resource_watch":
@@ -2132,6 +2174,29 @@ function normalizeAutomationTrigger(value: unknown): unknown {
 
 function normalizeTriggerSummary(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+/**
+ * A JSON-encoded object, or whatever was sent when it is not one.
+ *
+ * `parseJsonObject` answers `{}` for a string it cannot decode, which is the
+ * right tolerance for a field nobody has to get right. It is the wrong one
+ * here: an empty prefilter fails the ready-trigger refinement, so a model that
+ * sent `{eventType: drive.file_changed}` — unquoted keys, or a JSON string
+ * encoded twice — is told it declared no event type while looking at one it
+ * plainly wrote, and resubmits. Handing the string through instead lets the
+ * schema reject the value that was actually sent. On a draft that is saved it
+ * also stops a filter the model wrote being dropped, which would leave the
+ * automation matching every event of its kind rather than the one asked for.
+ */
+function jsonObjectOrRaw(value: unknown): unknown {
+  if (typeof value !== "string") return parseJsonObject(value);
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : value;
+  } catch {
+    return value;
+  }
 }
 
 function parseJsonObject(value: unknown): Record<string, unknown> {
@@ -2443,6 +2508,14 @@ export interface HarnessTool {
    * Re-run code-authored input refinements when a Zod failure escapes the
    * executor. JSON Schema cannot represent every refinement, so this keeps a
    * correctable argument error distinct from downstream response validation.
+   *
+   * **A tool whose executor parses with a schema stricter than the one it
+   * advertises owes the runtime one of these.** Without it the runtime reads
+   * only the advertised schema, finds arguments that match it, files the
+   * tool's own rejection as somebody else's data problem, and tells the model
+   * to retry without changing them — which it does, until the run ends. That
+   * failure is silent in every log: `automation_submit_draft` shipped without
+   * one and cost a production compile before anyone could see why.
    */
   validateInput?: (input: unknown) => z.ZodError | null;
   /** Execute in model-declared order before concurrent tools in the same batch. */
