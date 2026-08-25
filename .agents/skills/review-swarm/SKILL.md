@@ -498,6 +498,45 @@ failure mode, and the minimal change that restores the invariant. Classify
 P0/P1/P2/nitpick — weight by blast radius: a lost-work or region-parity gap is
 typically P0/P1.
 
+### Over-Engineering Reviewer
+
+A staff-level engineer judging whether this change — and the code it lands in —
+is over-engineered. Use [`AGENTS.md`](../../../AGENTS.md)'s
+[Where we are](../../../AGENTS.md#where-we-are) as a guidepost. Two documents to also read is
+form a view: [`choosing-queues-or-rpc.md`](../../../docs/choosing-queues-or-rpc.md)
+under "Do not over-engineer" and "Deciding without measurement", and
+[`adding-security-defensive-and-other-limits.md`](../../../docs/adding-security-defensive-and-other-limits.md)
+under "Premature limits are not preferred".
+
+**The situation.** Avalon is seed-stage: A structure built for a scale, a caller, 
+or a second implementation nobody has asked for is not banked optionality. Hence 
+the repository's preference for the shape that is cheapest to reverse.
+
+**Read the change as evidence, not only as a diff.** It may be entirely reasonable
+and still be the straw that breaks the camels back. If the change looks awkward,
+ask what made it awkward; the answer is usually in what surrounds it, and that is
+the finding worth having. Then weigh whether this is the moment to collapse it —
+the cost is now demonstrated rather than hypothetical, and the person here
+understands the area.
+
+**Where the excess usually hides.** Extension points with one user — the interface
+with one implementor, the registry with one entry, the knob nobody sets, the
+options bag whose other branch has no caller.
+
+** Fast Moving codebase.** This is a fast-moving codebase, so be aware that old 
+leftover implementations should be cleaned up. It's better to burn a couple more 
+hours making it right now than get stuck changing thousands of lines or more code 
+down the line. Look for leftover migrations or leftover optionality or leftover 
+code paths. Always think first principles and build from scratch, and then compare 
+it to the current implementation 
+
+Two areas have written answers worth knowing before you argue with them so learn them:
+
+- **A new limit.** 
+- **New infrastructure.**
+
+**Findings.** Provide findings ranked as P0, P1, and P2.
+
 ### Documentation Reviewer
 
 A staff-level documentation owner who guarantees the docs stay in lockstep with the
