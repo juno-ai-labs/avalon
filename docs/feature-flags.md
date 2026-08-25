@@ -442,7 +442,7 @@ guarantee. The inference ledger records what each attempt actually used.
 ### Client-visible flags
 
 A client flag decides what the desktop is allowed to *offer*, or how it should
-behave. There are six today:
+behave. There are seven today:
 
 | Flag key | Type | Default | Decides |
 | --- | --- | --- | --- |
@@ -451,20 +451,26 @@ behave. There are six today:
 | `meeting-recording-enabled` | boolean | `false` | Whether Electron shows meeting-recording actions |
 | `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
 | `automation-workspace-templates-enabled` | boolean | `false` | Whether Electron shows workspace-template surfaces |
+| `digests-enabled` | boolean | `true` | Whether Electron shows the Digest settings section — resolved through `digest-flags.ts`, the same function that gates delivery; see [`digests.md`](digests.md#the-run) |
 | `control-tower-refresh-seconds` | number | `60` | How often a recording meeting commits a transcript segment and rewrites its Control Tower briefing |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
 false, "hypersightEnabled": false, "meetingRecordingEnabled": false,
 "suggestedWorkEnabled": false, "automationWorkspaceTemplatesEnabled": false,
-"controlTowerRefreshSeconds": 60 }` — resolved for the signed-in person.
-It answers under *identity* auth rather than workspace auth: eligibility belongs
-to the account, and a device that has not chosen an organization yet still has to
-be told the feature is off rather than read a 403 as an outage.
+"digestsEnabled": true, "controlTowerRefreshSeconds": 60 }` — resolved for the
+signed-in person. It answers under *identity* auth rather than workspace auth:
+eligibility belongs to the account, and a device that has not chosen an
+organization yet still has to be told the feature is off rather than read a
+403 as an outage. `digestsEnabled` is the exception to "not chosen yet reads
+as off": with no workspace to evaluate against, it reads `true`, the same gap
+every other absence in this flag's evaluation resolves to.
 
-The fields are not all the same kind of answer, and the response schema says so.
-The five Boolean features default to off. `controlTowerRefreshSeconds`
-is a setting with no off: it defaults to the cadence the client would have used
-anyway, and both ends read that number from one definition —
+The fields are not all the same kind of answer, and the response schema says
+so. Five of the six Boolean features default to off; `digestsEnabled` is the
+one exception, for the same reason it is discussed on its own below.
+`controlTowerRefreshSeconds` is a setting with no off: it defaults to the
+cadence the client would have used anyway, and both ends read that number
+from one definition —
 `CONTROL_TOWER_REFRESH_SECONDS` in `@rally/contracts` — so an unreachable
 Flagship, an older service, and the desktop fallback cannot disagree. The
 resolver clamps what Flagship serves to that range before serving it, because
@@ -483,13 +489,24 @@ camel-case response fields. `true` therefore always means the surface may be
 shown and `false` means it is hidden; no caller has to infer whether a bare name
 means disabled, hidden, or selected.
 
-The four managed product Booleans are presentation-only. Only Electron consumes
-them to show or hide product surfaces; the API routes and underlying product
-capabilities do not evaluate them. They are rollout controls for discovery and
-visibility, not authorization, entitlements, or server-side kill switches. A
-hidden Suggested Work surface may skip its own fetch and impressions because
-nothing was drawn, but the Suggested Work API remains available. The same rule
-applies to workspace-template, meeting-recording, and HyperSight operations.
+The four original managed product Booleans are presentation-only. Only
+Electron consumes them to show or hide product surfaces; the API routes and
+underlying product capabilities do not evaluate them. They are rollout
+controls for discovery and visibility, not authorization, entitlements, or
+server-side kill switches. A hidden Suggested Work surface may skip its own
+fetch and impressions because nothing was drawn, but the Suggested Work API
+remains available. The same rule applies to workspace-template,
+meeting-recording, and HyperSight operations.
+
+**`digestsEnabled` breaks that pattern on purpose.** As a client field it is
+presentation-only exactly like the other five — Electron shows or hides a
+settings section, nothing else changes. But the Flagship flag behind it,
+`digests-enabled`, is not merely a rollout control: `fireDigestSchedule`
+reads the identical flag to decide whether to actually send. A hidden
+Suggested Work surface sits above a live API; a hidden Digest section sits
+above delivery that has genuinely stopped. This is one evaluation read from
+two places, not a presentation flag that happens to share a name with a
+kill switch elsewhere.
 
 The Developer section is for Juno staff, and **that is a Flagship targeting
 rule, not a condition in the Worker** — see [the rule the flag is provisioned
@@ -801,12 +818,10 @@ for every existing person, so provisioning it must not be the thing that
 silently stops delivery; see [`digests.md`](digests.md#the-run). Once created,
 edit these flags through Ace rather than the Flagship dashboard: Flagship's
 documented API has no outbound change webhook, so only Ace performs the Queue
-fan-out that wakes connected clients — including for `digests-enabled`, which
-no client reads. That fan-out is not wasted so much as unnecessary: it
-re-evaluates and re-sends the complete client contract regardless of which key
-changed, so a `digests-enabled` save costs the same harmless re-evaluation a
-presentation-flag save already does. [`ace.md`](ace.md) owns that release and
-recovery path.
+fan-out that wakes connected clients — including for `digests-enabled`, whose
+save now reaches a client the same way the presentation flags' do, serving
+`digestsEnabled` in the `GET /feature-flags` response the way any other field
+here is served. [`ace.md`](ace.md) owns that release and recovery path.
 
 To provision the app in a fresh account:
 
@@ -1026,6 +1041,34 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-08-25 — digests-enabled joins the client-visible flags
+
+**What changed:** `digestsEnabled` was added to `ClientFeatureFlagsSchema`
+and `client-feature-flags.ts`, resolved through the same
+`resolveDigestsEnabled` the entry below already introduced. It is the sixth
+Boolean in the client response and the second field overall — after
+`controlTowerRefreshSeconds` — that does not default the way the rest of the
+schema does.
+
+**Why:** The entry below deliberately drew the line at the server: nothing
+about firing a digest needed a value pushed to a connected socket, so
+teaching the client about this flag looked like unnecessary scope. It became
+necessary once Electron needed to hide the Digest settings section for
+someone the flag currently excludes — showing a section that looks active
+while silently doing nothing is worse than the scope of reading one more
+field.
+
+**Considered and rejected:** Nothing new here beyond what
+[`digests.md`](digests.md)'s matching entry already weighs — a "paused"
+notice instead of hiding the section outright, and a client-side check
+combined from workspace and user facts rather than one evaluation reused.
+
+**Consequences:** This document's tables, the client-visible-flags count, and
+the "presentation-only" claim about the four original product Booleans all
+now carry the exception. Ace's Queue fan-out on a `digests-enabled` save,
+previously a documented no-op for any connected client, now has a real
+effect the same way a `hypersight-enabled` save always did.
 
 ### 2026-08-25 — A fourth resolver: the digest kill switch
 
