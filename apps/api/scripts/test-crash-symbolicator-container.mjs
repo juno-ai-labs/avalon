@@ -165,7 +165,7 @@ try {
   await waitForProcessPressure();
 
   const report = JSON.parse(runDocker(containerArguments(
-    '/usr/local/bin/avalon-symbolicate',
+    '/usr/local/bin/rally-symbolicate',
     '/fixtures/test.dmp',
     '/fixtures/symbols',
   )));
@@ -175,7 +175,7 @@ try {
   assertSanitized(report);
 
   const malformed = JSON.parse(runDocker(containerArguments(
-    '/usr/local/bin/avalon-symbolicate',
+    '/usr/local/bin/rally-symbolicate',
     '/fixtures/malformed.dmp',
     '/fixtures/symbols',
   )));

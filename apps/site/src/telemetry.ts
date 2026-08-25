@@ -12,7 +12,7 @@ type SiteAction = TelemetryEventProperties<'site_action_selected'>['action'];
 type SitePlacement = TelemetryEventProperties<'site_action_selected'>['placement'];
 type HandoffType = TelemetryEventProperties<'desktop_handoff_attempted'>['handoffType'];
 
-const ANONYMOUS_EPOCH_KEY = 'avalon.site.anonymous-epoch.v1';
+const ANONYMOUS_EPOCH_KEY = 'rally.site.anonymous-epoch.v1';
 const MAX_PENDING_EVENTS = 20;
 
 interface CapabilityState extends TelemetryBootstrapResponse {

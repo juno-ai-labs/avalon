@@ -58,7 +58,7 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
     }, async (span) => {
       await span.step("workstream.create.receipt.reserve", () => Promise.resolve());
       await span.step("workstream.create.object.initialize", () => Promise.resolve());
-      span.setAttributes({ "avalon.create.path": "fresh" });
+      span.setAttributes({ "rally.create.path": "fresh" });
     });
 
     const opened = recordedSpans();
@@ -70,12 +70,12 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
     // A span left open never reaches the exporter.
     expect(opened.every((span) => span.ended)).toBe(true);
     expect(opened[0]?.attributes).toMatchObject({
-      "avalon.flow": "workstream_create",
+      "rally.flow": "workstream_create",
       "avalon.component": "api",
-      "avalon.workspace.id": "workspace-1",
-      "avalon.workstream.id": "workstream-1",
+      "rally.workspace.id": "workspace-1",
+      "rally.workstream.id": "workstream-1",
       "user.id": "user-1",
-      "avalon.create.path": "fresh",
+      "rally.create.path": "fresh",
     });
     void info;
   });
@@ -169,10 +169,10 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
     }), () => Promise.resolve());
 
     const attributes = recordedSpans()[0]?.attributes ?? {};
-    expect(attributes).toEqual({ "avalon.workspace.id": "workspace-1" });
+    expect(attributes).toEqual({ "rally.workspace.id": "workspace-1" });
     // A present-but-empty attribute is worse than an absent one: it makes
     // "unknown" indistinguishable from "known to be nothing" in a dashboard.
-    expect(Object.keys(attributes)).not.toContain("avalon.workstream.id");
+    expect(Object.keys(attributes)).not.toContain("rally.workstream.id");
   });
 
   it("opens no span and logs nothing for a path outside the traced flows", async () => {
@@ -209,9 +209,9 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
     // when the call it belongs to failed.
     expect(response.headers.get("x-request-id")).toBe(requestId);
     expect(recordedSpans()[0]?.attributes).toMatchObject({
-      "avalon.flow": "workstream_open",
-      "avalon.request.id": requestId,
-      "avalon.workstream.id": "workstream-1",
+      "rally.flow": "workstream_open",
+      "rally.request.id": requestId,
+      "rally.workstream.id": "workstream-1",
       "http.request.method": "GET",
     });
     // The caller's attributes reach the summary row too, so one row explains
@@ -241,9 +241,9 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
       // Both sides of the join: the raw id identifies the person to us, the
       // surrogate identifies the same person to PostHog.
       "user.id": "user-1",
-      "avalon.workspace.id": "workspace-1",
-      "avalon.analytics.person_id": "person-analytics-1",
-      "avalon.analytics.workspace_id": "workspace-analytics-1",
+      "rally.workspace.id": "workspace-1",
+      "rally.analytics.person_id": "person-analytics-1",
+      "rally.analytics.workspace_id": "workspace-analytics-1",
       // PostHog's own key, set to the surrogate rather than left for the
       // destination to infer from `user.id` — which would key the same human
       // differently from the product pipeline and split them in two.
@@ -264,8 +264,8 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
 
     const attributes = recordedSpans()[0]?.attributes ?? {};
     expect(attributes["user.id"]).toBe("user-1");
-    expect(Object.keys(attributes)).not.toContain("avalon.analytics.person_id");
-    expect(Object.keys(attributes)).not.toContain("avalon.analytics.workspace_id");
+    expect(Object.keys(attributes)).not.toContain("rally.analytics.person_id");
+    expect(Object.keys(attributes)).not.toContain("rally.analytics.workspace_id");
     // And no PostHog key either: keying a person before the pipeline has minted
     // their surrogate is what would make the destination fall back to guessing.
     expect(Object.keys(attributes)).not.toContain("posthog.distinct_id");
@@ -289,9 +289,9 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
 
     await app.request("/probe", undefined, envAt("info"));
 
-    expect(recordedSpans()[0]?.attributes).toMatchObject({ "avalon.auth.duration_ms": 42 });
+    expect(recordedSpans()[0]?.attributes).toMatchObject({ "rally.auth.duration_ms": 42 });
     expect(rows(info).find((row) => row.event === "perf_flow"))
-      .toMatchObject({ "avalon.auth.duration_ms": 42 });
+      .toMatchObject({ "rally.auth.duration_ms": 42 });
   });
 
   it("repeats the flow onto each step span, which does not inherit it", async () => {
@@ -309,12 +309,12 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
     // that omitted these could not be filtered or grouped by its flow.
     const step = recordedSpans().find((s) => s.name === "workstream.create.receipt.reserve");
     expect(step?.attributes).toMatchObject({
-      "avalon.flow": "workstream_create",
+      "rally.flow": "workstream_create",
       "avalon.component": "api",
     });
     // Identity stays on the root: it is many attributes, the step shares the
     // root's trace, and `perf_flow` carries every step beside the identity.
-    expect(Object.keys(step?.attributes ?? {})).not.toContain("avalon.workspace.id");
+    expect(Object.keys(step?.attributes ?? {})).not.toContain("rally.workspace.id");
   });
 
   it("charges work between two steps to `unattributed`, not to the next step", async () => {

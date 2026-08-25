@@ -6,8 +6,12 @@ bundle identity and deep-link scheme are all Rally already, with the Avalon
 forms kept deliberately as compatibility. The rest has not been touched.
 
 This document is the **inventory**: what still says Avalon, where, and — the
-part that decides the order of work — what each reference is coupled to.
-It is a survey, not a plan; it does not decide what gets renamed or when.
+part that decides the order of work — what each reference is coupled to. As
+each category is worked, its section records what moved, what deliberately did
+not, and what a consumer outside this repository still has to do.
+
+Sections 3 and 5 are **done**; sections 1, 4, 6, 7, and 8 are outstanding;
+section 2 is closed as out of scope.
 
 **The Cloudflare infrastructure does not get renamed.** Every `avalon-*` Worker,
 queue, R2 bucket, and lakehouse name in [section 2](#2-cloudflare-infrastructure--out-of-scope-not-renamed)
@@ -123,33 +127,42 @@ alongside `avalon-eu-access-revocations`. That is a real defect rather than
 rebrand debt, and is unaffected by the no-rename decision — but it is still a
 provisioning change, so it belongs to whatever next touches those queues.
 
-### 3. Externally-observable — a rename needs a consumer to move
+### 3. Externally-observable identifiers — renamed to Rally
 
-- **Analytics event names**: **62 distinct `avalon_*` identifiers, 280
-  occurrences, 69 files** — `avalon_connect`, `avalon_start_task_submit`,
-  `avalon_feedback_submit`, `avalon_preferences_submit`,
-  `avalon_lockdown_mode_enabled`, `avalon_menu_bar_enabled`,
-  `avalon_application_icon`, and the rest. These are the names PostHog
-  dashboards and saved insights query by. Renaming them breaks every existing
-  chart unless the destination aliases them.
-- **OpenTelemetry span attributes**: **77 distinct `avalon.*` names, 611
-  occurrences, 156 files** — `avalon.workspace.id`, `avalon.workstream.id`,
-  `avalon.request.id`, `avalon.socket.ticket_id`, `avalon.harness_run.id`,
-  `avalon.llm_inference`, `avalon.component`, `avalon.flow`,
-  `avalon.plugins.load`, `avalon.auth.duration_ms`. A partial `rally.*` prefix
-  already exists (15 occurrences, including `rally.message.client_id` and
-  `rally.request.id`), so the two prefixes are live at once — that split is
-  itself worth resolving.
-- **Telemetry event type**: `com.avalon.telemetry.event` (18).
-- **Socket ticket type**: `avalon.ticket.v1` (5).
-- **Plugin ids**: `avalon_core`, `avalon_web`, `avalon_terminal`,
-  `avalon_skills`, `avalon_discovery`, `avalon_memory`, `avalon_tables`,
-  `avalon_workstream`, `avalon_automation_architect` — surfaced to the agent
-  harness and referenced by `AVALON_*_PLUGIN_ID` env vars.
-- **Provider app registrations**: `config/provider-apps/*.json` (50
-  occurrences, 7 files), including Slack manifests and the Linear agent icon
-  at `https://rallywith.ai/brand/avalon-mark.png` — a Rally host serving an
-  Avalon-named asset. These are applied by hand per provider.
+**Done.** Every identifier below now mints its Rally spelling. What each one
+still needs on the *consumer* side is the part this section exists to record —
+renaming the emitter does not move a dashboard.
+
+| Identifier | Now | Consumer action still outstanding |
+| --- | --- | --- |
+| Analytics event names (55 distinct) | `rally_*` | PostHog dashboards, saved insights, and cohorts still query `avalon_*`. Alias the old names at the destination or the charts go flat. |
+| OpenTelemetry span attributes (68 distinct) | `rally.*` | Saved trace queries filtering `avalon.*` stop matching. Traces are short-lived, so this ages out on its own. |
+| PostHog app namespace | `app.rally.desktop` | Partitions existing desktop events from new ones under `$app_namespace`. |
+| Plugin ids (16 distinct) | `rally:*`, `rally_*`, `rally.skills` | None — resolved through `AVALON_*_PLUGIN_ID` env vars, whose *names* are section 4 and unchanged. |
+| Capability names | `rally.block-dashboard.submit` and siblings | None — model-facing, minted per run. |
+| Socket ticket sentinel | `rally.ticket.v1` | None. `avalon.ticket.v1` is accepted inbound and echoed back; see below. |
+| Public-site anonymous epoch key | `rally.site.anonymous-epoch.v1` | A returning visitor gets a fresh anonymous epoch once. |
+
+The **socket ticket sentinel** was the one identifier here that could not be
+renamed outright. A desktop build already installed offers the sentinel it
+shipped with, and Chromium fails a handshake whose response selects a
+subprotocol the client never offered — so accepting the superseded spelling is
+not sufficient, the server has to echo back the one it was handed.
+`SUPERSEDED_SOCKET_TICKET_SUBPROTOCOLS` in
+`packages/contracts/src/socket-tickets.ts` holds it, and
+`negotiatedSocketTicketSubprotocol` is what a 101 now echoes. Retiring it is one
+edit to that list once those builds are gone.
+
+Two identifiers listed here in the first inventory turned out to be **already
+Rally**, with the Avalon form kept as deliberate compatibility rather than debt:
+`com.rally.telemetry.event` (superseded schemas in
+`packages/contracts/src/telemetry.ts`) and the crash-dump sidecar
+`<dump>.rally.json` (superseded suffix in `native-crash-uploader.ts`).
+
+Not renamed, and deliberately so: `avalon_upload` / `avalon_note` /
+`avalon_generated` and `avalon.web_search` / `avalon.web_fetch` are section 1
+and need a migration; `avalon.analytics_events` and `avalon_agent_runs` are
+lakehouse names and belong to section 2.
 
 ### 4. Runtime configuration — a rename is a coordinated deploy
 
@@ -182,16 +195,33 @@ Environment variables and Worker bindings: **~950 occurrences, 277 files**.
 - Also in the untracked local `.env.local` (20), which `pnpm env:sync`
   regenerates — worth checking that whatever generates it moves too.
 
-### 5. Filesystem paths and on-disk layout
+### 5. Filesystem paths and on-disk layout — renamed to Rally, except artifacts
 
-- **Sandbox paths**: `/workspace/.avalon/session.env`, `.avalon/resources/`,
-  `/workspace/.avalon-output`. Written by the API and read inside the sandbox.
-- **Symbolication binary**: `/usr/local/bin/avalon-symbolicate` (10), baked
-  into the crash-symbolicator container.
-- **Release artifacts**: `Avalon-<version>-mac-arm64.dmg` / `.zip` and their
-  `.blockmap`s. Every already-shipped DMG polls the update feed for these
-  names — the same permanence that pins `downloads.with-avalon.com` in
-  [`domain-migration.md`](domain-migration.md).
+**Done, with one permanent exception.**
+
+- **Sandbox paths** — `/workspace/.rally/`, `.rally/resources/`, `.rally/tmp/`,
+  `.rally/logs/`, `.rally/publications/`, `/workspace/.rally-output`. The
+  snapshot bootstrap that creates them is idempotent and creates the new names
+  on next run; a sandbox already running against an old snapshot keeps its
+  `.avalon` directories until it is replaced, which is per work stream and
+  short-lived. The `AVALON_RESOURCE_DIR` env var that carries the output path
+  keeps its name — that is section 4.
+- **Symbolication binary** — `/usr/local/bin/rally-symbolicate`. Self-contained:
+  `apps/api/crash-symbolicator/Dockerfile` builds it and the callers and tests
+  in this repository are its only consumers.
+- **Publisher session names** — `rally-publisher-<key>`, and the
+  `/tmp/rally-publisher-home` Git home beside it. Minted per operation, so
+  nothing outlives the rename.
+
+**Release artifacts keep their Avalon names, permanently.** `Avalon-<version>-mac-arm64.dmg`
+/ `.zip` / `.blockmap` and the `Avalon.dmg` recovery pointer are compiled into
+every build shipped before the rename and polled by those builds for updates;
+renaming them strands every installed client that has not updated yet. This is
+the same permanence that pins `downloads.with-avalon.com` in
+[`domain-migration.md`](domain-migration.md). `apps/release-retention/src/retention.ts`
+reads a bucket holding both namings and must keep doing so — electron-builder
+already mints `Rally-${version}-...` for new releases, so the bucket is mixed by
+design, not by oversight.
 
 ### 6. Brand assets
 
@@ -236,16 +266,53 @@ throughout while serving from `rallywith.ai`.
 
 ## What this inventory does not settle
 
-- **Whether `rally.*` or `avalon.*` wins for span attributes.** Both prefixes
-  are in the tree now. The split is a fact this inventory found, not one it
-  resolves.
-- **Which Avalon references are permanent.** The Cloudflare resource names are,
-  by the decision above. `downloads.` is already known permanent; shipped DMG
-  artifact names look the same way. Others may be.
+- **Which Avalon references are permanent.** Three are now settled: the
+  Cloudflare resource names by the decision above, `downloads.` by
+  [`domain-migration.md`](domain-migration.md), and the release artifact names
+  by section 5. Others may be.
+- **Whether the PostHog aliases get written.** Section 3 renamed the emitters;
+  nothing in this repository can alias the old event names at the destination.
 - **Ordering and batching.** The categories above are ordered by coupling cost,
   which is not the same as the order the work should happen in.
 
 ## Changelog
+
+### 2026-08-25 — Sections 3 and 5 refactored to Rally
+
+Renamed the externally-observable identifiers and the on-disk paths, in one
+change rather than per-category, because the two share a failure mode: a
+regex broad enough to catch them also catches the section 1 and 2 values it
+must not touch. The sweep therefore ran with explicit blocklists —
+`avalon_upload` / `avalon_note` / `avalon_generated`, `avalon.web_search` /
+`avalon.web_fetch`, `avalon.analytics_events`, `avalon_agent_runs`, every
+`avalon-` Cloudflare name, `AVALON_*` env var names, `with-avalon.com`, the
+`avalon://` scheme, and `avalon-mark` — and the verification that each of
+those still appears at its original count is the evidence the sweep stayed in
+its lane.
+
+Three things the sweep got wrong on the first pass, all caught by the gates and
+recorded here because they are what a future sweep will get wrong too:
+
+- Renaming `avalon:` by prefix hit the **deep-link scheme**, including the
+  accepted-schemes list in `desktop-deep-link.ts`. Deep links from shipped
+  builds would have stopped resolving. The rule now requires a lowercase letter
+  after the colon, which is what separates a plugin id from `avalon:` in prose.
+- The same rule renamed a **TypeScript parameter** named `avalon`.
+- Renaming `Avalon-<version>` hit the **release artifacts**, which are
+  permanent: `retention.ts` and its tests encode a bucket holding both namings
+  because pre-rename builds poll the Avalon names for updates. Reverted, and
+  section 5 now says so.
+
+The socket ticket sentinel could not be renamed outright. Accepting the
+superseded spelling inbound is not enough — Chromium fails a handshake whose
+response selects a subprotocol the client never offered, so the server now
+echoes back whichever sentinel it was handed rather than always the canonical
+one. That asymmetry is the thing to respect if another negotiated wire
+identifier is ever renamed.
+
+Frozen PRDs and applied D1 migrations were excluded from the sweep. Both are
+historical records; an inventory that edits history to make a count go down is
+worth less than the history.
 
 ### 2026-08-25 — Cloudflare infrastructure placed out of scope
 

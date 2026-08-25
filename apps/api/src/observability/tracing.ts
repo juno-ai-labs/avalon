@@ -44,7 +44,7 @@ import { logStructuredEvent, type LogEnv, type LogFields } from "./logger";
  * names are not final.
  */
 
-/** The flows this module traces. Carried as `avalon.flow` on every span. */
+/** The flows this module traces. Carried as `rally.flow` on every span. */
 export type PerfFlow =
   | "workstream_create"
   | "workstream_open"
@@ -65,7 +65,7 @@ export type SpanAttributes = Record<string, SpanAttributeValue>;
  * `session.id`); everything this product owns is namespaced under `avalon.` so
  * it can never collide with a convention added later. This is the one place an
  * Avalon identifier becomes an attribute name, so a rename happens once and a
- * dashboard filtering on `avalon.workspace.id` does not care which component
+ * dashboard filtering on `rally.workspace.id` does not care which component
  * emitted the span.
  */
 export interface TraceIdentity {
@@ -99,15 +99,15 @@ export function identityAttributes(identity: TraceIdentity): SpanAttributes {
   return {
     "user.id": identity.userId,
     "session.id": identity.sessionId,
-    "avalon.workspace.id": identity.workspaceId,
-    "avalon.workstream.id": identity.workstreamId,
-    "avalon.substream.id": identity.substreamId,
-    "avalon.request.id": identity.requestId,
+    "rally.workspace.id": identity.workspaceId,
+    "rally.workstream.id": identity.workstreamId,
+    "rally.substream.id": identity.substreamId,
+    "rally.request.id": identity.requestId,
     // Named for what they are on the other side. A reader who has a PostHog
     // person open and wants its traces filters on the same value they are
     // already looking at.
-    "avalon.analytics.person_id": identity.analyticsPersonId,
-    "avalon.analytics.workspace_id": identity.analyticsWorkspaceId,
+    "rally.analytics.person_id": identity.analyticsPersonId,
+    "rally.analytics.workspace_id": identity.analyticsWorkspaceId,
     // The one vendor-specific name in this file, and it is deliberate.
     //
     // `performance-tracing.md` gives two ways to settle identity before an
@@ -241,7 +241,7 @@ export function inFlowSpan<T>(
   const identity = options.identity ?? {};
   const callerAttributes = options.attributes ?? {};
   const base: SpanAttributes = {
-    "avalon.flow": options.flow,
+    "rally.flow": options.flow,
     "avalon.component": options.component,
     ...identityAttributes(identity),
     ...callerAttributes,
@@ -321,7 +321,7 @@ export function inFlowSpan<T>(
           // row already carries every step's duration next to them, which is
           // the path built for aggregating across requests.
           return await inSpan(stepName, {
-            "avalon.flow": options.flow,
+            "rally.flow": options.flow,
             "avalon.component": options.component,
             ...attributes,
           }, () => stepRun());
@@ -405,7 +405,7 @@ export function requestFlowSpan<T>(
       // Authentication runs before this span opens, so its cost is inside
       // `http_request` and outside this flow's duration. Carrying the number
       // is what stops the difference between the two reading as unexplained.
-      "avalon.auth.duration_ms": c.get("authDurationMs"),
+      "rally.auth.duration_ms": c.get("authDurationMs"),
       ...(options.attributes ?? {}),
     },
   }, run);

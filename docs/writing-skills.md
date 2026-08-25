@@ -78,7 +78,7 @@ export const TRIAGE_SKILL: HarnessSkill = {
   description: "How to work an inbound queue down to zero…",   // Tier 1
   whenToUse: "When asked to work through a backlog of…",       // Tier 1
   body: TRIAGE_BODY,                                           // Tier 2
-  ownerPlugin: "avalon:workstream",                            // optional
+  ownerPlugin: "rally:workstream",                            // optional
   resources: [{ path: "reference/severity.md", body: SEVERITY }], // Tier 3
 };
 ```

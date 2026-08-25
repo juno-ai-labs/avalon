@@ -13,9 +13,9 @@ import {
   type WorkstreamId,
 } from "@rally/contracts";
 import {
+  negotiatedSocketTicketSubprotocol,
   offersSocketTicketSubprotocol,
   socketTicketFromProtocols,
-  SOCKET_TICKET_SUBPROTOCOL,
 } from "@rally/contracts/socket-tickets";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -387,12 +387,15 @@ export function socketTicketFromRequest(request: Request, queryTicket: string | 
 
 /**
  * Chromium fails a handshake where the client offered subprotocols and the
- * server selected none, so the offer has to be answered. Only the sentinel is
- * echoed — returning the ticket would put the credential in a response header
+ * server selected none, so the offer has to be answered. The sentinel echoed is
+ * the one the client offered, canonical or superseded — selecting a spelling it
+ * never sent fails the handshake just as selecting none does. Only the sentinel
+ * is echoed — returning the ticket would put the credential in a response header
  * and undo the point of moving it out of the URL.
  */
 export function withNegotiatedSubprotocol(request: Request, response: Response): Response {
-  if (!offersSocketTicketSubprotocol(request.headers.get("sec-websocket-protocol"))) return response;
+  const offered = negotiatedSocketTicketSubprotocol(request.headers.get("sec-websocket-protocol"));
+  if (offered === null) return response;
   // Only an accepted upgrade is negotiated. A room that refuses one answers
   // with a JSON 401, 403, or 500, and rebuilding that as a 101 would replace a
   // readable rejection with a bodyless upgrade carrying no socket — turning
@@ -400,7 +403,7 @@ export function withNegotiatedSubprotocol(request: Request, response: Response):
   // handshake instead of an error the client can act on.
   if (response.status !== 101 || !response.webSocket) return response;
   const headers = new Headers(response.headers);
-  headers.set("sec-websocket-protocol", SOCKET_TICKET_SUBPROTOCOL);
+  headers.set("sec-websocket-protocol", offered);
   return new Response(null, { status: 101, webSocket: response.webSocket, headers });
 }
 
@@ -442,7 +445,7 @@ export class SocketService {
         sessionId: claims.sessionId,
         substreamId: claims.substreamId,
       },
-      attributes: { "avalon.socket.ticket_id": claims.ticketId },
+      attributes: { "rally.socket.ticket_id": claims.ticketId },
     }, async (span) => {
       const stub = await span.step("workstream.socket.room_stub", () => durableObjectStubForWorkspace(
         this.env,

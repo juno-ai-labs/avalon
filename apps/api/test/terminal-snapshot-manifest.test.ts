@@ -36,8 +36,8 @@ describe("Terminal snapshot manifest", () => {
     expect(command).toContain("python3 -c");
     expect(command).toContain("node -e");
     expect(command).toContain("sqlite3 :memory:");
-    expect(command).toContain("test -d /workspace/.avalon/tmp");
-    expect(command).toContain("test -d /workspace/.avalon-output");
+    expect(command).toContain("test -d /workspace/.rally/tmp");
+    expect(command).toContain("test -d /workspace/.rally-output");
     expect(command).not.toMatch(/token|secret|credential/iu);
   });
 

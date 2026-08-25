@@ -166,7 +166,7 @@ export function workstreamUnfurlBlocks(
       type: "button",
       text: { type: "plain_text", text: "Open in Avalon" },
       url,
-      action_id: "avalon_open_unfurl",
+      action_id: "rally_open_unfurl",
     }],
   };
   if (!summary) {

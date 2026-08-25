@@ -64,7 +64,7 @@ admission is split in two.
    route, the edge, and the room all hold. See
    [`performance-tracing.md`](performance-tracing.md).
 2. **Present.** The client opens the socket with the ticket as the second
-   `WebSocket` constructor argument: `[avalon.ticket.v1, <ticket>]`. The browser
+   `WebSocket` constructor argument: `[rally.ticket.v1, <ticket>]`. The browser
    sends those as `Sec-WebSocket-Protocol`, the one request header it will carry
    on a handshake. A ticket is a compact JWS — base64url joined by dots — which
    is a legal subprotocol token, so it needs no encoding.
@@ -501,6 +501,25 @@ what that leaves exposed.
 
 ## Changelog
 
+### 2026-08-25 — The ticket sentinel is rally.ticket.v1, and the offered one is echoed
+
+**What changed:** `SOCKET_TICKET_SUBPROTOCOL` is `rally.ticket.v1`.
+`avalon.ticket.v1` is listed in `SUPERSEDED_SOCKET_TICKET_SUBPROTOCOLS` and
+still accepted, and `withNegotiatedSubprotocol` now echoes back whichever
+sentinel the client offered rather than always the canonical one.
+
+**Why:** The Avalon-to-Rally rename reached the sentinel, and accepting the
+superseded spelling inbound is not sufficient on its own: Chromium fails a
+handshake whose response selects a subprotocol the client never offered, so a
+build installed before the rename would have been refused at the 101 even
+though its ticket verified. Echoing the offered sentinel is what makes
+acceptance real. Rejected: renaming outright and letting old builds fall back to
+the deprecated query parameter — that puts the credential back in the URL, which
+is the one thing this whole scheme exists to prevent. A future change that
+renames another negotiated wire identifier has to respect the same asymmetry:
+the reader may accept many spellings, but the response must return the one it
+was given.
+
 ### 2026-08-24 — Product feature flags reconcile privately on subscribe and push
 
 **What changed:** WorkspaceDO now evaluates the full client feature-flag
@@ -783,7 +802,7 @@ property that makes the reply safe to send without correlation.
 ticket's `jti`, alongside the ticket. `WorkstreamService.socketTicket` now mints
 that id and hands it to `issueSocketTicket` rather than letting the issuer
 generate one. The issuing route, the edge upgrade, and the room all record it as
-the `avalon.socket.ticket_id` span attribute.
+the `rally.socket.ticket_id` span attribute.
 
 **Why:** Opening a work stream was reported slow with no way to say which part
 was slow, and the socket half was the invisible half. A WebSocket upgrade is a
@@ -1168,7 +1187,7 @@ split between signature verification and final authorization.
 ### 2026-08-11 — The ticket moves from the query string to the handshake subprotocol
 
 **What changed:** A client presents its realtime ticket as
-`Sec-WebSocket-Protocol: avalon.ticket.v1, <ticket>` instead of `?ticket=`. The
+`Sec-WebSocket-Protocol: rally.ticket.v1, <ticket>` instead of `?ticket=`. The
 server reads it from there, prefers it over the query, echoes only the sentinel,
 and still accepts the query so builds released before this keep connecting.
 

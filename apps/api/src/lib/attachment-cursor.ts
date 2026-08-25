@@ -40,7 +40,7 @@ function base64UrlDecode(value: string): Uint8Array {
 
 async function purposeSeparatedSecret(secret: string): Promise<string> {
   if (!secret) throw new Error("Attachment cursor signing key is not configured");
-  return hmacSha256(secret, "avalon:attachment-cursor:v1");
+  return hmacSha256(secret, "rally:attachment-cursor:v1");
 }
 
 export async function sealAttachmentCursor(

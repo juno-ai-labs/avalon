@@ -328,7 +328,7 @@ lists all ten and what each serves.
 
 ### The Rally rename cannot reach installed builds through the update feed
 
-**An installed `app.avalon.desktop` build will not auto-update to
+**An installed `app.rally.desktop` build will not auto-update to
 `ai.rallywith.desktop`.** Squirrel.Mac treats the bundle identifier as the
 application's identity and refuses to replace a bundle with one that does not
 match — see the macOS distribution section of
@@ -348,7 +348,7 @@ are usually worth considering:
 2. **Ship one last Avalon-identified release first** whose only job is to tell
    people, in the app, that the next version must be installed by hand. This is
    the version that reaches everyone, so it is the only reliable channel.
-3. **Keep `app.avalon.desktop`** and rename everything else. This is the only
+3. **Keep `app.rally.desktop`** and rename everything else. This is the only
    option with no migration at all; it trades a permanent `avalon` string in the
    shipped bundle for a clean update path.
 
@@ -1303,7 +1303,7 @@ every churn.
 ### Terminal platform analytics
 
 Both API Workers bind `TERMINAL_ANALYTICS` to the account-level
-`avalon_terminal_operations` dataset. This dataset has one point per Daytona
+`rally_terminal_operations` dataset. This dataset has one point per Daytona
 platform operation and is intentionally separate from `avalon_agent_runs`: a
 provider create/bootstrap/start is a different grain from a completed model
 run. Writes are non-blocking and advisory. A failed analytics write cannot
@@ -1402,7 +1402,7 @@ The Global inference lakehouse is the only raw-inference surface. For Global
 workspaces it captures request and terminal-attempt events automatically,
 retains the exact record under `inference-lakehouse/records/` in Global R2, and
 exposes typed dimensions plus request/response/error JSON through the
-`avalon.llm_inference` Iceberg table. EU inference analytics are intentionally
+`rally.llm_inference` Iceberg table. EU inference analytics are intentionally
 deferred: EU model calls are served normally but are not archived, queued, sent
 to Pipeline, or exported to Global. The former workspace preference, D1 payload
 index, and `agent-inference/` request-only writer no longer exist.
@@ -1492,7 +1492,7 @@ SELECT
   cost_microusd,
   response_bytes,
   payload_object_key
-FROM avalon.llm_inference
+FROM rally.llm_inference
 WHERE workstream_id = '<workstream-uuid>'
   AND substream_id = '0'
   AND captured_at >= '2026-08-24T19:00:00Z'
@@ -1555,7 +1555,7 @@ SELECT
   payload_object_key,
   payload_sha256,
   payload_bytes
-FROM avalon.llm_inference
+FROM rally.llm_inference
 WHERE inference_request_id = '<inference-request-id>'
 ORDER BY captured_at ASC
 LIMIT 10;
@@ -1581,7 +1581,7 @@ Interpret the pair rather than one row in isolation:
 
   ```sql
   SELECT event_id, COUNT(*) AS copies
-  FROM avalon.llm_inference
+  FROM rally.llm_inference
   WHERE inference_request_id = '<inference-request-id>'
   GROUP BY event_id
   HAVING COUNT(*) > 1;
