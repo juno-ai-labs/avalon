@@ -378,6 +378,69 @@ describe("boundary contracts", () => {
     expect(result.success).toBe(true);
   });
 
+  // Before `automation_submit_draft` declared a `validateInput`, none of these
+  // messages or paths ever reached a model — they were swallowed into the
+  // runtime's generic "could not validate its data" sentence. They are now the
+  // compiler's entire correction vocabulary, so a path that names a field the
+  // model cannot find puts the compile back in the loop that made it a bug.
+  it("names the exact field for every readiness refinement", () => {
+    const base = {
+      name: "Contract watch",
+      description: "Escalate changed customer contracts.",
+      overview: "Watches the authorized connection and escalates changed contracts.",
+      instructions: "1. Read the change.\n2. Escalate a contract.\n3. Record a no-change result.",
+      requiredCapabilities: [],
+      expectedOutputs: ["Escalation"],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+      suggestedScope: "personal",
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    const activity = {
+      type: "semantic_activity",
+      connectorType: "google",
+      sourceBindingKey: "drive_source",
+      suggestedSourcePluginId: "plugin_google",
+      deterministicPrefilter: { eventType: "drive.file_changed" },
+      condition: "The changed file is a customer contract.",
+    };
+    const memoryTable = (name: string) => ({
+      name,
+      description: "Seen contracts.",
+      usageInstructions: "One row per contract.",
+      columns: [{ name: "id", description: "Contract id.", type: "string", required: true, searchable: false }],
+      keyColumns: ["id"],
+    });
+    const omit = (trigger: Record<string, unknown>, key: string) =>
+      Object.fromEntries(Object.entries(trigger).filter(([entry]) => entry !== key));
+
+    const cases: Array<[string, Record<string, unknown>, Array<string | number>, string]> = [
+      ["memory table name", { ...base, triggers: [{ type: "manual" }], memoryTables: [memoryTable("Seen"), memoryTable("seen")] },
+        ["memoryTables", 1, "name"], "Memory-table names must be unique within an automation"],
+      ["binding key", { ...base, triggers: [omit(activity, "sourceBindingKey")] },
+        ["triggers", 0, "sourceBindingKey"], "Ready activity triggers require a source binding key"],
+      ["source plugin", { ...base, triggers: [omit(activity, "suggestedSourcePluginId")] },
+        ["triggers", 0, "suggestedSourcePluginId"], "Ready activity triggers require an inspected source plugin"],
+      ["connector type", { ...base, triggers: [{ ...activity, connectorType: null }] },
+        ["triggers", 0, "connectorType"], "Ready semantic activity triggers require a concrete connector type"],
+      ["prefilter event type", { ...base, triggers: [{ ...activity, deterministicPrefilter: {} }] },
+        ["triggers", 0, "deterministicPrefilter", "eventType"], "Ready semantic activity triggers require one declared event type"],
+      ["reused binding key", { ...base, triggers: [activity, { ...activity, connectorType: "slack" }] },
+        ["triggers", 1, "sourceBindingKey"], "Reused activity source binding keys must identify the same connector and suggested plugin"],
+    ];
+
+    for (const [label, draft, path, message] of cases) {
+      const result = AutomationDraftSchema.safeParse(draft);
+      expect(result.success, label).toBe(false);
+      expect(result.error!.issues, label).toContainEqual(
+        expect.objectContaining({ path: [...path], message }),
+      );
+    }
+  });
+
   it("requires an exact event type for ready semantic activity triggers", () => {
     const result = AutomationDraftSchema.safeParse({
       name: "Important GitHub activity",

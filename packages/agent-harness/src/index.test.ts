@@ -1307,18 +1307,32 @@ describe("agent harness", () => {
     });
 
     expect(fetcher).toHaveBeenCalledTimes(3);
-    const rejection = (bodies[2]!.messages as Array<{ role: string; content: unknown }>)
-      .filter((message) => message.role === "tool")
-      .map((message) => String(message.content))
-      .join("\n");
+    const toolMessages = (bodies[2]!.messages as Array<{ role: string; content: unknown }>)
+      .filter((message) => message.role === "tool");
+    const rejection = JSON.parse(String(toolMessages.at(-1)!.content)) as {
+      success: boolean;
+      kind: string;
+      error: string;
+    };
     // The correction has to name the field, because the model's only other move
     // is to resubmit what it already sent. The sentence it used to get instead
     // said the arguments were fine and told it not to change them.
-    expect(rejection).toContain('"kind":"validation"');
-    expect(rejection).toContain(
-      "triggers[0].deterministicPrefilter.eventType: ready semantic activity triggers require one declared event type",
-    );
-    expect(rejection).not.toContain("instead of changing the arguments");
+    //
+    // Parsed rather than substring-matched across every tool result, so this is
+    // provably about the rejected submission and not the `load_plugin` success
+    // beside it, and so it does not depend on how the result is serialized.
+    // The sentence is pinned verbatim because it is the behaviour under repair,
+    // and it is owned across two packages: `@rally/contracts` writes the
+    // refinement's words, `tool-arguments.ts` the `path: message` shape and the
+    // lowercased first letter. A reword in either is meant to fail here.
+    expect(rejection).toMatchObject({
+      success: false,
+      kind: "validation",
+      error: expect.stringContaining(
+        "triggers[0].deterministicPrefilter.eventType: ready semantic activity triggers require one declared event type",
+      ),
+    });
+    expect(rejection.error).not.toContain("instead of changing the arguments");
   });
 
   it("keeps the automation loop running after an unsupported text-only stop turn", async () => {
@@ -4469,6 +4483,48 @@ describe("agent harness", () => {
     expect(schema).not.toContain('"requiredCapabilities"');
     expect(schema).toContain('"memoryTables"');
     expect(schema).toContain('"usageInstructions"');
+    // `deterministicPrefilter` is an opaque JSON string in the declared schema,
+    // so the one key a ready semantic trigger must put inside it cannot be
+    // expressed as schema — this sentence is the only place the model can read
+    // it. Losing it costs a rejected round trip on every such draft, and the
+    // correction that recovers from one names a path
+    // (`deterministicPrefilter.eventType`) that does not exist in the arguments
+    // the model writes, so nothing downstream would make the loss obvious.
+    expect(schema).toContain('{\\"eventType\\": \\"the.event.type\\"}');
+  });
+
+  it("hands a prefilter that is not a JSON object to the schema instead of emptying it", () => {
+    const trigger = (deterministicPrefilter: unknown) => (__testing.normalizeAutomationDraft({
+      name: "Contract watch",
+      description: "Escalate changed contracts.",
+      instructions: "Escalate a changed contract.",
+      triggers: [{
+        type: "semantic_activity",
+        connectorType: "google",
+        sourceBindingKey: "drive_source",
+        suggestedSourcePluginId: "plugin_google",
+        deterministicPrefilter,
+        condition: "The changed file is a customer contract.",
+      }],
+      expectedOutputs: ["Escalation"],
+      defaultBehavior: "{}",
+      suggestedScope: "personal",
+      elicitation: null,
+    }) as { triggers: Array<{ deterministicPrefilter: unknown }> }).triggers[0]!.deterministicPrefilter;
+
+    // Decoded when it is what it claims to be.
+    expect(trigger('{"eventType":"drive.file_changed"}')).toEqual({ eventType: "drive.file_changed" });
+    expect(trigger(null)).toEqual({});
+
+    // Handed through when it is not. Emptying these was how the model came to
+    // be told it had declared no event type while looking at one it had
+    // plainly written — the shapes differ, the correction did not, and it
+    // resubmitted. A draft that survives this also keeps a filter the model
+    // wrote rather than matching every event of its kind.
+    expect(trigger("{eventType: drive.file_changed}")).toBe("{eventType: drive.file_changed}");
+    expect(trigger(JSON.stringify('{"eventType":"drive.file_changed"}')))
+      .toBe('"{\\"eventType\\":\\"drive.file_changed\\"}"');
+    expect(trigger("[]")).toBe("[]");
   });
 
   it("normalizes every supported automation trigger shape", () => {
