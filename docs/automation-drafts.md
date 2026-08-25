@@ -95,6 +95,21 @@ appear while they described the automation is the row that becomes the
 automation. A request without a `draftId`, or with one naming anything the caller
 may not write through to, inserts a new automation exactly as it always did.
 
+Promotion is also where a calendar trigger's timezone is settled. A draft carries
+the zone the person named for it and null when they named none, and the
+`schedules` row is derived in the account's — the owner's `users.timezone` for a
+personal automation, `workspaces.timezone` for a workspace one. It is read here
+rather than when the draft was compiled because the scope is chosen on this
+screen, not by the compiler: a draft the compiler suggested sharing and its
+author kept to themselves runs in their day, not the workspace's.
+
+The null is what makes that possible, which is why nothing fills it in earlier.
+The client posts the draft it holds beside the scope it chose, so a default
+substituted at compile time arrives here as a concrete zone indistinguishable
+from one the person asked for, and this screen has no way to tell the two apart.
+The same distinction is what a shared template needs: an adopter takes the
+author's zone when the author named one, and their own when nobody did.
+
 ## Invariants
 
 - **A draft never runs.** Every path that starts a run — the scheduler alarm,
@@ -286,6 +301,36 @@ conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
 ## Changelog
+
+### 2026-08-24 — A promoted draft is scheduled in the account's timezone
+
+**What changed:** A calendar trigger's `timezone` is nullable, and
+`AutomationService` resolves an absent one against the automation's owner where
+it derives the `schedules` row — on this path, on template subscription, and on
+version adoption. The compiler is separately given the account's zones so the
+draft a person reviews names the right one.
+
+**Why:** A briefing created by somebody whose account said America/New_York ran
+on Pacific time. The compiler had never been told the account's zone, and the
+zone it invented was frozen into the definition at compile time — before the
+scope was even chosen — so nothing downstream could correct it.
+
+**Consequences:** A draft now carries `timezone: null` for a recurrence nobody
+named a zone for. A first draft of this change filled the default in at compile
+time to keep the wire non-null, and review found that this left the server's
+resolution unreachable for everything the pipeline produced, including the
+scope-switch case above.
+
+A second round of review found the correction had over-reached: the null was
+reaching the *automation detail* response too, where `create` stores the draft's
+triggers verbatim and `get` returns them, so a desktop build older than this
+release could not parse any automation created after it — including a workspace
+automation a colleague created, and including an old automation once a newer
+template version existed. So a response now resolves the zone before returning
+it, from the `schedules` row the automation actually fires on, while storage
+keeps the null. Nothing posts those triggers back, so this cannot re-freeze the
+distinction the null exists to carry. The remaining skew is the builder alone:
+the draft response is the one place a null still reaches a client.
 
 ### 2026-08-23 — The compiler names the destination it was asked for
 
