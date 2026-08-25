@@ -50,7 +50,7 @@ describe("connector-declared user delivery", () => {
     expect(resolved.get("connection-slack-linked")).toEqual({
       targetType: "slack_agent_dm",
       label: "Slack DM",
-      description: "Avalon Agent DM in this Slack workspace.",
+      description: "Rally Agent DM in this Slack workspace.",
     });
     expect(resolved.has("connection-slack-unlinked")).toBe(false);
   });
