@@ -898,17 +898,34 @@ const addressingJsonSchema = {
   required: ["classification", "confidence", "rationaleCode"]
 };
 
+/**
+ * The two ways a message can name the product, and why they are not one pattern.
+ *
+ * `avalon` is unambiguous: nothing else in a work stream is called that, so
+ * seeing it is enough to short-circuit to `agent_action` without spending a
+ * model call. `rally` is an ordinary English verb — "let's rally the team on
+ * this" names no agent — so the same short-circuit would buy a false positive
+ * at 0.96 confidence, decided deterministically and never seen by the model.
+ *
+ * So the ambiguous token does not short-circuit; it rides into the prompt as
+ * `addressesRally`, where the classifier weighs it against the surrounding
+ * turns. The prompt tells the model an explicit Rally reference is strong
+ * evidence, and this is what makes that true.
+ */
+const UNAMBIGUOUS_PRODUCT_REFERENCE = /\bavalon\b/iu;
+const PRODUCT_REFERENCE = /\b(?:avalon|rally)\b/iu;
+
 export function classifyAddressingHeuristically(input: {
   message: string;
   activeTask: boolean;
   connectorMentions?: string[];
-  addressesAvalon?: boolean;
+  addressesRally?: boolean;
 }): AddressingClassification {
   const text = input.message.trim();
   if ((input.connectorMentions?.length ?? 0) > 0) {
     return { classification: "agent_action", confidence: 0.98, rationaleCode: "connector_mention" };
   }
-  if (input.addressesAvalon || /\bavalon\b/i.test(text)) {
+  if (input.addressesRally || UNAMBIGUOUS_PRODUCT_REFERENCE.test(text)) {
     return { classification: "agent_action", confidence: 0.96, rationaleCode: "rally_reference" };
   }
   if (/^(please\s+)?(find|check|create|draft|send|review|summarize|investigate|update|compare|prepare)\b/i.test(text)) {
@@ -932,7 +949,7 @@ export async function classifyAddressing(input: {
   message: string;
   activeTask: boolean;
   connectorMentions?: string[];
-  addressesAvalon?: boolean;
+  addressesRally?: boolean;
   recentMessages?: AddressingContextMessage[];
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
@@ -951,7 +968,7 @@ export async function classifyAddressing(input: {
       message: input.message,
       activeTask: input.activeTask,
       connectorMentions: input.connectorMentions ?? [],
-      addressesAvalon: input.addressesAvalon ?? /\bavalon\b/iu.test(input.message),
+      addressesRally: input.addressesRally ?? PRODUCT_REFERENCE.test(input.message),
       recentMessages: input.recentMessages ?? [],
     }),
     schemaName: "message_addressing",
@@ -985,7 +1002,7 @@ const automationDraftSubmissionJsonSchema = {
           rrule: { type: ["string", "null"] },
           timezone: {
             type: ["string", "null"],
-            description: "The IANA timezone a calendar recurrence's wall-clock time is read in, when the person named one. Use null for every other trigger, and for a calendar trigger whose zone nobody named — Avalon then reads it in the applicable scheduling default."
+            description: "The IANA timezone a calendar recurrence's wall-clock time is read in, when the person named one. Use null for every other trigger, and for a calendar trigger whose zone nobody named — Rally then reads it in the applicable scheduling default."
           },
           summary: { type: ["string", "null"] },
           intervalSeconds: { type: ["integer", "null"], minimum: 60 },
@@ -1024,7 +1041,7 @@ const automationDraftSubmissionJsonSchema = {
     expectedOutputs: { type: "array", items: { type: "string" } },
     requestedDelivery: {
       type: "array",
-      description: "The destinations the owner asked to receive the result themselves: \"email\" for their own email address, \"slack_agent_dm\" for their Avalon Slack Agent DM. Use [] when they asked for neither, or when they asked for it to be sent to somebody else. Avalon does the sending; this only records what was asked for.",
+      description: "The destinations the owner asked to receive the result themselves: \"email\" for their own email address, \"slack_agent_dm\" for their Rally Slack Agent DM. Use [] when they asked for neither, or when they asked for it to be sent to somebody else. Rally does the sending; this only records what was asked for.",
       items: { type: "string", enum: ["email", "slack_agent_dm"] }
     },
     defaultBehavior: {
@@ -1803,7 +1820,7 @@ export async function compileAutomation(input: {
           type: "tool",
           toolCallId: event.toolCallId,
           name: automationDiscoveryActivityName(event.toolName, "failed", labelPlugins),
-          summary: "This research step failed; Avalon will adjust the plan.",
+          summary: "This research step failed; Rally will adjust the plan.",
           status: "failed",
           plugin,
           ...(startedAt === undefined ? {} : { durationMs: Math.max(0, Date.now() - startedAt) }),

@@ -375,7 +375,7 @@ export function createDaytonaTerminalRuntime(
       ) {
         throw new TerminalToolError(
           "command_recovery_unavailable",
-          "The earlier command may have run, but Avalon cannot prove that the current sandbox and input match it. Stop and report the ambiguity; do not repeat the command.",
+          "The earlier command may have run, but Rally cannot prove that the current sandbox and input match it. Stop and report the ambiguity; do not repeat the command.",
         );
       }
 
@@ -452,11 +452,11 @@ export function createDaytonaTerminalRuntime(
         throw new TerminalToolError(
           "command_outcome_unknown",
           context.signal.aborted
-            ? "Cancellation interrupted provider observation. Avalon retained the durable task so a linked run can prove the named command stopped; do not repeat the command."
-            : "Avalon lost provider observation before the command reached a final state. Retry this exact tool call so Avalon can reattach to its durable task; do not submit a different command.",
+            ? "Cancellation interrupted provider observation. Rally retained the durable task so a linked run can prove the named command stopped; do not repeat the command."
+            : "Rally lost provider observation before the command reached a final state. Retry this exact tool call so Rally can reattach to its durable task; do not submit a different command.",
           context.signal.aborted
-            ? { reason: "Continue in a linked run so Avalon can clean up the retained provider command before using Terminal again." }
-            : { reason: "Resume this run so Avalon can reattach to the same durable command task." },
+            ? { reason: "Continue in a linked run so Rally can clean up the retained provider command before using Terminal again." }
+            : { reason: "Resume this run so Rally can reattach to the same durable command task." },
         );
       }
       const sanitizedStdout = sanitizeTerminalOutput(result.stdout);
@@ -505,7 +505,7 @@ export function createDaytonaTerminalRuntime(
             filePath: `.rally/logs/${effectIntentId}.log`,
             displayName: `Terminal command log ${effectIntentId}`,
             description: outputLimitExceeded
-              ? "Bounded command log; provider output exceeded Avalon's capture limit."
+              ? "Bounded command log; provider output exceeded Rally's capture limit."
               : "Complete output from a Terminal command whose inline result was truncated.",
           }, logBytes);
           if (
@@ -592,7 +592,7 @@ export function createDaytonaTerminalRuntime(
       } catch {
         throw new TerminalToolError(
           "resource_not_ready",
-          "The output changed or disappeared while Avalon was reading it. Wait for its producer to finish, then retry publish_resource with the final file.",
+          "The output changed or disappeared while Rally was reading it. Wait for its producer to finish, then retry publish_resource with the final file.",
           { reason: "Wait for the producer to finish, then retry with the final stable file." },
         );
       }
@@ -606,7 +606,7 @@ export function createDaytonaTerminalRuntime(
       ) {
         throw new TerminalToolError(
           "resource_not_ready",
-          "The output changed while Avalon was reading it. Wait for its command to finish, then write or rename the final file and use a new publish_resource invocation.",
+          "The output changed while Rally was reading it. Wait for its command to finish, then write or rename the final file and use a new publish_resource invocation.",
           { reason: "Wait for the producer to finish, then retry with the final stable file." },
         );
       }

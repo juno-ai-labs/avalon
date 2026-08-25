@@ -430,7 +430,7 @@ describe("durable UI-to-model transcript projection", () => {
 
     expect(projection.messages).toEqual([{
       role: "user",
-      content: expect.stringContaining("USER-SELECTED AVALON SUGGESTED-WORK BRIEF"),
+      content: expect.stringContaining("USER-SELECTED RALLY SUGGESTED-WORK BRIEF"),
     }]);
     expect(projection.messages[0]?.content).toContain("untrusted evidence");
     expect(projection.messages[0]?.content).toContain("Trace the failed release");

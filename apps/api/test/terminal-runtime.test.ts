@@ -421,7 +421,7 @@ describe("Daytona Terminal runtime", () => {
     await expect(runtime.runCommand(context, { command: "printf recovered", timeoutMs }))
       .rejects.toMatchObject({
         code: "command_outcome_unknown",
-        details: { reason: "Resume this run so Avalon can reattach to the same durable command task." },
+        details: { reason: "Resume this run so Rally can reattach to the same durable command task." },
       });
     const retained = workstreamObjectGet(
       objectStore,

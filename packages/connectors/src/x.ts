@@ -134,7 +134,7 @@ export const xTools: ToolDefinition[] = [
 export const XAgentPluginDescriptor = defineConnectorAgentPlugin({
   providerType: "x",
   wireNamePrefix: "x",
-  description: "Read public X data through Avalon's shared account: user timelines, threads, posts, replies, and List timelines. Load this plugin for X, Twitter, tweet, timeline, handle, or social-post requests.",
+  description: "Read public X data through Rally's shared account: user timelines, threads, posts, replies, and List timelines. Load this plugin for X, Twitter, tweet, timeline, handle, or social-post requests.",
   searchAliases: ["twitter", "tweet", "tweets", "post", "posts", "timeline", "thread", "handle", "social"],
   systemMessage: [
     "Use this X connection only through the tools exposed by this plugin.",
