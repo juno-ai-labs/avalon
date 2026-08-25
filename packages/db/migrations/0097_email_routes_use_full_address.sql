@@ -8,6 +8,10 @@
 -- Rally address before 2026-08-25T03:28:06Z. Production had no route claims
 -- between the last pre-cutover row and the first deployment known to carry the
 -- new domain, so the commit time is an unambiguous backfill boundary there.
+-- The boundary is exclusive: a row stamped at that exact instant belongs to
+-- the Rally side. The production deploy completed at 04:14:09Z; an audit found
+-- zero claims between merge and deploy, with the surrounding claims at
+-- 2026-08-24T22:25:01.928Z and 2026-08-25T15:00:02.996Z.
 -- A regional owner's stored full address remains the product authority; the
 -- Worker verifies this inferred value whenever that owner is reconciled and
 -- may replace it exactly once while address_source = 'migration'.

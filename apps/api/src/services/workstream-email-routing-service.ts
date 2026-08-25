@@ -53,6 +53,7 @@ export interface WorkstreamEmailRouterPing {
   region: "global";
   domain: string;
   addressIdentity?: "local_part" | "full_address";
+  ownerAddressClaim?: "full_email_address";
 }
 
 export type WorkstreamEmailRouterRpcResult<T> =
@@ -137,8 +138,8 @@ export class WorkstreamEmailRoutingService {
     if (this.env.AVALON_REGION !== "global") {
       const router = this.env.GLOBAL_EMAIL_ROUTER;
       if (router) {
-        const identity = unwrapRpcResult(await router.ping()).addressIdentity;
-        if (identity === "full_address" && router.claim) {
+        const capability = unwrapRpcResult(await router.ping()).ownerAddressClaim;
+        if (capability === "full_email_address" && router.claim) {
           return unwrapRpcResult(await router.claim(input));
         }
         const legacy = unwrapRpcResult(await router.reserve(input));
@@ -185,8 +186,8 @@ export class WorkstreamEmailRoutingService {
     if (this.env.AVALON_REGION !== "global") {
       const router = this.env.GLOBAL_EMAIL_ROUTER;
       if (router) {
-        const identity = unwrapRpcResult(await router.ping()).addressIdentity;
-        if (identity === "full_address" && router.claimAutomation) {
+        const capability = unwrapRpcResult(await router.ping()).ownerAddressClaim;
+        if (capability === "full_email_address" && router.claimAutomation) {
           return unwrapRpcResult(await router.claimAutomation(input));
         }
         if (!router.reserveAutomation) {
@@ -303,6 +304,10 @@ export class WorkstreamEmailRoutingService {
     if (!await this.registryUsesFullAddresses()) {
       return this.reserveInLegacyGlobalRegistry(input);
     }
+    return this.reserveInFullAddressGlobalRegistry(input);
+  }
+
+  private async reserveInFullAddressGlobalRegistry(input: WorkstreamEmailRouteInput): Promise<WorkstreamEmailRoute> {
     const existing = await this.loadDestination(input);
     if (existing) return this.mapRoute(existing);
 
@@ -343,6 +348,12 @@ export class WorkstreamEmailRoutingService {
     if (!await this.registryUsesFullAddresses()) {
       return this.reserveAutomationInLegacyGlobalRegistry(input);
     }
+    return this.reserveAutomationInFullAddressGlobalRegistry(input);
+  }
+
+  private async reserveAutomationInFullAddressGlobalRegistry(
+    input: AutomationEmailRouteInput,
+  ): Promise<AutomationEmailRoute> {
     const existing = await this.loadAutomationDestination(input);
     if (existing) return this.mapAutomationRoute(existing);
     const secretKey = this.addressKey();
@@ -380,8 +391,14 @@ export class WorkstreamEmailRoutingService {
   async reserveAutomationsInGlobalRegistry(inputs: AutomationEmailRouteInput[]): Promise<AutomationEmailRoute[]> {
     this.assertGlobalRegistry();
     this.assertBulkSize(inputs);
+    if (inputs.length === 0) return [];
+    const fullAddressRegistry = await this.registryUsesFullAddresses();
     const routes: AutomationEmailRoute[] = [];
-    for (const input of inputs) routes.push(await this.reserveAutomationInGlobalRegistry(input));
+    for (const input of inputs) {
+      routes.push(fullAddressRegistry
+        ? await this.reserveAutomationInFullAddressGlobalRegistry(input)
+        : await this.reserveAutomationInLegacyGlobalRegistry(input));
+    }
     return routes;
   }
 
@@ -389,11 +406,16 @@ export class WorkstreamEmailRoutingService {
   async reserveManyInGlobalRegistry(inputs: WorkstreamEmailRouteInput[]): Promise<WorkstreamEmailRoute[]> {
     this.assertGlobalRegistry();
     this.assertBulkSize(inputs);
+    if (inputs.length === 0) return [];
+    const fullAddressRegistry = await this.registryUsesFullAddresses();
     const routes: WorkstreamEmailRoute[] = [];
     // Serial execution keeps D1 pressure bounded. The service-binding call itself
-    // is still one bulk invocation from the owning regional Worker.
+    // is still one bulk invocation from the owning regional Worker, and the
+    // rollout-era schema probe is shared by every item in that invocation.
     for (const input of inputs) {
-      routes.push(await this.reserveInGlobalRegistry(input));
+      routes.push(fullAddressRegistry
+        ? await this.reserveInFullAddressGlobalRegistry(input)
+        : await this.reserveInLegacyGlobalRegistry(input));
     }
     return routes;
   }
@@ -427,6 +449,10 @@ export class WorkstreamEmailRoutingService {
       region: "global",
       domain: this.emailDomain(),
       addressIdentity: fullAddressRegistry ? "full_address" : "local_part",
+      // This describes the deployed RPC surface, independently of which side
+      // of the Worker-first schema migration the Global database is on. A new
+      // Global Worker can claim an owner's address against either schema.
+      ownerAddressClaim: "full_email_address",
     };
   }
 
