@@ -121,6 +121,10 @@ describe("hosted MCP abstraction", () => {
       { value: 42 },
       AbortSignal.timeout(1_000),
     )).resolves.toMatchObject({ output: { accepted: 42 } });
+    expect(requests.filter((request) => request.method === "initialize").map((request) => request.params)).toEqual([
+      expect.objectContaining({ clientInfo: { name: "Rally", version: "1.0.0" } }),
+      expect.objectContaining({ clientInfo: { name: "Rally", version: "1.0.0" } }),
+    ]);
     expect(requests.filter((request) => request.method === "tools/list")).toHaveLength(4);
   });
 
@@ -204,6 +208,7 @@ describe("hosted MCP abstraction", () => {
       }
       if (url.pathname === "/register") {
         expect(JSON.parse(String(init?.body))).toMatchObject({
+          client_name: "Rally",
           redirect_uris: ["https://avalon.example.test/callback"],
           token_endpoint_auth_method: "none",
           scope: "default offline_access",

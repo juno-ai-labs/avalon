@@ -287,9 +287,24 @@ Before applying for Linear Integration Directory review:
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
-the decisions above — beyond the reasons already written inline, and beyond
-Linear's own published contracts, which are linked rather than reproduced — was not
-recorded here and was not reconstructed. The next substantial change to the Linear
-integration starts the record, and that entry is that change, written in full.
+### 2026-08-25 — Linear's app and request identity moved to Rally
+
+**What changed:** Both manifests now publish Rally descriptions and client names,
+the native-agent capability names Rally in Linear, and all 24 resource and agent
+GraphQL operations use a `Rally` prefix. The same production app, callbacks,
+scopes, webhook resource events, client credentials, and signing secret remain in
+place.
+
+**Why:** Linear exposes the manifest identity to installers and GraphQL operation
+names in its request logs. Leaving either surface on Avalon made one integration
+present two product identities even after its canonical webhook host moved.
+
+**Considered and rejected:** Creating a replacement Linear app or changing the
+OAuth/event contract alongside the rename. Either would introduce new authority,
+installation, and delivery behavior unrelated to the public-identity correction.
+
+**Consequences:** Existing authorizations and webhook routing remain valid, and
+the four compatibility/canonical callbacks continue to cover the domain migration.
+Observability queries that group GraphQL requests by operation name must accept the
+new prefix at deployment. The reasoning behind the integration before this entry,
+beyond the rationale already written inline, was not recorded or reconstructed.

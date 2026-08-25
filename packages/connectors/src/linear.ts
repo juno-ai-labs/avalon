@@ -462,7 +462,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
           // itself, where they can be acted on, rather than in a summary.
           "linear.oauth_app.revoked", "linear.oauth_authorization.revoked",
           "linear.permission_change.team_access_changed",
-          // Avalon's own agent working. A digest must never narrate the
+          // Rally's own agent working. A digest must never narrate the
           // machinery that writes it.
           "linear.agent_session_event.created", "linear.agent_session_event.prompted",
         ],

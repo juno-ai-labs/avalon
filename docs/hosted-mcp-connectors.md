@@ -94,6 +94,13 @@ add, remove, or reshape a tool without a Rally release. Execution opens a new
 session and lists tools before `tools/call`; a tool removed between activation
 and use therefore fails closed instead of forwarding an unadvertised name.
 
+Rally is the client identity at both protocol boundaries: dynamic OAuth client
+registration defaults `client_name` to `Rally`, and MCP initialization sends
+`clientInfo.name = "Rally"`. Provider adapters may override DCR metadata only
+when a provider contract requires it. Existing encrypted client registrations
+and tokens are not rewritten; the default applies when registering a new client,
+while every newly opened MCP session uses the Rally initialization identity.
+
 ### Current scope splits
 
 | Provider | Personal connection | Workspace connection |
@@ -238,6 +245,27 @@ current `tools/list` response when a formerly working prompt loses a tool—do n
 patch a historical snapshot into Rally.
 
 ## Changelog
+
+### 2026-08-25 — Hosted MCP now presents the Rally client identity
+
+**What changed:** Standards-based dynamic client registration defaults to the
+public name `Rally`, and MCP initialization sends the same client name. The
+identity is shared across Granola, Slack, and Notion hosted-MCP sessions; only a
+provider-specific declaration can override DCR metadata.
+
+**Why:** The generic transport still announced Avalon directly to providers after
+the product rename. Keeping DCR and MCP initialization aligned avoids two names
+for the same client in authorization records, provider logs, and active sessions.
+
+**Considered and rejected:** Re-registering every stored OAuth client or forcing
+every member to reconnect. Existing provider-issued client IDs and refresh tokens
+remain valid and contain authority that a display-name change does not justify
+discarding.
+
+**Consequences:** New dynamic registrations and new MCP sessions display Rally.
+Existing encrypted credentials continue to refresh normally, so the change does
+not rotate secrets or revoke connections. The reasoning behind this module before
+its existing changelog began was not reconstructed.
 
 ### 2026-08-16 — The remote-schema repair defers to the sanitizer
 
