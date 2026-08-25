@@ -341,7 +341,7 @@ no projection fallback when that object is unavailable.
   owns that lifecycle and the reasons a draft carries no schedule, no address, and
   no workspace scope. Archiving is restricted to drafts; deleting is allowed at any
   status and also disables the schedules. The address is not released — the
-  Global ledger records only that a local part is taken — so nothing is written
+  Global ledger records only that the full email address is taken — so nothing is written
   there. A deleted row is
   kept, never removed: automation runs, generated work streams, the memory scope,
   and the permanent email tombstone all reference it. Every path that starts a run
@@ -748,6 +748,27 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-25 — Email route identity includes the domain
+
+**What changed:** Migration 0097 replaces `workstream_email_routes.local_part`
+with a case-insensitive full `email_address` primary key and migration provenance.
+An inferred cutover row may be owner-verified once; every allocator- or
+owner-sourced full-address tombstone is immutable.
+
+**Why:** The local-part key reconstructed historical addresses with the Worker's
+current domain, which made an old automation disagree with its WorkspaceDO row.
+It also made future custom domains unable to reuse a local part safely.
+
+**Considered and rejected:** Keeping local part as the key and tolerating a
+legacy-domain mismatch. That changes comparison semantics without making the
+pre-workspace inbound route unambiguous.
+
+**Consequences:** Global D1 can route the same local part to different owners on
+different domains. Regional owner state verifies the one-time cutover inference;
+after that, the full address is a permanent claim.
+
+See [`workstream-email-addresses.md`](workstream-email-addresses.md).
 
 ### 2026-08-24 — Accepted Global telemetry gains a second durable projection
 

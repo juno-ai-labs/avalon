@@ -26,7 +26,8 @@ interface StoredRun {
 }
 
 interface StoredEmailRoute {
-  local_part: string;
+  email_address: string;
+  address_source: "allocator";
   region: "global";
   workspace_id: string;
   workstream_id: string;
@@ -49,7 +50,7 @@ class ManualRunDatabase {
   readonly objectPortSql: string[] = [];
   /**
    * One row per work stream, as `workstream_email_routes` holds them — each
-   * reservation takes its own local part. A single slot would make a second
+   * reservation takes its own full address. A single slot would make a second
    * work stream's reservation look like an exhausted address space.
    */
   readonly emailRoutes: StoredEmailRoute[] = [];
@@ -98,6 +99,9 @@ class ManualRunStatement {
 
   async first<T>(): Promise<T | null> {
     const normalized = this.normalizedSql();
+    if (normalized.includes("pragma_table_info('workstream_email_routes')")) {
+      return { name: "email_address" } as T;
+    }
     if (normalized.includes("FROM automation_subscriptions s JOIN automation_templates")) {
       return this.database.subscription as T;
     }
@@ -175,11 +179,12 @@ class ManualRunStatement {
       // The regional identity anchor and route the runtime bootstrap reserves;
       // product state lives behind the object port below.
     } else if (normalized.startsWith("INSERT INTO workstream_email_routes")) {
-      const localPart = String(this.values[0]);
-      // `ON CONFLICT DO NOTHING` on the local part.
-      if (!this.database.emailRoutes.some((route) => route.local_part === localPart)) {
+      const emailAddress = String(this.values[0]);
+      // `ON CONFLICT DO NOTHING` on the full address.
+      if (!this.database.emailRoutes.some((route) => route.email_address === emailAddress)) {
         this.database.emailRoutes.push({
-          local_part: localPart,
+          email_address: emailAddress,
+          address_source: "allocator",
           region: String(this.values[1]) as "global",
           workspace_id: String(this.values[2]),
           workstream_id: String(this.values[3]),
