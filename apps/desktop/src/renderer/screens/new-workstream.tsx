@@ -38,6 +38,8 @@ interface CreateWorkstreamInput {
   startedAt: string;
 }
 
+const PERSON_MENTION_TYPE = 'Person';
+
 /**
  * What the screen shows between pressing enter and the work stream existing.
  *
@@ -737,7 +739,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             <div className="mention-popover" id="launch-mention-listbox" role="listbox" aria-label="Mentions">
               {visibleCandidates.map((member, index) => (
                 <button
-                  aria-label={`${member.name} — ${member.email} — Person`}
+                  aria-label={`${member.name} — ${member.email} — ${PERSON_MENTION_TYPE}`}
                   aria-selected={index === mentionNavigation.activeIndex}
                   className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
                   id={mentionOptionId(member.id)}
@@ -752,7 +754,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
                     <Avatar member={member} size="small" />
                   </span>
                   <span><strong>{member.name}</strong><small>{member.email}</small></span>
-                  <Badge>Person</Badge>
+                  <Badge>{PERSON_MENTION_TYPE}</Badge>
                 </button>
               ))}
             </div>

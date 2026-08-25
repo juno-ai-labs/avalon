@@ -58,6 +58,7 @@ const BASE_COMMANDS: ComposerCommand[] = [
   { id: 'attach', label: 'attach', description: 'Choose a file to attach' },
   { id: 'clear', label: 'clear', description: 'Clear this draft' },
 ];
+const PERSON_MENTION_TYPE = 'Person';
 
 export function WorkstreamComposer({
   api,
@@ -311,7 +312,7 @@ export function WorkstreamComposer({
         <div className="mention-popover" id="workstream-mention-listbox" role="listbox" aria-label="Mentions">
           {visibleCandidates.map((candidate, index) => (
             <button
-              aria-label={`${candidate.label} — ${candidate.description} — Person`}
+              aria-label={`${candidate.label} — ${candidate.description} — ${PERSON_MENTION_TYPE}`}
               aria-selected={index === mentionNavigation.activeIndex}
               className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
               id={mentionOptionId(candidate.id)}
@@ -329,7 +330,7 @@ export function WorkstreamComposer({
                 <Avatar member={candidate.member} size="small" />
               </span>
               <span><strong>{candidate.label}</strong><small>{candidate.description}</small></span>
-              <Badge>Person</Badge>
+              <Badge>{PERSON_MENTION_TYPE}</Badge>
             </button>
           ))}
         </div>

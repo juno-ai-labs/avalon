@@ -105,6 +105,12 @@ test('dry-run resolves the complete release transaction without cloud access or 
   }
 });
 
+test('live publication executes the entire release transaction under the remote R2 lock', async () => {
+  const source = await readFile(publisherPath, 'utf8');
+  assert.match(source, /await withR2ReleaseLock\(\{/u);
+  assert.match(source, /operation: executeReleaseTransaction,/u);
+});
+
 test('accepts pnpm argument separators forwarded by the root release command', async () => {
   const fixture = await createFixture();
   try {
