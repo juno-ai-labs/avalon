@@ -34,6 +34,8 @@ export interface DesktopReleasePublication {
 
 const releaseStartMarker = '<!-- rally-desktop-release:start -->';
 const releaseEndMarker = '<!-- rally-desktop-release:end -->';
+const heroCtaStartMarker = '<!-- rally-desktop-hero-cta:start -->';
+const heroCtaEndMarker = '<!-- rally-desktop-hero-cta:end -->';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -263,6 +265,25 @@ function escapeHtml(value: string): string {
     .replaceAll('>', '&gt;');
 }
 
+/**
+ * The hero's "Download for macOS" button ships pointed at `#download` so the
+ * unbuilt template still scrolls somewhere sensible. Once a release is
+ * published, point it straight at the verified installer instead — nobody
+ * who already decided to download should be routed through a second click
+ * on the button the download section renders for the same release.
+ */
+function renderHeroDownloadCta(html: string, href: string | null): string {
+  const start = html.indexOf(heroCtaStartMarker);
+  if (start === -1) return html;
+  const end = html.indexOf(heroCtaEndMarker);
+  if (end === -1 || end <= start) {
+    throw new Error('Desktop hero CTA markers are missing or malformed.');
+  }
+  const anchorHref = escapeHtml(href ?? '#download');
+  const markup = `${heroCtaStartMarker}<a class="rally-button rally-button-dark button-primary" href="${anchorHref}"><img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a>${heroCtaEndMarker}`;
+  return `${html.slice(0, start)}${markup}${html.slice(end + heroCtaEndMarker.length)}`;
+}
+
 export function renderDesktopRelease(
   html: string,
   value: unknown,
@@ -279,5 +300,6 @@ export function renderDesktopRelease(
   const markup = href
     ? `${releaseStartMarker}\n            <a class="rally-button rally-button-dark button-primary" href="${escapeHtml(href)}"><img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download Rally for macOS <span>↘</span></a>\n            <small class="release-note">${escapeHtml(config.platform)} · ${escapeHtml(config.architecture)} · ${escapeHtml(version)}</small>\n            ${releaseEndMarker}`
     : `${releaseStartMarker}\n            <span class="rally-button rally-button-dark button-disabled" aria-disabled="true"><img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Downloads opening soon</span>\n            <small class="release-note">${escapeHtml(config.platform)} · ${escapeHtml(config.architecture)} · Private preview</small>\n            ${releaseEndMarker}`;
-  return `${html.slice(0, start)}${markup}${html.slice(end + releaseEndMarker.length)}`;
+  const withDownloadSection = `${html.slice(0, start)}${markup}${html.slice(end + releaseEndMarker.length)}`;
+  return renderHeroDownloadCta(withDownloadSection, href);
 }

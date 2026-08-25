@@ -253,6 +253,36 @@ describe('public Rally site', () => {
     expect(renderDesktopRelease(page, release)).not.toContain('Preview 0.1.0');
   });
 
+  it('sends the hero download button straight to the verified installer once a release is published', () => {
+    const page = readProjectFile('index.html');
+    const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
+
+    // The unbuilt template still just scrolls, so a reader of the source and
+    // anyone running the site without the release transform gets a sane
+    // fallback rather than a dead link.
+    expect(page).toContain(
+      '<a class="rally-button rally-button-dark button-primary" href="#download">'
+      + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a>',
+    );
+
+    const rendered = renderDesktopRelease(page, release);
+    expect(rendered).toContain(
+      `<a class="rally-button rally-button-dark button-primary" href="${desktopDmgUrl(release)}">`
+      + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a>',
+    );
+  });
+
+  it('leaves the hero download button scrolling to the download section while no release is published', () => {
+    const page = readProjectFile('index.html');
+    const release = parseDesktopReleaseConfig(unpublishedReleaseFixture());
+
+    const rendered = renderDesktopRelease(page, release);
+    expect(rendered).toContain(
+      '<a class="rally-button rally-button-dark button-primary" href="#download">'
+      + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a>',
+    );
+  });
+
   it('renders the immutable DMG object only after a release is published', () => {
     const page = readProjectFile('index.html');
     const base = unpublishedReleaseFixture();
