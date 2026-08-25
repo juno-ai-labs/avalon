@@ -94,13 +94,14 @@ import { settleDigestRun } from "../services/digest-run-settlement";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
+import {
+  objectOwnsWorkstreamAuthorities,
+  withLocalWorkstreamAuthorities,
+  type LocalAuthorityExecutor,
+} from "../runtime/local-authorities";
 import { withWorkstreamRuntimeDatabase } from "../services/workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import {
-  createTerminalObjectPort,
-  TerminalObjectPortError,
-  type TerminalPortFactory,
-} from "../services/terminal/object-port";
+import { TerminalObjectPortError } from "../services/terminal/object-port";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import { loadWorkstreamWakeup } from "../services/workstream-wakeup-service";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
@@ -695,7 +696,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // of the constructor, and the store is built inside the callback below it.
     if (!this.objectStore) return null;
     // Guarded like every other object's name read. A throw here would not stay
-    // local: the thunk runs inside `durableObjectSelf`, so a missing table would
+    // local: the thunk runs inside `durableObjectSelfForId`, so a missing table would
     // take down *every* `SUBSTREAM_AGENTS` resolution this object makes,
     // including the sibling calls that have nothing to do with self-recognition.
     try {
@@ -1113,20 +1114,23 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * already.
    */
   private async acceptToolReceiptOperation(request: Request): Promise<Response> {
-    const parsed = ToolReceiptOperationRequestSchema.safeParse(
-      await request.json().catch(() => null),
-    );
+    const outcome = await this.toolReceiptOperationOutcome(await request.json().catch(() => null));
+    return jsonResponse(outcome.payload, outcome.status);
+  }
+
+  private async toolReceiptOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
+    const parsed = ToolReceiptOperationRequestSchema.safeParse(body);
     if (!parsed.success) {
-      return jsonResponse({ ok: false, error: "invalid_tool_receipt_operation" }, 400);
+      return { status: 400, payload: { ok: false, error: "invalid_tool_receipt_operation" } };
     }
     const refusal = this.objectPortRefusal(
       parsed.data,
       "workstream_tool_receipt_identity_mismatch",
     );
-    if (refusal) return jsonResponse(refusal.payload, refusal.status);
+    if (refusal) return refusal;
     const method = this.toolReceipts[parsed.data.operation] as (...args: unknown[]) => unknown;
     const value = method.apply(this.toolReceipts, parsed.data.args);
-    return jsonResponse({ ok: true, value: value ?? null });
+    return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
   /**
@@ -1192,14 +1196,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * the first one landed.
    */
   private async acceptSchedulingOperation(request: Request): Promise<Response> {
-    const parsed = SchedulingOperationRequestSchema.safeParse(
-      await request.json().catch(() => null),
-    );
+    const outcome = await this.schedulingOperationOutcome(await request.json().catch(() => null));
+    return jsonResponse(outcome.payload, outcome.status);
+  }
+
+  private async schedulingOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
+    const parsed = SchedulingOperationRequestSchema.safeParse(body);
     if (!parsed.success) {
-      return jsonResponse({ ok: false, error: "invalid_scheduling_operation" }, 400);
+      return { status: 400, payload: { ok: false, error: "invalid_scheduling_operation" } };
     }
     const refusal = this.objectPortRefusal(parsed.data, "workstream_scheduling_identity_mismatch");
-    if (refusal) return jsonResponse(refusal.payload, refusal.status);
+    if (refusal) return refusal;
     const method = this.scheduling[parsed.data.operation] as (...args: unknown[]) => unknown;
     const mutates = mutatesWakeups(parsed.data.operation);
     const value = mutates
@@ -1229,7 +1236,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         });
       }
     }
-    return jsonResponse({ ok: true, value: value ?? null });
+    return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
   /**
@@ -1354,20 +1361,25 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * from an empty table.
    */
   private async acceptBlockDashboardOperation(request: Request): Promise<Response> {
-    const parsed = BlockDashboardOperationRequestSchema.safeParse(
+    const outcome = await this.blockDashboardOperationOutcome(
       await request.json().catch(() => null),
     );
+    return jsonResponse(outcome.payload, outcome.status);
+  }
+
+  private async blockDashboardOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
+    const parsed = BlockDashboardOperationRequestSchema.safeParse(body);
     if (!parsed.success) {
-      return jsonResponse({ ok: false, error: "invalid_block_dashboard_operation" }, 400);
+      return { status: 400, payload: { ok: false, error: "invalid_block_dashboard_operation" } };
     }
     const refusal = this.objectPortRefusal(
       parsed.data,
       "workstream_block_dashboard_identity_mismatch",
     );
-    if (refusal) return jsonResponse(refusal.payload, refusal.status);
+    if (refusal) return refusal;
     const method = this.blockDashboard[parsed.data.operation] as (...args: unknown[]) => unknown;
     const value = method.apply(this.blockDashboard, parsed.data.args);
-    return jsonResponse({ ok: true, value: value ?? null });
+    return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
   private async acceptTerminalOperation(request: Request): Promise<Response> {
@@ -1496,21 +1508,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       });
     }
     return value ?? null;
-  }
-
-  /** Terminal port for a harness already executing in this object. */
-  private localTerminalPortFactory(): TerminalPortFactory {
-    return (workspaceId, workstreamId) => createTerminalObjectPort(
-      this.env,
-      workspaceId,
-      workstreamId,
-      (operation, args) => this.runTerminalOperation({
-        workspaceId,
-        workstreamId,
-        operation,
-        args,
-      }),
-    );
   }
 
   /** Resource-link writer for a harness already executing in this object. */
@@ -2372,11 +2369,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         {
           lease: claim.lease,
           publishRealtime: false,
-          // Terminal is work-stream-wide authority in the main child. A
-          // non-main substream still routes to that object; only the resident
-          // main loop may replace the RPC with direct in-event dispatch.
+          // Terminal reaches this object through the authorities installed on
+          // `executionEnv`, so it is not threaded here any more. The resource
+          // attacher still is, and deliberately: it carries a *scope* rather
+          // than a location — it refuses an attachment addressed to another
+          // work stream, which a port resolved by ids would happily deliver.
           ...(this.externalSubstreamId() === "0" ? {
-            terminalPortFactory: this.localTerminalPortFactory(),
             runtimeResourceAttacher: this.localRuntimeResourceAttacher(
               input.workspaceId,
               input.workstreamId,
@@ -2687,6 +2685,50 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   private localRuntimeEnvironment(
+    workspaceId: string,
+    workstreamId: string,
+    substreamId: string,
+  ): Env {
+    const routed = this.routedRuntimeEnvironment(workspaceId, workstreamId, substreamId);
+    // Everything this object owns about this work stream, declared in one
+    // place. A run executing here reaches each authority by holding it rather
+    // than by resolving a name, and the next authority to move into an object
+    // is added to `LocalWorkstreamAuthorities` instead of being given its own
+    // mechanism — which is how the receipt authority came to be the one that
+    // had none on 2026-08-24.
+    if (!objectOwnsWorkstreamAuthorities(
+      this.objectStore.identity(),
+      this.externalSubstreamId(),
+      { workspaceId, workstreamId, substreamId },
+    )) return routed;
+    // Each authority is installed as its *endpoint*, never as its storage: the
+    // endpoint is what refuses a fenced object, commits the directory
+    // projection with the row, and re-arms the alarm a wake-up write moved.
+    // Handing down the tables would drop all three for the caller running
+    // closest to them.
+    const resident = (
+      outcome: (body: unknown) => Promise<ObjectPortOutcome>,
+    ): LocalAuthorityExecutor => async (operation, args) => (
+      await outcome({ workspaceId, workstreamId, operation, args })
+    ).payload as { ok?: boolean; value?: unknown; error?: string };
+    return withLocalWorkstreamAuthorities(routed, workspaceId, workstreamId, {
+      blockDashboard: resident((body) => this.blockDashboardOperationOutcome(body)),
+      harnessRun: resident((body) => this.harnessRunOperationOutcome(body)),
+      identity: resident((body) => this.identityOperationOutcome(body)),
+      message: resident((body) => this.messageOperationOutcome(body)),
+      resource: resident((body) => this.resourceOperationOutcome(body)),
+      scheduling: resident((body) => this.schedulingOperationOutcome(body)),
+      toolReceipt: resident((body) => this.toolReceiptOperationOutcome(body)),
+      terminal: (operation, args) => this.runTerminalOperation({
+        workspaceId,
+        workstreamId,
+        operation,
+        args,
+      } as TerminalOperationRequest) as Promise<unknown>,
+    });
+  }
+
+  private routedRuntimeEnvironment(
     workspaceId: string,
     workstreamId: string,
     substreamId: string,

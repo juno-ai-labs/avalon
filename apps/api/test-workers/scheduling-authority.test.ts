@@ -19,6 +19,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { asSubstreamId } from "@avalon/contracts";
 
 import { substreamAgentName } from "../src/durable-objects/names";
+import type { SchedulingObjectPort } from "../src/durable-objects/workstream-scheduling-protocol";
+import type { Env } from "../src/env";
+import { ObjectPortError } from "../src/runtime/object-port";
+import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
 import {
   WORKSPACE_ID,
   WORKSTREAM_ID,
@@ -478,5 +482,107 @@ describe("scheduling authority on real workerd", () => {
 
     expect(status).toBe(400);
     expect(body).toMatchObject({ error: "invalid_scheduling_operation" });
+  });
+});
+
+/**
+ * The same endpoint, reached from inside the object that owns it.
+ *
+ * A run executing in this object is handed an environment carrying its own
+ * authorities, so a scheduling port built below it answers without a stub. What
+ * that environment carries has to be the *endpoint* and not the storage: the
+ * storage is a table, and everything above it in `acceptSchedulingOperation` —
+ * the authority fence, the projection commit, the alarm re-derive — would be
+ * skipped for exactly the callers running closest to the data. A wake-up
+ * scheduled that way is a row that never fires.
+ *
+ * The environment is wrapped so `SUBSTREAM_AGENTS` throws on use, as the
+ * receipt suite does: a port that quietly dispatched would otherwise pass these
+ * assertions by taking the wire, which is the path being replaced.
+ */
+describe("scheduling from inside the owning object", () => {
+  interface AgentInternals {
+    localRuntimeEnvironment(
+      workspaceId: string,
+      workstreamId: string,
+      substreamId: string,
+    ): Env;
+  }
+
+  function withoutAgentNamespace(agentEnv: Env): Env {
+    return new Proxy(agentEnv, {
+      get(target, property, receiver) {
+        if (property === "SUBSTREAM_AGENTS") {
+          throw new Error("scheduling operation left the isolate");
+        }
+        return Reflect.get(target, property, receiver) as unknown;
+      },
+    });
+  }
+
+  /** The port a run gets, over the environment the object hands it. */
+  function residentPort(instance: unknown): SchedulingObjectPort {
+    return createSchedulingObjectPort(
+      withoutAgentNamespace((instance as AgentInternals)
+        .localRuntimeEnvironment(WORKSPACE_ID, WORKSTREAM_ID, "0")),
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+    );
+  }
+
+  it("commits the projection and the alarm entry a dispatched call would have", async () => {
+    const stub = agent();
+    await boot(stub);
+
+    const outcome = await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      seedRun(state);
+      return residentPort(instance).scheduleWakeup(wakeup() as never);
+    });
+
+    expect(outcome).toMatchObject({ outcome: "scheduled" });
+    // The three assertions the first spec in this file makes about a dispatched
+    // call, made about the local one. Carrying `this.scheduling` instead of the
+    // endpoint still writes the row and still answers `scheduled`, and fails
+    // both assertions under it — which is the whole difference between the two,
+    // and none of it is visible in what the caller gets back.
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT status FROM workstream_wakeups`).toArray())
+        .toEqual([{ status: "pending" }]);
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM projection_keys WHERE projection_key = 'common'`,
+      ).one().count).toBe(1);
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM _internal_durable_alarms WHERE kind = 'agent_timer'`,
+      ).one().count).toBe(1);
+    });
+  });
+
+  it("refuses a write against an object that is no longer the authority", async () => {
+    const stub = agent();
+    await boot(stub);
+
+    // The fence is the check a local caller has no other way to meet: it lives
+    // in `objectPortRefusal`, above the storage, and a quarantined object is
+    // not the one whose writes count. A run holding its own storage commits
+    // here, exactly as it would have on an object that still was.
+    const refusal = await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      seedRun(state);
+      state.storage.sql.exec(`UPDATE workstream SET authority_mode = 'quarantined' WHERE id = 1`);
+      return residentPort(instance).scheduleWakeup(wakeup() as never)
+        .then(() => null, (error: unknown) => error);
+    });
+
+    // The same class and the same code a dispatched refusal raises, because
+    // both are read out of one `{ ok: false, error }` by one interpretation in
+    // `createObjectPort`. A local path with its own would be free to drift.
+    expect(refusal).toBeInstanceOf(ObjectPortError);
+    expect((refusal as ObjectPortError).code).toBe("workstream_runtime_authority_fenced");
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM workstream_wakeups`,
+      ).one().count).toBe(0);
+    });
   });
 });

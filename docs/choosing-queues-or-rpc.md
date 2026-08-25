@@ -500,7 +500,7 @@ mistake available here, and it is always made with good intentions.
   thread, and cannot include the result in the transaction it is in the middle
   of. This is not a rule you have to remember at each call site, because almost
   every call site is a shared helper that is right for the Worker calling it and
-  wrong only when the caller turns out to be the object: `durableObjectSelf` in
+  wrong only when the caller turns out to be the object: `durableObjectSelfForId` in
   `apps/api/src/lib/durable-object-self.ts` recognizes the case and hands back
   the object instead. What you do have to remember is to register a new Durable
   Object class there, in its constructor, the way the four existing ones do.

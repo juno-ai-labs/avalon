@@ -17,6 +17,7 @@
  * and keeps do not.
  */
 import { env } from "cloudflare:workers";
+import type { DurableObject as RpcDurableObject } from "cloudflare:workers";
 import { asBlockId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -27,7 +28,7 @@ import {
   workspaceDOName,
   workstreamDOName,
 } from "../src/durable-objects/names";
-import { durableObjectSelf } from "../src/lib/durable-object-self";
+import { durableObjectSelfForId } from "../src/lib/durable-object-self";
 import {
   seedWorkstreamRoot,
   WORKSPACE_ID,
@@ -54,30 +55,48 @@ function internals(instance: object): RegisteredObject {
   return instance as unknown as RegisteredObject;
 }
 
+/**
+ * Recognition as a caller performs it: derive the id the name resolves to in
+ * this binding, then ask whether it is the caller's own.
+ *
+ * The local test environment resolves without a jurisdiction, so `idFromName`
+ * on the binding is the same derivation `durableObjectIdForRegion` makes.
+ */
+function selfFor<T extends RpcDurableObject | undefined>(
+  held: object,
+  namespace: DurableObjectNamespace<T>,
+  name: string,
+): unknown {
+  return durableObjectSelfForId(held, namespace, namespace.idFromName(name));
+}
+
 beforeEach(async () => {
   await reset();
 });
 
-describe("a Durable Object's registration of its own name", () => {
-  it("lets a SubstreamAgent recognize itself once its identity is written", async () => {
+describe("a Durable Object's registration of its own identity", () => {
+  it("lets a SubstreamAgent recognize itself before its identity is written", async () => {
     const name = substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID);
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(name));
 
     await runInDurableObject(stub, (instance, state) => {
       const held = internals(instance);
-      // Before identity: nothing may address this object by name, so the
-      // registration must decline rather than guess at one.
-      expect(durableObjectSelf(held.env, env.SUBSTREAM_AGENTS, name)).toBeNull();
+      // Before identity, and this is the case that matters: an object whose
+      // durable facts are not written yet is still the object that name
+      // resolves to, and a call it makes to that name would land back on it.
+      // Recognition reads `state.id`, which it has had since construction, so
+      // there is no window where it fails to see that.
+      expect(selfFor(held.env, env.SUBSTREAM_AGENTS, name)).not.toBeNull();
 
       seedWorkstreamRoot(state);
 
-      expect(durableObjectSelf(held.env, env.SUBSTREAM_AGENTS, name)).not.toBeNull();
-      expect(durableObjectSelf(
+      expect(selfFor(held.env, env.SUBSTREAM_AGENTS, name)).not.toBeNull();
+      expect(selfFor(
         held.env,
         env.SUBSTREAM_AGENTS,
         substreamAgentName("global", WORKSPACE_ID, OTHER_WORKSTREAM_ID),
       )).toBeNull();
-      expect(durableObjectSelf(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
+      expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
     });
   });
 
@@ -94,7 +113,7 @@ describe("a Durable Object's registration of its own name", () => {
       seedWorkstreamRoot(state);
       const product = internals(instance).product;
       expect(product).toBeDefined();
-      expect(durableObjectSelf(product!.env, env.SUBSTREAM_AGENTS, name)).not.toBeNull();
+      expect(selfFor(product!.env, env.SUBSTREAM_AGENTS, name)).not.toBeNull();
     });
   });
 
@@ -105,24 +124,24 @@ describe("a Durable Object's registration of its own name", () => {
 
     await runInDurableObject(stub, (instance) => {
       const held = internals(instance);
-      expect(durableObjectSelf(held.env, env.WORKSPACE_DOS, name)).not.toBeNull();
-      expect(durableObjectSelf(
+      expect(selfFor(held.env, env.WORKSPACE_DOS, name)).not.toBeNull();
+      expect(selfFor(
         held.env,
         env.WORKSPACE_DOS,
         workspaceDOName("global", asWorkspaceId("00000000-0000-7000-8000-0000000004b3")),
       )).toBeNull();
-      expect(durableObjectSelf(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
+      expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
     });
   });
 
-  it("lets a WorkstreamDO recognize itself once its metadata exists", async () => {
+  it("lets a WorkstreamDO recognize itself with or without its metadata", async () => {
     const name = workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID);
     const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(name));
     await stub.fetch("https://workstream.test/health");
 
     await runInDurableObject(stub, (instance, state) => {
       const held = internals(instance);
-      expect(durableObjectSelf(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
+      expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).not.toBeNull();
 
       state.storage.sql.exec(
         `INSERT INTO workstream_metadata
@@ -134,24 +153,27 @@ describe("a Durable Object's registration of its own name", () => {
         WORKSTREAM_ID,
       );
 
-      expect(durableObjectSelf(held.env, env.WORKSTREAM_DOS, name)).not.toBeNull();
-      expect(durableObjectSelf(
+      expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).not.toBeNull();
+      expect(selfFor(
         held.env,
         env.WORKSTREAM_DOS,
         workstreamDOName("global", WORKSPACE_ID, OTHER_WORKSTREAM_ID),
       )).toBeNull();
-      expect(durableObjectSelf(held.env, env.SUBSTREAM_AGENTS, name)).toBeNull();
+      // The main `SubstreamAgent` shares this logical name, so only the binding
+      // separates them — and it still does, whether or not the two namespaces
+      // happen to hash a name to the same id.
+      expect(selfFor(held.env, env.SUBSTREAM_AGENTS, name)).toBeNull();
     });
   });
 
-  it("lets a BlockDashboardAgent recognize itself once its block identity is written", async () => {
+  it("lets a BlockDashboardAgent recognize itself with or without its block identity", async () => {
     const name = blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_ID);
     const stub = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(name));
     await stub.fetch("https://block-dashboard.test/health");
 
     await runInDurableObject(stub, (instance, state) => {
       const held = internals(instance);
-      expect(durableObjectSelf(held.env, env.BLOCK_DASHBOARD_AGENTS, name)).toBeNull();
+      expect(selfFor(held.env, env.BLOCK_DASHBOARD_AGENTS, name)).not.toBeNull();
 
       state.storage.sql.exec(
         `INSERT INTO block_dashboard_block_identity
@@ -162,8 +184,8 @@ describe("a Durable Object's registration of its own name", () => {
         BLOCK_ID,
       );
 
-      expect(durableObjectSelf(held.env, env.BLOCK_DASHBOARD_AGENTS, name)).not.toBeNull();
-      expect(durableObjectSelf(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
+      expect(selfFor(held.env, env.BLOCK_DASHBOARD_AGENTS, name)).not.toBeNull();
+      expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
     });
   });
 });
