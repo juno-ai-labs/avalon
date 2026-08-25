@@ -11,6 +11,7 @@ import {
   compareVersions,
   normalizeReleasePrefix,
   parseMacUpdateFeed,
+  reconcileImmutableReleaseObject,
   releaseContentType,
   sha512File,
   verifyFeedArtifact,
@@ -41,6 +42,49 @@ test('semantic versions compare with prerelease precedence', () => {
   assert.equal(compareVersions('1.2.4', '1.2.3'), 1);
   assert.equal(compareVersions('1.2.3-beta.2', '1.2.3-beta.10'), -1);
   assert.equal(compareVersions('1.2.3', '1.2.3-rc.1'), 1);
+});
+
+test('a pre-manifest retry replaces orphaned bytes but a committed release stays immutable', async () => {
+  let uploads = 0;
+  assert.equal(await reconcileImmutableReleaseObject({
+    existingHash: 'old-notarized-build',
+    localHash: 'new-notarized-build',
+    releaseIsCommitted: false,
+    objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
+    upload: async () => { uploads += 1; },
+  }), 'replaced-orphan');
+  assert.equal(uploads, 1);
+
+  await assert.rejects(
+    reconcileImmutableReleaseObject({
+      existingHash: 'published-build',
+      localHash: 'different-build',
+      releaseIsCommitted: true,
+      objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
+      upload: async () => { uploads += 1; },
+    }),
+    /already exists with different bytes/u,
+  );
+  assert.equal(uploads, 1);
+});
+
+test('an absent immutable object uploads and matching bytes are reused', async () => {
+  let uploads = 0;
+  assert.equal(await reconcileImmutableReleaseObject({
+    existingHash: undefined,
+    localHash: 'new-build',
+    releaseIsCommitted: false,
+    objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
+    upload: async () => { uploads += 1; },
+  }), 'uploaded');
+  assert.equal(await reconcileImmutableReleaseObject({
+    existingHash: 'new-build',
+    localHash: 'new-build',
+    releaseIsCommitted: true,
+    objectLocation: 'r2://releases/Avalon-1.147.0.dmg',
+    upload: async () => { uploads += 1; },
+  }), 'reused');
+  assert.equal(uploads, 1);
 });
 
 test('mac update feed parser requires a local checksummed artifact', () => {

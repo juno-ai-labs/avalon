@@ -1,5 +1,5 @@
 import { createRef } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MentionIdentity } from '../lib/api';
@@ -86,6 +86,14 @@ function renderComposer(
       />
     </Tooltip.Provider>,
   );
+}
+
+function mentionOptionCopy(option: HTMLElement): { badge: string | null; description: string | null; label: string | null } {
+  return {
+    badge: within(option).getByText('Person').textContent,
+    description: option.querySelector('small')?.textContent ?? null,
+    label: option.querySelector('strong')?.textContent ?? null,
+  };
 }
 
 describe('WorkstreamComposer mention confirmation', () => {
@@ -346,7 +354,11 @@ describe('WorkstreamComposer mention confirmation', () => {
     // membership that is not active — the participants rail already filters for
     // exactly this reason.
     const options = await screen.findAllByRole('option');
-    expect(options.map((option) => option.textContent)).toEqual(['Adamadam@example.comPerson']);
+    expect(options.map(mentionOptionCopy)).toEqual([{
+      badge: 'Person',
+      description: 'adam@example.com',
+      label: 'Adam',
+    }]);
   });
 
   it('offers people only, leaving the work stream\'s connections out of the list and out of the highlight', async () => {
@@ -367,11 +379,15 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.change(composer, { target: { value: '@' } });
 
     const options = await screen.findAllByRole('option');
-    expect(options.map((option) => option.textContent)).toEqual([
-      'Adamadam@example.comPerson',
-      'Bob Builderbob@example.com · not participatingPerson',
-      'Cara Chencara@example.com · not participatingPerson',
+    await waitFor(() => expect(options[0]?.querySelector('.avatar-fallback')).toBeInTheDocument());
+    expect(options.map(mentionOptionCopy)).toEqual([
+      { badge: 'Person', description: 'adam@example.com', label: 'Adam' },
+      { badge: 'Person', description: 'bob@example.com · not participating', label: 'Bob Builder' },
+      { badge: 'Person', description: 'cara@example.com · not participating', label: 'Cara Chen' },
     ]);
+    expect(options[0]).toHaveAccessibleName('Adamadam@example.comPerson');
+    expect(options[1]).toHaveAccessibleName('Bob Builderbob@example.com · not participatingPerson');
+    expect(options[2]).toHaveAccessibleName('Cara Chencara@example.com · not participatingPerson');
     expect(screen.queryByText('Workspace connection')).not.toBeInTheDocument();
 
     // The draft's highlight names what the composer can mention, so a
