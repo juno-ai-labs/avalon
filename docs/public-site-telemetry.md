@@ -28,9 +28,12 @@ and destination mechanics remain in [`telemetry.md`](telemetry.md).
 ## How it works
 
 Every page first requests `GET /telemetry/route` from the Global edge. The
-response carries the coarse `eu`/`global` route, whether it came from Cloudflare
-geolocation or the conservative Global fallback, and a five-minute signed route
-token. It creates no D1 journey and returns `Cache-Control: no-store`. The site
+Worker prefers Cloudflare's maintained `request.cf.isEUCountry` classification,
+falls back to the coarse country code when that property is unavailable, and
+reduces either signal to `eu` or `global`. The response carries that route,
+whether it came from Cloudflare geolocation or the conservative Global fallback,
+and a five-minute signed route token. It creates no D1 journey and returns
+`Cache-Control: no-store`. The site
 then selects an identity:
 
 - Global reads or creates one random UUIDv7 in first-party `localStorage`, so
@@ -80,6 +83,12 @@ navigation or opening the desktop.
   values, and resource identifiers stay inside the page-specific parser.
 - **The site has no generic capture or DOM autocapture.** A new event starts in
   the shared closed registry and one semantic producer.
+- **PostHog remains a server-side destination.** The site does not load
+  `posthog-js`, expose the project token, accept remote capture settings, or
+  enable PostHog cookies, autocapture, replay, heatmaps, exception capture, or
+  browser person profiles. PostHog's cookieless browser mode is therefore not
+  part of this path; Rally's narrower first-party envelopes already cross the
+  regional boundary before delivery.
 - **Measurement cannot change the site experience.** Storage denial, route or
   bootstrap failure, a rejected event, and destination failure are silent to
   navigation, downloads, and desktop handoffs.
@@ -131,7 +140,8 @@ web-event mapping.
 ## Regional impact
 
 The public route lookup and signed-capability issuer exist only on the Global
-Worker because Cloudflare observes the incoming country there. An affirmative EU
+Worker because Cloudflare supplies the maintained EU-country classification and
+incoming country there. An affirmative EU
 route sends the validated event projection to EU over `EU_TELEMETRY_BRIDGE` and
 terminates in EU D1. EU has no PostHog token or destination call. Non-EU,
 unknown, malformed, or unavailable geolocation uses Global and may reach the US
@@ -151,7 +161,13 @@ regional service credential, account session, or cross-region bridge authority.
 
 ## Operations
 
-The public site needs no analytics secret. The Global Worker needs exact
+The public site needs no analytics secret. Production Global delivery targets
+US PostHog project `541600`; its project token remains only in the Global Worker
+secret `POSTHOG_PROJECT_TOKEN`, and the EU Worker must not have that secret or a
+PostHog host. The project-level **Discard client IP data** control remains
+enabled as defense in depth alongside every delivered event's
+`$geoip_disable: true`; neither setting substitutes for the regional route.
+The Global Worker also needs exact
 `ALLOWED_ORIGINS` entries for all four served site origins —
 `https://rallywith.ai`, `https://www.rallywith.ai`, `https://with-avalon.com`,
 and `https://www.with-avalon.com` — plus the existing telemetry capability signing
@@ -181,6 +197,75 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-08-25 — Cloudflare owns the EU classification and PostHog stays off the page
+
+**What changed:** Public-site routing now consumes Cloudflare's maintained
+`request.cf.isEUCountry` signal directly and retains the country-code set as a
+conservative fallback when the edge property is unavailable. The site disclosure
+and operations guide now state explicitly that PostHog is a server-side Global
+destination: the browser loads no PostHog SDK, exposes no project token, and
+enables none of its automatic capture surfaces. Production delivery is recorded
+against the renamed Rally US project while its token remains a Global Worker
+secret, and that project now discards client IP data at ingestion.
+
+**Why:** PostHog's JavaScript SDK can run without cookies, but loading it would
+still broaden the browser's data path and make project-side defaults relevant to
+what the landing page collects. Rally already has a narrower semantic collector
+and a regional edge boundary. Cloudflare also publishes an EU classification,
+so maintaining only a hand-written country set would create avoidable policy
+drift at the exact point that decides whether an identifier may persist.
+
+**Considered and rejected:** Installing `posthog-js` with `cookieless_mode:
+"always"`. It would duplicate page events, add a third-party browser dependency,
+and require project-side cookieless mode, while producing less control over the
+closed event vocabulary and regional destination than the existing Worker path.
+
+**Consequences:** New public-site measurement must continue through Rally's
+typed first-party endpoint. Changes to PostHog project defaults cannot silently
+expand browser collection, and EU routing follows Cloudflare's maintained signal
+before the browser chooses whether an anonymous identifier may persist.
+
+### 2026-08-25 — The public acquisition journey speaks Rally only
+
+**What changed:** The landing page now has one Rally art direction and one
+meeting-grounded narrative: multiplayer workstreams turn an individual's AI
+setup into shared team leverage. The Trust Center, support, legal, invitation,
+work-stream, Slack, and desktop-auth handoff pages all show Rally identity and
+canonical `rallywith.ai` contact addresses. Landing actions still enter the same
+closed telemetry vocabulary, and the new social card carries no tracking or
+resource identity. The visual system uses the canonical woven Rally mark shared
+with the desktop product, a
+120-unit horizontal grid, three accent colors plus neutrals, functional
+geometric shapes, sculptural sans-serif type, and deliberate asymmetry. Circle
+geometry has an explicit square aspect ratio, and hover and keyboard-focus
+feedback cover each interactive treatment.
+
+The temporary tennis-ball mark was removed from every public page, favicon, and
+touch icon after the canonical product mark was identified in the desktop
+assets. Public surfaces now consume the same Rally-named asset so the product
+and acquisition identities cannot drift independently again.
+
+**Why:** The public site was canonical on `rallywith.ai` but still introduced
+itself, its desktop handoff, and every social unfurl as Avalon. That made the
+reinstall message for the renamed desktop app lead to a page that appeared to be
+for a different product, and it turned every shared link into a new source of
+the superseded name. Research across the team's meetings and Slack repeated one
+positioning pressure: AI use is still private and copy-paste mediated, while
+Rally's value is the shared workstream and the visible trail behind an outcome.
+
+**Considered and rejected:** Keeping the four randomly shuffled landscape
+concepts and replacing only their nouns. Each concept still centered an
+individual handing work to a named assistant, which contradicted the multiplayer
+positioning, and random art direction made the brand change impossible to read
+as one deliberate public identity.
+
+**Consequences:** Public HTML must not emit Avalon product copy, Avalon contact
+addresses, or the old mark path. Compatibility infrastructure remains separate:
+the old served domains, deep-link scheme, renderer origin, and already-published
+installer names continue to be accepted where the domain-migration contract
+requires them. New landing interactions must keep using the registered
+`site_action_selected` actions rather than adding DOM capture.
 
 ### 2026-08-25 — The web page host is read from configuration, not hardcoded
 

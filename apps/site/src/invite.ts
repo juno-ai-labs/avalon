@@ -1,6 +1,6 @@
 import { reportDesktopHandoff } from './telemetry';
 
-const button = document.querySelector<HTMLAnchorElement>('#open-avalon');
+const button = document.querySelector<HTMLAnchorElement>('#open-rally');
 const error = document.querySelector<HTMLElement>('#invite-error');
 const parameters = new URLSearchParams(window.location.hash.replace(/^#/u, ''));
 const entries = [...parameters.entries()];
