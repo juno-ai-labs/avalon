@@ -11,6 +11,7 @@ export type ResourcePortFactory = (
 ) => ResourceObjectPort;
 
 const CONTRACT: ObjectPortContract<WorkstreamResourceStorage, ResourceOperation> = {
+  authority: "resource",
   operations: RESOURCE_OPERATIONS,
   dispatch: (stub, request) => stub.executeResourceOperation(request),
   failureCode: "resource_operation_failed",

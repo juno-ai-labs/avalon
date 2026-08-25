@@ -14,6 +14,7 @@ export type SchedulingPortFactory = (
 ) => SchedulingObjectPort;
 
 const CONTRACT: ObjectPortContract<WorkstreamSchedulingStorage, SchedulingOperation> = {
+  authority: "scheduling",
   operations: SCHEDULING_OPERATIONS,
   dispatch: (stub, request) => stub.executeSchedulingOperation(request),
   failureCode: "scheduling_operation_failed",

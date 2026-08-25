@@ -265,6 +265,10 @@ describe("boundary contracts", () => {
       // defect and tells a member not to bother retrying.
       "provider_unavailable",
       "provider_circuit_open",
+      // The platform refusing to carry a subrequest is not the port that asked
+      // failing. Collapsing it back would restore the misattribution that cost
+      // a work stream on 2026-08-24.
+      "platform_limit_exceeded",
     ]));
     expect(() => HarnessFailureCodeSchema.parse("generic_limit")).toThrow();
   });

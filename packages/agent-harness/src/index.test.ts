@@ -2,7 +2,11 @@ import { asUserId } from "@avalon/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { AutomationDraft } from "@avalon/contracts";
 import { z } from "zod";
-import { TRANSPORT_RETRY_MAX_DELAY_MS, transportRetryDelayMs } from "./bind-runtime";
+import {
+  TRANSPORT_RETRY_MAX_DELAY_MS,
+  platformLimitRefusal,
+  transportRetryDelayMs,
+} from "./bind-runtime";
 import type { InferenceAttemptError } from "@juno-ai/bind/routing";
 import {
   __testing,
@@ -2632,6 +2636,50 @@ describe("agent harness", () => {
     expect(executionOrder).toEqual([]);
     expect(memberSafeHarnessFailureMessage("tool_receipt_persistence_failed"))
       .toContain("Check its card before retrying a write");
+  });
+
+  it("files a platform refusal under the platform, not under the port that asked", async () => {
+    // The 2026-08-24 shape: the receipt port is what happened to call next when
+    // Cloudflare stopped carrying subrequests for that invocation. Nothing about
+    // the receipt failed, and a reader sent to the receipt authority finds
+    // nothing wrong there.
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{
+        delta: { tool_calls: [toolDelta(0, "provider-write", "create_record")] },
+        finish_reason: "tool_calls",
+      }],
+    }])) as typeof fetch;
+    const executionOrder: string[] = [];
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([harnessTool("create_record", "write", executionOrder)])],
+      persistToolExecutionPlan: async () => {
+        throw new Error(
+          "D1_ERROR: Subrequest depth limit exceeded. This request recursed through Workers too many times.",
+        );
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: {
+        kind: "platform",
+        code: "platform_limit_exceeded",
+      },
+    });
+    expect(memberSafeHarnessFailureMessage("platform_limit_exceeded"))
+      .toContain("Trying again usually works");
+  });
+
+  it("files the count limit the same way as the depth limit", () => {
+    // One invocation may make a bounded number of subrequests as well as reach a
+    // bounded depth. Both are the platform refusing to carry the call, and the
+    // wordings differ, so both are matched.
+    expect(platformLimitRefusal(new Error("Too many subrequests."))).toBe(true);
+    expect(platformLimitRefusal(new Error("Subrequest depth limit exceeded."))).toBe(true);
+    expect(platformLimitRefusal(new Error("no such table: tool_effects"))).toBe(false);
+    expect(platformLimitRefusal(undefined)).toBe(false);
   });
 
   it("classifies a tool lifecycle event persistence failure as a receipt failure", async () => {

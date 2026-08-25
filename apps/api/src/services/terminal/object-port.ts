@@ -10,6 +10,7 @@ import {
   type TerminalOperation,
 } from "../../durable-objects/workstream-terminal-protocol";
 import type { Env } from "../../env";
+import { localWorkstreamAuthority } from "../../runtime/local-authorities";
 import type { WorkstreamTerminalStorage } from "../../durable-objects/workstream-terminal-storage";
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 
@@ -92,8 +93,15 @@ export function createTerminalObjectPort(
    * against real workerd. The resident main agent supplies the executor form
    * so it can keep those semantics without RPCing back into its own event.
    */
-  local?: WorkstreamTerminalStorage | TerminalOperationExecutor,
+  localOverride?: WorkstreamTerminalStorage | TerminalOperationExecutor,
 ): TerminalObjectPort {
+  // The same seam the eight object ports take through `createObjectPort`:
+  // an explicit override for a focused test, otherwise whatever the owning
+  // object installed on this environment. Terminal carries an *executor*
+  // rather than storage because its object wraps every operation in an alarm
+  // and transaction boundary that storage alone would skip.
+  const local = localOverride
+    ?? localWorkstreamAuthority(env, workspaceId, workstreamId, "terminal");
   const call = async (operation: TerminalOperation, args: unknown[]): Promise<unknown> => {
     if (typeof local === "function") {
       return await local(operation, args) ?? null;
