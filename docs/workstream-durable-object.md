@@ -1063,6 +1063,51 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-25 — The last two compatibility views, and what a migration is
+
+**What changed:** migration 26 drops `_runtime_workstreams`,
+`_runtime_workstream_participants` and their four write triggers. Nothing is
+left in `LOCAL_TABLES` or `TABLE_REWRITES` for either, `packages/db`'s
+work-stream repository is gone, and the `/dev` seed seats people through the
+identity authority. `compatObjectDrops` is the shape every promotion in
+`workstream-object-schema.ts` had written out by hand.
+
+**Why:** the slice before this one left both views declared because their
+remaining callers were fixtures, and said so. That was the wrong stopping
+point: a view nothing reads is a view a new caller can still reach, and the
+routing entry beside it is an invitation. Retiring them turned out to be the
+only way to find the two production writers that were left — `packages/db`'s
+`workstreams.create`, which the Slack path calls and which I had read as dead,
+and the `/dev` seed's participant insert. Neither showed up in a search for
+routed SQL, because both went through a repository.
+
+**The mistake worth recording.** The first attempt deleted the retired
+statements from `WORKSTREAM_RUNTIME_COMPAT_SCHEMA`. That array is not a
+description of today's schema — it is what migration 1 applies, so an object
+replaying from empty creates each view before a later migration drops it.
+Deleting from it rewrites history, and the damage lands on the *next* migration
+that names the view: migration 12 rebuilds the work-stream view and its
+triggers, and the participant first-opened migration derives from the rounded
+trigger rebuilds. Both broke, 608 suites deep, reporting `no such table:
+main._runtime_workstreams` from the schema apply rather than from anything a
+test wrote. **A retired compat statement stays in that array forever; the
+promotion drops it.** That is what every earlier promotion already did, and
+what the assertion inside each one is for.
+
+**What a future change has to respect:** `admitParticipant` bumps
+`participant_epoch` and clears `first_opened_at` when a removed person comes
+back. That was the retired triggers' behaviour and the conversion nearly lost
+it — being put back into a room you were taken out of is being added to it, so
+the person is notified again and the work stream is unseen for them again, and
+the three facts only agree if one write makes them.
+
+Test fixtures state product identity through `seedWorkstreamObjectRoot`'s own
+fields rather than a second statement against a view, and read it back through
+`workstreamObjectRootRow` / `workstreamObjectParticipantRows`. Assertions cross
+the two vocabularies where they actually differ: `next_attention_ordinal` is
+one ahead of the view's `latest_attention_sequence_number`, `exact_state` is
+finer than the `harness_status` bucket, and timestamps are unix milliseconds.
+
 ### 2026-08-25 — The identity and elicitation slices, and migration 25
 
 **What changed:** `WorkstreamIdentityStorage` gains the three layers the five
@@ -1106,13 +1151,10 @@ One behaviour changes on purpose, and one contract narrows.
 second source for it could only disagree.
 
 **What a future change has to respect:** `_runtime_workstreams` and
-`_runtime_workstream_participants` are still declared, and this slice does not
-drop them. Production has no caller left, but roughly two hundred test sites
-and the `/dev` seed's transcript import still write through the object's compat
-vocabulary, and `workstreamObjectRun`/`workstreamObjectGet` exist to let them.
-Retiring the views means migrating those to the object's own tables, which is
-its own slice — and until it lands, a new caller can still reach these tables
-through the router without anything failing.
+`_runtime_workstream_participants` were still declared when this entry was
+written, and the deferral was wrong — see the entry above. Migration 26 retires
+them, and doing so is what surfaced the two production writers that a search
+for routed SQL could not see, because both went through a repository.
 
 ### 2026-08-25 — The four system producers provision through the object
 
