@@ -172,7 +172,7 @@ describe("Slack Agent durable ingress", () => {
     expect(__slackAgentTesting.slackIngressRetryable(new ApiError(503, "unavailable", "unavailable"))).toBe(true);
   });
 
-  it("recognizes explicit retries and recovers only authentic denied Avalon prompts", () => {
+  it("recognizes explicit retries and recovers only authentic denied Rally prompts", () => {
     expect(__slackAgentTesting.isSlackRetryPrompt("try again")).toBe(true);
     expect(__slackAgentTesting.isSlackRetryPrompt("Please retry.")).toBe(true);
     expect(__slackAgentTesting.isSlackRetryPrompt("try a different analysis")).toBe(false);
@@ -181,7 +181,7 @@ describe("Slack Agent durable ingress", () => {
       { user: "U1", text: "<@UBOT> grab the documents above", ts: "1.1", thread_ts: "1.0" },
       {
         user: "UBOT",
-        text: "Avalon workspace tasks are not enabled for this Slack surface. Ask an admin.",
+        text: "Rally workspace tasks are not enabled for this Slack surface. Ask an admin.",
         ts: "1.2",
         thread_ts: "1.0",
       },
@@ -290,7 +290,7 @@ describe("Slack Agent durable ingress", () => {
       },
     }, "body-hash")).resolves.toEqual({
       response_action: "errors",
-      errors: { prompt: "Describe what Avalon should do." },
+      errors: { prompt: "Describe what Rally should do." },
     });
   });
 
@@ -311,7 +311,7 @@ describe("Slack Agent durable ingress", () => {
       },
     }, "body-hash")).resolves.toEqual({
       response_action: "errors",
-      errors: { prompt: "Describe what Avalon should do." },
+      errors: { prompt: "Describe what Rally should do." },
     });
   });
 
@@ -371,7 +371,7 @@ describe("Slack Agent durable ingress", () => {
       trigger_id: "trigger-1",
     }, "command-body")).resolves.toEqual({
       response_type: "ephemeral",
-      text: "Avalon queued your request. I’ll continue in your Agent conversation.",
+      text: "Rally queued your request. I’ll continue in your Agent conversation.",
     });
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ jobId: "command:command-body" }));
   });
@@ -410,7 +410,7 @@ describe("Slack Agent durable ingress", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("queues only Avalon-owned or pending public-channel thread replies", async () => {
+  it("queues only Rally-owned or pending public-channel thread replies", async () => {
     const database = new IngressDatabase();
     const send = vi.fn(async () => undefined);
     const service = new SlackAgentService(environment(database, send));
@@ -664,7 +664,7 @@ describe("work-stream link unfurl card", () => {
     const blocks = workstreamUnfurlBlocks(null, url);
     const text = cardText(blocks);
 
-    expect(text).toContain("*Avalon*");
+    expect(text).toContain("*Rally*");
     expect(text).not.toContain("Needs input");
     expect(JSON.stringify(blocks)).toContain(url);
   });
@@ -683,7 +683,7 @@ describe("work-stream link unfurl card", () => {
         type: "actions",
         elements: [{
           type: "button",
-          text: { type: "plain_text", text: "Open in Avalon" },
+          text: { type: "plain_text", text: "Open in Rally" },
           url,
           action_id: "rally_open_unfurl",
         }],

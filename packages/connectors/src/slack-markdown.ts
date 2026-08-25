@@ -145,7 +145,7 @@ export function slackNotificationText(markdown: string, limit = SLACK_NOTIFICATI
     .replace(/~~(.+?)~~/gu, "$1")
     .replace(/\n{3,}/gu, "\n\n")
     .trim();
-  if (!plain) return "Avalon posted a result.";
+  if (!plain) return "Rally posted a result.";
   return plain.length <= limit ? plain : `${plain.slice(0, limit - 1).trimEnd()}…`;
 }
 

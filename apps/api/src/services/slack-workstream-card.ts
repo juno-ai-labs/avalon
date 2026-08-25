@@ -164,14 +164,14 @@ export function workstreamUnfurlBlocks(
     type: "actions",
     elements: [{
       type: "button",
-      text: { type: "plain_text", text: "Open in Avalon" },
+      text: { type: "plain_text", text: "Open in Rally" },
       url,
       action_id: "rally_open_unfurl",
     }],
   };
   if (!summary) {
     return [
-      { type: "section", text: { type: "mrkdwn", text: "*Avalon*\nOpen this item in Avalon to view it with your existing workspace permissions." } },
+      { type: "section", text: { type: "mrkdwn", text: "*Rally*\nOpen this item in Rally to view it with your existing workspace permissions." } },
       openButton,
     ];
   }
