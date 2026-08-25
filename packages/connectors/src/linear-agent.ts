@@ -211,7 +211,7 @@ export const LinearAgentAcknowledgementSchema = z.object({
 
 export type LinearAgentAcknowledgement = z.infer<typeof LinearAgentAcknowledgementSchema>;
 
-/** Converts a provider webhook into the two commands Avalon's run coordinator handles. */
+/** Converts a provider webhook into the two commands Rally's run coordinator handles. */
 export function linearAgentInvocation(eventInput: unknown): LinearAgentInvocation {
   const event = parseLinearAgentSessionEvent(eventInput);
   if (event.action === "created") {
