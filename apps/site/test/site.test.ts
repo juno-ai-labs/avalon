@@ -244,11 +244,11 @@ describe('public Rally site', () => {
     expect(release.bucket).toBe('avalon-desktop-releases');
     expect(release.prefix).toBe('stable/darwin/arm64');
     expect(release.files).toMatchObject({
-      dmg: `Avalon-${release.version}-mac-arm64.dmg`,
-      zip: `Avalon-${release.version}-mac-arm64.zip`,
+      dmg: `Rally-${release.version}-mac-arm64.dmg`,
+      zip: `Rally-${release.version}-mac-arm64.zip`,
     });
     expect(desktopDmgUrl(release)).toBe(
-      'https://downloads.rallywith.ai/stable/darwin/arm64/Avalon.dmg',
+      'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
     );
     expect(page).not.toMatch(/href="[^"]+\.(?:dmg|zip)"/i);
     expect(page).toContain('Downloads opening soon');
@@ -265,7 +265,7 @@ describe('public Rally site', () => {
       published: true,
       sha256: {
         [dmg]: 'a'.repeat(64),
-        'Avalon.dmg': 'a'.repeat(64),
+        'Rally.dmg': 'a'.repeat(64),
       },
       publishedAt: '2026-08-02T12:00:00.000Z',
     });
@@ -273,10 +273,10 @@ describe('public Rally site', () => {
     const rendered = renderDesktopRelease(page, release);
 
     expect(desktopDmgUrl(release)).toBe(
-      'https://downloads.rallywith.ai/stable/darwin/arm64/Avalon.dmg',
+      'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
     );
     expect(rendered).toContain(
-      'href="https://downloads.rallywith.ai/stable/darwin/arm64/Avalon.dmg"',
+      'href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg"',
     );
     expect(rendered).toContain('Download Rally for macOS');
     expect(rendered).not.toContain('Downloads opening soon');
@@ -288,7 +288,7 @@ describe('public Rally site', () => {
     const fetchRelease: typeof fetch = async (input, init) => {
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
       if (url.pathname.endsWith('/latest-mac.yml')) {
-        const manifest = 'version: 0.1.0\nfiles:\n  - url: Avalon-0.1.0-mac-arm64.zip\n';
+        const manifest = 'version: 0.1.0\nfiles:\n  - url: Rally-0.1.0-mac-arm64.zip\n';
         return new Response(manifest, {
           status: 200,
           headers: { 'content-length': String(new TextEncoder().encode(manifest).byteLength) },
@@ -317,7 +317,7 @@ describe('public Rally site', () => {
       publishedAt: '2026-08-02T19:00:00.000Z',
     });
     expect(desktopDmgUrl(release, publication)).toBe(
-      'https://downloads.rallywith.ai/stable/darwin/arm64/Avalon.dmg',
+      'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
     );
     expect(renderDesktopRelease(page, release, publication)).toContain('Download Rally for macOS');
   });
@@ -329,7 +329,7 @@ describe('public Rally site', () => {
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
       if (url.pathname.endsWith('/latest-mac.yml')) {
         return new Response(
-          `version: ${release.version}\nfiles:\n  - url: Avalon-${release.version}-mac-arm64.zip\n`,
+          `version: ${release.version}\nfiles:\n  - url: Rally-${release.version}-mac-arm64.zip\n`,
         );
       }
       if (init?.method === 'HEAD') {

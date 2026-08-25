@@ -156,15 +156,18 @@ into the Vite bundle or stored as a Worker variable.
 
 ## Operations
 
-A merge to `main` touching Ace or its shared contracts starts
-`deploy-ace.yml`. The workflow validates the repository, creates all declared
-Queues, clones the migration Access policy, ensures all Enabled-named flags
-exist off by default, injects Ace's returned Access audience, deploys the Hono
-Worker and assets, installs the dedicated Flagship token as an encrypted secret,
-and verifies an unauthenticated request is redirected by Access. The API deploy
-and signed desktop release start from their existing `packages/**` and
-`apps/desktop/**` triggers in the same merge. There is no per-release manual
-command or dashboard step.
+A merge to `main` starts `deploy-ace.yml` when it changes Ace runtime or
+configuration, the reused Access verifier, a shared runtime contract, dependency
+resolution, the shared TypeScript configuration, or one of the deployment-time
+scripts. Test-only changes under Ace, shared contracts, or the Queue provisioner
+remain CI-only and do not redeploy production. The workflow validates the
+repository, creates all declared Queues, clones the migration Access policy,
+ensures all Enabled-named flags exist off by default, injects Ace's returned
+Access audience, deploys the Hono Worker and assets, installs the dedicated
+Flagship token as an encrypted secret, and verifies an unauthenticated request
+is redirected by Access. The API deploy and signed desktop release start from
+their existing `packages/**` and `apps/desktop/**` triggers in the same merge.
+There is no per-release manual command or dashboard step.
 
 The `api-production` GitHub environment must hold the existing
 `CLOUDFLARE_ACCOUNT_ID` variable, deployment `CLOUDFLARE_API_TOKEN`, and
@@ -184,6 +187,33 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-08-25 — Ace merge deployment follows its runtime boundary only
+
+**What changed:** The merge-to-main path filter now follows the shared
+TypeScript configuration and the Queue provisioner's transitive entry-point
+helper. It excludes Ace tests and contract tests, and drops the Queue
+provisioner's test file from the include list, while an exact
+deployment-contract assertion pins the complete list.
+
+**Why:** The old list could leave production on a bundle built under an older
+compiler configuration or defer a deployment-helper change until an unrelated
+merge. It also caused the production Ace deployment for the analytics lakehouse
+merge even though the only matching file was a Queue provisioner test.
+
+**Considered and rejected:** Treating every repository test or every API
+Wrangler configuration as an Ace deployment input. CI owns test validation, and
+the API and migration-tracker workflows already provision the Queue declarations
+their own runtime changes introduce; redeploying an unchanged Ace Worker adds no
+repair. Expanding this Ace correction into an audit of the API,
+migration-tracker, and site path filters was also rejected as separate module
+scope; this entry makes no claim that those workflows have the same complete
+boundary.
+
+**Consequences:** A runtime-relevant merge cannot miss Ace through these known
+shared inputs, while a test-only merge no longer performs a credentialed
+production deployment. Adding another external build or deployment module also
+requires adding it to the pinned path contract.
 
 ### 2026-08-25 — Access verification tolerates DNS propagation
 
