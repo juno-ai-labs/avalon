@@ -695,9 +695,11 @@ export function WorkspaceSettingsScreen({
               }]
             : [item]),
         };
-    // A hidden section is dropped from the list entirely rather than shown
-    // disabled: nothing about a person's own digest changed, so there is
-    // nothing here to explain to them.
+    // Dropped from the list entirely rather than shown disabled: their digest
+    // has in fact stopped arriving (`fireDigestSchedule` reads this same flag
+    // and returns `flag_disabled`), but there is no copy in this screen for a
+    // paused state, and an absent section is still an honest answer to "is
+    // this available to me."
     return digestSettingsAvailable
       ? withGithub
       : { ...withGithub, items: withGithub.items.filter((item) => item.id !== 'digest') };

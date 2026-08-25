@@ -362,11 +362,13 @@ describe("client feature flags", () => {
     await resolveClientFeatureFlags(envWithAccounts(flags), auth(staffUserId));
 
     // Order-independent: `digestsEnabled` resolves through `digest-flags.ts`,
-    // which awaits its own attribute load before calling `getBooleanDetails`,
-    // so its call lands after the other five's synchronous dispatch rather
-    // than at its position in the `Promise.all` array. What this test cares
-    // about — every enabled-named key queried exactly once — does not depend
-    // on which order they arrived in.
+    // which awaits its own attribute load before calling `getBooleanDetails`.
+    // Among the boolean-flag calls, its dispatch lands after the other five's
+    // synchronous one rather than at its position in the `Promise.all` array —
+    // `controlTowerRefreshSeconds` is the same way (it awaits the same kind of
+    // load before its own `getNumberDetails`), just not a boolean this test
+    // collects. What this test cares about — every enabled-named key queried
+    // exactly once — does not depend on which order they arrived in.
     expect((flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls.map(([key]) => key).sort())
       .toEqual([
         "automation-workspace-templates-enabled",
