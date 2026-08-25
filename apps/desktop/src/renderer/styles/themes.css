@@ -23,7 +23,7 @@
   src: url('../fonts/geist-mono-latin-variable.woff2') format('woff2');
 }
 
-/* Terra — Avalon's original low-light palette. */
+/* Terra — Rally's original low-light palette. */
 :root,
 [data-theme='terra'] {
   color-scheme: dark;
@@ -99,7 +99,7 @@
   --av-sys-color-border-subtle: var(--av-ref-color-line-1);
   --av-sys-color-border-strong: var(--av-ref-color-line-3);
 
-  /* Avalon's own colour. `ink` is the brand drawn as a mark or a label on an
+  /* Rally's own colour. `ink` is the brand drawn as a mark or a label on an
    * ordinary surface, which is a different question from `base`: the
    * chartreuse is a fine fill on white and an illegible label on it. */
   --av-sys-color-brand-base: #cedc00;

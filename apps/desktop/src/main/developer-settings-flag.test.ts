@@ -93,7 +93,7 @@ describe('developer settings flag controller', () => {
     await flag.refresh();
     expect(onAvailabilityChange).not.toHaveBeenCalled();
 
-    const failure = new Error('Avalon authentication failed (500)');
+    const failure = new Error('Rally authentication failed (500)');
     answer = async () => {
       throw failure;
     };

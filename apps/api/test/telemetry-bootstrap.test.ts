@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { TelemetryEnvelope } from "@avalon/contracts/telemetry";
+import type { TelemetryEnvelope } from "@rally/contracts/telemetry";
 import { TelemetryBootstrapService } from "../src/telemetry/bootstrap";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";

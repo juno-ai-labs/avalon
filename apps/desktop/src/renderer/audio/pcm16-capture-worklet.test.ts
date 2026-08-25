@@ -20,7 +20,7 @@ beforeEach(async () => {
   vi.stubGlobal('sampleRate', 24_000);
   vi.stubGlobal('AudioWorkletProcessor', AudioWorkletProcessorStub);
   vi.stubGlobal('registerProcessor', vi.fn((name: string, constructor: typeof Processor) => {
-    expect(name).toBe('avalon-pcm16-capture');
+    expect(name).toBe('rally-pcm16-capture');
     Processor = constructor;
   }));
   // The production worklet is intentionally plain JavaScript because it runs

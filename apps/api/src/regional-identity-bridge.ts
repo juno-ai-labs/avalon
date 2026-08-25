@@ -11,7 +11,7 @@ import {
   type RegionalRpcResult,
 } from "./services/platform-onboarding-service";
 import { parseRpcInput } from "./lib/rpc-contracts";
-import type { Session } from "@avalon/contracts";
+import type { Session } from "@rally/contracts";
 
 /**
  * Account-internal RPC entrypoint used by the Global identity control plane.

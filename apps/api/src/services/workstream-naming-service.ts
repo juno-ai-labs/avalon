@@ -1,9 +1,9 @@
-import { normalizeModelText } from "@avalon/contracts/model-markdown";
+import { normalizeModelText } from "@rally/contracts/model-markdown";
 import {
   renderWorkstreamNameMessages,
   type WorkstreamNameContextMessage,
-} from "@avalon/agent-harness";
-import { WorkstreamNameResultSchema } from "@avalon/contracts";
+} from "@rally/agent-harness";
+import { WorkstreamNameResultSchema } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { firstNonEmptyLine, truncateUtf16Safe } from "../lib/text";

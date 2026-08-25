@@ -3,8 +3,8 @@ import {
   authorizedConnection,
   type AuthorizedConnectorConnection,
   type ConnectorConnectionContext,
-} from "@avalon/connectors";
-import { nowIso } from "@avalon/db";
+} from "@rally/connectors";
+import { nowIso } from "@rally/db";
 import type { Env } from "../env";
 import { encryptString } from "../lib/crypto";
 import {

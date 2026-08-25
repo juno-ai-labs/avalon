@@ -8,7 +8,7 @@ import {
   NoteSummarySchema,
   NoteTranscriptSegmentSchema,
   UpdateNoteRequestSchema,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";

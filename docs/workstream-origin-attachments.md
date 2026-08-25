@@ -1,7 +1,7 @@
 # Work-stream origin attachments
 
 A work stream that exists because of a place in a connected tool — the Slack
-thread `@Avalon` was mentioned in, the Linear issue an automation fired on, the
+thread `@Rally` was mentioned in, the Linear issue an automation fired on, the
 GitHub pull request a suggestion was built out of — carries that place as a
 resource attached to it, from the moment it is created. The **Resources** section
 of the inspector rail shows it, and the agent's `workstream_list_resources` tool lists it
@@ -40,7 +40,7 @@ hydrates a currently authorized derivative only when the task needs it.
 | `apps/api/src/services/workstream-origin-resource.ts` | The host half: `describeWorkstreamOrigin` binds a connector's answer to the connection it was reached through, `resolveOriginResource` is the one place a connector resource row is looked up or created, and `attachWorkstreamOriginResource` writes and broadcasts the attachment. |
 | `apps/api/src/services/slack-agent-service.ts` | `slackSessionOrigin` hands the Slack locator to the adapter through the credential door; `createSlackWorkstreamSession` passes the result to whichever create path runs. |
 | `apps/api/src/services/workstream-service.ts` | `create` attaches `input.originResource`; `createFromOpportunity` attaches a suggestion's activity provenance roots; `describeActivityOrigin` is the shared stored-row path both it and `attachActivityResource` use. |
-| `apps/api/src/services/slack-workspace-workstream-service.ts` | `create` attaches the origin for a Slack member who is not an Avalon user. |
+| `apps/api/src/services/slack-workspace-workstream-service.ts` | `create` attaches the origin for a Slack member who is not a Rally user. |
 | `apps/api/src/telemetry/workstream-creation.ts` | Resolves a started suggestion's canonical connector types from the same retained activity provenance roots, without copying source content or connection IDs into telemetry. |
 | `apps/api/src/queues/activity-consumer.ts` | `startActivityAutomation` attaches the activity that matched the trigger. |
 | `packages/db/migrations/0001_initial.sql` | `workstream_resources.relationship_type`, which carries the `origin` label. |
@@ -108,7 +108,7 @@ the provider must be asked for it.
 ### Slack
 
 Slack implements both halves. It attaches the **thread**, not the channel: an
-`@Avalon` mention that opens a new top-level message still gets a thread of its
+`@Rally` mention that opens a new top-level message still gets a thread of its
 own, so there is always one, and it is the place a person would go back to. A
 direct message has a thread too — the root the agent posts when there is nothing
 to reply under. The identity is `<channelId>:<threadTs>`, and the ingress passes
@@ -305,9 +305,9 @@ It deliberately does **not** cover:
 Three suites, split the way the code is:
 
 ```bash
-pnpm --filter @avalon/connectors exec vitest run src/origin.test.ts   # the contract and the base
-pnpm --filter @avalon/connectors exec vitest run src/slack.test.ts    # one connector's implementation
-pnpm --filter @avalon/api exec vitest run test/workstream-origin-attachment.test.ts  # the host
+pnpm --filter @rally/connectors exec vitest run src/origin.test.ts   # the contract and the base
+pnpm --filter @rally/connectors exec vitest run src/slack.test.ts    # one connector's implementation
+pnpm --filter @rally/api exec vitest run test/workstream-origin-attachment.test.ts  # the host
 ```
 
 `src/origin.test.ts` holds the contract against a synthetic adapter, so a new

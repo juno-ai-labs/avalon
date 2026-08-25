@@ -1,4 +1,4 @@
-import { newId } from "@avalon/db";
+import { newId } from "@rally/db";
 import {
   TelemetryBootstrapResponseSchema,
   TelemetryEnvelopeSchema,
@@ -6,7 +6,7 @@ import {
   type TelemetryBootstrapResponse,
   type TelemetryEnvelope,
   type TelemetryRouteResponse,
-} from "@avalon/contracts/telemetry";
+} from "@rally/contracts/telemetry";
 import type { Env } from "../env";
 import { hmacSha256, timingSafeEqualText } from "../lib/crypto";
 import { TelemetryCollector, type TelemetryAcceptanceResult } from "./collector";

@@ -6,7 +6,7 @@ import {
   type NotionConnectorConfig,
   type SlackConnectorConfig,
   type XConnectorConfig,
-} from "@avalon/connectors";
+} from "@rally/connectors";
 import type { Env } from "../env";
 import { notionCallbackUrl } from "./notion-ingress";
 

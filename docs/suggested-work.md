@@ -29,7 +29,7 @@ route them are in [`feature-flags.md`](feature-flags.md).
 ## How it works
 
 ```
-connector activity / Avalon mention
+connector activity / Rally mention
   → WorkspaceDO event → connector-event Workflow: watches, automations, contextual routing
   → nothing claimed it? enqueueActivityOpportunity()
   → WorkspaceDO.opportunity_batch_windows          (10-minute debounce, 60-minute cap)
@@ -163,7 +163,7 @@ objective are the `displayPrompt` and whose opening message is the
 `executionPrompt` — **written as the selecting member's own turn**, not the
 agent's. Selecting is the request, and the brief is that request expanded; the
 `suggested_work_expansion` structured content on the message is what records that
-the words are Avalon's, and both the transcript label and the model projection read
+the words are Rally's, and both the transcript label and the model projection read
 it from there rather than from the author. The creation path itself belongs to
 [`workstream-creation.md`](workstream-creation.md).
 
@@ -322,7 +322,7 @@ work-stream identity anchor with no product provenance.
 | `apps/api/test-workers/opportunity-batching-window.test.ts` | The aggregation window: the ten-minute debounce, the one-hour cap from the first event, one window per partition, and a replayed source counted once. |
 
 Run one with
-`pnpm --filter @avalon/api exec vitest run test/work-opportunity-batching.test.ts`
+`pnpm --filter @rally/api exec vitest run test/work-opportunity-batching.test.ts`
 — the path is package-relative. The workerd suite takes
 `--config vitest.workers.config.ts`.
 

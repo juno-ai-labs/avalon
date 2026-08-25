@@ -1,7 +1,7 @@
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 
 import type { Env } from "../env";
-import { newId, nowIso } from "@avalon/db";
+import { newId, nowIso } from "@rally/db";
 import { deliverDigest } from "./digest-delivery-service";
 import {
   emitProductUsageTelemetry,

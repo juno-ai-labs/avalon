@@ -24,14 +24,14 @@ const rules = {
 function lint(source, enabled) {
   return new Linter({ configType: "flat" }).verify(source, {
     languageOptions: { ecmaVersion: 2024, sourceType: "module" },
-    plugins: { avalon: { rules } },
-    rules: { [`avalon/${enabled}`]: "error" },
+    plugins: { rally: { rules } },
+    rules: { [`rally/${enabled}`]: "error" },
   });
 }
 
 test("rejects API-side OpenRouter client construction", () => {
   const messages = lint(`
-    import { OpenRouterClient as Client } from "@avalon/agent-harness";
+    import { OpenRouterClient as Client } from "@rally/agent-harness";
     const client = new Client(config);
   `, "no-direct-openrouter-client");
   assert.equal(messages.length, 1);
@@ -84,7 +84,7 @@ test("rejects bare Zod URL validators but permits imported explicit contracts", 
     const schema = z.string().url();
   `, "no-bare-zod-url").length, 1);
   assert.equal(lint(`
-    import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
+    import { HttpUrlSchema } from "@rally/contracts/url-schemas";
     const schema = HttpUrlSchema.optional();
   `, "no-bare-zod-url").length, 0);
 });

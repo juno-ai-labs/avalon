@@ -23,7 +23,7 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { asSubstreamId } from "@avalon/contracts";
+import { asSubstreamId } from "@rally/contracts";
 
 import { substreamAgentName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";

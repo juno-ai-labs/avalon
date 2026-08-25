@@ -2,7 +2,7 @@ import {
   OpenRouterClient,
   type ModelMessage,
   type StructuredModelDiagnostic,
-} from "@avalon/agent-harness";
+} from "@rally/agent-harness";
 import type { Env } from "../env";
 import { createDeadline } from "../lib/deadline";
 import { logStructuredEvent } from "../observability/logger";

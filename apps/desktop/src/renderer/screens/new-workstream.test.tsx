@@ -1,4 +1,4 @@
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@avalon/contracts';
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -69,7 +69,7 @@ const currentUser = { id: 'user-1', name: 'Adam Juhasz', email: 'adam@example.co
 const teammate = { id: 'user-2', name: 'Samantha Lee', email: 'samantha@example.com', timezone: 'America/Los_Angeles' };
 const workspace: Workspace = {
   id: 'workspace-1',
-  name: 'Avalon Studio',
+  name: 'Rally Studio',
   region: 'global',
   timezone: 'America/Los_Angeles',
   currentUser,
@@ -160,7 +160,7 @@ describe('New work-stream home', () => {
       id: 'resource-notes',
       title: 'notes.txt',
       resourceType: 'uploaded_file',
-      provider: 'avalon_upload',
+      provider: 'rally_upload',
       mimeType: 'text/plain',
       watchEnabled: false,
       watchStatus: 'unsupported',
@@ -681,7 +681,7 @@ describe('New work-stream home', () => {
 
     const turn = await screen.findByRole('article', { name: 'Message from Adam Juhasz' });
     expect(within(turn).getByText('Prepare the launch brief')).toBeVisible();
-    expect(screen.getByRole('status', { name: 'Avalon is working' })).toBeVisible();
+    expect(screen.getByRole('status', { name: 'Rally is working' })).toBeVisible();
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Welcome back, Adam' })).not.toBeInTheDocument());
   });
 
@@ -696,7 +696,7 @@ describe('New work-stream home', () => {
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
-    await screen.findByRole('status', { name: 'Avalon is working' });
+    await screen.findByRole('status', { name: 'Rally is working' });
     expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toBe(composer);
   });
 
@@ -714,7 +714,7 @@ describe('New work-stream home', () => {
 
     expect(await screen.findByText(MESSAGE_TOO_LONG_MESSAGE)).toBeVisible();
     expect(api.createWorkstream).not.toHaveBeenCalled();
-    expect(screen.queryByRole('status', { name: 'Avalon is working' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Rally is working' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
     // Still in the composer. The person has to shorten it, which they cannot do
     // to text the screen has taken away from them.
@@ -775,7 +775,7 @@ describe('New work-stream home', () => {
 
     expect(await screen.findByText('offline')).toBeVisible();
     expect(screen.queryByRole('article', { name: 'Message from Adam Juhasz' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('status', { name: 'Avalon is working' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Rally is working' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
   });
 
@@ -817,7 +817,7 @@ describe('New work-stream home', () => {
       name: 'Prepare the follow-up for the unresolved launch blocker',
     }));
 
-    expect(await screen.findByRole('status', { name: 'Avalon is working' })).toBeVisible();
+    expect(await screen.findByRole('status', { name: 'Rally is working' })).toBeVisible();
     // The opening turn of suggested work is the selecting member's, but its text
     // is the brief the server expanded, which this screen has never seen — so
     // there is nothing here that could stand in for it.
@@ -875,7 +875,7 @@ describe('New work-stream home', () => {
       name: 'Prepare the follow-up for the unresolved launch blocker',
     }));
 
-    await waitFor(() => expect(screen.queryByRole('status', { name: 'Avalon is working' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('status', { name: 'Rally is working' })).not.toBeInTheDocument());
     expect(screen.getByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
     expect(composer).toHaveValue('A different thing I have not sent');
   });
@@ -902,7 +902,7 @@ describe('New work-stream home', () => {
     fireEvent.click(within(suggestions).getByRole('button', {
       name: 'Prepare the follow-up for the unresolved launch blocker',
     }));
-    await screen.findByRole('status', { name: 'Avalon is working' });
+    await screen.findByRole('status', { name: 'Rally is working' });
 
     fireEvent.change(composer, { target: { value: 'typed while launching' } });
     settleStart();

@@ -1,5 +1,5 @@
-import { ConnectorOAuthProviders } from '@avalon/contracts/connector-oauth-providers';
-import { isDesktopDeepLinkProtocol } from '@avalon/contracts/desktop-deep-link';
+import { ConnectorOAuthProviders } from '@rally/contracts/connector-oauth-providers';
+import { isDesktopDeepLinkProtocol } from '@rally/contracts/desktop-deep-link';
 import { reportDesktopHandoff } from './telemetry';
 
 const DESKTOP_HOST = 'auth';
@@ -24,7 +24,7 @@ const hasSingleValue = (parameters: URLSearchParams, name: string): boolean =>
 
 /**
  * Accept only the exact desktop authentication deep-link forms emitted by the
- * Avalon API. The returned value is intentionally opaque to the UI.
+ * Rally API. The returned value is intentionally opaque to the UI.
  */
 export function parseDesktopTarget(fragment: string): string | null {
   if (!fragment.startsWith('#')) return null;
@@ -150,7 +150,7 @@ function initializeHandoff(): void {
   if (!target) {
     reportDesktopHandoff('auth', 'presented', 'invalid');
     status.textContent = 'This sign-in response is incomplete or invalid.';
-    help.textContent = 'Return to the Avalon desktop app and start sign-in again.';
+    help.textContent = 'Return to the Rally desktop app and start sign-in again.';
     link.removeAttribute('href');
     return;
   }
@@ -162,15 +162,15 @@ function initializeHandoff(): void {
   const result = parsedTarget.searchParams.get('status');
   const error = parsedTarget.searchParams.get('error');
   if (provider && result === 'connected') {
-    status.textContent = `${connectorName[provider]} is connected. Opening the Avalon desktop app…`;
+    status.textContent = `${connectorName[provider]} is connected. Opening the Rally desktop app…`;
   } else if (provider && error) {
-    status.textContent = `${connectorName[provider]} could not be connected. Opening Avalon…`;
-    help.textContent = 'Avalon will show the authorization result and let you try again.';
+    status.textContent = `${connectorName[provider]} could not be connected. Opening Rally…`;
+    help.textContent = 'Rally will show the authorization result and let you try again.';
   } else if (error) {
-    status.textContent = 'Sign-in could not be completed. Opening Avalon…';
-    help.textContent = 'Avalon will show the sign-in result and let you try again.';
+    status.textContent = 'Sign-in could not be completed. Opening Rally…';
+    help.textContent = 'Rally will show the sign-in result and let you try again.';
   } else {
-    status.textContent = 'Sign-in is complete. Opening the Avalon desktop app…';
+    status.textContent = 'Sign-in is complete. Opening the Rally desktop app…';
   }
   link.href = target;
   link.setAttribute('aria-disabled', 'false');
@@ -186,7 +186,7 @@ function initializeHandoff(): void {
   link.addEventListener('click', () => {
     attempted = true;
     reportDesktopHandoff('auth', 'manual', 'valid');
-    status.textContent = 'Opening Avalon…';
+    status.textContent = 'Opening Rally…';
   });
   window.setTimeout(openOnce, 120);
 }

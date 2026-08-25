@@ -1,6 +1,6 @@
-import { asWorkspaceId } from "@avalon/contracts";
-import type { HarnessEvent } from "@avalon/agent-harness";
-import { authorizedConnection } from "@avalon/connectors";
+import { asWorkspaceId } from "@rally/contracts";
+import type { HarnessEvent } from "@rally/agent-harness";
+import { authorizedConnection } from "@rally/connectors";
 import { describe, expect, it } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";

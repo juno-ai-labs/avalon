@@ -7,14 +7,14 @@
 >
 > Companion documents: [state](state.md), [public-site telemetry](../../public-site-telemetry.md), [regional telemetry](../../telemetry.md).
 >
-> Standing brief: [Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
+> Standing brief: [Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
 ## Summary
 
-Avalon will measure the public acquisition path with typed first-party events
+Rally will measure the public acquisition path with typed first-party events
 that use the existing regional telemetry boundary. Global visitors can form an
 anonymous multi-page funnel that reaches PostHog. Affirmative EU-country traffic
-stays inside Avalon's EU Cloudflare resources and uses no persistent browser
+stays inside Rally's EU Cloudflare resources and uses no persistent browser
 analytics identifier.
 
 The site records real page views/leaves, bounded calls to action, downloads, and
@@ -49,13 +49,13 @@ product funnel disconnected from the product it feeds.
    rejected because the semantic allowlist cannot bound their content.
 2. Advertising attribution, pixels, device-advertising identifiers, and
    cross-site tracking are rejected; this is first-party product measurement.
-3. Automatically link a public-site epoch to a later Avalon account is deferred;
+3. Automatically link a public-site epoch to a later Rally account is deferred;
    the current browser handoff has no privacy-safe, region-stable link contract.
 4. Add a site preference UI in this change. The implementation avoids persistent
    EU identity and the public notice states the practice; any legally required
    additional choice is a separate product/legal rollout.
 5. Send EU public-site events to the US PostHog project. EU remains an internal
-   regional projection until Avalon deploys an approved EU destination.
+   regional projection until Rally deploys an approved EU destination.
 
 ## Product behavior
 
@@ -75,7 +75,7 @@ attempted. Analytics failure is invisible and never retries the product action.
 ## Impact on the product contract
 
 None — this connects the public acquisition surface to the existing desktop
-product without changing what Avalon is or what a work stream means. It replaces
+product without changing what Rally is or what a work stream means. It replaces
 the deliberately deferred public-site non-goal in the earlier telemetry release
 through the separate PRD that release required.
 
@@ -90,7 +90,7 @@ None yet.
    route decision that selected identity, so a network change between requests
    cannot reclassify the epoch. A single persistent identity was rejected
    because moving networks could merge residency histories.
-2. **Use Avalon's contract and adapter, not a browser provider SDK.** Global
+2. **Use Rally's contract and adapter, not a browser provider SDK.** Global
    still receives idiomatic reserved PostHog web events, while the site keeps
    provider tokens and unrestricted capture out of the browser.
 3. **Measure the handoff shell, never its target.** The site reports only type,

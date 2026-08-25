@@ -18,19 +18,19 @@ const publisherPath = new URL('./publish-r2-release.mjs', import.meta.url);
 const version = '0.1.0';
 
 async function createFixture({ releaseVersion = version, currentVersion = releaseVersion } = {}) {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-r2-publisher-test-'));
+  const directory = await mkdtemp(join(tmpdir(), 'rally-r2-publisher-test-'));
   const releaseDirectory = join(directory, 'release');
   await mkdir(releaseDirectory);
   const artifacts = {
-    [`Avalon-${releaseVersion}-arm64.dmg`]: 'not-a-real-dmg',
-    [`Avalon-${releaseVersion}-arm64.dmg.blockmap`]: 'dmg-blockmap',
-    [`Avalon-${releaseVersion}-arm64-mac.zip`]: 'not-a-real-zip',
-    [`Avalon-${releaseVersion}-arm64-mac.zip.blockmap`]: 'zip-blockmap',
+    [`Rally-${releaseVersion}-arm64.dmg`]: 'not-a-real-dmg',
+    [`Rally-${releaseVersion}-arm64.dmg.blockmap`]: 'dmg-blockmap',
+    [`Rally-${releaseVersion}-arm64-mac.zip`]: 'not-a-real-zip',
+    [`Rally-${releaseVersion}-arm64-mac.zip.blockmap`]: 'zip-blockmap',
   };
   await Promise.all(Object.entries(artifacts).map(([name, contents]) => (
     writeFile(join(releaseDirectory, name), contents, 'utf8')
   )));
-  const zipName = `Avalon-${releaseVersion}-arm64-mac.zip`;
+  const zipName = `Rally-${releaseVersion}-arm64-mac.zip`;
   const zipBytes = Buffer.from(artifacts[zipName]);
   const zipSha512 = createHash('sha512').update(zipBytes).digest('base64');
   await writeFile(join(releaseDirectory, 'latest-mac.yml'), [
@@ -49,8 +49,8 @@ async function createFixture({ releaseVersion = version, currentVersion = releas
     version: currentVersion,
     platform: 'macOS',
     architecture: 'Apple silicon',
-    downloadBaseUrl: 'https://downloads.with-avalon.com',
-    bucket: 'avalon-desktop-releases',
+    downloadBaseUrl: 'https://downloads.rallywith.ai',
+    bucket: 'rally-desktop-releases',
     prefix: 'stable/darwin/arm64',
   };
   const configBytes = `${JSON.stringify(config, null, 2)}\n`;
@@ -61,10 +61,10 @@ async function createFixture({ releaseVersion = version, currentVersion = releas
 function environmentWithoutReleaseCredentials() {
   const environment = { ...process.env };
   for (const name of [
-    'AVALON_RELEASE_R2_BUCKET',
-    'AVALON_RELEASE_PREFIX',
-    'AVALON_RELEASE_BASE_URL',
-    'AVALON_RELEASE_PUBLISH_CONFIRM',
+    'RALLY_RELEASE_R2_BUCKET',
+    'RALLY_RELEASE_PREFIX',
+    'RALLY_RELEASE_BASE_URL',
+    'RALLY_RELEASE_PUBLISH_CONFIRM',
     'CLOUDFLARE_ACCOUNT_ID',
     'CLOUDFLARE_API_TOKEN',
     'CLOUDFLARE_ZONE_ID',
@@ -88,17 +88,17 @@ test('dry-run resolves the complete release transaction without cloud access or 
     assert.equal(plan.dryRun, true);
     assert.ok(plan.immutableObjects.includes(`stable/darwin/arm64/${version}/SHA256SUMS`));
     assert.deepEqual(plan.immutableCachePurgeUrls, [
-      `https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-${version}-arm64-mac.zip`,
-      `https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-${version}-arm64-mac.zip.blockmap`,
-      `https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-${version}-arm64.dmg`,
-      `https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-${version}-arm64.dmg.blockmap`,
-      `https://downloads.with-avalon.com/stable/darwin/arm64/${version}/SHA256SUMS`,
+      `https://downloads.rallywith.ai/stable/darwin/arm64/Rally-${version}-arm64-mac.zip`,
+      `https://downloads.rallywith.ai/stable/darwin/arm64/Rally-${version}-arm64-mac.zip.blockmap`,
+      `https://downloads.rallywith.ai/stable/darwin/arm64/Rally-${version}-arm64.dmg`,
+      `https://downloads.rallywith.ai/stable/darwin/arm64/Rally-${version}-arm64.dmg.blockmap`,
+      `https://downloads.rallywith.ai/stable/darwin/arm64/${version}/SHA256SUMS`,
     ]);
     assert.ok(plan.immutableCachePurgeUrls.every((url) => !url.includes('?')));
-    assert.equal(plan.canonicalDmg, 'stable/darwin/arm64/Avalon.dmg');
+    assert.equal(plan.canonicalDmg, 'stable/darwin/arm64/Rally.dmg');
     assert.equal(plan.latestManifest, 'stable/darwin/arm64/latest-mac.yml');
     assert.equal(plan.siteRelease.published, true);
-    assert.equal(plan.siteRelease.objects.canonicalDmg, 'stable/darwin/arm64/Avalon.dmg');
+    assert.equal(plan.siteRelease.objects.canonicalDmg, 'stable/darwin/arm64/Rally.dmg');
     assert.equal(await readFile(fixture.configPath, 'utf8'), fixture.configBytes);
   } finally {
     await rm(fixture.directory, { recursive: true, force: true });
@@ -194,8 +194,8 @@ test('dry-run accepts the one-time stable promotion from 0.x to 1.0.0', async ()
 
 test('purges exact immutable URLs in one confirmed Cloudflare request', async () => {
   const urls = [
-    `https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-${version}-arm64.dmg`,
-    `https://downloads.with-avalon.com/stable/darwin/arm64/${version}/SHA256SUMS`,
+    `https://downloads.rallywith.ai/stable/darwin/arm64/Rally-${version}-arm64.dmg`,
+    `https://downloads.rallywith.ai/stable/darwin/arm64/${version}/SHA256SUMS`,
   ];
   let request;
   await purgeCloudflareUrls({
@@ -228,7 +228,7 @@ test('fails closed and redacts Cloudflare purge failure details', async () => {
     purgeCloudflareUrls({
       apiToken,
       zoneId: 'test-zone-id',
-      urls: ['https://downloads.with-avalon.com/stable/darwin/arm64/artifact.zip'],
+      urls: ['https://downloads.rallywith.ai/stable/darwin/arm64/artifact.zip'],
       fetchImplementation: async () => Response.json({
         success: false,
         errors: [{ code: 1001, message: `${providerDetail}: ${apiToken}` }],
@@ -246,7 +246,7 @@ test('fails closed and redacts Cloudflare purge failure details', async () => {
     purgeCloudflareUrls({
       apiToken,
       zoneId: 'test-zone-id',
-      urls: ['https://downloads.with-avalon.com/stable/darwin/arm64/artifact.zip'],
+      urls: ['https://downloads.rallywith.ai/stable/darwin/arm64/artifact.zip'],
       fetchImplementation: async () => Response.json({ success: true, errors: [] }),
     }),
     /could not be confirmed/u,
@@ -255,8 +255,8 @@ test('fails closed and redacts Cloudflare purge failure details', async () => {
 
 test('does not verify immutable public artifacts until their purge is confirmed', async () => {
   const artifacts = [
-    { name: 'artifact.zip', url: 'https://downloads.with-avalon.com/artifact.zip' },
-    { name: 'artifact.zip.blockmap', url: 'https://downloads.with-avalon.com/artifact.zip.blockmap' },
+    { name: 'artifact.zip', url: 'https://downloads.rallywith.ai/artifact.zip' },
+    { name: 'artifact.zip.blockmap', url: 'https://downloads.rallywith.ai/artifact.zip.blockmap' },
   ];
   const events = [];
   await purgeAndVerifyImmutableReleaseUrls({

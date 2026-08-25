@@ -1,6 +1,6 @@
 # Creating agent tools
 
-How to design the tools an Avalon agent calls, so they are usable, safe, and
+How to design the tools a Rally agent calls, so they are usable, safe, and
 hard to misuse. The mechanics of registering a plugin, narrowing it to a
 connection's frozen grants, and recording receipts live in
 [`agent-harness.md`](agent-harness.md); the connector manifests those tools hang
@@ -15,7 +15,7 @@ open model can use it correctly on the first try, not just the strongest model
 in the routing stage.** Frontier models paper over bad tool design with sheer
 reasoning; smaller ones do not. They follow the schema and the names literally,
 rarely re-read a long system message, seldom recover from a vague error, and do
-not infer hidden conventions. Avalon makes this concrete rather than
+not infer hidden conventions. Rally makes this concrete rather than
 hypothetical: model routing is a flag with configured fallback stages
 ([`feature-flags.md`](feature-flags.md)), classifier and structured-output work
 already runs on a small model, and a failure that only shows up after a fallback
@@ -450,21 +450,21 @@ Common failures are designed as loop repairs:
 | `match_not_found`, `match_not_unique` | Call `terminal_read_file` again, copy exact current text with enough surrounding context, then rebuild the edit; use `replaceAll` only when every match should change. This is the revision-drift recovery. |
 | `patch_does_not_apply`, `patch_invalid` | Re-read every affected file and regenerate the whole context-bearing patch; no partial patch is reported as successful. |
 | `destination_exists` | Choose a new import destination or set `overwrite: true` only after confirming replacement is intended. |
-| `destination_not_regular` | Choose an absent destination or a regular file; Avalon will not write through links, devices, or directories. |
+| `destination_not_regular` | Choose an absent destination or a regular file; Rally will not write through links, devices, or directories. |
 | `limit_exceeded`, `resource_limit_exceeded` | Narrow/split the operation or reduce the input/output size before retrying. Archives and unfamiliar binary types still publish as download-only `other` resources. |
 | `resource_empty`, `resource_not_ready` | Regenerate a non-empty file beneath `AVALON_RESOURCE_DIR`, wait for its producer to finish, then publish the stable final path with a new invocation. |
 | `command_rejected` | Use one bounded foreground command or a dedicated file tool; do not retry a PTY, detached/background process, or remote shell. Git and GitHub CLI are ordinary bounded commands whose actual authority comes from the selected repository credential. |
-| `sandbox_busy` | Wait the model-visible `retryAfterMs` before checking again. That value is retry cadence, not the lease deadline: an active harness execution owns the workspace through its valid operation lease, while an unsettled retained command blocks until Avalon confirms provider quiescence. A `submitting` task renews exact durable authority before each provider mutation, then becomes `running` with the requested command-plus-observation horizon after provider acceptance. Recovery and lifecycle cleanup likewise renew their exact token before later provider mutations and cannot revive an expired token. An accepted `running` command requires whole-sandbox stop before linked handoff because named-session deletion does not prove the process stopped; a pre-acceptance or otherwise unprovable sandbox is retired and advanced to a fresh generation. Final expiry instead commits `expired` and preserves its final-diff reference. Never repeat a prior ambiguous command under a new invocation. |
+| `sandbox_busy` | Wait the model-visible `retryAfterMs` before checking again. That value is retry cadence, not the lease deadline: an active harness execution owns the workspace through its valid operation lease, while an unsettled retained command blocks until Rally confirms provider quiescence. A `submitting` task renews exact durable authority before each provider mutation, then becomes `running` with the requested command-plus-observation horizon after provider acceptance. Recovery and lifecycle cleanup likewise renew their exact token before later provider mutations and cannot revive an expired token. An accepted `running` command requires whole-sandbox stop before linked handoff because named-session deletion does not prove the process stopped; a pre-acceptance or otherwise unprovable sandbox is retired and advanced to a fresh generation. Final expiry instead commits `expired` and preserves its final-diff reference. Never repeat a prior ambiguous command under a new invocation. |
 | command `timed_out`, `cancelled`, `output_limit_exceeded` | Inspect the final bounded output or `outputResourceId`, reduce the job, and rerun as a new bounded command only when doing so is safe. |
 | `repository_not_configured`, `repository_access_revoked` | Search the authorized GitHub repositories, call `terminal_checkout_repository` with an exact `owner/name`, then retry the repository operation. If policy changed, choose another authorized repository or ask a connector administrator to restore access. |
 | `repository_not_authorized` | Use GitHub repository search and choose a result whose effective access satisfies `requiredRemoteAccess`; do not guess an inaccessible repository or retry unchanged. |
 | `repository_remote_read_only` | Continue local edits and local commits, but do not push, publish a PR, or attempt another remote mutation until connector settings grant `full_access`. |
-| `workspace_backup_failed`, `workspace_backup_changed` | Stop workspace writers and retry checkout; Avalon leaves the existing repository and sandbox untouched until the durable recovery copy is verified. |
+| `workspace_backup_failed`, `workspace_backup_changed` | Stop workspace writers and retry checkout; Rally leaves the existing repository and sandbox untouched until the durable recovery copy is verified. |
 | `workspace_backup_too_large` | Remove regenerable dependency/output directories or publish large artifacts, then retry once the compressed recoverable state is at most 50 MiB. |
 | `working_tree_dirty`, `publication_conflict`, `nothing_to_publish` | Use local `git status`, check out the host-selected branch, commit intended changes, or rebase onto the selected base, then retry publication only after local state is valid. |
 | `publication_policy_denied`, publication size/path limits | Remove GitHub Actions workflow changes or split/reduce the committed change; a Terminal run cannot elevate this boundary. |
 | `publication_not_authorized`, `publication_target_closed` | Continue from an active participant run with current full repository access, or use standard `git`/`gh`; use a fresh work stream when the typed publisher's convergent PR is closed/merged. |
-| `command_outcome_unknown`, `tool_receipt_missing`, retryable provider failures | Retry the exact deterministic call so Avalon can reconcile its durable receipt; do not invent a new command, id, or branch. |
+| `command_outcome_unknown`, `tool_receipt_missing`, retryable provider failures | Retry the exact deterministic call so Rally can reconcile its durable receipt; do not invent a new command, id, or branch. |
 
 Adding or changing a Terminal tool requires this input/output/recovery registry,
 the exact descriptor and strict-schema tests, the plugin prompt update when
@@ -475,7 +475,7 @@ future agent tool or plugin, not just this family.
 ## Mechanics — where the rules are enforced
 
 - **Authorize through the frozen run scope, never a one-off check.** A tool's
-  `capability` is checked against the scope frozen at admission, and Avalon
+  `capability` is checked against the scope frozen at admission, and Rally
   revalidates the principal, connection identity, grants, and health before
   every tool call and between model turns. Loading never widens the scope, and
   revocation drops the plugin mid-run. Resolve the target server-side so a
@@ -563,7 +563,7 @@ future agent tool or plugin, not just this family.
   `workstream_list_resources` and `workstream_read_resource` are built that way
   and never broke. `apps/api/test/tool-schema-sanitization.test.ts` walks every
   authored schema through the real sanitizer and fails on either defect. A tool
-  schema Avalon does *not* author — a hosted MCP server's, which arrives at run
+  schema Rally does *not* author — a hosted MCP server's, which arrives at run
   time and no test can see — is repaired instead, at
   `validateDynamicConnectorTools`; see
   [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).

@@ -41,7 +41,7 @@ import { useUiStore } from '../lib/ui-store';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { InspectorRail } from '../components/inspector-rail';
-import { AvalonMark, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal, OpeningState, StatusDot } from '../components/primitives';
+import { RallyMark, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal, OpeningState, StatusDot } from '../components/primitives';
 
 type RunFilter = 'all' | 'scheduled' | 'manual';
 
@@ -100,7 +100,7 @@ function RunRow({ run, onOpen }: { run: AutomationRunSummary; onOpen: () => void
       <StatusDot compact status={run.status} />
       <span className="automation-run-main">
         <strong>{run.title}</strong>
-        <small>{run.resultSummary ?? (run.status === 'running' ? 'Avalon is working…' : 'No result summary')}</small>
+        <small>{run.resultSummary ?? (run.status === 'running' ? 'Rally is working…' : 'No result summary')}</small>
       </span>
       {run.participants?.length ? <AvatarStack limit={3} members={run.participants} /> : <span />}
       {run.durationMs !== undefined && <span className="run-duration">{formatDuration(run.durationMs)}</span>}
@@ -448,7 +448,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
                 </div>
                 <small>
                   {detail.scope === 'you'
-                    ? 'Email this address from your Avalon account email to start a new work stream.'
+                    ? 'Email this address from your Rally account email to start a new work stream.'
                     : 'Email this address from a workspace member email to start a new work stream.'}
                 </small>
               </section>
@@ -461,7 +461,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
                     {/* Stands where the other rows' checkbox is, so every icon
                         below it lines up rather than stepping in. */}
                     <span aria-hidden="true" className="delivery-locked-spacer" />
-                    <AvalonMark /><span>Avalon work stream</span>
+                    <RallyMark /><span>Rally work stream</span>
                   </li>
                   {deliveryChoices.map((choice) => (
                     <li key={choice.key}>

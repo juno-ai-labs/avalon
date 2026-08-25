@@ -14,7 +14,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { AvalonApi } from '../lib/api';
+import type { RallyApi } from '../lib/api';
 import {
   AGENT_MODEL_GROUPS,
   UNPINNED_AGENT_MODEL,
@@ -35,7 +35,7 @@ import { type AttachmentPreview, PendingAttachmentTile } from './attachments';
 import { IconButton, InlineError } from './primitives';
 
 interface ComposerInputProps {
-  api?: Pick<AvalonApi, 'getTranscriptionSocketTicket'>;
+  api?: Pick<RallyApi, 'getTranscriptionSocketTicket'>;
   ariaLabel: string;
   attachments: PendingAttachment[];
   autoFocus?: boolean;

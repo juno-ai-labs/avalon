@@ -8,14 +8,14 @@ import test from 'node:test';
 import { publishTelemetryArtifacts } from './publish-telemetry-artifacts.mjs';
 
 const runtimeEnvironment = {
-  AVALON_GLOBAL_TELEMETRY_R2_BUCKET: 'avalon-global-telemetry',
-  AVALON_EU_TELEMETRY_R2_BUCKET: 'avalon-eu-telemetry',
+  RALLY_GLOBAL_TELEMETRY_R2_BUCKET: 'rally-global-telemetry',
+  RALLY_EU_TELEMETRY_R2_BUCKET: 'rally-eu-telemetry',
   CLOUDFLARE_ACCOUNT_ID: 'test-account',
   CLOUDFLARE_API_TOKEN: 'test-token',
 };
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), 'avalon-publish-telemetry-test-'));
+  const root = await mkdtemp(join(tmpdir(), 'rally-publish-telemetry-test-'));
   const desktopDirectory = join(root, 'desktop');
   await writeFileBelow(desktopDirectory, 'package.json', '{"version":"1.96.0"}\n');
   for (const process of ['main', 'preload', 'renderer']) {
@@ -24,7 +24,7 @@ async function fixture() {
   await writeFileBelow(desktopDirectory, 'out/main/chunk.js.map', 'map:main-chunk');
   await writeFileBelow(
     desktopDirectory,
-    'release/mac-arm64/Avalon.app/Contents/MacOS/Avalon',
+    'release/mac-arm64/Rally.app/Contents/MacOS/Rally',
     'mach-o',
   );
   return { root, desktopDirectory };
@@ -42,7 +42,7 @@ function commandRunner() {
     calls.push({ command, arguments: arguments_ });
     if (command === 'file') return { code: 0, signal: null, stdout: 'Mach-O 64-bit executable', stderr: '' };
     if (command === 'dump_syms') {
-      await writeFile(options.stdoutFile, 'MODULE mac arm64 TESTID Avalon\nFUNC 1000 10 0 main\n');
+      await writeFile(options.stdoutFile, 'MODULE mac arm64 TESTID Rally\nFUNC 1000 10 0 main\n');
       return { code: 0, signal: null, stdout: '', stderr: '' };
     }
     if (command === 'tar') {
@@ -172,7 +172,7 @@ test('publishes every private artifact and verifies upload metadata in each regi
 
     const targets = [...api.objects.keys()].sort();
     assert.equal(targets.length, 10);
-    for (const bucket of ['avalon-global-telemetry', 'avalon-eu-telemetry']) {
+    for (const bucket of ['rally-global-telemetry', 'rally-eu-telemetry']) {
       for (const process of ['main', 'preload', 'renderer']) {
         assert.ok(targets.includes(
           `${bucket}/telemetry/javascript-symbols/1.96.0/1.96.0/${process}/index.js.map`,
@@ -200,12 +200,12 @@ test('publishes every private artifact and verifies upload metadata in each regi
       true,
     );
     assert.equal(
-      api.calls.filter(({ target }) => target.startsWith('avalon-global-telemetry/'))
+      api.calls.filter(({ target }) => target.startsWith('rally-global-telemetry/'))
         .every(({ jurisdiction }) => jurisdiction === null),
       true,
     );
     assert.equal(
-      api.calls.filter(({ target }) => target.startsWith('avalon-eu-telemetry/'))
+      api.calls.filter(({ target }) => target.startsWith('rally-eu-telemetry/'))
         .every(({ jurisdiction }) => jurisdiction === 'eu'),
       true,
     );
@@ -263,7 +263,7 @@ test('rejects shared regional buckets and a post-upload inventory mismatch', asy
         desktopDirectory: first.desktopDirectory,
         environment: {
           ...runtimeEnvironment,
-          AVALON_EU_TELEMETRY_R2_BUCKET: runtimeEnvironment.AVALON_GLOBAL_TELEMETRY_R2_BUCKET,
+          RALLY_EU_TELEMETRY_R2_BUCKET: runtimeEnvironment.RALLY_GLOBAL_TELEMETRY_R2_BUCKET,
         },
         fetchImpl: firstApi.fetchImpl,
         runCommand: commandRunner().runCommand,

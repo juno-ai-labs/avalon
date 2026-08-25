@@ -1,4 +1,4 @@
-import { normalizeModelMarkdown, normalizeModelText } from "@avalon/contracts/model-markdown";
+import { normalizeModelMarkdown, normalizeModelText } from "@rally/contracts/model-markdown";
 
 import { escapeHtml } from "./resend";
 

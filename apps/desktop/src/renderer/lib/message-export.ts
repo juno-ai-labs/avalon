@@ -1,6 +1,6 @@
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
-import markUrl from '../assets/avalon-mark.png';
+import markUrl from '../assets/rally-mark.png';
 import type { MessageExportFormat, MessageExportResult } from '../../common/message-export';
 import { desktopBridge } from './platform';
 
@@ -14,7 +14,7 @@ import { desktopBridge } from './platform';
 /**
  * Renders `content` into a detached root and answers its markup.
  *
- * `MarkdownBody` is a React component and the only markdown renderer Avalon has
+ * `MarkdownBody` is a React component and the only markdown renderer Rally has
  * — see [`docs/markdown-rendering.md`](../../../../../docs/markdown-rendering.md).
  * Rendering it here rather than passing markdown to the main process is what
  * keeps that true: the card shows the same DOM the feed does, and a fix to the
@@ -44,21 +44,21 @@ function renderToHtml(content: React.ReactElement): string {
 let markDataUrl: Promise<string> | undefined;
 
 /**
- * The Avalon mark as a data URL, read once out of the renderer's own bundle.
+ * The Rally mark as a data URL, read once out of the renderer's own bundle.
  *
  * The main process cannot reach this file by path: Vite gives it a content
  * hash, and in a packaged build it lives inside the asar archive under that
  * hashed name. Sending the bytes with the request costs one fetch per session
  * and keeps the artwork in the one place it is already maintained.
  */
-async function avalonMarkDataUrl(): Promise<string> {
+async function rallyMarkDataUrl(): Promise<string> {
   markDataUrl ??= (async () => {
     const response = await fetch(markUrl);
     const blob = await response.blob();
     return await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.addEventListener('load', () => resolve(String(reader.result)));
-      reader.addEventListener('error', () => reject(new Error('The Avalon mark could not be read')));
+      reader.addEventListener('error', () => reject(new Error('The Rally mark could not be read')));
       reader.readAsDataURL(blob);
     });
   })().catch((error: unknown) => {
@@ -74,7 +74,7 @@ export async function saveMessageExport(input: {
   fileName: string;
   format: MessageExportFormat;
 }): Promise<MessageExportResult> {
-  const [contentHtml, logoDataUrl] = [renderToHtml(input.content), await avalonMarkDataUrl()];
+  const [contentHtml, logoDataUrl] = [renderToHtml(input.content), await rallyMarkDataUrl()];
   return await desktopBridge().exportMessage({
     contentHtml,
     fileName: input.fileName,

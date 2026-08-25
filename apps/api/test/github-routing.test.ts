@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Region } from "@avalon/contracts";
+import type { Region } from "@rally/contracts";
 import type { Env } from "../src/env";
 import {
   GitHubRoutingService,

@@ -43,7 +43,7 @@ if phase 3 slips.
 - Add `reactions.remove` to the Slack API contract map (beside `reactions.add`
   at `:766`), treating `no_reaction` as an idempotent success as
   `already_reacted` already is for add.
-- Record the reaction Avalon last placed on a session's source message, so a
+- Record the reaction Rally last placed on a session's source message, so a
   transition removes its own emoji and never a member's.
 - Apply the outcome reaction in `deliverWorkstreamOutcome` (`:1092`) from the
   `outcomeStatus` it already carries.

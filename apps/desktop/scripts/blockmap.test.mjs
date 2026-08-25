@@ -12,8 +12,8 @@ test('blockmap generator is pinned to electron-builder 26.15.3', () => {
 });
 
 test('generated differential blockmaps are verifiable against final artifact bytes', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-blockmap-test-'));
-  const artifact = join(directory, 'Avalon.zip');
+  const directory = await mkdtemp(join(tmpdir(), 'rally-blockmap-test-'));
+  const artifact = join(directory, 'Rally.zip');
   const blockmap = `${artifact}.blockmap`;
   try {
     await writeFile(artifact, Buffer.alloc(64 * 1024, 0x41));

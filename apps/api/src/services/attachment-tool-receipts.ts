@@ -4,7 +4,7 @@ import {
   WorkstreamSummarizeResourceOutputSchema,
   WorkstreamViewResourceOutputSchema,
   type ExecutionPrincipal,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import type { Env } from "../env";

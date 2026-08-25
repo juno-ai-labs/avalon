@@ -25,8 +25,8 @@ describe('the file name a saved message is offered under', () => {
     // the first line inside the block rather than from `sql`.
     ['```sql\nselect 1\n```', 'select-1-2026-08-13'],
     ['   \n\n**Northwind** renewal at risk', 'northwind-renewal-at-risk-2026-08-13'],
-    ['', 'avalon-message-2026-08-13'],
-    ['#### ***', 'avalon-message-2026-08-13'],
+    ['', 'rally-message-2026-08-13'],
+    ['#### ***', 'rally-message-2026-08-13'],
   ])('turns %j into %s', (text, expected) => {
     expect(messageExportFileName(text, '2026-08-13')).toBe(expected);
   });

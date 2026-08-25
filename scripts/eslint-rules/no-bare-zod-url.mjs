@@ -5,7 +5,7 @@ export const noBareZodUrlRule = {
     docs: { description: "Require an explicit URL-scheme contract instead of bare Zod .url()." },
     schema: [],
     messages: {
-      bare: "Bare Zod .url() has ambiguous scheme semantics. Use an explicit schema from @avalon/contracts/url-schemas.",
+      bare: "Bare Zod .url() has ambiguous scheme semantics. Use an explicit schema from @rally/contracts/url-schemas.",
     },
   },
   create(context) {

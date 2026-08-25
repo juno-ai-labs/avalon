@@ -18,7 +18,7 @@ const CONTRACT: ObjectPortContract<WorkstreamSchedulingStorage, SchedulingOperat
   operations: SCHEDULING_OPERATIONS,
   dispatch: (stub, request) => stub.executeSchedulingOperation(request),
   failureCode: "scheduling_operation_failed",
-  failureMessage: "Avalon's scheduling authority rejected an internal request. Retry after the application and service versions are aligned.",
+  failureMessage: "Rally's scheduling authority rejected an internal request. Retry after the application and service versions are aligned.",
 };
 
 export function createSchedulingPortFactory(

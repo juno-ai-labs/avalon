@@ -39,7 +39,7 @@ import { createRunDeadline } from "@juno-ai/bind/run";
 import { validateAndHealMessages } from "@juno-ai/bind/transcript";
 import type OpenAI from "openai";
 import { z } from "zod";
-import { readStructuredFailure, type HarnessFailureCode } from "@avalon/contracts";
+import { readStructuredFailure, type HarnessFailureCode } from "@rally/contracts";
 import {
   AVALON_DISCOVERY_PLUGIN_ID,
   AVALON_DISCOVERY_TOOL_DEFINITIONS,

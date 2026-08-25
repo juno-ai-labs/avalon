@@ -2,7 +2,7 @@
 
 ## Current behavior
 
-Avalon has a native adaptive default icon and eight user-selectable static icons:
+Rally has a native adaptive default icon and eight user-selectable static icons:
 
 | Asset | Purpose |
 | --- | --- |
@@ -11,18 +11,18 @@ Avalon has a native adaptive default icon and eight user-selectable static icons
 | `apps/desktop/src/renderer/assets/app-icons/*.png` | Generated 128×128 Retina previews; Vite never bundles the 1024px Dock sources. |
 | `apps/desktop/native/selectable-app-icon/icon.json` | Icon Composer template used to give each selectable source a system-owned enclosure and platform effects. |
 | `apps/desktop/.native-build/app-icons/*.icns` | Generated static renditions compiled by Apple's `actool` and shipped for Finder and the Dock plug-in. |
-| `apps/desktop/.native-build/AvalonDockTilePlugin.docktileplugin` | Generated, signed `NSDockTilePlugIn` that keeps the selected icon in the Dock when Avalon is not running. |
+| `apps/desktop/.native-build/RallyDockTilePlugin.docktileplugin` | Generated, signed `NSDockTilePlugIn` that keeps the selected icon in the Dock when Rally is not running. |
 | `apps/desktop/native/set-application-icon.js` | AppKit bridge that updates Finder and refreshes the Dock icon cache. |
 | `apps/desktop/resources/menu-bar/avalonTemplate.png` (+ `@2x`) | Generated macOS template image for the menu bar status item. Black plus alpha only; macOS owns its colour. [`menu-bar.md`](menu-bar.md) owns how it is used. |
 | `apps/desktop/resources/icon.icns` | Legacy, pre-masked DMG volume icon. It is not the app icon source. |
 
-With no saved choice, macOS renders `icon.icon`, selects its appearance, and applies the current enclosure and platform effects. Selecting an icon in Settings writes only an allowlisted identifier to `~/Library/Application Support/Avalon/application-icon.json`. Packaged launches intentionally keep this app-level preference in the canonical directory even when Chromium is started with `--user-data-dir`, because the out-of-process Dock plugin cannot see that switch. Package smoke tests retain an isolated override.
+With no saved choice, macOS renders `icon.icon`, selects its appearance, and applies the current enclosure and platform effects. Selecting an icon in Settings writes only an allowlisted identifier to `~/Library/Application Support/Rally/application-icon.json`. Packaged launches intentionally keep this app-level preference in the canonical directory even when Chromium is started with `--user-data-dir`, because the out-of-process Dock plugin cannot see that switch. Package smoke tests retain an isolated override.
 
 The packaged app then performs the native macOS flow:
 
-1. Apple's `actool` compiles each full-bleed source through the `.icon` format. The resulting ICNS has the macOS-authored enclosure, transparency, shadow, and optical sizing; Avalon never invents or bakes its own mask.
-2. `NSWorkspace.setIcon(_:forFile:options:)` sets that compiled custom icon on `Avalon.app`, which updates Finder, Spotlight, and Launchpad.
-3. The app posts an immediate distributed notification to the Dock tile plugin. The plugin reads the saved choice and updates its `NSDockTile` content, including while Avalon is closed.
+1. Apple's `actool` compiles each full-bleed source through the `.icon` format. The resulting ICNS has the macOS-authored enclosure, transparency, shadow, and optical sizing; Rally never invents or bakes its own mask.
+2. `NSWorkspace.setIcon(_:forFile:options:)` sets that compiled custom icon on `Rally.app`, which updates Finder, Spotlight, and Launchpad.
+3. The app posts an immediate distributed notification to the Dock tile plugin. The plugin reads the saved choice and updates its `NSDockTile` content, including while Rally is closed.
 4. The AppKit bridge asks the Dock to rebuild its icon cache, then notifies the plug-in again so the change appears immediately even if the refresh recreated the tile.
 
 “Use the system icon” removes the saved preference, clears the Finder custom icon, clears the plugin content view, and refreshes the cache. The adaptive `.icon` then resumes automatically.
@@ -48,7 +48,7 @@ Keep both native and selectable source artwork unmasked:
 
 The renderer preview uses generated 128×128 copies and CSS rounding only to represent the macOS tile. That rounding is not written into the 1024px source files.
 
-## Change the current Avalon icon
+## Change the current Rally icon
 
 1. Update `assets/brand/avalon-mark-source.png` or the colors/composition in `scripts/generate-brand-assets.py`.
 2. Regenerate the derived assets from the repository root:
@@ -66,7 +66,7 @@ Do not hand-edit the generated light/dark copies or renderer previews. A later g
 
 1. Add an opaque, full-bleed 1024×1024 PNG under `apps/desktop/resources/app-icons`. Do not pre-mask it; `build-macos-icon-components.mjs` compiles it through the checked-in `.icon` template.
 2. Add its identifier to `TELEMETRY_APPLICATION_ICON_IDS` in `packages/contracts/src/telemetry.ts`, then add its label to `applicationIconLabels` in `apps/desktop/src/common/application-icons.ts`. The shared identifier allowlist drives the renderer, main IPC validation, filenames, and telemetry schema; IPC never accepts a filesystem path.
-3. Add the same identifier to the Dock plugin allowlist in `apps/desktop/native/dock-tile-plugin/AvalonDockTilePlugin.m`.
+3. Add the same identifier to the Dock plugin allowlist in `apps/desktop/native/dock-tile-plugin/RallyDockTilePlugin.m`.
 4. Add its identifier to `selectableIconNames` in `apps/desktop/scripts/build-macos-icon-components.mjs`, run `python3 scripts/generate-brand-assets.py` to produce the 128px renderer preview, then import that preview in `apps/desktop/src/renderer/components/application-icon-picker.tsx`.
 5. Add the expected resource to `apps/desktop/scripts/verify-macos-app.mjs` and update focused tests.
 
@@ -83,10 +83,10 @@ Never manually rewrite signed files under `Contents`. The Finder API does add th
 Run focused checks while iterating:
 
 ```text
-pnpm --filter @avalon/desktop test
-pnpm --filter @avalon/desktop typecheck
+pnpm --filter @rally/desktop test
+pnpm --filter @rally/desktop typecheck
 # arm64 macOS only:
-pnpm --filter @avalon/desktop build:macos-icons
+pnpm --filter @rally/desktop build:macos-icons
 pnpm exec eslint apps/desktop/src/main/application-icon.ts apps/desktop/src/main/index.ts apps/desktop/src/renderer/components/application-icon-picker.tsx
 ```
 
@@ -106,17 +106,17 @@ The package verifier checks:
 
 The plugin build also compiles and executes a smoke harness that invokes `setDockTile:nil`. This catches recursive implementations of the protocol setter before packaging.
 
-Launch the packaged app with `pnpm start:desktop:packaged`, select several icons, quit Avalon, and confirm the choice remains in the Dock. Check Finder, Spotlight, and Launchpad, then choose “Use the system icon” and confirm the adaptive icon returns.
+Launch the packaged app with `pnpm start:desktop:packaged`, select several icons, quit Rally, and confirm the choice remains in the Dock. Check Finder, Spotlight, and Launchpad, then choose “Use the system icon” and confirm the adaptive icon returns.
 
-For a notarized release candidate, repeat the selected-icon test from an installed copy, run `spctl -a -vvv --type execute /Applications/Avalon.app`, and complete one auto-update before release approval. `codesign --verify --deep` should continue to pass with a selected icon; `codesign --verify --deep --strict` is expected to reject Finder's custom-icon attributes until reset.
+For a notarized release candidate, repeat the selected-icon test from an installed copy, run `spctl -a -vvv --type execute /Applications/Rally.app`, and complete one auto-update before release approval. `codesign --verify --deep` should continue to pass with a selected icon; `codesign --verify --deep --strict` is expected to reject Finder's custom-icon attributes until reset.
 
 ## Troubleshooting
 
-- **The Dock changes only while Avalon runs:** confirm `NSDockTilePlugIn` names `AvalonDockTilePlugin.docktileplugin`, the signed plugin is under `Contents/PlugIns`, and the preference file contains an allowlisted identifier.
+- **The Dock changes only while Rally runs:** confirm `NSDockTilePlugIn` names `RallyDockTilePlugin.docktileplugin`, the signed plugin is under `Contents/PlugIns`, and the preference file contains an allowlisted identifier.
 - **Finder changes but the Dock does not:** inspect the Dock plugin signature and distributed notification name, then relaunch the Dock during development to force plugin discovery.
-- **The icon is square or double-masked:** confirm the source PNG is full-bleed and has no baked mask, inset, or platform shadow, then rebuild the selectable ICNS renditions with `pnpm --filter @avalon/desktop build:macos-icons`.
+- **The icon is square or double-masked:** confirm the source PNG is full-bleed and has no baked mask, inset, or platform shadow, then rebuild the selectable ICNS renditions with `pnpm --filter @rally/desktop build:macos-icons`.
 - **Reset leaves a stale icon:** confirm the native bridge can resolve `SLSIconAppearanceConfiguration`. The default returns after the Dock cache is rebuilt even when the private best-effort refresh is unavailable.
-- **Packaging rejects nested code:** rebuild with `pnpm --filter @avalon/desktop build:macos-icons` and verify the plugin contains only an arm64 executable before electron-builder signs it.
+- **Packaging rejects nested code:** rebuild with `pnpm --filter @rally/desktop build:macos-icons` and verify the plugin contains only an arm64 executable before electron-builder signs it.
 
 ## Changelog
 

@@ -1,10 +1,11 @@
+import { TELEMETRY_ENVELOPE_SCHEMA } from '@rally/contracts/telemetry';
 import type {
   TelemetryBootstrapResponse,
   TelemetryEnvelope,
   TelemetryEventName,
   TelemetryEventProperties,
   TelemetryRouteResponse,
-} from '@avalon/contracts/telemetry';
+} from '@rally/contracts/telemetry';
 
 type SitePage = TelemetryEventProperties<'site_page_viewed'>['page'];
 type SiteAction = TelemetryEventProperties<'site_action_selected'>['action'];
@@ -131,7 +132,7 @@ function makeEnvelope<TName extends TelemetryEventName>(
 ): TelemetryEnvelope {
   const timestamp = new Date().toISOString();
   return {
-    schema: 'com.avalon.telemetry.event',
+    schema: TELEMETRY_ENVELOPE_SCHEMA,
     schemaVersion: 1,
     eventId: uuidV7(),
     name,

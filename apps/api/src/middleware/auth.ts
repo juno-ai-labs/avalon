@@ -1,4 +1,5 @@
-import { UserIdSchema, WorkspaceIdSchema } from "@avalon/contracts";
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import { UserIdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import type { MiddlewareHandler } from "hono";
 import type { AuthContext, Env, HonoAppEnv, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -57,12 +58,12 @@ async function touchLastSeen(env: Env, workspaceId: string, userId: string): Pro
 }
 
 async function authenticate(c: Context): Promise<IdentityAuthContext> {
-  if (c.env.APP_ENV === "development" && c.env.AVALON_DEV_AUTH === "true") {
+  if (c.env.APP_ENV === "development" && c.env.RALLY_DEV_AUTH === "true") {
     // Parsed, not cast: a malformed development header is a request that
     // simply is not using dev auth, and must fall through to ordinary
     // authentication rather than 500 on the brand's validation.
-    const userId = UserIdSchema.safeParse(c.req.header("x-avalon-dev-user-id")).data;
-    const workspaceId = WorkspaceIdSchema.safeParse(c.req.header("x-avalon-dev-workspace-id")).data;
+    const userId = UserIdSchema.safeParse(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.DEV_USER_ID)).data;
+    const workspaceId = WorkspaceIdSchema.safeParse(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.DEV_WORKSPACE_ID)).data;
     if (userId && workspaceId) {
       const member = await c.env.DB.prepare(
         `SELECT m.role FROM workspace_members m
@@ -85,7 +86,7 @@ async function authenticate(c: Context): Promise<IdentityAuthContext> {
 
   const authorization = c.req.header("authorization");
   if (!authorization?.startsWith("Bearer ")) {
-    throw new ApiError(401, "authentication_required", "A valid Avalon session is required");
+    throw new ApiError(401, "authentication_required", "A valid Rally session is required");
   }
   const claims = await verifyAccessToken(c.env, authorization.slice(7));
   if (claims.region !== c.env.AVALON_REGION) {
@@ -167,7 +168,7 @@ export const requireAuth: MiddlewareHandler<HonoAppEnv> = async (c, next) => {
 
 export function getIdentityAuth(c: Context): IdentityAuthContext {
   const auth = c.get("auth");
-  if (!auth) throw new ApiError(401, "authentication_required", "A valid Avalon session is required");
+  if (!auth) throw new ApiError(401, "authentication_required", "A valid Rally session is required");
   return auth;
 }
 

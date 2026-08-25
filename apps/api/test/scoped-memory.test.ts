@@ -1,9 +1,9 @@
-import { asHarnessRunId, asUserId, asWorkstreamId } from "@avalon/contracts";
-import { asWorkspaceId } from "@avalon/contracts";
+import { asHarnessRunId, asUserId, asWorkstreamId } from "@rally/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { Env } from "../src/env";
 import {
   createMemoryTools,

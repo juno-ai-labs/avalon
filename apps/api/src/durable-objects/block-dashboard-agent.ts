@@ -1,3 +1,4 @@
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   ActiveStreamCheckpointSchema,
   asBlockId,
@@ -17,7 +18,7 @@ import {
   type BlockDashboardBlockRun,
   type ActiveStreamCheckpoint,
   type WorkstreamWorkflowInput,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { z } from "zod";
 
 import {
@@ -489,14 +490,14 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       return json({ error: "websocket_upgrade_required" }, 426);
     }
     const identity = BlockDashboardSocketIdentitySchema.safeParse({
-      workspaceId: request.headers.get("x-avalon-workspace-id"),
-      workstreamId: request.headers.get("x-avalon-workstream-id"),
-      blockId: request.headers.get("x-avalon-block-dashboard-block-id"),
-      region: request.headers.get("x-avalon-region"),
-      userId: request.headers.get("x-avalon-user-id"),
-      sessionId: request.headers.get("x-avalon-session-id"),
-      ticketId: request.headers.get("x-avalon-socket-ticket-id"),
-      ticketExpiresAt: request.headers.get("x-avalon-socket-ticket-expires-at"),
+      workspaceId: readRallyHeader(request.headers, RALLY_HEADERS.WORKSPACE_ID) ?? null,
+      workstreamId: readRallyHeader(request.headers, RALLY_HEADERS.WORKSTREAM_ID) ?? null,
+      blockId: readRallyHeader(request.headers, RALLY_HEADERS.BLOCK_DASHBOARD_BLOCK_ID) ?? null,
+      region: readRallyHeader(request.headers, RALLY_HEADERS.REGION) ?? null,
+      userId: readRallyHeader(request.headers, RALLY_HEADERS.USER_ID) ?? null,
+      sessionId: readRallyHeader(request.headers, RALLY_HEADERS.SESSION_ID) ?? null,
+      ticketId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_ID) ?? null,
+      ticketExpiresAt: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT) ?? null,
     });
     if (!identity.success) return json({ error: "invalid_socket_identity" }, 400);
     try {
@@ -577,7 +578,7 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       new Date().toISOString(),
     ).first();
     const developmentSession = this.env.APP_ENV === "development"
-      && this.env.AVALON_DEV_AUTH === "true"
+      && this.env.RALLY_DEV_AUTH === "true"
       && identity.sessionId === "development"
       ? await this.env.DB.prepare(
         `SELECT 1 FROM workspace_members

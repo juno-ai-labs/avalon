@@ -1,6 +1,6 @@
 # What each connector activity type puts in a digest
 
-One row per declared activity type, for every connector Avalon registers. The
+One row per declared activity type, for every connector Rally registers. The
 rule these answer to, and the contract that makes stating them mandatory, is in
 [`connectors.md`](connectors.md#declaring-what-a-digest-may-read); what happens
 to the answer afterwards is in
@@ -27,7 +27,7 @@ case rather than a failure.
 
 ## GitHub
 
-Thirty of ninety-one. The loudest connector Avalon has: continuous integration
+Thirty of ninety-one. The loudest connector Rally has: continuous integration
 alone reports two events per check and three per workflow run, so a repository
 under active development emits an order of magnitude more machinery than news.
 
@@ -122,7 +122,7 @@ under active development emits an order of magnitude more machinery than news.
 | `github.repository.edited` | No | Settings and description. |
 | `github.repository.renamed` | No | The same repository under a new name. |
 | `github.repository.unarchived` | No | Reversal of an administrative state. |
-| `github.installation_repositories.added` | No | Which repositories Avalon can see — configuration, not somebody's work. |
+| `github.installation_repositories.added` | No | Which repositories Rally can see — configuration, not somebody's work. |
 | `github.installation_repositories.removed` | No | Same. |
 
 ## Linear
@@ -187,7 +187,7 @@ comment being edited is the same thing said again a minute later.
 | `linear.oauth_app.revoked` | No | Surfaced on the connection, where it can be acted on. |
 | `linear.oauth_authorization.revoked` | No | Same. |
 | `linear.permission_change.team_access_changed` | No | Access administration. |
-| `linear.agent_session_event.created` | No | Avalon's own agent working; a digest must never narrate the machinery that writes it. |
+| `linear.agent_session_event.created` | No | Rally's own agent working; a digest must never narrate the machinery that writes it. |
 | `linear.agent_session_event.prompted` | No | Same. |
 
 ## Slack
@@ -198,7 +198,7 @@ Five of twelve. What somebody said, and what was addressed to this person.
 | --- | --- | --- |
 | `slack.message.posted` | Yes | Somebody said something in a channel. |
 | `slack.message.replied` | Yes | A thread moved. |
-| `slack.app_mention.received` | Yes | Addressed to Avalon by name. |
+| `slack.app_mention.received` | Yes | Addressed to Rally by name. |
 | `slack.direct_message.received` | Yes | Addressed to this person directly. |
 | `slack.file.shared` | Yes | Something was handed over. |
 | `slack.message.edited` | No | A revision to a message already reported. |
@@ -291,4 +291,4 @@ None of one.
 
 | Activity type | Digestible | Reason |
 | --- | --- | --- |
-| `webhook.received` | No | Avalon cannot know what a caller will post, and an unreadable payload rendered into somebody's morning email is worse than a missing line. A generic webhook earns a digest through an automation that understands it. |
+| `webhook.received` | No | Rally cannot know what a caller will post, and an unreadable payload rendered into somebody's morning email is worse than a missing line. A generic webhook earns a digest through an automation that understands it. |

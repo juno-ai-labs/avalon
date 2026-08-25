@@ -31,16 +31,16 @@ describe('device preferences', () => {
   });
 
   it('migrates the two legacy preference keys without treating them as auth data', () => {
-    window.localStorage.setItem('avalon:selected-region', 'global');
-    window.localStorage.setItem('avalon:workspace-name', 'Avalon');
+    window.localStorage.setItem('rally:selected-region', 'global');
+    window.localStorage.setItem('rally:workspace-name', 'Rally');
 
     expect(readDevicePreferences()).toEqual({
       version: 1,
       selectedRegion: 'global',
-      workspaceName: 'Avalon',
+      workspaceName: 'Rally',
     });
-    expect(window.localStorage.getItem('avalon:selected-region')).toBeNull();
-    expect(window.localStorage.getItem('avalon:workspace-name')).toBeNull();
+    expect(window.localStorage.getItem('rally:selected-region')).toBeNull();
+    expect(window.localStorage.getItem('rally:workspace-name')).toBeNull();
   });
 
   it('keeps the chosen theme beside the other preferences', () => {

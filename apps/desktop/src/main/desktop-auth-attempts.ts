@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { AvalonRegion, DesktopAuthAttempt } from '../common/desktop';
+import type { RallyRegion, DesktopAuthAttempt } from '../common/desktop';
 
 const DEFAULT_ATTEMPT_TTL_MS = 12 * 60_000;
 const DEFAULT_MAX_ATTEMPTS = 6;
@@ -7,7 +7,7 @@ const DEFAULT_MAX_ATTEMPTS = 6;
 interface StoredDesktopAuthAttempt {
   attemptId: string;
   apiBaseUrl: string;
-  region: AvalonRegion;
+  region: RallyRegion;
   verifier: string;
   createdAt: number;
   expiresAt: number;
@@ -47,7 +47,7 @@ export class DesktopAuthAttemptStore {
     this.random = options.randomBytes ?? randomBytes;
   }
 
-  create(apiBaseUrl: string, region: AvalonRegion): DesktopAuthAttempt {
+  create(apiBaseUrl: string, region: RallyRegion): DesktopAuthAttempt {
     this.prune();
     while (this.attempts.size >= this.maxAttempts) {
       const oldest = this.attempts.keys().next().value as string | undefined;

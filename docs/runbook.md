@@ -21,7 +21,7 @@ After the API is running, use `pnpm smoke:local` for the repeatable authenticati
 Local authentication is available only when all of these are true:
 
 - `APP_ENV=development`
-- `AVALON_DEV_AUTH=true`
+- `RALLY_DEV_AUTH=true`
 - Electron is unpackaged
 
 If the local account cannot sign in, run `pnpm env:sync`, confirm `.env.local` remains owner-readable, and restart both processes. Never add a development-auth value to a hosted Worker.
@@ -54,7 +54,7 @@ work-stream, and user *attributes* — slugs, counts, ages, roles, origins, emai
 domains — bounded by the rules in
 [`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
 
-The checked-in regional Wrangler files reference the provisioned Avalon resources. If a database is intentionally recreated, update only that region's `database_id` and keep the EU R2 jurisdiction and every region-specific name intact.
+The checked-in regional Wrangler files reference the provisioned Rally resources. If a database is intentionally recreated, update only that region's `database_id` and keep the EU R2 jurisdiction and every region-specific name intact.
 
 Wrangler validates an R2 binding without proving its named bucket exists. Run
 `pnpm cloudflare:resources:check` after provisioning or changing either regional
@@ -104,7 +104,7 @@ Set these shared Worker secrets separately in each regional deployment:
 Set `POSTHOG_PROJECT_TOKEN` only on the Global Worker when PostHog delivery is
 enabled. The checked-in Global configuration fixes `POSTHOG_HOST` to the approved
 US ingest origin; EU must have neither value. Until the token is provisioned,
-regional collection remains healthy and Global accepted rows stay inside Avalon
+regional collection remains healthy and Global accepted rows stay inside Rally
 until their normal deadline. `TELEMETRY_CAPABILITY_SIGNING_KEY` is an optional
 Global-only hardening boundary: when absent, onboarding capabilities use the
 existing Global `SESSION_SIGNING_KEY`; EU always sends the capability to the
@@ -116,7 +116,7 @@ it for low traffic or accept that capabilities issued under the session key in
 the preceding hour will fail verification and clients must bootstrap again.
 Rotating whichever key is active has the same one-hour boundary. The desktop
 release workflow also requires repository variables
-`AVALON_GLOBAL_TELEMETRY_R2_BUCKET` and `AVALON_EU_TELEMETRY_R2_BUCKET` so it can
+`RALLY_GLOBAL_TELEMETRY_R2_BUCKET` and `RALLY_EU_TELEMETRY_R2_BUCKET` so it can
 publish source maps and native symbols to both private regional buckets before
 distribution.
 
@@ -148,7 +148,7 @@ An activated region requires:
   credential in a `VITE_` variable, D1, a sandbox environment value, or a
   checked-in Wrangler file.
 
-If any required Daytona value is absent, Avalon treats that region as
+If any required Daytona value is absent, Rally treats that region as
 `unsupported` and continues starting without the Terminal plugin. This is the
 normal local-development state. Once every value is present, malformed values
 still fail the environment contract so an intended provider rollout cannot
@@ -166,7 +166,7 @@ Before enabling a region, place the candidate configuration only in the local
 operator environment. The current configuration can be checked immediately:
 
 ```text
-pnpm dotenv -e .env.local -- pnpm --filter @avalon/api terminal:verify-provider-interface
+pnpm dotenv -e .env.local -- pnpm --filter @rally/api terminal:verify-provider-interface
 ```
 
 The interface probe needs only the six normal Terminal/Daytona variables and is
@@ -181,7 +181,7 @@ blocked host, and `TERMINAL_PROBE_PRIVATE_DNS_URL` must be an allowed public nam
 that resolves to a private/special-use address. Then run:
 
 ```text
-pnpm dotenv -e .env.local -- pnpm --filter @avalon/api terminal:verify-provider
+pnpm dotenv -e .env.local -- pnpm --filter @rally/api terminal:verify-provider
 ```
 
 The automated acceptance probe creates one private Trusted-only sandbox,
@@ -224,7 +224,7 @@ the owning WorkspaceDO's `workspace_sandbox_network_policy_mutations` table.
 That table is not present in D1 after migration 0090, so use the authorized
 object diagnostic/repair surface for the workspace's regional route rather
 than issuing a regional D1 query.
-Inspect generated logs/diffs only through Avalon's authorized resource surface.
+Inspect generated logs/diffs only through Rally's authorized resource surface.
 The oldest running `last_activity_at`, nonterminal task beyond
 `command_deadline_at`, expired lifecycle claim, failed policy verification, or
 `ambiguous` publication points to the owning reconciler rather than permission to
@@ -253,19 +253,19 @@ Set `RESEND_WEBHOOK_SIGNING_SECRET` and `WORKSTREAM_EMAIL_ADDRESS_KEY` only on t
 Global Worker. `RESEND_API_KEY` is required in both regions with Resend's
 **Full access** permission because each owning region retrieves its own full
 message after the Global ingress has routed only signed metadata. An optional
-`RESEND_RECEIVING_API_KEY` can override it later if Avalon returns to separate
+`RESEND_RECEIVING_API_KEY` can override it later if Rally returns to separate
 sending and receiving credentials. All non-Global work-stream and automation
 email-name reservations use
 the Global `WorkstreamEmailRoutingBridge`; there is no regional allocator key or
 regional fallback registry.
 
-`RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. There are two checked-in senders, both `vars` in each region's Wrangler config: `RESEND_FROM_EMAIL` (`Avalon <invites@rallywith.ai>`) for transactional mail, and `RESEND_NOTIFICATION_FROM_EMAIL` (`Avalon <notifications@rallywith.ai>`) for mail Avalon generates — digests, automation results, mention notifications. Resend verifies the domain rather than the address, so the second rides the same verification; keep both `rallywith.ai` and `with-avalon.com` verified with their own DKIM/SPF records — Resend verifies the sending domain, so the Rally senders do not inherit the Avalon verification and mail from them is rejected until the Rally records are live. An unset notification sender does not fail: `sendResendEmail` falls back to the transactional one silently, which is why `GET /health` reports `resendNotificationSender` separately — check it after a deploy that touches either var. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
+`RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. There are two checked-in senders, both `vars` in each region's Wrangler config: `RESEND_FROM_EMAIL` (`Rally <invites@rallywith.ai>`) for transactional mail, and `RESEND_NOTIFICATION_FROM_EMAIL` (`Rally <notifications@rallywith.ai>`) for mail Rally generates — digests, automation results, mention notifications. Resend verifies the domain rather than the address, so the second rides the same verification; keep both `rallywith.ai` and `with-avalon.com` verified with their own DKIM/SPF records — Resend verifies the sending domain, so the Rally senders do not inherit the Rally verification and mail from them is rejected until the Rally records are live. An unset notification sender does not fail: `sendResendEmail` falls back to the transactional one silently, which is why `GET /health` reports `resendNotificationSender` separately — check it after a deploy that touches either var. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
 
 Inbound work-stream and automation mail uses the dedicated catch-all subdomain `automation.rallywith.ai`. Create it with Resend Receiving enabled, install the exact MX record returned by Resend in Cloudflare DNS, and create one `email.received` webhook pointing to `https://api.rallywith.ai/ingest/resend`. **Keep `automation.with-avalon.com` receiving, with its own MX record and webhook, for as long as any address on it exists.** Addresses are stored per work stream rather than derived, so every address issued before the rename still carries that domain, is printed in the sender's mail client, and is what mail rules forward to; the Worker routes on the local part and accepts either domain. See [`domain-migration.md`](domain-migration.md). Store its `whsec_...` value as the Global `RESEND_WEBHOOK_SIGNING_SECRET`. Ensure the reused `RESEND_API_KEY` has Full access in both regions because the regional Worker retrieves the full received message after routing. Store one stable 32+ byte `WORKSTREAM_EMAIL_ADDRESS_KEY` in the Global Worker. Do not log any of these values. Existing deployments using `RESEND_WEBHOOK_SECRET` remain compatible during migration.
 
 For non-interactive Wrangler commands, prefer `CLOUDFLARE_API_TOKEN`. The older global-key method requires both `CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` in `.env.local`; an API key by itself cannot authenticate a deployment.
 
-Use a custom token restricted to the Avalon Cloudflare account and the `rallywith.ai` and `with-avalon.com` zones — both are served while the rename is in flight, and a token holding only one of them fails route provisioning for the other. The deployment and migration workflow needs these permissions:
+Use a custom token restricted to the Rally Cloudflare account and the `rallywith.ai` and `with-avalon.com` zones — both are served while the rename is in flight, and a token holding only one of them fails route provisioning for the other. The deployment and migration workflow needs these permissions:
 
 - Account: Account Settings Read
 - Account: Workers Scripts Write (shown as Edit in older dashboards)
@@ -326,9 +326,70 @@ The other nine Rally hostnames are single-label and covered by the Universal
 pack, so they need no certificate work. [`domain-migration.md`](domain-migration.md)
 lists all ten and what each serves.
 
+### The Rally rename cannot reach installed builds through the update feed
+
+**An installed `app.avalon.desktop` build will not auto-update to
+`ai.rallywith.desktop`.** Squirrel.Mac treats the bundle identifier as the
+application's identity and refuses to replace a bundle with one that does not
+match — see the macOS distribution section of
+[`security.md`](security.md#macos-distribution-and-updates). The release that
+carries the rename therefore reaches existing installs only as a manual
+reinstall, and the failure mode if that is not planned is silent: those installs
+keep polling `downloads.with-avalon.com`, keep being offered a build they will
+not accept, and simply stop updating. Nothing is logged on either side.
+
+Decide the migration **before** the rename ships. The options, in the order they
+are usually worth considering:
+
+1. **Announce and ship a manual reinstall.** Mail every account a
+   `downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg` link before promoting
+   the release, and keep the Avalon feed serving its last Avalon-named build so
+   an un-migrated install is not left broken.
+2. **Ship one last Avalon-identified release first** whose only job is to tell
+   people, in the app, that the next version must be installed by hand. This is
+   the version that reaches everyone, so it is the only reliable channel.
+3. **Keep `app.avalon.desktop`** and rename everything else. This is the only
+   option with no migration at all; it trades a permanent `avalon` string in the
+   shipped bundle for a clean update path.
+
+Whichever is chosen, `downloads.with-avalon.com` and the last Avalon-named
+artifacts must stay served indefinitely — an install that never migrates polls
+them forever, and there is no way to tell from this side how many did.
+
+### Rename the release repository variables before the next desktop release
+
+The desktop release workflow reads three GitHub **repository variables** whose
+names moved with the rebrand. Rename them under **Settings → Secrets and
+variables → Actions → Variables**, keeping each value:
+
+| Current name | New name | Value |
+| --- | --- | --- |
+| `AVALON_RELEASE_R2_BUCKET` | `RALLY_RELEASE_R2_BUCKET` | `avalon-desktop-releases` |
+| `AVALON_GLOBAL_TELEMETRY_R2_BUCKET` | `RALLY_GLOBAL_TELEMETRY_R2_BUCKET` | `avalon-global-telemetry` |
+| `AVALON_EU_TELEMETRY_R2_BUCKET` | `RALLY_EU_TELEMETRY_R2_BUCKET` | `avalon-eu-telemetry` |
+
+**The values stay Avalon-named on purpose** — an R2 bucket cannot be renamed, and
+moving one means creating a bucket, copying every object, and repointing the
+`downloads.rallywith.ai` custom domain. That is a separate, reversible-only-by-
+copying operation; see the Boundary section of
+[`domain-migration.md`](domain-migration.md).
+
+Until the rename is done the workflow falls back to the superseded variable names
+(`vars.RALLY_… || vars.AVALON_…`), so a release does not fail in the window
+between this merging and someone opening that page. The fallback exists because
+the failure it prevents is quiet: an unset variable is an empty bucket name, and
+a publish to an empty bucket name uploads nowhere rather than erroring. Delete
+the fallback once the variables are renamed.
+
+No Apple credential changes with the rename. The Developer ID Application
+certificate is issued to the team (`7ZLT6A8W25`), not to a bundle identifier, and
+notarization authenticates the same team — so `ai.rallywith.desktop` signs and
+notarizes with the existing `CSC_LINK`, `CSC_KEY_PASSWORD`, and `APPLE_API_*`
+secrets untouched.
+
 ### Release version policy
 
-Every new Avalon release advances exactly one minor version and resets the patch to zero. The one stable-promotion exception permits a `0.x` release to advance to `1.0.0`; after that, releases continue by minor version (`1.0.0` → `1.1.0`). Do not create patch releases, prereleases, skip a minor, or make any other major-version jump. Do **not** move the package versions to the next minor immediately after publication, as earlier revisions of this policy directed: an unreleased version in `package.json` is now the instruction to release it, so the next merge to `main` would ship it. Bump in the change that is meant to go out. See "Releasing the desktop app by bumping the version" below. Leave `apps/site/release.config.json` on the currently published version until the immutable desktop artifacts and update feed for the next version have been uploaded and verified. The release tag and site-promotion tooling enforce this policy and allow the same published version only for an idempotent retry.
+Every new Rally release advances exactly one minor version and resets the patch to zero. The one stable-promotion exception permits a `0.x` release to advance to `1.0.0`; after that, releases continue by minor version (`1.0.0` → `1.1.0`). Do not create patch releases, prereleases, skip a minor, or make any other major-version jump. Do **not** move the package versions to the next minor immediately after publication, as earlier revisions of this policy directed: an unreleased version in `package.json` is now the instruction to release it, so the next merge to `main` would ship it. Bump in the change that is meant to go out. See "Releasing the desktop app by bumping the version" below. Leave `apps/site/release.config.json` on the currently published version until the immutable desktop artifacts and update feed for the next version have been uploaded and verified. The release tag and site-promotion tooling enforce this policy and allow the same published version only for an idempotent retry.
 
 ### Desktop release retention
 
@@ -345,8 +406,8 @@ and [pricing](https://developers.cloudflare.com/r2/pricing/) documentation.
 Create the archive bucket only if it does not already exist:
 
 ```text
-pnpm dotenv -e .env.local -- pnpm --filter @avalon/api exec wrangler r2 bucket create avalon-desktop-releases-archive --location wnam --storage-class InfrequentAccess
-pnpm dotenv -e .env.local -- pnpm --filter @avalon/api exec wrangler r2 bucket info avalon-desktop-releases-archive
+pnpm dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler r2 bucket create avalon-desktop-releases-archive --location wnam --storage-class InfrequentAccess
+pnpm dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler r2 bucket info avalon-desktop-releases-archive
 ```
 
 Use the live R2 inventory as the retention authority. Do not derive the keep set
@@ -360,7 +421,7 @@ objects:
 - The DMG and ZIP blockmaps
 - `<version>/SHA256SUMS`
 
-`stable/darwin/arm64/Avalon.dmg` and
+`stable/darwin/arm64/Rally.dmg` and
 `stable/darwin/arm64/latest-mac.yml` are mutable channel pointers, not releases.
 They must always remain in the public bucket.
 
@@ -403,7 +464,7 @@ Each admitted invocation performs this fail-closed transaction:
    changed while copies were in progress. This protects a release that races the
    nightly job.
 5. Delete only the computed, verified candidate-key array. Re-list both sides,
-   require exactly five complete releases plus `Avalon.dmg` and
+   require exactly five complete releases plus `Rally.dmg` and
    `latest-mac.yml` in active storage, prove every candidate is absent from the
    active bucket, and prove its verified archive copy remains present.
 
@@ -417,9 +478,9 @@ deleting any object.
 Before deploying a change, run:
 
 ```text
-pnpm --filter @avalon/release-retention test
-pnpm --filter @avalon/release-retention typecheck
-pnpm --filter @avalon/release-retention build
+pnpm --filter @rally/release-retention test
+pnpm --filter @rally/release-retention typecheck
+pnpm --filter @rally/release-retention build
 ```
 
 Exercise the real scheduled handler against the remote buckets without writes
@@ -428,7 +489,7 @@ That configuration pins `RETENTION_DRY_RUN=true` and is the only checked-in
 configuration whose development bindings access the remote buckets:
 
 ```text
-pnpm dotenv -e .env.local -- pnpm --filter @avalon/release-retention dev:dry-run
+pnpm dotenv -e .env.local -- pnpm --filter @rally/release-retention dev:dry-run
 curl "http://localhost:8799/cdn-cgi/handler/scheduled?cron=0+9+*+*+*&time=1786093200000&format=json"
 ```
 
@@ -607,7 +668,7 @@ pack is active — which reads as an outage rather than as a missing certificate
 unreachable hostname fails the deployment verification.
 
 The `internal.` label buys naming, not security — the site is protected by
-Cloudflare Access, not by being hard to guess. It is the one Avalon hostname
+Cloudflare Access, not by being hard to guess. It is the one Rally hostname
 that is not single-level, and it is the reason this zone carries ACM at all.
 
 **2. Cloudflare Access.** Zero Trust is enabled on the account with the team
@@ -645,7 +706,7 @@ Object namespaces and object IDs. `CLOUDFLARE_ACCOUNT_ID` is set in
 `wrangler.jsonc` — an identifier, not a credential — and the token is a secret:
 
 ```text
-pnpm --filter @avalon/migration-tracker exec wrangler secret put CLOUDFLARE_API_TOKEN --config wrangler.jsonc
+pnpm --filter @rally/migration-tracker exec wrangler secret put CLOUDFLARE_API_TOKEN --config wrangler.jsonc
 ```
 
 Grant it **Account · Workers Scripts · Read** and nothing else. Note that the
@@ -669,9 +730,9 @@ than it appears to.
 Before deploying a change, run:
 
 ```text
-pnpm --filter @avalon/migration-tracker test
-pnpm --filter @avalon/migration-tracker typecheck
-pnpm --filter @avalon/migration-tracker build
+pnpm --filter @rally/migration-tracker test
+pnpm --filter @rally/migration-tracker typecheck
+pnpm --filter @rally/migration-tracker build
 ```
 
 Locally, `pnpm dev:migrations` serves the site on port 8790 from
@@ -708,7 +769,7 @@ totals.
 To restore an archived release, copy its five objects back to the public bucket
 as `Standard` storage while preserving metadata, then repeat the key, size,
 ETag/hash, and public HEAD verification. Restoring immutable objects does not
-change the update channel. Change `latest-mac.yml` or `Avalon.dmg` only as a
+change the update channel. Change `latest-mac.yml` or `Rally.dmg` only as a
 separate, explicitly approved release rollback using the normal publisher's
 ordering and cache-purge safeguards.
 
@@ -716,7 +777,7 @@ ordering and cache-purge safeguards.
 
 If desktop icon artwork, generated icon assets, or the icon-family configuration changed, follow [Desktop application icons](desktop-icons.md). Regenerate the assets, build the guarded local desktop package, and verify the running Dock icon in both light and dark macOS appearances before creating a release build. Also inspect Finder to confirm the static bundle icon remains correct.
 
-Current production status: the site, both regional APIs, and the private nightly `avalon-release-retention` Worker are deployed. The retention Worker keeps the five newest complete desktop releases active and archives older releases to private Infrequent Access storage at 02:00 Pacific. Migrations through `0065_automation_draft_conversation.sql` are live in both D1 databases — confirmed against both remote databases with `pnpm db:migrate:remote:list` and its EU counterpart — and both regional infrastructure health checks pass. Firecrawl, Resend invitation delivery, and work-stream and automation inbound email on `automation.with-avalon.com` are configured. Google identity OAuth is configured only on the Global Worker; the separate Google connector OAuth client is configured in both regions, and credentials issued by the former shared client were invalidated during the cutover. Expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are registered with their regional secrets, callbacks, and ingress deployed. The public Notion connection and regional OAuth secrets exist; its webhook subscription remains to be created after migration `0071_notion_webhook_setup_nonces.sql` and the matching Worker release land, using the two clipboard commands in `docs/provider-apps.md`. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
+Current production status: the site, both regional APIs, and the private nightly `avalon-release-retention` Worker are deployed. The retention Worker keeps the five newest complete desktop releases active and archives older releases to private Infrequent Access storage at 02:00 Pacific. Migrations through `0065_automation_draft_conversation.sql` are live in both D1 databases — confirmed against both remote databases with `pnpm db:migrate:remote:list` and its EU counterpart — and both regional infrastructure health checks pass. Firecrawl, Resend invitation delivery, and work-stream and automation inbound email on `automation.with-avalon.com` are configured. Google identity OAuth is configured only on the Global Worker; the separate Google connector OAuth client is configured in both regions, and credentials issued by the former shared client were invalidated during the cutover. Expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Rally Workstreams` GitHub App and public Linear app are registered with their regional secrets, callbacks, and ingress deployed. The public Notion connection and regional OAuth secrets exist; its webhook subscription remains to be created after migration `0071_notion_webhook_setup_nonces.sql` and the matching Worker release land, using the two clipboard commands in `docs/provider-apps.md`. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
 
 Deploy the EU Worker first for ordinary releases because the Global Worker has named service bindings to EU entrypoints. The first release that introduces work-stream inbound email is a special, compatibility-staged rollout: Global must export `WorkstreamEmailRoutingBridge` before EU can bind to it, while Global must not require `InboundEmailRegionalBridge` until EU exports that entrypoint. Use a bootstrap Global deployment with the new router export and without the `EU_INBOUND_EMAIL_BRIDGE` binding, deploy the full EU Worker, then deploy the full Global Worker. Never deploy either caller before its target entrypoint exists. Apply migrations to both D1 databases before the staged Worker rollout.
 
@@ -778,7 +839,7 @@ The symbolicator image is the one expensive thing either workflow builds, in the
 
 Two things decide a release, in order. The workflow's **`paths:` filter** decides whether a push is release-worthy at all: `apps/desktop/**`, `packages/**`, the root manifests and lockfile, `tsconfig.base.json`, and the release workflow itself. A docs, Worker, or landing-site merge matches nothing there, starts no run, and does not spend a 90-minute signed, notarized build. **Change that list in `.github/workflows/release-desktop-macos.yml` when you add something the installed app is built from** — `release-workflow.test.mjs` pins it, so an entry cannot drift unnoticed, but only the entries the tests name.
 
-`apps/desktop/scripts/plan-release.mjs` then picks the version on a cheap runner before any macOS runner is claimed. `apps/site/release.config.json` records both the last published version and `commit`, the commit that release was built from — the **watermark**. The planner diffs `commit..origin/main` and releases if anything at all has landed since. It reads both the record and that diff at **main's tip, not at the commit that triggered the run**: the job waits for the release queue, and the release ahead of it pushes its `Record Avalon <version> release config` commit while it waits, so a plan made from the trigger reads a record that predates a release which has already shipped and cuts that version a second time. The tip is also what the release job goes on to build, so the two agree. It applies no path list of its own: two lists would drift, and the stricter one would silently win. What the watermark adds over `paths:` is the durable half of the question — `paths:` sees only the newest push, so it cannot tell whether the last release actually published, while the watermark makes a release carry everything still unreleased after a run is discarded, cancelled, or fails.
+`apps/desktop/scripts/plan-release.mjs` then picks the version on a cheap runner before any macOS runner is claimed. `apps/site/release.config.json` records both the last published version and `commit`, the commit that release was built from — the **watermark**. The planner diffs `commit..origin/main` and releases if anything at all has landed since. It reads both the record and that diff at **main's tip, not at the commit that triggered the run**: the job waits for the release queue, and the release ahead of it pushes its `Record Rally <version> release config` commit while it waits, so a plan made from the trigger reads a record that predates a release which has already shipped and cuts that version a second time. The tip is also what the release job goes on to build, so the two agree. It applies no path list of its own: two lists would drift, and the stricter one would silently win. What the watermark adds over `paths:` is the durable half of the question — `paths:` sees only the newest push, so it cannot tell whether the last release actually published, while the watermark makes a release carry everything still unreleased after a run is discarded, cancelled, or fails.
 
 Every published payload is immutable under `v<version>`, so a version can only be released once. The watermark moves with each release, so the same version never comes around twice, and `assertNextReleaseVersion` still requires each release to be exactly one minor above the record. The one-time `0.x` → `1.0.0` stable promotion is deliberately *not* something automation picks: `nextReleaseVersion` always increments the minor, and a major promotion is made by hand.
 
@@ -790,7 +851,7 @@ This replaces two earlier conventions in turn: first recording a release and pre
 
 A release writes two commits back to `main`, and neither can start another one. The **version bump** lands before the build — that is what keeps the released commit an ancestor of `main` and therefore usable as a watermark — and becomes the new watermark itself, so it is the diff base rather than part of the diff. That matters because the bump edits `package.json` and so *does* match the `paths:` filter. The **recorded release config** lands after publication and touches `apps/site/release.config.json`, which the filter excludes. Both are pushed with `GITHUB_TOKEN`, which does not start workflow runs. Two independent guards on purpose — a release publishes immutable payloads, and a loop cannot be undone by hand.
 
-**The record is excluded from the watermark diff by name**, in `RELEASE_RECORD_PATH`, and that exclusion is load-bearing rather than tidy. The watermark is the commit the release *built*, but the record naming it is pushed as a **later** commit, so it is always present in `commit..HEAD` — `c3a547b "Record Avalon 1.33.0 release config"` has its own recorded watermark `f4e66c6` as the direct parent. Without the exclusion the diff is never empty, the "nothing has landed" skip is unreachable, and re-planning a finished release cuts a minor with no work in it.
+**The record is excluded from the watermark diff by name**, in `RELEASE_RECORD_PATH`, and that exclusion is load-bearing rather than tidy. The watermark is the commit the release *built*, but the record naming it is pushed as a **later** commit, so it is always present in `commit..HEAD` — `c3a547b "Record Rally 1.33.0 release config"` has its own recorded watermark `f4e66c6` as the direct parent. Without the exclusion the diff is never empty, the "nothing has landed" skip is unreachable, and re-planning a finished release cuts a minor with no work in it.
 
 Two states fail *open* — an unrecorded `commit` (the first plan after this landed, or a publish run outside the pipeline) and a watermark git cannot reach (a force-push or a pruned object). Both cut a release. Skipping one that had work in it retires desktop changes silently, which is the failure this planner exists to prevent; cutting one that had nothing new in it only wastes a build.
 
@@ -880,22 +941,22 @@ Changing such a default afterwards is far more expensive than choosing it correc
 
 ## Provider configuration
 
-Google identity and connector OAuth use two distinct Google Cloud OAuth **Web application** clients in one project. The **Avalon Login** client requests only platform identity scopes and has this one redirect URI:
+Google identity and connector OAuth use two distinct Google Cloud OAuth **Web application** clients in one project. The **Rally Login** client requests only platform identity scopes and has this one redirect URI:
 
 **Register the Rally callback URLs on both Google clients before deploying.**
 `callbackUrl()` derives `redirect_uri` from `PUBLIC_API_BASE_URL`, so the moment
 that var moves, every Google sign-in and every Google connector authorization
-fails with `redirect_uri_mismatch` on its first request. Keep the Avalon URLs
+fails with `redirect_uri_mismatch` on its first request. Keep the Rally URLs
 registered alongside: they cost nothing and they are what a rollback lands on.
 
 - Global identity: `https://api.rallywith.ai/auth/google/callback`
 
-The **Avalon Google Connectors** client owns the Gmail, Calendar, Drive, Docs, and Sheets scopes and has these redirect URIs:
+The **Rally Google Connectors** client owns the Gmail, Calendar, Drive, Docs, and Sheets scopes and has these redirect URIs:
 
 - Global connector: `https://api.rallywith.ai/connections/google/callback`
 - EU connector: `https://eu.api.rallywith.ai/connections/google/callback`
 
-`https://rallywith.ai/auth/desktop/` is Avalon's browser handoff for login and connector outcomes, and `rallywithai://auth/complete` is the allowlisted desktop return URI. Provider codes always terminate at a regional API callback first; neither handoff URI belongs in Google's authorized redirect URI list. Identity login requests only `openid`, `email`, and `profile`.
+`https://rallywith.ai/auth/desktop/` is Rally's browser handoff for login and connector outcomes, and `rallywithai://auth/complete` is the allowlisted desktop return URI. Provider codes always terminate at a regional API callback first; neither handoff URI belongs in Google's authorized redirect URI list. Identity login requests only `openid`, `email`, and `profile`.
 
 Store the Login client as `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` on the Global Worker. Store the connector client as `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID` / `GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET` on both regional Workers. The connector runtime deliberately has no fallback to the login credentials.
 
@@ -906,7 +967,7 @@ Settings exposes two authorization presets over one `google` connector family:
 
 The exact Google scope URLs are listed in `docs/provider-apps.md`. Google may require sensitive/restricted-scope verification and, for some requested scopes, a security assessment before external production use. A consent screen in Testing or a successful test-user callback is not production approval. Complete the consent-screen configuration, verified-domain and policy requirements, provider verification, and both acceptance flows in `docs/e2e.md` before release.
 
-The production-approved connector scopes use `gmail.modify` for the Gmail capabilities, `calendar.readonly` plus `calendar.events` for Calendar, `drive.readonly` for Drive and native Docs/Sheets reads, and `drive.file` for Docs/Sheets creation and per-file writes. Existing Docs and Sheets discovered through Drive are read-only unless the user separately opens or shares them with Avalon; Avalon does not currently provide a Google Picker flow for that grant.
+The production-approved connector scopes use `gmail.modify` for the Gmail capabilities, `calendar.readonly` plus `calendar.events` for Calendar, `drive.readonly` for Drive and native Docs/Sheets reads, and `drive.file` for Docs/Sheets creation and per-file writes. Existing Docs and Sheets discovered through Drive are read-only unless the user separately opens or shares them with Rally; Rally does not currently provide a Google Picker flow for that grant.
 
 Google connector ingestion currently polls Gmail history, Calendar sync/completion cursors, and Drive changes. Drive change-token polling is also the change source for Docs and Sheets. Do not configure or claim Gmail Pub/Sub watch delivery, Calendar notification channels, Drive push notifications, or any Google webhook; none is implemented.
 
@@ -976,7 +1037,7 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://rallywith.ai` so ide
   defects. A hint remains best effort and never proves residency; inspect
   `ctx.id.jurisdiction`/constructor failures for the hard lock.
 - Monitor reconnect rate, `resync_required` rate, rejected socket origins, active connections, and messages per room. A rise in reconnects or resyncs is an availability signal, not a reason to retain unbounded replay state.
-- Dictation uses a separate, non-durable WebSocket bridge because each session has one desktop client and one Azure upstream; it does not need room coordination or persistence. Keep the 60-second Avalon ticket, exact Origin check, 256,000-character client-frame bound, and audio-buffer event allowlist. The Worker must set the Azure `api-key` handshake header and must never forward client `session.update` events.
+- Dictation uses a separate, non-durable WebSocket bridge because each session has one desktop client and one Azure upstream; it does not need room coordination or persistence. Keep the 60-second Rally ticket, exact Origin check, 256,000-character client-frame bound, and audio-buffer event allowlist. The Worker must set the Azure `api-key` handshake header and must never forward client `session.update` events.
 - The renderer captures mono PCM16 in a 24 kHz `AudioWorklet`, sends bounded chunks, and explicitly commits when the user stops. Permission denial, device removal, provider errors, and component unmounts must stop every media track and close both sides of the session.
 
 Cloudflare can terminate long-lived connections during network deployments, so recovery—not socket immortality—is the contract. Verify that a forced disconnect reconnects with a cursor, replays only newer events when available, and refreshes REST state when the room replies `resync_required` without dropping the active checkpoint that frame carries.
@@ -1248,12 +1309,12 @@ The fixed `terminal_platform_v1` positions are:
 | `blob1` | schema version |
 | `blob2` | `sandbox_create`, `sandbox_bootstrap`, or `sandbox_start` |
 | `blob3` | `completed`, `failed`, or `policy_mismatch` |
-| `blob4` | Avalon region |
+| `blob4` | Rally region |
 | `blob5` | configured Daytona snapshot |
 | `blob6` | source lifecycle state (`absent`, `stopped`, `archived`, and so on) |
 | `blob7` | failed phase, or `none` |
 | `blob8` | sorted compatibility capabilities installed, or `none` |
-| `blob9` | Avalon app version |
+| `blob9` | Rally app version |
 | `blob10` | build SHA |
 | `double1` | total operation milliseconds |
 | `double2` | provider create milliseconds |
@@ -1285,7 +1346,7 @@ Daytona target and retain manifest verification in both variants. Adopt an owned
 snapshot only when its first-ready improvement is material after including
 provider create/read-back, warming, archived restore, failure rate, image build
 and activation work, and the cost of following managed Daytona updates. A custom
-image cannot claim savings from verification, because Avalon keeps that phase
+image cannot claim savings from verification, because Rally keeps that phase
 for either image.
 
 Automatic tracing is enabled on both API Workers and on the retention Worker at
@@ -1342,7 +1403,7 @@ index, and `agent-inference/` request-only writer no longer exist.
 
 1. Copy the work-stream UUID from the canonical
    `https://rallywith.ai/app/workstreams/<uuid>` URL. The current main
-   substream ID is `0`. When Avalon exposes additional product substreams, copy
+   substream ID is `0`. When Rally exposes additional product substreams, copy
    the canonical substream ID from the API response or route that opened that
    substream; do not infer it from an inline child run. These opaque IDs are safe
    to place in the query examples below; do not paste a title, prompt fragment,
@@ -1377,7 +1438,7 @@ credential. A query needs **R2 SQL Read**, **R2 Data Catalog Read**, and
 **R2 Admin Read & Write**. An exact-record download needs R2 storage read access
 through the Object REST API. Cloudflare's current
 REST permission is account-level rather than cryptographically bucket-read-only:
-restrict the token to the Avalon account, keep it out of product clients, and use
+restrict the token to the Rally account, keep it out of product clients, and use
 it only with the GET/POST requests documented here.
 
 R2 SQL is a Cloudflare beta surface. If the HTTP contract has changed, use
@@ -1499,12 +1560,12 @@ or attach it to an incident.
 
 Interpret the pair rather than one row in isolation:
 
-- `request` is what Avalon sent to the provider, including messages, tool
+- `request` is what Rally sent to the provider, including messages, tool
   schemas, routing options, and structured-output schema when applicable.
 - `response` is the normalized terminal provider result; `error` and
   `failure_kind` explain a failed attempt. `metadata` carries retry, repair,
   cursor, validation, and source-specific context.
-- `model` is Avalon's requested route; `provider_model` is the concrete model
+- `model` is Rally's requested route; `provider_model` is the concrete model
   reported by the provider. Do not substitute one for the other in an incident
   report.
 - Queue and Pipeline delivery are at-least-once. Duplicate physical rows with
@@ -1565,7 +1626,7 @@ node -e '
   "$lakehouse_expected_sha256"
 ```
 
-Use `avalon-global-payloads` and `default`. The object key is generated by Avalon
+Use `avalon-global-payloads` and `default`. The object key is generated by Rally
 and contains only the fixed prefix, UTC date, inference ID, event suffix, and
 `.json`; do not substitute an arbitrary user-controlled path. The responder
 token is for these query and object-GET requests, not for provisioning,
@@ -1709,7 +1770,7 @@ To distinguish capture from export failure without the web interface, query the
 Global D1 outbox and Queue metadata through the APIs/CLI:
 
 ```text
-pnpm --filter @avalon/api exec wrangler d1 execute avalon-global --remote \
+pnpm --filter @rally/api exec wrangler d1 execute avalon-global --remote \
   --command "SELECT event_id, analytics_lakehouse_state, accepted_at, analytics_lakehouse_delivered_at FROM telemetry_accepted_events WHERE event_id = '<event-uuid>'"
 pnpm exec dotenv -e .env.local -- wrangler queues info avalon-global-analytics-events-lakehouse
 pnpm exec dotenv -e .env.local -- wrangler queues info avalon-global-analytics-events-lakehouse-dead-letter
@@ -1794,7 +1855,7 @@ operation is an exploratory listing surface.
    token. Ordinary event/profile batches preserve HTTP status: a 408, 429, 5xx, or
    network error retries within the original deadline, while another 4xx is
    terminal. SDK-backed JavaScript/native exception delivery exposes only flush
-   success/failure to Avalon, so any flush failure retries within the original
+   success/failure to Rally, so any flush failure retries within the original
    deadline. Investigate a persistent exception retry as a provider or contract
    incident rather than replaying it blindly.
 4. Let the five-minute circuit cool down after restoring the destination. Confirm
@@ -1893,19 +1954,19 @@ When every candidate answers with a transport fault the provider owns, the
 harness re-executes the **whole route plan** up to `HARNESS_TRANSPORT_RETRIES`
 times (declared as `1` in both regional Wrangler configs) after a backoff that
 honours `Retry-After` up to 30 seconds. So during an outage elevated latency may
-be Avalon waiting rather than a run hanging. **Set `HARNESS_TRANSPORT_RETRIES` to
+be Rally waiting rather than a run hanging. **Set `HARNESS_TRANSPORT_RETRIES` to
 `0` and redeploy to stop it everywhere — work streams, inline children, the final
 meeting-notes pass, and the automation compiler all read it** — worth doing when a provider is failing broadly,
 because each re-execution charges another failure to the per-workspace circuit
 breaker whose threshold is 3.
 
 Two failure codes an operator will see, both distinct from
-`harness_execution_failed`, which means Avalon's own defect:
+`harness_execution_failed`, which means Rally's own defect:
 
 | Code | Meaning | Triage |
 | --- | --- | --- |
-| `provider_unavailable` | Avalon called and got nothing — no response, a 408, a 429, or a 5xx — and its retries are spent. | The provider. Runs are safe to retry once it recovers. |
-| `provider_circuit_open` | Avalon did not call: the breaker had already opened, so the run was refused before a request went out. | Read the *earlier* failures that opened it. The breaker also opens on 401/402/403, which are Avalon's credential or credit, so this code does not by itself accuse the provider. |
+| `provider_unavailable` | Rally called and got nothing — no response, a 408, a 429, or a 5xx — and its retries are spent. | The provider. Runs are safe to retry once it recovers. |
+| `provider_circuit_open` | Rally did not call: the breaker had already opened, so the run was refused before a request went out. | Read the *earlier* failures that opened it. The breaker also opens on 401/402/403, which are Rally's credential or credit, so this code does not by itself accuse the provider. |
 
 A run failing with either while the provider is healthy points at credentials or
 at the breaker's cooldown (60–120 seconds), not at a model outage. The reasoning
@@ -1914,7 +1975,7 @@ behind the split and the retry is
 
 ### Ambiguous external write
 
-Do not retry automatically. A tool invocation left in `ambiguous` means the provider may have accepted the write before Avalon recorded confirmation. Inspect the provider using the stored operation metadata, then either reconcile the invocation or ask the user before another write.
+Do not retry automatically. A tool invocation left in `ambiguous` means the provider may have accepted the write before Rally recorded confirmation. Inspect the provider using the stored operation metadata, then either reconcile the invocation or ask the user before another write.
 
 ### Queue backlog or dead letters
 

@@ -1832,8 +1832,26 @@ const TelemetryContextV2Schema = z.object({
   ...telemetryNativeDesktopContext,
 }).strict();
 
+/**
+ * The envelope schema identifier this build mints.
+ *
+ * A desktop build carries it compiled in and spools envelopes to disk before
+ * sending, so the superseded spelling arrives from installed clients and from
+ * a spool written before an update. The reader accepts both; only this constant
+ * is written.
+ */
+export const TELEMETRY_ENVELOPE_SCHEMA = "com.rally.telemetry.event";
+
+/** Superseded identifiers still accepted inbound, never emitted. */
+export const SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS = [
+  "com.avalon.telemetry.event",
+] as const;
+
 const envelopeCommon = {
-  schema: z.literal("com.avalon.telemetry.event"),
+  schema: z.union([
+    z.literal(TELEMETRY_ENVELOPE_SCHEMA),
+    ...SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS.map((value) => z.literal(value)),
+  ]),
   schemaVersion: z.literal(1),
   eventId: UuidV7Schema,
   name: z.string(),

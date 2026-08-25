@@ -11,8 +11,8 @@ const config = {
     parser: tseslint.parser,
     parserOptions: { sourceType: "module" },
   },
-  plugins: { avalon: { rules: { "durable-object-region-routing": durableObjectRegionRoutingRule } } },
-  rules: { "avalon/durable-object-region-routing": "error" },
+  plugins: { rally: { rules: { "durable-object-region-routing": durableObjectRegionRoutingRule } } },
+  rules: { "rally/durable-object-region-routing": "error" },
 };
 
 function lint(source) {

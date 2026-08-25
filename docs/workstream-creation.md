@@ -1,6 +1,6 @@
 # Starting a work stream
 
-Between pressing enter in the launcher and a work stream existing, Avalon does
+Between pressing enter in the launcher and a work stream existing, Rally does
 real work: it reserves an email address, writes the work stream and its opening
 message, and starts a harness run. This document covers what the person who
 pressed enter sees while that happens, and what the server does and does not make
@@ -302,20 +302,20 @@ see
 ## Testing
 
 - `apps/desktop/src/renderer/screens/new-workstream.test.tsx` —
-  `pnpm --filter @avalon/desktop exec vitest run src/renderer/screens/new-workstream.test.tsx`.
+  `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/new-workstream.test.tsx`.
   Covers the surface appearing on the keystroke, composer node identity across
   the hand-off, and the optimistic turn being taken back when the create fails.
   The suite clears the draft cache in `beforeEach` and stubs `ResizeObserver`;
   a test that skips either will see a restored draft from its predecessor.
 - `apps/api/test/workstream-create-latency.test.ts` —
-  `pnpm --filter @avalon/api exec vitest run test/workstream-create-latency.test.ts`.
+  `pnpm --filter @rally/api exec vitest run test/workstream-create-latency.test.ts`.
   Covers what the create finishes before it answers: the run started, the route
   active, no address reserved for a create it is about to refuse, and one stable
   code for a request that violates both pre-flight checks. That last one loops
   five creates rather than asserting once — a fixed order that only held by luck
   would pass a single run.
 - `apps/api/test/message-length-limit.test.ts` —
-  `pnpm --filter @avalon/api exec vitest run test/message-length-limit.test.ts`.
+  `pnpm --filter @rally/api exec vitest run test/message-length-limit.test.ts`.
   Covers the ceiling from both sides: the guard's exact boundary on both routes,
   the sentence itself, that an unreadable body is left to the validator, and the
   incident this module's changelog records — a description derived from a
@@ -401,11 +401,11 @@ on 2026-08-24 and left an orphaned `verified` route row and a `reserved` receipt
 behind it.
 
 The two bounds disagreed because they were two numbers. They are now one, and it
-sits in `@avalon/contracts` where the composer reads it too, so the surface that
+sits in `@rally/contracts` where the composer reads it too, so the surface that
 accepts a message and the object that stores it cannot drift apart again.
 
 **Consequences:** Truncation was considered and rejected: a silently shortened
-message is one whose author does not know what Avalon read. Raising the
+message is one whose author does not know what Rally read. Raising the
 description to match the message was rejected for the reason
 [`workstream-descriptions.md`](workstream-descriptions.md#2026-08-24--the-provisional-description-is-the-opening-line)
 records — it is a sidebar line and a classifier input backed by a 4,000-character
@@ -449,7 +449,7 @@ hand. The flow also emits one `perf_flow` log row carrying the whole breakdown.
 
 **Why:** This document already says that everything the response does not depend
 on waits for it anyway, deliberately — which makes the create the longest thing
-a person waits on in Avalon, and made "it feels slow" unanswerable. The only
+a person waits on in Rally, and made "it feels slow" unanswerable. The only
 measurement was `http_request`'s total duration: eleven awaited round trips
 behind one number, so the question of whether the cost is the email reservation,
 the Durable Object initialize, or the directory probe could not be asked without
@@ -544,20 +544,20 @@ explicit initial-focus target keep Radix's default focus behavior.
 
 Shipped in #138.
 
-### 2026-08-12 — A started suggestion opens with the member's own turn, not Avalon's
+### 2026-08-12 — A started suggestion opens with the member's own turn, not Rally's
 
 **What changed:** `createFromOpportunity` writes its opening message as the
 selecting member's turn (`openingAuthor: { type: "human", … }`) instead of the
 agent's. The text is unchanged — it is still the server-expanded
 `executionPrompt` — and it still carries the `suggested_work_expansion`
-structured content whose label reads "Expanded by Avalon from suggested work".
+structured content whose label reads "Expanded by Rally from suggested work".
 `MessageBlock` now renders the identity header for an own turn when that turn has
 a context label, showing the label and the time but still not the reader's own
 name.
 
 **Why:** Selecting a suggestion *is* the request; the brief is that request
 written out. Attributing it to the agent made every one of these work streams
-open with Avalon instructing itself, and left the transcript with no human turn
+open with Rally instructing itself, and left the transcript with no human turn
 in it at all — which is not only a presentational claim. `retry` resolved its
 trigger as the latest human message, found none, and started the replay with a
 null trigger; the model projection admits the brief *only* as the trigger, so a
@@ -574,9 +574,9 @@ the run row.
 
 **Considered and rejected:** *Leaving the author as the agent and special-casing
 `retry`* to fall back to the opening message — it fixes the retry and leaves the
-transcript still reading as Avalon talking to itself, and every future consumer
+transcript still reading as Rally talking to itself, and every future consumer
 that asks "what did the person ask for" needs the same special case. *Attributing
-it to the member and dropping the label* — the words are Avalon's, and a long
+it to the member and dropping the label* — the words are Rally's, and a long
 brief appearing under your own name with nothing to explain it is worse than the
 agent attribution it replaces. *Sending the expanded brief to the client so the
 launcher could render the turn optimistically* — the payload behind four
@@ -629,7 +629,7 @@ Worse, a deferred start that never runs is unrecoverable. The run row says
 admits the run, and nothing reaps that shape: `stop` only records a request a
 live workflow has to observe, `retry` refuses a `running` work stream, and no
 screen offers either. `waitUntil` is best-effort, so the cost of losing one was a
-work stream permanently reading "Avalon is working", with no way out.
+work stream permanently reading "Rally is working", with no way out.
 
 And the activation deferral did not pay. `create.onSuccess` invalidates the
 work-stream list immediately, and `list` backfills every route that is not yet

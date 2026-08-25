@@ -7,10 +7,10 @@
  */
 
 /** The scheme a theme's backdrop document is served from. */
-export const backdropScheme = 'avalon-backdrop';
+export const backdropScheme = 'rally-backdrop';
 
 /** The scheme cached remote font files are served from. */
-export const fontScheme = 'avalon-font';
+export const fontScheme = 'rally-font';
 
 /**
  * Themes that bring a backdrop document. A theme not listed here paints its

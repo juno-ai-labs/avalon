@@ -1,7 +1,7 @@
 /**
  * The theme vocabulary both processes speak.
  *
- * A choice has two axes, not one. A **family** is a design — Terra, Avalon's
+ * A choice has two axes, not one. A **family** is a design — Terra, Rally's
  * original palette, or Air — and a **mode** is which way round it runs. They
  * are separate because they answer different questions: the family is a taste,
  * and the mode is a lighting condition that may change during the day. Folding

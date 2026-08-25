@@ -2,12 +2,12 @@ import {
   CONTROL_TOWER_REFRESH_SECONDS,
   type GenerateMeetingNotesRequest,
   type MeetingNotesResponse,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import {
   runHarness,
   RESPONSE_FORMATTING_POLICY,
   type RunHarnessInput,
-} from "@avalon/agent-harness";
+} from "@rally/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { countEnv, numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";

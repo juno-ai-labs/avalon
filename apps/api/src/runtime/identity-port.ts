@@ -18,7 +18,7 @@ const CONTRACT: ObjectPortContract<WorkstreamIdentityStorage, IdentityOperation>
   operations: IDENTITY_OPERATIONS,
   dispatch: (stub, request) => stub.executeIdentityOperation(request),
   failureCode: "identity_operation_failed",
-  failureMessage: "Avalon's work-stream identity authority rejected an internal request. Retry after the application and service versions are aligned.",
+  failureMessage: "Rally's work-stream identity authority rejected an internal request. Retry after the application and service versions are aligned.",
 };
 
 export function createIdentityPortFactory(

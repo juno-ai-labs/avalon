@@ -1,5 +1,5 @@
-import { asWorkspaceId } from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+import { asWorkspaceId } from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";

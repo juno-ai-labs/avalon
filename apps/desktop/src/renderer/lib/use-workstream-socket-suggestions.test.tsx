@@ -1,4 +1,4 @@
-import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
+import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
@@ -101,7 +101,7 @@ describe('activity suggestions over the work-stream socket', () => {
     queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail());
     const api = {
       getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),

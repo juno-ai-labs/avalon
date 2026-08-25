@@ -1,6 +1,6 @@
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { socketTicketProtocols, SOCKET_TICKET_SUBPROTOCOL } from "@avalon/contracts/socket-tickets";
+import { socketTicketProtocols, SOCKET_TICKET_SUBPROTOCOL } from "@rally/contracts/socket-tickets";
 import { ApiError } from "../src/lib/api-error";
 import {
   BlockDashboardBlockSocketService,
@@ -69,8 +69,8 @@ describe("socket ticket transport", () => {
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000703");
     const workstreamId = "00000000-0000-7000-8000-000000000704";
     const roomFetch = vi.fn(async (request: Request) => {
-      expect(request.headers.get("x-avalon-session-id")).toBe(sessionId);
-      expect(request.headers.get("x-avalon-user-id")).toBe(userId);
+      expect(request.headers.get("x-rally-session-id")).toBe(sessionId);
+      expect(request.headers.get("x-rally-user-id")).toBe(userId);
       expect(request.headers.get("sec-websocket-protocol")).toBeNull();
       return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
     });
@@ -146,11 +146,11 @@ describe("socket ticket transport", () => {
     const userId = asUserId("00000000-0000-7000-8000-000000000712");
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000713");
     const workspaceFetch = vi.fn(async (request: Request) => {
-      expect(request.headers.get("x-avalon-workspace-id")).toBe(workspaceId);
-      expect(request.headers.get("x-avalon-placement-affinity")).toBe("wnam");
-      expect(request.headers.get("x-avalon-workstream-id")).toBeNull();
-      expect(request.headers.get("x-avalon-substream-id")).toBeNull();
-      expect(request.headers.get("x-avalon-session-id")).toBe(sessionId);
+      expect(request.headers.get("x-rally-workspace-id")).toBe(workspaceId);
+      expect(request.headers.get("x-rally-placement-affinity")).toBe("wnam");
+      expect(request.headers.get("x-rally-workstream-id")).toBeNull();
+      expect(request.headers.get("x-rally-substream-id")).toBeNull();
+      expect(request.headers.get("x-rally-session-id")).toBe(sessionId);
       expect(request.headers.get("sec-websocket-protocol")).toBeNull();
       return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
     });
@@ -195,9 +195,9 @@ describe("socket ticket transport", () => {
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000723");
     const workstreamId = "00000000-0000-7000-8000-000000000724";
     const workstreamFetch = vi.fn(async (request: Request) => {
-      expect(request.headers.get("x-avalon-workspace-id")).toBe(workspaceId);
-      expect(request.headers.get("x-avalon-workstream-id")).toBe(workstreamId);
-      expect(request.headers.get("x-avalon-session-id")).toBe(sessionId);
+      expect(request.headers.get("x-rally-workspace-id")).toBe(workspaceId);
+      expect(request.headers.get("x-rally-workstream-id")).toBe(workstreamId);
+      expect(request.headers.get("x-rally-session-id")).toBe(sessionId);
       expect(request.headers.get("sec-websocket-protocol")).toBeNull();
       return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
     });
@@ -245,8 +245,8 @@ describe("socket ticket transport", () => {
     const blockId = "00000000-0000-7000-8000-000000000735";
     const initializeBlock = vi.fn(async () => undefined);
     const blockFetch = vi.fn(async (request: Request) => {
-      expect(request.headers.get("x-avalon-block-dashboard-block-id")).toBe(blockId);
-      expect(request.headers.get("x-avalon-session-id")).toBe(sessionId);
+      expect(request.headers.get("x-rally-block-dashboard-block-id")).toBe(blockId);
+      expect(request.headers.get("x-rally-session-id")).toBe(sessionId);
       expect(request.headers.get("sec-websocket-protocol")).toBeNull();
       return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
     });

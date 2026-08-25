@@ -52,7 +52,7 @@ async function filesBelow(directory) {
   return files;
 }
 
-const scratchDirectory = await mkdtemp(join(tmpdir(), 'avalon-packaged-crashpad-'));
+const scratchDirectory = await mkdtemp(join(tmpdir(), 'rally-packaged-crashpad-'));
 try {
   const fixtureSource = await readFile(join(fixtureDirectory, 'main.cjs'), 'utf8');
   if (fixtureSource.includes('submitURL')) {
@@ -68,7 +68,7 @@ try {
   ]);
   await run('pnpm', [
     '--filter',
-    '@avalon/desktop',
+    '@rally/desktop',
     'exec',
     'esbuild',
     join(fixtureDirectory, 'production-controller.mjs'),
@@ -83,8 +83,8 @@ try {
     targets: Platform.MAC.createTarget('dir', Arch.arm64),
     publish: 'never',
     config: {
-      appId: 'app.avalon.crashpad-fixture',
-      productName: 'Avalon Crashpad Fixture',
+      appId: 'ai.rallywith.crashpad-fixture',
+      productName: 'Rally Crashpad Fixture',
       electronVersion: '43.2.0',
       asar: true,
       npmRebuild: false,
@@ -94,12 +94,12 @@ try {
     },
   });
 
-  const applicationPath = join(outputDirectory, 'mac-arm64', 'Avalon Crashpad Fixture.app');
+  const applicationPath = join(outputDirectory, 'mac-arm64', 'Rally Crashpad Fixture.app');
   const executablePath = join(
     applicationPath,
     'Contents',
     'MacOS',
-    'Avalon Crashpad Fixture',
+    'Rally Crashpad Fixture',
   );
   const firstGenerationId = '00000000-0000-7000-8000-000000000001';
   const secondGenerationId = '00000000-0000-7000-8000-000000000002';
@@ -185,7 +185,7 @@ try {
     `Packaged Crashpad fixture routed, rotated, and uploaded a real renderer minidump; first size ${dumpSize}`,
   );
 } finally {
-  if (process.env.AVALON_KEEP_CRASHPAD_FIXTURE !== 'true') {
+  if (process.env.RALLY_KEEP_CRASHPAD_FIXTURE !== 'true') {
     await rm(scratchDirectory, { recursive: true, force: true });
   } else {
     console.log(`Preserved Crashpad fixture at ${scratchDirectory}`);

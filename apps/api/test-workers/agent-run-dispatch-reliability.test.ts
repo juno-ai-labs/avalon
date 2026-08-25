@@ -27,7 +27,7 @@ import {
 } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { asBlockId, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
+import { asBlockId, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import { blockDashboardAgentName, substreamAgentName } from "../src/durable-objects/names";
 import { seedOpenWorkstreamAuthority, seedWorkstreamRoot } from "./helpers/substream-fixture";

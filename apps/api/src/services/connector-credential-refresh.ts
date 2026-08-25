@@ -3,8 +3,8 @@ import {
   isRevokedGrantError,
   type ConnectorConnectionContext,
   type ResolvedConnectorAdapter,
-} from "@avalon/connectors";
-import { nowIso } from "@avalon/db";
+} from "@rally/connectors";
+import { nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env } from "../env";
 import { encryptString } from "../lib/crypto";

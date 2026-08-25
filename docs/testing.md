@@ -21,22 +21,22 @@ once and passes on a rerun.
 
 | Suite | Command | Runs on |
 | --- | --- | --- |
-| `apps/api/test-workers/**/*.test.ts` | `pnpm --filter @avalon/api test:workers` | **Real workerd**, through `@cloudflare/vitest-pool-workers`. Durable Objects, their SQLite storage, alarms, hibernation, eviction, `WebSocketPair`, D1, and queue producers are the real implementations. |
-| `apps/api/test/**/*.test.ts` | `pnpm --filter @avalon/api exec vitest run` | Node. Services and route handlers with bindings supplied by the typed builders, and real SQL through `node:sqlite`. `cloudflare:workers` is aliased to `test/helpers/cloudflare-workers.ts`, which stands in for the `DurableObject` base class and the `tracing` custom-span API — the stand-in keeps their contracts but nests no spans and exports nothing, so anything depending on either belongs a rung up. |
-| `apps/desktop/src/{renderer,main,common}/**/*.test.{ts,tsx}` | `pnpm --filter @avalon/desktop test` | Two projects. `renderer` runs on jsdom; `main` and `common` run on node, because a main-process module that reaches for `document` should fail rather than find a window Electron's main process does not have. A main or common test that genuinely needs a DOM opts back in with a `// @vitest-environment jsdom` docblock. Asserts on the DOM, which is not the same as looking at the screen — see [verifying visible changes](../AGENTS.md#verifying-visible-changes). Console output is buffered and printed only for failing tests (`silent: 'passed-only'`), because the renderer's [performance traces](performance-tracing.md) print on every create, open, and send; a test that asserts on a log line spies on `console` itself and is unaffected. |
-| `packages/*/src/**/*.test.ts` | `pnpm --filter @avalon/<pkg> test` | Node. Pure contract, harness, and connector logic. |
-| `packages/db/test/**/*.test.ts` | `pnpm --filter @avalon/db test` | Node. The [local baseline](d1-baseline-migrations.md), the development seed, and the work-stream queries over a migrated database. There is no per-migration suite: every migration is at or below the baseline boundary and immutable, and the manifest digest fails if one is edited or inserted. A *new* migration is tested through the baseline equivalence check and by whatever service test covers the behaviour it enables. |
-| `apps/site/test/**/*.test.ts`, `apps/release-retention/test/**/*.test.ts` | `pnpm --filter @avalon/site test`, `pnpm --filter @avalon/release-retention test` | Node. The public site Worker and the release-retention Worker, each with its own R2 builder. |
+| `apps/api/test-workers/**/*.test.ts` | `pnpm --filter @rally/api test:workers` | **Real workerd**, through `@cloudflare/vitest-pool-workers`. Durable Objects, their SQLite storage, alarms, hibernation, eviction, `WebSocketPair`, D1, and queue producers are the real implementations. |
+| `apps/api/test/**/*.test.ts` | `pnpm --filter @rally/api exec vitest run` | Node. Services and route handlers with bindings supplied by the typed builders, and real SQL through `node:sqlite`. `cloudflare:workers` is aliased to `test/helpers/cloudflare-workers.ts`, which stands in for the `DurableObject` base class and the `tracing` custom-span API — the stand-in keeps their contracts but nests no spans and exports nothing, so anything depending on either belongs a rung up. |
+| `apps/desktop/src/{renderer,main,common}/**/*.test.{ts,tsx}` | `pnpm --filter @rally/desktop test` | Two projects. `renderer` runs on jsdom; `main` and `common` run on node, because a main-process module that reaches for `document` should fail rather than find a window Electron's main process does not have. A main or common test that genuinely needs a DOM opts back in with a `// @vitest-environment jsdom` docblock. Asserts on the DOM, which is not the same as looking at the screen — see [verifying visible changes](../AGENTS.md#verifying-visible-changes). Console output is buffered and printed only for failing tests (`silent: 'passed-only'`), because the renderer's [performance traces](performance-tracing.md) print on every create, open, and send; a test that asserts on a log line spies on `console` itself and is unaffected. |
+| `packages/*/src/**/*.test.ts` | `pnpm --filter @rally/<pkg> test` | Node. Pure contract, harness, and connector logic. |
+| `packages/db/test/**/*.test.ts` | `pnpm --filter @rally/db test` | Node. The [local baseline](d1-baseline-migrations.md), the development seed, and the work-stream queries over a migrated database. There is no per-migration suite: every migration is at or below the baseline boundary and immutable, and the manifest digest fails if one is edited or inserted. A *new* migration is tested through the baseline equivalence check and by whatever service test covers the behaviour it enables. |
+| `apps/site/test/**/*.test.ts`, `apps/release-retention/test/**/*.test.ts` | `pnpm --filter @rally/site test`, `pnpm --filter @rally/release-retention test` | Node. The public site Worker and the release-retention Worker, each with its own R2 builder. |
 | `scripts/*.test.mjs` | `pnpm test:scripts` | `node --test`. The repository's own tooling and the ESLint boundary rules. |
-| `apps/desktop/scripts/*.test.mjs` | `pnpm --filter @avalon/desktop test:release` | `node --test`. The release planner and workflow invariants — **not** covered by `pnpm test:scripts`, whose name suggests otherwise. |
-| `apps/api/scripts/test-crash-symbolicator-container.mjs` | `pnpm --filter @avalon/api test:crash-symbolicator-container` | Docker. Builds and exercises the symbolicator image. |
+| `apps/desktop/scripts/*.test.mjs` | `pnpm --filter @rally/desktop test:release` | `node --test`. The release planner and workflow invariants — **not** covered by `pnpm test:scripts`, whose name suggests otherwise. |
+| `apps/api/scripts/test-crash-symbolicator-container.mjs` | `pnpm --filter @rally/api test:crash-symbolicator-container` | Docker. Builds and exercises the symbolicator image. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` against a running `pnpm dev:api:local` | Two real regional Workers under `wrangler dev`, with the local D1 database. |
 | `scripts/e2e-local.mjs` | `pnpm e2e:local` against a running `pnpm dev:api:local`, after `pnpm db:open-authority` | The full member pipeline over the live local stack — happy, sad, and chaos lanes, with real model calls when `OPENROUTER_API_KEY` is configured. See [`e2e.md`](e2e.md#automated-behavioral-lane). |
 
-`pnpm test` runs every package's `test` script recursively, and `@avalon/api`'s
+`pnpm test` runs every package's `test` script recursively, and `@rally/api`'s
 runs the Node suite *and then* the workerd suite — so a green `pnpm test`
 includes workerd. CI splits them: `api-tests-2-of-2` appends
-`pnpm --filter @avalon/api test:workers`, and the container and release suites
+`pnpm --filter @rally/api test:workers`, and the container and release suites
 are their own matrix jobs.
 
 ## Where a new test goes
@@ -181,7 +181,7 @@ beforeEach(async () => {
 - **Read the exit code, not the summary.** The line above is the reason: `Tests
   222 passed (222)` is printed by a run that exited 1. `grep`ping a vitest run
   for `Tests ` proves the specs passed and nothing else — capture `$?`, or run
-  `pnpm --filter @avalon/api test` and let its failure surface.
+  `pnpm --filter @rally/api test` and let its failure surface.
 - **`reset()` is not confined to the file that calls it.** Storage is isolated
   per file, but the reset itself takes every object's input gate, so a file that
   never calls one can still be made to wait for a sibling's. That surfaces as a
@@ -217,7 +217,7 @@ beforeEach(async () => {
   package-relative:
 
   ```bash
-  pnpm --filter @avalon/api exec vitest run \
+  pnpm --filter @rally/api exec vitest run \
     --config vitest.workers.config.ts \
     test-workers/<file>.test.ts
   ```
@@ -267,7 +267,7 @@ changed:
 # 1. Make the production code wrong: invert the condition, delete the write,
 #    return the wrong constant. One edit, in the code — never in the test.
 # 2. Run only that file, and read the failure.
-pnpm --filter @avalon/api exec vitest run test/<file>.test.ts &> /tmp/proof.log
+pnpm --filter @rally/api exec vitest run test/<file>.test.ts &> /tmp/proof.log
 # 3. Confirm it failed *for the reason the test is named after*, then revert.
 ```
 

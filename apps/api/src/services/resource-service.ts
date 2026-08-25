@@ -1,6 +1,6 @@
-import { ConnectorError, type ConnectorConnectionContext } from "@avalon/connectors";
-import { classifyAttachmentKind, type ConnectorManifest } from "@avalon/contracts";
-import { newId, nowIso } from "@avalon/db";
+import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
+import { classifyAttachmentKind, type ConnectorManifest } from "@rally/contracts";
+import { newId, nowIso } from "@rally/db";
 import type { AuthContext, Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";

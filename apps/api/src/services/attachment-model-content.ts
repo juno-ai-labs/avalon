@@ -1,9 +1,9 @@
-import type { ModelMessageContentPart } from "@avalon/agent-harness";
+import type { ModelMessageContentPart } from "@rally/agent-harness";
 import {
   classifyAttachmentKind,
   type AttachmentManifestEntry,
   type DerivativeStatus,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import UPNG from "upng-js";
 import * as UTIF from "utif2";
 import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "./attachment-derivative-service";

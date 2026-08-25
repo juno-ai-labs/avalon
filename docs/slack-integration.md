@@ -1,9 +1,9 @@
 # Slack Agent connector
 
-Avalon lives inside Slack as one public Marketplace app carrying two independent
+Rally lives inside Slack as one public Marketplace app carrying two independent
 credentials: an administrator's **workspace installation**, which is the bot
 identity and the whole Agent surface, and an optional **personal connection**,
-which gives Avalon's MCP client that member's own Slack visibility and
+which gives Rally's MCP client that member's own Slack visibility and
 attribution. Neither substitutes for the other.
 
 Read this before changing the ingress, the identity-linking flow, what a
@@ -24,7 +24,7 @@ listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 | `apps/api/src/services/connection-service.ts` | OAuth and connection lifecycle. |
 | `apps/api/src/services/slack-routing-service.ts` | The Global team-to-region route, and nothing else Global holds. |
 | `apps/api/src/services/slack-agent-service.ts` | Agent sessions, App Home, interactions, unfurls, delivery. |
-| `apps/api/src/services/slack-notification-service.ts` | Workspace-bot delivery of the two things Avalon tells one person about a work stream: a mention, and being added to it. |
+| `apps/api/src/services/slack-notification-service.ts` | Workspace-bot delivery of the two things Rally tells one person about a work stream: a mention, and being added to it. |
 | `apps/api/src/routes/slack.ts` | The three signed ingress routes. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The run-settlement output sink that reaches Slack. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `screens/new-automation.tsx` | Installation administration and the automation destination. |
@@ -34,12 +34,12 @@ listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 
 ### Product boundary
 
-Avalon uses one public Slack Marketplace app for two related but separate connections:
+Rally uses one public Slack Marketplace app for two related but separate connections:
 
-1. A **workspace installation** gives Avalon a bot identity and the Slack Agent surfaces. It receives Events API deliveries and powers Agent DMs, mentions, App Home, shortcuts, `/avalon`, modals, unfurls, streaming replies, and proactive automation results.
-2. An optional **personal connection** gives Avalon's MCP client a Slack user token. It preserves that user's broader private-channel, DM, MPIM, canvas, visibility, and user attribution.
+1. A **workspace installation** gives Rally a bot identity and the Slack Agent surfaces. It receives Events API deliveries and powers Agent DMs, mentions, App Home, shortcuts, `/avalon`, modals, unfurls, streaming replies, and proactive automation results.
+2. An optional **personal connection** gives Rally's MCP client a Slack user token. It preserves that user's broader private-channel, DM, MPIM, canvas, visibility, and user attribution.
 
-The workspace installation is required for the in-Slack Agent experience. Personal MCP authorization is not required to chat with Avalon in Slack. Every Slack-originated run receives bounded source provenance (team, channel, thread, invocation and channel types, and any matched Avalon member), plus up to eight nearby messages and attachment metadata when the bot can read them. Nearby Slack content is model-visible as explicitly labelled untrusted evidence rather than system instructions. The workspace installation also exposes bounded message search, channel/thread/message/file/user/member reads, and bot-authored message/reaction/conversation writes. Slack's Real-time Search API requires the short-lived `action_token` from a user-initiated message or app mention; Avalon carries that token as hidden run authorization and never adds it to prompts or model tool arguments. Bot search covers public channels only. Other workspace reads cover conversations and files visible to the installed bot. The message shortcut can explicitly prefill a task with its selected message.
+The workspace installation is required for the in-Slack Agent experience. Personal MCP authorization is not required to chat with Rally in Slack. Every Slack-originated run receives bounded source provenance (team, channel, thread, invocation and channel types, and any matched Rally member), plus up to eight nearby messages and attachment metadata when the bot can read them. Nearby Slack content is model-visible as explicitly labelled untrusted evidence rather than system instructions. The workspace installation also exposes bounded message search, channel/thread/message/file/user/member reads, and bot-authored message/reaction/conversation writes. Slack's Real-time Search API requires the short-lived `action_token` from a user-initiated message or app mention; Rally carries that token as hidden run authorization and never adds it to prompts or model tool arguments. Bot search covers public channels only. Other workspace reads cover conversations and files visible to the installed bot. The message shortcut can explicitly prefill a task with its selected message.
 
 This split follows Slack's July 2026 Agent model. New apps use `features.agent_view`, the normal Messages tab, and threaded replies. The older `assistant_view` is not configured.
 
@@ -47,12 +47,12 @@ This split follows Slack's July 2026 Agent model. New apps use `features.agent_v
 
 The invariant is asymmetric:
 
-- One Slack team ID maps to at most one Avalon workspace and one data region.
-- One Avalon workspace can contain any number of Slack team installations.
+- One Slack team ID maps to at most one Rally workspace and one data region.
+- One Rally workspace can contain any number of Slack team installations.
 - A member can add a personal Slack MCP connection for each Slack identity they use.
 - A workspace bot installation and a personal MCP connection are independent credentials, even when they refer to the same Slack team.
 
-Global D1 stores only `team_id -> region/workspace/connection` routing metadata. Signed payload processing, encrypted tokens, user links, Agent sessions, workstreams, and results stay in the owning Avalon region. The database and desktop UI deliberately allow **Connect another workspace** for Slack.
+Global D1 stores only `team_id -> region/workspace/connection` routing metadata. Signed payload processing, encrypted tokens, user links, Agent sessions, workstreams, and results stay in the owning Rally region. The database and desktop UI deliberately allow **Connect another workspace** for Slack.
 
 ### API versus MCP
 
@@ -72,11 +72,11 @@ Raw Slack APIs are the workspace Agent and workspace-tool plane:
 - bounded conversation, thread, message-context, file, user, and member reads
 - bot-authored message, reaction, and conversation writes
 
-Slack's hosted MCP server is the user tool plane. Avalon initializes a JSON-RPC 2.0 Streamable HTTP session at `https://mcp.slack.com/mcp`, sends `notifications/initialized`, follows all `tools/list` cursors, validates the discovered surface, invokes the exact live name through `tools/call`, and closes the session when Slack assigns one. The server's current names, descriptions, and JSON Schemas are passed through at plugin activation rather than copied into the connector. Provider annotations remain untrusted hints: every live tool keeps Avalon's confirmed-write and record-before-execute policy. Avalon's `slack.personal.mcp` grant and personal owner check constrain the surface without pretending to own its catalog. MCP calls are never used to host the Agent surface or to bypass a frozen automation delivery target. The reusable mechanism is in [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
+Slack's hosted MCP server is the user tool plane. Rally initializes a JSON-RPC 2.0 Streamable HTTP session at `https://mcp.slack.com/mcp`, sends `notifications/initialized`, follows all `tools/list` cursors, validates the discovered surface, invokes the exact live name through `tools/call`, and closes the session when Slack assigns one. The server's current names, descriptions, and JSON Schemas are passed through at plugin activation rather than copied into the connector. Provider annotations remain untrusted hints: every live tool keeps Rally's confirmed-write and record-before-execute policy. Rally's `slack.personal.mcp` grant and personal owner check constrain the surface without pretending to own its catalog. MCP calls are never used to host the Agent surface or to bypass a frozen automation delivery target. The reusable mechanism is in [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
-Personal authorization requests one `slack.personal.mcp` Avalon capability whose
+Personal authorization requests one `slack.personal.mcp` Rally capability whose
 provider scope set covers Slack's hosted user-tool plane. Existing personal rows
-that carry the older per-tool capability grants remain on Avalon's reviewed
+that carry the older per-tool capability grants remain on Rally's reviewed
 static Web API tools as a migration bridge; they never authorize the live MCP
 catalog. Reconnecting replaces them with the umbrella grant. Workspace Agent scopes remain a separate
 administrator-controlled installation with one reviewed capability bundle,
@@ -87,17 +87,17 @@ before health checks and tool calls succeed.
 
 ### Data behavior
 
-The canonical definition is in `docs/provider-apps.md`: zero-copy means Avalon does not recreate Slack inside Avalon. It is a product and architecture boundary, not a claim that no Slack data crosses the connector or is ever persisted. Avalon must not become a parallel Slack inbox, channel browser, history store, or generally searchable Slack replica.
+The canonical definition is in `docs/provider-apps.md`: zero-copy means Rally does not recreate Slack inside Rally. It is a product and architecture boundary, not a claim that no Slack data crosses the connector or is ever persisted. Rally must not become a parallel Slack inbox, channel browser, history store, or generally searchable Slack replica.
 
-Within that boundary, Avalon may subscribe to Slack activity, retain bounded normalized trigger evidence and provenance for configured automations, fetch authorized task-specific context on demand, and preserve Slack-derived content in the Avalon work that uses it. The workspace bot joins every current public channel after installation or reconnection and joins new public channels from `channel_created` events so `@Avalon` is consistently available. To support natural follow-ups, Slack delivers `message.channels` and `message.groups` events for conversations the bot has joined because Slack offers no thread-only event filter. The regional ingress accepts human replies in an existing Avalon thread, a recent denied Avalon thread, or a message event matched by an explicitly configured Slack automation source; unrelated messages are discarded before durable queueing. Normalized automation activity retains bounded trigger evidence and identifiers, not a general-purpose copy of the source conversation or file content.
+Within that boundary, Rally may subscribe to Slack activity, retain bounded normalized trigger evidence and provenance for configured automations, fetch authorized task-specific context on demand, and preserve Slack-derived content in the Rally work that uses it. The workspace bot joins every current public channel after installation or reconnection and joins new public channels from `channel_created` events so `@Rally` is consistently available. To support natural follow-ups, Slack delivers `message.channels` and `message.groups` events for conversations the bot has joined because Slack offers no thread-only event filter. The regional ingress accepts human replies in an existing Rally thread, a recent denied Rally thread, or a message event matched by an explicitly configured Slack automation source; unrelated messages are discarded before durable queueing. Normalized automation activity retains bounded trigger evidence and identifiers, not a general-purpose copy of the source conversation or file content.
 
-When a prompt is denied because the channel classification or Agent policy needs attention, Avalon retains that prompt regionally for at most 24 hours. This lets the same Slack member reply `try again` after the problem is fixed without retyping the request. The prompt is deleted when a session starts and expired rows are removed by scheduled maintenance. A narrowly matched, explicitly mentioned retry of a denial created before this mechanism may read at most the first 15 messages in that single thread to recover the prompting mention; unmentioned messages in other threads are ignored.
+When a prompt is denied because the channel classification or Agent policy needs attention, Rally retains that prompt regionally for at most 24 hours. This lets the same Slack member reply `try again` after the problem is fixed without retyping the request. The prompt is deleted when a session starts and expired rows are removed by scheduled maintenance. A narrowly matched, explicitly mentioned retry of a denial created before this mechanism may read at most the first 15 messages in that single thread to recover the prompting mention; unmentioned messages in other threads are ignored.
 
-Natural public- and private-channel follow-ups require the workspace bot's `channels:history` and `groups:history` scopes. Existing workspace installations must complete the Avalon OAuth flow again after this feature is released. The scopes apply only to conversations the bot can access; Avalon's routing and retention restrictions above remain narrower than the provider grant.
+Natural public- and private-channel follow-ups require the workspace bot's `channels:history` and `groups:history` scopes. Existing workspace installations must complete the Rally OAuth flow again after this feature is released. The scopes apply only to conversations the bot can access; Rally's routing and retention restrictions above remain narrower than the provider grant.
 
-Real-time Search API responses are transient context for the active model turn. Avalon stores only the generic tool-completion summary for replay, not the retrieved search payload, and suppresses the later raw inference-request capture after a Slack search result enters the model context. Terminal attempt metadata still reaches the lakehouse. The event `action_token` remains hidden runtime authorization and is not copied into the work-stream transcript, Slack session context, tool input, tool output, or inference record.
+Real-time Search API responses are transient context for the active model turn. Rally stores only the generic tool-completion summary for replay, not the retrieved search payload, and suppresses the later raw inference-request capture after a Slack search result enters the model context. Terminal attempt metadata still reaches the lakehouse. The event `action_token` remains hidden runtime authorization and is not copied into the work-stream transcript, Slack session context, tool input, tool output, or inference record.
 
-Normal product use can persist information in the resources that use it. A user prompt, bounded trigger record, Slack context used for the task, model-authored summary, workstream message, tool receipt, or automation result may remain in Avalon. That is purpose-bound Avalon work, not a cloned Slack corpus. By default these task and automation resources do not expire automatically; they remain until an authorized user deletes the resource or the workspace is deleted. Workspace disconnect revokes the credentials Avalon holds and disables routing; a Slack administrator separately removes the app from Slack App Management to uninstall it from the workspace. Personal disconnect revokes that user's credential. Disconnecting does not delete existing Avalon resources.
+Normal product use can persist information in the resources that use it. A user prompt, bounded trigger record, Slack context used for the task, model-authored summary, workstream message, tool receipt, or automation result may remain in Rally. That is purpose-bound Rally work, not a cloned Slack corpus. By default these task and automation resources do not expire automatically; they remain until an authorized user deletes the resource or the workspace is deleted. Workspace disconnect revokes the credentials Rally holds and disables routing; a Slack administrator separately removes the app from Slack App Management to uninstall it from the workspace. Personal disconnect revokes that user's credential. Disconnecting does not delete existing Rally resources.
 
 ### Ingress and routing
 
@@ -109,7 +109,7 @@ The shared ingress is `https://slack.rallywith.ai`:
 
 Ingress verifies `v0:{timestamp}:{exact raw body}` using HMAC-SHA256, requires a timestamp inside five minutes, compares in constant time, checks `api_app_id`, and deduplicates Events API `event_id` values. URL verification is answered synchronously. Before acknowledging an event, text command, or valid modal submission, the owning regional service writes an ingress job and publishes its opaque job ID to the regional queue. Modal validation errors are returned synchronously to Slack. Shortcuts that need a trigger ID open their modal synchronously. The Global router looks up only the team route and invokes the owning regional service binding.
 
-Queue workers atomically lease jobs, retry failed or abandoned work, and clear the stored ingress payload after successful processing. A job that failed on authorization is classified non-retryable and pinned at the attempt ceiling, which is right while a grant is dead and wrong the moment it is not: `redriveReauthorizedIngress` re-queues such a job once its connection has been written again, which a reauthorization always does. It is self-limiting, because a re-driven job that fails again stamps itself newer than the connection. Without it, events that arrived during an outage stayed failed forever with their payload still on the row — and a `link_shared` Slack reports exactly once is never redelivered, so the message keeps its bare URL permanently. Retries with the same `event_id` and body are acknowledged once. Reuse of an event ID with different content is a conflict. Provider payloads are not written to Global object storage during routing. Ordinary channel messages that do not match an existing or retryable Avalon thread are acknowledged without creating a regional ingress job.
+Queue workers atomically lease jobs, retry failed or abandoned work, and clear the stored ingress payload after successful processing. A job that failed on authorization is classified non-retryable and pinned at the attempt ceiling, which is right while a grant is dead and wrong the moment it is not: `redriveReauthorizedIngress` re-queues such a job once its connection has been written again, which a reauthorization always does. It is self-limiting, because a re-driven job that fails again stamps itself newer than the connection. Without it, events that arrived during an outage stayed failed forever with their payload still on the row — and a `link_shared` Slack reports exactly once is never redelivered, so the message keeps its bare URL permanently. Retries with the same `event_id` and body are acknowledged once. Reuse of an event ID with different content is a conflict. Provider payloads are not written to Global object storage during routing. Ordinary channel messages that do not match an existing or retryable Rally thread are acknowledged without creating a regional ingress job.
 
 After a queued DM or mention passes connection, policy, and actor checks, the worker adds the acknowledgement reaction to the exact triggering message before it gathers context, creates/resumes a workstream, or starts model/tool processing. Slack's `already_reacted` response is a successful idempotent retry. A Slack-side reaction failure is logged and, when appropriate, marks the installation for reconnect, but does not discard the already-admitted user request. Commands and modal submissions have no unambiguous source message and retain their existing ephemeral/modal acknowledgement instead.
 
@@ -117,41 +117,41 @@ The acknowledgement command is built and executed as two explicit adapter steps 
 
 ### Identity linking
 
-Slack users are never matched to Avalon accounts by mutable profile fields or email alone.
+Slack users are never matched to Rally accounts by mutable profile fields or email alone.
 
 Person-mention notification routing is deliberately narrower than account linking. When an
-active Avalon member is mentioned, Avalon first uses that member's confirmed Slack link for
+active Rally member is mentioned, Rally first uses that member's confirmed Slack link for
 an installed team. If no link exists, every workspace installation a person has not disabled may resolve the
-member's verified Avalon login email with `users.lookupByEmail`; Avalon sends a bot-authored
+member's verified Rally login email with `users.lookupByEmail`; Rally sends a bot-authored
 DM only when exactly one installed team returns a valid active human. This lookup is used only
 as a delivery address: it does not create a `slack_user_links` row, authenticate the recipient,
 or authorize personal Slack tools. Missing, ambiguous, invalid, or incompletely authorized
 matches fall back to the ordinary mention email. Existing installations must complete the
-Avalon OAuth flow again to grant additive `users:read`, `users:read.email`, and
+Rally OAuth flow again to grant additive `users:read`, `users:read.email`, and
 `reactions:read` and `reactions:write` bot scopes. Until the identity scopes arrive, lookup-based mentions use
-email. If an already-admitted prompt discovers that `reactions:write` is missing, Avalon
+email. If an already-admitted prompt discovers that `reactions:write` is missing, Rally
 continues that task and marks the installation for reconnect. The mark is a diagnosis, not a
 gate: later prompts still reach Slack and fail on Slack's answer if the scope is really gone —
 see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
 
-1. An unlinked member clicks **Connect Avalon** — on App Home, or on the private
-   prompt Avalon sends when a task it is running for them needs an Avalon account
+1. An unlinked member clicks **Connect Rally** — on App Home, or on the private
+   prompt Rally sends when a task it is running for them needs a Rally account
    of its own.
 2. The regional service creates a random, hashed, 15-minute link challenge bound
    to the workspace installation and Slack user ID, and returns it in a modal
    opened against that same click.
-3. The HTTPS handoff keeps the token in a URL fragment, removes it from browser history, and opens the signed-in Avalon desktop app.
-4. The desktop app calls authenticated `POST /connections/slack/link` against its active regional session; the endpoint consumes the challenge and binds that Avalon user to the Slack identity.
+3. The HTTPS handoff keeps the token in a URL fragment, removes it from browser history, and opens the signed-in Rally desktop app.
+4. The desktop app calls authenticated `POST /connections/slack/link` against its active regional session; the endpoint consumes the challenge and binds that Rally user to the Slack identity.
 5. The desktop then starts the personal Slack authorization against that same account, so one
    click accomplishes both halves rather than leaving the second as an errand. A link that
    committed survives a failed authorization; only the half that did not finish is reported.
-6. Every later invocation verifies active Avalon membership, the active link, the installation, and the owning region.
+6. Every later invocation verifies active Rally membership, the active link, the installation, and the owning region.
 
 **This is one of two routes to a link.** Completing a *personal* Slack connection establishes it
 too, through `establishIdentityLinkFromPersonalConnection`: Slack ran the OAuth and named the
-user, which is a stronger proof of who this is than a challenge Avalon minted. Both routes are
+user, which is a stronger proof of who this is than a challenge Rally minted. Both routes are
 idempotent, so whichever a member reaches first, both end up done. The insert is refused only
-when the Slack identity already belongs to a different Avalon member — the personal connection
+when the Slack identity already belongs to a different Rally member — the personal connection
 still stands in that case, because resolving it is not that operation's business.
 
 **A challenge is minted by the click that redeems it, and never earlier.** No
@@ -173,7 +173,7 @@ is refused with the reason rather than a single generic expiry:
 `slack_link_unknown`, `slack_link_consumed` (already used, or superseded),
 `slack_link_expired`, `slack_link_workspace_mismatch`, and
 `slack_installation_disabled`. Only the first three are answered by clicking
-**Connect Avalon** again. A *disabled* installation needs an Avalon workspace owner or admin
+**Connect Rally** again. A *disabled* installation needs a Rally workspace owner or admin
 to re-enable it: disabling clears the credentials and drops the row from `connectionForTeam`,
 so redeeming would commit the identity link and then fail publishing App Home. An installation
 merely marked `needs_reconnect` is **not** refused — that is a belief about a past moment, and
@@ -196,14 +196,14 @@ public stores `workspace`, and private stores participant-only `personal`.
 
 **Every member of that Slack conversation can continue the work stream.** A reply from somebody
 the work stream has not seen seats them first and is then recorded, so a private work stream
-answers the channel it belongs to rather than 404ing at it. A Slack member Avalon cannot map to
+answers the channel it belongs to rather than 404ing at it. A Slack member Rally cannot map to
 an account at all still has their message recorded, under their Slack actor.
 
 **Each message runs under the authority of whoever sent it**: a member with a confirmed account
 link runs as themselves, and everybody else runs under the workspace principal. Nothing weaker
 than a link authorizes a run — a `users.lookupByEmail`-grade match seats and credits somebody
 and cannot spend their credentials — so two replies in one thread can run under different
-principals, exactly as they do when two members type into the same work stream in Avalon.
+principals, exactly as they do when two members type into the same work stream in Rally.
 
 How "runs as themselves" reaches the work-stream object is the **connector principal**: the
 ingress verifies the active `slack_user_links` row and active membership on the very message
@@ -214,15 +214,15 @@ the correlation id up in `sessions`, because a Slack message is not a login and 
 exists for it. A login session, by contrast, is always re-verified against its `sessions` row (outside local development's dev-auth bypass).
 
 The triggering Slack member travels with the workflow input through delivery. If a run needs
-input that requires a connected account, Avalon sends the connect prompt to that member rather
+input that requires a connected account, Rally sends the connect prompt to that member rather
 than to whoever opened the work stream. Result controls are shared Slack content, so the feedback
 button is shown to everyone; the feedback submission still revalidates that the submitting member
-has an active Avalon link on the installation that owns this work stream. A link left on a retired
+has an active Rally link on the installation that owns this work stream. A link left on a retired
 installation cannot suppress the current installation's connect prompt.
 
 #### Work stream attribution
 
-A work stream started from Slack records the Avalon member the Slack author resolves to as its
+A work stream started from Slack records the Rally member the Slack author resolves to as its
 creator, and adds them as a participant. Slack does not decide that mapping on its own: it
 uses the shared connector actor identity described in
 [the connector document](connectors.md#actor-identity-and-work-stream-attribution), which
@@ -230,7 +230,7 @@ every agent connector uses. Slack contributes the `users.info` profile — inclu
 that feeds the `verified_email` step — and records the resolved mapping for later work.
 
 When a mapping only arrives
-later — the member links their account, or joins Avalon after the task ran — the earlier
+later — the member links their account, or joins Rally after the task ran — the earlier
 ownerless work streams of their Slack sessions are credited to them then. Account linking may
 additionally correct a creator that the same session's earlier `users.lookupByEmail` match
 produced, which is the only case where an existing creator is rewritten.
@@ -240,32 +240,32 @@ with the workspace principal, and the opening message keeps its external Slack a
 
 ### Agent sessions and delivery
 
-A Slack root DM or root mention creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp. It maps to exactly one durable Avalon workstream. Human replies in that Slack thread add messages to the same workstream without requiring another `@Avalon` mention, whoever sends them. Avalon ignores messages outside its session threads and does not replay or import the rest of the Slack conversation.
+A Slack root DM or root mention creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp. It maps to exactly one durable Rally workstream. Human replies in that Slack thread add messages to the same workstream without requiring another `@Rally` mention, whoever sends them. Rally ignores messages outside its session threads and does not replay or import the rest of the Slack conversation.
 
-The session row records who started the thread and where; it does not decide who may use it. The only reply Avalon refuses is one answering a question addressed to a specific member — the same rule the Avalon app applies to a targeted elicitation, per question rather than per thread.
+The session row records who started the thread and where; it does not decide who may use it. The only reply Rally refuses is one answering a question addressed to a specific member — the same rule the Rally app applies to a targeted elicitation, per question rather than per thread.
 
-The workstream also carries the thread it was summoned from as an attached `slack_thread` resource, so a member reading it in Avalon can get back to the conversation. That attachment holds identifiers, the channel name, and Slack's own permalink — origin metadata, not message content, consistent with the retention boundary above. See [work-stream origin attachments](workstream-origin-attachments.md).
+The workstream also carries the thread it was summoned from as an attached `slack_thread` resource, so a member reading it in Rally can get back to the conversation. That attachment holds identifiers, the channel name, and Slack's own permalink — origin metadata, not message content, consistent with the retention boundary above. See [work-stream origin attachments](workstream-origin-attachments.md).
 
-On a prompt Avalon:
+On a prompt Rally:
 
 1. adds the acknowledgement reaction when the invocation has a source message;
 2. sets the Slack Agent thread status;
 3. creates or resumes the durable workstream;
 4. starts the reaction rotation for that session;
 5. starts a `chat.startStream` reply when the surface supports it;
-6. executes the ordinary authorized Avalon harness;
+6. executes the ordinary authorized Rally harness;
 7. appends the complete persisted final message in Slack's required 12,000-character chunks and stops the stream;
 8. falls back to complete Slack message chunks if streaming is unavailable;
 9. stops the rotation and swaps the reaction for the one naming the outcome;
-10. links to the canonical Avalon workstream and offers feedback.
+10. links to the canonical Rally workstream and offers feedback.
 
-The persisted Avalon run is canonical. A Slack delivery failure never rewrites a completed run as failed.
+The persisted Rally run is canonical. A Slack delivery failure never rewrites a completed run as failed.
 
 #### The status reaction
 
 A reaction on the triggering message is the only status a member sees without
 opening the thread, so it tracks the run rather than merely receipting it. **At
-most one Avalon reaction sits on a message at a time**, and each transition
+most one Rally reaction sits on a message at a time**, and each transition
 removes the previous one:
 
 | State | Default | When |
@@ -274,7 +274,7 @@ removes the previous one:
 | Working | `brain` → `mag` → `writing_hand` → `gear` | Rotating while the run is live. |
 | Outcome | `white_check_mark`, `question`, `warning`, `octagonal_sign` | The run reaches `completed`, `needs_input`, `failed`, or `stopped`. |
 
-A transition removes only the emoji Avalon itself last placed, recorded in
+A transition removes only the emoji Rally itself last placed, recorded in
 `slack_agent_sessions.reaction_current`, so a member's own reaction on the same
 message survives. Both transitions re-read that column immediately before acting
 and write it back conditionally, because delivery and a rotation tick can be in
@@ -304,7 +304,7 @@ Reaction sets resolve most-specific-wins: the built-in defaults, then a workspac
 override on the installation's `config_json`, then a per-run override. An
 override may name any subset and inherits the rest. Slack exposes no way to check
 that an emoji name exists before using it, so a name it rejects with
-`invalid_name` falls back to Avalon's own default for that state, once.
+`invalid_name` falls back to Rally's own default for that state, once.
 
 #### Rendering agent output
 
@@ -324,16 +324,16 @@ Slack and email are delivered independently, so a failure in one is retried with
 
 ### App Home
 
-App Home is a personalized control surface published per user. Avalon publishes only for `app_home_opened` events whose tab is `home` and supplies Slack's current view hash to protect against stale updates.
+App Home is a personalized control surface published per user. Rally publishes only for `app_home_opened` events whose tab is `home` and supplies Slack's current view hash to protect against stale updates.
 
 #### Unlinked
 
-- concise description of Avalon and its data behavior
-- **Connect Avalon** call to action — an action button carrying no URL, so
+- concise description of Rally and its data behavior
+- **Connect Rally** call to action — an action button carrying no URL, so
   publishing Home mints nothing and nothing on the published view expires
 - example prompts, including the morning Gmail briefing
 - AI fallibility notice
-- paid Slack and Avalon plan disclosure
+- paid Slack and Rally plan disclosure
 - privacy and help links
 
 #### Linked member
@@ -346,7 +346,7 @@ App Home is a personalized control surface published per user. Avalon publishes 
 
 #### Workspace admin
 
-App Home adds a workspace-administration card for Avalon owners and admins with installation health and a secure desktop handoff to Connections. The desktop Connections page is the full administration surface: installation health, team labels, granted surfaces, token health, reconnect, and disconnect.
+App Home adds a workspace-administration card for Rally owners and admins with installation health and a secure desktop handoff to Connections. The desktop Connections page is the full administration surface: installation health, team labels, granted surfaces, token health, reconnect, and disconnect.
 
 Home is updated on `app_home_opened`, after account linking, and after settings changes. Blocks contain user-specific data only after the Slack user has been linked and active membership is revalidated.
 Recent/pinned work-stream summaries and link unfurls come from the authoritative
@@ -357,20 +357,20 @@ or delays that product summary rather than reading a frozen D1 work-stream row.
 ### Interactions
 
 - Agent DM: start a durable task or continue its thread.
-- `@Avalon` in a channel: create/continue a task in the mention thread; later human replies in that Avalon-owned thread do not need another mention, and responses always stay threaded.
-- Global shortcut **Start an Avalon task**: open a task modal.
-- Message shortcut **Work on this with Avalon**: prefill the task modal with the selected message.
+- `@Rally` in a channel: create/continue a task in the mention thread; later human replies in that Rally-owned thread do not need another mention, and responses always stay threaded.
+- Global shortcut **Start a Rally task**: open a task modal.
+- Message shortcut **Work on this with Rally**: prefill the task modal with the selected message.
 - `/avalon [request]`: start the request; an empty command opens the modal.
-- **Connect Avalon**: mint a link challenge and open it in a modal whose single
+- **Connect Rally**: mint a link challenge and open it in a modal whose single
   button is the desktop handoff. Not refused on a stored status; a grant that is
   really gone fails on Slack's answer.
 - Result buttons: open the canonical task or provide feedback. The shared message shows feedback
   to everyone; submission is accepted from any linked member of the installation, not only whoever
   started the thread.
-- Avalon person mention: notify the matched member in the Avalon Agent DM, falling back to email.
-- Avalon links: unfurls that summarize the work stream — title, last activity, automation origin, and a status badge only while it is running, needs input, or failed — and require the viewer's normal Avalon authorization for its contents.
+- Rally person mention: notify the matched member in the Rally Agent DM, falling back to email.
+- Rally links: unfurls that summarize the work stream — title, last activity, automation origin, and a status badge only while it is running, needs input, or failed — and require the viewer's normal Rally authorization for its contents.
 
-Every work-stream link Avalon posts is the canonical
+Every work-stream link Rally posts is the canonical
 `https://rallywith.ai/app/workstreams/<uuid>` — see
 [`workstream-links.md`](workstream-links.md). Slack delivers `link_shared` only
 for the registered unfurl domain, so a link must be on that domain, with the id
@@ -380,34 +380,34 @@ the legacy `/open#target=` handoff already sitting in channel history.
 
 Every other web button uses a static, allowlisted HTTPS-to-desktop handoff. Workstream IDs may cross that boundary; connector tokens and Slack link challenges stay in fragments and are removed from browser history. The single button carrying a link challenge is the one inside the connect modal, which exists only for as long as that modal is open.
 
-Modal submissions are validated server-side. Modals never request Avalon or provider passwords.
+Modal submissions are validated server-side. Modals never request Rally or provider passwords.
 
 ### User stories
 
 #### Delegate from Slack
 
-As a linked member, I can DM Avalon, mention it, invoke a shortcut on a message, or run `/avalon`, and receive progress and the durable result in the same Agent thread.
+As a linked member, I can DM Rally, mention it, invoke a shortcut on a message, or run `/avalon`, and receive progress and the durable result in the same Agent thread.
 
-#### Bring Slack context into Avalon
+#### Bring Slack context into Rally
 
-From a user-initiated Slack DM or app mention, I can ask Avalon to search public-channel messages using Slack's event-scoped authorization. With the workspace installation, I can also find visible users and conversations, read bounded channel/thread/message context, inspect bounded textual file content, and list conversation members. A personal Slack connection adds user-authorized private search, DMs, MPIMs, canvases, and the hosted MCP tool surface.
+From a user-initiated Slack DM or app mention, I can ask Rally to search public-channel messages using Slack's event-scoped authorization. With the workspace installation, I can also find visible users and conversations, read bounded channel/thread/message context, inspect bounded textual file content, and list conversation members. A personal Slack connection adds user-authorized private search, DMs, MPIMs, canvases, and the hosted MCP tool surface.
 
 #### Act in Slack
 
-With the workspace installation, I can ask Avalon to send a bot-authored message, create or open a conversation, or add a bot reaction. A personal connection continues to support user-attributed actions and canvas writes. Existing confirmation and external-write receipt policies still apply.
+With the workspace installation, I can ask Rally to send a bot-authored message, create or open a conversation, or add a bot reaction. A personal connection continues to support user-attributed actions and canvas writes. Existing confirmation and external-write receipt policies still apply.
 
 #### Connect several Slack workspaces
 
-As an Avalon admin, I can install the same Avalon app into several Slack workspaces. Each installation has its own health, links, sessions, and automation destinations. No installation becomes the implicit default when more than one is available.
+As a Rally admin, I can install the same Rally app into several Slack workspaces. Each installation has its own health, links, sessions, and automation destinations. No installation becomes the implicit default when more than one is available.
 
 #### Notify a mentioned teammate
 
-As an Avalon member, when I mention an active teammate in a work stream, Avalon sends that
+As a Rally member, when I mention an active teammate in a work stream, Rally sends that
 teammate a bot-authored Slack DM when the workspace installation can resolve them. A confirmed
-Slack link is preferred; otherwise Avalon uses an exact verified-email lookup without silently
+Slack link is preferred; otherwise Rally uses an exact verified-email lookup without silently
 linking the accounts. The message identifies the author, workspace, work stream, complete
-mention text, and a secure **Open in Avalon** handoff. If Slack cannot resolve or deliver it,
-Avalon sends the existing mention email instead.
+mention text, and a secure **Open in Rally** handoff. If Slack cannot resolve or deliver it,
+Rally sends the existing mention email instead.
 
 #### Morning Gmail briefing
 
@@ -420,12 +420,12 @@ The saved personal automation freezes:
 - the selected Slack workspace installation;
 - the linked Slack user as an `slack_agent_dm` destination.
 
-At each run Avalon ranks actionable inbox items, sends up to three (fewer if fewer qualify), and includes rank, sender, subject, why it matters, recommended action, and Gmail link in the Agent DM. Long results are sent without connector truncation using Slack-required message chunks. It posts a root Agent DM and sets the Agent thread title as a best-effort decoration after delivery succeeds. Empty results are suppressed by default. Revoked Gmail or Slack authorization marks the run or destination `needs_input`; transient Slack delivery errors remain retryable and do not disable the destination. Avalon does not silently switch accounts or Slack workspaces. Saving the recurring automation is the user's approval for those scheduled reads and deliveries.
+At each run Rally ranks actionable inbox items, sends up to three (fewer if fewer qualify), and includes rank, sender, subject, why it matters, recommended action, and Gmail link in the Agent DM. Long results are sent without connector truncation using Slack-required message chunks. It posts a root Agent DM and sets the Agent thread title as a best-effort decoration after delivery succeeds. Empty results are suppressed by default. Revoked Gmail or Slack authorization marks the run or destination `needs_input`; transient Slack delivery errors remain retryable and do not disable the destination. Rally does not silently switch accounts or Slack workspaces. Saving the recurring automation is the user's approval for those scheduled reads and deliveries.
 
 ## Invariants
 
-- **One Slack team ID maps to at most one Avalon workspace and one data region**,
-  while one Avalon workspace may hold any number of installations. The asymmetry is
+- **One Slack team ID maps to at most one Rally workspace and one data region**,
+  while one Rally workspace may hold any number of installations. The asymmetry is
   the point: a team that resolved to two workspaces has no answer to "where does
   this event go".
 - **A workspace installation and a personal connection are independent
@@ -442,7 +442,7 @@ At each run Avalon ranks actionable inbox items, sends up to three (fewer if few
 - **The ingress job is written and its opaque id queued *before* Slack is
   acknowledged.** An acknowledgement without a durable job is an event Slack will
   never send again.
-- **Slack users are never matched to Avalon accounts by mutable profile fields or
+- **Slack users are never matched to Rally accounts by mutable profile fields or
   email alone.** `users.lookupByEmail` is a delivery address only: it does not
   create a `slack_user_links` row, authenticate the recipient, or authorize personal
   tools.
@@ -464,8 +464,8 @@ At each run Avalon ranks actionable inbox items, sends up to three (fewer if few
 - **The acknowledgement reaction is added by the host control plane after
   admission and authorization but before context gathering**, and
   `already_reacted` is a successful retry.
-- **At most one Avalon reaction sits on a source message**, and a transition
-  removes only the emoji Avalon itself last placed — never whatever it finds
+- **At most one Rally reaction sits on a source message**, and a transition
+  removes only the emoji Rally itself last placed — never whatever it finds
   there, which would take a member's reaction with it.
 - **The outcome reaction is applied by the delivery path, not by the rotation.**
   Delivery runs on every terminal status, so the message ends correct even when
@@ -484,7 +484,7 @@ At each run Avalon ranks actionable inbox items, sends up to three (fewer if few
   one's room is the conversation's members, and anybody in the conversation may
   continue it. Each message runs as whoever sent it, and only a confirmed account
   link authorizes running as a member.
-- **The persisted Avalon run is canonical.** A Slack delivery failure never
+- **The persisted Rally run is canonical.** A Slack delivery failure never
   rewrites a completed run as failed.
 - **The `action_token` is hidden run authorization** and never enters a prompt,
   the transcript, Slack session context, tool input, tool output, or the
@@ -493,22 +493,22 @@ At each run Avalon ranks actionable inbox items, sends up to three (fewer if few
 - **Nearby Slack content is model-visible as explicitly labelled untrusted
   evidence**, never as system instructions.
 - **Unrelated channel messages are discarded before durable queueing.** Slack
-  offers no thread-only event filter, so the filtering is Avalon's job and it
+  offers no thread-only event filter, so the filtering is Rally's job and it
   happens before anything is stored.
-- **Avalon never becomes a parallel Slack.** No inbox, channel browser, history
+- **Rally never becomes a parallel Slack.** No inbox, channel browser, history
   store, or generally searchable replica — see
   [`provider-apps.md`](provider-apps.md#the-zero-copy-connector-boundary).
 - **No installation becomes the implicit default when more than one is
-  available**, and Avalon never silently switches accounts or Slack workspaces.
-- **Every work-stream link Avalon posts is the canonical HTTPS form.** Slack
+  available**, and Rally never silently switches accounts or Slack workspaces.
+- **Every work-stream link Rally posts is the canonical HTTPS form.** Slack
   delivers `link_shared` only for the registered unfurl domain, so an `rallywithai://`
   link pasted by a member produces no event and can never be previewed.
-- **Modal submissions are validated server-side**, and modals never request Avalon
+- **Modal submissions are validated server-side**, and modals never request Rally
   or provider passwords.
 
 ## Boundary
 
-This document owns Avalon's Slack product surface: the two connections, the
+This document owns Rally's Slack product surface: the two connections, the
 ingress, linking, Agent sessions, App Home, interactions, and delivery. It does
 not own:
 
@@ -561,7 +561,7 @@ not own:
   prompting mention; unmentioned messages in other threads are ignored.
 - **A spent link challenge is kept for a day, then reaped.** Expired or
   consumed, the row stays 24 hours so a late click is refused with its reason
-  rather than as a link Avalon has never seen, and the `slack_ingress`
+  rather than as a link Rally has never seen, and the `slack_ingress`
   maintenance pass removes it after that. The workspace alarm counts a
   challenge as due at exactly that horizon, and the reap has to remove what
   that expression counts, or the alarm comes straight back for the row it just
@@ -580,15 +580,15 @@ not own:
   reauthorization re-drive. The maintenance pass logs the standing count as one
   `slack_ingress_exhausted_jobs` row, not one error row per job per pass.
 - **A missing `reactions:write` discovered mid-prompt does not stop the task.**
-  Avalon continues and marks the installation for reconnect.
+  Rally continues and marks the installation for reconnect.
 - **A challenge that cannot be redeemed is refused with the reason**, not a generic
   expiry: `slack_link_unknown`, `slack_link_consumed` (used or superseded),
   `slack_link_expired`, `slack_link_workspace_mismatch`, and
   `slack_installation_disabled`. Only the first three are answered by clicking
-  **Connect Avalon** again; a disabled installation needs an Avalon workspace owner
+  **Connect Rally** again; a disabled installation needs a Rally workspace owner
   or admin to re-enable it.
 - **An identity-link insert is refused only when the Slack identity already belongs
-  to a different Avalon member.** The personal connection still stands in that case,
+  to a different Rally member.** The personal connection still stands in that case,
   because resolving the conflict is not that operation's business.
 - **Suspended members and revoked links cannot start or continue tasks.** A
   revoked link does not lock somebody out of a thread, though — it drops them to
@@ -601,7 +601,7 @@ not own:
   retryable: the retry re-reads the link and either runs at the new role or
   answers under the workspace principal. The code is deliberately not in
   `SLACK_AUTHORIZATION_ERROR_CODES` (reauthorizing Slack does not restore
-  Avalon membership), and it does not mark the installation `needs_reconnect` —
+  Rally membership), and it does not mark the installation `needs_reconnect` —
   one member's refusal says nothing about the workspace's grant. The same
   retryable classification covers `invalid_product_request`, the one-deploy
   window where a new Worker names a principal an old object script refuses.
@@ -622,19 +622,19 @@ not own:
 - **A reaction failure never touches the run.** A missing `reactions:write`
   discovered mid-run leaves whatever is on the message; a rate-limited rotation
   step keeps the current emoji and tries again on the next tick; a configured
-  emoji Slack rejects falls back to Avalon's default for that state.
+  emoji Slack rejects falls back to Rally's default for that state.
 - **The rotation parks after 50 steps.** A backstop for a ticker whose run
   vanished without reaching delivery, not a policy — the liveness check ends the
   rotation as soon as the run does.
 - **Message-context reads are bounded** — up to eight nearby messages on a prompt,
   and the per-tool bounds in [`slack-permissions.md`](slack-permissions.md).
 - **SSE responses on Slack's Streamable HTTP MCP endpoint are parsed**, but
-  Avalon never falls back to a separate legacy SSE endpoint.
+  Rally never falls back to a separate legacy SSE endpoint.
 - **Revoked Gmail or Slack authorization marks the run or destination
   `needs_input`**; transient Slack delivery errors remain retryable and do not
   disable the destination.
-- **Disconnecting does not delete existing Avalon resources.** Workspace disconnect
-  revokes the credentials Avalon holds and disables routing; a Slack administrator
+- **Disconnecting does not delete existing Rally resources.** Workspace disconnect
+  revokes the credentials Rally holds and disables routing; a Slack administrator
   separately removes the app from Slack App Management to uninstall it. Task and
   automation resources do not expire automatically and remain until an authorized
   user deletes the resource or the workspace is deleted.
@@ -657,7 +657,7 @@ not own:
 | `apps/api/test/slack-workspace-assignment.test.ts` | The one-team-one-workspace invariant, the ingress re-drive, the link-challenge reap and the `slack_ingress` due time it clears, the operator notice an exhausted job posts, and the connector principal: a linked member's create and reply present exactly the marked auth to the object, and the object's refusal stays retryable without flipping the installation. |
 
 Run one with
-`pnpm --filter @avalon/api exec vitest run test/slack-agent-ingress.test.ts` — the
+`pnpm --filter @rally/api exec vitest run test/slack-agent-ingress.test.ts` — the
 path is package-relative.
 
 The trap is signature fixtures: verification runs over the **untouched raw body**,
@@ -668,7 +668,7 @@ production path fails on the same delivery.
 
 Use a separate development Slack app and a paid Slack test workspace. Do not
 point the Marketplace app at a temporary tunnel or install a CLI-issued bot
-token directly into Avalon; the Avalon Settings OAuth flow must receive and
+token directly into Rally; the Rally Settings OAuth flow must receive and
 store the installation.
 
 For a Global-only local acceptance pass:
@@ -687,7 +687,7 @@ For a Global-only local acceptance pass:
    manifest:
 
    ```text
-   SLACK_MANIFEST_NAME="Avalon Dev" \
+   SLACK_MANIFEST_NAME="Rally Dev" \
    SLACK_MANIFEST_API_GLOBAL_BASE_URL="https://your-tunnel.example" \
    SLACK_MANIFEST_INGRESS_BASE_URL="https://your-tunnel.example" \
    node scripts/slack-manifest-hook.mjs > /tmp/avalon-slack-dev.json
@@ -703,14 +703,14 @@ For a Global-only local acceptance pass:
 
    Always pass the same three `SLACK_MANIFEST_*` overrides when syncing that
    development app.
-7. In the Avalon desktop, sign in as a workspace owner/admin and open **Settings
-   → Connections → Avalon Agent for Slack → Connect workspace**. Complete this OAuth flow even
-   if Slack already shows the app in the test workspace; it creates Avalon's
+7. In the Rally desktop, sign in as a workspace owner/admin and open **Settings
+   → Connections → Rally Agent for Slack → Connect workspace**. Complete this OAuth flow even
+   if Slack already shows the app in the test workspace; it creates Rally's
    encrypted connection and team route. Do not substitute `slack app install`.
-8. Open the app's Home tab in Slack, choose **Connect Avalon**, and let the local
+8. Open the app's Home tab in Slack, choose **Connect Rally**, and let the local
    site hand off the one-time fragment token to the signed-in desktop. Reopen
    Home and confirm the linked member view.
-9. Optionally choose **Slack → Connect for me** in Avalon Settings to authorize
+9. Optionally choose **Slack → Connect for me** in Rally Settings to authorize
    the personal hosted-MCP tool plane.
 
 The local site is required for account-link handoff because development sets
@@ -783,7 +783,7 @@ documentation does not publish what `oauth.v2.user.access` returns, describing
 the method only as RFC 6749 compliant, which is a fair reason to expect an
 identity to be optional; it is not evidence that what arrived was an RFC 6749
 token response, and an earlier draft of this entry overreached by saying so.
-Either way Avalon was reading `authed_user.id` off a field Slack never promised,
+Either way Rally was reading `authed_user.id` off a field Slack never promised,
 and spending the member's grant to find out.
 
 **Considered and rejected:** Guessing more keys — `user_id`, `user.id`, a
@@ -802,7 +802,7 @@ codes from fields that hold codes by construction, and a message is where
 providers quote the request back.
 
 Left undone, and named here because it is the shared pattern rather than this
-change: the stage wrapper's terminal branch relabels an Avalon bug — a
+change: the stage wrapper's terminal branch relabels a Rally bug — a
 `TypeError` inside a wrapped block — as `provider_error` with
 `error_name: "ConnectorError"`, losing the one field that used to identify it as
 ours. `granolaOAuthCallbackStage` has the same hole, and closing it means either
@@ -843,7 +843,7 @@ principal at the mint.
 **Why:** The Slack connector predates the object cutover of 2026-08-17. Before
 it, nothing verified the synthesized session id; after it, every product
 request was re-verified against `sessions`, where `slack:{team}:{user}` never
-existed — so from the cutover on, every linked member's `@Avalon` mention and
+existed — so from the cutover on, every linked member's `@Rally` mention and
 thread reply died on its first attempt as `session_revoked` (the incident of
 2026-08-22; the unlinked path survived because the workspace principal writes
 through the runtime port, which never consulted `sessions`). The retry and
@@ -862,7 +862,7 @@ verification — the object deliberately re-checks only membership, so a path
 that hands out `principal: "connector"` without verifying the link first has
 no second gate behind it. And `connector_member_revoked` must stay out of
 `SLACK_AUTHORIZATION_ERROR_CODES`: reauthorizing Slack does not restore
-Avalon membership.
+Rally membership.
 
 Shipped in #256.
 
@@ -871,8 +871,8 @@ Shipped in #256.
 **What changed:** The `eyes` reaction gained a lifecycle. It is still added on
 admission, but a Durable Object alarm now rotates a working reaction while the
 run is live, and delivery swaps in one naming the outcome — `white_check_mark`,
-`question`, `warning`, or `octagonal_sign`. At most one Avalon reaction sits on a
-message at a time, and a transition removes only what Avalon placed. The sets are
+`question`, `warning`, or `octagonal_sign`. At most one Rally reaction sits on a
+message at a time, and a transition removes only what Rally placed. The sets are
 configurable per installation. Separately, every delivery path now renders agent
 output through Slack's `markdown` block instead of posting it as `text`, and
 `slack_agent_sessions` — WorkspaceDO's, since the object cutover — gained four
@@ -918,12 +918,12 @@ That helper takes only the invocation and cannot see a workspace's configured
 reaction set, so the command is built and executed as two explicit adapter steps —
 the same control plane, one less indirection that could not carry the argument.
 
-`reaction_current` is deliberately nullable rather than defaulted: "Avalon has
+`reaction_current` is deliberately nullable rather than defaulted: "Rally has
 placed nothing" and "the reaction is `eyes`" are different states, and a default
 would make every row written before this migration claim the second and then try
 to remove an emoji that was never there.
 
-### 2026-08-22 — One DM path for both things Avalon tells a person, and a link check that reaches the right database
+### 2026-08-22 — One DM path for both things Rally tells a person, and a link check that reaches the right database
 
 **What changed:** `slack-mention-service.ts` is `slack-notification-service.ts`.
 Its connection resolution, email lookup, DM open, chunking, retry, and
@@ -973,7 +973,7 @@ fifteen minutes after the click. Holding the row for 30 days left that instant
 in the past for a month, and the alarm re-armed for it after every pass: on
 2026-08-22 one workspace's alarm ran about 1.5 times a second for hours,
 logging its eight exhausted ingress jobs on every wake. Two of those jobs were
-`@Avalon` mentions that had died on `session_revoked` at 18:20 UTC, and the
+`@Rally` mentions that had died on `session_revoked` at 18:20 UTC, and the
 only record was an error row nobody was watching. The notification is what
 would have said so within a minute; the agreeing horizons are what end the
 loop. The claim bound exists because the Queue redelivers a message whose
@@ -983,7 +983,7 @@ it again, and would have posted again.
 **Considered and rejected:** Deleting a challenge the moment it is spent — the
 first draft. It ends the loop just as well, but it makes `slack_link_expired`
 and `slack_link_consumed` unreachable in practice: the pass runs at the expiry
-instant, so a member clicking a twenty-minute-old link would be told Avalon has
+instant, so a member clicking a twenty-minute-old link would be told Rally has
 never seen it. A day of grace keeps the reason and costs nothing; what matters
 is that both sides name the same horizon. Keeping the 30-day retention and
 narrowing the schedule's expression to live challenges was rejected for the
@@ -1041,26 +1041,26 @@ best effort within the shared deadline, and participant-event consumers must rem
 ### 2026-08-12 — Slack MCP tools come from the active server
 
 **What changed:** Personal Slack connections now request one
-`slack.personal.mcp` Avalon grant and expose the live `tools/list` response at
+`slack.personal.mcp` Rally grant and expose the live `tools/list` response at
 plugin activation through the shared hosted-MCP abstraction. Legacy personal
 capability grants remain accepted for already-connected rows through the
 reviewed static Web API surface, never as an umbrella for live tools. Workspace
 bot and Agent tools stay code-authored Web API operations.
 
 **Why:** Slack's MCP tool surface is provider-owned and can change without an
-Avalon release. The previous connector definitions were a snapshot, so they
+Rally release. The previous connector definitions were a snapshot, so they
 could hide a new tool or continue advertising one Slack had removed.
 
 **Considered and rejected:** Keeping the old capability-per-observed-tool model
 as an allowlist. It did not authorize actual remote operations reliably because
 the mapping itself was guessed, while principal checks, one MCP grant,
-confirmation, and receipts already enforce the policy Avalon owns.
+confirmation, and receipts already enforce the policy Rally owns.
 
 **Consequences:** A personal plugin may show a different tool set on its next
 activation when Slack changes the server. Marketplace scope review remains tied
 to the requested OAuth scopes, not to a pasted tool catalog. Every live tool is
 confirmed as a write even when Slack sends `readOnlyHint`; a lower-friction read
-path requires an independent Avalon policy source. The legacy grants are
+path requires an independent Rally policy source. The legacy grants are
 compatibility-only static grants and should be removed with an explicit
 reconnection migration rather than extended or mapped onto provider-owned tools.
 
@@ -1073,15 +1073,15 @@ channel to a public work stream, private channel or DM to a private one seated w
 conversation's members — and everybody in the conversation can continue it. The two refusals
 that enforced the old pin are gone, as are the claim button, the claim DM, and
 `claimWorkspaceSession`. Each message runs as whoever sent it: a linked member's own authority,
-the workspace principal otherwise, and a Slack member Avalon cannot map still has their message
+the workspace principal otherwise, and a Slack member Rally cannot map still has their message
 recorded under their Slack actor. Feedback buttons are open to any linked member of the
 installation.
 
-**Why:** In a public channel, one member asked Avalon for domain names and the thread became
+**Why:** In a public channel, one member asked Rally for domain names and the thread became
 theirs. The workspace owner replying "do deep research on all technology companies named Delta"
-was answered with *"This thread is already running with another Avalon member's personal
-authority. Start a new Avalon task to keep identities and connected accounts separate."* A third
-member, an active Avalon member Slack could resolve by email but who had not linked, got the
+was answered with *"This thread is already running with another Rally member's personal
+authority. Start a new Rally task to keep identities and connected accounts separate."* A third
+member, an active Rally member Slack could resolve by email but who had not linked, got the
 other half: *"an unlinked Slack member cannot continue it."* Both messages were posted in
 channel, both were the correct behaviour as written, and both told a colleague that the
 conversation they were standing in belonged to somebody else. The claim button existed for
@@ -1091,7 +1091,7 @@ answering the one message.
 **Considered and rejected:** Keeping the pin and adding a "continue as me" button beside the
 refusal — the claim flow again, still asking a conversation to have one owner. Also rejected:
 letting Slack's verified email authorize a run as the matched member, which would have made
-every refusal disappear and would have let a Slack profile address spend an Avalon member's
+every refusal disappear and would have let a Slack profile address spend a Rally member's
 personal connectors. That match seats and credits somebody; nothing weaker than a link
 authorizes a run.
 
@@ -1103,7 +1103,7 @@ does not remove somebody from the work stream. `slack_agent_sessions.linked_user
 `execution_scope` survive as fixed compatibility values for one deployment — the previous Worker
 names both in its insert and `execution_scope` is `NOT NULL`. A later migration may drop them
 after this code has shipped everywhere. The targeted-elicitation refusal is deliberately still
-there: it is per question and matches what the Avalon app does, rather than saying who owns the
+there: it is per question and matches what the Rally app does, rather than saying who owns the
 conversation.
 
 ### 2026-08-12 — Linking became one step, and a stored status stopped gating events
@@ -1122,7 +1122,7 @@ The credential coordinator filtered on `status = 'healthy'`, so Slack events wer
 without a single call to Slack, and the refusal overwrote the accurate `missing_scopes:
 reactions:read` diagnosis with a generic one. Every work-stream link shared in Slack during
 those sixteen hours lost its unfurl permanently, because Slack reports `link_shared` once and
-never redelivers it. Separately, members could not tell "Connect Avalon" from "Connect for me":
+never redelivers it. Separately, members could not tell "Connect Rally" from "Connect for me":
 both said Connect, and redeeming the first republished App Home as "Welcome, `<name>`" while
 personal tools stayed unconnected below it.
 
@@ -1130,7 +1130,7 @@ personal tools stayed unconnected below it.
 reads like the stronger proof — Slack ran the OAuth and named the user. The connector OAuth
 callback is mounted before the auth middleware and completes from its `state` alone, so a member
 could start a personal flow, send the consent URL to a colleague, and have that colleague's
-genuine click bind the colleague's Slack identity to the sender's Avalon account. The link
+genuine click bind the colleague's Slack identity to the sender's Rally account. The link
 challenge is the only artifact carrying a Slack-signed statement of who clicked, so it stays the
 only thing that mints a link. Also rejected: waiving `disabled` for the challenge on the grounds
 that the challenge is its own authority. Disabling clears the credentials and drops the row from
@@ -1147,15 +1147,15 @@ Shipped in #113.
 
 ### 2026-08-11 — A link challenge is minted by the click that redeems it
 
-**What changed:** **Connect Avalon** on App Home is an action button with no URL.
+**What changed:** **Connect Rally** on App Home is an action button with no URL.
 Clicking it mints the challenge and opens it in a modal, which is now the only
-Slack surface that ever holds a handoff link. The claim DM Avalon sends when a
+Slack surface that ever holds a handoff link. The claim DM Rally sends when a
 workspace-owned task needs personal authority carries the same button instead of
 a minted URL. A challenge that cannot be redeemed is refused with the specific
 reason — unknown, consumed, expired, workspace mismatch, or unhealthy
 installation — where every one of them previously read as expiry.
 
-**Why:** A member clicked **Connect Avalon** and Avalon told them the link had
+**Why:** A member clicked **Connect Rally** and Rally told them the link had
 expired. App Home is published once and stays on screen until something
 republishes it, while the challenge embedded in its button lived fifteen minutes,
 so the visible button rotted in place with nothing to indicate it. Worse,
@@ -1177,7 +1177,7 @@ claiming a Slack identity, sitting in browser history, which is the exact
 property the single-use fragment exists to avoid. Lengthening the TTL only
 trades the failure for a longer-lived secret.
 
-**Consequences:** Connecting costs one extra click — button, then **Open Avalon**
+**Consequences:** Connecting costs one extra click — button, then **Open Rally**
 in the modal — bought in exchange for a link that cannot be stale when it is
 clicked. Any future surface inviting a member to connect must use
 `connectPromptBlocks` and must not embed a handoff URL; the rule is stated under
@@ -1186,11 +1186,11 @@ fail any test. `createLink` now has exactly one caller, the `avalon_connect`
 interaction, which is also where an unhealthy installation is refused before a
 challenge exists. `loadLinkChallenge` checks its conditions in a deliberate order
 — workspace mismatch ahead of every state check, so a caller holding a token
-minted for another Avalon workspace learns nothing about it — and a new condition
+minted for another Rally workspace learns nothing about it — and a new condition
 has to be placed in that order rather than appended.
 
 Two things in the interaction handler are load-bearing and look arbitrary.
-**Every** one of Avalon's buttons is matched on the Slack action id and none on
+**Every** one of Rally's buttons is matched on the Slack action id and none on
 the payload's `callback_id`, whose fallback prefers a top-level value that a
 block action raised from inside a view carries — matching the other way sends a
 connect button placed in a modal down the shortcut path instead. The four

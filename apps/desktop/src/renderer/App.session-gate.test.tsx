@@ -44,7 +44,7 @@ vi.mock('./screens/workspace-settings', () => ({ WorkspaceSettingsScreen: () => 
 const identitySession: DesktopSession = {
   accessToken: 'access-token-longer-than-twenty-characters',
   expiresAt: '2026-08-02T00:00:00.000Z',
-  apiBaseUrl: 'https://api.with-avalon.com',
+  apiBaseUrl: 'https://api.rallywith.ai',
   user: { id: 'user-1', email: 'adam@example.com', name: 'Adam' },
   workspace: null,
 };
@@ -68,7 +68,7 @@ describe('SessionGate identity-first ordering', () => {
     sessionState.activateWorkspace.mockResolvedValue(undefined);
     sessionState.api.getWorkspace.mockResolvedValue({
       id: 'workspace-1',
-      name: 'Avalon Studio',
+      name: 'Rally Studio',
       region: 'global',
       currentUser: { id: 'user-1', email: 'adam@example.com', name: 'Adam', role: 'owner' },
     });
@@ -84,7 +84,7 @@ describe('SessionGate identity-first ordering', () => {
   it('opens the main UI immediately when the authenticated session has a workspace', async () => {
     sessionState.session = {
       ...identitySession,
-      workspace: { id: 'workspace-1', name: 'Avalon Studio', region: 'global', role: 'owner' },
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
     };
     renderGate();
 
@@ -96,7 +96,7 @@ describe('SessionGate identity-first ordering', () => {
     window.history.replaceState({}, '', '/?surface=meeting#/meeting');
     sessionState.session = {
       ...identitySession,
-      workspace: { id: 'workspace-1', name: 'Avalon Studio', region: 'global', role: 'owner' },
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
     };
     renderGate();
 
@@ -108,7 +108,7 @@ describe('SessionGate identity-first ordering', () => {
     vi.useFakeTimers();
     sessionState.session = {
       ...identitySession,
-      workspace: { id: 'workspace-1', name: 'Avalon Studio', region: 'global', role: 'owner' },
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
     };
     renderGate();
 

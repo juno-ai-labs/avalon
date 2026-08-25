@@ -1,6 +1,6 @@
 # Access revocation
 
-Every Avalon socket is authorized once, when it connects, and then holds until
+Every Rally socket is authorized once, when it connects, and then holds until
 something closes it. Nothing an object can observe tells it that a session was
 revoked or that a membership ended — those facts live in D1, with the Worker that
 wrote them. **This module is the one path from such a fact to an open socket:** a
@@ -230,8 +230,8 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
 
 | Suite | What it proves |
 | --- | --- |
-| `pnpm --filter @avalon/api exec vitest run test/access-revocation.test.ts` | The producers write and publish, the guards refuse, the route refuses a foreign workspace, the consumer's fan-out publishes the right children, and a failed hop retries while an unreadable one is acknowledged. Runs against the checked-in migrations through `sqlite-d1`. |
-| `pnpm --filter @avalon/api test:workers` | `revokeSocketAccess` on real workerd: sockets actually close, a session-scoped revocation closes only the windows that presented it, and each object names its children. `test-workers/queue-dispatch.test.ts` covers the Worker's own queue entry point, which cannot be imported in the Node suite because it pulls in `cloudflare:workers`. |
+| `pnpm --filter @rally/api exec vitest run test/access-revocation.test.ts` | The producers write and publish, the guards refuse, the route refuses a foreign workspace, the consumer's fan-out publishes the right children, and a failed hop retries while an unreadable one is acknowledged. Runs against the checked-in migrations through `sqlite-d1`. |
+| `pnpm --filter @rally/api test:workers` | `revokeSocketAccess` on real workerd: sockets actually close, a session-scoped revocation closes only the windows that presented it, and each object names its children. `test-workers/queue-dispatch.test.ts` covers the Worker's own queue entry point, which cannot be imported in the Node suite because it pulls in `cloudflare:workers`. |
 
 Traps:
 

@@ -10,15 +10,16 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { IdSchema } from '@avalon/contracts';
+import { IdSchema } from '@rally/contracts';
+import { isDesktopDeepLinkProtocol } from '@rally/contracts/desktop-deep-link';
 import type {
-  AvalonDesktopBridge,
+  RallyDesktopBridge,
   DesktopDeepLinkNavigation,
   DesktopSession,
   RuntimeConfig,
 } from '../../common/desktop';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
-import { AvalonApi } from './api';
+import { RallyApi } from './api';
 import { clearAllDrafts } from './draft-cache';
 import {
   readDevicePreferences,
@@ -49,8 +50,8 @@ export interface AppSessionValue {
   region: Region | null;
   workspaceName: string;
   session: DesktopSession | null;
-  api: AvalonApi | null;
-  invitationApi: AvalonApi | null;
+  api: RallyApi | null;
+  invitationApi: RallyApi | null;
   deepLinkError: string | null;
   exchangingTicket: boolean;
   selectRegion: (region: Region) => void;
@@ -73,7 +74,7 @@ export interface AppSessionValue {
 const AppSessionContext = createContext<AppSessionValue | null>(null);
 
 export type AppSessionDesktopBridge = Pick<
-  AvalonDesktopBridge,
+  RallyDesktopBridge,
   | 'acceptInvitation'
   | 'activateWorkspace'
   | 'cancelDesktopAuthAttempt'
@@ -168,7 +169,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
             setWorkspaceNameState(nextSession.workspace.name);
           }
         } else {
-          // Avalon has one identity control plane. A data region is selected
+          // Rally has one identity control plane. A data region is selected
           // only after sign-in, when creating a new workspace.
           setDeviceSelectedRegion('global');
           setRegion('global');
@@ -206,7 +207,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
 
   const apiBaseUrl = session?.apiBaseUrl ?? runtime?.api.global ?? null;
   const api = useMemo(() => (
-    apiBaseUrl ? new AvalonApi(apiBaseUrl, session) : null
+    apiBaseUrl ? new RallyApi(apiBaseUrl, session) : null
   ), [
     apiBaseUrl,
     session?.user.id,
@@ -242,12 +243,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   // service, even when an existing session belongs to the other region.
   const invitationApi = useMemo(() => {
     if (!pendingInvitation || !runtime) return null;
-    return new AvalonApi(runtime.api[pendingInvitation.region], null);
+    return new RallyApi(runtime.api[pendingInvitation.region], null);
   }, [pendingInvitation, runtime]);
 
   const createDevelopmentSession = useCallback(async () => {
     if (!api) throw new Error('Choose a workspace region first.');
-    const nextSession = await bridge.createDevelopmentSession(api.baseUrl, workspaceName || 'Avalon Development');
+    const nextSession = await bridge.createDevelopmentSession(api.baseUrl, workspaceName || 'Rally Development');
     setSession(nextSession);
     if (nextSession.workspace) {
       setDeviceSelectedRegion(nextSession.workspace.region);
@@ -318,7 +319,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   useEffect(() => {
     const previousSession = draftScopeRef.current;
     draftScopeRef.current = session;
-    // A first session is an arrival, not a departure: launching Avalon must not
+    // A first session is an arrival, not a departure: launching Rally must not
     // discard the draft the last run left behind.
     if (previousSession && !sessionsShareDraftScope(previousSession, session)) void clearAllDrafts();
   }, [session]);
@@ -375,10 +376,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       try {
         deepLink = new URL(navigation.url);
       } catch {
-        setDeepLinkError('Avalon received an invalid sign-in link.');
+        setDeepLinkError('Rally received an invalid sign-in link.');
         return;
       }
-      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'workstreams' && deepLink.pathname === '/new') {
+      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'workstreams' && deepLink.pathname === '/new') {
         if (!session?.workspace) {
           setDeepLinkError('Sign in before starting a work stream.');
           return;
@@ -388,7 +389,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         window.location.hash = '/workstreams/new';
         return;
       }
-      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'workstreams') {
+      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'workstreams') {
         const workstreamId = deepLink.pathname.slice(1);
         if (!session?.workspace || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(workstreamId)) {
           setDeepLinkError('Sign in before opening this work-stream link.');
@@ -399,7 +400,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         window.location.hash = `/workstreams/${workstreamId}`;
         return;
       }
-      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'notes') {
+      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'notes') {
         // Sent by the main process when a meeting window closes, so that the
         // recording a person just ended hands them to the note it produced.
         const noteId = deepLink.pathname.slice(1);
@@ -407,7 +408,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         // between an instruction someone can act on and one that cannot help:
         // signing in again does nothing about a link that names no note.
         if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(noteId)) {
-          setDeepLinkError('Avalon could not open that note link.');
+          setDeepLinkError('Rally could not open that note link.');
           return;
         }
         if (!session?.workspace) {
@@ -420,7 +421,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return;
       }
       if (
-        deepLink.protocol === 'avalon:'
+        isDesktopDeepLinkProtocol(deepLink.protocol)
         && deepLink.hostname === 'settings'
         && (deepLink.pathname === '/workspace' || deepLink.pathname === '/connections'
           || deepLink.pathname === '/digest')
@@ -434,7 +435,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return;
       }
       if (
-        deepLink.protocol === 'avalon:'
+        isDesktopDeepLinkProtocol(deepLink.protocol)
         && deepLink.hostname === 'automations'
         && deepLink.pathname === '/new'
         && deepLink.search === ''
@@ -448,22 +449,22 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         window.location.hash = '/automations/new';
         return;
       }
-      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'slack' && deepLink.pathname === '/link') {
+      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'slack' && deepLink.pathname === '/link') {
         const token = deepLink.searchParams.get('token');
         const exactToken = token
           && /^[A-Za-z0-9_-]{20,500}$/u.test(token)
           && [...deepLink.searchParams.keys()].every((key) => key === 'token')
           && deepLink.searchParams.getAll('token').length === 1;
         if (!exactToken || !session?.workspace || !api) {
-          setDeepLinkError('Sign in to the matching Avalon workspace before connecting your Slack account.');
+          setDeepLinkError('Sign in to the matching Rally workspace before connecting your Slack account.');
           return;
         }
         setDeepLinkError(null);
         void api.previewSlackUserLink(token)
           .then((preview) => {
             const confirmed = window.confirm(
-              `Connect Slack user ${preview.slackUserId} from ${preview.workspaceName} to your Avalon account, `
-              + 'and let Avalon search and act in Slack as you?',
+              `Connect Slack user ${preview.slackUserId} from ${preview.workspaceName} to your Rally account, `
+              + 'and let Rally search and act in Slack as you?',
             );
             if (!confirmed) return null;
             return api.linkSlackUser(token);
@@ -475,7 +476,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
               queryClient.invalidateQueries({ queryKey: ['automation'] }),
             ]);
             // One button, both halves. Linking records who this Slack person is;
-            // the personal connection is what lets Avalon act as them. Split
+            // the personal connection is what lets Rally act as them. Split
             // across two buttons that both said "Connect", members reasonably
             // believed the first had done the second — App Home said
             // "Welcome, <name>" while personal tools stayed unconnected. The
@@ -509,11 +510,11 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           });
         return;
       }
-      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'invitations' && deepLink.pathname === '/accept') {
+      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'invitations' && deepLink.pathname === '/accept') {
         const token = deepLink.searchParams.get('token');
         const inviteRegion = deepLink.searchParams.get('region');
         if (!token || token.length < 20 || (inviteRegion !== 'global' && inviteRegion !== 'eu')) {
-          setDeepLinkError('Avalon received an invalid organization invitation.');
+          setDeepLinkError('Rally received an invalid organization invitation.');
           return;
         }
         setPendingInvitation({ token, region: inviteRegion });
@@ -524,8 +525,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         void queryClient.invalidateQueries({ queryKey: ['workspace-onboarding'] });
         return;
       }
-      if (deepLink.protocol !== 'avalon:' || deepLink.hostname !== 'auth' || deepLink.pathname !== '/complete') {
-        setDeepLinkError('Avalon received an unexpected sign-in link.');
+      if (!isDesktopDeepLinkProtocol(deepLink.protocol) || deepLink.hostname !== 'auth' || deepLink.pathname !== '/complete') {
+        setDeepLinkError('Rally received an unexpected sign-in link.');
         return;
       }
       const connectionId = deepLink.searchParams.get('connection');
@@ -541,7 +542,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           || deepLink.searchParams.getAll('connection').length !== 1
           || deepLink.searchParams.getAll('status').length !== 1
         ) {
-          setDeepLinkError('Avalon received an invalid connector completion link.');
+          setDeepLinkError('Rally received an invalid connector completion link.');
           return;
         }
         setDeepLinkError(null);
@@ -583,7 +584,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           && /^[a-z0-9_-]{1,100}$/u.test(connectorError)
           && (attemptId === null || (hasSingleValue('attempt') && /^[A-Za-z0-9_-]{43}$/u.test(attemptId)));
         if (!activeSession?.workspace || !connectorName || callbackRegion !== activeSession.workspace.region || (!validSuccess && !validFailure)) {
-          setDeepLinkError('Avalon received an invalid connector completion link.');
+          setDeepLinkError('Rally received an invalid connector completion link.');
           return;
         }
         if (validSuccess) {
@@ -618,7 +619,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       }
       const callbackRegion = deepLink.searchParams.get('region');
       if (callbackRegion !== 'global') {
-        setDeepLinkError('The sign-in link did not match Avalon’s identity service.');
+        setDeepLinkError('The sign-in link did not match Rally’s identity service.');
         return;
       }
       const attemptId = deepLink.searchParams.get('attempt');

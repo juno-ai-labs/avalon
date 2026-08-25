@@ -1,4 +1,4 @@
-import type { ConnectorConnectionContext } from "@avalon/connectors";
+import type { ConnectorConnectionContext } from "@rally/connectors";
 import { describe, expect, it, vi } from "vitest";
 import { decryptString, encryptString } from "../src/lib/crypto";
 import {

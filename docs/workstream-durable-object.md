@@ -1,6 +1,6 @@
 # Workspace, work-stream, and substream Durable Objects
 
-Avalon's regional stateful hierarchy is `WorkspaceDO -> WorkstreamDO ->
+Rally's regional stateful hierarchy is `WorkspaceDO -> WorkstreamDO ->
 {SubstreamAgent, BlockDashboardAgent}`. There is one `WorkspaceDO` per
 workspace, one non-agent `WorkstreamDO` per work stream, one `SubstreamAgent`
 per independently addressable model context, and one `BlockDashboardAgent`
@@ -135,7 +135,7 @@ proxies those operations through either parent, so one busy workspace or work
 stream cannot serialize unrelated child data planes. Parent updates travel in
 the other direction as versioned, idempotent child effects.
 
-Avalon uses deterministic `idFromName` identities, so a separate opaque
+Rally uses deterministic `idFromName` identities, so a separate opaque
 child-ID mapping is unnecessary. The active main child is recorded by the D1
 authority route and converges into `WorkstreamDO.substream_directory` with its
 first common projection. When product creation for non-main children is added,
@@ -272,7 +272,7 @@ After `durable_object_open`, one `SubstreamAgent` runs one complete Bind harness
 loop directly. A run is not one model turn: it includes every model/tool turn,
 plugin activation, structured elicitation, compaction, Terminal interaction,
 and terminalization needed to finish the admitted work. Bind remains the loop
-implementation; Avalon does not depend on the Agents SDK.
+implementation; Rally does not depend on the Agents SDK.
 
 Expected wall time is 2–30 minutes. Time to first token is normally 1–5 seconds,
 ordinary tools take seconds, and a Daytona Terminal action may take 3–5 minutes
@@ -772,7 +772,7 @@ projection changes only, not token cadence.
 Run:
 
 ```bash
-pnpm --filter @avalon/api test
+pnpm --filter @rally/api test
 pnpm lint
 pnpm typecheck
 ```
@@ -940,7 +940,7 @@ join crosses an object boundary.
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
 | `workstream_resource_links`, `resource_inventory_revision`, `suggested_actions` | Links to workspace resources, the authorization revision every relationship change advances (compat-routed changes included), and operational suggestion overlays. A suggestion is not transcript/model input unless acceptance explicitly authors a new part. |
 | `block_dashboard_configuration_versions`, `block_dashboard_block_runs`, `block_dashboard_user_preferences` | Source-runtime compatibility records used by the Bind harness and maintenance import. WorkstreamDO is the post-cutover product authority for configuration, published run state, and viewer preference. |
-| `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Avalon state for the Daytona-backed Terminal plugin. |
+| `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent effects and inbound dedupe such as feed tickets. |
 
 `parts.sequence_number` is transcript order, including tool and system rows.
@@ -2746,7 +2746,7 @@ projection dependency for both person notifications rather than only for
 mentions. Adding somebody who is already an active participant, or adding
 yourself, emits only the viewer effect.
 
-**Why:** being added was the one thing that could happen to a person in Avalon
+**Why:** being added was the one thing that could happen to a person in Rally
 that reached them through no channel at all. The work stream appeared in their
 sidebar if their client happened to be open and listening, and nothing was
 waiting for them if it was not — no Slack DM, no email, and not even an
@@ -4708,7 +4708,7 @@ idempotency keys, provider tool-call IDs, or caller-owned IDs. UUIDv7 does not
 establish causal order between writers, while those deterministic identities
 derive their correctness from stable replay rather than creation time.
 
-**Consequences:** New Avalon-owned IDs in the agent-serving boundary expose an
+**Consequences:** New Rally-owned IDs in the agent-serving boundary expose an
 approximate creation millisecond in lexical order. Authority generation plus
 the relevant sequence or waterline remains the only freshness contract.
 
@@ -4960,7 +4960,7 @@ directly from main SubstreamAgent, one Workflow per refresh, one agent for all
 blocks, and replacing Bind with the Agents SDK. These respectively put models
 in the control plane, duplicate configuration/fan-out state, retain a second
 orchestration state machine, serialize unrelated blocks, or discard the
-existing harness for lifecycle helpers Avalon can implement narrowly.
+existing harness for lifecycle helpers Rally can implement narrowly.
 
 **Consequences:** HyperSight refreshes fan out in parallel by stable block ID;
 each block recovers independently after eviction; source runtime access is a

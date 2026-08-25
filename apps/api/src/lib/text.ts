@@ -1,10 +1,10 @@
 /**
- * The canonical implementation lives in `@avalon/contracts`, beside the schemas
- * whose `max()` bounds it enforces, so `@avalon/db` can apply the same bound to
+ * The canonical implementation lives in `@rally/contracts`, beside the schemas
+ * whose `max()` bounds it enforces, so `@rally/db` can apply the same bound to
  * the same column. Re-exported here because every existing call site in this app
  * imports it from this path.
  */
-export { truncateUtf16Safe } from "@avalon/contracts/text";
+export { truncateUtf16Safe } from "@rally/contracts/text";
 
 /**
  * The first line of a message with anything on it.

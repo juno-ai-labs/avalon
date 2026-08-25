@@ -4,10 +4,10 @@ import {
   StartWorkOpportunityRequestSchema,
   WorkOpportunityPageSchema,
   WorkstreamSchema,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import { Hono } from "hono";
 import { z } from "zod";
-import { newId } from "@avalon/db";
+import { newId } from "@rally/db";
 import type { HonoAppEnv } from "../env";
 import { requestDeferral } from "../lib/defer";
 import { getAuth } from "../middleware/auth";

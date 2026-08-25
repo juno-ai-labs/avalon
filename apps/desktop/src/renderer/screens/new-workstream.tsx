@@ -1,4 +1,4 @@
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@avalon/contracts';
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ChevronRight, Plus } from 'lucide-react';
@@ -20,7 +20,7 @@ import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
-import { Avatar, AvatarStack, AvalonMark, Badge, Button, Modal, StatusDot, TitleSkeleton } from '../components/primitives';
+import { Avatar, AvatarStack, RallyMark, Badge, Button, Modal, StatusDot, TitleSkeleton } from '../components/primitives';
 import { withSuggestedPrompts } from '../components/suggested-prompts';
 import { MessageBlock } from '../components/workstream-blocks';
 
@@ -658,7 +658,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
           <div className={clsx('launch-home-layer', launching && 'is-leaving')} inert={Boolean(launching)}>
             <div className="new-workstream-home">
               <header className="new-workstream-welcome">
-                <AvalonMark className="new-workstream-welcome-mark" />
+                <RallyMark className="new-workstream-welcome-mark" />
                 <h1>Welcome back, {workspace.currentUser.name.split(/\s+/u)[0]}</h1>
               </header>
 

@@ -1,6 +1,6 @@
-import { ConnectorError, connectorRetryAfterMs, slackApi } from "@avalon/connectors";
-import { workstreamCanonicalUrl } from "@avalon/contracts";
-import { nowIso } from "@avalon/db";
+import { ConnectorError, connectorRetryAfterMs, slackApi } from "@rally/connectors";
+import { workstreamCanonicalUrl } from "@rally/contracts";
+import { nowIso } from "@rally/db";
 import { z } from "zod";
 
 import type { Env } from "../env";

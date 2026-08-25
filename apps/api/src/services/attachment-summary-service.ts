@@ -1,4 +1,4 @@
-import type { ModelMessage } from "@avalon/agent-harness";
+import type { ModelMessage } from "@rally/agent-harness";
 import { z } from "zod";
 import type { Env } from "../env";
 import { runStructuredInference } from "./structured-inference";

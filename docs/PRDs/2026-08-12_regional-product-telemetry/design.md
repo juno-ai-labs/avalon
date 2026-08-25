@@ -6,7 +6,7 @@
 
 ## Design principles
 
-1. Avalon's authenticated identity and regional APIs are the collection boundary; vendors are destinations.
+1. Rally's authenticated identity and regional APIs are the collection boundary; vendors are destinations.
 2. The event contract is an allowlist. Unknown data is rejected, not forwarded and scrubbed later.
 3. Main owns Electron telemetry. Renderer code can express semantics but cannot own policy or transport.
 4. A native dump is potentially customer content, even if most dumps do not contain readable content.
@@ -125,7 +125,7 @@ The client cannot choose its trusted region, authenticated identity, entitlement
 
 The producer creates a UUIDv7 `event_id` once and persists it with the local envelope. Retries, regional outbox processing, destination retry, and operator replay preserve it. The ingest database has a unique regional event key. A duplicate with an identical payload is acknowledged as duplicate; a reused ID with a different payload is rejected and alerted as an integrity violation.
 
-This provides deterministic deduplication inside Avalon. The Global PostHog adapter also passes a stable destination UUID where supported. Because provider deduplication windows and behavior can change, the public guarantee remains at-least-once.
+This provides deterministic deduplication inside Rally. The Global PostHog adapter also passes a stable destination UUID where supported. Because provider deduplication windows and behavior can change, the public guarantee remains at-least-once.
 
 ### Time semantics
 
@@ -180,7 +180,7 @@ Router instrumentation emits screen enums rather than paths or page titles. Comp
 
 ### Local spool
 
-The normal spool is an append-only or transactional queue under Avalon's application-data directory. Requirements:
+The normal spool is an append-only or transactional queue under Rally's application-data directory. Requirements:
 
 - validated serialized envelope only;
 - no provider payload and no raw pre-redaction input;
@@ -207,7 +207,7 @@ An unclean-exit marker is fsynced before the app becomes ready and cleared only 
 
 Before Google authentication, main creates a random anonymous epoch and requests a short-lived bootstrap capability from the Global edge. The edge binds the capability to that epoch, the registered logged-out onboarding schema subset, the coarse provisional route, expiry, and abuse limits. It is not an account credential and cannot call normal product, identity, or workspace APIs; only the bounded anonymous telemetry routes can consume it, including Global crash ingest after a second route/journey check. Main owns it; the renderer receives only typed semantic methods.
 
-Google authentication upgrades the journey to an identity-only Global bootstrap session before Avalon knows whether the user will activate an existing Global or EU workspace, accept an invitation, or create a new workspace. This is an authenticated `platform-user` scope, not anonymous traffic and not a Global workspace session.
+Google authentication upgrades the journey to an identity-only Global bootstrap session before Rally knows whether the user will activate an existing Global or EU workspace, accept an invitation, or create a new workspace. This is an authenticated `platform-user` scope, not anonymous traffic and not a Global workspace session.
 
 The bootstrap session carries the canonical Product analytics boolean and preference version plus a server-created `onboarding_journey_id`. The journey ID is opaque, non-authorizing, and bound to that bootstrap session. An existing opt-out is effective before identity-scoped product events are accepted. A new account uses the approved default-on policy; the settings control is not shown during onboarding.
 
@@ -228,7 +228,7 @@ For EU-routed onboarding events, Global keeps no event holding or replay payload
 
 The renderer reports only presentation and intent: fixed screen enums, selected-region intent after the user acts, and requests to create, activate, accept, or decline. The coordinator and regional services report authoritative state and outcomes. A safe operation identifier correlates each intent with its result; it remains distinct from authentication credentials and from any domain idempotency key.
 
-Native dumps never use the identity event ingest. If no explicit region is available, main resolves the bounded coarse-route gate before creating the first renderer. An affirmative EU-country route leaves Crashpad stopped and creates no local artifact; non-EU, unknown, timeout, network failure, and unusable responses start a Global-designated local Crashpad database. There is no pending region-resolution queue: the dump generation's capture route is final. At the next launch, after rotating the inactive database into the separate upload spool, Avalon authenticates upload in a request header using the regional session or a refreshed main-only Global bootstrap capability and never puts a credential in the Crashpad URL. Once a regional workspace session exists, a subsequent launch configures Crashpad for that workspace region. The identity ingest accepts neither minidumps nor arbitrary diagnostic attachments.
+Native dumps never use the identity event ingest. If no explicit region is available, main resolves the bounded coarse-route gate before creating the first renderer. An affirmative EU-country route leaves Crashpad stopped and creates no local artifact; non-EU, unknown, timeout, network failure, and unusable responses start a Global-designated local Crashpad database. There is no pending region-resolution queue: the dump generation's capture route is final. At the next launch, after rotating the inactive database into the separate upload spool, Rally authenticates upload in a request header using the regional session or a refreshed main-only Global bootstrap capability and never puts a credential in the Crashpad URL. Once a regional workspace session exists, a subsequent launch configures Crashpad for that workspace region. The identity ingest accepts neither minidumps nor arbitrary diagnostic attachments.
 
 ## Normal regional ingest
 
@@ -245,7 +245,7 @@ The normal endpoint accepts compressed batches with strict limits on compressed 
 9. creates regional outbox work;
 10. returns per-event accepted, duplicate, or rejected status.
 
-The queue payload contains region and an opaque outbox-work-item ID only. The destination worker retrieves the work item from the same regional database. A Global work item is either an accepted semantic-event reference or a provider-native identify/group-identify job with the exact PII allowlist defined below; both use the same ordered queue, delivery state, access controls, and immutable deadline. EU stores the equivalent pseudonymous identity link directly and has no profile job. This keeps sensitive schema changes from silently expanding queue payloads, avoids a second replay subsystem, and aligns with Avalon's current regional queue rule.
+The queue payload contains region and an opaque outbox-work-item ID only. The destination worker retrieves the work item from the same regional database. A Global work item is either an accepted semantic-event reference or a provider-native identify/group-identify job with the exact PII allowlist defined below; both use the same ordered queue, delivery state, access controls, and immutable deadline. EU stores the equivalent pseudonymous identity link directly and has no profile job. This keeps sensitive schema changes from silently expanding queue payloads, avoids a second replay subsystem, and aligns with Rally's current regional queue rule.
 
 At regional acceptance, every accepted row and its validated, sanitized replay projection receive an immutable deletion deadline 90 days later. Success, retry, terminal failure, and operator replay do not restart or extend that clock. The replay store never contains the raw client candidate, rejected payload fragments, raw minidumps, or private symbolication artifacts. A deletion request suppresses replay and removes an attributable row before the 90-day ceiling.
 
@@ -306,11 +306,11 @@ The server event never copies arbitrary client properties. It reconstructs its p
 
 ### Crashpad authentication and abuse control
 
-Electron Crashpad's supported start surface does not provide Avalon's required authenticated-header boundary. Avalon therefore does not configure native network submission and never embeds a token or capability in `submitURL`, query parameters, form metadata, or another URL-bearing field. Crashpad writes completed reports to a route-final database generation created for that launch. A packaged prototype must verify database location, completion semantics, process coverage, generation rotation, and pre-start purge behavior on every supported Electron version.
+Electron Crashpad's supported start surface does not provide Rally's required authenticated-header boundary. Rally therefore does not configure native network submission and never embeds a token or capability in `submitURL`, query parameters, form metadata, or another URL-bearing field. Crashpad writes completed reports to a route-final database generation created for that launch. A packaged prototype must verify database location, completion semantics, process coverage, generation rotation, and pre-start purge behavior on every supported Electron version.
 
-Avalon never opens or mutates the database while its Crashpad handler is active. At the next launch, before starting a new handler, main atomically rotates the entire inactive prior database plus its launch manifest and crash sidecar into Avalon's route-final upload spool. It validates the capture route, generation eligibility, age, completion state, and integrity, deletes ineligible/incomplete material, and starts a fresh Crashpad database before rendering. Upload proceeds asynchronously from the separate spool and therefore never races Crashpad. Multipart requests use the normal regional session or a short-lived, route-bound, main-only bootstrap capability in an authorization header. The capability authorizes only one regional crash-ingest shape, is refreshed rather than persisted in a URL, and cannot call product APIs. A capture route can never be changed by a later network or workspace selection.
+Rally never opens or mutates the database while its Crashpad handler is active. At the next launch, before starting a new handler, main atomically rotates the entire inactive prior database plus its launch manifest and crash sidecar into Rally's route-final upload spool. It validates the capture route, generation eligibility, age, completion state, and integrity, deletes ineligible/incomplete material, and starts a fresh Crashpad database before rendering. Upload proceeds asynchronously from the separate spool and therefore never races Crashpad. Multipart requests use the normal regional session or a short-lived, route-bound, main-only bootstrap capability in an authorization header. The capability authorizes only one regional crash-ingest shape, is refreshed rather than persisted in a URL, and cannot call product APIs. A capture route can never be changed by a later network or workspace selection.
 
-Local reports and sidecars become permanently ineligible for upload 14 days after creation. While Avalon is running, the separate rotated upload spool is actively deleted at that deadline, and independent byte/count ceilings may evict it sooner with only a content-free aggregate loss counter. No process can delete either a rotated spool or an unrotated report while the device is dormant, and Avalon cannot safely delete an active Crashpad database. At the next launch, before any upload attempt or Crashpad restart, main checks original creation time and deletes every expired rotated or unrotated report, manifest, invalidation record, and sidecar. A later launch, authentication, route change, or retry cannot restore eligibility. User-facing privacy material describes this next-launch physical-deletion limit rather than promising background deletion while Avalon is not running.
+Local reports and sidecars become permanently ineligible for upload 14 days after creation. While Rally is running, the separate rotated upload spool is actively deleted at that deadline, and independent byte/count ceilings may evict it sooner with only a content-free aggregate loss counter. No process can delete either a rotated spool or an unrotated report while the device is dormant, and Rally cannot safely delete an active Crashpad database. At the next launch, before any upload attempt or Crashpad restart, main checks original creation time and deletes every expired rotated or unrotated report, manifest, invalidation record, and sidecar. A later launch, authentication, route change, or retry cannot restore eligibility. User-facing privacy material describes this next-launch physical-deletion limit rather than promising background deletion while Rally is not running.
 
 Regardless of mechanism, the endpoint enforces:
 
@@ -326,9 +326,9 @@ Regardless of mechanism, the endpoint enforces:
 
 An inferred-EU pre-region launch never starts Crashpad and therefore creates neither a dump nor a crash sidecar. Every native dump waits until the next launch for custom upload, including renderer and child-process dumps. Crash-free dashboards expose awaiting-restart, rotated, expired-local, policy-invalidated, rejected, and uploaded counts so delayed delivery cannot silently improve the apparent rate.
 
-At the next successful launch, prior-generation rotation and eligibility validation finish before the first renderer is created. The uploader schedules every eligible prior-generation native report ahead of normal telemetry and begins its first attempt as soon as route-appropriate authentication and network are available. Avalon makes no wall-clock delivery promise while the app is closed or offline. If the new launch crashes before the prior report uploads, the independent rotated spool preserves that prior report for a later attempt and the new crash remains in the fresh active generation for the following launch; neither event can renew the other's absolute deadline.
+At the next successful launch, prior-generation rotation and eligibility validation finish before the first renderer is created. The uploader schedules every eligible prior-generation native report ahead of normal telemetry and begins its first attempt as soon as route-appropriate authentication and network are available. Rally makes no wall-clock delivery promise while the app is closed or offline. If the new launch crashes before the prior report uploads, the independent rotated spool preserves that prior report for a later attempt and the new crash remains in the fresh active generation for the following launch; neither event can renew the other's absolute deadline.
 
-Disabling Product analytics stops Avalon's upload-spool worker immediately, marks any bootstrap capability for revocation, and fsyncs an invalidation record for the active Crashpad generation before acknowledging the local change. A telemetry-region change performs the same generation invalidation before changing product state. Avalon does not open, mutate, or delete the active Crashpad database. On the next launch, the rotation step recognizes the invalidation and purges the entire generation and sidecars rather than uploading any report from it; Crashpad then remains stopped for opt-out or starts a fresh generation under the new effective route/policy. This deliberately discards even an earlier dump from an invalidated launch to avoid relying on racy per-report timing. Packaged tests cover database locks, crashes before and after invalidation, region changes, an upload already in flight from an older rotated generation, and a failed purge. An upload accepted before the server acknowledges the opt-out cannot be recalled synchronously and follows its normal regional retention or a separate account-deletion workflow; the UI does not claim otherwise.
+Disabling Product analytics stops Rally's upload-spool worker immediately, marks any bootstrap capability for revocation, and fsyncs an invalidation record for the active Crashpad generation before acknowledging the local change. A telemetry-region change performs the same generation invalidation before changing product state. Rally does not open, mutate, or delete the active Crashpad database. On the next launch, the rotation step recognizes the invalidation and purges the entire generation and sidecars rather than uploading any report from it; Crashpad then remains stopped for opt-out or starts a fresh generation under the new effective route/policy. This deliberately discards even an earlier dump from an invalidated launch to avoid relying on racy per-report timing. Packaged tests cover database locks, crashes before and after invalidation, region changes, an upload already in flight from an older rotated generation, and a failed purge. An upload accepted before the server acknowledges the opt-out cannot be recalled synchronously and follows its normal regional retention or a separate account-deletion workflow; the UI does not claim otherwise.
 
 ### Crash-surviving breadcrumbs
 
@@ -345,12 +345,12 @@ Before a release is published, CI uploads:
 - native-module symbols;
 - the signed release manifest.
 
-Uploads go to separate Global and EU private symbol stores. EU artifacts stay in Avalon's Cloudflare-backed EU path and are never read by the Global symbolication service. Release publication fails when a supported target's required artifacts are absent. Symbols outlive the longest crash-report retention for that release.
+Uploads go to separate Global and EU private symbol stores. EU artifacts stay in Rally's Cloudflare-backed EU path and are never read by the Global symbolication service. Release publication fails when a supported target's required artifacts are absent. Symbols outlive the longest crash-report retention for that release.
 
 JavaScript and native symbolication are separate regional processors:
 
 - **JavaScript exceptions** retain only release/build/debug identity plus bundle-relative generated frame identifiers and line/column coordinates until symbolication. The processor reads the matching private bundle and source map, resolves main, preload, and renderer frames, and emits original application-relative module/function/line information without source context. Generated frames and maps are deleted on their declared schedules. Global PostHog receives the already-symbolicated sanitized exception; source maps and bundles are not uploaded to PostHog. EU uses the same processor entirely inside its isolated Cloudflare-backed deployment.
-- **Native dumps** are read with matching platform debug symbols and produce a scrubbed normalized stack, owned top frame, system-frame summary, crash signature, and parser status. Global uses a dedicated Avalon-operated Cloudflare Container behind a Worker-owned private work boundary. Scoped outbound binding handlers expose only the named regional dump and matching private symbols to the container; it receives no general bucket credential or public ingress. EU symbolication may run only in Avalon-owned, isolated Cloudflare compute and storage allocated to EU. Until the same container boundary is proven with EU-isolated placement and bindings, the EU report remains explicitly `unsymbolicated` and the dump expires on schedule; adding external compute or egress requires a new recorded architecture and privacy decision.
+- **Native dumps** are read with matching platform debug symbols and produce a scrubbed normalized stack, owned top frame, system-frame summary, crash signature, and parser status. Global uses a dedicated Rally-operated Cloudflare Container behind a Worker-owned private work boundary. Scoped outbound binding handlers expose only the named regional dump and matching private symbols to the container; it receives no general bucket credential or public ingress. EU symbolication may run only in Rally-owned, isolated Cloudflare compute and storage allocated to EU. Until the same container boundary is proven with EU-isolated placement and bindings, the EU report remains explicitly `unsymbolicated` and the dump expires on schedule; adding external compute or egress requires a new recorded architecture and privacy decision.
 
 Neither processor places source excerpts, absolute paths, dumps, maps, bundles, or unsanitized stack text into destination payloads. Forced-error release tests prove artifact matching for all JavaScript bundles and native targets before publication.
 
@@ -360,11 +360,11 @@ Each raw minidump has a server-derived deletion deadline 90 days after receipt. 
 
 Default fingerprints include exception/crash type, process, owned top frames, and stable normalized frame tokens. Dynamic messages, addresses, offsets, local paths, line numbers in generated bundles, and user content are excluded. The schema permits a reviewed explicit fingerprint for known wrapper errors.
 
-Global PostHog receives the complete approved structured report and owns grouping, issue triage, regression, release-health, and investigation workflow after delivery. It still receives no raw artifact or private symbolication asset. EU stores flat full structured crash occurrences and exposes individual reports through a restricted internal query. It also stores one minimized contribution row per occurrence containing only fingerprint, occurrence time, and release so the query can compute first/last seen, count, and affected releases with `GROUP BY fingerprint`. V1 does not persist EU issue rows, regression/resolution state, annotations, materialized issue aggregates, or a bespoke issue-management UI. In either region, an authorized support role may resolve an opaque `crash_id` to the restricted raw artifact only inside Avalon.
+Global PostHog receives the complete approved structured report and owns grouping, issue triage, regression, release-health, and investigation workflow after delivery. It still receives no raw artifact or private symbolication asset. EU stores flat full structured crash occurrences and exposes individual reports through a restricted internal query. It also stores one minimized contribution row per occurrence containing only fingerprint, occurrence time, and release so the query can compute first/last seen, count, and affected releases with `GROUP BY fingerprint`. V1 does not persist EU issue rows, regression/resolution state, annotations, materialized issue aggregates, or a bespoke issue-management UI. In either region, an authorized support role may resolve an opaque `crash_id` to the restricted raw artifact only inside Rally.
 
-Avalon-held full structured reports retain for 90 days from occurrence. That applies to the EU internal sink and any Global pre-forward or replay copy, but not to the PostHog copy after destination acknowledgement. Each minimized EU fingerprint contribution expires independently 13 months after its occurrence. Queries operate only on surviving rows, so expiry needs no issue-state recomputation and a recurrence cannot renew an older contribution.
+Rally-held full structured reports retain for 90 days from occurrence. That applies to the EU internal sink and any Global pre-forward or replay copy, but not to the PostHog copy after destination acknowledgement. Each minimized EU fingerprint contribution expires independently 13 months after its occurrence. Queries operate only on surviving rows, so expiry needs no issue-state recomputation and a recurrence cannot renew an older contribution.
 
-PostHog-side retention, deletion, profile behavior, and issue-workflow configuration are administered separately after delivery and do not gate Avalon's internal collector, outbox, replay, crash-store, or EU lifecycle. Internal reconciliation verifies only Avalon-controlled storage and never treats destination acknowledgement as permission to extend an internal deadline.
+PostHog-side retention, deletion, profile behavior, and issue-workflow configuration are administered separately after delivery and do not gate Rally's internal collector, outbox, replay, crash-store, or EU lifecycle. Internal reconciliation verifies only Rally-controlled storage and never treats destination acknowledgement as permission to extend an internal deadline.
 
 ### Source and stack privacy
 
@@ -395,19 +395,19 @@ The PostHog adapter is deployed and configured only in Global. It has no access 
 
 “Complete” means every approved structured field needed to investigate the issue, not every byte collected by Crashpad. The adapter cannot access or emit minidumps, memory fragments, private source maps or symbols, source excerpts, absolute paths, unsanitized messages or frames, authentication material, or arbitrary metadata. Golden fixtures define both the required full-report fields and prohibited negative space.
 
-Batching respects PostHog's documented payload limit with a substantially lower Avalon cap. 4xx schema/config failures become terminal and alert; 408/429/5xx/network failures retry with exponential backoff and `Retry-After`. A circuit breaker protects the regional consumer during a provider incident.
+Batching respects PostHog's documented payload limit with a substantially lower Rally cap. 4xx schema/config failures become terminal and alert; 408/429/5xx/network failures retry with exponential backoff and `Retry-After`. A circuit breaker protects the regional consumer during a provider incident.
 
-PostHog project retention, deletion, access, profile, and issue-workflow configuration are owned through a separate provider-administration process. This adapter design ends at privacy-transform validation, successful destination acknowledgement, and internal delivery-receipt handling; it does not mirror PostHog lifecycle state back into Avalon's retention engine.
+PostHog project retention, deletion, access, profile, and issue-workflow configuration are owned through a separate provider-administration process. This adapter design ends at privacy-transform validation, successful destination acknowledgement, and internal delivery-receipt handling; it does not mirror PostHog lifecycle state back into Rally's retention engine.
 
 ### EU internal adapter
 
-EU has no PostHog project token, personal API key, provider hostname, or adapter route. An allowlist test rejects external analytics hosts from the EU deployment. The internal adapter writes the accepted projection to Cloudflare-backed primitives owned by Avalon and isolated from Global. Selection follows this order:
+EU has no PostHog project token, personal API key, provider hostname, or adapter route. An allowlist test rejects external analytics hosts from the EU deployment. The internal adapter writes the accepted projection to Cloudflare-backed primitives owned by Rally and isolated from Global. Selection follows this order:
 
 1. use a primitive with documented EU domicile when it meets reliability, volume, query, deletion, and retention requirements;
 2. otherwise provision a dedicated EU-only primitive, binding, dataset, keyspace, and access role that no Global telemetry uses;
 3. record the locality limitation in regional and customer-facing documentation rather than claiming a stronger guarantee.
 
-The EU sink supports the same schema versions, correlation, deletion, loss accounting, and structured crash-report contract as the Avalon-controlled Global pipeline, with its own destination-retention role because EU does not forward to PostHog. At acceptance, each EU semantic event receives an immutable deadline 13 months after occurrence, each full structured crash report receives an immutable deadline 90 days after occurrence, and each minimized fingerprint contribution receives an immutable deadline 13 months after occurrence. Secondary indexes and correlations inherit the source record's deadline or an explicitly shorter class. A regional lifecycle job deletes expired rows and is verified by an audited reconciliation job; no materialized issue state needs recomputation. V1 creates no Analytics Engine dataset or binding for this data because its sampling, three-month retention, and locality limits make it neither an exact sink nor a useful duplicate. A future EU-specific PostHog instance is a new adapter rollout requiring a recorded architecture/privacy decision, credentials provisioned only in EU, and migration/replay rules that do not send historical EU data without approval.
+The EU sink supports the same schema versions, correlation, deletion, loss accounting, and structured crash-report contract as the Rally-controlled Global pipeline, with its own destination-retention role because EU does not forward to PostHog. At acceptance, each EU semantic event receives an immutable deadline 13 months after occurrence, each full structured crash report receives an immutable deadline 90 days after occurrence, and each minimized fingerprint contribution receives an immutable deadline 13 months after occurrence. Secondary indexes and correlations inherit the source record's deadline or an explicitly shorter class. A regional lifecycle job deletes expired rows and is verified by an audited reconciliation job; no materialized issue state needs recomputation. V1 creates no Analytics Engine dataset or binding for this data because its sampling, three-month retention, and locality limits make it neither an exact sink nor a useful duplicate. A future EU-specific PostHog instance is a new adapter rollout requiring a recorded architecture/privacy decision, credentials provisioned only in EU, and migration/replay rules that do not send historical EU data without approval.
 
 ## Public website
 
@@ -474,7 +474,7 @@ At minimum operators need:
 - internal retention reconciliation and deletion-job completion percentage, expected-versus-processed rows, and oldest surviving age by region and retention class;
 - strict alerts without event property or crash content in log messages.
 
-Deletion alerts fire when a lifecycle or reconciliation job misses its deadline or any Avalon-controlled row, object, index, contribution, or correlation survives its immutable ceiling; an EU semantic event or minimized fingerprint contribution older than 13 months is always an alert rather than an accepted backlog.
+Deletion alerts fire when a lifecycle or reconciliation job misses its deadline or any Rally-controlled row, object, index, contribution, or correlation survives its immutable ceiling; an EU semantic event or minimized fingerprint contribution older than 13 months is always an alert rather than an accepted backlog.
 
 Runbooks cover provider outage, outbox backlog, schema rejection spike, crash-upload abuse, missing symbols, accidental prohibited-data detection, cross-region test failure, consent-policy incident, and deletion failure.
 
@@ -482,7 +482,7 @@ Runbooks cover provider outage, outbox backlog, schema rejection spike, crash-up
 
 ### Direct PostHog SDK in renderer
 
-Rejected for the core product because it makes region, consent, schemas, identity, offline retry, and provider-specific features client concerns. The Electron-compatible build solves bundling, not Avalon's trust boundary.
+Rejected for the core product because it makes region, consent, schemas, identity, offline retry, and provider-specific features client concerns. The Electron-compatible build solves bundling, not Rally's trust boundary.
 
 ### Direct desktop-to-PostHog proxy
 
@@ -494,7 +494,7 @@ Deferred. They solve routing and governance well, but add another data processor
 
 ### Sentry or Bugsnag for crashes
 
-Viable fallback for Global. They dramatically reduce symbolication and issue-management work. They remain deferred because the requested design calls for regional Avalon ingress and PostHog summary analysis, and the current EU decision prohibits sending EU crash data to an external US service. The native-crash spike must compare custom total cost and residency against these vendors before full build commitment.
+Viable fallback for Global. They dramatically reduce symbolication and issue-management work. They remain deferred because the requested design calls for regional Rally ingress and PostHog summary analysis, and the current EU decision prohibits sending EU crash data to an external US service. The native-crash spike must compare custom total cost and residency against these vendors before full build commitment.
 
 ### PostHog-only error tracking
 
@@ -502,4 +502,4 @@ Rejected as complete crash coverage. It covers JavaScript exceptions but is not 
 
 ### Automatic DOM and network capture
 
-Rejected. Avalon displays customer work content, and generic UI/network mechanisms cannot reliably distinguish semantics from secrets. Explicit events are more private and more analytically stable.
+Rejected. Rally displays customer work content, and generic UI/network mechanisms cannot reliably distinguish semantics from secrets. Explicit events are more private and more analytically stable.

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { TelemetryEnvelope } from "@avalon/contracts/telemetry";
+import type { TelemetryEnvelope } from "@rally/contracts/telemetry";
 import {
   mapPostHogCapture,
   mapPostHogProfileCapture,

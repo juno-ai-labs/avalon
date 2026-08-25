@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AvalonDesktopBridge, DesktopSession } from '../../common/desktop';
+import type { RallyDesktopBridge, DesktopSession } from '../../common/desktop';
 import { desktopBridge } from './platform';
 
 const globalApiBaseUrl = 'http://127.0.0.1:8787';
@@ -20,7 +20,7 @@ function jsonResponse(payload: unknown): Pick<Response, 'json' | 'ok' | 'status'
 
 describe('browser fallback single-platform identity boundary', () => {
   beforeEach(async () => {
-    delete window.avalon;
+    delete window.rally;
     vi.stubGlobal('fetch', vi.fn());
     await desktopBridge().logout();
   });
@@ -31,8 +31,8 @@ describe('browser fallback single-platform identity boundary', () => {
 
   it('prefers the hardened preload bridge for clipboard writes', async () => {
     const copyText = vi.fn(async () => undefined);
-    const preloadBridge = { copyText } satisfies Pick<AvalonDesktopBridge, 'copyText'>;
-    Object.defineProperty(window, 'avalon', {
+    const preloadBridge = { copyText } satisfies Pick<RallyDesktopBridge, 'copyText'>;
+    Object.defineProperty(window, 'rally', {
       configurable: true,
       value: preloadBridge,
       writable: true,

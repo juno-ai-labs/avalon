@@ -54,7 +54,7 @@ vi.mock('../lib/platform', () => ({
     getApplicationSettings: () => Promise.resolve(applicationSettings.current),
     onApplicationSettingsChanged: () => () => undefined,
   }),
-  // Avalon's turns in this conversation carry the same actions the work-stream
+  // Rally's turns in this conversation carry the same actions the work-stream
   // feed does, including the two that save one to a file.
   desktopServicesAvailable: () => true,
 }));
@@ -127,7 +127,7 @@ describe('New automation composer', () => {
       id: 'resource-notes',
       title: 'notes.txt',
       resourceType: 'uploaded_file',
-      provider: 'avalon_upload',
+      provider: 'rally_upload',
       mimeType: 'text/plain',
       watchEnabled: false,
       watchStatus: 'unsupported',
@@ -640,7 +640,7 @@ describe('New automation composer', () => {
     }, expect.any(Function)));
     const humanMessage = (await screen.findByText(example)).closest('article');
     expect(humanMessage).toHaveClass('message-block', 'human-message', 'own-human-message');
-    expect(screen.getByRole('status', { name: 'Avalon is working' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Rally is working' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'What should happen automatically?' })).not.toBeInTheDocument();
 
     act(() => {
@@ -651,8 +651,8 @@ describe('New automation composer', () => {
         durationMs: 0,
       });
     });
-    expect(screen.getByRole('status', { name: 'Avalon is working' })).toBeInTheDocument();
-    expect(screen.queryByText('Avalon is working')).not.toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Rally is working' })).toBeInTheDocument();
+    expect(screen.queryByText('Rally is working')).not.toBeInTheDocument();
 
     act(() => {
       stream({
@@ -675,7 +675,7 @@ describe('New automation composer', () => {
     expect(screen.getByRole('img', { name: 'Plugin: Google Drive + Docs + Sheets' })).toBeInTheDocument();
     expect(screen.getByTitle('Google Drive + Docs + Sheets')).toBeInTheDocument();
     expect(screen.getByText('working for 42ms')).toBeInTheDocument();
-    expect(screen.queryByText('Avalon is working')).not.toBeInTheDocument();
+    expect(screen.queryByText('Rally is working')).not.toBeInTheDocument();
 
     act(() => {
       stream({
@@ -701,19 +701,19 @@ describe('New automation composer', () => {
       });
       stream({ type: 'started' });
       stream({ type: 'delta', delta: 'Which blog ', reset: false });
-      stream({ type: 'delta', delta: 'should Avalon monitor?', reset: false });
+      stream({ type: 'delta', delta: 'should Rally monitor?', reset: false });
     });
     expect(await screen.findByText('Reviewed Google Drive + Docs + Sheets')).toBeInTheDocument();
     expect(activeResearch).toHaveClass('plugin-activity', 'tool-completed');
     expect(screen.getByText('42ms')).toBeInTheDocument();
     expect(screen.getByText('working for 1m 23s')).toBeInTheDocument();
-    expect(await screen.findByText('Which blog should Avalon monitor?')).toBeInTheDocument();
-    expect(screen.queryByText('Avalon is working')).not.toBeInTheDocument();
+    expect(await screen.findByText('Which blog should Rally monitor?')).toBeInTheDocument();
+    expect(screen.queryByText('Rally is working')).not.toBeInTheDocument();
 
     await act(async () => {
       resolveCompile({
         draftId: 'draft-example',
-        assistantMessage: 'Which blog should Avalon monitor?',
+        assistantMessage: 'Which blog should Rally monitor?',
         question: {
           id: 'question-example',
           prompt: 'Paste the full blog URL.',
@@ -725,7 +725,7 @@ describe('New automation composer', () => {
       });
     });
     expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
-    const assistantMessage = (await screen.findByText('Which blog should Avalon monitor?')).closest('article');
+    const assistantMessage = (await screen.findByText('Which blog should Rally monitor?')).closest('article');
     expect(assistantMessage).toHaveClass('message-block', 'agent-message');
     expect(screen.getByRole('textbox', { name: 'Paste the full blog URL.' })).toHaveAttribute(
       'placeholder',
@@ -821,7 +821,7 @@ describe('New automation composer', () => {
     await waitFor(() => expect(surface.scrollTop).toBe(4_000));
   });
 
-  it('preloads Avalon’s plugin picks without a Default plugins section', async () => {
+  it('preloads Rally’s plugin picks without a Default plugins section', async () => {
     api.getConnections.mockResolvedValue([
       {
         id: 'connection-linear',
@@ -959,7 +959,7 @@ describe('New automation composer', () => {
     expect(await screen.findByRole('button', { name: 'Remove notes.txt' })).toBeInTheDocument();
   });
 
-  it('allows Avalon-only delivery when a draft recommends Slack', async () => {
+  it('allows Rally-only delivery when a draft recommends Slack', async () => {
     api.getConnections.mockResolvedValue([
       {
         id: 'connection-slack-acme',
@@ -969,7 +969,7 @@ describe('New automation composer', () => {
         scope: 'workspace',
         status: 'healthy',
         capabilities: ['slack.agent'],
-        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM in this Slack workspace.' },
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Rally Agent DM in this Slack workspace.' },
       },
       {
         id: 'connection-slack-juno',
@@ -979,7 +979,7 @@ describe('New automation composer', () => {
         scope: 'workspace',
         status: 'healthy',
         capabilities: ['slack.agent'],
-        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM in this Slack workspace.' },
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Rally Agent DM in this Slack workspace.' },
       },
     ]);
     api.compileAutomation.mockResolvedValue({
@@ -1005,9 +1005,9 @@ describe('New automation composer', () => {
 
     const createButton = await screen.findByRole('button', { name: 'Create automation' });
     const delivery = screen.getByRole('region', { name: 'Deliver results' });
-    const avalon = screen.getByRole('checkbox', { name: /^Avalon/ });
-    expect(avalon).toBeChecked();
-    expect(avalon).toBeDisabled();
+    const rally = screen.getByRole('checkbox', { name: /^Rally/ });
+    expect(rally).toBeChecked();
+    expect(rally).toBeDisabled();
     expect(delivery).toHaveTextContent('Slack DM · Acme');
     expect(screen.getByRole('checkbox', { name: /Slack DM · Acme/ })).not.toBeChecked();
     expect(screen.getByRole('checkbox', { name: /Slack DM · Juno/ })).not.toBeChecked();
@@ -1045,7 +1045,7 @@ describe('New automation composer', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    // Avalon is the only sender: the run is forbidden to mail the result
+    // Rally is the only sender: the run is forbidden to mail the result
     // itself. An unticked box here is an automation that emails nobody, on the
     // path where the reader agrees with the screen and presses Create.
     const email = await screen.findByRole('checkbox', { name: /^Email/ });
@@ -1100,7 +1100,7 @@ describe('New automation composer', () => {
       assistantMessage: 'Ready to create.',
       summary: {
         name: 'Weekly changelog',
-        description: 'Summarizes merged work in Avalon.',
+        description: 'Summarizes merged work in Rally.',
         overview: 'Runs on Fridays.',
         recommendedPlugins: [],
         scope: 'you',
@@ -1133,7 +1133,7 @@ describe('New automation composer', () => {
         scope: 'workspace',
         status: 'healthy',
         capabilities: ['slack.agent'],
-        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM in this Slack workspace.' },
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Rally Agent DM in this Slack workspace.' },
       },
       {
         id: 'connection-slack-unlinked',
@@ -1152,7 +1152,7 @@ describe('New automation composer', () => {
         scope: 'workspace',
         status: 'healthy',
         capabilities: ['slack.agent'],
-        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM in this Slack workspace.' },
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Rally Agent DM in this Slack workspace.' },
       },
     ]);
     api.compileAutomation.mockResolvedValue({
@@ -1196,7 +1196,7 @@ describe('New automation composer', () => {
     }));
   });
 
-  it('defaults Runs as to Avalon’s suggestion and creates under the chosen scope', async () => {
+  it('defaults Runs as to Rally’s suggestion and creates under the chosen scope', async () => {
     api.getConnections.mockResolvedValue([
       {
         id: 'connection-linear',
@@ -1400,10 +1400,10 @@ describe('New automation composer', () => {
     api.compileAutomation
       .mockResolvedValueOnce({
         draftId: 'draft-choice',
-        assistantMessage: 'Choose where Avalon should send the update.',
+        assistantMessage: 'Choose where Rally should send the update.',
         question: {
           id: 'question-choice',
-          prompt: 'Where should Avalon send it?',
+          prompt: 'Where should Rally send it?',
           responseType: 'single_select',
           options: [
             { label: 'Email', value: 'email' },
@@ -1423,7 +1423,7 @@ describe('New automation composer', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByRole('heading', { name: 'Where should Avalon send it?' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Where should Rally send it?' })).toBeInTheDocument();
     expect(screen.queryByRole('radio', { name: 'Other' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('radio', { name: 'Email' }));
     fireEvent.click(screen.getByRole('button', { name: /Submit/u }));
@@ -1454,10 +1454,10 @@ describe('New automation composer', () => {
     api.compileAutomation
       .mockResolvedValueOnce({
         draftId: 'draft-choice',
-        assistantMessage: 'Choose where Avalon should send the update.',
+        assistantMessage: 'Choose where Rally should send the update.',
         question: {
           id: 'question-choice',
-          prompt: 'Where should Avalon send it?',
+          prompt: 'Where should Rally send it?',
           responseType: 'single_select',
           options: [
             { label: 'Email', value: 'email' },
@@ -1474,15 +1474,15 @@ describe('New automation composer', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByRole('heading', { name: 'Where should Avalon send it?' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Where should Rally send it?' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('radio', { name: 'Email' }));
     fireEvent.click(screen.getByRole('button', { name: /Submit/u }));
 
     await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledTimes(2));
-    expect(screen.queryByRole('heading', { name: 'Where should Avalon send it?' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Where should Rally send it?' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Email');
     expect(screen.queryByText('email')).not.toBeInTheDocument();
-    expect(screen.getByRole('status', { name: 'Avalon is working' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Rally is working' })).toBeInTheDocument();
   });
 
   it('drops the tail of a runaway narration rather than the explanation', () => {
@@ -1519,23 +1519,23 @@ describe('New automation composer', () => {
 
     // A compile that exhausts the wall clock is when the narration explains
     // the most, so it settles into the transcript rather than being cleared.
-    await act(async () => { rejectCompile(new Error('Avalon took too long to refine the automation.')); });
+    await act(async () => { rejectCompile(new Error('Rally took too long to refine the automation.')); });
 
     const settled = (await screen.findByText(
       'No blog connector is authorized, so I am checking the public web instead.',
     )).closest('article');
     expect(settled).toHaveClass('message-block', 'agent-message');
-    expect(await screen.findByText(/Avalon took too long/)).toBeInTheDocument();
+    expect(await screen.findByText(/Rally took too long/)).toBeInTheDocument();
   });
 
   it('reapplies the elicitation answer when a failed follow-up is retried', async () => {
     api.compileAutomation
       .mockResolvedValueOnce({
         draftId: 'draft-choice',
-        assistantMessage: 'Choose where Avalon should send the update.',
+        assistantMessage: 'Choose where Rally should send the update.',
         question: {
           id: 'question-choice',
-          prompt: 'Where should Avalon send it?',
+          prompt: 'Where should Rally send it?',
           responseType: 'single_select',
           options: [{ label: 'Email', value: 'email' }],
           allowOther: false,
@@ -1555,12 +1555,12 @@ describe('New automation composer', () => {
     fireEvent.click(await screen.findByRole('radio', { name: 'Email' }));
     fireEvent.click(screen.getByRole('button', { name: /Submit/u }));
 
-    expect(await screen.findByRole('heading', { name: 'Where should Avalon send it?' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Where should Rally send it?' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
     expect(await screen.findByLabelText('Elicitation response')).toHaveTextContent('Email');
     expect(await screen.findByText('The email automation is ready.')).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Where should Avalon send it?' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Where should Rally send it?' })).not.toBeInTheDocument();
     expect(screen.queryByText('email')).not.toBeInTheDocument();
   });
 });

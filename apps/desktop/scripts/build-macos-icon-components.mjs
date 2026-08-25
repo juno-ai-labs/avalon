@@ -11,13 +11,13 @@ const sourceDirectory = join(desktopDirectory, 'native', 'dock-tile-plugin');
 const outputBundle = join(
   desktopDirectory,
   '.native-build',
-  'AvalonDockTilePlugin.docktileplugin',
+  'RallyDockTilePlugin.docktileplugin',
 );
 const contentsDirectory = join(outputBundle, 'Contents');
 const executableDirectory = join(contentsDirectory, 'MacOS');
 const resourcesDirectory = join(contentsDirectory, 'Resources');
-const executablePath = join(executableDirectory, 'AvalonDockTilePlugin');
-const smokeExecutablePath = join(desktopDirectory, '.native-build', 'AvalonDockTilePluginSmoke');
+const executablePath = join(executableDirectory, 'RallyDockTilePlugin');
+const smokeExecutablePath = join(desktopDirectory, '.native-build', 'RallyDockTilePluginSmoke');
 const selectableIconSourceDirectory = join(desktopDirectory, 'resources', 'app-icons');
 const selectableIconTemplateDirectory = join(desktopDirectory, 'native', 'selectable-app-icon');
 const selectableIconOutputDirectory = join(desktopDirectory, '.native-build', 'app-icons');
@@ -33,7 +33,7 @@ const selectableIconNames = [
 ];
 
 if (process.platform !== 'darwin' || process.arch !== 'arm64') {
-  throw new Error('The Avalon Dock tile plugin must be built on arm64 macOS.');
+  throw new Error('The Rally Dock tile plugin must be built on arm64 macOS.');
 }
 
 await rm(outputBundle, { recursive: true, force: true });
@@ -42,7 +42,7 @@ await mkdir(executableDirectory, { recursive: true });
 await mkdir(resourcesDirectory, { recursive: true });
 await mkdir(selectableIconOutputDirectory, { recursive: true });
 await copyFile(join(sourceDirectory, 'Info.plist'), join(contentsDirectory, 'Info.plist'));
-await writeFile(join(resourcesDirectory, 'version.txt'), 'Avalon Dock Tile Plugin 1\n');
+await writeFile(join(resourcesDirectory, 'version.txt'), 'Rally Dock Tile Plugin 1\n');
 await run('/usr/bin/xcrun', [
   '--sdk',
   'macosx',
@@ -58,7 +58,7 @@ await run('/usr/bin/xcrun', [
   'AppKit',
   '-framework',
   'Foundation',
-  join(sourceDirectory, 'AvalonDockTilePlugin.m'),
+  join(sourceDirectory, 'RallyDockTilePlugin.m'),
   '-o',
   executablePath,
 ]);
@@ -84,8 +84,8 @@ try {
     'AppKit',
     '-framework',
     'Foundation',
-    join(sourceDirectory, 'AvalonDockTilePlugin.m'),
-    join(sourceDirectory, 'AvalonDockTilePluginSmoke.m'),
+    join(sourceDirectory, 'RallyDockTilePlugin.m'),
+    join(sourceDirectory, 'RallyDockTilePluginSmoke.m'),
     '-o',
     smokeExecutablePath,
   ]);
@@ -95,7 +95,7 @@ try {
 }
 
 async function compileSelectableIcon(name) {
-  const temporaryDirectory = await mkdtemp(join(tmpdir(), `avalon-${name}-icon-`));
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), `rally-${name}-icon-`));
   const iconPackage = join(temporaryDirectory, 'Icon.icon');
   const iconAssetsDirectory = join(iconPackage, 'Assets');
   const compiledDirectory = join(temporaryDirectory, 'compiled');

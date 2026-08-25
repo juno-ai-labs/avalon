@@ -1,4 +1,4 @@
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
   createSlackConnector,

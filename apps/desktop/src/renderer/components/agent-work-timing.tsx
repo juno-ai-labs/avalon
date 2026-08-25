@@ -15,7 +15,7 @@ export function AgentCompactionIndicator(): React.JSX.Element {
   return (
     <div
       aria-atomic="true"
-      aria-label="Avalon is compacting the conversation context"
+      aria-label="Rally is compacting the conversation context"
       aria-live="polite"
       className="agent-work-timing agent-work-timing-active"
       role="status"
@@ -55,7 +55,7 @@ export function AgentWorkTiming({
     : 0;
   const verb = active ? 'working' : 'worked';
   const label = `${verb} for ${formatDuration(durationMs + activeDuration) ?? '0ms'}`;
-  const accessibleLabel = active ? 'Avalon is working' : label;
+  const accessibleLabel = active ? 'Rally is working' : label;
 
   return (
     <div

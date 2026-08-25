@@ -1,6 +1,6 @@
-import { asUserId, asWorkspaceId } from "@avalon/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
-import type { RunHarnessInput } from "@avalon/agent-harness";
+import type { RunHarnessInput } from "@rally/agent-harness";
 import type { AuthContext } from "../src/env";
 import { MeetingNotesService } from "../src/services/meeting-notes-service";
 import { createTestEnv } from "./helpers/cloudflare-test";

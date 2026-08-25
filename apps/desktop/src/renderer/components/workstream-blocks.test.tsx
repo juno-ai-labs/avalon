@@ -138,7 +138,7 @@ describe('MessageBlock suggested context', () => {
 
 const singleSelectElicitation: ElicitationData = {
   id: 'elicitation-single',
-  prompt: 'What should Avalon do with these attachments?',
+  prompt: 'What should Rally do with these attachments?',
   responseType: 'single_select',
   options: [
     { value: 'compare', label: 'Compare offer vs. RSPA', description: 'Diff the two agreements and flag mismatches.' },
@@ -226,7 +226,7 @@ describe('ElicitationPanel', () => {
     expect(screen.queryByRole('button', { name: 'Dismiss question' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Collapse question' }));
     expect(screen.queryByRole('button', { name: /Submit/u })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Avalon needs input/u }));
+    fireEvent.click(screen.getByRole('button', { name: /Rally needs input/u }));
 
     expect(screen.getByRole('button', { name: /Submit/u })).toBeInTheDocument();
     expect(onAnswer).not.toHaveBeenCalled();
@@ -312,18 +312,18 @@ describe('MessageBlock human identity', () => {
 
   it('explains an own turn nobody typed, without naming the person back to themselves', () => {
     // A suggested-work brief is stored as the selecting member's turn but is
-    // written by Avalon. The label is the only thing on screen that accounts for
+    // written by Rally. The label is the only thing on screen that accounts for
     // a long brief appearing under their own name, so it survives the header
     // suppression that own turns otherwise get.
     const briefMessage: Message = {
       ...baseMessage,
       id: 'message-brief',
-      contextLabel: 'Expanded by Avalon from suggested work',
+      contextLabel: 'Expanded by Rally from suggested work',
       text: 'Trace the failed release, identify the owner, and prepare the fix.',
     };
     render(<MessageBlock {...actions} currentUserId="user-adam" message={briefMessage} />);
 
-    expect(screen.getByText('Expanded by Avalon from suggested work'))
+    expect(screen.getByText('Expanded by Rally from suggested work'))
       .toHaveClass('message-context-label');
     expect(screen.getByLabelText('Message from Adam')).toHaveClass('own-human-message');
     expect(screen.queryByText('Adam')).not.toBeInTheDocument();
@@ -343,7 +343,7 @@ describe('MessageBlock human identity', () => {
     expect(document.querySelector('.message-author-dot')).toBeInTheDocument();
   });
 
-  it('shows an externally attributed Slack member as a coworker rather than Avalon', () => {
+  it('shows an externally attributed Slack member as a coworker rather than Rally', () => {
     const externalMessage: Message = {
       ...baseMessage,
       id: 'message-slack-taylor',
@@ -361,7 +361,7 @@ describe('MessageBlock human identity', () => {
 
     expect(screen.getByLabelText('Message from Taylor · Slack')).toHaveClass('coworker-message');
     expect(screen.getByText('Taylor · Slack')).toHaveClass('message-author');
-    expect(screen.queryByText('Avalon')).not.toBeInTheDocument();
+    expect(screen.queryByText('Rally')).not.toBeInTheDocument();
   });
 
   it('renders sent attachments outside the rounded human text bubble', () => {
@@ -779,7 +779,7 @@ describe('MessageBlock export actions', () => {
 
   beforeEach(() => {
     vi.setSystemTime(new Date('2026-08-13T18:00:00.000Z'));
-    // The renderer reads the Avalon mark out of its own bundle before it can
+    // The renderer reads the Rally mark out of its own bundle before it can
     // ask for an export; jsdom has no server to fetch it from.
     vi.stubGlobal('fetch', vi.fn(async () => ({
       blob: async () => new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' }),
@@ -907,9 +907,9 @@ describe('MessageBlock system rows', () => {
   it('leaves a one-line note alone', () => {
     stubHeights(20);
 
-    render(<MessageBlock {...actions} message={systemMessage('message-woken', 'Avalon woke this work stream up as scheduled.')} />);
+    render(<MessageBlock {...actions} message={systemMessage('message-woken', 'Rally woke this work stream up as scheduled.')} />);
 
-    expect(screen.getByText('Avalon woke this work stream up as scheduled.')).toBeInTheDocument();
+    expect(screen.getByText('Rally woke this work stream up as scheduled.')).toBeInTheDocument();
     expect(screen.queryByRole('button')).toBeNull();
   });
 

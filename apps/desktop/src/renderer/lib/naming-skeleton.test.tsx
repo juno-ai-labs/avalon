@@ -1,6 +1,6 @@
 import { act, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
+import { WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 
 import { useNamingSkeleton, type NameableWorkstream } from './naming-skeleton';
 

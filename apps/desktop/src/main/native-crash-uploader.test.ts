@@ -12,7 +12,7 @@ const runtime = {
 };
 
 async function fixture(): Promise<{ root: string; dump: string }> {
-  const root = await mkdtemp(join(tmpdir(), 'avalon-native-upload-'));
+  const root = await mkdtemp(join(tmpdir(), 'rally-native-upload-'));
   roots.push(root);
   const first = await prepareNativeCrashGeneration({
     rootDirectory: root, route: 'global', now: new Date('2026-08-12T20:00:00.000Z'),
@@ -41,7 +41,7 @@ afterEach(async () => {
 
 describe('NativeCrashUploader', () => {
   it('uploads an explicit EU generation only to an authenticated EU API', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'avalon-native-upload-eu-'));
+    const root = await mkdtemp(join(tmpdir(), 'rally-native-upload-eu-'));
     roots.push(root);
     const first = await prepareNativeCrashGeneration({
       rootDirectory: root, route: 'eu', now: new Date('2026-08-12T20:00:00.000Z'),
@@ -64,13 +64,13 @@ describe('NativeCrashUploader', () => {
       rootDirectory: root, enabled: () => true,
       identity: () => ({ installationId: '018f0000-0000-7000-8000-000000000003' }),
       authenticatedSession: async () => ({
-        apiBaseUrl: 'https://eu.api.with-avalon.com', accessToken: 'eu-secret', route: 'eu',
+        apiBaseUrl: 'https://eu.api.rallywith.ai', accessToken: 'eu-secret', route: 'eu',
       }),
-      anonymousSession: () => null, globalApiBaseUrl: 'https://api.with-avalon.com', fetch,
+      anonymousSession: () => null, globalApiBaseUrl: 'https://api.rallywith.ai', fetch,
       eventId: () => '018f0000-0000-7000-8000-000000000023',
     });
     await uploader.flush();
-    expect(fetch.mock.calls[0]?.[0]).toBe('https://eu.api.with-avalon.com/telemetry/crashes');
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://eu.api.rallywith.ai/telemetry/crashes');
     expect(JSON.parse(String((fetch.mock.calls[0]?.[1]?.body as FormData).get('metadata')))).toMatchObject({ route: 'eu' });
   });
 
@@ -94,15 +94,15 @@ describe('NativeCrashUploader', () => {
       rootDirectory: root, enabled: () => true,
       identity: () => ({ installationId: '018f0000-0000-7000-8000-000000000003' }),
       authenticatedSession: async () => ({
-        apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', route: 'global',
+        apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', route: 'global',
       }),
-      anonymousSession: () => null, globalApiBaseUrl: 'https://api.with-avalon.com', fetch,
+      anonymousSession: () => null, globalApiBaseUrl: 'https://api.rallywith.ai', fetch,
       eventId: () => '018f0000-0000-7000-8000-000000000010',
       onState,
     });
     await uploader.flush();
 
-    expect(fetch.mock.calls[0]?.[0]).toBe('https://api.with-avalon.com/telemetry/crashes');
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://api.rallywith.ai/telemetry/crashes');
     expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('authorization')).toBe('Bearer secret');
     const form = fetch.mock.calls[0]?.[1]?.body as FormData;
     expect(JSON.parse(String(form.get('metadata')))).toMatchObject({
@@ -143,12 +143,12 @@ describe('NativeCrashUploader', () => {
       anonymousSession: () => ({
         capability: 'c'.repeat(64), route: 'global', expiresAt: '2099-01-01T00:00:00.000Z',
       }),
-      globalApiBaseUrl: 'https://api.with-avalon.com', fetch,
+      globalApiBaseUrl: 'https://api.rallywith.ai', fetch,
       eventId: () => '018f0000-0000-7000-8000-000000000010',
     });
     await uploader.flush();
-    expect(fetch.mock.calls[0]?.[0]).toBe('https://api.with-avalon.com/telemetry/crashes/anonymous');
-    expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('x-avalon-telemetry-capability')).toBe('c'.repeat(64));
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://api.rallywith.ai/telemetry/crashes/anonymous');
+    expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('x-rally-telemetry-capability')).toBe('c'.repeat(64));
     await expect(access(dump)).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(access(euDump)).resolves.toBeUndefined();
     expect(fetch).toHaveBeenCalledOnce();
@@ -161,8 +161,8 @@ describe('NativeCrashUploader', () => {
     const uploader = new NativeCrashUploader({
       rootDirectory: root, enabled: () => true,
       identity: () => ({ installationId: '018f0000-0000-7000-8000-000000000003' }),
-      authenticatedSession: async () => ({ apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', route: 'global' }),
-      anonymousSession: () => null, globalApiBaseUrl: 'https://api.with-avalon.com', fetch,
+      authenticatedSession: async () => ({ apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', route: 'global' }),
+      anonymousSession: () => null, globalApiBaseUrl: 'https://api.rallywith.ai', fetch,
       onState,
     });
     await expect(uploader.flush()).resolves.toBeUndefined();
@@ -187,7 +187,7 @@ describe('NativeCrashUploader', () => {
         capability: 'c'.repeat(64), route: 'global', expiresAt: '2099-01-01T00:00:00.000Z',
       }),
       refreshAnonymousSession,
-      globalApiBaseUrl: 'https://api.with-avalon.com', fetch, onState,
+      globalApiBaseUrl: 'https://api.rallywith.ai', fetch, onState,
     });
 
     await uploader.flush();
@@ -208,8 +208,8 @@ describe('NativeCrashUploader', () => {
     const uploader = new NativeCrashUploader({
       rootDirectory: root, enabled: () => true,
       identity: () => ({ installationId: '018f0000-0000-7000-8000-000000000003' }),
-      authenticatedSession: async () => ({ apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', route: 'global' }),
-      anonymousSession: () => null, globalApiBaseUrl: 'https://api.with-avalon.com', fetch,
+      authenticatedSession: async () => ({ apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', route: 'global' }),
+      anonymousSession: () => null, globalApiBaseUrl: 'https://api.rallywith.ai', fetch,
       maxReports: 1,
       onState,
     });
@@ -218,5 +218,35 @@ describe('NativeCrashUploader', () => {
     expect((await readdir(completed)).filter((name) => name.endsWith('.dmp'))).toHaveLength(1);
     expect(fetch).toHaveBeenCalledOnce();
     expect(onState.mock.calls.map(([state]) => state)).toContain('evicted');
+  });
+
+  it('reuses the upload id from a sidecar written before the rename', async () => {
+    // A dump queued by the previous build carries `<dump>.avalon.json`. Minting
+    // a fresh id for it files the same crash a second time.
+    const { root, dump } = await fixture();
+    await writeFile(`${dump}.avalon.json`, `${JSON.stringify({
+      version: 1, uploadId: '018f0000-0000-7000-8000-0000000000ab',
+    })}\n`);
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(JSON.stringify({
+      result: 'accepted', uploadId: '018f0000-0000-7000-8000-0000000000ab',
+    }), { status: 202 }));
+    const uploader = new NativeCrashUploader({
+      rootDirectory: root, enabled: () => true,
+      identity: () => ({ installationId: '018f0000-0000-7000-8000-000000000003' }),
+      authenticatedSession: async () => ({
+        apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', route: 'global',
+      }),
+      anonymousSession: () => null, globalApiBaseUrl: 'https://api.rallywith.ai', fetch,
+      eventId: () => '018f0000-0000-7000-8000-00000000ffff',
+    });
+
+    await uploader.flush();
+
+    const form = fetch.mock.calls[0]?.[1]?.body as FormData;
+    expect(JSON.parse(String(form.get('metadata')))).toMatchObject({
+      uploadId: '018f0000-0000-7000-8000-0000000000ab',
+    });
+    // Both sidecar names are cleaned up, so the dump cannot be re-queued.
+    await expect(access(`${dump}.avalon.json`)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

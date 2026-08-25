@@ -1,4 +1,4 @@
-import type { NormalizedActivity } from "@avalon/contracts";
+import type { NormalizedActivity } from "@rally/contracts";
 
 import {
   WorkspaceConnectorEventQueueMessageSchema,

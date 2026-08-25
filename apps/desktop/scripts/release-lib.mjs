@@ -3,8 +3,8 @@ import { createReadStream } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
-export const AVALON_APP_ID = 'app.avalon.desktop';
-export const AVALON_APPLE_TEAM_ID = '7ZLT6A8W25';
+export const RALLY_APP_ID = 'ai.rallywith.desktop';
+export const RALLY_APPLE_TEAM_ID = '7ZLT6A8W25';
 export const DEFAULT_RELEASE_PREFIX = 'stable/darwin/arm64';
 
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
@@ -23,7 +23,7 @@ export function parseVersion(version) {
 export function assertMinorReleaseVersion(version) {
   const parsed = parseVersion(version);
   if (parsed.patch !== 0 || parsed.prerelease.length > 0) {
-    throw new Error(`Avalon releases must use a stable minor version with patch 0; received ${version}`);
+    throw new Error(`Rally releases must use a stable minor version with patch 0; received ${version}`);
   }
   return version;
 }
@@ -92,7 +92,7 @@ export function assertNextReleaseVersion(currentVersion, nextVersion) {
   const stablePromotion = current.major === 0 && nextVersion === '1.0.0';
   if (nextVersion !== expectedVersion && !stablePromotion) {
     throw new Error(
-      `Next Avalon release after ${currentVersion} must be ${expectedVersion}`
+      `Next Rally release after ${currentVersion} must be ${expectedVersion}`
         + `${current.major === 0 ? ' or the one-time stable promotion 1.0.0' : ''}; received ${nextVersion}`,
     );
   }

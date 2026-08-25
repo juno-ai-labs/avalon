@@ -19,7 +19,7 @@ function settings(patch: Partial<StoredApplicationSettings>): StoredApplicationS
 }
 
 async function temporaryUserDataDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'avalon-application-settings-'));
+  const directory = await mkdtemp(join(tmpdir(), 'rally-application-settings-'));
   temporaryDirectories.push(directory);
   return directory;
 }

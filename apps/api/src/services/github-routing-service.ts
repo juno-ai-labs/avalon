@@ -2,8 +2,8 @@ import {
   ConnectorError,
   verifyGitHubWebhook,
   type GitHubWebhookDelivery,
-} from "@avalon/connectors";
-import type { Region } from "@avalon/contracts";
+} from "@rally/connectors";
+import type { Region } from "@rally/contracts";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { githubRegionFromInstallState } from "../lib/github-install-state";

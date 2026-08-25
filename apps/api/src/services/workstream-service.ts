@@ -1,6 +1,6 @@
-import { newId, nowIso } from "@avalon/db";
-import { memberSafeHarnessFailureMessage } from "@avalon/agent-harness";
-import { HarnessFailureCodeSchema, asHarnessRunId, asSubstreamId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@avalon/contracts";
+import { newId, nowIso } from "@rally/db";
+import { memberSafeHarnessFailureMessage } from "@rally/agent-harness";
+import { HarnessFailureCodeSchema, asHarnessRunId, asSubstreamId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
 import type {
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
@@ -12,7 +12,7 @@ import type {
   UpdateWorkstreamRequestSchema,
   WorkstreamDetail,
   WorkstreamWorkflowInput,
-} from "@avalon/contracts";
+} from "@rally/contracts";
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { substreamAgentName } from "../durable-objects/substream-agent";
@@ -132,18 +132,18 @@ const MAX_OPPORTUNITY_ORIGIN_RESOURCES = 8;
 // invent. Do not read the rules above as already enforced here.
 const ADDITIONAL_MEMBER_SAFE_HARNESS_ERRORS = Object.freeze({
   empty_completion: "The model returned an empty response. Try again in a moment",
-  model_output_invalid: "The model returned a response Avalon could not read. Try again in a moment",
+  model_output_invalid: "The model returned a response Rally could not read. Try again in a moment",
   provider_error: "A connected service returned an error, so this run stopped",
   run_admission_timeout: "This work stream stayed busy too long to start the run",
   run_cancelled: "This run was cancelled",
   run_ownership_lost: "This run was superseded by another executor",
   stale_run_reaped: "This run stopped after its execution lease expired",
-  workflow_unavailable: "Avalon could not start this run",
+  workflow_unavailable: "Rally could not start this run",
 } satisfies Readonly<Record<string, string>>);
 
 const GENERIC_MEMBER_SAFE_HARNESS_ERROR = Object.freeze({
   code: "harness_execution_failed",
-  message: "Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support",
+  message: "Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support",
 });
 
 export async function launchWorkstreamHarness(
@@ -310,7 +310,7 @@ export async function launchWorkstreamHarness(
     // cannot answer that question and must not be read as if it could.
     // The member-safe error carries forward whether an instance is live, so a
     // caller undoing its own preparation is answering the right question.
-    const memberSafe = new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
+    const memberSafe = new ApiError(503, "workflow_unavailable", "The Rally harness could not be started");
     throw memberSafe;
   }
   await publishEvent(env, input.workspaceId, input.workstreamId, {

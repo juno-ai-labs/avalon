@@ -1,4 +1,4 @@
-import { ProductFeatureFlagKeySchema, type ProductFeatureFlagKey } from '@avalon/contracts';
+import { ProductFeatureFlagKeySchema, type ProductFeatureFlagKey } from '@rally/contracts';
 import type { Env } from './env';
 import { MANAGED_FLAGS, ManagedFlagUpdateSchema, type ManagedFlagUpdate } from './protocol';
 

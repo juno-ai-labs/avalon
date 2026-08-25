@@ -1,6 +1,6 @@
 ObjC.import('AppKit');
 
-const notificationName = 'app.avalon.desktop.application-icon-changed';
+const notificationName = 'ai.rallywith.desktop.application-icon-changed';
 
 function refreshDockIconCache() {
   try {
@@ -25,7 +25,7 @@ function notifyDockTilePlugin() {
   $.NSDistributedNotificationCenter.defaultCenter
     .postNotificationNameObjectUserInfoDeliverImmediately(
       $(notificationName),
-      $('Avalon'),
+      $('Rally'),
       $(),
       true,
     );

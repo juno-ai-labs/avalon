@@ -1,3 +1,4 @@
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
@@ -9,8 +10,8 @@ import {
   IdSchema,
   ScopeSchema,
   UpdateGitHubRepositoryAccessSettingsSchema,
-} from "@avalon/contracts";
-import type { ConnectorOAuthProvider } from "@avalon/contracts";
+} from "@rally/contracts";
+import type { ConnectorOAuthProvider } from "@rally/contracts";
 import { z } from "zod";
 import { telemetryOperationId } from "../telemetry/api-emitter";
 import type { HonoAppEnv } from "../env";
@@ -128,7 +129,7 @@ const googleCallback = z.object({
 const slackLink = z.object({ token: z.string().min(20).max(500) });
 /**
  * Response contracts for this route's envelopes. The connector entities come
- * from `@avalon/contracts`; the wrappers, the webhook credentials and the
+ * from `@rally/contracts`; the wrappers, the webhook credentials and the
  * provider acknowledgements are shaped here.
  */
 const ConnectionPageSchema = z.object({ items: z.array(ConnectionSchema) });
@@ -173,7 +174,7 @@ async function bindConnectorTelemetry(
   service: ConnectionService,
   result: z.infer<typeof ConnectorOAuthStartSchema>,
 ): Promise<z.infer<typeof ConnectorOAuthStartSchema>> {
-  const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
+  const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
   const telemetryVersion = c.req.query('telemetryVersion') === '2' ? 2 : 1;
   if (operationId) await service.bindOAuthTelemetry(result.attemptId, operationId, telemetryVersion);
   return result;
@@ -468,7 +469,7 @@ webhookIngestionRoutes.post("/webhook/:id", zValidator("param", idParam), async 
   const result = await new ConnectionService(c.env).ingestWebhook(
     c.req.valid("param").id,
     new Uint8Array(await c.req.arrayBuffer()),
-    c.req.header("x-avalon-signature") ?? null,
+    readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.SIGNATURE) ?? null,
   );
   return c.json(ConnectorWebhookIngestionSchema.parse(result), result.duplicate ? 200 : 202);
 });

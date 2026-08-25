@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
-  AVALON_UPDATE_URL,
+  RALLY_UPDATE_URL,
   assertDeveloperIdDetails,
   assertEmbeddedUpdateConfig,
   assertEntitlementPlistMatchesPolicy,
@@ -44,7 +44,7 @@ test('the packaged app explains microphone and native system audio without reque
   assert.match(contents, /from:\s+\.native-build\/system-audio-tap\.node/u);
 });
 
-test('nested components require the Avalon Developer ID team', () => {
+test('nested components require the Rally Developer ID team', () => {
   const details = [
     'Authority=Developer ID Application: Juno AI Labs Inc. (7ZLT6A8W25)',
     'TeamIdentifier=7ZLT6A8W25',
@@ -63,15 +63,15 @@ test('nested components require the Avalon Developer ID team', () => {
 test('embedded updater is pinned to the stable arm64 channel', () => {
   assert.doesNotThrow(() => assertEmbeddedUpdateConfig([
     'provider: generic',
-    `url: ${AVALON_UPDATE_URL}`,
+    `url: ${RALLY_UPDATE_URL}`,
     '',
   ].join('\n')));
   assert.throws(
-    () => assertEmbeddedUpdateConfig('provider: generic\nurl: https://downloads.with-avalon.com/beta/darwin/arm64\n'),
+    () => assertEmbeddedUpdateConfig('provider: generic\nurl: https://downloads.rallywith.ai/beta/darwin/arm64\n'),
     /must be exactly/u,
   );
   assert.throws(
-    () => assertEmbeddedUpdateConfig(`provider: generic\nprovider: generic\nurl: ${AVALON_UPDATE_URL}\n`),
+    () => assertEmbeddedUpdateConfig(`provider: generic\nprovider: generic\nurl: ${RALLY_UPDATE_URL}\n`),
     /exactly one generic/u,
   );
 });

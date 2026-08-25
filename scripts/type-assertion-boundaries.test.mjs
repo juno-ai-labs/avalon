@@ -21,8 +21,8 @@ function lint(source, enabled) {
       parser: tseslint.parser,
       parserOptions: { sourceType: "module" },
     },
-    plugins: { avalon: { rules } },
-    rules: { [`avalon/${enabled}`]: "error" },
+    plugins: { rally: { rules } },
+    rules: { [`rally/${enabled}`]: "error" },
   });
 }
 
@@ -34,7 +34,7 @@ test("production code cannot erase a value before asserting another type", () =>
 
 test("test doubles cannot assert past application-owned contracts", () => {
   for (const source of [
-    'import type { Client as Port } from "@avalon/contracts"; const client = {} as unknown as Port;',
+    'import type { Client as Port } from "@rally/contracts"; const client = {} as unknown as Port;',
     'import { operation } from "../src/service"; value as unknown as Parameters<typeof operation>[0];',
     'window.avalon = { copyText } as unknown as typeof window.avalon;',
   ]) {
