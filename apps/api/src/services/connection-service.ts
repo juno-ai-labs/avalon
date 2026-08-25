@@ -1047,7 +1047,7 @@ export class ConnectionService {
       ).bind(stateData.scope, providerAccountId, row.workspace_id, row.user_id).first<StoredConnection>();
       if (existing) {
         if (existing.workspace_id !== row.workspace_id) {
-          throw new ApiError(409, "slack_workspace_already_connected", "This Slack workspace is already connected to another Avalon workspace");
+          throw new ApiError(409, "slack_workspace_already_connected", "This Slack workspace is already connected to another Rally workspace");
         }
         connectionId = existing.id;
         existingCredentials = (await this.context(existing)).credentials;

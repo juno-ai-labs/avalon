@@ -266,6 +266,11 @@ Mailboxes printed by the site use `@rallywith.ai`. Superseded invitation and
 notification addresses elsewhere remain governed by the retirement conditions
 in [`domain-migration.md`](domain-migration.md), not by this completed site pass.
 
+The Slack installation landing page now documents `/rally` so it agrees with
+the provider registration. The Slack manifest deliberately retains the known
+`support@with-avalon.com` mailbox until the new support alias is operationally
+confirmed; the provider cut-over must not turn a rebrand into a support outage.
+
 ### 8. Internal prose — cheapest, and safe to move alone
 
 - **`docs/`: 538 occurrences across 64 files.** Heaviest: `runbook.md` (67),
@@ -322,8 +327,9 @@ BRIEF`, and `The person responded to Avalon's blocking question.`
 **Tool descriptions the model reads when choosing a tool** — six Google Docs and
 Sheets descriptions in `packages/connectors/src/index.ts` ("writable under
 Avalon's per-file Google Drive grant"), the X plugin, the Linear native-agent
-plugin, four Slack connector labels and descriptions, and the core plugin's own
-`Use Avalon's universally available core utilities.`
+plugin, and the core plugin's own `Use Avalon's universally available core
+utilities.` The four Slack connector labels and descriptions moved in the Slack
+cut-over.
 
 **Model-facing schema field names**, which are harder than the prose around
 them because a description names the field and the model is told to branch on
@@ -331,9 +337,9 @@ it: `writableByAvalon` (14, in Google Drive tool output and named in two
 descriptions) and Notion's `avalonTruncated` / `avalonTotalChars`.
 
 **Strings the agent emits to people**, not prompts but produced by this loop:
-`Avalon posted a result.` (Slack fallback), `Avalon mentioned in Slack`, and the
-Control Tower failure notices `Avalon could not create the final meeting
-summary` / `Avalon could not update Control Tower`.
+the Slack fallback and mention copy moved in the Slack cut-over. The Control
+Tower failure notices `Avalon could not create the final meeting summary` /
+`Avalon could not update Control Tower` remain.
 
 **Identity sent to third parties.** `appName: "Avalon"` becomes the `X-Title`
 header on every inference request (3 call sites); the GitHub connector sends
@@ -378,6 +384,21 @@ Compatibility identifiers, Cloudflare resource names, release buckets, and
 old hostnames were deliberately not swept. Their retirement conditions belong
 to sections 1, 2, 4, and `domain-migration.md`; a brand regeneration must never
 be used as a reason to rename them.
+
+### 2026-08-25 — The Slack app cut-over closed its user-facing slice
+
+The Slack manifest, Worker responses, connector labels, installation-page
+command, and permissions reference now agree on Rally and `/rally`. The provider
+manifest follows the Worker deployment in both regions so Slack cannot deliver
+the new command to old ingress code. Slack CLI 4.6.0 strips this app's immutable
+`pkce_enabled` field during validation and sync, so the provider change is made
+through Slack's App Manifest editor instead.
+
+Compatibility remains where external state requires it: old OAuth redirects,
+the legacy unfurl domain, and the four Avalon denial prefixes already present in
+Slack channel history stay accepted. The support address also remains
+`support@with-avalon.com` until the new alias is operationally confirmed.
+Section 9's non-Slack agent identity remains open.
 
 ### 2026-08-25 — What the sweep's verification could not see
 
