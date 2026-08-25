@@ -15,6 +15,7 @@ import type {
 } from "@rally/contracts";
 import { z } from "zod";
 import { AutomationCompilerError, OpenRouterError } from "@rally/agent-harness";
+import { ConnectorError } from "@rally/connectors";
 import type { AutomationCompilerStreamEvent } from "@rally/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
@@ -345,6 +346,22 @@ export class AutomationService {
         throw new ApiError(502, "automation_provider_failed", "The automation model could not complete the draft. Try again", {
           retryable: error.status !== 401 && error.status !== 402 && error.status !== 403,
         });
+      }
+      if (error instanceof ConnectorError) {
+        // Raised while the compiler was inspecting a connector's own tools —
+        // a revoked token, a provider outage, or a plugin exposing more
+        // dynamic tools than Avalon will read. Left unmapped, this fell
+        // through to the generic 500 below with no hint of which connector
+        // or why, indistinguishable from an actual defect in the compiler.
+        const needsReconnect = error.code === "unauthorized" || error.code === "invalid_configuration";
+        throw new ApiError(
+          502,
+          "automation_connector_failed",
+          needsReconnect
+            ? "Avalon could not use that connector. Reconnect it and try again."
+            : "Avalon could not inspect that connector's tools. Try again.",
+          { connectorErrorCode: error.code, retryable: !needsReconnect },
+        );
       }
       throw error;
     }
