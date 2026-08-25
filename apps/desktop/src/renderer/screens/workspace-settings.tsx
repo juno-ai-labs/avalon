@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import * as Tooltip from '@radix-ui/react-tooltip';
 import {
   AtSign,
   Building2,
@@ -33,7 +34,15 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type ReactNode,
+} from 'react';
 import type { ConnectorOAuthProvider, ConnectorOAuthStart } from '@rally/contracts';
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
@@ -88,6 +97,68 @@ const installedConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   'generic_webhook',
   'x',
 ]);
+
+function ConnectorButton({
+  tooltip,
+  disabled = false,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { tooltip: string }): React.JSX.Element {
+  const button = <Button disabled={disabled} {...props} />;
+  return (
+    <Tooltip.Root delayDuration={300}>
+      <Tooltip.Trigger asChild>
+        {disabled
+          ? <span className="provider-action-tooltip-trigger" tabIndex={0}>{button}</span>
+          : button}
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content className="tooltip settings-connection-tooltip" side="top" sideOffset={6}>
+          {tooltip}
+          <Tooltip.Arrow className="tooltip-arrow" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  );
+}
+
+function ConnectionIconAction({
+  label,
+  tooltip,
+  icon,
+  disabled = false,
+  ...props
+}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'aria-label'> & {
+  label: string;
+  tooltip: string;
+  icon: ReactNode;
+}): React.JSX.Element {
+  const button = (
+    <button
+      aria-label={label}
+      className="settings-icon-action"
+      disabled={disabled}
+      type="button"
+      {...props}
+    >
+      {icon}
+    </button>
+  );
+  return (
+    <Tooltip.Root delayDuration={300}>
+      <Tooltip.Trigger asChild>
+        {disabled
+          ? <span className="settings-icon-tooltip-trigger" tabIndex={0}>{button}</span>
+          : button}
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content className="tooltip settings-connection-tooltip" side="top" sideOffset={6}>
+          {tooltip}
+          <Tooltip.Arrow className="tooltip-arrow" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  );
+}
 
 interface SettingsNavItem {
   id: SettingsSection;
@@ -375,9 +446,12 @@ export function WorkspaceSettingsScreen({
   const queryClient = useQueryClient();
   const bridge = useMemo(() => desktopBridge(), []);
   const contentRef = useRef<HTMLElement | null>(null);
+  const webhookRefreshCancelRef = useRef<HTMLButtonElement | null>(null);
+  const reconnectCancelRef = useRef<HTMLButtonElement | null>(null);
+  const disconnectCancelRef = useRef<HTMLButtonElement | null>(null);
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSettingsSection);
   const [navigationQuery, setNavigationQuery] = useState('');
-  const [connectionFilter, setConnectionFilter] = useState<ConnectionFilter>('all');
+  const [connectionFilter, setConnectionFilter] = useState<ConnectionFilter>('not_connected');
   const [githubSettingsConnectionId, setGitHubSettingsConnectionId] = useState<string | null>(null);
   const [githubRepositorySearch, setGitHubRepositorySearch] = useState('');
   const [email, setEmail] = useState('');
@@ -399,6 +473,7 @@ export function WorkspaceSettingsScreen({
   const [applicationSettingsLoadError, setApplicationSettingsLoadError] = useState<string | null>(null);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [reconnectTarget, setReconnectTarget] = useState<WorkstreamConnection | null>(null);
+  const [disconnectTarget, setDisconnectTarget] = useState<WorkstreamConnection | null>(null);
   const [connectorOAuthMessage, setConnectorOAuthMessage] = useState<string | null>(null);
   const [connectorOAuthError, setConnectorOAuthError] = useState<string | null>(null);
   const [granolaWorkspaceModalOpen, setGranolaWorkspaceModalOpen] = useState(false);
@@ -621,13 +696,12 @@ export function WorkspaceSettingsScreen({
       provider,
     }),
   });
-  const testConnection = useMutation({
-    mutationFn: (id: string) => api!.testConnection(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['connections'] }),
-  });
   const disconnectConnection = useMutation({
     mutationFn: (id: string) => api!.disconnectConnection(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['connections'] }),
+    onSuccess: () => {
+      setDisconnectTarget(null);
+      return queryClient.invalidateQueries({ queryKey: ['connections'] });
+    },
   });
   const createInvitation = useMutation({
     mutationFn: () => api!.createWorkspaceInvitation(email.trim(), role),
@@ -724,6 +798,8 @@ export function WorkspaceSettingsScreen({
   const installedConnections = (connections.data ?? []).filter((connection) =>
     installedConnectorTypes.has(connection.connectorType),
   );
+  const workspaceConnections = installedConnections.filter((connection) => connection.scope === 'workspace');
+  const personalConnections = installedConnections.filter((connection) => connection.scope === 'you');
   const healthyConnections = installedConnections.filter((connection) => connection.status === 'healthy');
   const visibleProviders = connectorProviders.filter((provider) => {
     const connected = providerHasConnection(provider, connections.data ?? []);
@@ -1242,58 +1318,111 @@ export function WorkspaceSettingsScreen({
             {activeSection === 'connections' && (
               <section aria-labelledby="settings-title" className="settings-pane settings-connections-pane">
                 <div className="settings-pane-heading settings-pane-heading-count">
-                  <div><h2>Installed connections</h2><p>Credentials currently available to you or this workspace.</p></div>
+                  <div><h2>Your connections</h2><p>Credentials currently available to you or this workspace.</p></div>
                   <span>{installedConnections.length}</span>
                 </div>
-                <div className="settings-connection-list settings-list-card">
-                  {installedConnections.map((connection) => (
-                    <div className="settings-connection-row" key={connection.id}>
-                      <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
-                      <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Personal' : 'Workspace'} · {connection.capabilities?.length ?? 0} capabilities</small></span>
-                      <Badge>{connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status}</Badge>
-                      <Button disabled={testConnection.isPending} onClick={() => testConnection.mutate(connection.id)}>Test</Button>
-                      {reconnectableConnectorTypes.has(connection.connectorType)
-                        && !(connection.connectorType === 'granola' && connection.scope === 'workspace') && (
-                        <button
-                          aria-label={`Reconnect ${connection.displayName}`}
-                          className="settings-icon-action"
-                          disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
-                          onClick={() => setReconnectTarget(connection)}
-                          type="button"
-                        >
-                          <RefreshCcw aria-hidden="true" size={14} />
-                        </button>
-                      )}
-                      {connection.connectorType === 'generic_webhook' && (
-                        <button
-                          aria-label={`Rotate secret for ${connection.displayName}`}
-                          className="settings-icon-action"
-                          disabled={rotateWebhookSecret.isPending}
-                          onClick={() => {
-                            setWebhookModalScope(connection.scope);
-                            setWebhookDisplayName(connection.displayName);
-                            setWebhookEventTypes('');
-                            setWebhookSecretResult(null);
-                            setWebhookCopied(null);
-                            setWebhookRotationTarget(connection);
-                          }}
-                          type="button"
-                        >
-                          <RefreshCcw aria-hidden="true" size={14} />
-                        </button>
-                      )}
-                      <button aria-label={`Disconnect ${connection.displayName}`} className="settings-icon-action" disabled={disconnectConnection.isPending} onClick={() => disconnectConnection.mutate(connection.id)} type="button"><Trash2 aria-hidden="true" size={14} /></button>
-                    </div>
+                <div className="settings-connection-tables">
+                  {([
+                    {
+                      id: 'personal-connections',
+                      title: 'Personal connections',
+                      items: personalConnections,
+                      emptyTitle: 'No personal connections yet',
+                      emptyDescription: 'Connect a connector below to use its tools privately with your provider identity.',
+                    },
+                    {
+                      id: 'workspace-connections',
+                      title: 'Workspace connections',
+                      items: workspaceConnections,
+                      emptyTitle: 'No workspace connections yet',
+                      emptyDescription: 'Connect a connector below to make its tools available across this workspace.',
+                    },
+                  ] as const).map((group) => (
+                    <section className="settings-connection-group" key={group.id}>
+                      <div className="settings-connection-group-heading">
+                        <h3 id={group.id}>{group.title}</h3>
+                        <span>{group.items.length}</span>
+                      </div>
+                      <div className="settings-list-card settings-connection-table-frame">
+                        <table aria-labelledby={group.id} className="settings-connection-table">
+                          <thead>
+                            <tr>
+                              <th scope="col">Connection</th>
+                              <th scope="col">Status</th>
+                              <th className="settings-connection-capabilities" scope="col">Capabilities</th>
+                              <th scope="col"><span className="sr-only">Actions</span></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.items.map((connection) => (
+                              <tr className="settings-connection-row" key={connection.id}>
+                                <td>
+                                  <span className="settings-connection-name">
+                                    <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
+                                    <span className="settings-connection-copy"><strong>{connection.displayName}</strong></span>
+                                  </span>
+                                </td>
+                                <td><Badge>{connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status}</Badge></td>
+                                <td className="settings-connection-capabilities">{connection.capabilities?.length ?? 0} capabilities</td>
+                                <td>
+                                  <span className="settings-connection-actions">
+                                    {isAdmin && reconnectableConnectorTypes.has(connection.connectorType)
+                                      && !(connection.connectorType === 'granola' && connection.scope === 'workspace') && (
+                                      <ConnectionIconAction
+                                        disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
+                                        icon={<RefreshCcw aria-hidden="true" size={14} />}
+                                        label={`Refresh ${connection.displayName}`}
+                                        onClick={() => setReconnectTarget(connection)}
+                                        tooltip="Refresh authorization with the provider."
+                                      />
+                                    )}
+                                    {isAdmin && connection.connectorType === 'generic_webhook' && (
+                                      <ConnectionIconAction
+                                        disabled={rotateWebhookSecret.isPending}
+                                        icon={<RefreshCcw aria-hidden="true" size={14} />}
+                                        label={`Refresh ${connection.displayName}`}
+                                        onClick={() => {
+                                          setWebhookModalScope(connection.scope);
+                                          setWebhookDisplayName(connection.displayName);
+                                          setWebhookEventTypes('');
+                                          setWebhookSecretResult(null);
+                                          setWebhookCopied(null);
+                                          setWebhookRotationTarget(connection);
+                                        }}
+                                        tooltip="Refresh this webhook by replacing its signing secret."
+                                      />
+                                    )}
+                                    <ConnectionIconAction
+                                      disabled={disconnectConnection.isPending}
+                                      icon={<Trash2 aria-hidden="true" size={14} />}
+                                      label={`Delete ${connection.displayName}`}
+                                      onClick={() => setDisconnectTarget(connection)}
+                                      tooltip="Delete this connection from Rally."
+                                    />
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                            {!connections.isLoading && group.items.length === 0 && (
+                              <tr className="settings-connection-empty-row">
+                                <td colSpan={4}>
+                                  <EmptyState description={group.emptyDescription} title={group.emptyTitle} />
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
                   ))}
-                  {!connections.isLoading && installedConnections.length === 0 && <EmptyState title="No connections yet" description="Connect a provider below to make its tools available to Rally." />}
                 </div>
                 <div className="settings-subsection">
                   <div className="settings-connection-toolbar">
                     <div className="settings-segmented" role="group" aria-label="Filter connections">
                       {([
-                        ['all', 'All'],
-                        ['connected', 'Connected'],
                         ['not_connected', 'Not connected'],
+                        ['connected', 'Connected'],
+                        ['all', 'All'],
                       ] as const).map(([value, label]) => (
                         <button aria-pressed={connectionFilter === value} key={value} onClick={() => setConnectionFilter(value)} type="button">{label}</button>
                       ))}
@@ -1341,7 +1470,7 @@ export function WorkspaceSettingsScreen({
                           <p>{provider.description}</p>
                             <div className="provider-actions">
                               {provider.scopes.includes('you' as never) && (
-                                <Button
+                                <ConnectorButton
                                   disabled={personalConnectDisabled}
                                   onClick={() => {
                                     if (provider.provider === 'generic_webhook') {
@@ -1357,10 +1486,11 @@ export function WorkspaceSettingsScreen({
                                     connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') });
                                   }}
                                   title={personalConnectTitle}
-                                >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : 'Connect for me'}</Button>
+                                  tooltip={`Only you can use this connection; it acts with your provider identity.${personalConnectTitle ? ` ${personalConnectTitle}` : ''}`}
+                                >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : 'Connect for me'}</ConnectorButton>
                               )}
                             {provider.scopes.includes('workspace' as never) && isAdmin && (
-                              <Button
+                              <ConnectorButton
                                 disabled={workspaceConnectDisabled}
                                 onClick={() => {
                                   if (provider.provider === 'granola') {
@@ -1380,9 +1510,10 @@ export function WorkspaceSettingsScreen({
                                   connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: providerCapabilitiesForScope(provider, 'workspace') });
                                 }}
                                 title={workspaceConnectTitle}
+                                tooltip={`Everyone in this workspace can use this connection; it acts for the workspace.${workspaceConnectTitle ? ` ${workspaceConnectTitle}` : ''}`}
                               >
                                 Connect workspace
-                              </Button>
+                              </ConnectorButton>
                             )}
                           </div>
                         </article>
@@ -1392,8 +1523,8 @@ export function WorkspaceSettingsScreen({
                   </div>
                 </div>
                 {connectorOAuthMessage && <p className="settings-oauth-status" role="status"><Check aria-hidden="true" size={14} />{connectorOAuthMessage}</p>}
-                {(connectorOAuthError || connections.error || connectorCatalog.error || connectProvider.error || createGranolaWorkspaceConnection.error || createWebhookConnection.error || rotateWebhookSecret.error || reconnectConnection.error || testConnection.error || disconnectConnection.error) && (
-                  <InlineError>{connectorOAuthError ?? connections.error?.message ?? connectorCatalog.error?.message ?? connectProvider.error?.message ?? createGranolaWorkspaceConnection.error?.message ?? createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message ?? reconnectConnection.error?.message ?? testConnection.error?.message ?? disconnectConnection.error?.message}</InlineError>
+                {(connectorOAuthError || connections.error || connectorCatalog.error || connectProvider.error || createGranolaWorkspaceConnection.error || createWebhookConnection.error || rotateWebhookSecret.error || reconnectConnection.error || disconnectConnection.error) && (
+                  <InlineError>{connectorOAuthError ?? connections.error?.message ?? connectorCatalog.error?.message ?? connectProvider.error?.message ?? createGranolaWorkspaceConnection.error?.message ?? createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message ?? reconnectConnection.error?.message ?? disconnectConnection.error?.message}</InlineError>
                 )}
               </section>
             )}
@@ -1781,13 +1912,13 @@ export function WorkspaceSettingsScreen({
         </main>
         <Modal
           description={webhookRotationTarget
-            ? 'Rotate the endpoint signing secret. The previous secret stops working immediately.'
+            ? 'Continue to replace the endpoint signing secret. The previous secret stops working immediately.'
             : `Create a ${webhookModalScope === 'workspace' ? 'workspace' : 'personal'} signed activity endpoint.`}
           footer={webhookSecretResult ? (
             <Button className="button-primary" onClick={() => setWebhookModalScope(null)}>Done</Button>
           ) : (
             <>
-              <Button onClick={() => setWebhookModalScope(null)}>Cancel</Button>
+              <Button ref={webhookRefreshCancelRef} onClick={() => setWebhookModalScope(null)}>Cancel</Button>
               {webhookRotationTarget ? (
                 <Button
                   className="button-primary"
@@ -1795,7 +1926,7 @@ export function WorkspaceSettingsScreen({
                   onClick={() => rotateWebhookSecret.mutate(webhookRotationTarget)}
                 >
                   {rotateWebhookSecret.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
-                  Rotate secret
+                  Continue
                 </Button>
               ) : (
                 <Button
@@ -1809,6 +1940,7 @@ export function WorkspaceSettingsScreen({
               )}
             </>
           )}
+          initialFocusRef={webhookRotationTarget ? webhookRefreshCancelRef : undefined}
           onOpenChange={(open) => {
             if (open || createWebhookConnection.isPending || rotateWebhookSecret.isPending) return;
             setWebhookModalScope(null);
@@ -1817,7 +1949,7 @@ export function WorkspaceSettingsScreen({
             setWebhookCopied(null);
           }}
           open={webhookModalScope !== null}
-          title={webhookRotationTarget ? `Rotate ${webhookDisplayName}` : 'Create inbound webhook'}
+          title={webhookRotationTarget ? `Refresh ${webhookDisplayName}?` : 'Create inbound webhook'}
         >
           {webhookSecretResult ? (
             <div className="settings-list-card">
@@ -1937,7 +2069,7 @@ export function WorkspaceSettingsScreen({
           description="You’ll be sent to the provider to authorize this connection again."
           footer={(
             <>
-              <Button onClick={() => setReconnectTarget(null)}>Cancel</Button>
+              <Button ref={reconnectCancelRef} onClick={() => setReconnectTarget(null)}>Cancel</Button>
               <Button
                 className="button-primary"
                 onClick={() => {
@@ -1946,15 +2078,48 @@ export function WorkspaceSettingsScreen({
                   setReconnectTarget(null);
                 }}
               >
-                <RefreshCcw aria-hidden="true" size={14} /> Re-connect
+                <RefreshCcw aria-hidden="true" size={14} /> Continue
               </Button>
             </>
           )}
+          initialFocusRef={reconnectCancelRef}
           onOpenChange={(open) => {
             if (!open) setReconnectTarget(null);
           }}
           open={Boolean(reconnectTarget)}
-          title={`Do you want to re-connect ${reconnectTarget?.displayName ?? 'this app'}?`}
+          title={`Refresh ${reconnectTarget?.displayName ?? 'this connection'}?`}
+        />
+        <Modal
+          description={disconnectTarget?.scope === 'workspace'
+            ? 'This removes the connection and its tools from everyone in this workspace.'
+            : 'This removes the connection and its tools from your Rally account.'}
+          footer={(
+            <>
+              <Button
+                disabled={disconnectConnection.isPending}
+                onClick={() => setDisconnectTarget(null)}
+                ref={disconnectCancelRef}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="button-danger"
+                disabled={disconnectConnection.isPending}
+                onClick={() => {
+                  if (disconnectTarget) disconnectConnection.mutate(disconnectTarget.id);
+                }}
+              >
+                {disconnectConnection.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+                Continue
+              </Button>
+            </>
+          )}
+          initialFocusRef={disconnectCancelRef}
+          onOpenChange={(open) => {
+            if (!open && !disconnectConnection.isPending) setDisconnectTarget(null);
+          }}
+          open={Boolean(disconnectTarget)}
+          title={`Delete ${disconnectTarget?.displayName ?? 'this connection'}?`}
         />
       </div>
     </div>
