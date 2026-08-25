@@ -16,7 +16,21 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 24;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 25;
+
+/**
+ * The names the retired elicitation view and its triggers were declared under.
+ *
+ * Written out rather than derived from `WORKSTREAM_RUNTIME_COMPAT_SCHEMA`, as
+ * the promotions above are, because this migration drops the statements in the
+ * same change that deletes them: a filter over that array would find nothing
+ * and the assertion would fire on a correct migration.
+ */
+const RETIRED_ELICITATION_COMPAT_OBJECTS = [
+  "_runtime_elicitations",
+  "_runtime_elicitations_insert",
+  "_runtime_elicitations_update",
+] as const;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1354,7 +1368,42 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "retire the run lifecycle-event view now the final message is an object write",
     statements: runLifecycleAuthorityPromotion(),
   },
+  {
+    version: 25,
+    description: "retire the elicitation view now both of its writers are object operations",
+    statements: elicitationAuthorityPromotion(),
+  },
 ];
+
+/**
+ * Retires the elicitation view, which the scheduling slice could not.
+ *
+ * Its two writers were batches spanning the messages and identity slices — an
+ * elicitation row, a transcript part, and the work stream's counters, written
+ * together because each statement was guarded on the one before it having
+ * landed. Both are single operations on `WorkstreamSchedulingStorage` now, so
+ * the view has neither a reader nor a writer left.
+ *
+ * The view and its two triggers are objects over a table this schema already
+ * declares, so nothing is adopted — the same shape and the same assertion as
+ * the promotions above, for the same reason: a reshaped compat schema should
+ * fail the build rather than produce a migration that quietly patches nothing.
+ */
+function elicitationAuthorityPromotion(): string[] {
+  const names = /^_runtime_elicitations/;
+  const compatObjects = RETIRED_ELICITATION_COMPAT_OBJECTS.filter((name) => names.test(name));
+  if (compatObjects.length !== 3) {
+    throw new Error(`expected three elicitation compat objects, found ${compatObjects.length}`);
+  }
+  return [
+    // Triggers first, so no trigger is left orphaned in `sqlite_schema`.
+    ...compatObjects
+      .filter((name) => name !== "_runtime_elicitations")
+      .map((name) => `DROP TRIGGER IF EXISTS ${name}`),
+    "DROP VIEW IF EXISTS _runtime_elicitations",
+  ];
+}
+
 
 /**
  * Retires the lifecycle-event view, which slice 6 could not.
@@ -1466,13 +1515,13 @@ function resourceAuthorityPromotion(): string[] {
 /**
  * Retires four of the scheduling slice's five compatibility views.
  *
- * `_runtime_elicitations` is deliberately not among them, and its two triggers
- * stay with it. Every *read* of that view is gone, but its two writers are
+ * `_runtime_elicitations` was deliberately not among them, and its two triggers
+ * stayed with it: every *read* of that view was gone, but its two writers were
  * batches spanning the messages and identity slices — an elicitation row, a
  * transcript message, and the work stream's counters, written together because
- * the second statement is guarded on the first having landed. It goes when the
- * messages slice converts what it depends on. Dropping it here would leave
- * those batches with nothing to write through.
+ * the second statement was guarded on the first having landed. Dropping it here
+ * would have left those batches with nothing to write through. Migration 25
+ * retires it, once both writers became single object operations.
  *
  * The other four views and their seven triggers are objects over tables this
  * schema already declares, so nothing is adopted — the same shape as the
