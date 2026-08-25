@@ -415,7 +415,7 @@ theme is named for and leaves the rest of the field where the design put it.
 
 ### Choosing one
 
-The choice lives in `localStorage`, in the same `avalon:device-preferences`
+The choice lives in `localStorage`, in the same `rally:device-preferences`
 record as the selected region and the microphone. It is a device preference, not
 an account one: an appearance belongs to the screen it is being looked at, and a
 person who works on a bright laptop and a dark desktop should not have to keep

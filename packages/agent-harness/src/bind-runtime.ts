@@ -1069,7 +1069,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           const structured = readStructuredFailure(error);
           const interrupted = toolSignal.aborted;
           const recoverableTerminalObservation = structured?.code === "command_outcome_unknown"
-            && dispatched.pluginId === "avalon:terminal"
+            && dispatched.pluginId === "rally:terminal"
             && dispatched.tool.definition.name === "run_command";
           const ambiguousExternalWrite = (interrupted || ambiguousResponseValidation || recoverableTerminalObservation)
             && dispatched.tool.definition.mode === "write"
@@ -1701,7 +1701,7 @@ async function createPluginRuntime(
       ?? "authorized";
   const discovery = buildPlugin({
     canonicalId: AVALON_DISCOVERY_PLUGIN_ID,
-    modelId: "avalon_discovery",
+    modelId: "rally_discovery",
     // Discovery controls intentionally keep their globally unique public
     // names (`list_plugins`, `search_plugins`, and `load_plugin`). Every
     // ordinary plugin receives its short name through stableWireToolName.
@@ -1827,7 +1827,7 @@ async function createPluginRuntime(
     ? buildPlugin(
         {
           canonicalId: AVALON_SKILLS_PLUGIN_ID,
-          modelId: "avalon_skills",
+          modelId: "rally_skills",
           // Globally unique public names, like the discovery controls.
           shortWireName: "",
           description: "Load procedures and reference knowledge authorized for this run.",
@@ -1917,7 +1917,7 @@ async function createPluginRuntime(
   const resolveTool = (wireName: string) => {
     // Prefer the exact name Avalon advertised. Some OpenRouter routes have
     // nevertheless returned a namespaced/canonical alias (for example,
-    // `avalon_core.linear_search_issues`) after a plugin was loaded. Bind has
+    // `rally_core.linear_search_issues`) after a plugin was loaded. Bind has
     // already rebuilt the next-turn tool surface at that point; rejecting the
     // alias would make a successfully activated tool appear unavailable.
     for (const id of [...active].sort()) {
@@ -2045,7 +2045,7 @@ function normalizeToolIdentity(value: string): string {
 /**
  * Return normalized identities a provider may have used for one advertised
  * tool name. The full value is included for punctuation-only rewrites, while
- * suffixes cover provider-added namespaces such as `avalon_core.<tool>`.
+ * suffixes cover provider-added namespaces such as `rally_core.<tool>`.
  */
 function providerToolAliasCandidates(value: string): ReadonlySet<string> {
   const candidates = new Set<string>();

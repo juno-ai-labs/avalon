@@ -176,21 +176,21 @@ describe("Terminal resource bridge", () => {
        VALUES (?, ?, 0, 'attachment', ?, ?, ?)`,
     ).run(RESOURCE, U, JSON.stringify({ id: RESOURCE }), Date.parse("2026-08-13"), Date.parse("2026-08-13"));
 
-    await expect(bridge.importResource(context, { resourceId: RESOURCE }, `.avalon/resources/${RESOURCE}/resource`, 1, "sandbox", provider)).resolves.toEqual({
+    await expect(bridge.importResource(context, { resourceId: RESOURCE }, `.rally/resources/${RESOURCE}/resource`, 1, "sandbox", provider)).resolves.toEqual({
       resourceId: RESOURCE,
-      filePath: `.avalon/resources/${RESOURCE}/resource`,
+      filePath: `.rally/resources/${RESOURCE}/resource`,
       outcome: "created",
       mimeType: "text/csv",
       sizeBytes: 14,
       sourceSha256: digest,
     });
-    expect(provider.writeFile).toHaveBeenCalledWith("sandbox", `/workspace/.avalon/resources/${RESOURCE}/resource`, bytes, context.signal);
+    expect(provider.writeFile).toHaveBeenCalledWith("sandbox", `/workspace/.rally/resources/${RESOURCE}/resource`, bytes, context.signal);
     expect(workstreamObjectGet(
       objectStore,
       `SELECT destination_path, source_sha256, size_bytes, state, imported_at IS NOT NULL AS imported
          FROM terminal_imported_resources`,
     )).toEqual({
-      destination_path: `.avalon/resources/${RESOURCE}/resource`,
+      destination_path: `.rally/resources/${RESOURCE}/resource`,
       source_sha256: digest,
       size_bytes: 14,
       state: "completed",

@@ -87,7 +87,7 @@ Two properties of `step` decide how a flow has to be written:
   one. Every awaited call inside a flow therefore belongs inside a step — an
   unstepped `await` does not go unmeasured, it silently inflates its neighbour
   and makes `slowest_step` name the wrong thing.
-- **`avalon.flow` and `avalon.component` are repeated onto every step span.**
+- **`rally.flow` and `avalon.component` are repeated onto every step span.**
   OpenTelemetry does not inherit attributes from a parent, so a step span
   without them cannot be filtered or grouped by the flow it belongs to. The
   identity attributes are deliberately not repeated: they are many, the step
@@ -138,28 +138,28 @@ under `avalon.`, so it can never collide with a convention added later:
 
 | Attribute | Meaning |
 | --- | --- |
-| `avalon.flow` | `workstream_create`, `workstream_open`, or `workstream_message_send`. |
+| `rally.flow` | `workstream_create`, `workstream_open`, or `workstream_message_send`. |
 | `avalon.component` | Which participant emitted it: `api`, `api_socket`, `substream_do`, `workspace_do`. |
-| `avalon.workspace.id`, `avalon.workstream.id`, `avalon.substream.id` | The identifiers a slow trace has to be attributable to. |
-| `avalon.request.id` | The desktop's `x-request-id`. |
-| `avalon.analytics.person_id`, `avalon.analytics.workspace_id` | What PostHog knows the same person and workspace as. See [Joining a system span to a product event](#joining-a-system-span-to-a-product-event). |
-| `avalon.auth.duration_ms` | What authentication cost, which the flow's own duration excludes. |
-| `avalon.socket.ticket_id`, `avalon.socket.connection_id` | The two socket joins below. |
-| `avalon.message.client_id` | The composer's client message id. |
-| `avalon.harness_run.id`, `avalon.agent.invoked` | What the write started. |
-| `avalon.snapshot.bytes`, `avalon.snapshot.message_count`, `avalon.snapshot.trims` | What a subscription had to assemble. |
-| `avalon.create.path`, `avalon.create.receipt_state`, `avalon.create.first_naming` | Which create this was. |
+| `rally.workspace.id`, `rally.workstream.id`, `rally.substream.id` | The identifiers a slow trace has to be attributable to. |
+| `rally.request.id` | The desktop's `x-request-id`. |
+| `rally.analytics.person_id`, `rally.analytics.workspace_id` | What PostHog knows the same person and workspace as. See [Joining a system span to a product event](#joining-a-system-span-to-a-product-event). |
+| `rally.auth.duration_ms` | What authentication cost, which the flow's own duration excludes. |
+| `rally.socket.ticket_id`, `rally.socket.connection_id` | The two socket joins below. |
+| `rally.message.client_id` | The composer's client message id. |
+| `rally.harness_run.id`, `rally.agent.invoked` | What the write started. |
+| `rally.snapshot.bytes`, `rally.snapshot.message_count`, `rally.snapshot.trims` | What a subscription had to assemble. |
+| `rally.create.path`, `rally.create.receipt_state`, `rally.create.first_naming` | Which create this was. |
 
 `identityAttributes` in `tracing.ts` is the only place a Rally identifier
 becomes an attribute name. Add a name there rather than at a call site, so a
-rename happens once and a dashboard filtering on `avalon.workspace.id` never has
+rename happens once and a dashboard filtering on `rally.workspace.id` never has
 to know which component emitted the span.
 
 ### Joining a system span to a product event
 
-A span carries both identities: `user.id` and `avalon.workspace.id` are the
-product keys, and `avalon.analytics.person_id` and
-`avalon.analytics.workspace_id` are the surrogates PostHog is keyed on
+A span carries both identities: `user.id` and `rally.workspace.id` are the
+product keys, and `rally.analytics.person_id` and
+`rally.analytics.workspace_id` are the surrogates PostHog is keyed on
 (`users.analytics_person_id`, `workspaces.analytics_workspace_id`). Carrying
 both is the whole point — one lets an operator go from a slow trace to the
 person to talk to, the other lets them go from that trace to what the person was
@@ -204,8 +204,8 @@ authorization query already joins. They deliberately do **not** get the person
 surrogate: that would mean a Durable Object joining `users` on every socket
 frame, and no diagnostic is worth widening what a socket's authorization depends
 on. A socket trace is one hop from an HTTP trace that has it — through
-`avalon.socket.ticket_id`, `avalon.socket.connection_id`, or
-`avalon.message.client_id` — and it still carries the raw `user.id`, so the
+`rally.socket.ticket_id`, `rally.socket.connection_id`, or
+`rally.message.client_id` — and it still carries the raw `user.id`, so the
 "who do I talk to" question is answerable without the hop. Only the PostHog
 person join needs it.
 
@@ -229,10 +229,10 @@ would never meet.
 
 | Seam | The attribute that crosses it |
 | --- | --- |
-| Renderer → Worker, over HTTP | `avalon.request.id`, from the `x-request-id` the desktop mints per call and the Worker echoes. |
-| `GET …/socket` → the WebSocket upgrade → the room | `avalon.socket.ticket_id`. A browser can attach no header to a handshake — see [`realtime-sockets.md`](realtime-sockets.md) — so the ticket id, which the issuing route logs and the room consumes, is the only shared value. |
-| The room's upgrade → the `subscribe` that follows | `avalon.socket.connection_id`. `subscribe` arrives on a later invocation, possibly on a woken isolate. |
-| Renderer → workspace command socket → WorkspaceDO | `avalon.message.client_id`, which the renderer, the command, and the command result all carry. |
+| Renderer → Worker, over HTTP | `rally.request.id`, from the `x-request-id` the desktop mints per call and the Worker echoes. |
+| `GET …/socket` → the WebSocket upgrade → the room | `rally.socket.ticket_id`. A browser can attach no header to a handshake — see [`realtime-sockets.md`](realtime-sockets.md) — so the ticket id, which the issuing route logs and the room consumes, is the only shared value. |
+| The room's upgrade → the `subscribe` that follows | `rally.socket.connection_id`. `subscribe` arrives on a later invocation, possibly on a woken isolate. |
+| Renderer → workspace command socket → WorkspaceDO | `rally.message.client_id`, which the renderer, the command, and the command result all carry. |
 
 ### The three flows
 
@@ -245,7 +245,7 @@ the route already resolved the same row), `…receipt.reserve`, `…receipt.read
 `…workspace.directory_probe`, `…route.activate`, `…email_route.activate`,
 `…receipt.complete`. Inside `object.initialize` the room adds
 `workstream.room.initialize` and its children. A replayed create is labelled
-`avalon.create.path = replayed_receipt` so it does not sit in the same
+`rally.create.path = replayed_receipt` so it does not sit in the same
 distribution as a first one.
 
 **`workstream_open`** — four traces, joined by the attributes above: the
@@ -254,7 +254,7 @@ socket-ticket route (`workstream.socket.ticket`), the edge upgrade
 (`workstream.room.socket.accept`), and the room's subscription
 (`workstream.room.socket.subscribe`). When the subscription's plan is a
 snapshot, `workstream.room.snapshot.detail`, `…transcript`, and `…encode` sit
-inside it. `avalon.snapshot.trims` is worth reading beside the byte size: the
+inside it. `rally.snapshot.trims` is worth reading beside the byte size: the
 trim loop re-serializes the whole frame per dropped message, and that count is
 the only place its cost appears. `GET /:id` and `GET /:id/messages` carry the
 same flow, because a resync fetches canonical state over HTTP and is part of the
@@ -264,7 +264,7 @@ same wait.
 socket, so `workstream.message.send` on WorkspaceDO is the trace to read:
 `…authority_read`, `…session_auth`, `…object_write`, `…respond`, with the room's
 `workstream.room.create_message` nested under the write. `POST /:id/messages`
-traces the same flow for the HTTP path, distinguished by `avalon.transport`.
+traces the same flow for the HTTP path, distinguished by `rally.transport`.
 
 ### The desktop half
 
@@ -380,12 +380,12 @@ This module owns latency diagnosis for the three named flows and nothing else.
 - **`perf_flow` does not include authentication.** `requireAuth` is middleware
   and finishes before a route opens its span, so its cost sits inside
   `http_request` and outside the flow. The difference is carried explicitly as
-  `avalon.auth.duration_ms`, on the span and in the row, so the gap between the
+  `rally.auth.duration_ms`, on the span and in the row, so the gap between the
   two durations reads as a number rather than as a mystery.
 - **The session lookup is one uncached, blocking D1 round trip per
   authenticated request**, and there is no read replication on the `DB` binding.
   Whether that is a problem is now measurable rather than arguable: read
-  `avalon.auth.duration_ms`, and the platform's own `d1_first` span for the same
+  `rally.auth.duration_ms`, and the platform's own `d1_first` span for the same
   query carries `cloudflare.d1.response.sql_duration_ms` beside it, which
   separates the database's own time from the round trip to reach it. If it does
   turn out to matter, the lever is
@@ -451,10 +451,10 @@ go to Workers Logs. To investigate one slow interaction a person reported:
 1. Get an id from their client — the request id from a `[perf] http …` line, or
    the `traceId` / `ticketId` / `clientMessageId` from a `[perf] <flow>` line.
 2. In the trace destination, filter on the matching attribute:
-   `avalon.request.id`, `avalon.socket.ticket_id`, or
-   `avalon.message.client_id`. For a socket open, follow
-   `avalon.socket.ticket_id` into the room's acceptance, then
-   `avalon.socket.connection_id` into the subscription.
+   `rally.request.id`, `rally.socket.ticket_id`, or
+   `rally.message.client_id`. For a socket open, follow
+   `rally.socket.ticket_id` into the room's acceptance, then
+   `rally.socket.connection_id` into the subscription.
 3. In Workers Logs, `event = perf_flow` with the same `request_id` gives the
    same breakdown as one row, including `slowest_step`.
 
@@ -491,7 +491,7 @@ chosen casually.
 
 The other half is a correctness problem before it is a privacy one.
 
-Spans carry raw `user.id` and `avalon.workspace.id` — the same ids every other
+Spans carry raw `user.id` and `rally.workspace.id` — the same ids every other
 diagnostic in Workers Logs already carries. PostHog is keyed on neither.
 `users.analytics_person_id` and `workspaces.analytics_workspace_id` are random
 UUIDv7 surrogates, minted lazily by `ensurePersonAnalyticsId` and
@@ -523,6 +523,20 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-08-25 — Span attributes are namespaced rally.*
+
+**What changed:** Every product-owned span attribute moved from `avalon.` to
+`rally.` — `rally.workspace.id`, `rally.workstream.id`, `rally.request.id`,
+`rally.flow`, `rally.component`, and the rest.
+
+**Why:** The rename, and a split that had already opened: the renderer's
+`perf-trace` documented `rally.request.id` while the Worker emitted
+`avalon.request.id`, so a filter written from either side missed half the trace.
+One prefix is the point of the namespace. Saved queries filtering `avalon.*`
+stop matching; traces are short-lived, so this ages out rather than needing a
+backfill. A future change adding an attribute uses `rally.` — the namespace is
+what makes a dashboard filter work across components.
 
 ### 2026-08-21 — The renderer half can say whether it was waiting or busy
 
@@ -592,9 +606,9 @@ control twice; `sendSnapshot` gives `socketAuth` its own step; and the create
 service's `durableObjectStubForWorkspace` calls now surface as `unattributed`
 rather than inflating the step after them.
 
-Also in this pass: `avalon.snapshot.bytes` reports UTF-8 bytes rather than
+Also in this pass: `rally.snapshot.bytes` reports UTF-8 bytes rather than
 `String.length`, carried in a variable so the trim loop encodes once per
-iteration instead of twice; `step` repeats `avalon.flow` and `avalon.component`
+iteration instead of twice; `step` repeats `rally.flow` and `avalon.component`
 onto each child span, because OpenTelemetry does not inherit attributes and a
 step that lacks them cannot be grouped by its flow; the renderer's create trace
 reports `navigation_requested` rather than `navigated` and ends a superseded
@@ -632,16 +646,16 @@ recorded under **Failure modes and limits**.
 **Consequences:** A step's number is now its own, so `slowest_step` can be
 trusted — but a flow with unstepped awaits will show an `unattributed` entry,
 and that entry is a bug report about the instrumentation rather than a finding
-about the code. `avalon.snapshot.bytes` is not comparable across this change for
+about the code. `rally.snapshot.bytes` is not comparable across this change for
 non-ASCII transcripts; earlier values read low.
 
 Shipped in #203.
 
 ### 2026-08-20 — Spans carry the analytics surrogates, read on the auth query
 
-**What changed:** Traced requests now set `avalon.analytics.person_id` and
-`avalon.analytics.workspace_id` alongside the raw `user.id` and
-`avalon.workspace.id`. Both are read from the session query that already
+**What changed:** Traced requests now set `rally.analytics.person_id` and
+`rally.analytics.workspace_id` alongside the raw `user.id` and
+`rally.workspace.id`. Both are read from the session query that already
 authenticates an HTTP request; the two Durable Objects add only the workspace
 surrogate, from the `workspaces` row they already join.
 `IdentityAuthContext` carries both as optional fields.
@@ -677,7 +691,7 @@ than two attributes per span, and cheaper — but it reverses the decision
 the choice of which side carries the linkage, traces already carry raw ids and
 internal detail, and PostHog deliberately does not.
 
-**Also measured here:** authentication now records `avalon.auth.duration_ms`.
+**Also measured here:** authentication now records `rally.auth.duration_ms`.
 The session lookup is uncached and blocks every authenticated request, and it
 runs before any flow span opens — so it was both invisible in `perf_flow` and
 the reason `perf_flow` and `http_request` disagree. Whether it is expensive is

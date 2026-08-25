@@ -103,7 +103,7 @@ acceptance row ran against `7fbfa5ff-d4ec-4b55-89cf-d9763ce4a609`.
 
 | Surface | Result | Fresh evidence |
 | --- | --- | --- |
-| Failure protocol, discovery, and validation | PASS | Workstream `01a02ca6-5325-7345-b8f3-a434dd70e881`, run `01a02ca6-5aa0-7089-9e94-f7395676593e`. `public web social timeline` returned `plugin_x`, then `avalon_web`, with `totalMatches: 2`. Missing plugin, skill, and wake-up calls rendered failed rows with `success: false` and codes `plugin_not_available`, `skill_not_available`, and `wakeup_not_found`. Empty resource arguments rendered `kind: validation` with the exact missing-`resourceId` error and no false `Attachment content unverified` boundary. |
+| Failure protocol, discovery, and validation | PASS | Workstream `01a02ca6-5325-7345-b8f3-a434dd70e881`, run `01a02ca6-5aa0-7089-9e94-f7395676593e`. `public web social timeline` returned `plugin_x`, then `rally_web`, with `totalMatches: 2`. Missing plugin, skill, and wake-up calls rendered failed rows with `success: false` and codes `plugin_not_available`, `skill_not_available`, and `wakeup_not_found`. Empty resource arguments rendered `kind: validation` with the exact missing-`resourceId` error and no false `Attachment content unverified` boundary. |
 | HyperSight payload logging | PASS in Global | HyperSight request `01a02ca7-fcf6-7029-8bbd-16f04de60826` rendered `HYPERSIGHT_PR247_POSTDEPLOY_OK`. D1 row `80f51d15-c8a4-4dd2-98dc-b9041c780e01` recorded source `block_dashboard` and object key `agent-inference/019fc068-22e8-739a-8394-a760fdc7c376/2026-08-23/80f51d15-c8a4-4dd2-98dc-b9041c780e01.json`; the exact 44,510-byte R2 object existed and carried the same request identity. No payload contents were exposed. |
 | Stop receipt | PASS; linked-run lease defect found | Workstream `01a02ca6-9b16-761b-b61f-08f8f612d9ae`, initial run `01a02ca6-a2fa-781c-8ae5-d6f33348eb12`. Stop moved the sleeping command card from `started` to `ambiguous` and visibly stopped the parent. A deliberately different follow-up command in run `01a02ca9-7aac-700c-9027-65bf6e9d5cfe` returned conservative `command_outcome_unknown`; three later runs produced five `sandbox_busy` read failures from 03:29:10Z through 03:33:38Z. This is HQA-06 below. |
 | Accepted-command quiescence | PASS in Global after PR #251 | Private workstream `01a02dd3-7328-7a2e-b9d9-31b1a4b902bc`. Strict run `01a02dd4-6d36-7257-b21b-b78bcc9f0bb5` wrote its start marker at 08:54:57Z, entered a 120-second sleep, and invocation `01a02dd4-7feb-7ab7-ba87-84696df880c0` became `ambiguous` after member stop. Linked run `01a02dd5-4b96-7d63-8246-91564414489f` immediately read the start marker and received `not_found` for the late marker with zero `sandbox_busy`. Post-deadline run `01a02dd7-1395-7588-b14d-645b74db5a1a`, invocation `01a02dd7-2319-71a5-94a0-36a3a9c45997`, again received `not_found`; the command was never replayed. Trace-only run `01a02dda-092e-7c50-b45f-e1a326e0bae9` reconfirmed the missing marker against exact Worker version `7fbfa5ff-d4ec-4b55-89cf-d9763ce4a609`. |
@@ -124,9 +124,9 @@ for that run.
 
 | Plugin id | Display name | Production state | Live coverage |
 | --- | --- | --- | --- |
-| `avalon_terminal` | Terminal | available | Load, command, sleep, stop, recovery, sandbox persistence. |
-| `avalon_web` | Web | available | Search, fetch, invalid URL. |
-| `avalon_workstream` | Workstream | active | Resources, wake-ups, delegation-related surface. |
+| `rally_terminal` | Terminal | available | Load, command, sleep, stop, recovery, sandbox persistence. |
+| `rally_web` | Web | available | Search, fetch, invalid URL. |
+| `rally_workstream` | Workstream | active | Resources, wake-ups, delegation-related surface. |
 | `plugin_github` | GitHub | available | Tool discovery, repository list, missing contents. |
 | `plugin_linear` | Linear | available | Team list, missing issue. |
 | `plugin_google` | Google Mail + Calendar | available | Gmail profile, missing message. |

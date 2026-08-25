@@ -351,9 +351,9 @@ export function createDaytonaTerminalProvider(
           domainAllowList: domains,
           envVars: input.environment,
           labels: {
-            "avalon.workspace": input.workspaceId,
-            "avalon.workstream": input.workstreamId,
-            "avalon.generation": String(input.generation),
+            "rally.workspace": input.workspaceId,
+            "rally.workstream": input.workstreamId,
+            "rally.generation": String(input.generation),
           },
         }, { timeout: 60 });
         createFinishedAt = now();
@@ -619,7 +619,7 @@ export function createDaytonaTerminalProvider(
           cancelled = true;
           throw new Error("Terminal command cancelled");
         }
-        const command = `(cd -- ${shellQuote(input.cwd)} || exit $?; if [ -f /workspace/.avalon/session.env ]; then . /workspace/.avalon/session.env || exit $?; fi; timeout --signal=TERM --kill-after=5s ${timeoutSeconds}s bash -lc ${shellQuote(input.command)}; avalon_status=$?; if [ "$avalon_status" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n' >&2; fi; exit "$avalon_status")`;
+        const command = `(cd -- ${shellQuote(input.cwd)} || exit $?; if [ -f /workspace/.rally/session.env ]; then . /workspace/.rally/session.env || exit $?; fi; timeout --signal=TERM --kill-after=5s ${timeoutSeconds}s bash -lc ${shellQuote(input.command)}; rally_status=$?; if [ "$rally_status" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n' >&2; fi; exit "$rally_status")`;
         const supportsObservation = Boolean(
           sandbox.process.getSession
           && sandbox.process.getSessionCommand
@@ -786,7 +786,7 @@ export function createDaytonaTerminalProvider(
       let publisher: DaytonaSandboxLike | null = null;
       try {
         publisher = await client.create({
-          name: `avalon-publisher-${operationKey}`.slice(0, 100),
+          name: `rally-publisher-${operationKey}`.slice(0, 100),
           language: "typescript",
           snapshot: configuration.snapshot,
           public: false,
@@ -797,7 +797,7 @@ export function createDaytonaTerminalProvider(
           ttlMinutes: 30,
           domainAllowList: "github.com",
           secrets: { GITHUB_WRITE_BASIC: secret.name },
-          labels: { "avalon.publisher": input.operationId },
+          labels: { "rally.publisher": input.operationId },
         }, { timeout: 60 });
         if (!publisher.fs || !publisher.process) throw new Error("The Daytona publisher sandbox is missing required services");
         await publisher.fs.uploadFile(Buffer.from(input.bundle), "/workspace/publication.bundle", 120);
@@ -805,7 +805,7 @@ export function createDaytonaTerminalProvider(
         const expectedOld = input.expectedOldSha ?? "";
         const command = [
           "set -euo pipefail",
-          "export GIT_CONFIG_NOSYSTEM=1 HOME=/tmp/avalon-publisher-home",
+          "export GIT_CONFIG_NOSYSTEM=1 HOME=/tmp/rally-publisher-home",
           ...terminalGitCaSetupCommands({ required: true }),
           'mkdir -p "$HOME"',
           "git init --bare /workspace/repository.git >/dev/null",
@@ -821,7 +821,7 @@ export function createDaytonaTerminalProvider(
           `test "$(git -C /workspace/repository.git ls-remote origin ${shellQuote(`refs/heads/${input.headRef}`)} | cut -f1)" = ${shellQuote(input.headSha)}`,
           "printf 'published\\n'",
         ].join("\n");
-        const sessionId = `avalon-publisher-${operationKey}`;
+        const sessionId = `rally-publisher-${operationKey}`;
         await publisher.process.createSession(sessionId);
         let result;
         try {

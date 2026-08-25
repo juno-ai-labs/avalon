@@ -1844,7 +1844,7 @@ export const TELEMETRY_ENVELOPE_SCHEMA = "com.rally.telemetry.event";
 
 /** Superseded identifiers still accepted inbound, never emitted. */
 export const SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS = [
-  "com.avalon.telemetry.event",
+  "com.rally.telemetry.event",
 ] as const;
 
 const envelopeCommon = {

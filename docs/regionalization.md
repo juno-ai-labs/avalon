@@ -359,7 +359,7 @@ commitments, and establishing contractual processing terms.
 Workers Analytics Engine is also an account-level observability service for
 which this repository configures no regional jurisdiction. Both API Workers
 write root-run summaries to `avalon_agent_runs` and content-free Daytona phase
-measurements to `avalon_terminal_operations`. To keep that additional boundary
+measurements to `rally_terminal_operations`. To keep that additional boundary
 operational-only, datapoints contain operational enums, region, configured
 snapshot/model/release metadata, and numeric totals but no workspace,
 work-stream, run, user, provider-sandbox, prompt, transcript, tool payload,
@@ -682,7 +682,7 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 **What changed:** Both regional Workers now write provider create, managed-image
 bootstrap, verification, and lifecycle-start phase measurements to the shared
-`avalon_terminal_operations` Analytics Engine dataset. The sampling cohort is
+`rally_terminal_operations` Analytics Engine dataset. The sampling cohort is
 the fixed Terminal source plus region, while configured snapshot remains a
 groupable blob; no tenant or operation identifier is stored.
 

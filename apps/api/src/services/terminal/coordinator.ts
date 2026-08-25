@@ -589,7 +589,7 @@ export class TerminalSandboxCoordinator {
         workstreamId: context.workstreamId,
         generation: row.generation,
         domainAllowList: domains,
-        environment: { AVALON_RESOURCE_DIR: "/workspace/.avalon-output" },
+        environment: { AVALON_RESOURCE_DIR: "/workspace/.rally-output" },
       });
     } catch {
       try {

@@ -15,7 +15,7 @@ import {
 const WEB_BASE = { webBaseUrl: "https://rallywith.ai" };
 
 const event: TelemetryEnvelope = {
-  schema: "com.avalon.telemetry.event",
+  schema: "com.rally.telemetry.event",
   schemaVersion: 1,
   eventId: "018f22f2-4c22-7abc-8def-0123456789ab",
   name: "workspace_create_completed",
@@ -86,7 +86,7 @@ describe("PostHog adapter", () => {
         $process_person_profile: true,
         $groups: { workspace: crash.workspaceAnalyticsId },
         $app_name: "Avalon",
-        $app_namespace: "app.avalon.desktop",
+        $app_namespace: "app.rally.desktop",
         $app_version: crash.release,
         $app_build: crash.buildId,
         $device_type: "Desktop",
@@ -94,7 +94,7 @@ describe("PostHog adapter", () => {
         $is_identified: true,
         $os_name: "macOS",
         $exception_fingerprint: crash.fingerprint,
-        $exception_source: "avalon_native",
+        $exception_source: "rally_native",
         $session_id: crash.launchId,
         launch_id: crash.launchId,
         channel: "stable",
@@ -151,11 +151,11 @@ describe("PostHog adapter", () => {
       row().analyticsSubjectId,
       expect.objectContaining({
         $app_name: "Avalon",
-        $app_namespace: "app.avalon.desktop",
+        $app_namespace: "app.rally.desktop",
         $app_version: exceptionEnvelope.context.release,
         $app_build: exceptionEnvelope.context.buildId,
         $device_type: "Desktop",
-        avalon_event_name: "javascript_exception",
+        rally_event_name: "javascript_exception",
         $exception_fingerprint: "b".repeat(64),
         $session_id: exceptionEnvelope.context.launchId,
         launch_id: exceptionEnvelope.context.launchId,
@@ -210,7 +210,7 @@ describe("PostHog adapter", () => {
         $process_person_profile: true,
         $is_identified: true,
         $set_once: { first_avalon_release: "0.24.0" },
-        avalon_event_name: "workspace_create_completed",
+        rally_event_name: "workspace_create_completed",
         schema_version: 1,
         source: "api",
         category: "product",
@@ -246,7 +246,7 @@ describe("PostHog adapter", () => {
 
     expect(mapPostHogCapture(row({ envelope: workstreamEnvelope }), WEB_BASE).properties).toMatchObject({
       $is_server: true,
-      avalon_event_name: "workstream_created",
+      rally_event_name: "workstream_created",
       creationSource: "suggested_work",
       connectorType: "multiple",
       connectorTypes: ["linear", "slack"],
@@ -275,13 +275,13 @@ describe("PostHog adapter", () => {
 
     expect(mapPostHogCapture(row({ envelope: settingsEnvelope }), WEB_BASE).properties).toMatchObject({
       $set: {
-        avalon_launch_at_login_enabled: true,
-        avalon_launch_at_login_available: true,
-        avalon_lockdown_mode_enabled: false,
-        avalon_lockdown_mode_available: true,
-        avalon_application_icon: "ruby",
-        avalon_application_icon_automatic: false,
-        avalon_application_icon_available: true,
+        rally_launch_at_login_enabled: true,
+        rally_launch_at_login_available: true,
+        rally_lockdown_mode_enabled: false,
+        rally_lockdown_mode_available: true,
+        rally_application_icon: "ruby",
+        rally_application_icon_automatic: false,
+        rally_application_icon_available: true,
       },
     });
   });
@@ -295,7 +295,7 @@ describe("PostHog adapter", () => {
         requestedEnabled: true,
         appliedEnabled: false,
       },
-      { avalon_launch_at_login_enabled: false },
+      { rally_launch_at_login_enabled: false },
     ],
     [
       "application_setting_change_completed",
@@ -305,7 +305,7 @@ describe("PostHog adapter", () => {
         requestedEnabled: true,
         appliedEnabled: true,
       },
-      { avalon_lockdown_mode_enabled: true },
+      { rally_lockdown_mode_enabled: true },
     ],
     [
       "application_icon_changed",
@@ -316,8 +316,8 @@ describe("PostHog adapter", () => {
         automatic: false,
       },
       {
-        avalon_application_icon: "holographic",
-        avalon_application_icon_automatic: false,
+        rally_application_icon: "holographic",
+        rally_application_icon_automatic: false,
       },
     ],
   ] as const)("updates the relevant person property for %s", (name, properties, expectedSet) => {
@@ -364,11 +364,11 @@ describe("PostHog adapter", () => {
     expect(mapPostHogCapture(row({ envelope: screenEnvelope }), WEB_BASE)).toMatchObject({
       event: "$screen",
       properties: {
-        avalon_event_name: "screen_viewed",
+        rally_event_name: "screen_viewed",
         $screen_name: "workspace_home",
         screen: "workspace_home",
         $app_name: "Avalon",
-        $app_namespace: "app.avalon.desktop",
+        $app_namespace: "app.rally.desktop",
         $app_version: "0.24.0",
         $app_build: "build-0123456789",
         $device_type: "Desktop",
@@ -406,7 +406,7 @@ describe("PostHog adapter", () => {
 
     expect(capture).toMatchObject({
       event: "$screen",
-      properties: { $screen_name: "note_detail", avalon_event_name: "surface_viewed" },
+      properties: { $screen_name: "note_detail", rally_event_name: "surface_viewed" },
     });
   });
 
@@ -489,7 +489,7 @@ describe("PostHog adapter", () => {
     expect(mapPostHogCapture(row({ envelope: versionEnvelope }), WEB_BASE)).toMatchObject({
       event: destinationEvent,
       properties: {
-        avalon_event_name: "application_version_changed",
+        rally_event_name: "application_version_changed",
         $device_id: "018f22f2-4c22-7abc-8def-0123456789a4",
         $is_identified: false,
         ...destinationProperties,
@@ -515,7 +515,7 @@ describe("PostHog adapter", () => {
     expect(mapPostHogCapture(row({ envelope: openedEnvelope }), WEB_BASE)).toMatchObject({
       event: "Application Opened",
       properties: {
-        avalon_event_name: "application_opened",
+        rally_event_name: "application_opened",
         application_open_source: entrypoint,
         from_background: fromBackground,
         ...(phase === "cold_start" ? { version: "0.24.0", build: "build-0123456789" } : {}),
@@ -550,7 +550,7 @@ describe("PostHog adapter", () => {
     const capture = mapPostHogCapture(row({ envelope: lifecycleEnvelope }), WEB_BASE);
     expect(capture.event).toBe(destinationEvent);
     expect(capture.properties).toMatchObject({
-      avalon_event_name: "application_lifecycle",
+      rally_event_name: "application_lifecycle",
       state,
       $app_version: "0.24.0",
       $app_build: "build-0123456789",
@@ -602,7 +602,7 @@ describe("PostHog adapter", () => {
         workstreamId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d3",
         harnessRunId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d4",
         toolName: "search_messages",
-        pluginId: "avalon.workstream",
+        pluginId: "rally.workstream",
         capability: "workstream.search",
         mode: "read",
         runKind: "system",

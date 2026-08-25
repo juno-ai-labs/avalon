@@ -154,7 +154,7 @@ Two non-negotiables when you resolve names:
 
 If a tool needs ids, types, or valid values, ship something that returns them.
 The run already has plugin-level discovery — `list_plugins`, `search_plugins`,
-and `load_plugin` on the always-active `avalon_discovery` plugin — and the same
+and `load_plugin` on the always-active `rally_discovery` plugin — and the same
 logic applies one level down: a `describe_*`-style read that returns a
 resource's fields, types, and valid enum values in one call is a far better
 instruction than "you must already know the column ids". Reserve it for shapes
@@ -414,7 +414,7 @@ that remediation.
 
 ## Terminal tool contract registry
 
-The deferred `avalon:terminal` plugin is the concrete file/command family that
+The deferred `rally:terminal` plugin is the concrete file/command family that
 follows these rules. All nine tools are exposed together after plugin load and
 execute serially against one authority-fenced work-stream workspace. Model-facing
 names are prefixed by Bind as `terminal_<name>`. The runtime retains internal

@@ -28,8 +28,8 @@ describe("Terminal plugin contract", () => {
     const plugin = createTerminalPlugin(executors);
 
     expect(plugin).toMatchObject({
-      canonicalId: "avalon:terminal",
-      modelId: "avalon_terminal",
+      canonicalId: "rally:terminal",
+      modelId: "rally_terminal",
       shortWireName: "terminal",
       displayName: "Terminal",
       preload: false,

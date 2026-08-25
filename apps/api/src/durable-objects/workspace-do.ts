@@ -3148,7 +3148,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ): Promise<void> {
     // A command arrives over an already-open socket, which the platform traces
     // as its own invocation with no relationship to the HTTP request the
-    // desktop made to open it. `avalon.message.client_id` is what joins this
+    // desktop made to open it. `rally.message.client_id` is what joins this
     // trace to the composer that sent it: the desktop prints the same id, and
     // the command result comes back keyed by it.
     return inFlowSpan(this.env, "workstream.message.send", {
@@ -3161,9 +3161,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         substreamId: command.substreamId,
       },
       attributes: {
-        "avalon.transport": "workspace_socket",
-        "avalon.message.client_id": command.payload.clientMessageId,
-        "avalon.message.attachment_count": command.payload.attachmentIds?.length ?? 0,
+        "rally.transport": "workspace_socket",
+        "rally.message.client_id": command.payload.clientMessageId,
+        "rally.message.attachment_count": command.payload.attachmentIds?.length ?? 0,
       },
     }, async (span) => {
       try {
@@ -3197,8 +3197,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           telemetryOperationId: command.operationId,
         }));
         span.setAttributes({
-          "avalon.agent.invoked": result.agentInvoked,
-          "avalon.harness_run.id": result.harnessRunId,
+          "rally.agent.invoked": result.agentInvoked,
+          "rally.harness_run.id": result.harnessRunId,
         });
         socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
           type: "client_command_succeeded",

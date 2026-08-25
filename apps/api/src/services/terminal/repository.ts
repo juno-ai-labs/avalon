@@ -234,11 +234,11 @@ export async function bootstrapTerminalRepository(
   const command = [
     "set -euo pipefail",
     "mkdir -p /workspace/.avalon",
-    `printf '%s\\n' ${sessionExports} > /workspace/.avalon/session.env`,
-    "chmod 600 /workspace/.avalon/session.env",
+    `printf '%s\\n' ${sessionExports} > /workspace/.rally/session.env`,
+    "chmod 600 /workspace/.rally/session.env",
     ...terminalGitCaSetupCommands({
       required: false,
-      sessionEnvPath: "/workspace/.avalon/session.env",
+      sessionEnvPath: "/workspace/.rally/session.env",
     }),
     "if [ ! -d /workspace/.git ]; then",
     "  rm -rf -- /workspace/repository.tmp",
@@ -271,7 +271,7 @@ export async function bootstrapTerminalRepository(
     `if git show-ref --verify --quiet ${shellQuote(`refs/remotes/origin/${selection.headRef}`)}; then`,
     `  git branch --set-upstream-to=${shellQuote(`origin/${selection.headRef}`)} ${shellQuote(selection.headRef)}`,
     "fi",
-    "grep -qxF '.avalon/' .git/info/exclude || printf '.avalon/\\n' >> .git/info/exclude",
+    "grep -qxF '.rally/' .git/info/exclude || printf '.rally/\\n' >> .git/info/exclude",
   ].join("\n");
   const result = await provider.runCommand(sandbox.providerSandboxId, {
     taskName: `avalon-bootstrap-${sandbox.generation}`,
@@ -485,12 +485,12 @@ export function createTerminalRepositoryPublisher(
       if (paths.some((path) => path === ".github/workflows" || path.startsWith(".github/workflows/"))) {
         throw new TerminalToolError("publication_policy_denied", "Terminal cannot publish GitHub Actions workflow changes. Remove `.github/workflows/` changes and ask a coding workflow with elevated review to publish them.");
       }
-      const bundlePath = `/workspace/.avalon/publications/${effectIntentId}.bundle`;
+      const bundlePath = `/workspace/.rally/publications/${effectIntentId}.bundle`;
       const bundle = await runInspection(
         provider,
         sandbox.providerSandboxId,
         "bundle",
-        `mkdir -p /workspace/.avalon/publications && git bundle create ${shellQuote(bundlePath)} ${shellQuote(`refs/heads/${selection.headRef}`)} && stat -c %s -- ${shellQuote(bundlePath)}`,
+        `mkdir -p /workspace/.rally/publications && git bundle create ${shellQuote(bundlePath)} ${shellQuote(`refs/heads/${selection.headRef}`)} && stat -c %s -- ${shellQuote(bundlePath)}`,
       );
       if (bundle.exitCode !== 0) throw new TerminalToolError("publication_conflict", "Git could not create the bounded publication bundle. Verify the branch ref and retry.", { reason: "Verify the fixed branch ref and committed objects before retrying." });
       const bundleSize = Number(bundle.stdout.trim());

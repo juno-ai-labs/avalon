@@ -38,7 +38,7 @@ describe('native crash symbolicator', () => {
           input: options?.stdin ? await new Response(options.stdin).text() : null,
           user: options?.user,
         });
-        return command[0] === '/usr/local/bin/avalon-symbolicate'
+        return command[0] === '/usr/local/bin/rally-symbolicate'
           ? processResult('{"status":"ok","threads":[]}')
           : processResult('');
       }),
@@ -75,7 +75,7 @@ describe('native crash symbolicator', () => {
         user: 'processor',
       },
       {
-        command: ['/usr/local/bin/avalon-symbolicate', '/workspace/input.dmp', '/workspace/symbols'],
+        command: ['/usr/local/bin/rally-symbolicate', '/workspace/input.dmp', '/workspace/symbols'],
         input: null,
         user: 'processor',
       },
@@ -94,7 +94,7 @@ describe('native crash symbolicator', () => {
       start: vi.fn(async () => undefined),
       exec: vi.fn(async (command) => {
         commands.push(command);
-        return command[0] === '/usr/local/bin/avalon-symbolicate'
+        return command[0] === '/usr/local/bin/rally-symbolicate'
           ? processResult('not-json')
           : processResult('');
       }),
@@ -123,7 +123,7 @@ describe('native crash symbolicator', () => {
     const executor: CrashSymbolicatorExecutor = {
       running: true,
       start: vi.fn(async () => undefined),
-      exec: vi.fn(async (command) => command[0] === '/usr/local/bin/avalon-symbolicate'
+      exec: vi.fn(async (command) => command[0] === '/usr/local/bin/rally-symbolicate'
         ? processResult(outputs.shift() ?? '')
         : processResult('')),
     };
@@ -171,7 +171,7 @@ describe('native crash symbolicator', () => {
     const executor: CrashSymbolicatorExecutor = {
       running: true,
       start: vi.fn(async () => undefined),
-      exec: vi.fn(async (command) => command[0] === '/usr/local/bin/avalon-symbolicate'
+      exec: vi.fn(async (command) => command[0] === '/usr/local/bin/rally-symbolicate'
         ? processResult(tooLarge)
         : processResult('')),
     };

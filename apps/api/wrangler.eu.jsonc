@@ -125,7 +125,7 @@
   ],
   "analytics_engine_datasets": [
     { "binding": "RUN_ANALYTICS", "dataset": "avalon_agent_runs" },
-    { "binding": "TERMINAL_ANALYTICS", "dataset": "avalon_terminal_operations" }
+    { "binding": "TERMINAL_ANALYTICS", "dataset": "rally_terminal_operations" }
   ],
   "images": { "binding": "IMAGES" },
   "containers": [

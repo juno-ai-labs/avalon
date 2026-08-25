@@ -224,7 +224,7 @@ describe("skills in a run", () => {
     const owned: HarnessSkill = {
       ...triage,
       name: "drafting-with-web",
-      ownerPlugin: "avalon:web",
+      ownerPlugin: "rally:web",
     };
     const responses = [
       toolCallResponse("load_skill", { name: owned.name }),
@@ -299,7 +299,7 @@ describe("skills in a run", () => {
   });
 
   it("does not offer a skill whose owner plugin is outside the run's scope", async () => {
-    const owned: HarnessSkill = { ...triage, name: "drafting-with-web", ownerPlugin: "avalon:web" };
+    const owned: HarnessSkill = { ...triage, name: "drafting-with-web", ownerPlugin: "rally:web" };
     const bodies: Array<Record<string, unknown>> = [];
     const responses = [
       toolCallResponse("load_skill", { name: owned.name }),
@@ -310,7 +310,7 @@ describe("skills in a run", () => {
       return responses.shift()!;
     }) as typeof fetch;
 
-    // No `plugins`, so `avalon:web` is not in the frozen scope.
+    // No `plugins`, so `rally:web` is not in the frozen scope.
     await runHarness({ ...runInput(fetcher), skills: [owned, triage] });
 
     const first = systemPrompt(bodies[0]!);
@@ -431,8 +431,8 @@ describe("skills in a run", () => {
 
 function webPlugin(): HarnessPlugin {
   return {
-    canonicalId: "avalon:web",
-    modelId: "avalon_web",
+    canonicalId: "rally:web",
+    modelId: "rally_web",
     shortWireName: "web",
     description: "Search and read current public-web sources.",
     preload: false,
