@@ -9,8 +9,8 @@ export const WORKSTREAM_ADDRESS_GENERATION_VERSION = "v1";
  * domain does not move the addresses already issued — and those are printed in
  * mail clients, saved in contacts, and forwarded to by rules nobody here can
  * see. The rename is therefore forward-only: new addresses are minted on
- * `automation.rallywith.ai`, and mail to the old domain keeps routing on the
- * strength of its local part, which is what the routing table is keyed by.
+ * `automation.rallywith.ai`, while the Global registry retains the exact old
+ * full addresses for inbound lookup.
  *
  * A legacy domain leaves this list only when inbound mail to it has stopped.
  */
@@ -723,7 +723,7 @@ function validateInput(input: AllocateWorkstreamEmailAddressCandidateInput): num
 
 /**
  * Generates one deterministic candidate. The caller must reserve the returned
- * local part atomically and retry with the next attempt after a collision.
+ * full address atomically and retry with the next attempt after a collision.
  */
 export async function allocateWorkstreamEmailAddressCandidate(
   input: AllocateWorkstreamEmailAddressCandidateInput
