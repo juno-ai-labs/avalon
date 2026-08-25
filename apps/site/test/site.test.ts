@@ -498,6 +498,26 @@ describe('public Rally site', () => {
     }
   });
 
+  it('uses help@rallywith.ai as the only role-based public contact', () => {
+    const contactPages = [
+      'terms/index.html',
+      'privacy/index.html',
+      'acceptable-use/index.html',
+      'dpa/index.html',
+      'subprocessors/index.html',
+      'cookies/index.html',
+      'security/index.html',
+      'support/index.html',
+    ];
+
+    for (const path of contactPages) {
+      const page = readProjectFile(path);
+      expect(page, path).toContain('help@rallywith.ai');
+      expect(page, path).not.toContain('support@rallywith.ai');
+      expect(page, path).not.toContain('privacy@rallywith.ai');
+    }
+  });
+
   it('routes site telemetry before choosing whether an anonymous browser identifier may persist', () => {
     const telemetry = readProjectFile('src/telemetry.ts');
     const headers = readProjectFile('public/_headers');
