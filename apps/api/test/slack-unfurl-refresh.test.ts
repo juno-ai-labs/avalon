@@ -123,7 +123,7 @@ describe("Slack work-stream unfurl refresh", () => {
     await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     const body = unfurlBody(calls);
-    expect(body).toContain("*Avalon*");
+    expect(body).toContain("*Rally*");
     expect(body).not.toContain("Quarterly planning");
     expect(body).not.toContain("Completed");
   });
@@ -253,7 +253,7 @@ describe("Slack work-stream unfurl refresh", () => {
     await refreshSlackWorkstreamUnfurls(environment(database), workspaceId);
 
     const body = unfurlBody(calls);
-    expect(body).toContain("*Avalon*");
+    expect(body).toContain("*Rally*");
     expect(body).not.toContain("Quarterly planning");
     expect(renderedAnonymous(database)).toBe(1);
   });
@@ -468,7 +468,7 @@ function rowCount(database: DatabaseSync): number {
   ).get() as { count: number }).count);
 }
 
-/** A second Avalon workspace with its own Slack installation and work stream. */
+/** A second Rally workspace with its own Slack installation and work stream. */
 async function addQuietWorkspace(database: DatabaseSync): Promise<{
   connectionId: string;
   workspaceId: string;
