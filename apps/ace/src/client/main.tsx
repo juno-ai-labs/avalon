@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ProductFeatureFlagKey } from '@rally/contracts';
 import type { AceCondition } from '../protocol';
@@ -174,10 +174,11 @@ function ConditionEditor({ condition, depth, onChange, onRemove }: {
   </div>;
 }
 
-function RuleEditor({ rule, index, dragging, onChange, onRemove, onDragStart, onDragEnd, onDragOver, onDrop }: {
+function RuleEditor({ rule, index, dragging, onChange, onRemove, onDragStart, onDragEnd, onDragOver, onDrop, onKeyDown, handleRef }: {
   rule: Rule; index: number; dragging: boolean; onChange: (rule: Rule) => void; onRemove: () => void;
   onDragStart: () => void; onDragEnd: () => void;
   onDragOver: (event: React.DragEvent) => void; onDrop: (event: React.DragEvent) => void;
+  onKeyDown: (event: React.KeyboardEvent) => void; handleRef: (element: HTMLButtonElement | null) => void;
 }): React.JSX.Element {
   const rootCondition: AceCondition = rule.conditions.length === 1 && isGroup(rule.conditions[0]!)
     ? rule.conditions[0]!
@@ -191,7 +192,7 @@ function RuleEditor({ rule, index, dragging, onChange, onRemove, onDragStart, on
   return (
     <Panel className={`rule-card${dragging ? ' dragging' : ''}`} onDragOver={onDragOver} onDrop={onDrop}>
       <header>
-        <span aria-label={`Reorder rule ${index + 1}`} className="rule-handle" draggable onDragEnd={onDragEnd} onDragStart={onDragStart} role="button">⠿</span>
+        <button aria-keyshortcuts="ArrowUp ArrowDown" aria-label={`Reorder rule ${index + 1}`} className="rule-handle" draggable onDragEnd={onDragEnd} onDragStart={onDragStart} onKeyDown={onKeyDown} ref={handleRef} type="button">⠿</button>
         <span className="rule-number">{index + 1}</span><strong>Target rule</strong><Button variant="quiet" onClick={onRemove} type="button">Remove rule</Button>
       </header>
       <ConditionEditor condition={rootCondition} depth={1} onChange={setRootCondition} />
@@ -208,6 +209,20 @@ function App(): React.JSX.Element {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
   const [draggedRuleIndex, setDraggedRuleIndex] = useState<number | null>(null);
+  const [reorderAnnouncement, setReorderAnnouncement] = useState('');
+  const [focusRuleIndex, setFocusRuleIndex] = useState<number | null>(null);
+  const ruleHandleRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  // Rule cards are keyed by array position, not a stable rule identity, so a
+  // keyboard-driven move reorders the data but leaves focus sitting on the
+  // position it started at — now showing a different rule. Without this, a
+  // second arrow-key press would silently move whatever landed there instead
+  // of the rule the operator is actually moving.
+  useEffect(() => {
+    if (focusRuleIndex === null) return;
+    ruleHandleRefs.current[focusRuleIndex]?.focus();
+    setFocusRuleIndex(null);
+  }, [focusRuleIndex]);
 
   useEffect(() => {
     void Promise.all([
@@ -229,6 +244,14 @@ function App(): React.JSX.Element {
   const selected = flags.find((flag) => flag.key === selectedKey) ?? emptyFlag(selectedKey);
   const definition = MANAGED_FLAGS.find((flag) => flag.key === selectedKey)!;
   const updateSelected = (patch: Partial<Flag>): void => setFlags((current) => current.map((flag) => flag.key === selectedKey ? { ...flag, ...patch } : flag));
+  const moveRuleBy = (index: number, delta: number): void => {
+    const rules = selected.rules ?? [];
+    const target = index + delta;
+    if (target < 0 || target >= rules.length) return;
+    updateSelected({ rules: reorderRules(rules, index, target) });
+    setReorderAnnouncement(`Moved rule to position ${target + 1} of ${rules.length}.`);
+    setFocusRuleIndex(target);
+  };
   const dirtyPayload = useMemo(() => ({
     key: selected.key,
     description: selected.description ?? definition.description,
@@ -266,8 +289,10 @@ function App(): React.JSX.Element {
     <main className="flag-editor"><header className="editor-header"><div><p>Feature flag</p><h2>{definition.label}</h2><code>{selected.key}</code></div><Button variant="primary" disabled={saving || flagshipConnected !== true} onClick={() => void save()} type="button">{saving ? 'Saving…' : 'Save changes'}</Button></header>
       <section className="default-section"><div><h3>Default</h3><p>The value for anyone who does not match a targeting rule.</p></div><div className="flag-controls"><Field label="Flag status"><SegmentedControl onChange={(value) => updateSelected({ enabled: value === 'enabled' })} options={['enabled', 'paused'] as const} value={selected.enabled === false ? 'paused' : 'enabled'} /></Field><Field label="Default value"><SegmentedControl large onChange={(value) => updateSelected({ default_variation: value })} options={['off', 'on'] as const} value={selected.default_variation ?? definition.defaultVariation} /></Field></div></section>
       <section className="targeting"><div className="section-title"><div><h3>Targeting rules</h3><p>Rules run from top to bottom. The first match wins. Nest AND/OR groups for precise audiences.</p></div><button className="add" onClick={() => updateSelected({ rules: [...(selected.rules ?? []), { priority: (selected.rules ?? []).length + 1, conditions: [newSimpleCondition()], serve_variation: 'on', rollout: { percentage: 100, attribute: 'userPlatformId' } }] })} type="button">＋ Add rule</button></div>
+        <span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>
         <div className="rule-stack">{(selected.rules ?? []).map((rule, index) => <RuleEditor
           dragging={draggedRuleIndex === index}
+          handleRef={(element) => { ruleHandleRefs.current[index] = element; }}
           index={index}
           key={index}
           onChange={(next) => updateSelected({ rules: (selected.rules ?? []).map((candidate, candidateIndex) => candidateIndex === index ? next : candidate) })}
@@ -279,6 +304,11 @@ function App(): React.JSX.Element {
             if (draggedRuleIndex !== null && draggedRuleIndex !== index) {
               updateSelected({ rules: reorderRules(selected.rules ?? [], draggedRuleIndex, index) });
             }
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+            event.preventDefault();
+            moveRuleBy(index, event.key === 'ArrowUp' ? -1 : 1);
           }}
           onRemove={() => updateSelected({ rules: (selected.rules ?? []).filter((_, candidateIndex) => candidateIndex !== index) })}
           rule={rule}
