@@ -292,6 +292,15 @@ what "Avalon itself sends"; `prompts/workstream.ts` (6) carries the Slack
 authority and automation-delivery bullets. `bind-runtime.ts` tells the model
 that a section is "Avalon-generated live state".
 
+**Plugin system messages.** `TERMINAL_PLUGIN_SYSTEM_MESSAGE` in
+`apps/api/src/services/terminal/contract.ts` is concatenated into the prompt at
+`terminal/plugin.ts` and tells the model that "Avalon creates or restores
+`$AVALON_GIT_BRANCH`" and "Avalon creates a durable recovery backup"; a terminal
+tool description repeats "Avalon backs up recoverable workspace state". These
+sit beside `$AVALON_*` variable names that are section 4 and stay — so the
+sentence moves and the variable it names does not, which is the one place in
+this section where the two halves of a line have different answers.
+
 **Injected context headers**, which the model reads verbatim:
 `SCHEDULED DIGEST BRIEF FROM AVALON`, `USER-SELECTED AVALON SUGGESTED-WORK
 BRIEF`, and `The person responded to Avalon's blocking question.`
@@ -337,6 +346,23 @@ It belongs to section 1, not here.
   which is not the same as the order the work should happen in.
 
 ## Changelog
+
+### 2026-08-25 — Section 9 gains the plugin system messages it missed
+
+A review of #294 flagged the Avalon prose in `terminal/contract.ts` as a stale
+code comment. It is not a comment: it is `TERMINAL_PLUGIN_SYSTEM_MESSAGE`,
+concatenated into the model's prompt by `terminal/plugin.ts`. Section 9 had
+missed it because the audit behind that section searched the harness prompt
+modules, `integrations.ts`, `meeting-notes-service.ts`, and the connectors, and
+a plugin's system message lives in neither the prompt directory nor the plugin
+file that assembles it.
+
+Recorded as a correction rather than a quiet edit, because the near-miss
+generalizes: a prompt is not identifiable by where it lives, only by whether
+something concatenates it into a model request. Any later pass over this
+section should enumerate the *assembly* sites — what feeds `systemMessage`,
+`description`, and the plugin builders — rather than a list of likely
+directories, which is what missed this one.
 
 ### 2026-08-25 — The telemetry envelope identifier is ai.rallywith, and a collapsed supersede list
 
