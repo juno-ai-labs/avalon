@@ -11,7 +11,7 @@ part that decides the order of work — what each reference is coupled to. As
 each category is worked, its section records what moved, what deliberately did
 not, and what a consumer outside this repository still has to do.
 
-Sections 3, 5, 6, and 7 are **done**; sections 1, 4, 8, and 9 are outstanding;
+Sections 3, 5, 6, 7, and 9 are **done**; sections 1, 4, and 8 are outstanding;
 section 2 is closed as out of scope.
 
 **The Cloudflare infrastructure does not get renamed.** Every `avalon-*` Worker,
@@ -285,78 +285,83 @@ other role aliases are not published as parallel external contact paths.
   which are internal to the test that mints them and coupled to nothing.
 - **`.github`** (14) and **`.agents`** (8).
 
-### 9. The agent loop's prompt surface — outstanding, and the most visible left
+### 9. The agent loop's prompt surface — renamed to Rally
 
-The first inventory counted these under section 8 as prose. That was wrong, and
-the misfiling is the finding: **this prose is executed, not read.** The
-work-stream system prompt opens `You are Avalon`, so the agent introduces
-itself as the code name, in its own voice, to every user in every work stream —
-which is precisely what [`AGENTS.md`](../AGENTS.md) means by a name that is not
-user-facing. Nothing here is coupled to stored data or a deployed resource, so
-it is among the cheapest categories to change and the highest-value.
+**Done.** The first inventory counted these under section 8 as prose. That was
+wrong, and the misfiling was the finding: **this prose is executed, not read.**
+The work-stream system prompt opened `You are Avalon`, so the agent introduced
+itself by the code name, in its own voice, to every user in every work stream.
 
-**Self-identity — the agent says it is Avalon (5 prompts).**
+Five prompts said it outright and now say Rally: the work-stream system prompt,
+Control Tower and the end-of-meeting summarizer in `meeting-notes-service.ts`,
+the automation architect in `prompts/automation-compiler.ts`, and the read-only
+sub-agent in `integrations.ts`. The prompt bodies moved with them — the
+addressing classifier, work-opportunity admission and ranking, the Bind
+summarization instructions, the injected context headers (`SCHEDULED DIGEST
+BRIEF FROM RALLY`, `USER-SELECTED RALLY SUGGESTED-WORK BRIEF`), and the
+connector tool descriptions the model reads when choosing a tool.
 
-| Prompt | Opens with |
-| --- | --- |
-| `packages/agent-harness/src/prompts/workstream.ts` | `You are Avalon, the inherent intelligent environment in this work stream.` |
-| `apps/api/src/services/meeting-notes-service.ts` | `You are Avalon Control Tower, a real-time briefing assistant…` |
-| `apps/api/src/services/meeting-notes-service.ts` | `You are Avalon's end-of-meeting chief of staff.` |
-| `packages/agent-harness/src/prompts/automation-compiler.ts` | `You are Avalon's automation architect.` |
-| `apps/api/src/services/integrations.ts` | `You are a focused read-only Avalon sub-agent.` |
+Two things here were not prose and moved as pairs or not at all:
 
-**Prompt bodies naming the product.** `prompts/addressing.ts` (5) classifies
-whether a message addresses "Avalon"; `prompts/work-opportunity.ts` (5) admits
-and ranks work "Avalon can start"; `prompts/automation-compiler.ts` (8) explains
-what "Avalon itself sends"; `prompts/workstream.ts` (6) carries the Slack
-authority and automation-delivery bullets. `bind-runtime.ts` tells the model
-that a section is "Avalon-generated live state".
+| Item | Now | Why it needed care |
+| --- | --- | --- |
+| `writableByRally` | renamed | A tool-output field the model is told to branch on, named inside two tool descriptions. The field and the descriptions had to move in the same change or the model would be told to read a key that no longer exists. |
+| `rallyTruncated` / `rallyTotalChars` | renamed | Same shape, in Notion tool output. |
+| `avalon-core-write-v1` | **unchanged** | Not a label: the seed of a hash deriving durable provider idempotency keys. Renaming it silently re-issues writes that were already idempotent. It belongs to section 1. |
 
-**Plugin system messages.** `TERMINAL_PLUGIN_SYSTEM_MESSAGE` in
-`apps/api/src/services/terminal/contract.ts` is concatenated into the prompt at
-`terminal/plugin.ts` and tells the model that "Avalon creates or restores
-`$AVALON_GIT_BRANCH`" and "Avalon creates a durable recovery backup"; a terminal
-tool description repeats "Avalon backs up recoverable workspace state". These
-sit beside `$AVALON_*` variable names that are section 4 and stay — so the
-sentence moves and the variable it names does not, which is the one place in
-this section where the two halves of a line have different answers.
+Identity this product sends to third parties moved too: `appName` (the
+`X-Title` header on every inference request, 4 call sites),
+`Rally-GitHub-Connector` as the GitHub connector's user-agent, the hosted-MCP
+`client_name` and `clientInfo.name`, and 25 GraphQL operation names that appear
+in Linear's and GitHub's own request logs.
 
-**Injected context headers**, which the model reads verbatim:
-`SCHEDULED DIGEST BRIEF FROM AVALON`, `USER-SELECTED AVALON SUGGESTED-WORK
-BRIEF`, and `The person responded to Avalon's blocking question.`
+The surface was wider than the first audit found. Beyond the prompts, the model
+also reads: the attachment manifest header, the memory-retrieval embedding
+instruction, and — the largest group — the Terminal tool-result messages, which
+are not status text but instructions the model acts on ("Retry this exact tool
+call", "do not repeat the command"). Those moved too. Finding them took the
+positive check rather than a list of likely files, which is the same lesson
+recorded under the section 3 sweep.
 
-**Tool descriptions the model reads when choosing a tool** — six Google Docs and
-Sheets descriptions in `packages/connectors/src/index.ts` ("writable under
-Avalon's per-file Google Drive grant"), the X plugin, the Linear native-agent
-plugin, and the core plugin's own `Use Avalon's universally available core
-utilities.` The four Slack connector labels and descriptions moved in the Slack
-cut-over.
+**Tool descriptions the model reads when choosing a tool** — the six Google Docs
+and Sheets descriptions in `packages/connectors/src/index.ts`, the X plugin, the
+Linear native-agent plugin, and the core plugin's own utilities line all moved;
+the four Slack connector labels moved earlier, in the Slack cut-over.
 
-**Model-facing schema field names**, which are harder than the prose around
-them because a description names the field and the model is told to branch on
-it: `writableByAvalon` (14, in Google Drive tool output and named in two
-descriptions) and Notion's `avalonTruncated` / `avalonTotalChars`.
+One adjacent thing moved with them, because leaving half of a pair is worse than
+moving neither: the Terminal Git author identity is now `Rally Agent
+<rally-agent@users.noreply.github.com>`, which is visible in the commit history
+of every repository the agent pushes to.
 
-**Strings the agent emits to people**, not prompts but produced by this loop:
-the Slack fallback and mention copy moved in the Slack cut-over. The Control
-Tower failure notices `Avalon could not create the final meeting summary` /
-`Avalon could not update Control Tower` remain.
+**Not section 9, and deliberately left here:** the transactional email copy
+(`mention-`, `invitation-`, `participant-`, `automation-email-service.ts`) and
+the API error strings surfaced in the client UI. Those are user-facing copy the
+public-site pass did not reach, and they are section 7's remainder rather than
+this section's.
 
-**Identity sent to third parties.** `appName: "Avalon"` becomes the `X-Title`
-header on every inference request (3 call sites); hosted MCP registers
-`client_name` and `clientInfo.name` as `Avalon`. Also 25 GraphQL operation names —
-`AvalonReadIssue`, `AvalonSearchIssues`, `AvalonLinearAgentSessionCreate` — which
-appear in Linear's own request logs. The GitHub App identity, connector and
-Terminal publisher user agents, pinned-repository GraphQL query, and commit author
-moved in the GitHub provider cut-over. Generic Terminal model-facing prose and the
-stored `avalon/<slug>` branch namespace remain for section 9 and a compatibility
-plan respectively.
+**Strings the agent emits to people** moved too: the Slack fallback and mention
+copy in the Slack cut-over, and the Control Tower failure notices with this
+change.
+
+**Identity sent to third parties** moved: `appName` (the `X-Title` header on
+every inference request, 4 call sites), the hosted-MCP `client_name` and
+`clientInfo.name`, and the Linear GraphQL operation names that appear in that
+provider's own request logs. The GitHub half — the App identity, the connector
+and Terminal publisher user agents, the pinned-repository query, and the commit
+author — moved in the GitHub provider cut-over rather than here; this section
+claims only what it changed.
 
 **One string here must not change.** `avalon-core-write-v1` in
 `integrations.ts` is the seed of a hash that derives durable provider
 idempotency keys. It is not prose and nothing reads it as a name; changing it
 changes every derived id and re-issues writes that were already idempotent.
 It belongs to section 1, not here.
+
+**One split is deliberate and will look like a miss.** The Terminal plugin's
+system message now says "Rally creates or restores `$AVALON_GIT_BRANCH`" — the
+sentence is section 9 and moved; the variable it names is section 4 and stays,
+because renaming it is a coordinated change with the sandbox image rather than
+with this repository. The two halves of that line have different owners.
 
 ## What this inventory does not settle
 
@@ -370,6 +375,39 @@ It belongs to section 1, not here.
   which is not the same as the order the work should happen in.
 
 ## Changelog
+
+### 2026-08-25 — Section 9 renamed: the agent stops calling itself Avalon
+
+Five system prompts opened `You are Avalon`, so the product introduced itself by
+its code name, in its own voice, to every user. They now say Rally, along with
+the prompt bodies, the injected context headers, and the connector tool
+descriptions the model reads when choosing a tool.
+
+The audit behind the original section 9 was too narrow, and the positive check
+is what showed it. Three more model-facing surfaces turned up that no list of
+"prompt files" would have contained: the attachment manifest header, the
+memory-retrieval embedding instruction, and the Terminal tool-result messages —
+the largest group, and the least prompt-shaped, because they read as error text
+while actually being instructions the model obeys ("Retry this exact tool call",
+"do not repeat the command").
+
+`addressesAvalon` is the sharpest example of why "prompt surface" is the wrong
+mental model. It is a TypeScript interface field, which is section 8 by every
+appearance — but `renderAddressingMessages` serializes it into the JSON the
+classifier reads, so its *name* is prompt text. A field is model-facing if
+something stringifies it, and that is not visible from its declaration.
+
+The golden-prompt test earned its place here. `prompts.test.ts` hashes each
+rendered prompt, so the rename failed it loudly rather than drifting through.
+Before regenerating the hashes, every changed line in the prompt modules was
+diffed against a rename-only normalization to prove nothing else moved — a
+regenerated golden is worthless if the thing that changed it was never checked.
+Five hashes moved and five did not, and the five that moved are exactly the
+prompts that contained the old name, which is the cross-check that made
+regenerating them safe.
+
+Not renamed, and still correct: `avalon-core-write-v1`, the idempotency-key hash
+seed, which belongs to section 1.
 
 ### 2026-08-25 — The GitHub App and request identity moved as one slice
 

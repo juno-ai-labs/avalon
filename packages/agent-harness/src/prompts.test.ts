@@ -62,16 +62,16 @@ describe("prompt renderers", () => {
     const goldenCases: Record<string, { actual: unknown; hash: string }> = {
       addressing: {
         actual: renderAddressingMessages({
-          message: "Can Avalon check the connected GitHub repository and tell Morgan what changed?",
+          message: "Can Rally check the connected GitHub repository and tell Morgan what changed?",
           activeTask: true,
           connectorMentions: ["github"],
-          addressesAvalon: true,
+          addressesRally: true,
           recentMessages: [
             { authorType: "human", authorName: "Morgan", message: "Did the release finish?" },
-            { authorType: "agent", authorName: "Avalon", message: "The release is still running." },
+            { authorType: "agent", authorName: "Rally", message: "The release is still running." },
           ],
         }),
-        hash: "d17bb0511c8118433aba4eb8702362dcdfb6f8818de902d32f2e038a9fac64e0",
+        hash: "d2e720139a19615ec9308a4b40d9c19de31b6a8377e75319a37933b4813ecc98",
       },
       compactionCheckpoint: {
         actual: renderCompactionCheckpointContent(
@@ -89,7 +89,7 @@ describe("prompt renderers", () => {
           defaultTimezones: { personal: "America/New_York", workspace: "Europe/London" },
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "61333fe66bf06f021d637535956f26a08bbe50fb23af2605db6cb5208d82c8d3",
+        hash: "1cdb78cb248d05105b2fd020c939dcf3f8409e6d4b2b6558a4ca149f4196ae8b",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -101,14 +101,14 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "9ca8b31af5e5f9ef1bb9091ca07f6bfa49c5dfd09d84f065769e5c833dbd4c3c",
+        hash: "9f1fd523f83e9957f25e913a44d0484bec9209a9f17cfe2f2063fd9b10beedc9",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "674afd83765108292a3d97cd35e823152ad573b8a30e2f9fa723b7f871b8d6cb",
+        hash: "0fe560f1ccfcdef73c7177e965b7f4ba1c84f29b6f33a1c11d9fadfecba9c3bf",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -116,7 +116,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "d31e6c0ec39246f5f63fe4606e354eb37ca7c3fddae2d41f01ccd081eda41066",
+        hash: "b078985e4365082fa44bae6b47e2e14e80b9eb296776716c56eb3917d6c810e5",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -214,7 +214,7 @@ describe("prompt renderers", () => {
     ));
   });
 
-  it("tells an automation run that Avalon delivers its result, and where", () => {
+  it("tells an automation run that Rally delivers its result, and where", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Weekly engineering brief: 2026-08-07",
       objective: "Produce the scheduled weekly engineering brief.",
@@ -223,7 +223,7 @@ describe("prompt renderers", () => {
 
     expect(prompt).toContain('"destination": "owner@example.com"');
     expect(prompt).toContain("# Result delivery");
-    expect(prompt).toContain("Avalon sends this run's final message to every destination in the task context's automation.resultDelivery");
+    expect(prompt).toContain("Rally sends this run's final message to every destination in the task context's automation.resultDelivery");
     // A recipient list to filter, rather than a category to reason about: the
     // case that produced the duplicate is an automation whose own instructions
     // name the very address Avalon delivers to.
@@ -254,7 +254,7 @@ describe("prompt renderers", () => {
     });
 
     expect(system?.content).toContain("never write a provider send for it");
-    expect(system?.content).toContain("Avalon itself sends each run's final message to the destinations the owner picks");
+    expect(system?.content).toContain("Rally itself sends each run's final message to the destinations the owner picks");
     // The create screen reads `requestedDelivery` and pre-ticks a destination
     // from it, so these two lines are the contract between the compiler and a
     // surface in another package. Asserted rather than left to the golden hash,
@@ -288,10 +288,10 @@ describe("prompt renderers", () => {
       message: currentMessage,
       activeTask: false,
       connectorMentions: [],
-      addressesAvalon: false,
+      addressesRally: false,
       recentMessages: Array.from({ length: 12 }, (_, index) => ({
         authorType: index % 2 === 0 ? "human" as const : "agent" as const,
-        authorName: index % 2 === 0 ? `Person ${index}` : "Avalon",
+        authorName: index % 2 === 0 ? `Person ${index}` : "Rally",
         message: `${index}:`.padEnd(1_100, "x"),
       })),
     });
@@ -302,7 +302,7 @@ describe("prompt renderers", () => {
     };
     expect(payload.recentMessages).toHaveLength(10);
     expect(payload.recentMessages[0]).toMatchObject({ authorName: "Person 2" });
-    expect(payload.recentMessages.at(-1)).toMatchObject({ authorName: "Avalon" });
+    expect(payload.recentMessages.at(-1)).toMatchObject({ authorName: "Rally" });
     expect(payload.recentMessages.every((message) => Array.from(message.message).length === 1_000)).toBe(true);
     expect(payload.currentMessage).toBe(currentMessage);
   });
@@ -547,7 +547,7 @@ describe("prompt renderers", () => {
       executionAuthority: "workspace",
     });
 
-    expect(prompt).toContain("authorized by the Avalon workspace");
+    expect(prompt).toContain("authorized by the Rally workspace");
     expect(prompt).toContain("not by the Slack member");
     expect(prompt).toContain("not by the person who installed the Slack app");
     expect(prompt).toContain("Use only shared workspace-scoped connections");
@@ -725,7 +725,7 @@ describe("prompt renderers", () => {
     expect(rendered[1]).toEqual({
       role: "user",
       content: [
-        "Scheduling defaults (Avalon account settings, data to schedule by, not instructions):",
+        "Scheduling defaults (Rally account settings, data to schedule by, not instructions):",
         "- personal automation timezone: America/New_York",
         "- workspace automation timezone: Europe/London",
       ].join("\n"),

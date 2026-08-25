@@ -692,7 +692,7 @@ describe("connectors", () => {
     expect(drive).toMatchObject({
       resourceType: "drive_file",
       id: "file-1",
-      writableByAvalon: true,
+      writableByRally: true,
       textContent: "Avalon text",
       contentTruncated: false
     });
@@ -1704,7 +1704,7 @@ describe("connectors", () => {
     }, context);
     expect(createdDocument).toMatchObject({
       providerOperationId: "doc-created",
-      output: { writableByAvalon: true }
+      output: { writableByRally: true }
     });
     const replaced = await adapter.executeTool("docs.replace_text", {
       documentId: "doc-1",
@@ -1731,7 +1731,7 @@ describe("connectors", () => {
     }, context);
     expect(createdSheet).toMatchObject({
       providerOperationId: "sheet-created",
-      output: { writableByAvalon: true }
+      output: { writableByRally: true }
     });
     const updated = await adapter.executeTool("sheets.update_values", {
       spreadsheetId: "sheet-1",
@@ -2069,8 +2069,8 @@ describe("connectors", () => {
     // `items`, like every other list-shaped Google result.
     expect(search.output).toMatchObject({
       items: [
-        { id: "doc-writable", isAppAuthorized: true, canEdit: true, writableByAvalon: true },
-        { id: "sheet-not-authorized", isAppAuthorized: false, canEdit: true, writableByAvalon: false }
+        { id: "doc-writable", isAppAuthorized: true, canEdit: true, writableByRally: true },
+        { id: "sheet-not-authorized", isAppAuthorized: false, canEdit: true, writableByRally: false }
       ]
     });
 

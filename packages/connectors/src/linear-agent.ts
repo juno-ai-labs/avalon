@@ -491,7 +491,7 @@ export async function createLinearAgentActivity(
 ): Promise<LinearAgentActivityResult> {
   const input = LinearAgentActivityCreateInputSchema.parse(rawInput);
   const data = await executeGraphql(`
-    mutation AvalonLinearAgentActivityCreate($input: AgentActivityCreateInput!) {
+    mutation RallyLinearAgentActivityCreate($input: AgentActivityCreateInput!) {
       agentActivityCreate(input: $input) {
         success
         agentActivity { id }
@@ -514,7 +514,7 @@ export async function createLinearAgentAcknowledgement(
 ): Promise<LinearAgentAcknowledgementResult> {
   const input = LinearAgentAcknowledgementSchema.parse(rawInput);
   const data = await executeGraphql(`
-    mutation AvalonLinearAgentAcknowledge($input: ReactionCreateInput!) {
+    mutation RallyLinearAgentAcknowledge($input: ReactionCreateInput!) {
       reactionCreate(input: $input) {
         success
         reaction { id }
@@ -537,7 +537,7 @@ export async function updateLinearAgentSession(
 ): Promise<LinearAgentSessionResult> {
   const id = idSchema.parse(agentSessionId);
   const data = await executeGraphql(`
-    mutation AvalonLinearAgentSessionUpdate($id: String!, $input: AgentSessionUpdateInput!) {
+    mutation RallyLinearAgentSessionUpdate($id: String!, $input: AgentSessionUpdateInput!) {
       agentSessionUpdate(id: $id, input: $input) {
         success
         agentSession { id status }
@@ -627,7 +627,7 @@ async function createLinearAgentSession(
   const field = target === "issue" ? "agentSessionCreateOnIssue" : "agentSessionCreateOnComment";
   const inputType = target === "issue" ? "AgentSessionCreateOnIssue" : "AgentSessionCreateOnComment";
   const data = await executeGraphql(`
-    mutation AvalonLinearAgentSessionCreate($input: ${inputType}!) {
+    mutation RallyLinearAgentSessionCreate($input: ${inputType}!) {
       ${field}(input: $input) {
         success
         agentSession { id status }

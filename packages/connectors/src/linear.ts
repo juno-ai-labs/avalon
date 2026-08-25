@@ -326,7 +326,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
 
   const readIssue = async (connection: ConnectorConnectionContext, issueId: string, signal: AbortSignal) => {
     const data = await graphql(connection, signal, `
-      query AvalonReadIssue($id: String!) {
+      query RallyReadIssue($id: String!) {
         issue(id: $id) {
           ${issueFields}
           comments(first: 25) {
@@ -343,7 +343,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
 
   const readProject = async (connection: ConnectorConnectionContext, projectId: string, signal: AbortSignal) => {
     const data = await graphql(connection, signal, `
-      query AvalonReadProject($id: String!) {
+      query RallyReadProject($id: String!) {
         project(id: $id) {
           id name summary description url createdAt updatedAt startDate targetDate
           status { id name type }
@@ -402,7 +402,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       capabilities: [{
         id: LinearCapabilities.agent,
         kind: "native_agent",
-        description: "Delegate and mention Avalon in Linear, then continue the work through native agent sessions.",
+        description: "Delegate and mention Rally in Linear, then continue the work through native agent sessions.",
       }],
       nativeAgent: {
         capability: LinearCapabilities.agent,
@@ -559,7 +559,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       }, LINEAR_RESPONSE_BYTES);
       const credentials = normalizeToken(payload, now());
       const identity = await linearGraphql(fetcher, String(credentials.accessToken), `
-        query AvalonLinearIdentity {
+        query RallyLinearIdentity {
           viewer { id name email app organization { id name urlKey } }
         }
       `, {}, AbortSignal.timeout(15_000));
@@ -639,7 +639,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       if (resourceType === "linear_project") return readProject(connection, resourceId, signal);
       if (resourceType === "linear_project_update") {
         const data = await graphql(connection, signal, `
-          query AvalonReadProjectUpdate($id: String!) {
+          query RallyReadProjectUpdate($id: String!) {
             projectUpdate(id: $id) {
               id body health url createdAt updatedAt editedAt
               project { id name url }
@@ -653,7 +653,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       }
       if (resourceType === "linear_document") {
         const data = await graphql(connection, signal, `
-          query AvalonReadDocument($id: String!) {
+          query RallyReadDocument($id: String!) {
             document(id: $id) { id title content url createdAt updatedAt creator { id name } project { id name } }
           }
         `, { id: resourceId });
@@ -663,7 +663,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       }
       if (resourceType === "linear_comment") {
         const data = await graphql(connection, signal, `
-          query AvalonReadComment($id: String!) {
+          query RallyReadComment($id: String!) {
             comment(id: $id) { id body createdAt updatedAt user { id name } issue { id identifier title url } }
           }
         `, { id: resourceId });
@@ -673,7 +673,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       }
       if (resourceType === "linear_attachment") {
         const data = await graphql(connection, signal, `
-          query AvalonReadAttachment($id: String!) {
+          query RallyReadAttachment($id: String!) {
             attachment(id: $id) {
               id title subtitle url bodyData sourceType metadata createdAt updatedAt
               creator { id name }
@@ -685,7 +685,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       }
       if (resourceType === "linear_issue_label") {
         const data = await graphql(connection, signal, `
-          query AvalonReadIssueLabel($id: String!) {
+          query RallyReadIssueLabel($id: String!) {
             issueLabel(id: $id) { id name description color isGroup createdAt updatedAt team { id key name } }
           }
         `, { id: resourceId });
@@ -693,7 +693,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       }
       if (resourceType === "linear_project_label") {
         const data = await graphql(connection, signal, `
-          query AvalonReadProjectLabel($id: String!) {
+          query RallyReadProjectLabel($id: String!) {
             projectLabel(id: $id) { id name description color isGroup createdAt updatedAt team { id key name } }
           }
         `, { id: resourceId });
@@ -701,7 +701,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       }
       if (resourceType === "linear_cycle") {
         const data = await graphql(connection, signal, `
-          query AvalonReadCycle($id: String!) {
+          query RallyReadCycle($id: String!) {
             cycle(id: $id) { id name number description startsAt endsAt completedAt createdAt updatedAt team { id key name } }
           }
         `, { id: resourceId });
@@ -709,7 +709,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       }
       if (resourceType === "linear_user") {
         const data = await graphql(connection, signal, `
-          query AvalonReadUser($id: String!) {
+          query RallyReadUser($id: String!) {
             user(id: $id) { id name displayName email url description active admin app createdAt updatedAt }
           }
         `, { id: resourceId });
@@ -741,7 +741,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
         // tracked, which is the same false negative a name-only file search
         // produced for Drive.
         const data = await graphql(context.connection, context.signal, `
-          query AvalonSearchIssues($query: String!, $first: Int!, $after: String) {
+          query RallySearchIssues($query: String!, $first: Int!, $after: String) {
             issues(
               first: $first
               after: $after
@@ -770,7 +770,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       if (name === "list_teams") {
         const args = pageSchema(50).parse(rawArgs);
         const data = await graphql(context.connection, context.signal, `
-          query AvalonListTeams($first: Int!, $after: String) {
+          query RallyListTeams($first: Int!, $after: String) {
             teams(first: $first, after: $after) {
               nodes { id key name description private }
               pageInfo { hasNextPage endCursor }
@@ -783,7 +783,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       if (name === "list_projects") {
         const args = pageSchema(25).parse(rawArgs);
         const data = await graphql(context.connection, context.signal, `
-          query AvalonListProjects($first: Int!, $after: String) {
+          query RallyListProjects($first: Int!, $after: String) {
             projects(first: $first, after: $after, orderBy: updatedAt) {
               nodes { id name summary url createdAt updatedAt startDate targetDate status { id name type } lead { id name } }
               pageInfo { hasNextPage endCursor }
@@ -801,7 +801,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       if (name === "list_workflow_states") {
         const args = listWorkflowStatesSchema.parse(rawArgs);
         const data = await graphql(context.connection, context.signal, `
-          query AvalonListWorkflowStates($first: Int!, $after: String, $filter: WorkflowStateFilter) {
+          query RallyListWorkflowStates($first: Int!, $after: String, $filter: WorkflowStateFilter) {
             workflowStates(first: $first, after: $after, filter: $filter) {
               nodes { id name type position description team { id key name } }
               pageInfo { hasNextPage endCursor }
@@ -822,7 +822,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
         const args = createIssueSchema.parse(rawArgs);
         const input = definedValues(args);
         const data = await graphql(context.connection, context.signal, `
-          mutation AvalonCreateIssue($input: IssueCreateInput!) {
+          mutation RallyCreateIssue($input: IssueCreateInput!) {
             issueCreate(input: $input) { success issue { ${issueFields} } }
           }
         `, { input });
@@ -836,7 +836,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
         const args = updateIssueSchema.parse(rawArgs);
         const { issueId, ...updates } = args;
         const data = await graphql(context.connection, context.signal, `
-          mutation AvalonUpdateIssue($id: String!, $input: IssueUpdateInput!) {
+          mutation RallyUpdateIssue($id: String!, $input: IssueUpdateInput!) {
             issueUpdate(id: $id, input: $input) { success issue { ${issueFields} } }
           }
         `, { id: issueId, input: definedValues(updates) });
@@ -849,7 +849,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       if (name === "create_comment") {
         const args = createCommentSchema.parse(rawArgs);
         const data = await graphql(context.connection, context.signal, `
-          mutation AvalonCreateComment($input: CommentCreateInput!) {
+          mutation RallyCreateComment($input: CommentCreateInput!) {
             commentCreate(input: $input) { success comment { id body createdAt updatedAt url } }
           }
         `, { input: args });
@@ -866,7 +866,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       if (!connection) return { ok: true, message: "Linear OAuth is configured" };
       assertLinearConnection(connection);
       const signal = callerSignal ?? AbortSignal.timeout(15_000);
-      const data = await graphql(connection, signal, "query AvalonLinearHealth { viewer { id } }");
+      const data = await graphql(connection, signal, "query RallyLinearHealth { viewer { id } }");
       const viewer = recordValue(data, "viewer");
       return viewer?.id ? { ok: true, message: "Linear authorization is healthy" } : { ok: false, message: "Linear did not return an authorized identity" };
     },
@@ -942,7 +942,7 @@ export async function canPersonalLinearConnectionAccessWebhook(
       input.connection,
       signal,
       (token) => linearGraphqlAccessProbe(fetcher, token, `
-        query AvalonPersonalWebhookAccess($id: String!) {
+        query RallyPersonalWebhookAccess($id: String!) {
           resource: ${candidate.field}(id: $id) { id }
         }
       `, { id: candidate.id }, signal),
@@ -1577,7 +1577,7 @@ function assertConfig(config: LinearConnectorConfig): void {
 function assertWorkspaceConnection(connection: ConnectorConnectionContext): void {
   assertLinearConnection(connection);
   if (connection.scope !== "workspace") {
-    throw new ConnectorError("unauthorized", "Linear app connections must use Avalon workspace scope");
+    throw new ConnectorError("unauthorized", "Linear app connections must use Rally workspace scope");
   }
 }
 
