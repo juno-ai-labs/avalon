@@ -176,33 +176,43 @@ describe("Slack Agent durable ingress", () => {
     expect(__slackAgentTesting.isSlackRetryPrompt("try again")).toBe(true);
     expect(__slackAgentTesting.isSlackRetryPrompt("Please retry.")).toBe(true);
     expect(__slackAgentTesting.isSlackRetryPrompt("try a different analysis")).toBe(false);
-    const messages = [
+    const baseMessages = [
       { user: "U1", text: "Earlier context", ts: "1.0" },
       { user: "U1", text: "<@UBOT> grab the documents above", ts: "1.1", thread_ts: "1.0" },
+    ];
+    const denialPrefixes = [
+      "Rally needs updated Slack permissions before it can start workspace tasks here",
+      "Rally couldn’t verify whether this Slack channel is public or private",
+      "Avalon’s Slack workspace connection needs attention",
+      "Avalon workspace tasks are not enabled for this Slack surface",
+      "Avalon needs updated Slack permissions before it can start workspace tasks here",
+      "Avalon couldn’t verify whether this Slack channel is public or private",
+    ];
+    for (const denialPrefix of denialPrefixes) {
+      expect(__slackAgentTesting.recoverSlackDeniedPrompt([
+        ...baseMessages,
+        {
+          user: "UBOT",
+          text: `${denialPrefix}. Ask an admin.`,
+          ts: "1.2",
+          thread_ts: "1.0",
+        },
+      ], "U1", "UBOT")).toBe("grab the documents above");
+    }
+    const rallyMessages = [
+      ...baseMessages,
       {
         user: "UBOT",
-        text: "Rally workspace tasks are not enabled for this Slack surface. Ask an admin.",
+        text: "Rally needs updated Slack permissions before it can start workspace tasks here. Ask an admin.",
         ts: "1.2",
         thread_ts: "1.0",
       },
     ];
-    expect(__slackAgentTesting.recoverSlackDeniedPrompt(messages, "U1", "UBOT"))
-      .toBe("grab the documents above");
+    expect(__slackAgentTesting.recoverSlackDeniedPrompt(rallyMessages, "U2", "UBOT")).toBeNull();
     expect(__slackAgentTesting.recoverSlackDeniedPrompt([
-      messages[0]!,
-      messages[1]!,
-      {
-        user: "UBOT",
-        text: "Avalon workspace tasks are not enabled for this Slack surface. Ask an admin.",
-        ts: "1.2",
-        thread_ts: "1.0",
-      },
-    ], "U1", "UBOT")).toBe("grab the documents above");
-    expect(__slackAgentTesting.recoverSlackDeniedPrompt(messages, "U2", "UBOT")).toBeNull();
-    expect(__slackAgentTesting.recoverSlackDeniedPrompt([
-      messages[0]!,
-      messages[1]!,
-      { ...messages[2]!, user: "UATTACKER" },
+      rallyMessages[0]!,
+      rallyMessages[1]!,
+      { ...rallyMessages[2]!, user: "UATTACKER" },
     ], "U1", "UBOT")).toBeNull();
   });
 
@@ -374,7 +384,7 @@ describe("Slack Agent durable ingress", () => {
     await expect(service.processCommand({
       team_id: "T1",
       user_id: "U1",
-      command: "/avalon",
+      command: "/rally",
       text: "Summarize the incident",
       channel_id: "C1",
       channel_name: "general",

@@ -269,10 +269,8 @@ const PERSONAL_AUTOMATIONS_FOR_HOME_SQL =
    WHERE s.workspace_id = ? AND s.owner_user_id = ? AND s.lifecycle_state = 'visible'
      AND s.status <> 'draft'
    ORDER BY s.updated_at DESC LIMIT 5`;
-const SLACK_RETRY_PROMPT_MISSING_TEXT = "I couldn’t find the original request for this retry. Mention `@rally` again and restate what you want me to do.";
+const SLACK_RETRY_PROMPT_MISSING_TEXT = "I couldn’t find the original request for this retry. Mention `@Rally` again and restate what you want me to do.";
 const SLACK_RETRYABLE_DENIAL_PREFIXES = [
-  "Rally’s Slack workspace connection needs attention",
-  "Rally workspace tasks are not enabled for this Slack surface",
   "Rally needs updated Slack permissions before it can start workspace tasks here",
   "Rally couldn’t verify whether this Slack channel is public or private",
   "Avalon’s Slack workspace connection needs attention",
@@ -3036,7 +3034,7 @@ export class SlackAgentService {
   ): Promise<Map<string, WorkstreamUnfurlSummary>> {
     if (!workstreamIds.length) return new Map();
     // Scoping to the connection's own workspace is the one check here that is
-    // not a matter of taste: a link to another Avalon workspace's work stream
+    // not a matter of taste: a link to another Rally workspace's work stream
     // must fall through to the anonymous card rather than be named in this
     // Slack team. A miss is indistinguishable from a link that never existed.
     // Archiving retires a work stream from view, including App Home's own task
