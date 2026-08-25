@@ -6,9 +6,10 @@ const DEVELOPMENT_DIRECTORY_NAME = 'Rally Development';
 /**
  * Directory names earlier builds stored user data under, newest first.
  *
- * `Avalon` is the product's previous name; `@rally/desktop` (which shipped as
- * `@rally/desktop`) is the package name builds used before userData was pinned
- * at all. Both are still read, and the first one found is adopted.
+ * `Avalon` is the product's previous name. `@avalon/desktop` — the package name
+ * this workspace carried before it became `@rally/desktop` — is where builds
+ * stored user data before userData was pinned at all. Both are still read, and
+ * the first one found is adopted.
  */
 const SUPERSEDED_PRODUCTION_DIRECTORY_NAMES: readonly string[] = Object.freeze(['Avalon']);
 const SUPERSEDED_DEVELOPMENT_DIRECTORY_NAMES: readonly string[] = Object.freeze(['Avalon Development']);
