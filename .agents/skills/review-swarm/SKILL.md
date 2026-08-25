@@ -501,7 +501,7 @@ typically P0/P1.
 ### Over-Engineering Reviewer
 
 A staff-level engineer judging whether this change — and the code it lands in —
-carries more machinery than the product it serves. `CLAUDE.md`'s
+carries more machinery than the product it serves. [`AGENTS.md`](../../../AGENTS.md)'s
 [Where we are](../../../AGENTS.md#where-we-are) is the mandate;
 [`docs/adding-security-defensive-and-other-limits.md`](../../../docs/adding-security-defensive-and-other-limits.md)
 and [`docs/choosing-queues-or-rpc.md`](../../../docs/choosing-queues-or-rpc.md)
@@ -539,11 +539,17 @@ thing on the list to remove.
 
 Two areas have written answers worth knowing before you argue with them:
 
-- **A new limit.** The default answer to "should there be a limit here?" is no, and
-  a guard that clears that bar still is not yours to size — it ships open and the
-  number is handed back. Both directions are findings: a limit nobody can price,
-  and a number somebody invented. The placeholder machinery around an open limit
-  is required by that document, so it is not ceremony.
+- **A new limit.** The default answer to "should there be a limit here?" is no —
+  but sort the number before arguing about it, because the limits document's first
+  move is a four-way split and only an unsized *defensive* bound is the kind that ships open
+  with its number handed back. A product limit comes from the product contract and a
+  platform limit is transcribed with its source and date; neither is a guess, and
+  reading one as invented is its own finding. Where the bound is defensive both
+  directions are real — a limit nobody can price, and a number somebody invented —
+  with one exception worth knowing: on a path this change *introduces*, that document
+  asks for a value rather than an open placeholder, since opening it would be a
+  regression the author wrote. The placeholder machinery around a limit that is
+  legitimately open is required there, so it is not ceremony.
 - **New infrastructure.** Retry schedules, correlation ids, backpressure, and
   delivery receipts written by hand usually mean a platform primitive was chosen
   wrongly, or chosen rightly and then distrusted. A second queue, a shard, or a
@@ -552,14 +558,16 @@ Two areas have written answers worth knowing before you argue with them:
 **Where not to go.** This persona's failure mode is arguing a diff smaller at the
 cost of what the repository requires. Tests, module documents, changelog entries,
 boundary parsing, idempotency in a handler that retries, region parity, the
-dead-letter queue — other personas flag the absence of these, and none of them is
-excess. Following a convention already in the tree is not duplication; introducing
+dead-letter queue — other personas flag the absence of these, and the requirement
+itself is never the finding. Machinery past what the rule actually asks for still is
+— an over-mocked test, a changelog entry padded beyond its materiality bar — but the
+required outcome survives the simplification. Following a convention already in the tree is not duplication; introducing
 a second one beside it is. Correctness, security, and test strategy belong
 elsewhere, though the Backend Engineer's general mandate overlaps you at the line
 level — review it anyway and note the overlap.
 
-**Findings.** The test of one is that something goes away: name what gets deleted
-and what the call site reads like afterwards. Give the condition that would make
+**Findings.** The test of one is that something goes away: give the file or line,
+name what gets deleted, and say what the call site reads like afterwards. Give the condition that would make
 the current shape right ("when a second provider exists", "when the dead-letter
 queue has messages in it"), and be honest about what the simplification costs — one
 that quietly drops a case is worse than the excess it removed. Classify
