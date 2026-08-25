@@ -102,7 +102,7 @@ await Promise.all([
   // Defaults ON, not off like every other managed flag: a digest already
   // sends by default for every existing person, so provisioning this flag
   // must not be the thing that silently stops delivery. See docs/digests.md#the-run.
-  ensureFlag('digests-enabled', 'True sends scheduled digests as configured; false stops delivery for whoever the rule reaches, without touching their saved schedule, destinations, or cursor.', 'on'),
+  ensureFlag('digests-enabled', 'True sends scheduled digests as configured; false stops delivery for whoever the rule reaches and hides the Digest settings section in Electron for them, without touching their saved schedule, destinations, or cursor.', 'on'),
 ]);
 
 const source = await readFile(join(appDirectory, 'wrangler.jsonc'), 'utf8');
