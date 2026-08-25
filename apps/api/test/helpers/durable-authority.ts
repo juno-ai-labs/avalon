@@ -23,6 +23,8 @@ import {
   HARNESS_RUN_OPERATIONS,
   type HarnessRunObjectPort,
 } from "../../src/durable-objects/workstream-harness-run-protocol";
+import type { SubstreamRuntimeProvisionRequest } from "../../src/durable-objects/substream-agent";
+import { WorkstreamIdentityStorage } from "../../src/durable-objects/workstream-identity-storage";
 import { WorkstreamResourceStorage } from "../../src/durable-objects/workstream-resource-storage";
 import {
   RESOURCE_OPERATIONS,
@@ -781,8 +783,34 @@ export function testSubstreamAgentsBinding(
       // Production's bootstrap opens the object and writes its identity root;
       // seeding here is that same admission, so a creation flow's first routed
       // statement finds the root the way it would in the real object.
-      storeFor(input.workstreamId, input.workspaceId);
+      const store = storeFor(input.workstreamId, input.workspaceId);
+      // And it stamps the reason code, as `bootstrapRuntimeAuthority` does.
+      // `provisionWorkstream` keys its replay guard on that value, so a double
+      // that left the shared fixture's `seeded` in place would make every
+      // provision look like a replay and write nothing.
+      store.prepare(
+        `UPDATE workstream
+            SET authority_mode = 'authoritative', exact_state = 'idle',
+                state_reason_code = 'runtime_bootstrap'
+          WHERE id = 1 AND state_reason_code = 'seeded'`,
+      ).run();
       return { status: 200, bodyJson: "{}" };
+    }),
+    provisionRuntime: vi.fn((input: SubstreamRuntimeProvisionRequest) => {
+      // The real storage class, not a model of it. This write is the whole
+      // point of the operation, and a double that reproduced it by hand would
+      // be the second implementation that drifts.
+      const store = storeFor(input.workstreamId, input.workspaceId);
+      const storage = new WorkstreamIdentityStorage(
+        createCloudflareTestBinding<DurableObjectStorage>({
+          getAlarm: async () => null,
+          setAlarm: async () => undefined,
+          transactionSync: (body: () => unknown) => body(),
+          sql: objectSqlStorage(store),
+        }),
+      );
+      const outcome = storage.provision({ ...input, now: Date.now() });
+      return { status: 200, bodyJson: JSON.stringify({ ok: true, ...outcome }) };
     }),
     refreshTimerAlarm: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
     flushEffectsToWorkstreamDO: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
