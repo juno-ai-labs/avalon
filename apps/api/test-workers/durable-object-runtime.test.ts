@@ -2269,6 +2269,17 @@ describe("Durable Objects in the Workers runtime", () => {
         (id, user_id, workspace_id, region, revoked_at, expires_at)
         VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
         .bind(`${SESSION_ID}-${participantId}`, participantId, WORKSPACE_ID),
+      // Naming somebody on the create is an add, and an add is told about, so
+      // the effects the create enqueues carry both people's display names.
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+        VALUES (?, 'creator@example.com', 'Creator', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
+        .bind(USER_ID),
+      env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+        VALUES (?, 'participant@example.com', 'Participant', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
+        .bind(participantId),
     ]);
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),

@@ -115,6 +115,7 @@ async function openWorkstream(
   stub: DurableObjectStub,
   workstreamId = WORKSTREAM_ID,
   title = "Quarterly planning",
+  participantUserIds: readonly string[] = [],
 ): Promise<void> {
   const opened = await product(stub, {
     operation: "initialize",
@@ -131,7 +132,7 @@ async function openWorkstream(
       creatorUserId: CREATOR_ID,
       openingMessage: "starting the plan",
       clientMessageId: `participant-open-${workstreamId}`,
-      participantUserIds: [],
+      participantUserIds,
       attachmentIds: [],
       modelOverride: null,
       executionPrincipal: { type: "user", userId: CREATOR_ID },
@@ -172,6 +173,31 @@ async function notificationReceipts(
       `SELECT message_id FROM child_effect_receipts
         WHERE message_id LIKE 'effect:participant_added:%' ORDER BY message_id`,
     ).toArray().map((row) => row.message_id));
+}
+
+/**
+ * Every effect the parent object has taken delivery of, with its payload.
+ *
+ * The child's own outbox is not a place to read this from: a commit arms its
+ * alarm for the current instant, so the drain races any assertion made against
+ * it — the more effects a path enqueues, the more reliably the read loses. The
+ * parent's outbox holds each envelope until the Queue consumer acknowledges
+ * it, which nothing in this suite does, so a flush lands them here to stay.
+ */
+async function deliveredEffects(
+  stub: DurableObjectStub,
+  workstreamId = WORKSTREAM_ID,
+): Promise<WorkstreamRegionalEffectEnvelope[]> {
+  await (stub as unknown as { flushEffectsToWorkstreamDO(): Promise<unknown> })
+    .flushEffectsToWorkstreamDO();
+  const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+    workstreamDOName("global", WORKSPACE_ID, workstreamId),
+  ));
+  const rows = await runInDurableObject(parent, (_instance, state) =>
+    state.storage.sql.exec<{ payload_json: string }>(
+      `SELECT payload_json FROM durable_outbox ORDER BY created_at, message_id`,
+    ).toArray());
+  return rows.map((row) => WorkstreamRegionalEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
 }
 
 describe("adding somebody to a work stream", () => {
@@ -295,5 +321,71 @@ describe("adding somebody to a work stream", () => {
       envelope.effect.kind === "activity_event"
       && envelope.effect.eventType === "workstream_participant_added"
     ))).toHaveLength(0);
+  });
+});
+
+describe("naming somebody when the work stream is created", () => {
+  it("tells them the same way adding them afterwards does", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub, WORKSTREAM_ID, "Quarterly planning", [INVITEE_ID]);
+
+    const envelopes = await deliveredEffects(stub);
+    const viewer = envelopes.filter((envelope) => (
+      envelope.effect.kind === "directory_user" && envelope.effect.userId === INVITEE_ID
+    ));
+    const activity = envelopes.filter((envelope) => (
+      envelope.effect.kind === "activity_event"
+      && envelope.effect.eventType === "workstream_participant_added"
+    ));
+    const notification = envelopes.filter((envelope) => envelope.effect.kind === "participant_notification");
+    expect([viewer.length, activity.length, notification.length]).toEqual([1, 1, 1]);
+
+    const notificationEffect = notification[0]!.effect;
+    if (notificationEffect.kind !== "participant_notification") {
+      throw new Error("expected a participant notification");
+    }
+    // The same identity the add-afterwards path mints, so the two cannot
+    // notify one person about one participation twice.
+    expect(notificationEffect.intentId).toBe(`participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`);
+    expect(notificationEffect.sourceId).toBe(`participant:${WORKSTREAM_ID}:${INVITEE_ID}:0`);
+    expect(notificationEffect.recipientUserId).toBe(INVITEE_ID);
+    expect(notificationEffect.actorUserId).toBe(CREATOR_ID);
+    expect(notificationEffect.actorNameSnapshot).toBe("Creator");
+    expect(notificationEffect.workstreamTitleSnapshot).toBe("Quarterly planning");
+    expect(notificationEffect.workstreamObjectiveSnapshot).toBe("Draft the quarterly plan");
+
+    const activityEffect = activity[0]!.effect;
+    if (activityEffect.kind !== "activity_event") throw new Error("expected an activity event");
+    expect(activityEffect.targets).toEqual([{ userId: INVITEE_ID, relation: "added" }]);
+    expect(activityEffect.body).toBe("Creator added Invitee to this work stream.");
+
+    // Armed by the viewer effect emitted immediately before it, exactly as on
+    // the add-afterwards path: nobody is told about a work stream their own
+    // sidebar row has not reached the workspace yet.
+    expect(notification[0]!.requiredProjectionVersion).toBe(viewer[0]!.sourceVersion);
+    expect(notification[0]!.requiredProjectionVersion).toBeGreaterThan(0);
+  });
+
+  it("says nothing to the creator about their own work stream", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub);
+
+    const envelopes = await deliveredEffects(stub);
+    expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification")).toHaveLength(0);
+    expect(envelopes.filter((envelope) => (
+      envelope.effect.kind === "activity_event"
+      && envelope.effect.eventType === "workstream_participant_added"
+    ))).toHaveLength(0);
+  });
+
+  it("does not tell somebody twice when they are also added afterwards", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub, WORKSTREAM_ID, "Quarterly planning", [INVITEE_ID]);
+
+    const added = await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+    expect(added.status).toBe(200);
+
+    expect(await notificationReceipts(stub))
+      .toEqual([`effect:participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`]);
   });
 });
