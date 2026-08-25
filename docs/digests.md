@@ -39,7 +39,7 @@ Workflow. It answers *what did GitHub tell this workspace*. Legacy regional D1
 live ingest writes no D1 event body.
 
 `WorkspaceDO.workspace_activity_events` answers a different question: *what happened in Rally that
-this person should hear about*. An Rally mention has no connection. A
+this person should hear about*. A Rally mention has no connection. A
 work-stream message has no provider event id. Neither has a dedupe key a
 provider controls. Widening `activities` to hold both would leave first-party
 rows carrying a column of synthetic nulls for every provider concept they do not

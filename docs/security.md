@@ -661,6 +661,32 @@ incident response that may prompt it.
 
 ## Changelog
 
+### 2026-08-25 — The public Trust Center describes only implemented boundaries
+
+**What changed:** The public security page became an ungated Trust Center with
+implementation-backed control summaries, direct links to every applicable public
+policy, the configured service-provider categories, operationally honest FAQs,
+and coordinated reporting. The landing page links to it only from the footer.
+
+**Why:** A conventional procurement surface is useful only when its green checks
+mean something. The previous prose mixed a policy-shaped narrative with claims
+that were broader than the current desktop defaults and socket compatibility
+path. The replacement was regenerated from the current API, Electron,
+deployment, logging, CI, and provider configuration, and explicitly names the
+default application-wide desktop session key and legacy socket-query acceptance.
+
+**Considered and rejected:** Copying a hosted trust-center template, displaying
+certification badges without independent assurance, publishing names of internal
+policies that are not actually public, and putting documents behind an email or
+access-request gate. Those choices create the appearance of maturity while
+making the underlying evidence harder to inspect.
+
+**Consequences:** A public control must continue to be traceable to shipped code
+or checked-in deployment configuration. Certifications and internal documents
+remain absent until they exist and are current; changes to desktop session
+storage, regional telemetry, socket transport, providers, or public policy links
+must update the Trust Center in the same change.
+
 ### 2026-08-25 — The desktop's stored-data namespace follows the rename
 
 **What changed:** The application name became `Rally`/`Rally Development`, its

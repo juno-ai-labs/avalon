@@ -3,14 +3,15 @@
 Avalon is becoming Rally. Part of that rename has already landed — the npm
 package scope, the public hostnames, the product HTTP headers, the desktop
 bundle identity and deep-link scheme are all Rally already, with the Avalon
-forms kept deliberately as compatibility. The rest has not been touched.
+forms kept deliberately as compatibility. The public site and canonical brand
+asset pipeline are Rally; the remaining work is enumerated below.
 
 This document is the **inventory**: what still says Avalon, where, and — the
 part that decides the order of work — what each reference is coupled to. As
 each category is worked, its section records what moved, what deliberately did
 not, and what a consumer outside this repository still has to do.
 
-Sections 3 and 5 are **done**; sections 1, 4, 6, 7, 8, and 9 are outstanding;
+Sections 3, 5, 6, and 7 are **done**; sections 1, 4, 8, and 9 are outstanding;
 section 2 is closed as out of scope.
 
 **The Cloudflare infrastructure does not get renamed.** Every `avalon-*` Worker,
@@ -33,7 +34,7 @@ changelog date below. They move with every commit; treat them as magnitudes.
 
 ## The shape of it
 
-**583 tracked files, ~4,560 occurrences.** By area:
+**Snapshot from the first inventory: 583 tracked files, ~4,560 occurrences.** By area:
 
 | Area | Occurrences | Files |
 | --- | --- | --- |
@@ -199,7 +200,7 @@ Environment variables and Worker bindings: **~950 occurrences, 277 files**.
     `AVALON_REQUEST_ELICITATION_TOOL_DEFINITION`, and the `AVALON_*_PLUGIN_ID`
     set.
   - *Build, release, and CI* — `AVALON_RELEASE_R2_BUCKET`,
-    `AVALON_RELEASE_DISCOVERY`, `AVALON_SITE_BUILD__*`, `AVALON_SITE_RELEASE__*`,
+    `RALLY_RELEASE_DISCOVERY`, `AVALON_SITE_BUILD__*`, `AVALON_SITE_RELEASE__*`,
     `AVALON_SMOKE_*`, `AVALON_E2E_*`, `AVALON_HEALTH_*`,
     `AVALON_GLOBAL_API_URL`, `AVALON_EU_API_URL`,
     `AVALON_{GLOBAL,EU}_TELEMETRY_R2_BUCKET`, `AVALON_DEV_AUTH`.
@@ -241,33 +242,29 @@ reads a bucket holding both namings and must keep doing so — electron-builder
 already mints `Rally-${version}-...` for new releases, so the bucket is mixed by
 design, not by oversight.
 
-### 6. Brand assets
+### 6. Brand assets — done
 
-- `assets/brand/avalon-mark.png`, `assets/brand/avalon-mark-source.png`,
-  `apps/site/public/brand/avalon-mark.png` — 53 references across 25 files,
-  including every site page header and footer, the desktop auth handoff page,
-  and two provider-app registrations.
+- The canonical mask and generated mark are `assets/brand/rally-mark-source.png`
+  and `assets/brand/rally-mark.png`. The generator writes the same real mark to
+  the desktop, native icon, menu bar, site, favicon, and social-card surfaces.
+- The public site exposes only `/brand/rally-mark.png`; provider manifests use
+  that URL. The obsolete public Avalon mark and oversized `og.png` were removed.
 - `apps/api/test/avalon-tool-prose.test.ts` — filename.
 - `docs/PRDs/2026-08-05_avalon-implementation-brief/` — folder name, and the
   standing product contract [`docs/README.md`](README.md) points at. PRDs
   freeze under [`prds.md`](prds.md), so this one is history, not debt.
 
-### 7. User-facing copy
+### 7. User-facing copy — public site done
 
-**`apps/site` is 460 occurrences across 34 files** and is the most visible
-Avalon left in the product — the marketing site still calls it Avalon
-throughout while serving from `rallywith.ai`.
+The marketing, handoff, support, legal, manifest, metadata, unfurl, and Trust
+Center surfaces now identify Rally. The public legal documents were reviewed as
+product-party copy, and their security link is named for the destination it now
+serves: the public Trust Center. Internal noindex concept studies remain in the
+tree but are not a production navigation surface.
 
-- `index.html` (53): headline, meta description, OG and Twitter card titles,
-  the brand mark's alt text and label.
-- `concepts/index.html` (28), `concepts/horizon/index.html` (23).
-- Legal pages: `terms/` (18), `privacy/` (18), `acceptable-use/` (15), and the
-  footer line `© 2026 Juno AI Labs · Avalon` on every one of them. **Legal copy
-  names the product as a party — these need whoever owns the legal text, not a
-  find-and-replace.**
-- Support and notification mailboxes: `support@`, `privacy@`, `invites@`,
-  `notifications@with-avalon.com` — addresses printed to users, so they move
-  with the mailboxes, not with the code.
+Mailboxes printed by the site use `@rallywith.ai`. Superseded invitation and
+notification addresses elsewhere remain governed by the retirement conditions
+in [`domain-migration.md`](domain-migration.md), not by this completed site pass.
 
 ### 8. Internal prose — cheapest, and safe to move alone
 
@@ -363,6 +360,24 @@ It belongs to section 1, not here.
   which is not the same as the order the work should happen in.
 
 ## Changelog
+
+### 2026-08-25 — Public site and brand pipeline completed
+
+Sections 6 and 7 were closed when the Rally public site landed. Review found
+that the checked-in pages had moved but their source-of-truth generator and this
+inventory had not: running the generator would have restored Avalon artwork and
+an obsolete 907 KB social asset. The generator now owns the Rally-named source,
+real mark, native assets, and compact 1200×630 social card; public pages, legal
+navigation, release markup, and provider manifests consume those outputs.
+The shared stylesheet also dropped the retired four-theme landing rules after
+the Rally layout moved to its own class namespace; keeping that layer would
+have shipped unused theme images, selectors, and responsive overrides on every
+public page even though the no-index concept studies have separate stylesheets.
+
+Compatibility identifiers, Cloudflare resource names, release buckets, and
+old hostnames were deliberately not swept. Their retirement conditions belong
+to sections 1, 2, 4, and `domain-migration.md`; a brand regeneration must never
+be used as a reason to rename them.
 
 ### 2026-08-25 — What the sweep's verification could not see
 

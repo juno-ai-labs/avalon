@@ -44,7 +44,7 @@ belong to.
 The connection scope chooses the provider protocol after that shared routing.
 Any member may start a personal authorization: the adapter discovers the hosted
 MCP authorization server, dynamically registers Rally, and uses authorization
-code plus PKCE. An Rally owner or administrator may start the workspace public
+code plus PKCE. A Rally owner or administrator may start the workspace public
 integration authorization. Notion's required `owner=user` parameter on that
 public flow identifies the approver, while the installed bot and selected pages
 are the shared grant; the provider parameter never changes Rally's workspace

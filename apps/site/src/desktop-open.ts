@@ -29,7 +29,7 @@ export function classifyDesktopHandoffTarget(value: string | null): {
 }
 
 function initializeDesktopHandoff(): void {
-  const button = document.querySelector<HTMLAnchorElement>('#open-avalon');
+  const button = document.querySelector<HTMLAnchorElement>('#open-rally');
   const error = document.querySelector<HTMLElement>('#open-error');
   const parameters = new URLSearchParams(window.location.hash.replace(/^#/u, ''));
   const target = parameters.get('target');

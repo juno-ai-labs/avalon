@@ -32,8 +32,8 @@ export interface DesktopReleasePublication {
   publishedAt?: string;
 }
 
-const releaseStartMarker = '<!-- avalon-desktop-release:start -->';
-const releaseEndMarker = '<!-- avalon-desktop-release:end -->';
+const releaseStartMarker = '<!-- rally-desktop-release:start -->';
+const releaseEndMarker = '<!-- rally-desktop-release:end -->';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -221,7 +221,7 @@ export async function discoverDesktopRelease(
   }
 
   const canonicalUrl = new URL(canonicalObjectUrl);
-  canonicalUrl.searchParams.set('avalon-site-release', version);
+  canonicalUrl.searchParams.set('rally-site-release', version);
   const head = await fetchRelease(canonicalUrl, {
     method: 'HEAD',
     headers: { 'cache-control': 'no-cache' },
@@ -277,7 +277,7 @@ export function renderDesktopRelease(
   const href = desktopDmgUrl(config, publication);
   const version = publication?.published === true ? publication.version : config.version;
   const markup = href
-    ? `${releaseStartMarker}\n            <a class="button button-primary" href="${escapeHtml(href)}">Download Rally for macOS</a>\n            <span class="release-note">${escapeHtml(config.platform)} · ${escapeHtml(config.architecture)} · ${escapeHtml(version)}</span>\n            ${releaseEndMarker}`
-    : `${releaseStartMarker}\n            <span class="button button-disabled" aria-disabled="true">Downloads opening soon</span>\n            <span class="release-note">${escapeHtml(config.platform)} · ${escapeHtml(config.architecture)} · Private preview</span>\n            ${releaseEndMarker}`;
+    ? `${releaseStartMarker}\n            <a class="rally-button rally-button-dark button-primary" href="${escapeHtml(href)}"><img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download Rally for macOS <span>↘</span></a>\n            <small class="release-note">${escapeHtml(config.platform)} · ${escapeHtml(config.architecture)} · ${escapeHtml(version)}</small>\n            ${releaseEndMarker}`
+    : `${releaseStartMarker}\n            <span class="rally-button rally-button-dark button-disabled" aria-disabled="true"><img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Downloads opening soon</span>\n            <small class="release-note">${escapeHtml(config.platform)} · ${escapeHtml(config.architecture)} · Private preview</small>\n            ${releaseEndMarker}`;
   return `${html.slice(0, start)}${markup}${html.slice(end + releaseEndMarker.length)}`;
 }
