@@ -9,12 +9,12 @@ import {
 import type { Env, IdentityAuthContext } from "../env";
 import { logWarn } from "../observability/logger";
 import { createMessageObjectPort } from "../runtime/message-port";
-import { withWorkstreamRuntimeDatabase } from "../services/workstream-runtime-database";
 import {
   apiTelemetryEnvelope,
   emitAuthenticatedApiTelemetry,
   emitWorkspaceApiTelemetry,
 } from "./api-emitter";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 export const WORKSTREAM_CREATION_SOURCES = TELEMETRY_WORKSTREAM_CREATION_SOURCES;
 export type WorkstreamCreationSource = TelemetryWorkstreamCreationSource;
@@ -30,14 +30,6 @@ interface WorkstreamCreationTelemetryInput {
   connectorTypes?: readonly string[];
   operationId?: string | null;
   principal: WorkstreamCreationPrincipal;
-}
-
-interface WorkstreamCreationRow {
-  scope: "personal" | "workspace";
-  origin_type: "ad_hoc" | "automation";
-  system_kind: string | null;
-  model_override: string | null;
-  participant_count: number;
 }
 
 const connectorTypeSet = new Set<string>(TELEMETRY_CONNECTOR_TYPES);
@@ -78,21 +70,14 @@ export async function recordWorkstreamCreatedTelemetry(
     // The counts live with the work-stream authority — messages and their
     // attachments have no regional copy — so the read routes through the
     // runtime database rather than the regional handle the emitters use.
-    const routed = withWorkstreamRuntimeDatabase(env, input.workspaceId, input.workstreamId);
-    const row = await routed.DB.prepare(
-      `SELECT w.scope, w.origin_type, w.system_kind, w.model_override,
-              (SELECT COUNT(*) FROM workstream_participants participant
-               WHERE participant.workstream_id = w.id AND participant.removed_at IS NULL) AS participant_count
-       FROM workstreams w
-       WHERE w.id = ? AND w.workspace_id = ?
-       LIMIT 1`,
-    ).bind(input.workstreamId, input.workspaceId).first<WorkstreamCreationRow>();
+    const identity = createIdentityObjectPort(env, input.workspaceId, input.workstreamId);
+    const row = await identity.identity();
     // Hidden execution machinery is not a product-created work stream.
     if (!row || row.system_kind !== null) return;
-    // Asked after that check rather than beside it, which the retired subquery
-    // could not do: a hidden work stream now costs one read instead of two, and
-    // the attachment half no longer rides in a statement whose other half
-    // belongs to the identity slice.
+    // Both counts are asked after that check rather than beside it, which the
+    // retired subqueries could not do: a hidden work stream now costs one read
+    // instead of three.
+    const participantCount = (await identity.participants()).length;
     const attachmentCount = await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
       .openingAttachmentCount();
 
@@ -113,7 +98,7 @@ export async function recordWorkstreamCreatedTelemetry(
         connectorType,
         connectorTypes,
         connectorTypeCount: connectorTypes.length,
-        participantCount: count(row.participant_count),
+        participantCount: count(participantCount),
         attachmentCount: count(attachmentCount),
         modelOverride: row.model_override !== null,
       },

@@ -233,9 +233,17 @@ function agentsBinding(database: ManualRunDatabase, failures: Error[] = []) {
     extra: { dispatchRun, attachRuntimeResource },
   });
   const baseStub = base.get(base.idFromName("substream-agent"));
+  const identityOperations: string[] = [];
   const stub = new Proxy(baseStub, {
     get(target, property, receiver) {
       const value: unknown = Reflect.get(target, property, receiver);
+      if (property === "executeIdentityOperation") {
+        const forward = value as (input: { operation: string }) => unknown;
+        return (input: { operation: string }) => {
+          identityOperations.push(input.operation);
+          return forward(input);
+        };
+      }
       if (property !== "executeRuntimeSql") return value;
       const forward = value as (input: RuntimeSqlRequest) => unknown;
       return (input: RuntimeSqlRequest) => {
@@ -249,7 +257,7 @@ function agentsBinding(database: ManualRunDatabase, failures: Error[] = []) {
     get: () => stub,
     jurisdiction: () => namespace,
   };
-  return { binding: namespace, dispatchRun, objectStore };
+  return { binding: namespace, dispatchRun, objectStore, identityOperations };
 }
 
 interface RuntimeSqlRequest {
@@ -375,13 +383,14 @@ describe("manual automation run recovery", () => {
     expect(storedHarnessRun(agents.objectStore)).toMatchObject({ status: "scheduled", workflow_instance_id: null });
     expect(storedWorkstream(agents.objectStore)).toMatchObject({ archived_at: null });
     // `archived_at` left regional D1 with migration 0090 — the work-stream
-    // object owns it now. Both reads of it on the create path must therefore
-    // arrive on the object's port; one issued against `env.DB` would ask the
-    // identity anchor for a column it no longer has, and fail the route gate
-    // with `no such column` after the address was already reserved.
-    const archiveReads = database.objectPortSql
-      .filter((sql) => /archived_at[\s\S]*FROM workstreams/u.test(sql));
-    expect(archiveReads.length).toBeGreaterThanOrEqual(2);
+    // object owns it now. Both reads of it on the create path reach the
+    // identity authority; one issued against `env.DB` would ask the identity
+    // anchor for a column it no longer has, and fail the route gate with
+    // `no such column` after the address was already reserved. The route gate
+    // reads it twice, once to ensure the address and once to activate.
+    expect(agents.identityOperations.filter((operation) => operation === "identity").length)
+      .toBeGreaterThanOrEqual(2);
+    expect(database.objectPortSql.filter((sql) => /FROM workstreams/u.test(sql))).toEqual([]);
     const originalRunId = database.run?.id;
     const originalWorkstreamId = database.run?.workstreamId;
     const originalHarnessRunId = storedHarnessRun(agents.objectStore)?.id;

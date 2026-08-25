@@ -10,6 +10,7 @@ import { preRetirementProductSqliteDatabase, sqliteD1 } from './helpers/sqlite-d
 import {
   executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectRun,
   seedToolReceipt,
@@ -210,7 +211,10 @@ describe('agent tool usage telemetry', () => {
       `UPDATE tool_effects SET error_json = ? WHERE effect_intent_id = ?`,
     ).run('{"code":"provider_timeout","message":"secret provider response"}', userInvocationId);
     const routedEnv = withWorkstreamRuntimeDatabase(
-      env,
+      // The work stream's automation run was a third table in the receipt's
+      // join; it is the identity authority's read now, answered by the real
+      // storage class over the same object store this test seeds.
+      createTestEnv({ ...env, SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore) }),
       workspaceId,
       workstreamId,
       '0',
