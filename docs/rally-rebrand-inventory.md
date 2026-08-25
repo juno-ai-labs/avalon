@@ -9,6 +9,17 @@ This document is the **inventory**: what still says Avalon, where, and — the
 part that decides the order of work — what each reference is coupled to.
 It is a survey, not a plan; it does not decide what gets renamed or when.
 
+**The Cloudflare infrastructure does not get renamed.** Every `avalon-*` Worker,
+queue, R2 bucket, and lakehouse name in [section 2](#2-cloudflare-infrastructure--out-of-scope-not-renamed)
+keeps its current name — the account is out of scope for the rebrand. Those
+names are internal to the deploy; nothing a user sees reads them. Treat that
+section as a record of what exists under the old name, not as a work list. The
+one thing it is still good for is recognizing an `avalon-` string as an
+infrastructure name, so a broad rename does not sweep it up by accident.
+
+This is the team's decision, not a conclusion of this survey; the reasoning
+behind it was not recorded here.
+
 [`domain-migration.md`](domain-migration.md) owns the hostnames, the deep-link
 scheme, and the work-stream email domain, and is the authority on all three.
 This document defers to it for those and covers everything else.
@@ -82,11 +93,12 @@ stored rows silently breaks every existing record.
   `packages/db/migrations/`. Applied migrations are immutable history — these
   are read-only and should be left alone.
 
-### 2. Infrastructure-coupled — a rename is a provisioning change
+### 2. Cloudflare infrastructure — out of scope, not renamed
 
 Cloudflare resource names: **174 distinct names, 764 occurrences, 185 files**.
-Renaming a queue, bucket, or Worker is a create-migrate-delete against the
-account, not an edit.
+**These are not being renamed** — see the note at the top. The inventory below
+records what exists so an `avalon-` string can be recognized as an
+infrastructure name and left alone.
 
 - **Workers**: `avalon-api-global`, `avalon-api-eu`, `avalon-site`,
   `avalon-ace`, `avalon-migration-tracker`, `avalon-release-retention`,
@@ -107,8 +119,9 @@ account, not an edit.
   provisioning scripts and their tests under `scripts/`.
 
 One typo is already in the tree: `avalon-eu-access-revocaitons` appears
-alongside `avalon-eu-access-revocations`. Worth resolving during whatever
-touches these, not before.
+alongside `avalon-eu-access-revocations`. That is a real defect rather than
+rebrand debt, and is unaffected by the no-rename decision — but it is still a
+provisioning change, so it belongs to whatever next touches those queues.
 
 ### 3. Externally-observable — a rename needs a consumer to move
 
@@ -226,12 +239,27 @@ throughout while serving from `rallywith.ai`.
 - **Whether `rally.*` or `avalon.*` wins for span attributes.** Both prefixes
   are in the tree now. The split is a fact this inventory found, not one it
   resolves.
-- **Which Avalon references are permanent.** `downloads.` is already known
-  permanent; shipped DMG artifact names look the same way. Others may be.
+- **Which Avalon references are permanent.** The Cloudflare resource names are,
+  by the decision above. `downloads.` is already known permanent; shipped DMG
+  artifact names look the same way. Others may be.
 - **Ordering and batching.** The categories above are ordered by coupling cost,
   which is not the same as the order the work should happen in.
 
 ## Changelog
+
+### 2026-08-25 — Cloudflare infrastructure placed out of scope
+
+The team ruled the Cloudflare account out of the rebrand: every `avalon-*`
+Worker, queue, bucket, and lakehouse keeps its name. Recorded at the top rather
+than only in section 2, because that section is the second-largest group in the
+inventory (174 distinct names, 764 occurrences) and reading it as a work list
+was the likeliest way to misread the document.
+
+Section 2 is kept rather than deleted, inverted from a work list into a
+recognition list — the names still need to be identifiable *as* infrastructure
+so a broad rename elsewhere does not sweep them up. The reasoning behind the
+decision itself was not recorded here; a future change that wants to revisit it
+should ask rather than infer it from this entry.
 
 ### 2026-08-25 — First inventory
 
