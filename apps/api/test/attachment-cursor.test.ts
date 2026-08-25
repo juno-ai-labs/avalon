@@ -5,6 +5,7 @@ import {
   openAttachmentCursor,
   sealAttachmentCursor,
 } from "../src/lib/attachment-cursor";
+import { hmacSha256 } from "../src/lib/crypto";
 
 const SECRET = "test-session-signing-key-with-enough-entropy";
 
@@ -63,5 +64,19 @@ describe("attachment cursors", () => {
     await expect(openAttachmentCursor(SECRET, "x".repeat(2_049), {
       purpose: "workstream-read", principal: "user:one", scopeId: "workstream-one",
     })).rejects.toMatchObject({ code: "invalid_cursor" });
+  });
+
+  it("opens a cursor sealed under the separator used before the rename", async () => {
+    // A cursor is valid for an hour and is held by an agent run between
+    // paginated tool calls, so a deploy lands mid-run. Rejecting the superseded
+    // separator interrupts a run holding an authentic, unexpired cursor.
+    const payload = { version: 1, purpose: "workstream-read", expiresAt: 10_000,
+      principal: "user:one", scopeId: "workstream-one", state: {} };
+    const encoded = btoa(JSON.stringify(payload)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+    const legacySecret = await hmacSha256(SECRET, "avalon:attachment-cursor:v1");
+    const legacyCursor = `${encoded}.${await hmacSha256(legacySecret, encoded)}`;
+    await expect(openAttachmentCursor(SECRET, legacyCursor, {
+      purpose: "workstream-read", principal: "user:one", scopeId: "workstream-one", now: 1,
+    })).resolves.toMatchObject({ purpose: "workstream-read", scopeId: "workstream-one" });
   });
 });

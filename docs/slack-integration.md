@@ -1110,7 +1110,7 @@ conversation.
 
 **What changed:** A member who redeems a link challenge is carried straight into the personal
 Slack authorization, so one click in Slack both links the identity and connects personal Slack
-tools. The status gates came off the inbound surface — events, interactions, `avalon_connect`,
+tools. The status gates came off the inbound surface — events, interactions, `rally_connect`,
 mentions, the unfurl refresh sweep, automation delivery, credential pre-warm — leaving only
 `disabled`. `redriveReauthorizedIngress` re-queues ingress jobs that failed on authorization
 once the installation returns to `healthy`. The `slack_installation_unhealthy` refusal and
@@ -1182,7 +1182,7 @@ in the modal — bought in exchange for a link that cannot be stale when it is
 clicked. Any future surface inviting a member to connect must use
 `connectPromptBlocks` and must not embed a handoff URL; the rule is stated under
 [Identity linking](#identity-linking) because a surface that breaks it will not
-fail any test. `createLink` now has exactly one caller, the `avalon_connect`
+fail any test. `createLink` now has exactly one caller, the `rally_connect`
 interaction, which is also where an unhealthy installation is refused before a
 challenge exists. `loadLinkChallenge` checks its conditions in a deliberate order
 — workspace mismatch ahead of every state check, so a caller holding a token
@@ -1204,7 +1204,7 @@ mint time rather than retiring every token but its own — two clicks in flight
 together would otherwise each retire the other's, leaving two modals on screen
 and no redeemable link between them.
 
-**The `avalon_connect` action id was deliberately reused rather than renamed**,
+**The `rally_connect` action id was deliberately reused rather than renamed**,
 which has a cost on deploy day worth knowing about. Every App Home view published
 before this shipped still carries a button with that id *and* the old `url`, and
 Slack both follows a `url` button's link and sends its interaction — so the first

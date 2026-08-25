@@ -328,35 +328,35 @@ describe("connector tools selected for harness runs", () => {
     }), workflowInput());
 
     const listPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
-      pluginId: "avalon:discovery",
+      pluginId: "rally:discovery",
       canonicalToolName: "list_plugins",
-      capability: "avalon.plugins.list",
+      capability: "rally.plugins.list",
       mode: "read",
       idempotency: "safe",
     }, selected);
     const loadPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
-      pluginId: "avalon:discovery",
+      pluginId: "rally:discovery",
       canonicalToolName: "load_plugin",
-      capability: "avalon.plugins.load",
+      capability: "rally.plugins.load",
       mode: "read",
       idempotency: "safe",
     }, selected);
     const timePolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
-      pluginId: "avalon:core",
+      pluginId: "rally:core",
       canonicalToolName: "current_time",
       capability: "time.read",
       mode: "read",
       idempotency: "safe",
     }, selected);
     const workstreamPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
-      pluginId: "avalon:workstream",
+      pluginId: "rally:workstream",
       canonicalToolName: "list_resources",
       capability: "workstream.resources.list",
       mode: "read",
       idempotency: "safe",
     }, selected);
     const webPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
-      pluginId: "avalon:web",
+      pluginId: "rally:web",
       canonicalToolName: "search",
       capability: "web.search",
       mode: "read",
@@ -375,13 +375,13 @@ describe("connector tools selected for harness runs", () => {
     expect(loadPolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
     expect(timePolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
     expect(workstreamPolicy).toMatchObject({
-      pluginId: "avalon:workstream",
+      pluginId: "rally:workstream",
       connectionId: null,
       toolSurfaceHash: expect.any(String),
       definition: { name: "list_resources", mode: "read", idempotency: "safe" },
     });
     expect(webPolicy).toMatchObject({
-      pluginId: "avalon:web",
+      pluginId: "rally:web",
       connectionId: null,
       toolSurfaceHash: expect.any(String),
       definition: { name: "search", mode: "read", idempotency: "safe" },
@@ -474,28 +474,28 @@ describe("connector tools selected for harness runs", () => {
       definition.name === "run_subagent"
     )).toHaveLength(1);
     expect(selected.corePlugins.map((plugin) => plugin.canonicalId)).toEqual([
-      "avalon:core",
-      "avalon:tables",
-      "avalon:memory",
+      "rally:core",
+      "rally:tables",
+      "rally:memory",
     ]);
-    expect(selected.corePlugins.find((plugin) => plugin.canonicalId === "avalon:core")
+    expect(selected.corePlugins.find((plugin) => plugin.canonicalId === "rally:core")
       ?.tools.map(({ definition }) => definition.name)).toEqual([
         "current_time",
         "request_elicitation",
       ]);
     expect(selected.plugins.find((plugin) =>
-      plugin.canonicalId === "avalon:workstream"
+      plugin.canonicalId === "rally:workstream"
     )?.tools.filter(({ definition }) => definition.name === "run_subagent")).toHaveLength(1);
     expect(selected.plugins.find((plugin) =>
-      plugin.canonicalId === "avalon:workstream"
+      plugin.canonicalId === "rally:workstream"
     )).toMatchObject({
-      modelId: "avalon_workstream",
+      modelId: "rally_workstream",
       shortWireName: "workstream",
       preload: true,
       explicit: true,
     });
     expect(selected.plugins.find((plugin) =>
-      plugin.canonicalId === "avalon:workstream"
+      plugin.canonicalId === "rally:workstream"
     )?.tools.map(({ definition }) => definition.name)).toEqual(expect.arrayContaining([
       "list_resources",
       "read_resource",
@@ -534,8 +534,8 @@ describe("connector tools selected for harness runs", () => {
     });
 
     expect(childTools.plugins.map((plugin) => plugin.canonicalId)).toEqual([
-      "avalon:workstream",
-      "avalon:web",
+      "rally:workstream",
+      "rally:web",
       `connection:${WORKSPACE_CONNECTION_ID}`,
     ]);
     expect(childTools.plugins[0]).toMatchObject({ preload: true, explicit: true });
@@ -564,7 +564,7 @@ describe("connector tools selected for harness runs", () => {
     expect(childTools.coreTools.some((tool) => tool.definition.capability.startsWith("memory.")))
       .toBe(false);
     expect(childTools.corePlugins.map((plugin) => plugin.canonicalId)).toEqual([
-      "avalon:core",
+      "rally:core",
     ]);
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("run_subagent");
     expect(childTools.frozenConnections.has(`connection:${OWNER_CONNECTION_ID}`)).toBe(false);
@@ -706,7 +706,7 @@ describe("connector tools selected for harness runs", () => {
     expect(selected.modeByTool.get("google_sheets_update_values")).toBe("write");
     const tables = __integrationTesting.createWorkstreamCorePlugins(
       createMemoryTableTools(env(database), workflowInput()),
-    ).find((plugin) => plugin.canonicalId === "avalon:tables");
+    ).find((plugin) => plugin.canonicalId === "rally:tables");
     expect(tables?.systemMessage).toContain("query those exact row IDs again");
     expect(tables?.systemMessage).toContain("table_insert_rows");
     expect(tables?.systemMessage).not.toMatch(/\binsert_rows\b(?!\s+can)/u);

@@ -277,7 +277,8 @@ rather than assertions.
 `x-rally-`, with every reader going through `readRallyHeader` in
 `packages/contracts/src/http-headers.ts` and both spellings listed in the CORS
 `allowHeaders`. The telemetry envelope's `schema` identifier moved to
-`com.rally.telemetry.event`, with `com.avalon.telemetry.event` still parsed. The
+`ai.rallywith.telemetry.event`, with `com.rally.telemetry.event` and
+`com.avalon.telemetry.event` still parsed. The
 desktop app renamed itself: `Rally`/`Rally Development` userData directories,
 `rally-data` for the encrypted session files, `rally-session/*` envelope headers,
 the bundle identifier `ai.rallywith.desktop`, and the `@rally/*` package scope

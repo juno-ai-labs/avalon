@@ -195,8 +195,8 @@ describe("Avalon Firecrawl harness tools", () => {
     const plugin = __integrationTesting.createAvalonWebPlugin(tools);
 
     expect(plugin).toMatchObject({
-      canonicalId: "avalon:web",
-      modelId: "avalon_web",
+      canonicalId: "rally:web",
+      modelId: "rally_web",
       shortWireName: "web",
       preload: false,
       explicit: false,

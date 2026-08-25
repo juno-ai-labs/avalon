@@ -14,7 +14,27 @@
  * tokens: a sentinel naming this scheme, and the ticket itself. Cloudflare does
  * not capture the header, so the credential stays out of the URL entirely.
  */
-export const SOCKET_TICKET_SUBPROTOCOL = "avalon.ticket.v1";
+export const SOCKET_TICKET_SUBPROTOCOL = "rally.ticket.v1";
+
+/**
+ * Sentinels still honoured inbound, and deliberately never offered.
+ *
+ * The rename from Avalon to Rally moved the sentinel, but a desktop build
+ * already installed keeps offering the one it shipped with. Accepting the
+ * superseded spelling is not enough on its own: Chromium fails a handshake
+ * whose response selects a subprotocol the client never offered, so the server
+ * has to echo back the one it was actually given — which is what
+ * `negotiatedSocketTicketSubprotocol` is for. Retiring one is an edit to this
+ * list once those builds are gone.
+ */
+export const SUPERSEDED_SOCKET_TICKET_SUBPROTOCOLS: readonly string[] = Object.freeze([
+  "avalon.ticket.v1",
+]);
+
+const TICKET_SENTINELS: readonly string[] = Object.freeze([
+  SOCKET_TICKET_SUBPROTOCOL,
+  ...SUPERSEDED_SOCKET_TICKET_SUBPROTOCOLS,
+]);
 
 /**
  * The deprecated query parameter, still accepted so a desktop build released
@@ -35,18 +55,28 @@ export function socketTicketProtocols(ticket: string): [string, string] {
 }
 
 export function offersSocketTicketSubprotocol(header: string | null | undefined): boolean {
-  return protocolTokens(header).includes(SOCKET_TICKET_SUBPROTOCOL);
+  return negotiatedSocketTicketSubprotocol(header) !== null;
+}
+
+/**
+ * The sentinel the client actually offered — canonical or superseded — or null
+ * when it offered none. This is the one a 101 must echo: selecting a spelling
+ * the client never sent fails the handshake exactly as selecting none does.
+ */
+export function negotiatedSocketTicketSubprotocol(header: string | null | undefined): string | null {
+  const tokens = protocolTokens(header);
+  return TICKET_SENTINELS.find((sentinel) => tokens.includes(sentinel)) ?? null;
 }
 
 /**
  * The ticket the client offered alongside the sentinel, or null when it offered
- * none. Only the sentinel identifies the scheme, so a client that offers some
+ * none. Only a sentinel identifies the scheme, so a client that offers some
  * other subprotocol gets no ticket read out of it.
  */
 export function socketTicketFromProtocols(header: string | null | undefined): string | null {
   const tokens = protocolTokens(header);
-  if (!tokens.includes(SOCKET_TICKET_SUBPROTOCOL)) return null;
-  return tokens.find((token) => token !== SOCKET_TICKET_SUBPROTOCOL && TICKET_TOKEN.test(token)) ?? null;
+  if (!tokens.some((token) => TICKET_SENTINELS.includes(token))) return null;
+  return tokens.find((token) => !TICKET_SENTINELS.includes(token) && TICKET_TOKEN.test(token)) ?? null;
 }
 
 /**

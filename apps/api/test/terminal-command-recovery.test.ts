@@ -19,8 +19,8 @@ describe("Terminal command receipt recovery", () => {
   it("re-executes only the recorded Terminal run_command through its frozen tool", async () => {
     const execute = vi.fn(async () => ({ output: { state: "completed" }, summary: "Recovered" }));
     const plugin: HarnessPlugin = {
-      canonicalId: "avalon:terminal",
-      modelId: "avalon_terminal",
+      canonicalId: "rally:terminal",
+      modelId: "rally_terminal",
       shortWireName: "terminal",
       description: "Terminal",
       preload: false,
@@ -42,7 +42,7 @@ describe("Terminal command receipt recovery", () => {
       expectedInputHash: "same",
       policyMatches: true,
       expectedPolicy: {
-        pluginId: "avalon:terminal",
+        pluginId: "rally:terminal",
         definition: plugin.tools[0]!.definition,
       },
       plugins: [plugin],
@@ -64,7 +64,7 @@ describe("Terminal command receipt recovery", () => {
       expectedInputHash: "new",
       policyMatches: true,
       expectedPolicy: {
-        pluginId: "avalon:terminal",
+        pluginId: "rally:terminal",
         definition: {
           name: "write_file",
           description: "Write",
@@ -90,8 +90,8 @@ describe("Terminal command receipt recovery", () => {
       inputSchema: { type: "object", additionalProperties: true },
     };
     const plugin: HarnessPlugin = {
-      canonicalId: "avalon:terminal",
-      modelId: "avalon_terminal",
+      canonicalId: "rally:terminal",
+      modelId: "rally_terminal",
       shortWireName: "terminal",
       description: "Terminal",
       preload: false,
@@ -102,7 +102,7 @@ describe("Terminal command receipt recovery", () => {
       row: { id: RECEIPT, status: "started", inputHash: "same", inputJson: '{"title":"Ship","body":"Why"}' },
       expectedInputHash: "same",
       policyMatches: true,
-      expectedPolicy: { pluginId: "avalon:terminal", definition },
+      expectedPolicy: { pluginId: "rally:terminal", definition },
       plugins: [plugin],
       context,
     })).resolves.toMatchObject({ summary: "Recovered PR" });
@@ -120,8 +120,8 @@ describe("Terminal command receipt recovery", () => {
       inputSchema: { type: "object", additionalProperties: true },
     };
     const plugin: HarnessPlugin = {
-      canonicalId: "avalon:terminal",
-      modelId: "avalon_terminal",
+      canonicalId: "rally:terminal",
+      modelId: "rally_terminal",
       shortWireName: "terminal",
       description: "Terminal",
       preload: false,
@@ -132,7 +132,7 @@ describe("Terminal command receipt recovery", () => {
       row: { id: RECEIPT, status: "ambiguous", inputHash: "same", inputJson: '{"repositoryFullName":"owner/repo","requiredRemoteAccess":"read_only"}' },
       expectedInputHash: "same",
       policyMatches: true,
-      expectedPolicy: { pluginId: "avalon:terminal", definition },
+      expectedPolicy: { pluginId: "rally:terminal", definition },
       plugins: [plugin],
       context,
     })).resolves.toMatchObject({ summary: "Recovered checkout" });

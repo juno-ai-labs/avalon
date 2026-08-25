@@ -20,7 +20,7 @@
  * carries it regardless of how either side was loaded, and it cannot collide
  * with a property any other code sets.
  */
-const WORKFLOW_INSTANCE_CREATED = Symbol.for("avalon.workflowInstanceCreated");
+const WORKFLOW_INSTANCE_CREATED = Symbol.for("rally.workflowInstanceCreated");
 
 export function markWorkflowInstanceCreated<T extends Error>(error: T): T {
   return Object.assign(error, { [WORKFLOW_INSTANCE_CREATED]: true });

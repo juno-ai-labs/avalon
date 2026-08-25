@@ -1686,7 +1686,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         substreamId: this.externalSubstreamId(),
         ...(workstreamId === undefined ? {} : { workstreamId }),
       },
-      attributes: { "avalon.room.operation": parsed.data.operation },
+      attributes: { "rally.room.operation": parsed.data.operation },
     }, (span) => this.runProductRequest(parsed.data, span));
   }
 
@@ -1775,7 +1775,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           query.after,
           query.around,
         ));
-        span.setAttributes({ "avalon.transcript.message_count": page.items.length });
+        span.setAttributes({ "rally.transcript.message_count": page.items.length });
         return jsonResponse(page);
       }
       const identity = this.objectStore.identity();
@@ -1802,9 +1802,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             this.publishLocalProductEvent(identity, { type: "message_created", message: result.message }));
         }
         span.setAttributes({
-          "avalon.agent.invoked": result.agentInvoked,
-          "avalon.harness_run.id": result.harnessRunId,
-          "avalon.message.deduplicated": !result.inserted,
+          "rally.agent.invoked": result.agentInvoked,
+          "rally.harness_run.id": result.harnessRunId,
+          "rally.message.deduplicated": !result.inserted,
         });
         return jsonResponse({
           message: result.message,
@@ -2828,7 +2828,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
       // The subscription is the half of opening a work stream that a person
       // actually waits on, and it arrives on its own invocation — hence its own
-      // trace, joined to the upgrade's by `avalon.socket.connection_id`.
+      // trace, joined to the upgrade's by `rally.socket.connection_id`.
       const afterSequence = parsed.data.afterSequence;
       await inFlowSpan(this.env, "workstream.room.socket.subscribe", {
         flow: "workstream_open",
@@ -2840,8 +2840,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           substreamId: attachment.substreamId,
         },
         attributes: {
-          "avalon.socket.connection_id": attachment.connectionId,
-          "avalon.socket.after_sequence": afterSequence,
+          "rally.socket.connection_id": attachment.connectionId,
+          "rally.socket.after_sequence": afterSequence,
         },
       }, async (span) => {
         await this.fulfillSubscription(
@@ -3431,7 +3431,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   /**
    * The upgrade and the `subscribe` that follows it are separate invocations —
    * `subscribe` arrives over an already-open socket, possibly on a woken
-   * isolate — so the platform traces them as two traces. `avalon.socket.*`
+   * isolate — so the platform traces them as two traces. `rally.socket.*`
    * attributes are what join them: the ticket id back to the route that issued
    * it, and the connection id forward to the subscription.
    */
@@ -3482,12 +3482,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (!identity.success) return jsonResponse({ error: "invalid_socket_identity" }, 400);
 
     span.setAttributes({
-      "avalon.workspace.id": identity.data.workspaceId,
-      "avalon.workstream.id": identity.data.workstreamId,
+      "rally.workspace.id": identity.data.workspaceId,
+      "rally.workstream.id": identity.data.workstreamId,
       "user.id": identity.data.userId,
-      "avalon.substream.id": identity.data.substreamId,
-      "avalon.socket.ticket_id": identity.data.ticketId,
-      "avalon.socket.after_sequence": identity.data.afterSequence,
+      "rally.substream.id": identity.data.substreamId,
+      "rally.socket.ticket_id": identity.data.ticketId,
+      "rally.socket.after_sequence": identity.data.afterSequence,
     });
 
     const currentAuthority = await span.step("workstream.room.socket.authority_read", () =>
@@ -3573,8 +3573,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
     span.mark("workstream.room.socket.accept_connection");
     span.setAttributes({
-      "avalon.socket.outcome": "accepted",
-      "avalon.socket.connection_id": attachment.connectionId,
+      "rally.socket.outcome": "accepted",
+      "rally.socket.connection_id": attachment.connectionId,
     });
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -3858,8 +3858,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // sends what is already in memory, and a resync makes the client fetch
     // canonical state over HTTP instead.
     span.setAttributes({
-      "avalon.subscribe.replay_plan": plan.type,
-      ...(plan.type === "replay" ? { "avalon.subscribe.replay_event_count": plan.events.length } : {}),
+      "rally.subscribe.replay_plan": plan.type,
+      ...(plan.type === "replay" ? { "rally.subscribe.replay_event_count": plan.events.length } : {}),
     });
     await span.step("workstream.room.subscribe.deliver", () =>
       this.deliverReplayPlan(socket, workspaceId, workstreamId, deliveredThrough, plan, span));
@@ -3870,7 +3870,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const catchUpSequence = await span.step("workstream.room.subscribe.catch_up_sequence", () =>
       this.currentSequence());
     if (catchUpSequence > deliveredThrough) {
-      span.setAttributes({ "avalon.subscribe.catch_up_events": catchUpSequence - deliveredThrough });
+      span.setAttributes({ "rally.subscribe.catch_up_events": catchUpSequence - deliveredThrough });
       await span.step("workstream.room.subscribe.deliver_catch_up", () => this.deliverReplayPlan(
         socket,
         workspaceId,
@@ -4019,9 +4019,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       span.setAttributes({
         // Bytes, not `encoded.length`: that counts UTF-16 code units, so any
         // non-ASCII transcript under-reported against a cap measured in UTF-8.
-        "avalon.snapshot.bytes": encodedBytes,
-        "avalon.snapshot.message_count": messageFeed.items.length + (resumeFeed?.items.length ?? 0),
-        "avalon.snapshot.trims": trims,
+        "rally.snapshot.bytes": encodedBytes,
+        "rally.snapshot.message_count": messageFeed.items.length + (resumeFeed?.items.length ?? 0),
+        "rally.snapshot.trims": trims,
       });
       socket.send(encoded);
     } catch {

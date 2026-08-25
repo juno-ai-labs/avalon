@@ -5,9 +5,9 @@ const APPROVED_POSTHOG_ORIGINS = new Set([
   "https://us.i.posthog.com",
   "https://us.posthog.com",
 ]);
-const POSTHOG_APP_NAME = "Avalon";
-const POSTHOG_APP_NAMESPACE = "app.avalon.desktop";
-const POSTHOG_LIBRARY = "avalon-regional-telemetry";
+const POSTHOG_APP_NAME = "Rally";
+const POSTHOG_APP_NAMESPACE = "app.rally.desktop";
+const POSTHOG_LIBRARY = "rally-regional-telemetry";
 const POSTHOG_LIBRARY_VERSION = "1";
 
 export interface GlobalTelemetryDeliveryRow {
@@ -225,17 +225,17 @@ function webPageContext(envelope: TelemetryEnvelope, webBaseUrl: string): Record
 function applicationSettingsPersonProperties(envelope: TelemetryEnvelope): Record<string, unknown> | null {
   if (envelope.name === "application_settings_state" || envelope.name === "application_settings_state_v2") {
     return {
-      avalon_launch_at_login_enabled: envelope.properties["launchAtLoginEnabled"],
-      avalon_launch_at_login_available: envelope.properties["launchAtLoginAvailable"],
-      avalon_lockdown_mode_enabled: envelope.properties["lockdownModeEnabled"],
-      avalon_lockdown_mode_available: envelope.properties["lockdownModeAvailable"],
-      avalon_application_icon: envelope.properties["applicationIcon"],
-      avalon_application_icon_automatic: envelope.properties["applicationIconAutomatic"],
-      avalon_application_icon_available: envelope.properties["applicationIconAvailable"],
+      rally_launch_at_login_enabled: envelope.properties["launchAtLoginEnabled"],
+      rally_launch_at_login_available: envelope.properties["launchAtLoginAvailable"],
+      rally_lockdown_mode_enabled: envelope.properties["lockdownModeEnabled"],
+      rally_lockdown_mode_available: envelope.properties["lockdownModeAvailable"],
+      rally_application_icon: envelope.properties["applicationIcon"],
+      rally_application_icon_automatic: envelope.properties["applicationIconAutomatic"],
+      rally_application_icon_available: envelope.properties["applicationIconAvailable"],
       ...(envelope.name === "application_settings_state_v2" ? {
-        avalon_menu_bar_enabled: envelope.properties["menuBarEnabled"],
-        avalon_menu_bar_available: envelope.properties["menuBarAvailable"],
-        avalon_menu_bar_present: envelope.properties["menuBarPresent"],
+        rally_menu_bar_enabled: envelope.properties["menuBarEnabled"],
+        rally_menu_bar_available: envelope.properties["menuBarAvailable"],
+        rally_menu_bar_present: envelope.properties["menuBarPresent"],
       } : {}),
     };
   }
@@ -243,19 +243,19 @@ function applicationSettingsPersonProperties(envelope: TelemetryEnvelope): Recor
     || envelope.name === "application_setting_change_completed_v2") {
     const setting = envelope.properties["setting"];
     if (setting === "launch_at_login") {
-      return { avalon_launch_at_login_enabled: envelope.properties["appliedEnabled"] };
+      return { rally_launch_at_login_enabled: envelope.properties["appliedEnabled"] };
     }
     if (setting === "lockdown_mode") {
-      return { avalon_lockdown_mode_enabled: envelope.properties["appliedEnabled"] };
+      return { rally_lockdown_mode_enabled: envelope.properties["appliedEnabled"] };
     }
     if (setting === "menu_bar") {
-      return { avalon_menu_bar_enabled: envelope.properties["appliedEnabled"] };
+      return { rally_menu_bar_enabled: envelope.properties["appliedEnabled"] };
     }
   }
   if (envelope.name === "application_icon_changed") {
     return {
-      avalon_application_icon: envelope.properties["selectedIcon"],
-      avalon_application_icon_automatic: envelope.properties["automatic"],
+      rally_application_icon: envelope.properties["selectedIcon"],
+      rally_application_icon_automatic: envelope.properties["automatic"],
     };
   }
   return null;
@@ -285,7 +285,7 @@ export function mapPostHogCapture(
       ...(envelope.source === "api" ? { $is_server: true } : {}),
       $process_person_profile: !personless,
       $is_identified: !personless,
-      ...(!personless ? { $set_once: { first_avalon_release: envelope.context.release } } : {}),
+      ...(!personless ? { $set_once: { first_rally_release: envelope.context.release } } : {}),
       ...(settingsPersonProperties ? { $set: settingsPersonProperties } : {}),
       ...(desktopSource ? desktopApplicationContext({
         release: envelope.context.release,
@@ -301,7 +301,7 @@ export function mapPostHogCapture(
         viewportHeight: envelope.context.viewportHeight,
         windowId: envelope.context.windowId,
       }) : {}),
-      avalon_event_name: envelope.name,
+      rally_event_name: envelope.name,
       schema_version: envelope.schemaVersion,
       source: envelope.source,
       category: envelope.category,
@@ -470,7 +470,7 @@ export async function sendPostHogCrashBatch(input: {
         $process_person_profile: row.processPersonProfile,
         $is_identified: row.processPersonProfile,
         $exception_fingerprint: row.fingerprint,
-        $exception_source: "avalon_native",
+        $exception_source: "rally_native",
         $exception_level: "fatal",
         category: "diagnostic",
         release: row.release,
@@ -529,9 +529,9 @@ export async function sendPostHogJavascriptExceptionBatch(input: {
         }),
         $process_person_profile: true,
         $is_identified: true,
-        avalon_event_name: row.envelope.name,
+        rally_event_name: row.envelope.name,
         $exception_fingerprint: properties.fingerprint,
-        $exception_source: "avalon_javascript",
+        $exception_source: "rally_javascript",
         category: "diagnostic",
         schema_version: row.envelope.schemaVersion,
         source: row.envelope.source,

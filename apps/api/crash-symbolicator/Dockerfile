@@ -8,7 +8,7 @@ RUN useradd --create-home --uid 10001 processor \
     && install --directory --owner=processor --group=processor --mode=0700 /workspace
 
 COPY --from=builder /usr/local/cargo/bin/minidump-stackwalk /usr/local/bin/minidump-stackwalk
-COPY --chmod=0555 processor.py /usr/local/bin/avalon-symbolicate
+COPY --chmod=0555 processor.py /usr/local/bin/rally-symbolicate
 
 USER processor
 WORKDIR /workspace

@@ -113,13 +113,13 @@ function everyAuthoredToolSchema(): { name: string; schema: Record<string, unkno
  */
 const EXPECTED_TOOLS = [
   "memory.search:search",
-  "avalon.plugins.list:list_plugins",
-  "avalon.skills.load:load_skill",
+  "rally.plugins.list:list_plugins",
+  "rally.skills.load:load_skill",
   "web.search:search",
   "web.fetch:fetch",
-  "avalon.automation.plugins.list:plugins_list",
-  "avalon.automation.submit:submit_draft",
-  "avalon.block-dashboard.submit:submit_block",
+  "rally.automation.plugins.list:plugins_list",
+  "rally.automation.submit:submit_draft",
+  "rally.block-dashboard.submit:submit_block",
   "terminal.import_resource",
   "notion.create_comment",
   "x.get_user_timeline",

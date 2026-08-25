@@ -183,7 +183,7 @@ describe("Terminal repository publication", () => {
       command: expect.stringMatching(/rm -rf -- \/workspace\/repository\.tmp\n.*clone --no-checkout 'https:\/\/github\.com\/owner\/repo\.git'/su),
     }));
     expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
-      command: expect.stringContaining("grep -qxF '.avalon/' .git/info/exclude || printf '.avalon/\\n' >> .git/info/exclude"),
+      command: expect.stringContaining("grep -qxF '.rally/' .git/info/exclude || printf '.rally/\\n' >> .git/info/exclude"),
     }));
     expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
       command: expect.not.stringContaining("git push --set-upstream"),
@@ -198,7 +198,7 @@ describe("Terminal repository publication", () => {
       command: expect.stringContaining('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'),
     }));
     expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
-      command: expect.stringContaining("printf 'export GIT_SSL_CAINFO=%q\\n' \"$GIT_SSL_CAINFO\" >> '/workspace/.avalon/session.env'"),
+      command: expect.stringContaining("printf 'export GIT_SSL_CAINFO=%q\\n' \"$GIT_SSL_CAINFO\" >> '/workspace/.rally/session.env'"),
     }));
     const bootstrapCommand = vi.mocked(provider.runCommand).mock.calls.at(-1)?.[1].command ?? "";
     expect(bootstrapCommand.indexOf('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'))

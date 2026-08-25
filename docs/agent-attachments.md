@@ -181,7 +181,7 @@ resolves one resource through current work-stream/principal visibility, streams
 its regional R2 original through the Worker, verifies its stored hash, and writes
 it into the current authority-fenced sandbox generation. Daytona receives no R2
 credential or signed URL. An omitted destination is deterministic beneath
-`.avalon/resources/`; an explicit destination is create-only unless the model
+`.rally/resources/`; an explicit destination is create-only unless the model
 states `overwrite: true`.
 
 `terminal_publish_resource` reads one stable nonempty regular file from the
