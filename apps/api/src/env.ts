@@ -52,7 +52,7 @@ export interface Env {
   SLACK_REACTION_TICKERS: DurableObjectNamespace;
   ACTIVITY_QUEUE: Queue;
   /** Regional durable hand-off from inference capture to Pipeline ingestion. */
-  INFERENCE_LAKEHOUSE_QUEUE: Queue;
+  INFERENCE_LAKEHOUSE_QUEUE?: Queue;
   /** The one path from a D1 access retraction to an open socket. */
   ACCESS_REVOCATION_QUEUE: Queue;
   CONNECTOR_POLL_WORKFLOW: Workflow;
@@ -294,7 +294,7 @@ const EnvContractSchema = z.object({
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   SLACK_REACTION_TICKERS: binding<DurableObjectNamespace>(),
   ACTIVITY_QUEUE: binding<Queue>(),
-  INFERENCE_LAKEHOUSE_QUEUE: binding<Queue>(),
+  INFERENCE_LAKEHOUSE_QUEUE: binding<Queue>().optional(),
   ACCESS_REVOCATION_QUEUE: binding<Queue>(),
   INFERENCE_LAKEHOUSE: binding<Pipeline>().optional(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
@@ -406,7 +406,10 @@ const productionOnlySecrets = [
   { key: "OPENROUTER_API_KEY", regions: ["global", "eu"] },
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
-const productionOnlyBindings = ["INFERENCE_LAKEHOUSE"] as const satisfies readonly (keyof Env)[];
+const productionOnlyBindings = [
+  { key: "INFERENCE_LAKEHOUSE_QUEUE", regions: ["global"] },
+  { key: "INFERENCE_LAKEHOUSE", regions: ["global"] },
+] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 /**
  * Drift guard. If a key is required by the schema but optional on `Env` — or
@@ -456,7 +459,11 @@ export function assertEnvContract(env: Env): void {
         .map((secret) => secret.key)
     : [];
   const missingBindings = env.APP_ENV === "production" || env.APP_ENV === "staging"
-    ? productionOnlyBindings.filter((key) => !env[key])
+    ? productionOnlyBindings
+        .filter((bindingRule) =>
+          (!knownRegion || (bindingRule.regions as readonly Region[]).includes(env.AVALON_REGION))
+          && !env[bindingRule.key])
+        .map((bindingRule) => bindingRule.key)
     : [];
   const terminalRequiredKeys = ["DAYTONA_API_KEY", "DAYTONA_API_URL", "DAYTONA_TARGET", "DAYTONA_TERMINAL_SNAPSHOT"] as const;
   const terminalConfigurationComplete = terminalRequiredKeys.every(

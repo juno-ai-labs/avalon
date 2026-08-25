@@ -9,7 +9,6 @@ import {
 
 export const INFERENCE_LAKEHOUSE_QUEUE_NAMES = new Set([
   "avalon-global-inference-lakehouse",
-  "avalon-eu-inference-lakehouse",
 ]);
 
 /** Published Cloudflare Pipelines ingestion-request limit, checked 2026-08-24. */
@@ -66,7 +65,7 @@ export async function deliverInferenceLakehousePointer(
 
   // The array brackets added by `send` count toward the platform's 5 MB
   // ingestion-request ceiling. The fallback row keeps queryable metadata in
-  // Iceberg and the exact oversized record in regional R2 under its hash.
+  // Iceberg and the exact oversized record in Global R2 under its hash.
   const overflow = pointer.payloadBytes + 2 > PIPELINE_INGEST_REQUEST_BYTES;
   const delivered = overflow ? overflowRecord(record, pointer) : record;
   await env.INFERENCE_LAKEHOUSE.send([delivered]);
