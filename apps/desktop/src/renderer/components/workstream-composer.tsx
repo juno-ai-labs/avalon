@@ -2,6 +2,7 @@ import { LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { AvalonApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
+import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
 import { NO_MENTIONS, useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import type { PendingAttachment } from '../lib/use-file-attachments';
@@ -58,8 +59,6 @@ const BASE_COMMANDS: ComposerCommand[] = [
   { id: 'attach', label: 'attach', description: 'Choose a file to attach' },
   { id: 'clear', label: 'clear', description: 'Clear this draft' },
 ];
-const PERSON_MENTION_TYPE = 'Person';
-
 export function WorkstreamComposer({
   api,
   workstream,

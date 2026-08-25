@@ -298,3 +298,28 @@ test('rejects stale public bytes even when their size and first byte match', asy
     /SHA-512 mismatch/u,
   );
 });
+
+test('allows a full artifact transfer to exceed the timeout while bytes keep arriving', async () => {
+  const chunks = ['first-', 'second-', 'third'];
+  const expected = Buffer.from(chunks.join(''));
+  let chunkIndex = 0;
+
+  await verifyPublicReleaseArtifactHash({
+    expectedHash: createHash('sha512').update(expected).digest('base64'),
+    fetchImplementation: async (_url, { signal }) => new Response(new ReadableStream({
+      start(controller) {
+        signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+      },
+      async pull(controller) {
+        await new Promise((resolve) => setTimeout(resolve, 75));
+        if (signal.aborted) return;
+        controller.enqueue(Buffer.from(chunks[chunkIndex]));
+        chunkIndex += 1;
+        if (chunkIndex === chunks.length) controller.close();
+      },
+    })),
+    idleTimeoutMilliseconds: 200,
+    sleepImplementation: async () => undefined,
+    url: 'https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-1.147.0.dmg',
+  });
+});
