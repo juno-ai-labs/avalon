@@ -6,6 +6,8 @@ import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createR2ReleaseLockClient, withR2ReleaseLock } from './release-r2-lock.mjs';
 
 class FakeR2Client {
+  failDelete = false;
+
   locked = false;
 
   events = [];
@@ -24,6 +26,7 @@ class FakeR2Client {
     }
     assert.ok(command instanceof DeleteObjectCommand);
     this.events.push(['delete']);
+    if (this.failDelete) throw new Error('delete failed');
     this.locked = false;
     return {};
   }
@@ -77,6 +80,21 @@ test('the remote lock is released when publication fails', async () => {
     /publish failed/u,
   );
   assert.equal(client.locked, false);
+});
+
+test('a cleanup failure says that publication completed and leaves the lock fail-closed', async () => {
+  const client = new FakeR2Client();
+  client.failDelete = true;
+  await assert.rejects(
+    withR2ReleaseLock({
+      bucket: 'releases',
+      client,
+      key: 'stable/release-publish.lock',
+      operation: async () => 'published',
+    }),
+    /publication completed, but its remote lock could not be released/u,
+  );
+  assert.equal(client.locked, true);
 });
 
 test('account token verification derives an R2 S3 client without exposing the token', async () => {

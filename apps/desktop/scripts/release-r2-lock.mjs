@@ -2,13 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
-function cloudflareErrorCodes(body) {
-  if (!Array.isArray(body?.errors)) return 'none';
-  const codes = body.errors
-    .map((error) => error?.code)
-    .filter((code) => Number.isSafeInteger(code));
-  return codes.length > 0 ? codes.join(',') : 'none';
-}
+import { cloudflareErrorCodes } from './release-cloudflare.mjs';
 
 export async function createR2ReleaseLockClient({
   accountId,
@@ -87,7 +81,11 @@ export async function withR2ReleaseLock({
     }));
   } catch (error) {
     if (isConditionalConflict(error)) {
-      throw new Error(`Another desktop release publisher holds r2://${bucket}/${key}`, { cause: error });
+      const status = error?.$metadata?.httpStatusCode ?? 'unknown';
+      throw new Error(
+        `Another desktop release publisher holds r2://${bucket}/${key} (${error?.name ?? 'unknown'}, HTTP ${status})`,
+        { cause: error },
+      );
     }
     throw new Error(`Could not acquire the desktop release lock at r2://${bucket}/${key}`, { cause: error });
   }
@@ -105,8 +103,11 @@ export async function withR2ReleaseLock({
   let releaseError;
   try {
     await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
-  } catch {
-    releaseError = new Error(`Could not release the desktop release lock at r2://${bucket}/${key}`);
+  } catch (error) {
+    releaseError = new Error(
+      `Desktop release publication completed, but its remote lock could not be released at r2://${bucket}/${key}; confirm no publisher is active and remove only that lock before the next release`,
+      { cause: error },
+    );
   }
   if (operationFailed && releaseError) {
     throw new AggregateError(
