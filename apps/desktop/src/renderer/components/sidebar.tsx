@@ -508,6 +508,7 @@ function WorkstreamRow({
             : undefined}
           onPointerEnter={socketWarmup.onPointerEnter}
           onPointerLeave={socketWarmup.onPointerLeave}
+          onPointerCancel={socketWarmup.onPointerCancel}
         >
           <NavLink
             aria-keyshortcuts={commandShortcut === undefined ? undefined : `Meta+${commandShortcut}`}
