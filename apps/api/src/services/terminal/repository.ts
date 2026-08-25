@@ -256,7 +256,7 @@ export async function bootstrapTerminalRepository(
     ]),
     ...(alreadyBootstrapped ? [
       `if ! git checkout ${shellQuote(selection.headRef)}; then`,
-      `  printf '%s\n' ${shellQuote(`Avalon could not restore ${selection.headRef}; inspect git status and finish or abort the active Git operation before pushing.`)} >&2`,
+      `  printf '%s\n' ${shellQuote(`Rally could not restore ${selection.headRef}; inspect git status and finish or abort the active Git operation before pushing.`)} >&2`,
       "fi",
     ] : [
       `if git show-ref --verify --quiet ${shellQuote(`refs/heads/${selection.headRef}`)}; then`,

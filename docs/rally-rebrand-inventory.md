@@ -365,7 +365,23 @@ classified as `human_only` and the agent stayed silent while being addressed by
 name. It now matches both spellings — recognizing an extra word costs nothing,
 and there is no stored value to keep consistent.
 
-**Found while sweeping for other regex literals, and left for later:**
+**Nested template literals broke the scanner, twice.** A tokenizer that pairs
+backticks naively mis-pairs `` `…${shellQuote(`…`)}…` `` and then mis-reads the
+rest of the file, which is how `Rally could not restore <ref>` — printed to
+stderr *inside the sandbox*, where the model reads it as tool output — and two
+Daytona resource descriptions survived a pass that renamed their neighbours.
+Both are fixed. The lesson is the one already recorded for the blocklist: the
+sweep is a convenience, and only enumerating what remains proves anything.
+
+**`matchedRallyUserId` is the second field whose name is prompt text.**
+`renderWorkstreamSystemPrompt` serializes the Slack origin object into the
+prompt, so this schema field reads to the model exactly as `addressesRally`
+does. It is declared in `packages/contracts`, which makes it look like a wire
+contract — but nothing persists it (no column, no Durable Object row), so it
+renames cleanly. Any *future* field of this shape needs that check first: the
+declaration cannot tell you whether it is stored.
+
+**Found while sweeping, and left for later:**
 `AVALON_BRANCH_PATTERN` in `terminal/repository-selection.ts` both mints
 `avalon/<slug>` and recognizes `^avalon/`. Moving it is not a rename but a
 compatibility problem — branches of that name already exist in members' GitHub

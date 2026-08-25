@@ -2721,7 +2721,7 @@ export class SlackAgentService {
     teamId: string,
     slackUserId: string,
     source: SlackPromptSource,
-    matchedAvalonUserId: string | null,
+    matchedRallyUserId: string | null,
   ): Promise<SlackOriginContext> {
     // Slack Agent policy prohibits durable storage of provider content
     // obtained for surrounding context. Persist only origin metadata; Slack
@@ -2738,7 +2738,7 @@ export class SlackAgentService {
       threadTs: source.threadTs,
       invocationType: source.kind,
       channelType: source.channelType,
-      matchedAvalonUserId,
+      matchedRallyUserId,
       nearbyMessagesStatus: "not_applicable",
       nearbyMessages: [],
       attachments: source.attachments,
