@@ -626,7 +626,11 @@ When an executor throws a Zod error and its normalized arguments also fail the
 provider-facing schema or its code-authored refinement, the model sees
 `kind: "validation"`, at most five actionable issues from the closest union
 branch, and no raw `invalid_union` tree. The message is capped at 1,200
-characters and never echoes submitted values. That bounded schema message is
+characters and echoes no submitted *value*. It does name up to five rejected
+**key** names on an `unrecognized_keys` issue, which is the one thing the model
+wrote that comes back to it: "remove these fields" is not actionable without
+them. Keep that in view when widening what the message carries, because a model
+that authored a key can put content in the key. That bounded schema message is
 the complete model recovery context for this branch; structured details from
 the executor's thrown error are not forwarded because they may describe
 downstream state rather than the rejected arguments. If those arguments pass
