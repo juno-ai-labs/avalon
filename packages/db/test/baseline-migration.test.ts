@@ -289,7 +289,7 @@ describe("the D1 baseline reproduces the migration chain", () => {
 });
 
 describe("the baseline's triggers are live, not just present", () => {
-  it("keeps the Global email ledger a claim register, in both databases", () => {
+  it("keeps the Global email ledger a full-address claim register, in both databases", () => {
     // Ported from the per-migration suite when it was retired: it asserted the
     // shape 0092 leaves, and a chain-versus-baseline diff cannot stand in for
     // that — a lifecycle column wrongly present would appear on both sides and
@@ -311,8 +311,9 @@ describe("the baseline's triggers are live, not just present", () => {
         (id, workspace_id, do_identity_anchor)
       VALUES ('workstream-email', 'workspace-email', 1);
       INSERT INTO workstream_email_routes
-        (local_part, region, workspace_id, workstream_id, created_at, updated_at)
-      VALUES ('bright-steady-clear-otter', 'global', 'workspace-email', 'workstream-email',
+        (email_address, address_source, region, workspace_id, workstream_id, created_at, updated_at)
+      VALUES ('bright-steady-clear-otter@automation.rallywith.ai', 'owner',
+              'global', 'workspace-email', 'workstream-email',
               '2026-01-01', '2026-01-01');
     `);
 
@@ -324,33 +325,46 @@ describe("the baseline's triggers are live, not just present", () => {
           .all() as Array<{ name: string }>).map((column) => column.name);
         expect(routeColumns, label).not.toContain("status");
         expect(routeColumns, label).not.toContain("disabled_at");
+        expect(routeColumns, label).not.toContain("local_part");
+        expect(routeColumns, label).toContain("email_address");
         expect(
           (database.prepare("PRAGMA table_info(workstreams)").all() as Array<{ name: string }>)
             .map((column) => column.name),
           label,
         ).not.toContain("email_address");
 
-        // The route is a permanent claim: nobody else may take the local part,
-        // it cannot be renamed, and it cannot be deleted.
+        // The route is a permanent claim: nobody else may take the full
+        // address, it cannot be renamed, and it cannot be deleted.
         expect(() => database.exec(`
           INSERT INTO workstream_email_routes
-            (local_part, region, workspace_id, workstream_id, created_at, updated_at)
-          VALUES ('bright-steady-clear-otter', 'global', 'workspace-other', 'workstream-other',
+            (email_address, address_source, region, workspace_id, workstream_id, created_at, updated_at)
+          VALUES ('bright-steady-clear-otter@automation.rallywith.ai', 'owner',
+                  'global', 'workspace-other', 'workstream-other',
                   '2026-01-01', '2026-01-01');
         `), label).toThrow();
         expect(() => database.exec(
-          "UPDATE workstream_email_routes SET local_part = 'different-route' WHERE workstream_id = 'workstream-email'",
+          "UPDATE workstream_email_routes SET email_address = 'different-route@automation.rallywith.ai' WHERE workstream_id = 'workstream-email'",
         ), label).toThrow(/immutable/u);
         expect(() => database.exec(
           "DELETE FROM workstream_email_routes WHERE workstream_id = 'workstream-email'",
         ), label).toThrow(/permanent tombstones/u);
 
-        // And it outlives the work stream that claimed it.
+        // The same local part on another domain is a different address and may
+        // belong to a different destination.
+        database.exec(`
+          INSERT INTO workstream_email_routes
+            (email_address, address_source, region, workspace_id, workstream_id, created_at, updated_at)
+          VALUES ('bright-steady-clear-otter@customer.example', 'owner',
+                  'global', 'workspace-other', 'workstream-other',
+                  '2026-01-01', '2026-01-01');
+        `);
+
+        // And the original outlives the work stream that claimed it.
         database.exec("DELETE FROM workstreams WHERE id = 'workstream-email'");
         expect(database.prepare(
-          "SELECT local_part, workstream_id FROM workstream_email_routes WHERE local_part = 'bright-steady-clear-otter'",
+          "SELECT email_address, workstream_id FROM workstream_email_routes WHERE email_address = 'bright-steady-clear-otter@automation.rallywith.ai'",
         ).get(), label).toEqual({
-          local_part: "bright-steady-clear-otter",
+          email_address: "bright-steady-clear-otter@automation.rallywith.ai",
           workstream_id: "workstream-email",
         });
       } finally {

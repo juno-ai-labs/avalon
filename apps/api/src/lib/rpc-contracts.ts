@@ -135,10 +135,16 @@ export const WorkstreamEmailRouteInputSchema = z.object({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
 });
+export const WorkstreamEmailAddressClaimSchema = WorkstreamEmailRouteInputSchema.extend({
+  emailAddress: z.string().email().max(254),
+});
 export const AutomationEmailRouteInputSchema = z.object({
   region: RegionSchema,
   workspaceId: IdSchema,
   automationSubscriptionId: IdSchema,
+});
+export const AutomationEmailAddressClaimSchema = AutomationEmailRouteInputSchema.extend({
+  emailAddress: z.string().email().max(254),
 });
 /**
  * The registry's batch methods take arrays. Bounding them is part of the
