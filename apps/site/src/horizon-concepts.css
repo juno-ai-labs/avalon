@@ -131,7 +131,7 @@ a, button { -webkit-tap-highlight-color: transparent; }
 .person-node { align-items: center; backdrop-filter: blur(12px); background: rgba(19, 20, 17, 0.82); border: 1px solid rgba(236, 235, 229, 0.15); border-radius: 999px; display: flex; gap: 9px; padding: 7px 12px 7px 7px; position: absolute; text-align: left; }
 .person-node > i { align-items: center; background: #3a3b36; border-radius: 50%; color: #d4d3cc; display: flex; font-size: 7px; font-style: normal; height: 29px; justify-content: center; width: 29px; }
 .person-node > span { display: flex; flex-direction: column; gap: 2px; }.person-node strong { font-size: 9px; }.person-node small { color: #74756d; font-size: 7px; }
-.person-adam { bottom: 14%; left: 4%; }.person-avalon { bottom: 50%; left: 50%; transform: translateX(-50%); }.person-avalon > i { background: var(--lime); }.person-avalon img { border-radius: 3px; height: 16px; width: 16px; }.person-maya { bottom: 18%; right: 4%; }
+.person-adam { bottom: 14%; left: 4%; }.person-rally { bottom: 50%; left: 50%; transform: translateX(-50%); }.person-rally > i { background: var(--lime); }.person-rally img { border-radius: 3px; height: 16px; width: 16px; }.person-maya { bottom: 18%; right: 4%; }
 .signal-arc { border: 1px solid rgba(255, 99, 55, 0.28); border-bottom: 0; border-radius: 50% 50% 0 0; bottom: 9%; height: 15%; position: absolute; z-index: 10; }
 .signal-arc-one { animation: arc-glow 5s ease-in-out infinite; left: 12%; right: 49%; }.signal-arc-two { animation: arc-glow 5s ease-in-out -2.5s infinite; left: 49%; right: 12%; }
 @keyframes arc-glow { 50% { border-color: rgba(206, 220, 0, 0.45); filter: drop-shadow(0 0 10px rgba(206, 220, 0, 0.18)); } }
@@ -178,7 +178,7 @@ a, button { -webkit-tap-highlight-color: transparent; }
   .runway-layout, .proof-layout { align-content: start; display: flex; flex-direction: column; gap: 2.2rem; inset: 122px 1.4rem 7%; }
   .runway-copy, .proof-copy { max-width: 680px; }.runway-copy h1, .proof-copy h2 { font-size: clamp(3.5rem, 13vw, 5rem); }.runway-proof, .proof-ledger { margin: 0; width: 100%; }
   .runway-path { left: 71%; }.runway-far, .proof-far { height: 19%; }.runway-near, .proof-near { height: 12%; }
-  .valley-copy { top: 39%; }.valley-copy h2 { font-size: clamp(3.5rem, 13vw, 5.1rem); }.valley-people { bottom: 8%; left: 1.4rem; right: 1.4rem; }.person-adam { left: 0; }.person-maya { right: 0; }.person-avalon { bottom: 62%; }.signal-arc-one { left: 8%; right: 48%; }.signal-arc-two { left: 48%; right: 8%; }.valley-far { height: 20%; }.valley-near { height: 12%; }
+  .valley-copy { top: 39%; }.valley-copy h2 { font-size: clamp(3.5rem, 13vw, 5.1rem); }.valley-people { bottom: 8%; left: 1.4rem; right: 1.4rem; }.person-adam { left: 0; }.person-maya { right: 0; }.person-rally { bottom: 62%; }.signal-arc-one { left: 8%; right: 48%; }.signal-arc-two { left: 48%; right: 8%; }.valley-far { height: 20%; }.valley-near { height: 12%; }
   .trail-copy { left: 1.4rem; max-width: calc(100% - 2.8rem); top: 37%; }.trail-copy h2 { font-size: clamp(3.5rem, 13vw, 5.2rem); }.run-cards { bottom: 8%; display: flex; flex-direction: column; left: 1.4rem; right: 1.4rem; }.run-cards article { min-height: 76px; }.run-cards article:nth-child(n) { transform: none; }.trail-line { bottom: 24%; }.trail-far { height: 17%; }.trail-near { height: 11%; }
 }
 
@@ -186,7 +186,7 @@ a, button { -webkit-tap-highlight-color: transparent; }
   .study-header { height: 72px; padding-inline: 1rem; }.brand { font-size: 13px; }.brand img { height: 20px; width: 20px; }.header-action { font-size: 8px; padding: 8px 10px; }
   .runway-layout, .proof-layout { inset: 102px 1rem 6%; }.runway-copy h1, .proof-copy h2, .valley-copy h2, .trail-copy h2 { font-size: clamp(3.2rem, 15vw, 4.3rem); }
   .actions { align-items: stretch; flex-direction: column; }.quiet-action { text-align: center; }.runway-proof li { min-height: 52px; }
-  .valley-copy { padding: 0 1rem; top: 36%; }.valley-copy > p:not(.study-label) { font-size: 12px; }.valley-people { bottom: 11%; }.person-node { padding-right: 8px; }.person-node small { display: none; }.person-avalon { bottom: 78%; }.signal-arc { bottom: 12%; height: 13%; }
+  .valley-copy { padding: 0 1rem; top: 36%; }.valley-copy > p:not(.study-label) { font-size: 12px; }.valley-people { bottom: 11%; }.person-node { padding-right: 8px; }.person-node small { display: none; }.person-rally { bottom: 78%; }.signal-arc { bottom: 12%; height: 13%; }
   .proof-ledger .ledger-row { grid-template-columns: auto auto 1fr; }.ledger-row time { display: none; }.ledger-output { grid-template-columns: auto 1fr; }.ledger-output b { display: none; }
   .trail-copy { left: 1rem; max-width: calc(100% - 2rem); top: 32%; }.trail-copy > p:not(.study-label) { font-size: 12px; }.trail-copy .primary-action { width: 100%; }.run-cards { left: 1rem; right: 1rem; }
   .study-footer span:last-child { display: none; }
