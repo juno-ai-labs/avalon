@@ -900,6 +900,24 @@ describe('Rally API wire adapter', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ scope: 'personal' });
   });
 
+  it('archives a work stream through the same update endpoint', async () => {
+    const archivedAt = '2026-08-25T12:00:00.000Z';
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ ...detail, archivedAt }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.archiveWorkstream(workstreamId)).resolves.toMatchObject({
+      id: workstreamId,
+      archivedAt,
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.rally.test/workstreams/${workstreamId}`);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PATCH' });
+    // Only `archived` travels. Resending the title or the description would be
+    // read as somebody having authored them at the moment they archived it.
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ archived: true });
+  });
+
   it('creates an attachment-only work stream with its draft resource IDs', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(json({
       workstream: detail,
