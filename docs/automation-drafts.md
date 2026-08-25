@@ -217,6 +217,16 @@ from the API, not a second renderer completion.
   compiler returns a draft, so a provider error, a timeout, or invalid model
   output leaves the previous turn as the saved state and the conversation on
   screen unchanged.
+- **A submission the draft schema rejects** is answered with the field that has
+  to change. `AutomationDraftSchema`'s refinements — a ready activity trigger's
+  binding key, its inspected plugin, one declared `deterministicPrefilter`
+  event type — are what decide readiness, and none of them can be stated in the
+  JSON Schema the model is shown, so the compiler hands the same parse to the
+  harness as the submit tool's code-authored refinement. Without it a rejection
+  reads as an external fault, the model is told to resubmit unchanged, and the
+  turn ends `automation_draft_not_submitted` — a `502` the person can only
+  answer by retrying into the same wall. [`agent-harness.md`](agent-harness.md)
+  owns the classification.
 - **A draft that cannot bind its activity source** is still saved, as a draft
   that is not ready with the reason as its follow-up question. That is the case
   someone most needs to come back to.
@@ -303,6 +313,45 @@ conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
 ## Changelog
+
+### 2026-08-25 — A rejected submission tells the compiler which field to fix
+
+**What changed:** `automation_submit_draft` hands the harness
+`AutomationDraftSchema` as its code-authored refinement, so a submission the
+draft contract rejects comes back naming the field. The submission schema also
+states the requirement that had been invisible in it: a ready
+`semantic_activity` trigger declares exactly one normalized event type in its
+`deterministicPrefilter`.
+
+**Why:** the compiler could reach a state it could not leave. The submit tool's
+advertised JSON Schema accepts a draft the same tool's executor then refuses,
+and with no refinement declared the harness read that refusal as a fault in
+somebody else's system — telling the model to retry without changing its
+arguments. On request `8592b3f1` the model complied four times over one missing
+`deterministicPrefilter.eventType`, the compile ended with no draft, and the
+person got "Avalon could not refine the automation draft. Try again" for a turn
+where trying again could not have helped. Nothing was written, so the loss was
+the turn rather than the draft — but a builder that answers a fixable mistake
+with an unfixable error is worse than one that saves a draft that is not ready.
+
+**How it is proved:** `packages/agent-harness/src/index.test.ts` asserts the
+correction the model receives names
+`triggers[0].deterministicPrefilter.eventType` and that the corrected
+resubmission compiles. `apps/api/test/automation-compile-source-validation.test.ts`
+still covers the neighbouring case, where a draft that cannot bind its source is
+saved as not ready rather than failing.
+
+**What a future change has to respect:** the draft contract's refinements are
+the compiler's readiness rules, and the model only ever learns about them from a
+rejection. Adding one without a way for the model to read it back — in the
+submission schema, in the policy, or through the correction — reintroduces the
+loop with a different field's name on it.
+
+**Considered and rejected:** *Saving the rejected draft as not-ready* so the turn
+survives: the draft that arrived is the model's, not the person's, and storing a
+draft whose triggers were refused would put an unusable automation in the
+sidebar. The compiler's own not-ready path already exists for what the person
+still has to decide.
 
 ### 2026-08-25 — Review found the connector-error mapping below doesn't reach its motivating case
 

@@ -101,7 +101,7 @@ Request-scoped attachment tools may be added directly to the preloaded automatio
 
 The compiler narrates while it researches, and the composer streams that narration. `compileAutomation` emits `started` once for the whole compile, a `thinking` frame per inference request, a `tool` row per discovery call, and `delta` frames carrying the architect's own text: the plan it states alongside its first tool calls, and a progress update every three or four calls after that. The `# Narration` section of the compiler policy owns what belongs in that text — settled sentences about the automation, never a question, never internal deliberation, never a tool or field name — and the submission turn is the one turn that carries none of it, because Rally renders the settled result from the saved draft and the elicitation instead. Narration accumulates into one composer bubble across turns, so the compiler tracks what earlier turns settled: a route restart replays only its own turn, and the reset frame restores the earlier updates rather than clearing text the reader has already seen.
 
-The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone stays null through the draft and into storage, and is resolved against the automation's own owner and scope when its `schedules` row is derived; an explicit trigger timezone wins there. Null is the distinction that makes the resolution possible at all — a default filled in at compile time is indistinguishable from a zone the person named, and answers for the scope the compiler guessed rather than the one the automation was created with. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Invalid structured output gets one sanitized repair attempt, then `502 model_output_invalid` with a request ID.
+The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone stays null through the draft and into storage, and is resolved against the automation's own owner and scope when its `schedules` row is derived; an explicit trigger timezone wins there. Null is the distinction that makes the resolution possible at all — a default filled in at compile time is indistinguishable from a zone the person named, and answers for the scope the compiler guessed rather than the one the automation was created with. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Because most of what makes a submission *ready* is a cross-field refinement no JSON Schema can state — a binding key, an inspected plugin, one declared prefilter event type — `automation_submit_draft` supplies `AutomationDraftSchema` as the tool's code-authored refinement, so a rejected submission comes back to the model as the named field rather than as an external fault. Invalid structured output gets one sanitized repair attempt, then `502 model_output_invalid` with a request ID.
 
 ### Connection plugins and authority narrowing
 
@@ -708,6 +708,65 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-25 — A rejected automation draft names the field, instead of telling the model not to change it
+
+**What changed:** `automation_submit_draft` supplies a `validateInput` that
+re-runs `normalizeAutomationDraft` and `AutomationDraftSchema` — the same parse
+its executor runs. The submission JSON Schema also states the one requirement it
+had left to the refinement: a ready `semantic_activity` trigger's
+`deterministicPrefilter` declares exactly one normalized event type as
+`{"eventType":"…"}`.
+
+**Why:** the tool's declared `inputSchema` accepts a draft its executor then
+rejects, because everything that decides readiness — the binding key, the
+inspected plugin, the prefilter's event type, unique memory-table names — is a
+cross-field refinement JSON Schema cannot carry, and the prefilter's is inside an
+opaque JSON string besides. The runtime's classifier reads exactly one signal to
+tell a correctable argument from an external fault: whether the arguments also
+fail the declared schema or a code-authored refinement. With no refinement
+supplied they never did, so a `ZodError` raised by the draft's own contract was
+filed as downstream data validation and the model was handed "retry once; if it
+fails again, report that the tool could not validate its data instead of
+changing the arguments" — advice that is correct for a provider response and
+exactly wrong here, since the model *is* the author of the rejected value. On
+request `8592b3f1` it did as it was told: four submissions, byte-identical
+rejections of one missing `deterministicPrefilter.eventType`, then
+`automation_draft_not_submitted`, and a `502` whose only member-facing advice was
+to try again — which would have failed the same way. The hook existed for this;
+this tool had simply never been given one.
+
+**How it is proved:** `packages/agent-harness/src/index.test.ts` compiles a draft
+whose ready semantic trigger declares an empty prefilter, and asserts the tool
+result the *next* provider request carries names
+`triggers[0].deterministicPrefilter.eventType` with the refinement's own
+sentence, arrives as `kind: "validation"`, and does not carry the
+"instead of changing the arguments" advice — then that the corrected
+resubmission compiles. Removing the hook fails it on the received text, which is
+the production sentence verbatim.
+
+**What a future change has to respect:** a tool whose executor parses with a
+schema stricter than the one it advertises owes the runtime a `validateInput`.
+Without it, its own contract's failures are attributed to somebody else's system
+and the model is actively steered away from the fix. The refinement passed here
+must stay the same parse the executor runs; two parses that can disagree would
+name a field in the correction that the executor does not reject, or accept one
+it does.
+
+**Considered and rejected:** *Broadening the runtime's classifier* to treat any
+executor `ZodError` as an argument error — the distinction is load-bearing, and a
+provider response that fails validation is not the model's to fix. *Loosening
+`AutomationDraftSchema`* so the submission is accepted and the missing event type
+surfaces later — `POST /automations` refuses the same draft with
+`activity_trigger_event_required`, so this only moves the dead end behind a
+Create button. *Leaving the submission schema's wording alone* now that
+the correction loop works — one recoverable round trip per draft is still a round
+trip, and the requirement was invisible to a model reading the field's own
+contract. *Saying it in the compiler policy too*: the schema is rendered into a
+user-role message on the first turn and again in the failsafe reminder, so the
+model already reads it twice per compile, and the policy's fixed overhead is
+within 61 bytes of the bound `prompts.test.ts` holds it to — a second copy of a
+rule is the prose creep that bound exists to catch.
 
 ### 2026-08-25 — A platform refusal stops being the asking port's fault
 

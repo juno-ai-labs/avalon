@@ -1232,6 +1232,95 @@ describe("agent harness", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it("names the draft field a rejected submission has to fix", async () => {
+    const trigger = {
+      type: "semantic_activity",
+      rrule: null,
+      timezone: null,
+      summary: null,
+      intervalSeconds: null,
+      connectorType: "google",
+      sourceBindingKey: "drive_source",
+      suggestedSourcePluginId: "plugin_google_2",
+      eventTypes: null,
+      deterministicFilters: null,
+      condition: "The changed file is a customer contract.",
+      resourceId: null,
+    };
+    const draft = {
+      name: "Contract watch",
+      description: "Escalate changed customer contracts.",
+      overview: "Watches the authorized Drive connection and escalates changed customer contracts.",
+      instructions: "1. Read the changed file.\n2. Escalate a customer contract.\n3. Record when nothing qualifies.",
+      expectedOutputs: ["Escalation"],
+      requestedDelivery: [],
+      defaultBehavior: "{}",
+      recommendedPlugins: [],
+      memoryTables: [],
+      suggestedScope: "personal",
+      ready: true,
+    };
+    const bodies: Array<Record<string, unknown>> = [];
+    const responses = [
+      automationToolResponse("load_plugin", { pluginId: "plugin_google_2" }),
+      // A ready semantic trigger whose prefilter declares no event type. The
+      // shape matches the schema the model was shown; only `AutomationDraftSchema`'s
+      // refinement rejects it, which is exactly the case the runtime used to
+      // report as an external fault the model was told not to work around.
+      automationSubmitResponse({ ...draft, triggers: [{ ...trigger, deterministicPrefilter: "{}" }] }),
+      automationSubmitResponse({
+        ...draft,
+        triggers: [{ ...trigger, deterministicPrefilter: '{"eventType":"drive.file_changed"}' }],
+      }),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "test/model",
+      messages: [{ role: "user", content: "Escalate changed customer contracts." }],
+      fetch: fetcher,
+      pluginCatalog: [{
+        pluginId: "plugin_google_2",
+        displayName: "Google Drive · Work",
+        icon: "brand-google-drive",
+        description: "Search an authorized Google Drive connection.",
+        scope: "personal",
+        searchAliases: ["drive"],
+        systemMessage: "Use Drive tools.",
+        activityTriggers: [{
+          eventType: "drive.file_changed",
+          label: "Drive file changed",
+          description: "A file changed in the connected Drive.",
+          filterFields: [],
+          digestible: false,
+        }],
+        tools: [],
+      }],
+    })).resolves.toMatchObject({
+      name: "Contract watch",
+      ready: true,
+      triggers: [{ type: "semantic_activity", deterministicPrefilter: { eventType: "drive.file_changed" } }],
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    const rejection = (bodies[2]!.messages as Array<{ role: string; content: unknown }>)
+      .filter((message) => message.role === "tool")
+      .map((message) => String(message.content))
+      .join("\n");
+    // The correction has to name the field, because the model's only other move
+    // is to resubmit what it already sent. The sentence it used to get instead
+    // said the arguments were fine and told it not to change them.
+    expect(rejection).toContain('"kind":"validation"');
+    expect(rejection).toContain(
+      "triggers[0].deterministicPrefilter.eventType: ready semantic activity triggers require one declared event type",
+    );
+    expect(rejection).not.toContain("instead of changing the arguments");
+  });
+
   it("keeps the automation loop running after an unsupported text-only stop turn", async () => {
     const fetcher = vi.fn(async () => streamResponse([{
       choices: [{ delta: { content: "I need more information." }, finish_reason: "stop" }],
