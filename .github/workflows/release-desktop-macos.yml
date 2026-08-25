@@ -418,10 +418,9 @@ jobs:
             git fetch origin main
             git worktree remove --force "$sync" 2>/dev/null || true
             git worktree add --detach "$sync" origin/main
-            cd "$sync"
             # Never move the recorded release backwards: a dispatch replaying an
             # older tag must not overwrite a newer published config.
-            recorded="$(node -p "require('./$config').version")"
+            recorded="$(node -p "require('$sync/$config').version")"
             if ! node -e '
               const [recorded, released] = process.argv.slice(1);
               const part = (value) => value.replace(/^v/u, "").split(".").map(Number);
@@ -433,12 +432,12 @@ jobs:
               exit 0
             fi
 
-            cp "$RUNNER_TEMP/release.config.json" "$config"
-            git add "$config"
-            git -c user.name='github-actions[bot]' \
+            cp "$RUNNER_TEMP/release.config.json" "$sync/$config"
+            git -C "$sync" add "$config"
+            git -C "$sync" -c user.name='github-actions[bot]' \
                 -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
                 commit -m "Record Avalon ${RELEASE_VERSION#v} release config"
-            if git push origin HEAD:main; then
+            if git -C "$sync" push origin HEAD:main; then
               echo "recorded ${RELEASE_VERSION#v} on main"
               exit 0
             fi

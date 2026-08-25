@@ -234,10 +234,23 @@ test('the release records its site config back on the default branch', async () 
   // publish-r2-release.mjs reads the committed config through
   // assertNextReleaseVersion, so leaving main stale breaks the next release,
   // and plan-release.mjs reads the commit it names as its watermark.
-  assert.match(recordStep, /git push origin HEAD:main/u);
+  assert.match(recordStep, /git -C "\$sync" push origin HEAD:main/u);
   assert.match(recordStep, /apps\/site\/release\.config\.json/u);
   // A dispatch replaying an older tag must not move the record backwards.
   assert.match(recordStep, /leaving it alone/u);
+});
+
+test('the release-config retry never runs from the disposable sync worktree', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const recordStep = workflow.slice(
+    workflow.indexOf('- name: Record the published release config'),
+    workflow.indexOf('- name: Deploy the landing site with the verified release'),
+  );
+
+  // A rejected push removes and recreates this worktree on the next attempt.
+  // Keeping the shell inside it makes that retry fail before it can refetch.
+  assert.doesNotMatch(recordStep, /cd "\$sync"/u);
+  assert.match(recordStep, /git -C "\$sync" push origin HEAD:main/u);
 });
 
 test('the pipeline bumps the version itself, before the commit it tags', async () => {
