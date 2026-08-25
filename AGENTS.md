@@ -53,11 +53,12 @@ defined in [`docs/sandbox.md`](docs/sandbox.md).
   retrying. Never disable TLS verification or unset `HTTPS_PROXY`.
 - **Debugging a production model run?** Start with
   [`docs/runbook.md`](docs/runbook.md#inspecting-a-runs-raw-inference). Raw
-  inference is in the workspace region's lakehouse, not D1 or Workers Logs;
-  use its region-scoped R2 SQL or Parquet/Object API procedure (not the web dashboard),
-  filter by canonical work-stream and substream IDs (`"0"` is the main feed),
-  and keep retrieved user content out of logs, tickets, commits, and agent
-  responses.
+  inference for Global workspaces is in the Global lakehouse, not D1 or Workers
+  Logs; use the R2 SQL and Object HTTP APIs (not the web dashboard), filter by
+  canonical work-stream and substream IDs (`"0"` is the main feed), and keep
+  retrieved user content out of logs, tickets, commits, and agent responses.
+  EU inference is intentionally not archived, so stop after resolving an EU
+  workspace rather than falling back to D1, logs, or a cross-region query.
 
 ## Quality gates
 

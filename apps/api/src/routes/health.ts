@@ -101,16 +101,19 @@ healthRoutes.get("/", async (c) => {
     ok: typeof c.env.ACTIVITY_QUEUE?.send === "function",
     message: typeof c.env.ACTIVITY_QUEUE?.send === "function" ? "binding available" : "binding unavailable",
   };
-  checks.inferenceLakehouse = {
-    ok: typeof c.env.INFERENCE_LAKEHOUSE_QUEUE?.send === "function"
-      && typeof c.env.INFERENCE_LAKEHOUSE?.send === "function",
-    message: typeof c.env.INFERENCE_LAKEHOUSE_QUEUE?.send === "function"
-      && typeof c.env.INFERENCE_LAKEHOUSE?.send === "function"
-      ? "regional Queue and Pipeline bindings available"
-      : c.env.APP_ENV === "production"
-        ? "regional Queue or Pipeline binding unavailable"
-        : "Pipeline binding is materialized only for hosted deployments",
-  };
+  const inferenceLakehouseEnabled = c.env.AVALON_REGION === "global";
+  const inferenceLakehouseBindingsAvailable = typeof c.env.INFERENCE_LAKEHOUSE_QUEUE?.send === "function"
+    && typeof c.env.INFERENCE_LAKEHOUSE?.send === "function";
+  checks.inferenceLakehouse = inferenceLakehouseEnabled
+    ? {
+        ok: inferenceLakehouseBindingsAvailable,
+        message: inferenceLakehouseBindingsAvailable
+          ? "Global Queue and Pipeline bindings available"
+          : c.env.APP_ENV === "production"
+            ? "Global Queue or Pipeline binding unavailable"
+            : "Pipeline binding is materialized only for hosted deployments",
+      }
+    : { ok: true, message: "EU inference analytics export intentionally disabled" };
   checks.workflows = {
     ok: typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function"
       && typeof c.env.CONNECTOR_EVENT_WORKFLOW?.create === "function"

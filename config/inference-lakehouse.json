@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "binding": "INFERENCE_LAKEHOUSE",
   "deploymentTokenOwner": "account",
   "namespace": "avalon",
@@ -13,16 +13,6 @@
       "stream": "avalon_global_inference_lakehouse_stream",
       "sink": "avalon_global_inference_lakehouse_sink",
       "pipeline": "avalon_global_inference_lakehouse"
-    },
-    "eu": {
-      "jurisdiction": "eu",
-      "sinkType": "r2",
-      "bucket": "avalon-eu-inference-lakehouse",
-      "path": "avalon/llm_inference",
-      "partitioning": "year=%Y/month=%m/day=%d/hour=%H",
-      "stream": "avalon_eu_inference_lakehouse_stream",
-      "sink": "avalon_eu_inference_lakehouse_sink",
-      "pipeline": "avalon_eu_inference_lakehouse"
     }
   }
 }

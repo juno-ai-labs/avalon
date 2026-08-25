@@ -37,12 +37,12 @@ Create independent resource sets for `global` and `eu`:
 - Queues need no manual step: the deployment preflight creates every queue the
   Wrangler files declare, and Cloudflare creates each dead-letter queue on first
   deploy (see [the migration tracker section](#the-durable-object-migration-tracker)).
-  The inference lakehouse is also automatic: the API deployment creates its
-  Global and EU R2 buckets, enables the Global Data Catalog, creates the Global
-  Catalog sink and EU-jurisdiction Parquet sink, creates both streams and
-  pipelines, and materializes the generated stream IDs into the
-  Worker deploy configs. The general payload and telemetry R2 buckets remain
-  one-time resources created by hand.
+  The inference lakehouse is also automatic: the API deployment creates the
+  Global analytical R2 bucket, enables Data Catalog, creates the Global stream,
+  sink, and Pipeline, and materializes its generated ID into the Global Worker
+  deploy config. EU inference analytics are intentionally deferred, so the EU
+  config has no inference Queue or Pipeline binding. The general payload and
+  telemetry R2 buckets remain one-time resources created by hand.
 - The Worker, Durable Object namespaces, Workflows, and `CRASH_SYMBOLICATOR`
   Container declared in the regional Wrangler file
 
@@ -257,14 +257,10 @@ Use a custom token restricted to the Avalon Cloudflare account and the `with-ava
 - Account: D1 Write/Edit
 - Account: Workers R2 Storage Write/Edit
 - Account: R2 Admin Read & Write — used by the inference-lakehouse preflight to
-  create the regional buckets and Global catalog, and as the non-interactive
-  credential source for the Global Catalog and EU R2 sinks
-- R2 bucket `avalon-eu-inference-lakehouse`: Object Read & Write — the EU
-  Pipeline sink uses the account-owned deployment token as an S3 credential,
-  whose bucket-item permission is distinct from the account-level R2
-  administration permission
-- Account: Pipelines Write/Edit — to create and inspect the regional stream,
-  sink, and pipeline; Worker ingestion itself uses the generated binding
+  create the Global analytical bucket and Data Catalog and as the
+  non-interactive credential source for the Global Catalog sink
+- Account: Pipelines Write/Edit — to create and inspect the Global stream, sink,
+  and pipeline; Worker ingestion itself uses the generated binding
 - Account: Queues Write/Edit — to attach a consumer on deploy and for the
   preflight to create a declared queue. A token that can only list queues fails
   the create with `Authentication error [code: 10000]`.
@@ -667,9 +663,9 @@ For ordinary releases after both entrypoints exist:
 
 1. Validate both Wrangler configurations with dry-run builds.
 2. Create or confirm each region's named Cloudflare resources. The deployment
-   automatically creates and verifies the inference Queues, regional R2 buckets,
-   Global Data Catalog, Global Catalog sink, EU-jurisdiction Parquet sink,
-   streams, pipelines, and generated bindings. Scoped
+   automatically creates and verifies the Global inference Queue, analytical R2
+   bucket, Data Catalog, sink, stream, Pipeline, and generated binding. EU has no
+   inference analytics resources in its Worker config. Scoped
    memory still requires `avalon-global-memory` and `avalon-eu-memory` Vectorize
    indexes with 1,024 dimensions and cosine distance, plus the Workers AI
    binding declared by each API Worker.
@@ -693,7 +689,7 @@ Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers af
 Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
 
 - `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop and API Vitest suites each use two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
-- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), the inference-lakehouse manifests/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and fully provisions/verifies both regional inference lakehouses before migrations. It does not create unrelated resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
+- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), the inference-lakehouse manifests/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and fully provisions/verifies the Global inference lakehouse before migrations; the EU deploy config intentionally contains no inference binding. It does not create unrelated resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
   Migration 0090 is the one destructive exception to normal migration-first ordering: when it is the sole pending migration, compatible Workers deploy before it. The workflow fails closed if 0090 appears beside any other pending migration, because Wrangler applies the complete pending ledger and must never move an ordinary later migration behind the Worker that may require it.
 - `.github/workflows/release-desktop-macos.yml` guards the tag, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, and deploys the landing site. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its `paths:` filter — the files the installed app is built from — bumping the version itself, and on a manual dispatch naming an existing tag. Nothing triggers on a tag.
 
@@ -1218,7 +1214,7 @@ buckets as credential-adjacent: bucket-scoped write-only delivery credentials,
 no wider dashboard access than a responder needs. Moving those two secrets off
 the query string is the only fix that removes them from the capture.
 
-Every OpenRouter call that the provider refuses records `provider_error_code` and `provider_error_provider` — the provider's own classification of the rejection, which is what separates a bad model id from a provider outage. The provider's free-text message is deliberately **not** recorded in Workers Logs: some upstreams quote the request back inside it, these lines are written for every workspace into Workers Logs and 90-day Logpush storage, and the key-based redactor has no way to recognise it. The sensitive regional lakehouse retains the bounded provider failure beside the exact request instead. A `request_failed` at `error_name = ZodError` is a response that failed *its own* contract before it left the Worker — the log carries the route and the offending field paths, so fix the row or the schema rather than the caller.
+Every OpenRouter call that the provider refuses records `provider_error_code` and `provider_error_provider` — the provider's own classification of the rejection, which is what separates a bad model id from a provider outage. The provider's free-text message is deliberately **not** recorded in Workers Logs: some upstreams quote the request back inside it, these lines are written for every workspace into Workers Logs and 90-day Logpush storage, and the key-based redactor has no way to recognise it. For Global inference, the sensitive lakehouse retains the bounded provider failure beside the exact request instead; EU inference has no analytical archive, so the message is not available for later analysis. A `request_failed` at `error_name = ZodError` is a response that failed *its own* contract before it left the Worker — the log carries the route and the offending field paths, so fix the row or the schema rather than the caller.
 
 Account-level `workers_trace_events` Logpush jobs route `avalon-api-global` to the `avalon-global-observability` R2 bucket and `avalon-api-eu` to the EU-jurisdiction `avalon-eu-observability` bucket. Both buckets use an automatic 90-day object-expiration rule. Keep the destination credentials bucket-scoped and write-only. The configuration command also reconciles bucket retention and verifies each existing job's filter, fields, destination bucket, and redacted delivery state. The read-only release check must report all saved-query drift at once so a partial repair cannot make the next release discover one definition at a time.
 
@@ -1238,12 +1234,14 @@ a fabricated value, a tool the model never called, a question it should not have
 needed to ask — the answer is the recorded request body, and this section turns a
 work-stream URL into it. Nothing here mutates production; every step is a read.
 
-The regional inference lakehouse is the only raw-inference surface. It captures
-request and terminal-attempt events automatically, retains the exact record
-under `inference-lakehouse/records/` in regional R2, and exposes typed dimensions
-plus request/response/error JSON through Global's `avalon.llm_inference` Iceberg
-table or EU's hourly Parquet partitions. The former workspace preference, D1
-payload index, and `agent-inference/` request-only writer no longer exist.
+The Global inference lakehouse is the only raw-inference surface. For Global
+workspaces it captures request and terminal-attempt events automatically,
+retains the exact record under `inference-lakehouse/records/` in Global R2, and
+exposes typed dimensions plus request/response/error JSON through the
+`avalon.llm_inference` Iceberg table. EU inference analytics are intentionally
+deferred: EU model calls are served normally but are not archived, queued, sent
+to Pipeline, or exported to Global. The former workspace preference, D1 payload
+index, and `agent-inference/` request-only writer no longer exist.
 
 #### Before querying
 
@@ -1256,14 +1254,15 @@ payload index, and `agent-inference/` request-only writer no longer exist.
    email, or other user content into SQL.
 2. Resolve the workspace's immutable **Data region** from the regional API base
    URL serving its authenticated session: `api.with-avalon.com` is Global and
-   `eu.api.with-avalon.com` is EU. Do not use the web interface and do not search
-   both regions merely because one returned no row.
-3. Select the matching resources:
+   `eu.api.with-avalon.com` is EU. Use the authenticated API response, not the
+   web interface. If it is EU, stop: no lakehouse evidence exists by design. Do
+   not search D1, Workers Logs, the unused EU preflight resources, or Global as a
+   substitute.
+3. For Global, use these resources:
 
    | Data region | Typed analytical surface | Exact-record `PAYLOADS` bucket |
    | --- | --- | --- |
    | Global | R2 SQL over Data Catalog bucket `avalon-global-inference-lakehouse` | `avalon-global-payloads` |
-   | EU | R2 Object API over Parquet prefix `avalon/llm_inference/` in EU-jurisdiction bucket `avalon-eu-inference-lakehouse` | `avalon-eu-payloads` with `eu` jurisdiction |
 
 Use Cloudflare's HTTP APIs, not the dashboard. Global uses R2 SQL. Its endpoint
 takes the **Data Catalog bucket name**, not a warehouse ID:
@@ -1276,18 +1275,17 @@ Content-Type: application/json
 {"query":"SELECT ..."}
 ```
 
-Store a dedicated responder token in the ignored `.env.local` as
+Store a dedicated Global responder token in the ignored `.env.local` as
 `INFERENCE_LAKEHOUSE_API_TOKEN`; the existing `CLOUDFLARE_ACCOUNT_ID` supplies
 the account path. Never reuse `CLOUDFLARE_API_TOKEN`, which is the deployment
-credential. A Global query needs **R2 SQL Read**, **R2 Data Catalog Read**, and
-**R2 Admin Read & Write**. An EU query and either region's exact-record download
-need R2 storage read access through the Object REST API. Cloudflare's current
+credential. A query needs **R2 SQL Read**, **R2 Data Catalog Read**, and
+**R2 Admin Read & Write**. An exact-record download needs R2 storage read access
+through the Object REST API. Cloudflare's current
 REST permission is account-level rather than cryptographically bucket-read-only:
 restrict the token to the Avalon account, keep it out of product clients, and use
 it only with the GET/POST requests documented here.
 
-R2 SQL is a Cloudflare beta surface and applies only to Global while Data Catalog
-does not support EU-jurisdiction buckets. If the HTTP contract has changed, use
+R2 SQL is a Cloudflare beta surface. If the HTTP contract has changed, use
 Cloudflare's current [R2 SQL query
 guide](https://developers.cloudflare.com/r2-sql/query-data/) rather than
 guessing. The table and bucket names in this runbook remain repository-owned.
@@ -1301,7 +1299,7 @@ Pipeline rolls files every 300 seconds, so a just-finished call may not be
 queryable for roughly one roll interval. Query a bounded time range around the
 incident and inspect identifiers before selecting raw JSON:
 
-For Global, use this R2 SQL statement:
+Use this R2 SQL statement:
 
 ```sql
 SELECT
@@ -1364,91 +1362,6 @@ Keep the response in the scratch directory rather than printing it into a
 terminal transcript. Inspect only the identifier and typed columns needed to
 choose the `inference_request_id` for the next query.
 
-For EU, R2 SQL is unavailable because Cloudflare cannot enable Data Catalog on
-an EU-jurisdiction bucket. Use the R2 Object REST API to list and download every
-UTC hour partition that overlaps the incident. Include both hours when the
-window or a request/attempt pair crosses an hour boundary. For the one-hour
-example window above, the list has one prefix:
-
-```text
-lakehouse_scratch="$(mktemp -d)"
-lakehouse_eu_bucket='avalon-eu-inference-lakehouse'
-lakehouse_hour_prefixes=(
-  'avalon/llm_inference/year=2026/month=08/day=24/hour=19/'
-)
-mkdir "$lakehouse_scratch/eu-parquet"
-pnpm exec dotenv -e .env.local -- node --input-type=module - \
-  "$lakehouse_eu_bucket" "$lakehouse_scratch/eu-parquet" \
-  "${lakehouse_hour_prefixes[@]}" <<'NODE'
-import { writeFile } from "node:fs/promises";
-import { basename } from "node:path";
-import { createHash } from "node:crypto";
-
-const [bucket, outputDirectory, ...prefixes] = process.argv.slice(2);
-if (prefixes.length === 0) throw new Error("at least one EU hour prefix is required");
-const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-const token = process.env.INFERENCE_LAKEHOUSE_API_TOKEN;
-if (!accountId || !token) throw new Error("missing lakehouse API credentials");
-const headers = {
-  Authorization: `Bearer ${token}`,
-  "cf-r2-jurisdiction": "eu",
-};
-const root = `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets/${bucket}/objects`;
-let downloaded = 0;
-const downloadedKeys = new Set();
-for (const prefix of prefixes) {
-  let cursor;
-  do {
-    const listUrl = new URL(root);
-    listUrl.searchParams.set("prefix", prefix);
-    listUrl.searchParams.set("per_page", "1000");
-    if (cursor) listUrl.searchParams.set("cursor", cursor);
-    const listResponse = await fetch(listUrl, { headers });
-    const page = await listResponse.json();
-    if (!listResponse.ok || page.success !== true) throw new Error("EU R2 object listing failed");
-    for (const entry of page.result) {
-      if (!entry.key.endsWith(".parquet") || downloadedKeys.has(entry.key)) continue;
-      const encodedKey = entry.key.split("/").map(encodeURIComponent).join("/");
-      const objectResponse = await fetch(`${root}/${encodedKey}`, { headers });
-      if (!objectResponse.ok) throw new Error(`EU R2 object download failed: ${entry.key}`);
-      const bytes = Buffer.from(await objectResponse.arrayBuffer());
-      const keyHash = createHash("sha256").update(entry.key).digest("hex");
-      await writeFile(`${outputDirectory}/${keyHash}-${basename(entry.key)}`, bytes);
-      downloadedKeys.add(entry.key);
-      downloaded += 1;
-    }
-    cursor = page.result_info?.is_truncated ? page.result_info.cursor : undefined;
-  } while (cursor);
-}
-if (downloaded === 0) throw new Error("no Parquet files found in the requested EU hours");
-process.stdout.write(`downloaded ${downloaded} EU Parquet files\n`);
-NODE
-```
-
-Run the same bounded projection with an approved local DuckDB CLI, reading only
-those downloaded Parquet files. Keep output redirected to the scratch directory:
-
-```text
-(cd "$lakehouse_scratch/eu-parquet" && duckdb -json -c "
-SELECT
-  captured_at, event_id, event_type, source, invocation_type, substream_id,
-  request_id, parent_request_id, inference_request_id, turn_id, provider,
-  model, provider_model, success, disposition, failure_kind, latency_ms,
-  ttft_ms, input_tokens, output_tokens, reasoning_tokens, cached_input_tokens,
-  cost_microusd, response_bytes, payload_object_key
-FROM read_parquet('*.parquet', union_by_name = true)
-WHERE workstream_id = '<workstream-uuid>'
-  AND substream_id = '0'
-  AND captured_at >= '2026-08-24T19:00:00Z'
-  AND captured_at <  '2026-08-24T20:00:00Z'
-ORDER BY captured_at ASC
-LIMIT 200;
-" > "$lakehouse_scratch/find-response.json")
-```
-
-The Object API is the production access path; DuckDB processes the downloaded
-regional evidence locally and does not authorize or retrieve anything itself.
-
 Use `substream_id` to isolate the product conversation and `request_id` to
 isolate one API/harness run. `"0"` is the current main substream. An inline
 child remains in the same product substream as its root; identify it by its own
@@ -1484,19 +1397,10 @@ ORDER BY captured_at ASC
 LIMIT 10;
 ```
 
-For Global, save this statement as `$lakehouse_scratch/pair.sql` and invoke the
-same R2 SQL API recipe with `pair-request.json` and `pair-response.json`. For EU,
-replace `FROM avalon.llm_inference` with
-`FROM read_parquet('*.parquet', union_by_name = true)` and run it with the same
-redirected DuckDB recipe inside `$lakehouse_scratch/eu-parquet`; write the result
-to `$lakehouse_scratch/pair-response.json`. That response contains raw customer
-content; do not print it, pipe it through a logging tool, or attach it to an
-incident.
-
-Do not interpret an EU pair until the result contains both its `request` row and
-terminal `attempt` row. If only one is present, add the adjacent UTC hour
-partition to `lakehouse_hour_prefixes`, download again, and rerun the pair query;
-the two events can straddle Pipeline's hourly partition boundary.
+Save this statement as `$lakehouse_scratch/pair.sql` and invoke the same R2 SQL
+API recipe with `pair-request.json` and `pair-response.json`. That response
+contains raw customer content; do not print it, pipe it through a logging tool,
+or attach it to an incident.
 
 Interpret the pair rather than one row in isolation:
 
@@ -1519,12 +1423,9 @@ Interpret the pair rather than one row in isolation:
   HAVING COUNT(*) > 1;
   ```
 
-  For EU, make the same `FROM read_parquet(...)` substitution before executing
-  this check locally.
-
 #### Retrieve the exact archived record
 
-Every row also has an exact JSON archive in its regional `PAYLOADS` bucket. Use
+Every row also has an exact JSON archive in the Global `PAYLOADS` bucket. Use
 the archive when the analytical row is pointer-backed, when the query response
 is awkward to inspect, or when byte-for-byte evidence matters.
 
@@ -1536,7 +1437,7 @@ is awkward to inspect, or when byte-for-byte evidence matters.
   complete JSON already fits in the analytical row, but their archive still exists.
 - Download it with Cloudflare's R2 Object REST API and the same dedicated token.
   Never use the analytical bucket for this request; it contains the Global
-  Iceberg table or EU Parquet files, not the per-event JSON archive.
+  Iceberg table, not the per-event JSON archive.
 - If the pointer supplied `payload_sha256` and `payload_bytes`, verify both
   before treating the file as evidence.
 
@@ -1569,8 +1470,7 @@ node -e '
   "$lakehouse_expected_sha256"
 ```
 
-For EU, use `avalon-eu-payloads` and `eu`; for Global, use
-`avalon-global-payloads` and `default`. The object key is generated by Avalon
+Use `avalon-global-payloads` and `default`. The object key is generated by Avalon
 and contains only the fixed prefix, UTC date, inference ID, event suffix, and
 `.json`; do not substitute an arbitrary user-controlled path. The responder
 token is for these query and object-GET requests, not for provisioning,
@@ -1579,16 +1479,18 @@ maintenance.
 
 #### When a row is missing
 
-No row is not proof that no model call occurred. Wait through the five-minute
-roll interval, confirm the workspace region and time window, then correlate the
-content-free Workers events by `request_id`/`inference_request_id`:
+For a Global workspace, no row is not proof that no model call occurred. Wait
+through the five-minute roll interval, confirm the workspace region and time
+window, then correlate the content-free Workers events by
+`request_id`/`inference_request_id`. For an EU workspace, no row is the designed
+outcome and these delivery diagnostics do not exist:
 
 - `inference_lakehouse_stage_failed` means archive or Queue acceptance failed.
 - `inference_lakehouse_delivery_failed` means a delivery is retrying.
-- A non-empty `avalon-<region>-inference-lakehouse-dead-letter` queue is the
+- A non-empty `avalon-global-inference-lakehouse-dead-letter` queue is the
   definitive terminal delivery alarm.
 - `inference_lakehouse_delivered` confirms Pipeline acceptance, not that product
-  state committed and not that the row is already visible to the regional query.
+  state committed and not that the row is already visible to R2 SQL.
 
 Keep this distinction during incident reconstruction: the owning
 `SubstreamAgent`/`BlockDashboardAgent` `inference_attempts` ledger is operational
@@ -1596,7 +1498,7 @@ authority for attempt recovery, while the lakehouse is best-effort analytical
 evidence. Never repair product state from an analytical row.
 
 [`inference-lakehouse.md`](inference-lakehouse.md) owns the complete schema,
-regional resource names, deduplication rule, and failure operations.
+Global resource names, deduplication rule, and failure operations.
 
 A retrieved payload contains the prompt, the connector data pulled into it, and
 whatever the person wrote. Treat it as production user content: read it from a
