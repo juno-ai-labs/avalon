@@ -290,6 +290,28 @@ decided retention policy, not a speculative cache or aggregation layer.
 
 ## Changelog
 
+### 2026-08-24 — Sink creation leaves account ownership to the API path
+
+**What changed:** Sink-create payloads no longer repeat the Cloudflare account ID
+inside `config`. The account-scoped API path remains authoritative. Existing
+sink reads accept Cloudflare's public config with that field either present or
+redacted, but still reject a different returned account ID.
+
+**Why:** The first recovery deployment created the EU bucket and stream, then
+Cloudflare rejected the direct-R2 sink with `422 / 1012: invalid account id`.
+Wrangler's current sink-create implementation sends bucket and destination
+configuration without `config.account_id`; the generated API schema incorrectly
+suggested repeating this output field in the request.
+
+**Considered and rejected:** Retrying the same documented body or weakening all
+account checks. The live API had already disproved the former, while the latter
+would discard useful drift evidence when Cloudflare does return its public
+account field.
+
+**Consequences:** Merge provisioning now matches Cloudflare's own client input
+shape for both direct-R2 and Data Catalog sinks. Bucket ownership is still fixed
+by the account-scoped endpoint, and a contradictory read-back fails closed.
+
 ### 2026-08-24 — EU preserves residency with a direct R2 Parquet sink
 
 **What changed:** Global retains its Data Catalog/Iceberg sink. EU now uses a

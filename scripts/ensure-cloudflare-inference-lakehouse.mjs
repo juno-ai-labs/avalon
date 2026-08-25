@@ -210,7 +210,7 @@ function assertSink(sink, expected, manifest, accountId) {
     : sink.config?.jurisdiction !== expected.jurisdiction
       || sink.config?.path !== expected.path
       || sink.config?.partitioning?.time_pattern !== expected.partitioning;
-  if (sink.config?.account_id !== accountId
+  if ((sink.config?.account_id !== undefined && sink.config.account_id !== accountId)
     || sink.config?.bucket !== expected.bucket
     || sink.config?.rolling_policy?.interval_seconds !== 300
     || destinationDrifted) {
@@ -256,7 +256,6 @@ function r2SinkCredentials(client) {
 function newSinkConfig(client, region, manifest) {
   if (region.sinkType === 'r2_data_catalog') {
     return {
-      account_id: client.accountId,
       bucket: region.bucket,
       namespace: manifest.namespace,
       table_name: manifest.table,
@@ -268,7 +267,6 @@ function newSinkConfig(client, region, manifest) {
     throw new Error(`Unsupported inference lakehouse sink type: ${region.sinkType}`);
   }
   return {
-    account_id: client.accountId,
     bucket: region.bucket,
     jurisdiction: region.jurisdiction,
     path: region.path,
