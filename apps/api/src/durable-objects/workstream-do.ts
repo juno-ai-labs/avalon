@@ -2439,7 +2439,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     }
   }
 
-  protected override nextDerivedAlarmAt(): number | null {
+  protected override nextDerivedAlarmCandidates(): readonly number[] {
     const regional = first(this.state.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(not_before) AS due_at FROM durable_outbox WHERE state IN ('pending', 'inflight')`,
     ))?.due_at ?? null;
@@ -2449,9 +2449,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     const sourceRefresh = first(this.state.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(not_before) AS due_at FROM block_dashboard_source_refresh_outbox`,
     ))?.due_at ?? null;
-    return [regional, blockDashboard, sourceRefresh].reduce<number | null>((earliest, candidate) => {
-      if (candidate === null) return earliest;
-      return earliest === null ? candidate : Math.min(earliest, candidate);
-    }, null);
+    return [regional, blockDashboard, sourceRefresh]
+      .filter((candidate): candidate is number => candidate !== null);
   }
 }
