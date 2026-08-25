@@ -13,6 +13,19 @@ import { normalizedTelemetryPathname } from '../src/telemetry';
 const readProjectFile = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
+/**
+ * `wrangler.jsonc` is JSON with comments, like the two regional API configs.
+ * Reading it with a bare `JSON.parse` made the file's *formatting* part of this
+ * assertion: the first explanatory comment anyone added failed a test about
+ * route patterns, naming neither the comment nor the file.
+ *
+ * Deliberately narrow — line comments only, which is all these configs use.
+ * `scripts/migrate-d1.mjs` owns the complete stripper for the deploy path,
+ * where a mis-parse takes out a migration rather than a test.
+ */
+const parseJsonc = (source: string): unknown =>
+  JSON.parse(source.replace(/^\s*\/\/.*$/gmu, ''));
+
 function unpublishedReleaseFixture(): Record<string, unknown> {
   return {
     ...JSON.parse(readProjectFile('release.config.json')) as Record<string, unknown>,
@@ -227,7 +240,7 @@ describe('public Avalon site', () => {
     const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
 
     expect(release.published).toBe(true);
-    expect(release.downloadBaseUrl).toBe('https://downloads.with-avalon.com');
+    expect(release.downloadBaseUrl).toBe('https://downloads.rallywith.ai');
     expect(release.bucket).toBe('avalon-desktop-releases');
     expect(release.prefix).toBe('stable/darwin/arm64');
     expect(release.files).toMatchObject({
@@ -235,7 +248,7 @@ describe('public Avalon site', () => {
       zip: `Avalon-${release.version}-mac-arm64.zip`,
     });
     expect(desktopDmgUrl(release)).toBe(
-      'https://downloads.with-avalon.com/stable/darwin/arm64/Avalon.dmg',
+      'https://downloads.rallywith.ai/stable/darwin/arm64/Avalon.dmg',
     );
     expect(page).not.toMatch(/href="[^"]+\.(?:dmg|zip)"/i);
     expect(page).toContain('Downloads opening soon');
@@ -260,10 +273,10 @@ describe('public Avalon site', () => {
     const rendered = renderDesktopRelease(page, release);
 
     expect(desktopDmgUrl(release)).toBe(
-      'https://downloads.with-avalon.com/stable/darwin/arm64/Avalon.dmg',
+      'https://downloads.rallywith.ai/stable/darwin/arm64/Avalon.dmg',
     );
     expect(rendered).toContain(
-      'href="https://downloads.with-avalon.com/stable/darwin/arm64/Avalon.dmg"',
+      'href="https://downloads.rallywith.ai/stable/darwin/arm64/Avalon.dmg"',
     );
     expect(rendered).toContain('Download Avalon for macOS');
     expect(rendered).not.toContain('Downloads opening soon');
@@ -304,7 +317,7 @@ describe('public Avalon site', () => {
       publishedAt: '2026-08-02T19:00:00.000Z',
     });
     expect(desktopDmgUrl(release, publication)).toBe(
-      'https://downloads.with-avalon.com/stable/darwin/arm64/Avalon.dmg',
+      'https://downloads.rallywith.ai/stable/darwin/arm64/Avalon.dmg',
     );
     expect(renderDesktopRelease(page, release, publication)).toContain('Download Avalon for macOS');
   });
@@ -352,15 +365,20 @@ describe('public Avalon site', () => {
     })).toThrow(/object keys/u);
   });
 
-  it('declares both production custom domains and restrictive static-site headers', () => {
-    const wrangler = JSON.parse(readProjectFile('wrangler.jsonc')) as {
+  it('declares every production custom domain and restrictive static-site headers', () => {
+    const wrangler = parseJsonc(readProjectFile('wrangler.jsonc')) as {
       routes: Array<{ pattern: string; custom_domain: boolean }>;
       workers_dev: boolean;
       preview_urls: boolean;
     };
     const headers = readProjectFile('public/_headers');
 
+    // Both zones are served while the rename is in flight. The Avalon pair is
+    // asserted, not merely tolerated: dropping it silently 404s every link
+    // already indexed, unfurled, or printed in a signature block.
     expect(wrangler.routes).toEqual([
+      { pattern: 'rallywith.ai', custom_domain: true },
+      { pattern: 'www.rallywith.ai', custom_domain: true },
       { pattern: 'with-avalon.com', custom_domain: true },
       { pattern: 'www.with-avalon.com', custom_domain: true },
     ]);
@@ -377,7 +395,7 @@ describe('public Avalon site', () => {
     expect(page).toContain('Continue in the Avalon app');
     expect(page).toContain('noindex, nofollow');
     expect(script).toContain('window.location.hash');
-    expect(script).toContain("new URL('avalon://invitations/accept')");
+    expect(script).toContain("new URL('rallywithai://invitations/accept')");
     expect(script).toContain('window.history.replaceState');
     expect(script).not.toContain('window.location.search');
   });
@@ -389,7 +407,7 @@ describe('public Avalon site', () => {
     expect(page).toContain('Continue in the Avalon app');
     expect(page).toContain('noindex, nofollow');
     expect(script).toContain('window.location.hash');
-    expect(script).toContain("new URL('avalon://slack/link')");
+    expect(script).toContain("new URL('rallywithai://slack/link')");
     expect(script).toContain('window.history.replaceState');
     expect(script).not.toContain('window.location.search');
   });
@@ -433,7 +451,7 @@ describe('public Avalon site', () => {
 
     for (const [, route] of policies) {
       expect(landing).toContain(`href="${route}/"`);
-      expect(sitemap).toContain(`https://with-avalon.com${route}`);
+      expect(sitemap).toContain(`https://rallywith.ai${route}`);
     }
 
     for (const [path, route, title] of policies) {
@@ -441,7 +459,7 @@ describe('public Avalon site', () => {
       expect(page).toContain('<body class="legal-page">');
       expect(page).toContain(title);
       expect(page).toContain('Juno AI Labs');
-      expect(page).toContain(`rel="canonical" href="https://with-avalon.com${route}"`);
+      expect(page).toContain(`rel="canonical" href="https://rallywith.ai${route}"`);
       for (const [, linkedRoute] of policies) {
         expect(page).toContain(`href="${linkedRoute}/"`);
       }
@@ -464,20 +482,20 @@ describe('public Avalon site', () => {
     const telemetry = readProjectFile('src/telemetry.ts');
     const headers = readProjectFile('public/_headers');
 
-    expect(telemetry).toContain("'https://api.with-avalon.com'");
+    expect(telemetry).toContain("'https://api.rallywith.ai'");
     expect(telemetry).toContain('/telemetry/route');
     expect(telemetry).toContain('/telemetry/bootstrap');
     expect(telemetry).toContain('/telemetry/anonymous');
-    expect(telemetry).not.toContain('https://eu.api.with-avalon.com');
+    expect(telemetry).not.toContain('https://eu.api.rallywith.ai');
     expect(telemetry).toContain("route.route === 'global' ? globalAnonymousEpochId() : transientAnonymousEpochId");
     expect(telemetry).toContain('routeToken: route.routeToken');
     expect(telemetry).not.toContain('sessionStorage');
     expect(telemetry).toContain("report('site_page_viewed'");
     expect(telemetry).toContain("report('site_page_left'");
     expect(headers).toMatch(/^\/\*\n {2}Content-Security-Policy:/u);
-    expect(headers).toContain("connect-src https://api.with-avalon.com");
+    expect(headers).toContain("connect-src https://api.rallywith.ai https://api.with-avalon.com");
     expect(headers).not.toContain("connect-src 'none'");
-    expect(headers).not.toContain('connect-src https://eu.api.with-avalon.com');
+    expect(headers).not.toContain('https://eu.api.rallywith.ai');
   });
 
   it('removes resource identity from public handoff paths and classifies invalid targets truthfully', () => {

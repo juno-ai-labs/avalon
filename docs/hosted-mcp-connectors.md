@@ -36,7 +36,7 @@ const personalMcp = createHostedMcpPassthrough({
   withAccessToken: (connection, signal, operation) =>
     withFreshProviderToken(connection, signal, operation),
   oauth: {
-    redirectUri: "https://api.with-avalon.com/connections/example/callback",
+    redirectUri: "https://api.rallywith.ai/connections/example/callback",
     allowedAuthorizationOrigins: ["https://mcp.example.com"],
   },
 });

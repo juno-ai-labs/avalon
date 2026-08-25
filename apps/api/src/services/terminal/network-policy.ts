@@ -9,8 +9,12 @@ export const TERMINAL_NETWORK_BASELINE = [
     label: "GitHub and Avalon",
     domains: [
       "api.github.com",
-      "api.with-avalon.com",
-      "eu.api.with-avalon.com",
+      // The canonical API hosts only. A sandbox reaches Avalon at whatever
+      // `PUBLIC_API_BASE_URL` names, and that is Rally in both regions — so the
+      // superseded hosts would be two unreachable entries that each cost a
+      // workspace one of its `TERMINAL_NETWORK_MAX_TARGETS` slots.
+      "api.rallywith.ai",
+      "eu.api.rallywith.ai",
       "github.com",
       "objects.githubusercontent.com",
       "raw.githubusercontent.com",

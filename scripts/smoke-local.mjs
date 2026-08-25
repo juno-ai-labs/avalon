@@ -34,7 +34,7 @@ async function jsonRequest(path, options = {}, origin = baseUrl) {
 
 async function openSocket(url, { expectOpen, protocols }) {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url, protocols ?? [], { origin: "app://avalon" });
+    const socket = new WebSocket(url, protocols ?? [], { origin: "app://rallywithai" });
     const timeout = setTimeout(() => {
       socket.close();
       reject(new Error(`Realtime check timed out (${expectOpen ? "open" : "replay"})`));

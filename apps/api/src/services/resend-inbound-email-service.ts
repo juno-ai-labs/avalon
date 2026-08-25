@@ -4,6 +4,10 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
+import {
+  ACCEPTED_WORKSTREAM_EMAIL_DOMAINS,
+  WORKSTREAM_EMAIL_DOMAIN,
+} from "../lib/workstream-email-address";
 import { publishWorkstreamEvent } from "./integrations";
 import { runAutomationFromInboundEmail } from "./automation-service";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
@@ -11,7 +15,7 @@ import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 const RESEND_RECEIVED_EMAIL_URL = "https://api.resend.com/emails/receiving";
-const DEFAULT_WORKSTREAM_EMAIL_DOMAIN = "automation.with-avalon.com";
+const DEFAULT_WORKSTREAM_EMAIL_DOMAIN = WORKSTREAM_EMAIL_DOMAIN;
 const DEFAULT_MAX_WEBHOOK_BYTES = 2_000_000;
 const DEFAULT_MAX_RECEIVED_EMAIL_BYTES = 2_000_000;
 const DEFAULT_PROCESSING_LEASE_SECONDS = 300;
@@ -274,10 +278,16 @@ export class ResendInboundEmailRoutingService {
       }
     }
 
-    const domain = configuredEmailDomain(this.bindings().WORKSTREAM_EMAIL_DOMAIN);
-    const localParts = [...new Set(data.to
-      .map((recipient) => localPartForRecipient(recipient, domain))
-      .filter((value): value is string => value !== null))];
+    const domains = acceptedEmailDomains(this.bindings().WORKSTREAM_EMAIL_DOMAIN);
+    // Keyed by local part because that is what the routing table is keyed by,
+    // holding the domain each one arrived on so the region is told the address
+    // the sender used rather than the one this deployment would have minted.
+    const arrivedOn = new Map<string, string>();
+    for (const recipient of data.to) {
+      const match = recipientAddress(recipient, domains);
+      if (match && !arrivedOn.has(match.localPart)) arrivedOn.set(match.localPart, match.domain);
+    }
+    const localParts = [...arrivedOn.keys()];
     if (localParts.length > MAX_ROUTED_RECIPIENTS) {
       await this.env.DB.prepare(
         `UPDATE resend_webhook_receipts
@@ -317,7 +327,11 @@ export class ResendInboundEmailRoutingService {
         workspaceId: route.workspace_id,
         ...target,
         localPart: route.local_part.toLowerCase(),
-        emailAddress: `${route.local_part.toLowerCase()}@${domain}`,
+        // `arrivedOn` is what produced the local parts these routes were looked
+        // up by, so it always holds this one. Indexing rather than defaulting
+        // keeps that guarantee visible instead of implying a route could arrive
+        // without a recorded domain.
+        emailAddress: `${route.local_part.toLowerCase()}@${arrivedOn.get(route.local_part.toLowerCase())!}`,
       });
     }));
     const failures = dispatches.filter((result): result is PromiseRejectedResult => result.status === "rejected");
@@ -426,8 +440,11 @@ export class ResendRegionalEmailService {
     if (parsed.region !== this.env.AVALON_REGION) {
       throw new ApiError(409, "email_region_mismatch", "The inbound email was routed to the wrong region");
     }
-    const configuredAddress = `${parsed.localPart}@${configuredEmailDomain(this.bindings().WORKSTREAM_EMAIL_DOMAIN)}`;
-    if (configuredAddress !== parsed.emailAddress.toLowerCase()) {
+    const routed = recipientAddress(
+      parsed.emailAddress,
+      acceptedEmailDomains(this.bindings().WORKSTREAM_EMAIL_DOMAIN),
+    );
+    if (routed === null || routed.localPart !== parsed.localPart.toLowerCase()) {
       throw new ApiError(409, "email_route_mismatch", "The inbound-email address does not match this service");
     }
     this.env = withWorkspaceRuntimeDatabase(this.env, parsed.workspaceId);
@@ -1315,15 +1332,49 @@ function resourceTitle(subject: string): string {
   return `Email: ${subject}`.slice(0, MAX_SUBJECT_CHARACTERS);
 }
 
+/**
+ * The domain this deployment mints new addresses on.
+ *
+ * The guard is exact, not membership in the accepted set: a deployment left on
+ * a superseded domain would otherwise pass here and quietly go on minting
+ * addresses nobody intends to issue any more — the accepted set exists to keep
+ * *receiving* old mail, not to license writing it. A typo is refused outright,
+ * because it silently drops every inbound email — the failure the `0021`
+ * migration was written to repair — and nothing distinguishes that from nobody
+ * having written in.
+ */
 function configuredEmailDomain(value: string | undefined): string {
   const domain = (value ?? DEFAULT_WORKSTREAM_EMAIL_DOMAIN).trim().toLowerCase().replace(/\.$/u, "");
-  if (domain !== DEFAULT_WORKSTREAM_EMAIL_DOMAIN) {
+  if (domain !== WORKSTREAM_EMAIL_DOMAIN) {
     throw new ApiError(503, "resend_inbound_unavailable", "The work-stream email domain is not configured correctly");
   }
   return domain;
 }
 
-function localPartForRecipient(recipient: string, domain: string): string | null {
+/**
+ * Every domain whose mail this deployment will route.
+ *
+ * Wider than the minting domain, and has to be: an address issued before the
+ * rename is the one printed in the sender's mail client, and it keeps arriving
+ * long after nothing new carries it. Routing is by local part, so an old
+ * address resolves through the same table as a new one.
+ */
+function acceptedEmailDomains(value: string | undefined): ReadonlySet<string> {
+  configuredEmailDomain(value);
+  return new Set(ACCEPTED_WORKSTREAM_EMAIL_DOMAINS);
+}
+
+/**
+ * Splits an accepted recipient into its local part and the domain it arrived
+ * on. The domain is returned rather than discarded because, with more than one
+ * domain accepted, it is the only record of what the sender actually typed —
+ * and that address is what gets attached to the work stream and shown back.
+ * Substituting the canonical domain here would rewrite the reader's own history.
+ */
+function recipientAddress(
+  recipient: string,
+  domains: ReadonlySet<string>,
+): { localPart: string; domain: string } | null {
   const trimmed = recipient.trim();
   const angleStart = trimmed.lastIndexOf("<");
   const angleEnd = trimmed.endsWith(">") ? trimmed.length - 1 : -1;
@@ -1332,10 +1383,11 @@ function localPartForRecipient(recipient: string, domain: string): string | null
     : trimmed).trim().toLowerCase();
   if (/\s/u.test(address)) return null;
   const separator = address.lastIndexOf("@");
-  if (separator <= 0 || address.slice(separator + 1) !== domain) return null;
+  const domain = address.slice(separator + 1);
+  if (separator <= 0 || !domains.has(domain)) return null;
   const localPart = address.slice(0, separator);
   return /^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u.test(localPart) && localPart.length <= 64
-    ? localPart
+    ? { localPart, domain }
     : null;
 }
 
@@ -1471,10 +1523,11 @@ async function readBoundedResponseText(response: Response, maxBytes: number): Pr
 }
 
 export const __resendInboundEmailTesting = {
+  acceptedEmailDomains,
   configuredEmailDomain,
   decodeBasicHtmlEntities,
   htmlToSafeText,
-  localPartForRecipient,
+  recipientAddress,
   mailboxAddress,
   normalizeReceivedEmail,
   verifySvixSignature,

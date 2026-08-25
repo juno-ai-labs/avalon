@@ -4,7 +4,7 @@ export const NESTED_COMPONENT_ENTITLEMENTS = Object.freeze([
   'com.apple.security.network.client',
 ]);
 
-export const AVALON_UPDATE_URL = 'https://downloads.with-avalon.com/stable/darwin/arm64';
+export const AVALON_UPDATE_URL = 'https://downloads.rallywith.ai/stable/darwin/arm64';
 
 export function assertExactNestedEntitlements(keys, label) {
   const actual = [...new Set(keys)].sort();

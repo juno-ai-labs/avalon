@@ -18,7 +18,7 @@ window.history.replaceState(null, document.title, window.location.pathname);
 
 if (button && valid && token) {
   reportDesktopHandoff('slack', 'presented', 'valid');
-  const deepLink = new URL('avalon://slack/link');
+  const deepLink = new URL('rallywithai://slack/link');
   deepLink.searchParams.set('token', token);
   button.href = deepLink.toString();
   button.removeAttribute('aria-disabled');

@@ -95,7 +95,7 @@ export function SignInScreen(): React.JSX.Element {
         region: 'global',
       });
       attemptId = authAttempt.attemptId;
-      const url = await api.beginGoogleLogin('global', 'avalon://auth/complete', { authAttempt });
+      const url = await api.beginGoogleLogin('global', 'rallywithai://auth/complete', { authAttempt });
       await bridge.openExternal(url);
     } catch (caught) {
       if (attemptId) await bridge.cancelDesktopAuthAttempt(attemptId).catch(() => undefined);

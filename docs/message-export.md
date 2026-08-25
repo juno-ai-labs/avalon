@@ -20,7 +20,7 @@ by the feed's own component and only the surroundings are new.
 | `apps/desktop/src/renderer/lib/message-export.ts` | The renderer's half: serializes a `MarkdownBody` element to HTML in a detached root, reads the Avalon mark out of the bundle once, calls the bridge. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `AssistantMessageActions` — the hover row under a turn, its in-flight and failed states. |
 | `apps/desktop/src/main/message-export.ts` | Everything about the card: the document, its stylesheet, the splash, the page footer, request validation, and `MessageExporter`, which drives one render at a time and writes the file. |
-| `apps/desktop/src/main/index.ts` | The Electron adapter — the hidden `BrowserWindow`, the `avalon-export` protocol handler, the save dialog, and the `message-export:save` IPC handler. |
+| `apps/desktop/src/main/index.ts` | The Electron adapter — the hidden `BrowserWindow`, the `rallywithai-export` protocol handler, the save dialog, and the `message-export:save` IPC handler. |
 | `apps/desktop/src/renderer/styles/app.css` | Only the hover row's own styling. The card's stylesheet is not here; see the boundary below. |
 
 ## How it works
@@ -43,7 +43,7 @@ A click on **Image** or **PDF** starts one pass:
    *rejected* rather than sanitized.
 4. **The main process builds the document** — `messageExportDocument` — and files
    it under a random token.
-5. **A hidden window loads it** from `avalon-export://sheet/<token>`. The document
+5. **A hidden window loads it** from `rallywithai-export://sheet/<token>`. The document
    is served from memory with its own restrictive `Content-Security-Policy`
    response header, and **reading it spends it** — the token resolves once, for
    the one navigation it was minted for.
@@ -124,7 +124,7 @@ The chain recovers from a rejected export rather than wedging behind it.
   request carries HTML rather than markdown.
 - **The export document is never same-origin with the application.** It is a page
   built out of a model's words; it gets a scheme of its own, no preload, no Node,
-  and a policy that forbids script. Serving it from `app://avalon` would put it
+  and a policy that forbids script. Serving it from `app://rallywithai` would put it
   inside the renderer's origin for the sake of one fewer scheme.
 - **A file name is validated, never sanitized.** The name is derived from message
   text, and text a model wrote reaches `showSaveDialog` as a default path.
@@ -250,6 +250,23 @@ Two traps:
 
 ## Changelog
 
+### 2026-08-25 — The export scheme is rallywithai-export://
+
+**What changed:** `MESSAGE_EXPORT_SCHEME` is `rallywithai-export`. No legacy scheme is
+registered or accepted.
+
+**Why:** The rebrand to Rally. Unlike the desktop deep link and the renderer
+origin, which both kept their superseded values working, this one was renamed
+outright: the scheme is registered, served, and loaded entirely inside the main
+process, against a single-use token held in memory for one export. Nothing
+outside ever receives a URL on it, so there is no party to keep working and a
+compatibility alias would have been dead code from the day it shipped.
+
+**Consequences:** The invariant that matters is unchanged and is the reason this
+scheme exists at all — an export document must never share an origin with the
+application, so it must not be moved onto `app://rallywithai` no matter how convenient
+the existing handler looks. See [`domain-migration.md`](domain-migration.md) for
+why the schemes were treated differently from each other.
 ### 2026-08-13 — Avalon's messages can be saved as a picture or a PDF
 
 **What changed:** Two buttons joined **Copy** under a finished turn. Both render

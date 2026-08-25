@@ -3,7 +3,7 @@ import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { SlackAgentService } from "./slack-agent-service";
 
-export const DEFAULT_SLACK_INGRESS_BASE_URL = "https://slack.with-avalon.com";
+export const DEFAULT_SLACK_INGRESS_BASE_URL = "https://slack.rallywith.ai";
 
 export interface SlackRouteInput {
   teamId: string;

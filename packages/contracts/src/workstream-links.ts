@@ -2,13 +2,13 @@
  * The canonical shareable link to an Avalon work stream, shared by the API, the
  * desktop client, and the public site.
  *
- * `avalon://workstreams/<id>` is the protocol the desktop client registers, and
- * it stays the target every surface ultimately opens. It is not, however, a
- * link that survives being pasted somewhere else: Slack only emits
- * `link_shared` for URLs whose registered *domain* matches an unfurl domain, so
- * a custom scheme can never be unfurled; mail clients rarely linkify an unknown
- * scheme at all; and a recipient without the app installed is left with a dead
- * string.
+ * `rallywithai://workstreams/<id>` is the protocol the desktop client
+ * registers, and it stays the target every surface ultimately opens. It is
+ * not, however, a link that survives being pasted somewhere else: Slack emits
+ * `link_shared` only for URLs whose registered *domain* matches an unfurl
+ * domain, so a custom scheme can never be unfurled; mail clients rarely
+ * linkify an unknown scheme at all; and a recipient without the app installed
+ * is left with a dead string.
  *
  * The canonical form is therefore an HTTPS URL on the public site that carries
  * the work-stream id in its **path** — where a server reading the shared URL
@@ -19,12 +19,32 @@
  * import it directly without pulling a validation library into a static page.
  */
 
-/** Host segment of the desktop deep link: `avalon://workstreams/<id>`. */
-const DEEP_LINK_PROTOCOL = "avalon:";
+import {
+  DESKTOP_DEEP_LINK_PROTOCOL,
+  isDesktopDeepLinkProtocol,
+} from "./desktop-deep-link";
+
+/** Host segment of the desktop deep link: `rallywithai://workstreams/<id>`. */
 const DEEP_LINK_HOST = "workstreams";
 
 /** Path prefix of the canonical HTTPS link: `/app/workstreams/<id>`. */
 export const WORKSTREAM_LINK_PATH_PREFIX = "/app/workstreams/";
+
+/**
+ * Site origins a shared work-stream link may still be on, besides the caller's
+ * own. Fixed historical values, like the legacy deep-link scheme: links minted
+ * on these are in Slack history and inboxes and cannot be reissued.
+ *
+ * A caller opts in. Most read one origin at a time — the site really does serve
+ * one origin per request — but a caller handed URLs by a third party does not
+ * get to choose which domain they arrive on. Slack is the case that matters:
+ * its app registers both domains for unfurling, so it delivers `link_shared`
+ * for both.
+ */
+export const LEGACY_WORKSTREAM_LINK_ORIGINS: readonly string[] = Object.freeze([
+  "https://with-avalon.com",
+  "https://www.with-avalon.com",
+]);
 
 /** Legacy handoff still present in Slack and mail history: `/open#target=…`. */
 const LEGACY_HANDOFF_PATHS = new Set(["/open", "/open/"]);
@@ -45,7 +65,7 @@ function assertWorkstreamId(workstreamId: string): void {
 /** The desktop deep link every canonical link resolves to. */
 export function workstreamDeepLink(workstreamId: string): string {
   assertWorkstreamId(workstreamId);
-  return `${DEEP_LINK_PROTOCOL}//${DEEP_LINK_HOST}/${workstreamId}`;
+  return `${DESKTOP_DEEP_LINK_PROTOCOL}//${DEEP_LINK_HOST}/${workstreamId}`;
 }
 
 /**
@@ -65,7 +85,7 @@ export function parseWorkstreamLinkPath(pathname: string): string | null {
 }
 
 function parseDeepLink(url: URL): string | null {
-  if (url.protocol !== DEEP_LINK_PROTOCOL || url.hostname !== DEEP_LINK_HOST) return null;
+  if (!isDesktopDeepLinkProtocol(url.protocol) || url.hostname !== DEEP_LINK_HOST) return null;
   if (url.search || url.hash || url.username || url.password || url.port) return null;
   const candidate = url.pathname.slice(1);
   return isWorkstreamId(candidate) ? candidate : null;
@@ -79,18 +99,25 @@ function parseDeepLink(url: URL): string | null {
  *
  * Accepted, in order of preference:
  * - the canonical `<webBaseUrl>/app/workstreams/<id>`
- * - the desktop deep link `avalon://workstreams/<id>`
- * - the legacy handoff `<webBaseUrl>/open#target=avalon://workstreams/<id>`
+ * - the desktop deep link `rallywithai://workstreams/<id>`, or `avalon://…`
+ * - the legacy handoff `<webBaseUrl>/open#target=<either deep link>`
  *
- * Only links on `webBaseUrl`'s own origin are read, so a look-alike host cannot
- * borrow the treatment Avalon gives its own links.
+ * Only links on an origin the caller named are read, so a look-alike host
+ * cannot borrow the treatment Avalon gives its own links. `webBaseUrl` accepts
+ * several origins for a caller that is handed URLs it did not choose the domain
+ * of — see `LEGACY_WORKSTREAM_LINK_ORIGINS`.
  */
-export function parseWorkstreamLink(raw: string, options: { webBaseUrl: string }): string | null {
+export function parseWorkstreamLink(
+  raw: string,
+  options: { webBaseUrl: string | readonly string[] },
+): string | null {
   let url: URL;
-  let origin: string;
+  let origins: string[];
   try {
     url = new URL(raw);
-    origin = new URL(options.webBaseUrl).origin;
+    const bases = typeof options.webBaseUrl === "string" ? [options.webBaseUrl] : options.webBaseUrl;
+    if (bases.length === 0) return null;
+    origins = bases.map((base) => new URL(base).origin);
   } catch {
     return null;
   }
@@ -98,7 +125,7 @@ export function parseWorkstreamLink(raw: string, options: { webBaseUrl: string }
   const deepLinkId = parseDeepLink(url);
   if (deepLinkId) return deepLinkId;
 
-  if (url.origin !== origin) return null;
+  if (!origins.includes(url.origin)) return null;
 
   if (!url.search) {
     const canonicalId = parseWorkstreamLinkPath(url.pathname);

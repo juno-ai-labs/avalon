@@ -1,7 +1,7 @@
 import { ConnectorOAuthProviders } from '@avalon/contracts/connector-oauth-providers';
+import { isDesktopDeepLinkProtocol } from '@avalon/contracts/desktop-deep-link';
 import { reportDesktopHandoff } from './telemetry';
 
-const DESKTOP_PROTOCOL = 'avalon:';
 const DESKTOP_HOST = 'auth';
 const DESKTOP_PATH = '/complete';
 const TICKET_PATTERN = /^[A-Za-z0-9_-]{20,500}$/u;
@@ -48,7 +48,7 @@ export function parseDesktopTarget(fragment: string): string | null {
   }
 
   if (
-    target.protocol !== DESKTOP_PROTOCOL
+    !isDesktopDeepLinkProtocol(target.protocol)
     || target.hostname !== DESKTOP_HOST
     || target.pathname !== DESKTOP_PATH
     || target.username !== ''
