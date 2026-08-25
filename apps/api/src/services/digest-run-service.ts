@@ -351,6 +351,7 @@ async function createDigestWorkstream(
     automationRunId: null,
     plannedFor: null,
     modelOverride: null,
+    now: Date.parse(at),
   });
   // The occurrence is regional coordination state; it references the D1
   // identity anchor but never owns the work-stream record.

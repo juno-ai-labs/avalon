@@ -698,6 +698,7 @@ async function startAutomation(
           workspaceId: schedule.workspace_id,
           automationSubscriptionId: subscriptionId,
         }),
+        now: Date.parse(timestamp),
       });
     }
 

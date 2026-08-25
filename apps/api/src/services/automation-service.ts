@@ -1612,6 +1612,7 @@ export class AutomationService {
         automationRunId: runId,
         plannedFor: plannedFor === null ? null : Date.parse(plannedFor),
         modelOverride,
+        now: Date.parse(at),
       });
       const runStatement = this.env.DB.prepare(
         `INSERT INTO automation_runs
