@@ -219,4 +219,34 @@ describe('NativeCrashUploader', () => {
     expect(fetch).toHaveBeenCalledOnce();
     expect(onState.mock.calls.map(([state]) => state)).toContain('evicted');
   });
+
+  it('reuses the upload id from a sidecar written before the rename', async () => {
+    // A dump queued by the previous build carries `<dump>.avalon.json`. Minting
+    // a fresh id for it files the same crash a second time.
+    const { root, dump } = await fixture();
+    await writeFile(`${dump}.avalon.json`, `${JSON.stringify({
+      version: 1, uploadId: '018f0000-0000-7000-8000-0000000000ab',
+    })}\n`);
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(JSON.stringify({
+      result: 'accepted', uploadId: '018f0000-0000-7000-8000-0000000000ab',
+    }), { status: 202 }));
+    const uploader = new NativeCrashUploader({
+      rootDirectory: root, enabled: () => true,
+      identity: () => ({ installationId: '018f0000-0000-7000-8000-000000000003' }),
+      authenticatedSession: async () => ({
+        apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', route: 'global',
+      }),
+      anonymousSession: () => null, globalApiBaseUrl: 'https://api.rallywith.ai', fetch,
+      eventId: () => '018f0000-0000-7000-8000-00000000ffff',
+    });
+
+    await uploader.flush();
+
+    const form = fetch.mock.calls[0]?.[1]?.body as FormData;
+    expect(JSON.parse(String(form.get('metadata')))).toMatchObject({
+      uploadId: '018f0000-0000-7000-8000-0000000000ab',
+    });
+    // Both sidecar names are cleaned up, so the dump cannot be re-queued.
+    await expect(access(`${dump}.avalon.json`)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 });

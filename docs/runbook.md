@@ -326,6 +326,36 @@ The other nine Rally hostnames are single-label and covered by the Universal
 pack, so they need no certificate work. [`domain-migration.md`](domain-migration.md)
 lists all ten and what each serves.
 
+### The Rally rename cannot reach installed builds through the update feed
+
+**An installed `app.avalon.desktop` build will not auto-update to
+`ai.rallywith.desktop`.** Squirrel.Mac treats the bundle identifier as the
+application's identity and refuses to replace a bundle with one that does not
+match — see the macOS distribution section of
+[`security.md`](security.md#macos-distribution-and-updates). The release that
+carries the rename therefore reaches existing installs only as a manual
+reinstall, and the failure mode if that is not planned is silent: those installs
+keep polling `downloads.with-avalon.com`, keep being offered a build they will
+not accept, and simply stop updating. Nothing is logged on either side.
+
+Decide the migration **before** the rename ships. The options, in the order they
+are usually worth considering:
+
+1. **Announce and ship a manual reinstall.** Mail every account a
+   `downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg` link before promoting
+   the release, and keep the Avalon feed serving its last Avalon-named build so
+   an un-migrated install is not left broken.
+2. **Ship one last Avalon-identified release first** whose only job is to tell
+   people, in the app, that the next version must be installed by hand. This is
+   the version that reaches everyone, so it is the only reliable channel.
+3. **Keep `app.avalon.desktop`** and rename everything else. This is the only
+   option with no migration at all; it trades a permanent `avalon` string in the
+   shipped bundle for a clean update path.
+
+Whichever is chosen, `downloads.with-avalon.com` and the last Avalon-named
+artifacts must stay served indefinitely — an install that never migrates polls
+them forever, and there is no way to tell from this side how many did.
+
 ### Rename the release repository variables before the next desktop release
 
 The desktop release workflow reads three GitHub **repository variables** whose

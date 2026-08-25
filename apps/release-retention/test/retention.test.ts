@@ -37,12 +37,12 @@ function stored(
   };
 }
 
-function releaseKeys(version: string): string[] {
+function releaseKeys(version: string, productName = "Avalon"): string[] {
   return [
-    `${prefix}Avalon-${version}-mac-arm64.dmg`,
-    `${prefix}Avalon-${version}-mac-arm64.dmg.blockmap`,
-    `${prefix}Avalon-${version}-mac-arm64.zip`,
-    `${prefix}Avalon-${version}-mac-arm64.zip.blockmap`,
+    `${prefix}${productName}-${version}-mac-arm64.dmg`,
+    `${prefix}${productName}-${version}-mac-arm64.dmg.blockmap`,
+    `${prefix}${productName}-${version}-mac-arm64.zip`,
+    `${prefix}${productName}-${version}-mac-arm64.zip.blockmap`,
     `${prefix}${version}/SHA256SUMS`,
   ];
 }
@@ -244,5 +244,70 @@ describe("Pacific schedule gate", () => {
   it("runs once at 02:00 after the fall-back transition", () => {
     expect(shouldRunAtLocalHour(Date.parse("2026-11-01T09:00:00Z"), zone, 2)).toBe(false);
     expect(shouldRunAtLocalHour(Date.parse("2026-11-01T10:00:00Z"), zone, 2)).toBe(true);
+  });
+
+  describe("the rename from Avalon", () => {
+    // What the bucket actually looks like after the rename ships: releases up to
+    // the rename named Avalon, releases after it named Rally, and both recovery
+    // pointers present because `Avalon.dmg` is compiled into every build shipped
+    // before it and can never be removed.
+    function mixedInventory(avalon: string[], rally: string[]): StoredObject[] {
+      return [
+        stored(`${prefix}Avalon.dmg`),
+        stored(`${prefix}Rally.dmg`),
+        stored(`${prefix}latest-mac.yml`),
+        ...avalon.flatMap((version) => releaseKeys(version).map((key) => stored(key))),
+        ...rally.flatMap((version) => releaseKeys(version, "Rally").map((key) => stored(key))),
+      ];
+    }
+
+    it("plans across releases named on either side of the rename", async () => {
+      const active = new MockBucket(mixedInventory(
+        ["1.8.0", "1.9.0", "1.10.0"],
+        ["1.11.0", "1.12.0", "1.13.0"],
+      ));
+
+      const plan = await planRetention(createTestR2Bucket(active), 5);
+
+      expect(plan.archiveVersions).toEqual(["1.8.0"]);
+      expect(plan.retainedVersions).toEqual(["1.9.0", "1.10.0", "1.11.0", "1.12.0", "1.13.0"]);
+      // The candidate keys carry the archived release's own product name.
+      expect(plan.candidateKeys).toContain(`${prefix}Avalon-1.8.0-mac-arm64.dmg`);
+    });
+
+    it("archives a Rally release by its own name", async () => {
+      const active = new MockBucket(mixedInventory([], ["1.11.0", "1.12.0"]));
+      const archive = new MockBucket();
+
+      const report = await runRetention(bindings(active, archive), { dryRun: false, keepCount: 1 });
+
+      expect(report.archiveVersions).toEqual(["1.11.0"]);
+      expect([...archive.objects.keys()]).toContain(`${prefix}Rally-1.11.0-mac-arm64.zip`);
+      // Neither recovery pointer is ever a retention candidate.
+      expect(report.candidateKeys).not.toContain(`${prefix}Avalon.dmg`);
+      expect(report.candidateKeys).not.toContain(`${prefix}Rally.dmg`);
+    });
+
+    it("runs on a bucket that still holds only the Avalon pointer", async () => {
+      // Between this shipping and the first Rally release there is no
+      // `Rally.dmg`. Requiring one would break retention every night until then.
+      const active = new MockBucket(inventory(["1.8.0", "1.9.0"]));
+
+      const plan = await planRetention(createTestR2Bucket(active), 1);
+
+      expect(plan.retainedVersions).toEqual(["1.9.0"]);
+    });
+
+    it("fails closed when a release mixes both product names", async () => {
+      const active = new MockBucket([
+        stored(`${prefix}Rally.dmg`),
+        stored(`${prefix}latest-mac.yml`),
+        ...releaseKeys("1.11.0", "Rally").slice(0, 2).map((key) => stored(key)),
+        ...releaseKeys("1.11.0").slice(2).map((key) => stored(key)),
+      ]);
+
+      await expect(planRetention(createTestR2Bucket(active), 1))
+        .rejects.toThrow(/mixes product names/u);
+    });
   });
 });

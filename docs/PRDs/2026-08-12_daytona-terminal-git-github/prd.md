@@ -30,7 +30,7 @@ optional tool.
 
 Workspace administrators choose **Trusted only** or **Full internet**. Trusted
 only uses Daytona's native domain allow-list, an immutable baseline, and optional
-workspace domains. It does not introduce an Rally egress proxy in this release.
+workspace domains. It does not introduce a Rally egress proxy in this release.
 
 ## Motivation
 

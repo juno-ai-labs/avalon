@@ -242,27 +242,44 @@ export class NativeCrashUploader {
     await this.removeDump(path);
   }
 
+  /**
+   * The sidecar names, current first.
+   *
+   * The upload id is what makes a retried upload the same report rather than a
+   * second one, and a dump written before the rename is still on disk waiting
+   * to be sent. Reading only the current name would mint a fresh id for it and
+   * file the same crash twice.
+   */
+  private sidecarPaths(path: string): readonly string[] {
+    return [`${path}.rally.json`, `${path}.avalon.json`];
+  }
+
   private async uploadId(path: string): Promise<string> {
-    const sidecarPath = `${path}.rally.json`;
-    try {
-      const parsed = UploadSidecarSchema.safeParse(JSON.parse(await readFile(sidecarPath, 'utf8')) as unknown);
-      if (parsed.success) return parsed.data.uploadId;
-    } catch (error) {
-      if (!(error instanceof SyntaxError)
-        && !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    const [sidecarPath] = this.sidecarPaths(path);
+    for (const candidate of this.sidecarPaths(path)) {
+      try {
+        const parsed = UploadSidecarSchema.safeParse(JSON.parse(await readFile(candidate, 'utf8')) as unknown);
+        if (parsed.success) return parsed.data.uploadId;
+      } catch (error) {
+        if (!(error instanceof SyntaxError)
+          && !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
     }
     const uploadId = (this.options.eventId ?? uuidV7)();
-    await writeFile(sidecarPath, `${JSON.stringify({ version: 1, uploadId })}\n`, {
+    await writeFile(sidecarPath!, `${JSON.stringify({ version: 1, uploadId })}\n`, {
       encoding: 'utf8', flag: 'wx', mode: 0o600,
     }).catch(async (error: unknown) => {
       if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
     });
-    const parsed = UploadSidecarSchema.parse(JSON.parse(await readFile(sidecarPath, 'utf8')) as unknown);
+    const parsed = UploadSidecarSchema.parse(JSON.parse(await readFile(sidecarPath!, 'utf8')) as unknown);
     return parsed.uploadId;
   }
 
   private async removeDump(path: string): Promise<void> {
-    await Promise.all([rm(path, { force: true }), rm(`${path}.rally.json`, { force: true })]);
+    await Promise.all([
+      rm(path, { force: true }),
+      ...this.sidecarPaths(path).map((sidecar) => rm(sidecar, { force: true })),
+    ]);
   }
 
   private state(state: NativeCrashUploadState): void {

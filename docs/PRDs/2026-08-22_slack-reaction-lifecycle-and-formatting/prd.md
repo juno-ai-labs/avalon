@@ -242,7 +242,7 @@ the host control plane after admission, before context gathering, and
 
 6. **Only Rally's own last-known reaction is removed.** The transition does not
    clear the message's reactions or remove whatever Rally finds there. A member
-   who reacts 👀 themselves keeps their reaction, and an Rally reaction someone
+   who reacts 👀 themselves keeps their reaction, and a Rally reaction someone
    has already removed by hand is not re-added to be removed again.
 
 ## Data model

@@ -224,7 +224,7 @@ const connectorProviders = [
     id: 'x' as const,
     provider: 'x' as const,
     name: 'Public X via TwitterAPI.io',
-    description: 'Read-only public X timelines, threads, replies, and Lists using an Rally-managed third-party API key.',
+    description: 'Read-only public X timelines, threads, replies, and Lists using a Rally-managed third-party API key.',
     icon: AtSign,
     scopes: ['workspace'] as const,
     capabilities: ['x.read'],
