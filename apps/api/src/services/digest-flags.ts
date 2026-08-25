@@ -16,15 +16,18 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
  * explicit `false` should ever stop a digest from sending, never a Flagship
  * hiccup.
  *
- * Not Ace-managed. Ace's editor and its Queue fan-out exist to push a changed
- * value to connected desktop sockets within Flagship's propagation window;
- * this flag is read fresh by the scheduler each time one occurrence is about
- * to fire, which is at most a few times a day per person and never from a
- * live socket, so there is no propagation problem for Ace's machinery to
- * solve. It is provisioned and changed the way the agent-model flags and the
- * Control Tower cadence are — `wrangler flagship flags`, documented in
- * `docs/feature-flags.md` — and `docs/ace.md`'s boundary section names it
- * alongside them.
+ * Ace-managed, but not client-visible: it is in `MANAGED_FLAGS`
+ * (`apps/ace/src/protocol.ts`) and provisioned by `apps/ace/scripts/deploy.mjs`
+ * alongside the four presentation flags, so an operator has exactly one editor
+ * for every Boolean flag they might need to change by hand — but Electron
+ * never reads it, and it is not part of `ClientFeatureFlagsSchema`. A save
+ * still triggers Ace's ordinary Queue fan-out to connected desktop sockets;
+ * that fan-out always re-evaluates and re-sends the complete client contract
+ * regardless of which key changed, so it costs a harmless repeat of work
+ * already safe to repeat rather than solving a propagation problem this flag
+ * actually has — read fresh by the scheduler each time one occurrence is
+ * about to fire, at most a few times a day per person, never from a live
+ * socket. See `docs/ace.md` and `docs/feature-flags.md`.
  *
  * The flag gates firing only. It is read at the top of `fireDigestSchedule`,
  * before the occurrence is claimed, so an occurrence skipped for this reason
@@ -112,7 +115,16 @@ export async function resolveDigestsEnabled(
   // this person, which is the only way to tell a rule that excluded them from
   // one that never fired. The attribute *names* say whether the fact a rule is
   // written against was even available, and carry none of the values.
-  logStructuredEvent(env, "debug", "digests_enabled_flag_resolved", {
+  //
+  // Resolving to disabled logs at `info`, not `debug`: this flag is an
+  // operator's kill switch, and `debug` sits below both regions' configured
+  // production level. Without this, flipping the flag off leaves no trace an
+  // operator can find — no delivery row is written either, by design — so
+  // there would be no way to confirm the flag took effect or to answer "why
+  // did nobody get a digest" without reading this source file. Volume is
+  // bounded by the same arithmetic that makes this flag cheap to evaluate: at
+  // most a few resolutions per person per day, even with it off account-wide.
+  logStructuredEvent(env, enabled ? "debug" : "info", "digests_enabled_flag_resolved", {
     user_id: subject.userId,
     workspace_id: subject.workspaceId,
     flag_key: DIGESTS_ENABLED_FLAG_KEY,
