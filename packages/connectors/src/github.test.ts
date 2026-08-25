@@ -288,6 +288,7 @@ describe("GitHub connector", () => {
       const url = requestUrl(input);
       expect(url.pathname).toBe("/app/installations/42/access_tokens");
       expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("user-agent")).toBe("Rally-GitHub-Connector");
       bearer = new Headers(init?.headers).get("authorization") ?? "";
       return jsonResponse({
         token: "installation-access",
