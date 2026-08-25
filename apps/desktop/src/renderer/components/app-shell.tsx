@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { useRef, type CSSProperties, type PropsWithChildren } from 'react';
+import { useMemo, useRef, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
@@ -189,7 +189,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const featureFlags = useClientFeatureFlags(api);
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
-  const backgroundRealtimeIds = backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams.data);
+  const backgroundRealtimeIds = useMemo(
+    () => backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams.data),
+    [activeWorkstreamId, workstreams.data],
+  );
 
   // One custom property carries the right sidebar's width, so the panel in the
   // slot, the grab handle beside it, and the room the main pane leaves for it
