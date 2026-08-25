@@ -6848,6 +6848,15 @@ function createFirecrawlWebTools(env: Env): HarnessTool[] {
           required: ["query"],
         },
       },
+      // `format: "uri"` accepts `mailto:`, `ftp:`, and `javascript:`, and the
+      // declared `minLength: 1` accepts a query that is only spaces — all of
+      // which these executors then reject. Without the hook the runtime reads
+      // the advertised schema, finds the arguments fine, and tells the model
+      // its data could not be validated and not to change them.
+      validateInput: (raw) => {
+        const result = searchInputSchema.safeParse(raw);
+        return result.success ? null : result.error;
+      },
       execute: async (raw, context) => {
         const args = searchInputSchema.parse(raw);
         try {
@@ -6885,6 +6894,10 @@ function createFirecrawlWebTools(env: Env): HarnessTool[] {
           },
           required: ["url"],
         },
+      },
+      validateInput: (raw) => {
+        const result = fetchInputSchema.safeParse(raw);
+        return result.success ? null : result.error;
       },
       execute: async (raw, context) => {
         const args = fetchInputSchema.parse(raw);
