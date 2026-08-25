@@ -47,7 +47,15 @@ class ManualRunDatabase {
   run: StoredRun | null = null;
   /** Every statement that arrived on the work-stream object's port. */
   readonly objectPortSql: string[] = [];
-  emailRoute: StoredEmailRoute | null = null;
+  /**
+   * One row per work stream, as `workstream_email_routes` holds them — each
+   * reservation takes its own local part. A single slot would make a second
+   * work stream's reservation look like an exhausted address space.
+   */
+  readonly emailRoutes: StoredEmailRoute[] = [];
+  get emailRoute(): StoredEmailRoute | null {
+    return this.emailRoutes[0] ?? null;
+  }
   attachedResourceId: string | null = null;
   automationResource: {
     id: string;
@@ -56,6 +64,12 @@ class ManualRunDatabase {
     archived: boolean;
   } | null = null;
   automationRunInsertCount = 0;
+  /**
+   * Model the window two concurrent requests with one idempotency key race in:
+   * the loser's lookup runs before the winner's insert is visible, so both
+   * reach the insert and the unique index decides. Set for the loser's call.
+   */
+  concealRunFromLookupOnce = false;
 
   readonly binding = createTestD1Database({
     prepare: (sql: string) => createTestD1PreparedStatement(new ManualRunStatement(this, sql)),
@@ -90,6 +104,10 @@ class ManualRunStatement {
     if (normalized.includes("SELECT id AS run_id, workstream_id, status AS run_status")
       && normalized.includes("FROM automation_runs")) {
       const run = this.database.run;
+      if (this.database.concealRunFromLookupOnce) {
+        this.database.concealRunFromLookupOnce = false;
+        return null;
+      }
       if (!run || run.workspaceId !== this.values[0] || run.subscriptionId !== this.values[1] || run.idempotencyKey !== this.values[2]) {
         return null;
       }
@@ -124,11 +142,12 @@ class ManualRunStatement {
       } as T;
     }
     if (normalized.includes("FROM workstream_email_routes") && normalized.includes("WHERE region = ?")) {
-      const route = this.database.emailRoute;
-      if (!route || route.region !== this.values[0] || route.workspace_id !== this.values[1] || route.workstream_id !== this.values[2]) {
-        return null;
-      }
-      return route as T;
+      const route = this.database.emailRoutes.find((candidate) => (
+        candidate.region === this.values[0]
+        && candidate.workspace_id === this.values[1]
+        && candidate.workstream_id === this.values[2]
+      ));
+      return (route ?? null) as T;
     }
     if (normalized.includes("FROM pragma_table_info('workstreams')")) {
       return null;
@@ -156,15 +175,23 @@ class ManualRunStatement {
       // The regional identity anchor and route the runtime bootstrap reserves;
       // product state lives behind the object port below.
     } else if (normalized.startsWith("INSERT INTO workstream_email_routes")) {
-      if (!this.database.emailRoute) {
-        this.database.emailRoute = {
-          local_part: String(this.values[0]),
+      const localPart = String(this.values[0]);
+      // `ON CONFLICT DO NOTHING` on the local part.
+      if (!this.database.emailRoutes.some((route) => route.local_part === localPart)) {
+        this.database.emailRoutes.push({
+          local_part: localPart,
           region: String(this.values[1]) as "global",
           workspace_id: String(this.values[2]),
           workstream_id: String(this.values[3]),
-        };
+        });
       }
     } else if (normalized.startsWith("INSERT INTO automation_runs")) {
+      // `automation_runs_idempotency_uq`. It is what decides a race between two
+      // deliveries of one email, so the fixture has to enforce it rather than
+      // record every insert as having won.
+      if (this.database.run && this.database.run.idempotencyKey === String(this.values[9])) {
+        throw new Error("UNIQUE constraint failed: automation_runs.idempotency_key");
+      }
       this.database.automationRunInsertCount += 1;
       this.database.run = {
         id: String(this.values[0]),
@@ -427,6 +454,47 @@ describe("manual automation run recovery", () => {
       reused: true,
     });
     expect(agents.dispatchRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("provisions nothing when the run it would belong to loses the idempotency race", async () => {
+    const database = new ManualRunDatabase();
+    const agents = agentsBinding(database);
+    const env = createTestEnv({
+      DB: database.binding,
+      SUBSTREAM_AGENTS: agents.binding,
+      AVALON_REGION: "global",
+      OPENROUTER_PRIMARY_MODEL: "test-model",
+      WORKSTREAM_EMAIL_ADDRESS_KEY: "inbound-email-automation-address-key-v1",
+      WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
+    });
+    const service = new AutomationService(env, {
+      sessionId: "system-inbound-email",
+      userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904"),
+      workspaceId: asWorkspaceId("668953d2-25f2-44fd-8d72-1e8cf024a277"),
+      region: "global",
+      role: "member",
+    });
+    const opening = {
+      resendEmailId: "resend-email-1",
+      textContent: "Subject: Prepare the brief\n\nUse the attached notes.",
+      structuredContent: { kind: "inbound_email", provider: "resend", untrusted: true, emailId: "resend-email-1" },
+      resourceId: "resource-email-1",
+    };
+
+    const winner = await service.runFromInboundEmail("subscription-1", opening);
+    // The loser's lookup ran before the winner's insert was visible, so it
+    // reaches the insert too and the unique index refuses it there.
+    database.concealRunFromLookupOnce = true;
+    const loser = await service.runFromInboundEmail("subscription-1", opening);
+
+    expect(loser).toMatchObject({ runId: winner.runId, workstreamId: winner.workstreamId, reused: true });
+    expect(database.automationRunInsertCount).toBe(1);
+    // The control row is claimed before anything visible exists, so the loser
+    // never provisions. Provisioning first would leave a sidebar entry and a
+    // reserved address for a run that does not exist — and `controlRunInserted`
+    // is false down that path, so nothing compensates it away.
+    expect(agents.identityOperations.filter((operation) => operation === "provision"))
+      .toEqual(["provision"]);
   });
 
   it("creates exactly one work stream and run for duplicate inbound email delivery", async () => {

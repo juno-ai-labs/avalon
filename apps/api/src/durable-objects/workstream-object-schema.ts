@@ -1378,7 +1378,7 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
  *
  * The view and its two triggers are objects over a table this schema already
  * declares, so nothing is adopted — the same shape and the same assertion as
- * the promotions above, for the same reason: a reshaped compat schema should
+ * the promotions below, for the same reason: a reshaped compat schema should
  * fail the build rather than produce a migration that quietly patches nothing.
  */
 function elicitationAuthorityPromotion(): string[] {
@@ -1404,11 +1404,20 @@ function identityAuthorityPromotion(): string[] {
 /**
  * The drops that retire one family of compatibility objects.
  *
- * Every promotion in this file wrote this out: filter the compat schema for
- * the family's views and triggers, assert the expected count so a reshaped
- * schema fails the build rather than producing a migration that quietly
- * patches nothing, and drop the triggers first so none is left orphaned in
- * `sqlite_schema`.
+ * Every promotion in this file writes this out by hand: filter the compat
+ * schema for the family's views and triggers, assert the expected count so a
+ * reshaped schema fails the build rather than producing a migration that
+ * quietly patches nothing, and drop the triggers first so none is left
+ * orphaned in `sqlite_schema`.
+ *
+ * The two promotions this file gained last share it; the seven before them
+ * were left alone. Three of those cannot use it — the terminal promotion drops
+ * every trigger it finds rather than a named family, and the tool-receipt one
+ * adopts tables as well as dropping objects — and rewriting the other four
+ * would put a migration nobody is changing into the diff of a conversion
+ * slice. The assertion is what matters and each of them already has it; this
+ * is where a promotion should start, not a cleanup owed to the ones that
+ * predate it.
  *
  * `WORKSTREAM_RUNTIME_COMPAT_SCHEMA` keeps declaring what these drop, and has
  * to: it is what migration 1 applies, so an object replaying from empty

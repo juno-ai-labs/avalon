@@ -111,7 +111,7 @@ const SeedProductResultSchema = z.object({
   })),
 }).strict();
 
-export /**
+/**
  * The `exact_state` a captured `harnessStatus` restores to.
  *
  * The retired `_runtime_workstreams` update trigger's mapping, kept here

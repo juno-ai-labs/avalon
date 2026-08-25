@@ -163,38 +163,34 @@ export async function admitConnectorAudience(
   // Participant rows live with the work stream, so every statement that touches
   // them has to run under the work stream's authority — post-cutover that is
   // the Durable Object, and the D1 copy is fenced. User profiles stay regional,
-  // which is why the roster read below is split in two instead of joining
-  // `users` from inside the object.
+  // which is why the profile read below is a second query against D1 rather
+  // than a `users` join from inside the object.
   const identity = createIdentityObjectPort(env, input.workspaceId, input.workstreamId);
-  // The `user_id IN (json_each(?))` narrowing is gone with the statement. The
-  // roster of one work stream is small and this call already holds the list it
-  // wants to intersect against, so filtering here costs a `Set` and saves the
-  // authority a bound-parameter list that grows with the audience.
-  const activeUserIds = new Set((await identity.participants()).map((row) => row.user_id));
-  const newlyAdmittedUserIds = userIds.filter((userId) => !activeUserIds.has(userId));
-  const now = Date.now();
   // The upsert's `WHERE EXISTS (SELECT 1 FROM workstreams …)` is the identity
   // check the port makes before it dispatches, and the batch's atomicity was
-  // never across work streams — every statement in it named this one.
-  await Promise.all(userIds.map((userId) => identity.admitParticipant({
-    userId,
-    addedByUserId: input.addedByUserId ?? userId,
+  // never across work streams — every statement in it named this one. What the
+  // batch did guarantee, and what one operation per member would not, is that
+  // the whole audience lands or none of it does: a half-applied admission is
+  // one whose survivors are already on the roster when the retry recomputes
+  // who is new, so their `participant_joined` is never published.
+  const seated = await identity.admitParticipants({
+    userIds,
+    addedByUserId: input.addedByUserId,
     reason: "explicit",
-    now,
-  })));
-  if (newlyAdmittedUserIds.length === 0) return;
+    now: Date.now(),
+  });
   // The `JOIN workstreams` here proved nothing the object does not already
   // know: it re-checked that the participant's work stream belongs to this
   // workspace, which is the identity check the port makes before dispatching.
   // `joined_at` was the view's ISO rendering of `added_at`; the crossing is
-  // this boundary now, because a participant is about to be published.
-  const admitted = new Set(newlyAdmittedUserIds);
-  const admittedRows = (await identity.participants())
-    .filter((row) => admitted.has(row.user_id))
+  // this boundary now, because a participant is about to be published. The
+  // rows come back from the write, so no second read can disagree with it.
+  const admittedRows = seated
+    .filter((row) => row.outcome !== "unchanged")
     .map((row) => ({
-      user_id: row.user_id,
-      participation_reason: row.participation_reason,
-      joined_at: new Date(row.added_at).toISOString(),
+      user_id: row.userId,
+      participation_reason: row.participationReason,
+      joined_at: new Date(row.addedAt).toISOString(),
     }));
   if (admittedRows.length === 0) return;
   const users = await env.DB.prepare(

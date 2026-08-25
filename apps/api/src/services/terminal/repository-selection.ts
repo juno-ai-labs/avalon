@@ -82,13 +82,13 @@ function accessSatisfies(
 const AVALON_BRANCH_PATTERN = /^avalon\/[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u;
 
 async function workstreamBranchRef(
-  env: Pick<Env, "DB" | "SESSION_SIGNING_KEY">,
+  env: Env,
   workspaceId: string,
   workstreamId: string,
   currentHeadRef: string | null,
 ): Promise<string> {
   if (currentHeadRef && AVALON_BRANCH_PATTERN.test(currentHeadRef)) return currentHeadRef;
-  const workstream = await createIdentityObjectPort(env as Env, workspaceId, workstreamId)
+  const workstream = await createIdentityObjectPort(env, workspaceId, workstreamId)
     .identity();
   const localPart = workstream?.email_address?.split("@", 1)[0];
   const slug = localPart && /^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u.test(localPart)

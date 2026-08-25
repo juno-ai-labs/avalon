@@ -605,19 +605,6 @@ function isWorkstreamObjectStore(database: DatabaseSync): boolean {
 }
 
 /**
- * A SUBSTREAM_AGENTS binding whose runtime SQL port mirrors production truth:
- * work-stream authority statements (the request carries a `workstreamId`)
- * execute against a real object database — created by
- * {@link testWorkstreamObjectStore} and root-seeded from the request ids, one
- * per workstream, or the given database itself when it already is an object
- * store — after the same identity and fence checks the Durable Object makes.
- * Workspace-authority requests (no `workstreamId`) execute against the given
- * through-0089 compatibility database so focused repository tests can preserve
- * their frozen SQL dialect. That is a test fixture, not current regional D1.
- * Run dispatch is recorded instead of executed. Pair with
- * {@link openWorkstreamAuthorityForTest}.
- */
-/**
  * The agent stub's identity endpoint, over one object database.
  *
  * Exported so a test with its own hand-built agent stub gets the *real*
@@ -643,6 +630,19 @@ export function testIdentityOperationStub(
   };
 }
 
+/**
+ * A SUBSTREAM_AGENTS binding whose runtime SQL port mirrors production truth:
+ * work-stream authority statements (the request carries a `workstreamId`)
+ * execute against a real object database — created by
+ * {@link testWorkstreamObjectStore} and root-seeded from the request ids, one
+ * per workstream, or the given database itself when it already is an object
+ * store — after the same identity and fence checks the Durable Object makes.
+ * Workspace-authority requests (no `workstreamId`) execute against the given
+ * through-0089 compatibility database so focused repository tests can preserve
+ * their frozen SQL dialect. That is a test fixture, not current regional D1.
+ * Run dispatch is recorded instead of executed. Pair with
+ * {@link openWorkstreamAuthorityForTest}.
+ */
 export function testSubstreamAgentsBinding(
   database: DatabaseSync,
   options: SubstreamAgentsStubOptions = {},

@@ -40,6 +40,9 @@ export interface IdentityRow extends Record<string, SqlStorageValue> {
   updated_at: number;
 }
 
+/** What a seating did: a first admission, a return, or nothing at all. */
+export type ParticipantAdmission = "admitted" | "readmitted" | "unchanged";
+
 export interface ParticipantRow extends Record<string, SqlStorageValue> {
   user_id: string;
   participation_reason: string;
@@ -320,43 +323,109 @@ export class WorkstreamIdentityStorage {
     addedByUserId: string;
     reason: string;
     now: number;
-  }): { outcome: "admitted" | "readmitted" | "unchanged" } {
-    return this.storage.transactionSync(() => {
-      const existing = first(this.sql.exec<ParticipantRow & { status: string }>(
-        `SELECT user_id, participation_reason, added_by_user_id, status, added_at, removed_at
-           FROM participants WHERE user_id = ?`,
-        input.userId,
-      ));
-      if (existing && existing.removed_at === null) return { outcome: "unchanged" as const };
-      if (existing) {
-        this.sql.exec(
-          `UPDATE participants
-              SET status = 'active', removed_at = NULL, participation_reason = ?,
-                  added_by_user_id = ?, added_at = ?,
-                  participant_epoch = participant_epoch + 1, first_opened_at = NULL,
-                  updated_at = ?
-            WHERE user_id = ?`,
-          input.reason,
-          input.addedByUserId,
-          input.now,
-          input.now,
-          input.userId,
-        );
-        return { outcome: "readmitted" as const };
-      }
+  }): { outcome: ParticipantAdmission } {
+    return this.storage.transactionSync(() => ({ outcome: this.seat(input).outcome }));
+  }
+
+  /**
+   * Seat a whole audience, all or none.
+   *
+   * The caller that needs this is a connector's audience reconciliation, which
+   * publishes a `participant_joined` effect for everybody this call newly
+   * seated. Admitting the audience one operation at a time makes that
+   * unrecoverable: a call that seats three of five and then throws leaves the
+   * three seated, and the retry — which recomputes "newly admitted" against a
+   * roster that now contains them — publishes nothing for any of the three.
+   * Their admission is lost with no row anywhere recording that it was not
+   * announced. The routed batch this replaced could not fail that way, because
+   * it was one statement set against one work stream.
+   *
+   * `addedByUserId` is null when nobody else is credited, and each member is
+   * then recorded as having seated themselves; that is the arriving-member case
+   * and it is per-user, which is why it is resolved here rather than by the
+   * caller repeating it.
+   *
+   * The admitted rows come back rather than being read again. The second read
+   * was not just a round trip: between the writes and the read, a removal could
+   * land, and the audience would publish a joining for somebody no longer on
+   * the work stream — or drop one who is.
+   */
+  admitParticipants(input: {
+    userIds: readonly string[];
+    addedByUserId: string | null;
+    reason: string;
+    now: number;
+  }): { userId: string; outcome: ParticipantAdmission; participationReason: string; addedAt: number }[] {
+    return this.storage.transactionSync(() => input.userIds.map((userId) => {
+      const seated = this.seat({
+        userId,
+        addedByUserId: input.addedByUserId ?? userId,
+        reason: input.reason,
+        now: input.now,
+      });
+      return {
+        userId,
+        outcome: seated.outcome,
+        participationReason: seated.participationReason,
+        addedAt: seated.addedAt,
+      };
+    }));
+  }
+
+  /**
+   * One seating, without a transaction of its own.
+   *
+   * Both admission entry points and `adoptCreator` share it, so the branch and
+   * the re-admission resets are written once. Every caller already holds a
+   * transaction, and the fields it returns are the ones it just wrote — which
+   * is why the plural form needs no read after its writes.
+   */
+  private seat(input: {
+    userId: string;
+    addedByUserId: string;
+    reason: string;
+    now: number;
+  }): { outcome: ParticipantAdmission; participationReason: string; addedAt: number } {
+    const existing = first(this.sql.exec<ParticipantRow & { status: string }>(
+      `SELECT user_id, participation_reason, added_by_user_id, status, added_at, removed_at
+         FROM participants WHERE user_id = ?`,
+      input.userId,
+    ));
+    if (existing && existing.removed_at === null) {
+      return {
+        outcome: "unchanged",
+        participationReason: existing.participation_reason,
+        addedAt: existing.added_at,
+      };
+    }
+    if (existing) {
       this.sql.exec(
-        `INSERT INTO participants
-           (user_id, participation_reason, added_by_user_id, status, participant_epoch,
-            added_at, removed_at, first_opened_at, updated_at)
-         VALUES (?, ?, ?, 'active', 0, ?, NULL, NULL, ?)`,
-        input.userId,
+        `UPDATE participants
+            SET status = 'active', removed_at = NULL, participation_reason = ?,
+                added_by_user_id = ?, added_at = ?,
+                participant_epoch = participant_epoch + 1, first_opened_at = NULL,
+                updated_at = ?
+          WHERE user_id = ?`,
         input.reason,
         input.addedByUserId,
         input.now,
         input.now,
+        input.userId,
       );
-      return { outcome: "admitted" as const };
-    });
+      return { outcome: "readmitted", participationReason: input.reason, addedAt: input.now };
+    }
+    this.sql.exec(
+      `INSERT INTO participants
+         (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+          added_at, removed_at, first_opened_at, updated_at)
+       VALUES (?, ?, ?, 'active', 0, ?, NULL, NULL, ?)`,
+      input.userId,
+      input.reason,
+      input.addedByUserId,
+      input.now,
+      input.now,
+    );
+    return { outcome: "admitted", participationReason: input.reason, addedAt: input.now };
   }
 
   /**
@@ -388,7 +457,7 @@ export class WorkstreamIdentityStorage {
         && input.previousAssignedUserId !== null
         && previousCreator === input.previousAssignedUserId
       );
-      this.admitParticipant({
+      this.seat({
         userId: input.userId,
         addedByUserId: input.userId,
         reason: "explicit",
