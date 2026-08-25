@@ -5,7 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../src/env";
 import { AutomationService } from "../src/services/automation-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
-import { testSubstreamAgentsBinding, testWorkstreamObjectStore, workstreamObjectGet } from "./helpers/durable-authority";
+import {
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectGet,
+  workstreamObjectParticipantRows,
+} from "./helpers/durable-authority";
 import { publishedRunStatus } from "../src/runtime/harness-run-runtime";
 
 interface StoredRun {
@@ -473,10 +478,8 @@ describe("manual automation run recovery", () => {
       automation_subscription_id: "subscription-1",
       automation_run_id: first.runId,
     });
-    expect(workstreamObjectGet(
-      agents.objectStore,
-      `SELECT user_id FROM workstream_participants WHERE removed_at IS NULL`,
-    )).toMatchObject({ user_id: database.subscription.owner_user_id });
+    expect(workstreamObjectParticipantRows(agents.objectStore, "user_id"))
+      .toEqual([{ user_id: database.subscription.owner_user_id }]);
     expect(database.attachedResourceId).toBe("resource-email-1");
     const openingMessage = storedOpeningMessage(agents.objectStore);
     expect(openingMessage).toMatchObject({
