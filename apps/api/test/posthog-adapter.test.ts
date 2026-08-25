@@ -703,3 +703,25 @@ describe("PostHog adapter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("web page URLs stay on the configured site origin", () => {
+  it("does not let a doubled-slash pathname resolve to another host", () => {
+    // `site_page_viewed.pathname` is validated as `^\/[a-z0-9_:/.-]*$`, which
+    // admits a leading `//`. Resolving that against the base with `new URL`
+    // reads it as a network-path reference, so `$current_url` would name a host
+    // that is not ours while `$host` still said it was. Reachable by visiting a
+    // doubled-slash path on the site itself.
+    const envelope: TelemetryEnvelope = {
+      ...event,
+      name: "site_page_viewed",
+      source: "site",
+      identityScope: "anonymous-epoch",
+      properties: { page: "landing", pathname: "//evil.example/x" },
+    };
+
+    const capture = mapPostHogCapture(row({ envelope }), WEB_BASE);
+
+    expect(capture.properties["$current_url"]).toBe("https://rallywith.ai//evil.example/x");
+    expect(capture.properties["$host"]).toBe("rallywith.ai");
+  });
+});

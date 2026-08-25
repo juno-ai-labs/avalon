@@ -36,6 +36,25 @@ export const DESKTOP_DEEP_LINK_PROTOCOLS: readonly string[] = Object.freeze([
   ...LEGACY_DESKTOP_DEEP_LINK_PROTOCOLS,
 ]);
 
+/**
+ * The scheme to mint when the target has to reach a build whose registrations
+ * are not known.
+ *
+ * Most deep links can answer in the caller's own scheme, because the caller
+ * supplies it — identity sign-in sends its `returnUri`. Connector OAuth does
+ * not: its start request carries only a scope and capabilities, and the
+ * completion is reached through a target the server minted earlier. A build
+ * shipped before the rename registered the legacy scheme and nothing else,
+ * while every build since registers the current scheme *and* the legacy one, so
+ * the legacy scheme is the single target that reaches both generations.
+ *
+ * This is the one value the migration writes in its superseded form on purpose,
+ * and it retires itself: when the last legacy scheme leaves the list above,
+ * this becomes the current scheme with no other edit.
+ */
+export const COMPATIBLE_DESKTOP_DEEP_LINK_PROTOCOL: string =
+  LEGACY_DESKTOP_DEEP_LINK_PROTOCOLS[0] ?? DESKTOP_DEEP_LINK_PROTOCOL;
+
 /** Whether a `URL.protocol` names a desktop deep link, current or legacy. */
 export function isDesktopDeepLinkProtocol(protocol: string): boolean {
   return DESKTOP_DEEP_LINK_PROTOCOLS.includes(protocol);

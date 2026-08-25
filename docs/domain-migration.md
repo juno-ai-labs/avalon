@@ -24,6 +24,8 @@ deep-link scheme, and the work-stream email domain.
 | `apps/desktop/src/main/index.ts` | `rendererHost` — the `app://rallywithai` origin the Workers' `ALLOWED_ORIGINS` must admit. |
 | `apps/desktop/src/main/message-export.ts` | `MESSAGE_EXPORT_SCHEME` — `rallywithai-export`, in-process only and renamed outright. |
 | `apps/api/test/domain-migration-config.test.ts` | Asserts the deployed configs list both renderer origins, all four site origins, both route sets, and no superseded host in any minted URL. |
+| `apps/api/src/lib/desktop-handoff.ts` | `compatibleDesktopDeepLink` — the one place a deep link is minted in its superseded scheme, for targets the server cannot attribute to a calling build. |
+| `apps/api/src/services/auth-service.ts` | `allowedReturnUri` — pins the sign-in destination's host and path, deliberately not its scheme. |
 | `apps/site/public/_headers` | The site's CSP `connect-src`, which permits both API origins. |
 | `config/provider-apps/*.json` | The provider registrations to apply by hand, per provider. |
 
@@ -63,8 +65,9 @@ address already in the world keeps working while nothing new is minted on it.
 
 ### The deep-link scheme
 
-`rallywithai://` is minted; `avalon://` is parsed and never emitted. The desktop
-registers **both** with the operating system.
+`rallywithai://` is minted; `avalon://` is parsed and never emitted, with one
+deliberate exception below. The desktop registers **both** with the operating
+system.
 
 A URL scheme is claimed by an *installed* build, which is what makes it unlike a
 hostname: nothing on the server can make an older client answer to a scheme it
@@ -72,6 +75,29 @@ never registered. A build shipped before the rename knows `avalon:` alone, and
 the links it minted are sitting in inboxes and Slack history that nobody can
 reissue. So the Worker's `DESKTOP_DEEP_LINK_URI` moved to `rallywithai://`, and
 every parser on every surface accepts either.
+
+**Accepting a scheme is not the same as being able to answer in it**, and that
+distinction decides two paths that look alike:
+
+- **Sign-in answers in the caller's scheme.** `POST /auth/google/start` carries
+  the client's own `returnUri`. `allowedReturnUri` pins its host and path to
+  `DESKTOP_DEEP_LINK_URI` and deliberately does *not* pin its scheme, then
+  returns the caller's value unchanged, so the completion lands in the scheme
+  that build registered. Pinning the scheme would reject every pre-rename client
+  with `invalid_return_uri` before OAuth even began.
+- **Connector OAuth cannot, so it mints the compatible scheme.** A connector
+  start request carries only a scope and capabilities — there is no caller
+  scheme to record, and the completion is reached through a `return_uri` the
+  server stored earlier. `compatibleDesktopDeepLink` therefore mints
+  `COMPATIBLE_DESKTOP_DEEP_LINK_PROTOCOL`: the oldest scheme still registered,
+  which is the only one both build generations answer, because every build since
+  the rename registers the current scheme *and* the legacy one. The same applies
+  to the identity error path, which is reached when no stored return URI can be
+  consumed.
+
+That constant is the single place this migration writes a superseded value on
+purpose, and it retires itself — when the last legacy scheme leaves the list, it
+becomes the current scheme with no other edit.
 
 ### The two internal schemes
 
@@ -106,6 +132,26 @@ The domain a message *arrived on* is carried through to the region rather than
 replaced with the canonical one, so the address attached to the work stream is
 the address the sender actually used.
 
+Minting and accepting are guarded separately. `configuredEmailDomain` requires
+`WORKSTREAM_EMAIL_DOMAIN` to equal the canonical domain **exactly**, so a
+deployment left on a superseded one fails loudly instead of quietly issuing
+addresses nobody means to issue; `acceptedEmailDomains` is the wider set, and it
+governs receiving only.
+
+### Reading a shared link on more than one origin
+
+`parseWorkstreamLink` reads one origin by default — the caller's own — because
+the site really does serve one origin per request, and a narrow default is what
+stops a look-alike host borrowing the treatment. A caller that is *handed* URLs
+by a third party does not get that luxury and names every origin it accepts.
+
+Slack is the case that matters: its app registers both site domains for
+unfurling, so it delivers `link_shared` for links on either, with no way to know
+which one a link in channel history was minted on. It passes
+`PUBLIC_WEB_BASE_URL` plus `LEGACY_WORKSTREAM_LINK_ORIGINS`. Passing only the
+canonical origin would silently drop every already-shared Avalon link — silently
+because the drop is indistinguishable from Slack not delivering the event.
+
 ### Provider webhooks are switched by hand
 
 A provider stores one webhook URL per app. GitHub, Linear, Notion, and Slack
@@ -135,6 +181,13 @@ both regions and a connection completes on whichever origin the client used.
 - **The deep-link scheme list lives in one module.** Five surfaces must agree on
   it and none can check the others; a copy that fell behind would silently
   classify a real link as untrusted, on one surface only.
+- **A deep link the server mints without a caller scheme uses
+  `COMPATIBLE_DESKTOP_DEEP_LINK_PROTOCOL`.** Minting the current scheme there
+  sends a pre-rename build to a scheme nothing on its machine claims, and the
+  flow dead-ends with no error raised anywhere.
+- **`allowedReturnUri` pins host and path, never scheme.** Widening the host or
+  the path would let a caller name its own destination; narrowing the scheme
+  locks out every client that has not updated.
 - **A legacy email domain leaves `LEGACY_WORKSTREAM_EMAIL_DOMAINS` only when
   inbound mail to it has stopped.** Dropping one silently discards every message
   to every address issued before the rename, and a discarded message is
@@ -199,6 +252,64 @@ only in production, which is why they are runbook steps with an explicit order
 rather than assertions.
 
 ## Changelog
+
+### 2026-08-25 — Accepting a scheme and answering in it are separated
+
+**What changed:** `allowedReturnUri` accepts any registered deep-link scheme on
+the configured host and path, and returns the caller's own value rather than the
+configured one. `compatibleDesktopDeepLink` mints
+`COMPATIBLE_DESKTOP_DEEP_LINK_PROTOCOL` wherever the server builds a deep link it
+cannot attribute to a calling build — the connector attempt's stored `return_uri`
+and the identity error path. `parseWorkstreamLink` accepts a set of origins, and
+the Slack unfurl path names both site domains. `configuredEmailDomain` guards
+minting against the canonical domain exactly, leaving `acceptedEmailDomains` to
+govern receiving. `$current_url` is concatenated onto the origin instead of
+resolved against it.
+
+**Why:** Review found that the entry above claimed a compatibility rule the code
+did not actually hold on two surfaces, and both of them broke sign-in for
+already-installed builds. `allowedReturnUri` compared the caller's scheme against
+`DESKTOP_DEEP_LINK_URI`, which had just moved — so every pre-rename client would
+have failed `POST /auth/google/start` with `invalid_return_uri` before OAuth
+began. No test caught it because every API test env sets the deep-link URI to the
+legacy scheme, so client and server agreed everywhere except production.
+Connector completion had the same shape with no client value to widen against:
+its target is minted server-side, so a pre-rename build was sent to a scheme
+nothing on its machine claimed and the flow dead-ended silently.
+
+The distinction that resolves both: accepting a scheme is cheap and belongs
+everywhere, but *answering* in one requires knowing what the caller registered.
+Where the caller says (`returnUri`), answer in its scheme. Where it cannot, mint
+the oldest scheme still registered — every build since the rename registers both,
+so that is the one target reaching both generations.
+
+The Slack drop was the same error in the reading direction: the app registers
+both site domains for unfurling and Slack delivers `link_shared` for either, but
+the parser was given only the canonical origin, so every already-shared Avalon
+link was delivered and discarded.
+
+**Considered and rejected:** Carrying the calling build's scheme into the
+connector attempt the way `returnUri` does for identity. It is the more complete
+answer and remains the right one later, but it needs an optional field on six
+separate start schemas plus `/:id/reconnect` (which has no body), a stored value,
+and a desktop change — and it *still* needs a default for clients that send
+nothing, which is exactly the compatible-scheme rule. The constant achieves the
+same result for every live client today and deletes itself when the legacy scheme
+is retired.
+
+Also rejected: dropping `with-avalon.com` from Slack's `unfurl_domains` to stop
+the dead deliveries. That stops the drop by giving up the unfurl, on links people
+are still sharing.
+
+**Consequences:** `COMPATIBLE_DESKTOP_DEEP_LINK_PROTOCOL` is the one value this
+migration deliberately writes in its superseded form; anything minting a deep
+link without a caller scheme must use it, and it becomes the current scheme by
+itself once the legacy list empties. `allowedReturnUri` must keep pinning host
+and path — only the scheme is open. `parseWorkstreamLink`'s default stays narrow;
+widening is per-caller and only for callers handed URLs by a third party. And the
+minting guard on the email domain is exact on purpose: relaxing it back to
+membership in the accepted set lets a deployment issue addresses on a domain it
+is migrating off, with nothing to notice.
 
 ### 2026-08-25 — The renderer origin and the export scheme move too
 

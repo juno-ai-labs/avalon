@@ -72,16 +72,40 @@ describe("reading a shared work-stream link", () => {
       .toBe(WORKSTREAM_ID);
   });
 
-  it("ignores a canonical link on the domain the site is migrating off", () => {
-    // Both domains serve the site, but a caller reads links for one origin at a
-    // time: the Worker passes its own `PUBLIC_WEB_BASE_URL`. An Avalon-hosted
-    // link is read by passing that base, not by widening this one.
+  it("ignores a canonical link on another origin unless the caller named it", () => {
+    // A caller that serves one origin per request reads one origin. The default
+    // stays narrow so a look-alike host cannot borrow the treatment.
     expect(parseWorkstreamLink(`${LEGACY_WEB_BASE_URL}/app/workstreams/${WORKSTREAM_ID}`, {
       webBaseUrl: WEB_BASE_URL,
     })).toBeNull();
     expect(parseWorkstreamLink(`${LEGACY_WEB_BASE_URL}/app/workstreams/${WORKSTREAM_ID}`, {
       webBaseUrl: LEGACY_WEB_BASE_URL,
     })).toBe(WORKSTREAM_ID);
+  });
+
+  it("reads links on every origin a caller names", () => {
+    // Slack registers both site domains for unfurling and delivers link_shared
+    // for either, without knowing which one a link in channel history was
+    // minted on. A caller handed URLs by a third party does not get to pick the
+    // domain, so it names both — and every already-shared Avalon link would
+    // otherwise be delivered and silently dropped.
+    const accepted = [WEB_BASE_URL, LEGACY_WEB_BASE_URL];
+
+    for (const base of accepted) {
+      expect(parseWorkstreamLink(`${base}/app/workstreams/${WORKSTREAM_ID}`, {
+        webBaseUrl: accepted,
+      })).toBe(WORKSTREAM_ID);
+    }
+    // Widening to a set must not widen to anything else.
+    expect(parseWorkstreamLink(`https://evil.example/app/workstreams/${WORKSTREAM_ID}`, {
+      webBaseUrl: accepted,
+    })).toBeNull();
+    expect(parseWorkstreamLink(`${WEB_BASE_URL}.evil.example/app/workstreams/${WORKSTREAM_ID}`, {
+      webBaseUrl: accepted,
+    })).toBeNull();
+    expect(parseWorkstreamLink(`${WEB_BASE_URL}/app/workstreams/${WORKSTREAM_ID}`, {
+      webBaseUrl: [],
+    })).toBeNull();
   });
 
   it("reads the legacy handoff still sitting in Slack history", () => {

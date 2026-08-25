@@ -27,6 +27,7 @@ import {
 import {
   ExternalActorSchema,
   SlackIngressQueueMessageSchema,
+  LEGACY_WORKSTREAM_LINK_ORIGINS,
   SlackOriginContextSchema,
   SlackSearchAuthorizationSchema,
   TriggerDefinitionSchema,
@@ -2878,10 +2879,16 @@ export class SlackAgentService {
     const linkedWorkstreams = new Map<string, string>();
     for (const link of links) {
       if (typeof link.url !== "string" || linkedWorkstreams.size >= SLACK_UNFURL_MAX_LINKS) continue;
-      // Slack only delivers link_shared for the app's registered unfurl domain,
-      // so only the HTTPS shapes below can ever arrive here. The shared parser
-      // still accepts the raw deep link, and it never throws on a malformed URL.
-      const workstreamId = parseWorkstreamLink(link.url, { webBaseUrl: this.env.PUBLIC_WEB_BASE_URL });
+      // Slack only delivers link_shared for the app's registered unfurl
+      // domains, so only the HTTPS shapes below can ever arrive here. It
+      // registers *both* site domains, and it does not know which one a link
+      // sitting in channel history was minted on — so both are accepted, or
+      // every already-shared Avalon link would be delivered here and silently
+      // dropped. The shared parser still accepts the raw deep link, and it
+      // never throws on a malformed URL.
+      const workstreamId = parseWorkstreamLink(link.url, {
+        webBaseUrl: [this.env.PUBLIC_WEB_BASE_URL, ...LEGACY_WORKSTREAM_LINK_ORIGINS],
+      });
       if (workstreamId) linkedWorkstreams.set(link.url, workstreamId);
     }
     if (linkedWorkstreams.size === 0) return;
