@@ -1,10 +1,5 @@
 # Agent instructions
 
-Rally is an AI-native workplace communication and execution environment organized
-around concrete work streams rather than channels, inboxes, or search — see [the
-implementation brief](docs/PRDs/2026-08-05_avalon-implementation-brief/prd.md)
-for what that means in full.
-
 This is the project-wide rule sheet for AI coding agents, exposed as `CLAUDE.md`
 through a symlink. Keep it short: it is read in full at the start of every
 session, so detail belongs in `docs/` behind a pointer.
