@@ -165,6 +165,21 @@ function seededDatabase(enabled = 1): DatabaseSync {
   return database;
 }
 
+/** `envFor`, with `digests-enabled` stubbed to the one explicit variation that turns it off. */
+function envWithDigestsDisabled(database: DatabaseSync): Env {
+  return {
+    ...envFor(database),
+    FLAGS: createCloudflareTestBinding<Flagship>({
+      getBooleanDetails: async (flagKey: string) => ({
+        flagKey,
+        value: false,
+        variant: "off",
+        reason: "STATIC",
+      }),
+    }),
+  };
+}
+
 async function recordEvent(env: Env, dedupeKey: string): Promise<string> {
   return await recordActivityEventOrThrow(env, {
     workspaceId: WORKSPACE,
@@ -270,6 +285,24 @@ describe("firing a digest occurrence", () => {
     expect(launchWorkstreamHarness).not.toHaveBeenCalled();
     expect(database.prepare("SELECT status, cursor_through FROM digest_deliveries").get())
       .toEqual({ status: "empty", cursor_through: 1 });
+  });
+
+  it("skips firing while digests-enabled is off, claiming nothing and moving no cursor", async () => {
+    const database = seededDatabase();
+    const env = envWithDigestsDisabled(database);
+    await recordEvent(env, "message:1");
+
+    const outcome = await fireDigestSchedule(env, {
+      scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: PLANNED_FOR,
+    });
+
+    expect(outcome).toEqual({ started: false, reason: "flag_disabled" });
+    expect(launchWorkstreamHarness).not.toHaveBeenCalled();
+    // Unlike an empty window, this occurrence is never claimed: no delivery
+    // row and no cursor advance, so turning the flag back on lets the next
+    // occurrence pick up this event along with whatever arrives after it.
+    expect(database.prepare("SELECT COUNT(*) AS count FROM digest_deliveries").get())
+      .toEqual({ count: 0 });
   });
 
   it("runs in a private work stream the recipient alone participates in", async () => {
