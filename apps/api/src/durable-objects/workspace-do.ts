@@ -1404,11 +1404,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * every event. Product work, schedules, watches, maintenance passes, and
    * Terminal deadlines are all entries, each with its own retry gate.
    */
-  protected override nextDerivedAlarmAt(now: number): number | null {
+  protected override nextDerivedAlarmCandidates(): readonly number[] {
     const oldest = this.state.storage.sql.exec<{ created_at: number | null }>(
       `SELECT MIN(created_at) AS created_at FROM workspace_activity_events`,
     ).one().created_at;
-    return oldest === null ? null : Math.max(now + 1, Number(oldest) + ACTIVITY_EVENT_RETENTION_MS);
+    return oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS];
   }
 
   /**

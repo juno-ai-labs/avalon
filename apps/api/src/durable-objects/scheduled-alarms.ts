@@ -51,10 +51,20 @@ export const SCHEDULED_ALARM_SCHEMA_STATEMENTS: readonly string[] = [
     ON _internal_durable_alarms(MAX(due_at, retry_at), kind, alarm_key)`,
 ];
 
-/** First retry ceiling, also used as the pre-work cancellation-recovery horizon. */
+/** First backoff step for an entry whose handler threw. */
 export const SCHEDULED_ALARM_RETRY_BASE_MS = 60_000;
 /** Ceiling for that backoff: past this a target is broken, not busy. */
 export const SCHEDULED_ALARM_RETRY_MAX_MS = 30 * 60_000;
+/**
+ * Recovery horizon for an alarm continuation the runtime cancels without a throw.
+ *
+ * Cloudflare retries a thrown Durable Object alarm after two seconds. A
+ * cancelled continuation is invisible to that retry mechanism, so the
+ * durability arm mirrors its first retry rather than choosing an Avalon-owned
+ * timeout. Source: https://developers.cloudflare.com/durable-objects/api/alarms/
+ * (retrieved 2026-08-24).
+ */
+export const SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS = 2_000;
 /**
  * Entries drained in one wake.
  *
@@ -297,7 +307,7 @@ export class ScheduledAlarmStore {
     return row?.due_at ?? null;
   }
 
-  /** The earliest stored instant strictly after `after`. */
+  /** The earliest effective `MAX(due_at, retry_at)` strictly after `after`. */
   nextDueAtAfter(after: number): number | null {
     const row = this.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(MAX(due_at, retry_at)) AS due_at
@@ -394,14 +404,14 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
   private scheduledAlarmStore: ScheduledAlarmStore | null = null;
 
   /**
-   * The earliest instant this object's *own* tables want it awake, or `null`.
+   * Every instant this object's *own* tables want it awake.
    *
    * For wake reasons whose canonical due time already lives in a table with its
    * own writers — an outbox's `not_before`, a keep-alive lease — deriving is
    * cheaper and cannot drift. Reasons with no such table belong in
    * `_internal_durable_alarms` instead.
    */
-  protected abstract nextDerivedAlarmAt(now: number): number | null;
+  protected abstract nextDerivedAlarmCandidates(now: number): readonly number[];
 
   /**
    * Run one due stored entry. Throwing puts it behind its retry gate; what it
@@ -496,7 +506,14 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
    * the common re-arm free.
    */
   protected async armNextAlarm(
-    options: { now?: number; overdueAt?: number } = {},
+    options: {
+      /** One shared time snapshot for classifying every candidate. */
+      now?: number;
+      /** Where already-due candidates are parked; omitted means `now + 1`. */
+      overdueAt?: number;
+      /** Override derived lanes when the current invocation owns one of them. */
+      derivedCandidates?: readonly (number | null)[];
+    } = {},
   ): Promise<number | null> {
     const now = options.now ?? Date.now();
     const storedDueAt = this.scheduledAlarms.nextDueAt();
@@ -505,7 +522,7 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
       options.overdueAt !== undefined && storedDueAt !== null && storedDueAt <= now
         ? this.scheduledAlarms.nextDueAtAfter(now)
         : null,
-      this.nextDerivedAlarmAt(now),
+      ...(options.derivedCandidates ?? this.nextDerivedAlarmCandidates(now)),
     ]
       .filter((value): value is number => value !== null);
     if (candidates.length === 0) {
@@ -619,7 +636,10 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
    * horizon.
    */
   protected armAlarmBeforeDueWork(now: number): Promise<unknown> {
-    return this.armNextAlarm({ now, overdueAt: now + SCHEDULED_ALARM_RETRY_BASE_MS });
+    return this.armNextAlarm({
+      now,
+      overdueAt: now + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
+    });
   }
 
   /** The re-arm made once this alarm's work has run. Same override rule. */
@@ -633,10 +653,9 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
     await this.armAlarmBeforeDueWork(now);
     const deferral = await this.scheduledAlarmDeferral(now);
     if (deferral !== null) {
-      // Set outright rather than lowered: the re-arm above points at the
-      // earliest due entry, which during a deferral is usually already past.
-      // Only an alarm that moves *out* stops this from becoming a hot loop for
-      // as long as the region stays closed.
+      // Set outright rather than lowered: the recovery arm above can be
+      // earlier than the region's recheck instant. Only an alarm that moves
+      // *out* stops this from re-entering while the region stays closed.
       await this.ctx.storage.setAlarm(Math.max(Date.now() + 1, deferral));
       return;
     }
