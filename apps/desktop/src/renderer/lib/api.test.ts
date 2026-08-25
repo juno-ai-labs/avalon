@@ -315,6 +315,28 @@ describe('Rally API wire adapter', () => {
     });
   });
 
+  it('tells the person to restart Rally when a stream event does not match its own schema', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => sse([
+      { type: 'completed', draftId: '00000000-0000-7000-8000-000000000042', draft: { name: 'Missing every other field' }, assistantMessage: 'Ready.' },
+    ])));
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.compileAutomation({ message: 'Brief me.' })).rejects.toMatchObject({
+      code: 'invalid_response',
+      message: expect.stringContaining('Restarting Rally'),
+    } satisfies Partial<ApiError>);
+  });
+
+  it('tells the person to restart Rally when a plain response does not match its schema', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: [{ notAnAutomation: true }] })));
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.getAutomations()).rejects.toMatchObject({
+      code: 'invalid_response',
+      message: expect.stringContaining('Restarting Rally'),
+    } satisfies Partial<ApiError>);
+  });
+
   it('carries a work stream’s model pin through to the renderer detail', () => {
     // Every realtime snapshot replaces the cached detail through this mapper, so
     // a pin dropped here is a pin that survives the first load and disappears on
