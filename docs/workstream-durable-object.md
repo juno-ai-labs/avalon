@@ -1082,9 +1082,14 @@ repository comes from, and throws in development and test while logging
 a per-work-stream registry and the ownership rule the endpoints enforce;
 `createObjectPort` consults it for whichever authority its contract names, so all
 eight ports gained the seam at once, and the Terminal port reads the same
-registry. `SubstreamAgent.localRuntimeEnvironment` installs all of them in one
-call, and `terminalPortFactory` is gone from the harness options, from
-`loadHarnessTools`, and from `createAvalonTerminalPlugin`, along with the
+registry. What an object installs is each authority's *endpoint body* —
+`schedulingOperationOutcome` and its six siblings, extracted from their `Request`
+handlers — never the storage instance under it, so a local call answers the same
+`{ ok, value }` or `{ ok: false, error }` a dispatched one does and
+`createObjectPort` reads both with one interpretation.
+`SubstreamAgent.localRuntimeEnvironment` installs all of them in one call, and
+`terminalPortFactory` is gone from the harness options, from `loadHarnessTools`,
+and from `createAvalonTerminalPlugin`, along with the
 `terminal_resident_runtime_incomplete` pairing it required.
 
 *A platform refusal is its own failure code.* `platform_limit_exceeded`, kind
@@ -1138,14 +1143,27 @@ dispatches, and checks each clause of the ownership rule.
 `test-workers/tool-receipt-authority.test.ts` and
 `test-workers/terminal-authority.test.ts` do the same inside the real object: the
 main child answers with the namespace unusable, a non-main child cannot.
-`packages/agent-harness/src/index.test.ts` fails a run through a receipt port
-carrying the platform's wording and expects `platform_limit_exceeded`.
+`test-workers/scheduling-authority.test.ts` builds a scheduling port over the
+environment the real object hands a run and asserts the local call commits the
+sidebar projection, re-derives the alarm index, and refuses against a quarantined
+object with the same `ObjectPortError` code the wire raises — the three things
+carrying the storage would drop, none of which is visible in what the caller gets
+back. `packages/agent-harness/src/index.test.ts` fails a run through a receipt
+port carrying the platform's wording and expects `platform_limit_exceeded`.
 
 **Considered and rejected:** *Writing both identity facts earlier* so the name is
 never withheld — fixes this window and leaves routing keyed on a lookup that can
 fail. *Keeping the fatal check in the name-based resolvers* — after id
 recognition they cannot produce a self-address, so a check there is unreachable
-code that cannot be tested. *Threading every authority as a parameter* rather
+code that cannot be tested. *Installing each authority's storage* rather than its endpoint — the first shape
+this took, and wrong: an endpoint is not a thin wrapper around its table. It
+refuses a request against an object whose `authority_mode` is no longer
+`authoritative`, runs a mutating operation inside `commitRuntimeMutation` so the
+row and the directory projection that renders it are one commit, and — for
+scheduling — re-derives the timer index and arms the next alarm before answering.
+Carrying the tables would have dropped all three for exactly the callers running
+closest to the data: stale sidebar previews, wake-ups that never fire, and writes
+accepted against a quarantined object. *Threading every authority as a parameter* rather
 than carrying it — the right shape, and it is what `runtimeResourceAttacher` still
 does deliberately, because that one carries a *scope* invariant (it refuses an
 attachment addressed to another work stream) rather than a location. Doing it for
@@ -1155,7 +1173,10 @@ provides.
 **What a future change has to respect:** an authority that moves into an object
 gets a name in `LocalWorkstreamAuthorities` and an `authority` on its port
 contract — not a fifth mechanism, and not name recognition, which is now a
-backstop rather than the mechanism. The ownership rule and the endpoints' guards
+backstop rather than the mechanism. What it installs there is its endpoint, and
+anything an endpoint does above its storage is part of the operation rather than
+a wrapper the local path may skip; a guard added to one belongs in the body both
+paths run, not in the `Request` handler. The ownership rule and the endpoints' guards
 are one rule. And a new failure code answers "which system produced this",
 because that is the only question the code is read to answer.
 

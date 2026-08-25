@@ -7,7 +7,7 @@ import type { DurableObjectRpcResult } from "../durable-objects/rpc-result";
 import type { ObjectPortOf } from "../durable-objects/object-port-protocol";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { localWorkstreamAuthority, type WorkstreamAuthority } from "./local-authorities";
+import { localWorkstreamAuthority, type ObjectPortAuthority } from "./local-authorities";
 
 /**
  * The object rejected the request itself — a bad protocol or a misrouted stub.
@@ -53,7 +53,7 @@ export interface ObjectPortContract<TStorage, TOperation extends keyof TStorage 
    * that object answers from it instead of resolving a stub back to the object
    * doing the resolving. See `local-authorities.ts`.
    */
-  authority: WorkstreamAuthority;
+  authority: ObjectPortAuthority;
   /** The code a refusal carries when the object named none of its own. */
   failureCode: string;
   /** What a member is told, if this ever reaches one. */
@@ -86,23 +86,28 @@ export function createObjectPort<TStorage, TOperation extends keyof TStorage & s
    */
   localStorage?: TStorage,
 ): ObjectPortOf<TStorage> {
-  // An explicit override wins, so the Node suite still says what it means; the
-  // carried authority is what the owning object installs once, for every port
-  // built below it. The cast is the one place the registry's per-authority type
-  // is recovered: `authority` and `TStorage` are declared together in each
-  // port's contract literal, which is where the pairing is actually checked.
-  const local = localStorage
-    ?? localWorkstreamAuthority(env, workspaceId, workstreamId, contract.authority) as
-      TStorage | undefined;
+  // The owning object installs its endpoint here, once, for every port built
+  // below it — the endpoint and not the storage, because the endpoint is what
+  // holds the authority fence, the projection commit, and the alarm re-arm.
+  const resident = localWorkstreamAuthority(env, workspaceId, workstreamId, contract.authority);
   const call = async (operation: TOperation, args: unknown[]): Promise<unknown> => {
-    if (local) {
-      const method = local[operation] as (...rest: unknown[]) => unknown;
+    if (localStorage) {
+      const method = localStorage[operation] as (...rest: unknown[]) => unknown;
       // `?? null` so this path answers exactly as the remote one does. JSON has
       // no `undefined`: over RPC a method returning it arrives as an absent
       // `value`, which the caller below reads as `null`. Dropping the coalesce
       // here would not preserve `undefined` end to end — it would only make the
       // Node suite disagree with production about a method that returned one.
-      return method.apply(local, args) ?? null;
+      return method.apply(localStorage, args) ?? null;
+    }
+    if (resident) {
+      const body = await resident(operation, args);
+      // Interpreted by the same three lines as a dispatched answer below. A
+      // second interpretation here is how the two paths would drift.
+      if (!body?.ok) {
+        throw new ObjectPortError(body?.error ?? contract.failureCode, contract.failureMessage);
+      }
+      return body.value ?? null;
     }
     const stub = await durableObjectStubForWorkspace(
       env,
