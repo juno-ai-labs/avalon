@@ -3,15 +3,18 @@ import { AutomationDraftStreamEventSchema } from "@rally/contracts";
 import { compileAutomation } from "./index";
 
 /**
- * `apps/api/src/routes/automations.ts` validates the compiler's `completed`
- * event with this same schema before writing it to the SSE stream, and
- * `apps/desktop/src/renderer/lib/api.ts` validates the bytes that arrive with
- * its own copy of it. Both copies come from `@rally/contracts`, so they only
- * diverge across a rollout — but when they do, the desktop build's rejection
- * surfaces as a generic "unexpected response" with no hint of why. This suite
- * pins the one property that keeps that gap from opening on this path: a
- * draft this compiler can actually produce always satisfies the schema both
- * sides parse it with.
+ * A regression pin, not a two-version-skew detector — this file imports one
+ * `@rally/contracts` build for both the route's and the client's side of the
+ * schema, so it structurally cannot observe the two diverging the way a real
+ * rollout can. What it does prove: the normalizer's own trigger handling
+ * (`normalizeAutomationTrigger` in `./index`) for an unnamed, multi-time-daily
+ * calendar schedule — three separate triggers, or one with several `BYHOUR`
+ * values — produces a draft that survives `AutomationDraftStreamEventSchema`,
+ * a `JSON.stringify`/`parse` round trip, and the same schema again. That is
+ * exactly the mechanism the route (`apps/api/src/routes/automations.ts`) and
+ * the desktop client (`apps/desktop/src/renderer/lib/api.ts`) each apply to
+ * the same bytes, so a transport-losable value (`undefined`-vs-absent, a
+ * non-JSON type) here would be a transport-losable value there too.
  */
 
 function streamResponse(events: unknown[]): Response {
@@ -92,7 +95,7 @@ async function expectDraftSurvivesTheWire(draft: Record<string, unknown>): Promi
     apiKey: "test-key",
     model: "test/model",
     messages: [{ role: "user", content: USER_MESSAGE }],
-    defaultTimezones: { personal: "America/Los_Angeles", workspace: "America/Los_Angeles" },
+    defaultTimezones: { personal: "America/Los_Angeles", workspace: "UTC" },
     fetch: fetcher,
   });
   expect(result.ready).toBe(true);
