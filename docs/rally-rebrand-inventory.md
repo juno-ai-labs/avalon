@@ -12,7 +12,10 @@ each category is worked, its section records what moved, what deliberately did
 not, and what a consumer outside this repository still has to do.
 
 Sections 3, 5, 6, 7, and 9 are **done**; sections 1, 4, and 8 are outstanding;
-section 2 is closed as out of scope.
+section 2 is closed as out of scope. Two items sit outside that split and are
+waiting on a decision rather than on work: the Linear provider manifests
+(section 3) and `AVALON_BRANCH_PATTERN` (section 5); both are described where
+they are recorded and listed again at the end.
 
 **The Cloudflare infrastructure does not get renamed.** Every `avalon-*` Worker,
 queue, R2 bucket, and lakehouse name in [section 2](#2-cloudflare-infrastructure--out-of-scope-not-renamed)
@@ -29,33 +32,56 @@ behind it was not recorded here.
 scheme, and the work-stream email domain, and is the authority on all three.
 This document defers to it for those and covers everything else.
 
-Counts are occurrences across tracked files (`git ls-files`), taken at the
-changelog date below. They move with every commit; treat them as magnitudes.
+Counts are occurrences across tracked files (`git ls-files`), **excluding this
+file** — an inventory that counts its own prose reports its own growth as
+remaining work, and this document is now one of the largest single sources of the
+word in the tree. They move with every commit; treat them as magnitudes.
 
 ## The shape of it
 
-**Snapshot from the first inventory: 583 tracked files, ~4,560 occurrences.** By area:
+**535 tracked files, 3,288 occurrences**, down from 583 files and ~4,560
+occurrences at the first inventory. By area:
 
 | Area | Occurrences | Files |
 | --- | --- | --- |
-| `apps/api` | 2,530 | 329 |
-| `docs` | 538 | 64 |
-| `apps/site` | 460 | 34 |
-| `scripts` | 230 | 25 |
-| `packages/agent-harness` | 229 | 19 |
-| `packages/connectors` | 183 | 25 |
-| `packages/contracts` | 103 | 17 |
+| `apps/api` | 1,987 | 319 |
+| `docs` | 443 | 61 |
+| `scripts` | 219 | 24 |
+| `packages/connectors` | 116 | 23 |
+| `packages/agent-harness` | 114 | 15 |
+| `packages/contracts` | 105 | 18 |
 | `apps/migration-tracker` | 60 | 12 |
 | `apps/desktop` | 57 | 13 |
-| `config` | 50 | 7 |
+| `apps/site` | 40 | 5 |
 | `packages/db` | 35 | 18 |
+| `config` | 24 | 7 |
 | `apps/release-retention` | 23 | 4 |
 | `.github` | 14 | 6 |
 | `apps/ace` | 11 | 3 |
+| `.agents` | 8 | 1 |
 
-That distribution is misleading on its own, because a single identifier
-accounts for a sixth of the total. The breakdown by *kind* is the one that
-matters.
+`apps/site` fell from 460 to 40 and `packages/agent-harness` from 229 to 114 as
+sections 6, 7, and 9 landed. `docs` fell only from 538 to 443, and 50 of what is
+left is in frozen PRDs.
+
+That distribution is misleading on its own, because a single identifier accounts
+for a fifth of the total. The breakdown by *kind* is the one that matters, and
+every remaining occurrence falls into exactly one row of it:
+
+| Kind | Occurrences | Section |
+| --- | --- | --- |
+| Bare word — prose, comments, fixture strings, the `with-avalon.com` stem | 1,039 | 8 |
+| `AVALON_*` environment variable and binding names | 944 | 4 |
+| `avalon.*` literals, 287 of them `with-avalon.com` | 378 | 8, [`domain-migration.md`](domain-migration.md) |
+| `avalon-*` Cloudflare resource names | 365 | 2 |
+| `avalon-*` literals that are not Cloudflare names — Daytona tasks, fixtures, seed data | 364 | 5, 8 |
+| Stored D1 values, Analytics Engine datasets, the `avalon-core-write-v1` hash seed | 90 | 1, 2 |
+| `avalon://` deep-link scheme | 74 | compatibility, already Rally |
+| Superseded wire identifiers and fixture mailboxes | 34 | 3, 8 |
+
+That table is the positive check the changelog below demands, run over the whole
+tree rather than a sample: it sums to 3,288, so an occurrence no section claims
+has nowhere to hide in it. Reproduce it before trusting a sweep, not after.
 
 ## What is already Rally
 
@@ -68,7 +94,7 @@ below from being read as bigger than it is.
 | Public hostnames | `rallywith.ai` and its nine subdomains | ten `with-avalon.com` hostnames still served — [`domain-migration.md`](domain-migration.md) owns the retirement conditions |
 | Product HTTP headers | `x-rally-*`, read through `readRallyHeader` | `x-avalon-*` accepted as superseded prefixes (31 occurrences, 9 files) |
 | Desktop bundle | `appId: ai.rallywith.desktop`, `productName: Rally` | none |
-| Desktop deep link | `rallywithai://` minted everywhere | `avalon://` registered and accepted, never emitted (73 occurrences, 27 files) |
+| Desktop deep link | `rallywithai://` minted everywhere | `avalon://` registered and accepted, never emitted (74 occurrences, 28 files) |
 | Renderer origin | `app://rallywithai` | `app://avalon` still admitted by `ALLOWED_ORIGINS` (50 occurrences) |
 | Telemetry envelope | Rally identifiers | superseded Avalon identifiers still parsed |
 | Desktop userData / session dirs | `rally-data` and the canonical userData path | superseded directories adopted once at launch |
@@ -87,22 +113,38 @@ expensive that coordination is.
 Values written into D1 rows. Changing the literal in code without migrating the
 stored rows silently breaks every existing record.
 
-- **Resource provider values**: `avalon_upload` (23), `avalon_note` (9),
-  `avalon_generated` (5). Written by `packages/db/src/index.ts`, read by
+- **Resource provider values**: `avalon_upload` (25), `avalon_note` (11),
+  `avalon_generated` (20). Written by `packages/db/src/index.ts`, read by
   queries and by triggers in `packages/db/migrations/0029`, `0045`, `0089`.
-- **Web tool names**: `avalon.web_search`, `avalon.web_fetch`, constrained by a
-  `CHECK` in `packages/db/migrations/0009` — the constraint has to move with
-  the value.
+  These counts rose since the first inventory while every other section's fell:
+  nothing renamed them, and new tests covering the resource path minted more
+  fixtures at the existing spelling. A section nobody is working still grows.
+- **Web tool names**: `avalon.web_search` and `avalon.web_fetch` are **dead, and
+  are not work**. The first inventory recorded them as constrained by a `CHECK`
+  in `packages/db/migrations/0009` that "has to move with the value". The table
+  it constrains — `web_usage_log` — was dropped by
+  `0085_retire_dead_tables.sql`, whose own comment records that its writer had
+  been removed long before that. The two names now occur exactly once each in
+  the tree, inside an applied migration nobody may edit. There is no stored
+  value, no writer, and nothing to migrate.
 - **Seed data**: `packages/db/seed.sql` — `Avalon Studio` workspace, slug
   `avalon-studio`, `@avalon.local` dev emails. Local only; no migration needed.
-- **Applied migration prose**: ~25 comment references to Avalon across
+- **Applied migration prose**: 28 comment references to Avalon across
   `packages/db/migrations/`. Applied migrations are immutable history — these
   are read-only and should be left alone.
+- **The idempotency-key hash seed**: `avalon-core-write-v1`, one occurrence, in
+  `integrations.ts`. Filed here rather than in section 9, where it was found,
+  because renaming it re-derives every durable provider idempotency key and
+  re-issues writes that were already idempotent.
 
 ### 2. Cloudflare infrastructure — out of scope, not renamed
 
-Cloudflare resource names: **174 distinct names, 764 occurrences, 185 files**.
-**These are not being renamed** — see the note at the top. The inventory below
+Names matching `avalon-*`: **173 distinct, 730 occurrences, 167 files**. That
+pattern is an upper bound rather than the Cloudflare set — it also catches
+Daytona task names, `avalon-studio` seed data, and fixtures like `avalon-task-1`,
+which belong to sections 1, 5, and 8. Restricted to the Worker, queue, bucket,
+and lakehouse prefixes below it is 66 names, 430 occurrences, 67 files.
+**None of them are being renamed** — see the note at the top. The inventory below
 records what exists so an `avalon-` string can be recognized as an
 infrastructure name and left alone.
 
@@ -132,10 +174,27 @@ infrastructure name and left alone.
   `config/{analytics,inference}-lakehouse.json`, and asserted by the
   provisioning scripts and their tests under `scripts/`.
 
-One typo is already in the tree: `avalon-eu-access-revocaitons` appears
-alongside `avalon-eu-access-revocations`. That is a real defect rather than
-rebrand debt, and is unaffected by the no-rename decision — but it is still a
-provisioning change, so it belongs to whatever next touches those queues.
+**Cloudflare is not the only account whose names this reasoning covers**, and the
+question gets re-asked otherwise. The Slack workspace subdomain
+(`avalon.slack.com`) and the Azure OpenAI resource (`avalon.openai.azure.com`)
+appear only as test fixtures here, but both name real third-party accounts on the
+same footing as the Cloudflare one: renaming the fixture is free, renaming the
+account is not this repository's change. One name has already moved past the
+question — the Cloudflare Access team domain is `juno-labs.cloudflareaccess.com`,
+named for the company rather than either product name, so it is outside the
+rebrand in both directions. The sandbox image's
+`/etc/profile.d/zz-avalon-noproxy.sh` is the same shape as section 4's sandbox
+contract: the file lives in the image, not here.
+
+The first inventory recorded a typo here — `avalon-eu-access-revocaitons`
+alongside `avalon-eu-access-revocations` — as a real defect awaiting a
+provisioning change. **It is not a defect.** The misspelling exists only in
+`scripts/ensure-cloudflare-queues.test.mjs`, as the input to a test named
+*refuses a queue only one side names*: the producer entry is deliberately
+misspelled so the two sides disagree and the checker has something to reject.
+Both wranglers spell the real queue correctly. The reading that made it look
+like a defect is the one this section exists to prevent — an `avalon-` string
+recognized by shape, without opening the file that holds it.
 
 ### 3. Externally-observable identifiers — renamed to Rally
 
@@ -172,41 +231,68 @@ Rally**, with the Avalon form kept as deliberate compatibility rather than debt:
 `com.avalon` spellings) and the crash-dump sidecar
 `<dump>.rally.json` (superseded suffix in `native-crash-uploader.ts`).
 
+**One identifier in this section is still Avalon, and it is not deliberate.**
+`config/provider-apps/linear.json` and its preview variant declare
+`client_name: "Avalon"` — the name Linear prints on its OAuth consent screen, so
+it is externally observable in the strongest sense this section means: a user
+reads it while deciding whether to grant access. It was missed because the sweep
+looked for identifier *shapes* and this is a display name in a manifest, the same
+class the Slack and GitHub cut-overs each had to handle by hand. Closing it is
+likely a re-registration at Linear rather than a file edit, which is why it is
+recorded as outstanding rather than swept.
+
 Not renamed, and deliberately so: `avalon_upload` / `avalon_note` /
-`avalon_generated` and `avalon.web_search` / `avalon.web_fetch` are section 1
-and need a migration; `avalon.analytics_events` and `avalon_agent_runs` are
-lakehouse names and belong to section 2.
+`avalon_generated` are section 1 and need a migration; `avalon.web_search` /
+`avalon.web_fetch` are section 1 and need nothing, because the table that
+constrained them has been dropped; `avalon.analytics_events` and
+`avalon_agent_runs` are lakehouse names and belong to section 2. Two superseded
+ids that look like misses are not: `avalon_public_channel_sync` in `slack-agent-service.ts` and the
+`avalon_start_task_submit` fixture beside it are the Slack cut-over's accepted
+inbound spellings, matched against action ids already sitting in channel
+history.
 
 ### 4. Runtime configuration — a rename is a coordinated deploy
 
-Environment variables and Worker bindings: **~950 occurrences, 277 files**.
+Environment variables and Worker bindings: **949 occurrences, 276 files** — 29%
+of everything still saying Avalon, and now the largest section by some margin.
 
-- **`AVALON_REGION` alone is 743 occurrences across 236 files** — the single
-  largest identifier in the inventory, about a sixth of everything. It is a
+- **`AVALON_REGION` alone is 750 occurrences across 239 files** — the single
+  largest identifier in the inventory, about a fifth of everything. It is a
   Worker `var` read as `env.AVALON_REGION` / `c.env.AVALON_REGION` /
   `this.env.AVALON_REGION` throughout `apps/api/src`, and stubbed in nearly
   every test that constructs an env. Heaviest: `connection-service.ts` (42),
   `durable-object-namespace.ts` (19), `auth-service.ts` (16),
-  `workspace-do.ts` (15).
-- **49 other `AVALON_*` names, 207 occurrences.** Three groups:
+  `workspace-do.ts` (15), `work-opportunity-service.ts` and
+  `provider-webhook-service.ts` (14 each).
+- **199 occurrences under 46 other `AVALON_*` spellings** — 43 complete names
+  and three prefix forms (`AVALON_SITE_BUILD__*`, `AVALON_SITE_RELEASE__*`,
+  `AVALON_SMOKE_*`), which is why a distinct-name count of this set depends on
+  how it is measured. Three groups:
   - *Sandbox/terminal contract* — `AVALON_RESOURCE_DIR`, `AVALON_WORKSPACE_ID`,
     `AVALON_CONNECTION_ID`, `AVALON_GIT_BRANCH`, `AVALON_GIT_BASE_BRANCH`,
     `AVALON_BRANCH_PATTERN`, `AVALON_DIFF_SUMMARY`, `AVALON_COMMAND_TIMED_OUT`,
     `AVALON_BOOTSTRAP_INSTALLED`, `AVALON_REMOTE_ACCESS`. These are injected
     into the Daytona sandbox and read by scripts running *inside* it, so they
-    are a contract with the sandbox image, not purely internal.
+    are a contract with the sandbox image, not purely internal. **Two of them
+    are not literals at all**: `daytona-provider.ts` builds `AVALON_READ_<id>_`
+    and `AVALON_GH_<key>` by string concatenation, so no grep enumerates this
+    group — a rename has to read the construction sites, not a match list.
   - *Agent harness* — `AVALON_TOOL_PROSE`, `AVALON_SKILL_TOOL_DEFINITIONS`,
     `AVALON_DISCOVERY_TOOL_DEFINITIONS`, `AVALON_SKILLS_SYSTEM_MESSAGE`,
     `AVALON_CURRENT_TIME_TOOL_DEFINITION`,
-    `AVALON_REQUEST_ELICITATION_TOOL_DEFINITION`, and the `AVALON_*_PLUGIN_ID`
+    `AVALON_REQUEST_ELICITATION_TOOL_DEFINITION`,
+    `AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS`, and the `AVALON_*_PLUGIN_ID`
     set.
   - *Build, release, and CI* — `AVALON_RELEASE_R2_BUCKET`,
     `RALLY_RELEASE_DISCOVERY`, `AVALON_SITE_BUILD__*`, `AVALON_SITE_RELEASE__*`,
     `AVALON_SMOKE_*`, `AVALON_E2E_*`, `AVALON_HEALTH_*`,
     `AVALON_GLOBAL_API_URL`, `AVALON_EU_API_URL`,
     `AVALON_{GLOBAL,EU}_TELEMETRY_R2_BUCKET`, `AVALON_DEV_AUTH`.
-- Also in the untracked local `.env.local` (20), which `pnpm env:sync`
-  regenerates — worth checking that whatever generates it moves too.
+- Two spellings in this count are test fixtures rather than real variables —
+  `AVALON_USER_ID` in `notion.test.ts` and `AVALON_TEST_MARKER` in
+  `terminal-provider.test.ts`. They move with section 8, not with a deploy.
+- Also in the untracked local `.env.local`, which `pnpm env:sync` regenerates —
+  worth checking that whatever generates it moves too.
 
 ### 5. Filesystem paths and on-disk layout — renamed to Rally, except artifacts
 
@@ -274,16 +360,23 @@ other role aliases are not published as parallel external contact paths.
 
 ### 8. Internal prose — cheapest, and safe to move alone
 
-- **`docs/`: 538 occurrences across 64 files.** Heaviest: `runbook.md` (67),
-  `domain-migration.md` (54, mostly *about* the rename and correct as written),
-  `performance-tracing.md` (42), `security.md` (24), `agent-harness.md` (20),
-  `telemetry.md` (15). Most of the rest is prose using "Avalon" as the product
-  name, which is now simply wrong rather than coupled to anything.
-- **Code comments and test fixtures**: 221 of the 583 files are tests. Much of
+- **`docs/`: 443 occurrences across 61 files**, but only 393 across 50 files are
+  actually in scope — the other 50 are in frozen PRDs, which
+  [`prds.md`](prds.md) puts out of reach. Heaviest of the rest: `runbook.md`
+  (61), `domain-migration.md` (57, mostly *about* the rename and correct as
+  written), `security.md` (21), `agent-attachments.md` (14), `menu-bar.md` (13),
+  `durable-object-migration-tracking.md` (12). Most is prose using "Avalon" as
+  the product name, which is now simply wrong rather than coupled to anything.
+- `performance-tracing.md` fell from 42 occurrences to 6 without anyone working
+  this section: it is mostly span-attribute names, which moved with section 3.
+  Part of what looks like section 8 is other sections' prose, and will clear
+  itself the same way.
+- **Code comments and test fixtures**: 217 of the 535 files are tests. Much of
   that is fixture strings — `avalon-task-1`, `avalon-ws-stream`,
   `avalon.example`, `avalon.test`, `https://example.com/issue` —
   which are internal to the test that mints them and coupled to nothing.
-- **`.github`** (14) and **`.agents`** (8).
+- **`.github`** (14, across six workflows) and **`.agents`** (8, all in one
+  skill file).
 
 ### 9. The agent loop's prompt surface — renamed to Rally
 
@@ -354,8 +447,14 @@ latter two.** `classifyAddressingHeuristically` matched `/\bavalon\b/i` to decid
 whether a message names the product. It is a fast path that returns *without*
 invoking the model, so after the prompts moved, "Rally, take a look at this"
 classified as `human_only` and the agent stayed silent while being addressed by
-name. It now matches both spellings — recognizing an extra word costs nothing,
-and there is no stored value to keep consistent.
+name. The fix is asymmetric, because the two spellings are not equally safe.
+`UNAMBIGUOUS_PRODUCT_REFERENCE` — Avalon only — still short-circuits to
+`agent_action` at 0.96 without consulting the model. `PRODUCT_REFERENCE`, which
+accepts both, only sets `addressesRally` on the classifier prompt and lets the
+model weigh it against the surrounding text. Adding "rally" to the short-circuit
+would have been the obvious one-word fix and would have made the agent barge into
+"let's rally the team before Friday" at 0.96 confidence. A word that is also an
+ordinary English verb cannot be evidence on its own.
 
 **Nested template literals broke the scanner, twice.** A tokenizer that pairs
 backticks naively mis-pairs `` `…${shellQuote(`…`)}…` `` and then mis-reads the
@@ -365,13 +464,23 @@ Daytona resource descriptions survived a pass that renamed their neighbours.
 Both are fixed. The lesson is the one already recorded for the blocklist: the
 sweep is a convenience, and only enumerating what remains proves anything.
 
-**`matchedAvalonUserId` is the second field whose name is prompt text.**
-`renderWorkstreamSystemPrompt` serializes the Slack origin object into the
-prompt, so this schema field reads to the model exactly as `addressesRally`
-does. It is declared in `packages/contracts`, which makes it look like a wire
-contract — but nothing persists it (no column, no Durable Object row), so it
-renames cleanly. Any *future* field of this shape needs that check first: the
-declaration cannot tell you whether it is stored.
+**`matchedAvalonUserId` is the second field whose name is prompt text, and it
+renamed at the boundary only.** `renderWorkstreamSystemPrompt` serializes the
+Slack origin object into the prompt, so the *key the model reads* is prompt text
+and now says `matchedRallyUserId`. The field itself keeps its Avalon name in
+`packages/contracts` and at all 13 sites that reference it, because
+`SlackOriginContextSchema` is `.strict()` and rides inside
+`WorkstreamWorkflowInputSchema`, which is re-parsed as a dispatch request:
+renaming it in place would make a rolling deploy reject in-flight requests
+carrying the old key. The single mapping line in `prompts/workstream.ts` moves
+the only half the model sees.
+
+An earlier draft of this section said the field renamed cleanly *because nothing
+persists it*, and that reasoning was wrong in a way worth keeping. "Is it
+stored?" is only half the question — a value that is never written to a column
+can still be re-parsed in flight, and a `.strict()` schema turns an unrecognized
+key into a rejection rather than an ignored field. Any future field of this shape
+needs both checks, and neither is visible from the declaration.
 
 **Found while sweeping, and left for later:**
 `AVALON_BRANCH_PATTERN` in `terminal/repository-selection.ts` both mints
@@ -398,8 +507,75 @@ with this repository. The two halves of that line have different owners.
   nothing in this repository can alias the old event names at the destination.
 - **Ordering and batching.** The categories above are ordered by coupling cost,
   which is not the same as the order the work should happen in.
+- **Two identifiers waiting on a decision, not on work.** The Linear provider
+  manifests still declare `client_name: "Avalon"` on that provider's consent
+  screen, and closing it is probably a re-registration at Linear rather than a
+  file edit. `AVALON_BRANCH_PATTERN` both mints and recognizes `avalon/<slug>`,
+  and the branches it has already minted live in members' GitHub repositories
+  and open pull requests — so the minted prefix and the recognized one have to
+  diverge, and for how long is a judgement about those branches rather than
+  about this repository. Neither belongs to whoever picks up section 1, 4, or 8
+  next; both are listed here so they are not rediscovered as oversights.
 
 ## Changelog
+
+### 2026-08-25 — Verified against `main`, and three claims it did not survive
+
+Re-derived every count in this document against `main` and ran the positive
+check the entry below demands over the whole tree — the by-kind table in *The
+shape of it* is that run, and it sums to 3,288 rather than sampling it. Counts
+now exclude this file, which had grown into one of the largest single sources of
+the word "Avalon" in the tree and was inflating `docs/` by 120 occurrences of its
+own prose. The rest had drifted far enough to mislead: section 4 is now 29% of
+what remains and the largest section by some margin, while `apps/site` fell from
+460 occurrences to 40 and `performance-tracing.md` from 42 to 6 without anyone
+working section 8 — its Avalon was span-attribute names, which left with section
+3. Section 1 is the only one that *grew*, from 37 occurrences to 56, because new
+tests on the resource path kept minting fixtures at the stored spelling. A
+section nobody is working does not hold still.
+
+Four claims were wrong rather than stale, and each was wrong in the direction
+this document keeps warning about — a string judged by its shape without the file
+around it being read.
+
+**The `avalon-eu-access-revocaitons` typo is not a defect.** It was recorded as
+one in the first inventory and carried through every revision since. The
+misspelling exists only in `scripts/ensure-cloudflare-queues.test.mjs`, as the
+deliberately-wrong producer entry in a test named *refuses a queue only one side
+names* — it is the input that makes the two sides disagree so the checker has
+something to reject. Both wranglers spell the queue correctly. An inventory that
+manufactures a defect out of a fixture costs somebody the afternoon they spend
+confirming it isn't real.
+
+**`avalon.web_search` and `avalon.web_fetch` are not section 1 work.** They were
+recorded as values pinned by a `CHECK` constraint that "has to move with the
+value" — the scariest-sounding item in the section. The table it constrains,
+`web_usage_log`, was dropped by `0085_retire_dead_tables.sql`, whose comment
+records that the writer had gone even earlier. Both names now occur exactly once
+each in the whole tree, inside an applied migration nobody may edit. The
+constraint was read out of the migration that created it without checking the 76
+migrations after it.
+
+**`matchedAvalonUserId` did not rename cleanly, and this document gave the wrong
+reason it could.** Section 9 said nothing persists it, so it renames — but
+`SlackOriginContextSchema` is `.strict()` and is re-parsed as a dispatch request,
+which turns an unrecognized key into a rejection during a rolling deploy. Only
+the serialization boundary moved. The correction matters more than the fact: "is
+it stored?" is half the question, and the half this document had been asking.
+
+**The addressing heuristic's fix is asymmetric, and the description flattened
+it.** "It now matches both spellings" reads as the obvious one-word change, which
+is exactly the change that would have been wrong: Avalon alone short-circuits to
+`agent_action` without consulting the model, while both spellings only set a flag
+the model weighs, because "rally" is also an ordinary English verb.
+
+Also newly recorded: the Linear provider manifests still declare
+`client_name: "Avalon"` — a name a user reads on a consent screen, missed because
+the sweep looked for identifier shapes and this is a display name. And the
+Cloudflare no-rename reasoning was generalized to the other third-party accounts
+it obviously covers but never named — the Slack workspace subdomain and the
+Azure OpenAI resource — because the question was going to be re-asked once per
+account otherwise.
 
 ### 2026-08-25 — Section 9 renamed: the agent stops calling itself Avalon
 
