@@ -1,16 +1,18 @@
 {
   "name": "Avalon Workstreams",
-  "url": "https://with-avalon.com",
+  "url": "https://rallywith.ai",
   "description": "Connect GitHub repositories to Avalon work streams and automations.",
   "hook_attributes": {
-    "url": "https://github.with-avalon.com/ingest/github",
+    "url": "https://github.rallywith.ai/ingest/github",
     "active": true
   },
   "callback_urls": [
+    "https://api.rallywith.ai/connections/github/callback",
+    "https://eu.api.rallywith.ai/connections/github/callback",
     "https://api.with-avalon.com/connections/github/callback",
     "https://eu.api.with-avalon.com/connections/github/callback"
   ],
-  "setup_url": "https://github.with-avalon.com/connections/github/setup",
+  "setup_url": "https://github.rallywith.ai/connections/github/setup",
   "setup_on_update": false,
   "request_oauth_on_install": false,
   "public": true,

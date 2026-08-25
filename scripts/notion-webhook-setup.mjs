@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { createCloudflareClient } from "./configure-cloudflare-observability.mjs";
 import { isEntryPoint } from "./entry-point.mjs";
 
-const DEFAULT_NOTION_INGRESS_BASE_URL = "https://notion.with-avalon.com";
+const DEFAULT_NOTION_INGRESS_BASE_URL = "https://notion.rallywith.ai";
 const NONCE_TTL_MS = 30 * 60 * 1_000;
 const NOTION_CHALLENGE_AAD = "provider-webhook:notion:global";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");

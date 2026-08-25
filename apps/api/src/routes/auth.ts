@@ -8,7 +8,7 @@ import {
   SessionSchema,
   WorkspaceInvitationPreviewSchema,
 } from "@avalon/contracts";
-import { HttpOrAvalonUrlSchema } from "@avalon/contracts/url-schemas";
+import { HttpOrDesktopDeepLinkUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -17,7 +17,7 @@ import { AuthService, verifyAccessToken } from "../services/auth-service";
 import { previewInvitation } from "../services/workspace-service";
 
 const startBody = z.object({
-  returnUri: HttpOrAvalonUrlSchema.optional(),
+  returnUri: HttpOrDesktopDeepLinkUrlSchema.optional(),
   desktopAttemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
   desktopCodeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
 });

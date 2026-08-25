@@ -152,15 +152,25 @@ regional service credential, account session, or cross-region bridge authority.
 ## Operations
 
 The public site needs no analytics secret. The Global Worker needs exact
-`ALLOWED_ORIGINS` entries for `https://with-avalon.com` and
-`https://www.with-avalon.com`, plus the existing telemetry capability signing
+`ALLOWED_ORIGINS` entries for all four served site origins —
+`https://rallywith.ai`, `https://www.rallywith.ai`, `https://with-avalon.com`,
+and `https://www.with-avalon.com` — plus the existing telemetry capability signing
 key and Global PostHog configuration. Operators inspect Global and EU telemetry
 backlogs independently; a healthy Global PostHog graph says nothing about EU
 site delivery. Cloudflare Pages applies one `/*` Content Security Policy to
-every public path. Its `connect-src` permits only `https://api.with-avalon.com`:
-the route probe, bootstrap, and anonymous batch all use that Global browser
-origin. An EU decision is forwarded server-side over `EU_TELEMETRY_BRIDGE`; the
-browser must not call `https://eu.api.with-avalon.com` directly.
+every public path. Its `connect-src` permits the Global browser origin on both
+zones, `https://api.rallywith.ai` and `https://api.with-avalon.com`: the route
+probe, bootstrap, and anonymous batch all use it, and the page calls the
+canonical host from whichever domain served it. An EU decision is forwarded
+server-side over `EU_TELEMETRY_BRIDGE`; the browser must not call
+`https://eu.api.rallywith.ai` directly.
+
+`$host` and `$current_url` on a web event are reconstructed in the Global
+PostHog adapter from the Worker's own `PUBLIC_WEB_BASE_URL`, because a site
+envelope reports a `pathname` and deliberately nothing else about its origin.
+While two domains both answer, that attributes every visit to the canonical one.
+Splitting acquisition by domain would mean the site reporting its own host — a
+registered property and a privacy-boundary decision, not a default to assume.
 
 ## Performance and cost
 
@@ -172,6 +182,38 @@ is allowed.
 
 ## Changelog
 
+### 2026-08-25 — The web page host is read from configuration, not hardcoded
+
+**What changed:** `$host` and `$current_url` on `$pageview` and `$pageleave` are
+built from the Worker's `PUBLIC_WEB_BASE_URL` instead of a literal
+`with-avalon.com`. `mapPostHogCapture` and `sendPostHogBatch` take the base URL
+as an argument. The site's own production-environment check now recognises all
+four served hostnames.
+
+**Why:** The rebrand to Rally made the public site answer on two domains at once.
+A literal naming one of them stops being merely stale and becomes wrong for the
+whole migration — which is precisely the period the acquisition numbers are being
+read. The site reports a `pathname` and deliberately nothing else about its
+origin, so the host has to come from somewhere; configuration is the only source
+that follows the canonical domain without another edit.
+
+The environment check was the sharper bug: it compared `location.hostname`
+against the two Avalon hosts, so every visit arriving on a Rally domain would
+have been filed as `staging` — invisible in the production funnel, and
+indistinguishable from a drop in traffic.
+
+**Considered and rejected:** Adding the host to the `site_page_viewed` envelope so
+acquisition could be split by domain, which is genuinely the more useful number
+during a migration. That is a registered telemetry property and a privacy-boundary
+decision, not something to add as a side effect of removing a literal; it goes
+through [`adding-new-instrumented-event.md`](adding-new-instrumented-event.md) if
+the split is wanted.
+
+**Consequences:** While both domains answer, every visit is attributed to the
+canonical one; the split is unavailable until the site reports its own host. Any
+new caller of `mapPostHogCapture` must pass the deployment's web base URL — the
+argument is required rather than defaulted, so a caller cannot silently
+reintroduce a hardcoded host. See [`domain-migration.md`](domain-migration.md).
 ### 2026-08-13 — One site-wide CSP admits the complete regional telemetry exchange
 
 **What changed:** The `/*` Cloudflare Pages policy permits the one Global API

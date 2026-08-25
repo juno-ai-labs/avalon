@@ -1,7 +1,31 @@
 const textEncoder = new TextEncoder();
 
 export const WORKSTREAM_ADDRESS_GENERATION_VERSION = "v1";
-export const WORKSTREAM_EMAIL_DOMAIN = "automation.with-avalon.com";
+
+/**
+ * The domain every work-stream address minted from now on carries.
+ *
+ * An address is stored per work stream, not derived on read, so renaming the
+ * domain does not move the addresses already issued — and those are printed in
+ * mail clients, saved in contacts, and forwarded to by rules nobody here can
+ * see. The rename is therefore forward-only: new addresses are minted on
+ * `automation.rallywith.ai`, and mail to the old domain keeps routing on the
+ * strength of its local part, which is what the routing table is keyed by.
+ *
+ * A legacy domain leaves this list only when inbound mail to it has stopped.
+ */
+export const WORKSTREAM_EMAIL_DOMAIN = "automation.rallywith.ai";
+
+/** Domains still accepted inbound, whose addresses are no longer minted. */
+export const LEGACY_WORKSTREAM_EMAIL_DOMAINS: readonly string[] = Object.freeze([
+  "automation.with-avalon.com",
+]);
+
+/** Every domain an inbound work-stream address may arrive on. */
+export const ACCEPTED_WORKSTREAM_EMAIL_DOMAINS: readonly string[] = Object.freeze([
+  WORKSTREAM_EMAIL_DOMAIN,
+  ...LEGACY_WORKSTREAM_EMAIL_DOMAINS,
+]);
 
 /**
  * Frozen vocabulary for v1 work-stream email addresses.

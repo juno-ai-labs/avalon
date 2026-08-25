@@ -511,7 +511,7 @@ describe('TelemetryReporter', () => {
       event: { identityScope: 'anonymous-epoch', context: { onboardingJourneyId: anonymous.journeyId } },
     });
     await reporter.flush();
-    expect(fetch.mock.calls[0]?.[0]).toBe('https://api.with-avalon.com/telemetry/anonymous');
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://api.rallywith.ai/telemetry/anonymous');
     expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).has('authorization')).toBe(false);
   });
 
@@ -527,7 +527,7 @@ describe('TelemetryReporter', () => {
     }), { status: 202 }));
     await reporter.applicationLifecycle('launch_started');
     await reporter.flush();
-    expect(fetch.mock.calls[0]?.[0]).toBe('https://api.with-avalon.com/telemetry/anonymous');
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://api.rallywith.ai/telemetry/anonymous');
     expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({
       capability: anonymous.capability,
       installationId: identity.installationId,

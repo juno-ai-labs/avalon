@@ -9,7 +9,7 @@ export async function prepareFixtureGeneration(input) {
   const route = await resolveTelemetryRoute({
     explicitRegion: null,
     anonymousEpochId,
-    globalApiBaseUrl: 'https://api.with-avalon.com',
+    globalApiBaseUrl: 'https://api.rallywith.ai',
     fetch: async () => new Response(JSON.stringify({
       journeyId: '00000000-0000-7000-8000-000000000012',
       route: input.route,
@@ -36,13 +36,13 @@ export async function uploadFixtureGeneration(input) {
     identity: () => ({ installationId }),
     authenticatedSession: async () => ({
       apiBaseUrl: input.route === 'eu'
-        ? 'https://eu.api.with-avalon.com'
-        : 'https://api.with-avalon.com',
+        ? 'https://eu.api.rallywith.ai'
+        : 'https://api.rallywith.ai',
       accessToken: 'fixture-session',
       route: input.route,
     }),
     anonymousSession: () => null,
-    globalApiBaseUrl: 'https://api.with-avalon.com',
+    globalApiBaseUrl: 'https://api.rallywith.ai',
     fetch: async (url, init) => {
       const metadata = JSON.parse(String(init.body.get('metadata')));
       requests.push({ endpoint: String(url), metadata });
