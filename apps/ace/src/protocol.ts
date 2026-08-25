@@ -35,11 +35,16 @@ export type AceCondition = {
   clauses?: AceCondition[];
 };
 
+// Cloudflare Flagship limits, checked 2026-08-24:
+// https://developers.cloudflare.com/flagship/reference/limits/
 export const MAX_CONDITION_DEPTH = 5;
+export const MAX_CONDITION_STRING_LENGTH = 256;
+export const MAX_FLAG_DESCRIPTION_LENGTH = 512;
 
 export const ConditionSchema: z.ZodType<AceCondition> = z.lazy(() => z.union([
   z.object({ attribute: AttributeSchema, operator: OperatorSchema, value: z.union([
-    z.string().min(1).max(256), z.number(), z.array(z.union([z.string().min(1).max(256), z.number()])).min(1),
+    z.string().min(1).max(MAX_CONDITION_STRING_LENGTH), z.number(),
+    z.array(z.union([z.string().min(1).max(MAX_CONDITION_STRING_LENGTH), z.number()])).min(1),
   ]) }).strict(),
   z.object({
     logical_operator: z.enum(['AND', 'OR']),
@@ -56,7 +61,7 @@ export const FlagRuleSchema = z.object({
 
 export const ManagedFlagUpdateSchema = z.object({
   key: ProductFeatureFlagKeySchema,
-  description: z.string().max(512),
+  description: z.string().max(MAX_FLAG_DESCRIPTION_LENGTH),
   enabled: z.boolean(),
   default_variation: z.enum(['on', 'off']),
   rules: z.array(FlagRuleSchema),

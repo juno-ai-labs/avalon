@@ -281,7 +281,7 @@ export function WorkstreamHeader({
   workstream,
   socketState,
   blockDashboardOpen,
-  blockDashboardAvailable = true,
+  blockDashboardAvailable = false,
   blockDashboardPreferencePending,
   onAddParticipant,
   onOpenRail,

@@ -47,8 +47,8 @@ export interface MenuBarMenuOptions {
   readonly appName: string;
   readonly content: MenuBarContent;
   readonly signedIn: boolean;
-  readonly meetingRecordingAvailable?: boolean;
-  readonly suggestedWorkAvailable?: boolean;
+  readonly meetingRecordingAvailable: boolean;
+  readonly suggestedWorkAvailable: boolean;
   /** Whether this macOS draws real section headers. See
    * {@link supportsSectionHeaders}. */
   readonly sectionHeaders: boolean;
@@ -172,7 +172,7 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     invoke();
   };
   const template: MenuItemConstructorOptions[] = [
-    ...(options.meetingRecordingAvailable !== false
+    ...(options.meetingRecordingAvailable
       ? [{ label: 'New Meeting/Note', click: tracked('new_meeting_note', actions.newMeetingNote) }]
       : []),
     { label: 'New Work Stream', click: tracked('new_workstream', actions.newWorkstream) },
@@ -200,7 +200,7 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
   // the one message that state needs. Signed in, every group renders — an empty
   // one says how it fills instead of disappearing, because the people it is
   // empty for are exactly the ones who have not found the feature yet.
-  if (options.signedIn && options.suggestedWorkAvailable !== false) {
+  if (options.signedIn && options.suggestedWorkAvailable) {
     pushGroup(
       'Suggestions',
       SUGGESTIONS_EMPTY_LABEL,

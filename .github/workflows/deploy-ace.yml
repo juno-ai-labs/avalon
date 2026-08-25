@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "apps/ace/**"
+      - "apps/migration-tracker/src/access.ts"
       - "packages/contracts/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"

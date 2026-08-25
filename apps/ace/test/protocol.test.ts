@@ -1,3 +1,4 @@
+import { ProductFeatureFlagKeySchema } from '@avalon/contracts';
 import { describe, expect, it } from 'vitest';
 import { MANAGED_FLAGS, ManagedFlagUpdateSchema } from '../src/protocol';
 
@@ -9,6 +10,7 @@ describe('Ace managed flag protocol', () => {
       'suggested-work-enabled',
       'automation-workspace-templates-enabled',
     ]);
+    expect(MANAGED_FLAGS.map((flag) => flag.key)).toEqual(ProductFeatureFlagKeySchema.options);
     for (const flag of MANAGED_FLAGS) {
       expect(flag.label).toMatch(/ Enabled$/);
       expect(flag.description).toMatch(/^True .+; false .+\.$/);

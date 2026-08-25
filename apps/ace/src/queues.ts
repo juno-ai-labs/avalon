@@ -10,46 +10,55 @@ const FlagChangeMessageSchema = z.object({
   flagKey: ProductFeatureFlagKeySchema,
 }).strict();
 
+// Queue sendBatch accepts at most 100 messages, checked 2026-08-24:
+// https://developers.cloudflare.com/queues/configuration/javascript-apis/#sendbatch
+export const QUEUE_SEND_BATCH_MAX_MESSAGES = 100;
+
 async function fanOutRegion(
   db: D1Database,
   queue: Queue,
-  flagKey: FlagChangeMessage['flagKey'],
+  flagKeys: readonly FlagChangeMessage['flagKey'][],
 ): Promise<void> {
   let after = '';
   for (;;) {
     const page = await db.prepare(
-      'SELECT id FROM workspaces WHERE id > ? ORDER BY id LIMIT 500',
-    ).bind(after).all<{ id: string }>();
+      'SELECT id FROM workspaces WHERE id > ? ORDER BY id LIMIT ?',
+    ).bind(after, QUEUE_SEND_BATCH_MAX_MESSAGES).all<{ id: string }>();
     const rows = page.results ?? [];
-    for (let offset = 0; offset < rows.length; offset += 100) {
-      await queue.sendBatch(rows.slice(offset, offset + 100).map((row) => ({
-        body: ProductFeatureFlagFanoutMessageSchema.parse({
+    const messages = rows.flatMap((row) => flagKeys.map((flagKey) => ({
+      body: ProductFeatureFlagFanoutMessageSchema.parse({
           kind: 'product_feature_flag_changed',
           flagKey,
           workspaceId: row.id,
-        }),
-      })));
+      }),
+    })));
+    for (let offset = 0; offset < messages.length; offset += QUEUE_SEND_BATCH_MAX_MESSAGES) {
+      await queue.sendBatch(messages.slice(offset, offset + QUEUE_SEND_BATCH_MAX_MESSAGES));
     }
-    if (rows.length < 500) return;
+    if (rows.length < QUEUE_SEND_BATCH_MAX_MESSAGES) return;
     after = rows.at(-1)!.id;
   }
 }
 
 export async function consumeFlagChanges(batch: MessageBatch<unknown>, env: Env): Promise<void> {
-  await Promise.all(batch.messages.map(async (message) => {
+  const valid: Array<{ message: Message<unknown>; flagKey: FlagChangeMessage['flagKey'] }> = [];
+  for (const message of batch.messages) {
     const parsed = FlagChangeMessageSchema.safeParse(message.body);
     if (!parsed.success) {
       message.ack();
-      return;
+      continue;
     }
-    try {
-      await Promise.all([
-        fanOutRegion(env.GLOBAL_DB, env.GLOBAL_PRODUCT_FLAG_QUEUE, parsed.data.flagKey),
-        fanOutRegion(env.EU_DB, env.EU_PRODUCT_FLAG_QUEUE, parsed.data.flagKey),
-      ]);
-      message.ack();
-    } catch {
-      message.retry();
-    }
-  }));
+    valid.push({ message, flagKey: parsed.data.flagKey });
+  }
+  if (valid.length === 0) return;
+  const flagKeys = [...new Set(valid.map((entry) => entry.flagKey))];
+  try {
+    await Promise.all([
+      fanOutRegion(env.GLOBAL_DB, env.GLOBAL_PRODUCT_FLAG_QUEUE, flagKeys),
+      fanOutRegion(env.EU_DB, env.EU_PRODUCT_FLAG_QUEUE, flagKeys),
+    ]);
+    for (const { message } of valid) message.ack();
+  } catch {
+    for (const { message } of valid) message.retry();
+  }
 }

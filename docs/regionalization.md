@@ -100,13 +100,17 @@ falls back to the Global table.
 provisioning contract.
 
 Ace is the one internal control plane that reads both regional workspace
-directories. Its shared change Queue carries only a product flag key. The Ace
-consumer reads workspace IDs directly from each D1 and emits the key plus opaque
-workspace ID to that region's Queue. From there the regional API and
-WorkspaceDO evaluate against regional identity/membership data. Effective
-values, names, full email addresses, memberships, and socket state never cross
-regions; the one global Flagship application sees only the already-approved
-targeting attributes listed in [`feature-flags.md`](feature-flags.md).
+directories. An Access-authorized directory search transiently brings matching
+EU names, full email addresses, workspace names, slugs, and opaque IDs into the
+shared Ace Worker and operator's browser; Ace neither persists those results nor
+writes names or full addresses to Flagship. Its shared change Queue carries only
+a product flag key. The Ace consumer reads workspace IDs directly from each D1
+and emits the key plus opaque workspace ID to that region's Queue. From there
+the regional API and WorkspaceDO evaluate against regional
+identity/membership data. Effective values, memberships, product content, and
+socket state never cross through Ace; the one global Flagship application sees
+only the already-approved targeting attributes listed in
+[`feature-flags.md`](feature-flags.md).
 
 ### The shared ingresses
 
@@ -183,7 +187,10 @@ See [`public-site-telemetry.md`](public-site-telemetry.md).
 
 ## Invariants
 
-- **Global reaches EU only through named Worker RPC service bindings.** The EU
+- **Product runtimes reach EU only through named Worker RPC service bindings.**
+  Ace's Access-gated operator directory is the explicit administrative
+  exception: its Worker has a direct EU D1 binding for transient user/workspace
+  search and flag fan-out enumeration. The EU
   regional identity bridge is a named service entrypoint, not a public HTTP route,
   and no bridge is ever exposed as one. An HTTP internal bridge would put the
   region boundary on the open internet with nothing but a shared secret on it.
@@ -362,6 +369,26 @@ these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
+
+### 2026-08-24 — Ace's operator directory is named as a regional exception
+
+**What changed:** The boundary now explicitly records that Ace directly reads
+EU D1 and transiently exposes matching directory fields to an authorized
+operator, while its queue fan-out continues to carry only opaque IDs and a flag
+key.
+
+**Why:** The earlier text claimed names and full email addresses never crossed
+regions even though Ace's configured EU D1 binding and directory route did
+exactly that. A regional guarantee must describe the deployed read path, not
+only the notification payload.
+
+**Considered and rejected:** Describing Ace as an RPC-only product runtime. Ace
+is a shared internal administrative plane with an explicit direct-directory
+requirement; hiding that distinction would preserve the contradiction.
+
+**Consequences:** Product/API regional access remains RPC-only. Any expansion of
+Ace beyond transient directory lookup and opaque fan-out is a new residency
+decision and must update this exception rather than inherit it silently.
 
 ### 2026-08-24 — Ace fans product-flag keys into regional ownership
 
