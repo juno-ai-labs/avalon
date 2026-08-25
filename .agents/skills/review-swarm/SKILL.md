@@ -540,17 +540,21 @@ thing on the list to remove.
 
 Two areas have written answers worth knowing before you argue with them:
 
-- **A new limit.** The default answer to "should there be a limit here?" is no —
-  but sort the number before arguing about it, because the limits document's first
-  move is a four-way split and only an unsized *defensive* bound is the kind that ships open
-  with its number handed back. A product limit comes from the product contract and a
-  platform limit is transcribed with its source and date; neither is a guess, and
-  reading one as invented is its own finding. Where the bound is defensive both
-  directions are real — a limit nobody can price, and a number somebody invented —
-  with one exception worth knowing: on a path this change *introduces*, that document
-  asks for a value rather than an open placeholder, since opening it would be a
-  regression the author wrote. The placeholder machinery around a limit that is
-  legitimately open is required there, so it is not ceremony.
+- **A new limit.** Sort the number first: the limits document gives a product limit
+  to the product contract and a platform limit to a dated citation, and only the
+  defensive kind is unowned — reading either of the first two as invented is its own
+  finding. For a defensive bound the default answer to "should there be a limit
+  here?" is no, and one that clears that bar is still not yours to size. Where the
+  path was **already** unbounded it ships open and the number goes back to the team.
+  Where *this change* introduces the unbounded path — a new endpoint, fan-out, retry
+  loop, or allocation sized by caller input — open would be a regression the author
+  wrote, a real value is correct, and the finding is a missing question rather than a
+  missing placeholder. That holds hardest where the path is reachable without
+  authentication, allocates memory proportional to untrusted input, or spends money
+  per iteration, which that document says to ask about rather than open. Both
+  directions are findings — a defensive limit nobody can price, and a number somebody
+  guessed — and the placeholder machinery around a legitimately open limit is
+  required, not ceremony.
 - **New infrastructure.** Retry schedules, correlation ids, backpressure, and
   delivery receipts written by hand usually mean a platform primitive was chosen
   wrongly, or chosen rightly and then distrusted. A second queue, a shard, or a
@@ -559,25 +563,28 @@ Two areas have written answers worth knowing before you argue with them:
 **Where not to go.** This persona's failure mode is arguing a diff smaller at the
 cost of what the repository requires. Tests, module documents, changelog entries,
 boundary parsing, idempotency in a handler that retries, region parity, the
-dead-letter queue — other personas flag the absence of these, and the requirement
-itself is never the finding. Machinery past what the rule actually asks for still is
-— an over-mocked test, a changelog entry padded beyond its materiality bar — but the
-required outcome survives the simplification. Following a convention already in the tree is not duplication; introducing
-a second one beside it is. Correctness, security, and test strategy belong
-elsewhere, though the Backend Engineer's general mandate overlaps you at the line
-level — review it anyway and note the overlap.
+dead-letter queue — other personas flag the absence of these, and none of them is
+excess where the rule requiring it applies. Machinery past what that rule asks for
+still is: a module document for a two-function helper, a changelog entry for a
+rename, 300 lines of mock scaffolding. The argument is with the rule's threshold,
+never with the obligation. Following a convention already in the tree is not
+duplication; introducing a second one beside it is. Correctness, security, and test
+strategy belong elsewhere, though the Backend Engineer's general mandate overlaps
+you at the line level — review it anyway and note the overlap.
 
 **Findings.** The test of one is that something goes away: give the file or line,
-name what gets deleted, and say what the call site reads like afterwards. Give the condition that would make
-the current shape right ("when a second provider exists", "when the dead-letter
-queue has messages in it"), and be honest about what the simplification costs — one
-that quietly drops a case is worse than the excess it removed. Classify
-P0/P1/P2/nitpick: excess is usually P1 or P2, since it costs maintenance rather
-than correctness, and reaches P0 only when the machinery brings a failure mode of
-its own — a hand-rolled retry ledger that loses work, isolate memory used as a
-lock, a cap that will cut off a real user on a bad day. Lead with the one thing
-that matters most; a long list of small structural gripes reads as noise and
-buries it.
+name what gets deleted, and say what the call site reads like afterwards. Give the
+condition that would make the current shape right ("when a second provider exists",
+"when the dead-letter queue has messages in it"), and be honest about what the
+simplification costs — one that quietly drops a case is worse than the excess it
+removed. Classify P0/P1/P2/nitpick: excess is usually P1 or P2, since it costs
+maintenance rather than correctness, and reaches P0 only when the machinery brings a
+failure mode of its own — a hand-rolled retry ledger that loses work, isolate memory
+used as a lock, a cap that will cut off a real user on a bad day. Structure this
+change did not introduce is a P2 unless the change makes it materially worse — the
+author stood next to it rather than writing it — and that P0 bar holds either way.
+Lead with the one thing that matters most; a long list of small structural gripes
+reads as noise and buries it.
 
 ### Documentation Reviewer
 
