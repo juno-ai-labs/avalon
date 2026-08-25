@@ -111,7 +111,7 @@ Every connector adapter supplies a static agent-plugin descriptor whose provider
 - Automation runs include explicitly bound connection/capability pairs and eligible connections attached through work-stream resources. Attached connections remain limited to the immutable grants frozen for the run.
 - Inbound-email runs remove external connector writes.
 
-Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `avalon_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. Activation is durably recorded before the plugin's tools or trusted guidance become visible.
+Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `rally_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. Activation is durably recorded before the plugin's tools or trusted guidance become visible.
 
 A hosted-MCP connection may supply `HarnessPlugin.loadTools` instead of a
 code-authored tool array. It still appears through the same static trusted
@@ -126,10 +126,10 @@ returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
 validation, and provider declaration are owned by
 [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
-Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `avalon_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `avalon_core` plugin owns exact time and structured elicitation, and `avalon_automation_architect` owns automation research and draft submission. Workstream agents load `avalon_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `avalon_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
+Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `rally_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `rally_core` plugin owns exact time and structured elicitation, and `rally_automation_architect` owns automation research and draft submission. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 In a provider-verified region, ordinary work-stream runs also register the
-deferred built-in `avalon:terminal` plugin. It has no connection row and loading
+deferred built-in `rally:terminal` plugin. It has no connection row and loading
 it is allocation-free: activation exposes its static supported-language prompt
 and complete eight-tool family, while the first tool execution acquires the
 separate Terminal mutation lease and Daytona sandbox. It is absent—not merely
@@ -158,7 +158,7 @@ A plugin gives the model a capability; a **skill** gives it a procedure. Skills 
 
 A run's skills are **frozen with its scope**, exactly like its plugins. The host resolves them against the execution principal before admission and passes them on `RunHarnessInput.skills`; nothing in the loop reaches a store, so `load_skill` can only surface a body the run was already authorized to read. When a run has no skills, neither prompt section nor either tool appears.
 
-The always-active `avalon_skills` plugin owns two globally named controls. `load_skill` takes an exact name from the `# Skills` catalog and adds the skill's body to `# Active Skill Instructions` for the rest of the run. `read_skill_resource` reads a bundled reference file, and refuses until its skill has been loaded — that gate is what stops a model pulling every catalog skill's references without taking on the instructions they belong to.
+The always-active `rally_skills` plugin owns two globally named controls. `load_skill` takes an exact name from the `# Skills` catalog and adds the skill's body to `# Active Skill Instructions` for the rest of the run. `read_skill_resource` reads a bundled reference file, and refuses until its skill has been loaded — that gate is what stops a model pulling every catalog skill's references without taking on the instructions they belong to.
 
 **Loading a skill grants no authority.** Where a skill declares an owner plugin it is offered only to a run whose scope already includes that plugin — the eligible plugin ids are handed to the skill registry, which drops the rest before the catalog is built — and loading it *names* the plugin for the model to load separately rather than activating it: an auto-activation would let a document issue a capability grant. Skill bodies are also not trusted prose about the world — they are workspace-authored instructions, and are wrapped in a `<skill_content name=…>` element so the model can tell them apart from platform policy and from one another.
 
@@ -193,7 +193,7 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 
 ### Elicitation
 
-The canonical `request_elicitation` tool belongs to `avalon:core` and is rendered to the model as `core_request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. In a work stream, the work stream becomes `needs_input`; a valid answer persists a visible response, clears attention when no blockers remain, and admits a new run into the same `SubstreamAgent`, linked to the previous run. In automation creation, the architect first saves its best partial state with `automation_submit_draft`, then calls the same core elicitation tool; the next creator request resumes from the saved draft and answered conversation.
+The canonical `request_elicitation` tool belongs to `rally:core` and is rendered to the model as `core_request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. In a work stream, the work stream becomes `needs_input`; a valid answer persists a visible response, clears attention when no blockers remain, and admits a new run into the same `SubstreamAgent`, linked to the previous run. In automation creation, the architect first saves its best partial state with `automation_submit_draft`, then calls the same core elicitation tool; the next creator request resumes from the saved draft and answered conversation.
 
 ### Durable receipts and terminal state
 
@@ -379,7 +379,7 @@ A HyperSight block run is the same harness with a different terminal product: it
 
 It is read-only, by the same `rejectToolModesBeforeCall(["write"], …)` hook the inline children use, and it cannot pause — a run that reaches `needs_input` fails with `block_dashboard_input_unavailable`, because there is no one to answer.
 
-Its output is a tool call. The block is exactly the `markdown` argument passed to the `avalon:block-dashboard` plugin's `submit_block`, and assistant text is discarded. Taking the block from the run's trailing text instead made every preamble, apology, and "here is the block:" part of the dashboard; an argument with a schema cannot drift that way. The tool is `mode: "read"` — it settles Rally's own record and reaches no provider, the same reason the automation architect's draft submission is a read — so the write ban above does not lock the run out of its own output.
+Its output is a tool call. The block is exactly the `markdown` argument passed to the `rally:block-dashboard` plugin's `submit_block`, and assistant text is discarded. Taking the block from the run's trailing text instead made every preamble, apology, and "here is the block:" part of the dashboard; an argument with a schema cannot drift that way. The tool is `mode: "read"` — it settles Rally's own record and reaches no provider, the same reason the automation architect's draft submission is a read — so the write ban above does not lock the run out of its own output.
 
 A turn that would end without that call gets one `onTurnWouldEnd` message asking for it, and only one: a block that will not submit twice running is a failed block, and nagging further only spends the run's ceilings. If it still never submits, the run is recorded `failed` with `block_dashboard_block_not_submitted` rather than completed-and-empty, so a block that renders nothing says why.
 
@@ -391,7 +391,7 @@ the measured distributions rather than assumed in advance.
 
 ### Durable inline subagents
 
-The root harness exposes `workstream_run_subagent` through the default-loaded `avalon:workstream` plugin for several independent, substantial read-only investigations. Rally follows Monad's useful delegation shape while preserving Rally-specific durable authority:
+The root harness exposes `workstream_run_subagent` through the default-loaded `rally:workstream` plugin for several independent, substantial read-only investigations. Rally follows Monad's useful delegation shape while preserving Rally-specific durable authority:
 
 - A child is an inline Bind run, not an autonomous participant. It receives one self-contained objective and a narrowed subset of plugins already authorized and active in the parent run.
 - Child admission is atomically keyed by the parent's stable tool-call receipt. Duplicate calls replay the same durable result, and a child can never widen the parent's frozen scope.
@@ -404,7 +404,7 @@ This deliberately adopts Monad's focused parallel-investigation strategy without
 
 ### Scoped durable memory
 
-Root work-stream runs receive the stable `avalon_memory` plugin. `memory_search`
+Root work-stream runs receive the stable `rally_memory` plugin. `memory_search`
 accepts exactly one of a content query or `memoryItemId`; the exact-ID form is the
 conflict-recovery read for a mutation and still reauthorizes the item against the
 host-derived scope union. The host returns scope provenance without allowing the
@@ -415,7 +415,7 @@ created by one automation subscription therefore share one automation scope.
 
 Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; Workers AI embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership, and each root run stores an immutable admission-recall snapshot and hash.
 
-Root runs also receive the separate stable `avalon_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records. Inline children receive no direct table access.
+Root runs also receive the separate stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records. Inline children receive no direct table access.
 
 Memory and table mutations return identifiers and current revisions. On a revision
 conflict, the failed result directs the model to re-read those exact identifiers,
@@ -428,7 +428,7 @@ Automation drafts may declare automation-scoped tables. Acceptance materializes 
 
 ### Scheduled wake-ups
 
-`avalon:workstream` carries `schedule_wakeup`, `list_wakeups`, and `cancel_wakeup`, so a run can defer work to a stated instant instead of promising it in text. `schedule_wakeup` takes the prompt plus exactly one of `delay` — a duration in common units, `"5 minutes"`, `"90 sec"`, `"1h30m"`, or an ISO-8601 `"PT2H30M"` — or `at`, an exact ISO-8601 timestamp. An `at` without an offset is read in the run's local zone, or in an explicit `timezone`; an `at` that carries an offset is absolute and rejects `timezone` rather than silently choosing between the two. The resolved instant must be at least one minute and at most one year out, whichever form produced it. Pending wake-ups are capped per work stream, and every rejection returns a stable code with its remediation and accepted vocabulary in the model-visible failed result.
+`rally:workstream` carries `schedule_wakeup`, `list_wakeups`, and `cancel_wakeup`, so a run can defer work to a stated instant instead of promising it in text. `schedule_wakeup` takes the prompt plus exactly one of `delay` — a duration in common units, `"5 minutes"`, `"90 sec"`, `"1h30m"`, or an ISO-8601 `"PT2H30M"` — or `at`, an exact ISO-8601 timestamp. An `at` without an offset is read in the run's local zone, or in an explicit `timezone`; an `at` that carries an offset is absolute and rejects `timezone` rather than silently choosing between the two. The resolved instant must be at least one minute and at most one year out, whichever form produced it. Pending wake-ups are capped per work stream, and every rejection returns a stable code with its remediation and accepted vocabulary in the model-visible failed result.
 
 The tool is `provider_key`-idempotent against `(workstream_id, idempotency_key)`, so a replayed receipt returns the persisted wake-up instead of scheduling a second. The workspace scheduler fires it: it claims the row before launching, so a lost claim means a missed wake-up rather than a duplicated run, and releases the claim when the harness cannot start so a later alarm retries. The principal that scheduled the wake-up is re-validated against current membership at fire time — a wake-up cannot outlive the authority that created it. The resulting run reads the prompt as an explicit trigger message labelled as coming from an earlier run of the same work stream; the transcript row is separate host-written system state. Sub-agents get none of these tools: they cannot schedule, and a parent's wake-ups are not theirs to act on.
 
@@ -1838,7 +1838,7 @@ remain a bounded canonical taxonomy and must not add content.
 ### 2026-08-13 — Terminal activation stays allocation-free and authority-neutral
 
 **What changed:** Supported regional work-stream runtimes register
-`avalon:terminal` as a deferred built-in plugin. Loading exposes one static
+`rally:terminal` as a deferred built-in plugin. Loading exposes one static
 prompt and all eight typed tools but creates no sandbox; execution crosses into
 the Terminal coordinator, which keeps its own mutation lease and rechecks its
 frozen authority fingerprint.
@@ -2313,7 +2313,7 @@ than by total work-stream count.
 ### 2026-08-12 — Artifacts are gone; a run's output is its final message
 
 **What changed:** `workstream_create_artifact` was removed from
-`avalon_workstream`, along with the `artifact.write` capability prefix, the R2
+`rally_workstream`, along with the `artifact.write` capability prefix, the R2
 write behind it, the download route, and the transcript block that rendered one.
 The `artifacts` table itself is retained for one release and dropped in the
 next — see **Consequences**. A run that is asked to produce something now produces it

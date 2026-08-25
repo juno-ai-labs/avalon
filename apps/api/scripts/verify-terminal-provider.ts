@@ -94,14 +94,14 @@ try {
     // Establish that the public negative targets are healthy from this exact
     // Daytona location before using them to prove Trusted-only denial.
     domainAllowList: [],
-    environment: { AVALON_RESOURCE_DIR: "/workspace/.avalon-output" },
+    environment: { AVALON_RESOURCE_DIR: "/workspace/.rally-output" },
   });
   sandboxId = created.id;
   if (created.domainAllowList.length !== 0) throw new Error("Daytona did not report Full-internet create state");
   await provider.prepareSandbox?.(sandboxId, []);
   await run("printf 'session-ok\\n'", "zero", "command-session");
 
-  const roundTripPath = "/workspace/.avalon/tmp/provider-interface-round-trip.bin";
+  const roundTripPath = "/workspace/.rally/tmp/provider-interface-round-trip.bin";
   const roundTripBytes = new Uint8Array([0, 1, 2, 10, 13, 127, 128, 254, 255]);
   await provider.writeFile(sandboxId, roundTripPath, roundTripBytes, new AbortController().signal);
   const downloadedBytes = await provider.readFile(sandboxId, roundTripPath);

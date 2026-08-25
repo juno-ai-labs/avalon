@@ -39,7 +39,7 @@ describe("Bind host durability boundaries", () => {
       type: "tool_started",
       toolCallId: "tool-read-invalid-arguments",
       toolName: "workstream_read_resource",
-      pluginId: "avalon_core",
+      pluginId: "rally_core",
       policy,
       input: {},
     } as never);
@@ -47,7 +47,7 @@ describe("Bind host durability boundaries", () => {
       type: "tool_failed",
       toolCallId: "tool-read-invalid-arguments",
       toolName: "workstream_read_resource",
-      pluginId: "avalon_core",
+      pluginId: "rally_core",
       policy,
       error: "resourceId or cursor is required",
       phase: "validation",
@@ -66,7 +66,7 @@ describe("Bind host durability boundaries", () => {
       type: "tool_started",
       toolCallId: "tool-read-csv",
       toolName: "workstream_read_resource",
-      pluginId: "avalon_core",
+      pluginId: "rally_core",
       policy,
       input: { resourceId: "00000000-0000-7000-8000-000000000777" },
     } as never);
@@ -74,7 +74,7 @@ describe("Bind host durability boundaries", () => {
       type: "tool_failed",
       toolCallId: "tool-read-csv",
       toolName: "workstream_read_resource",
-      pluginId: "avalon_core",
+      pluginId: "rally_core",
       policy,
       error: "The resource could not be converted",
       data: { code: "resource_format_unsupported" },
@@ -94,7 +94,7 @@ describe("Bind host durability boundaries", () => {
       type: "tool_started",
       toolCallId: "tool-read-retry",
       toolName: "workstream_read_resource",
-      pluginId: "avalon_core",
+      pluginId: "rally_core",
       policy,
       input: { resourceId: "00000000-0000-7000-8000-000000000777" },
     } as never);
@@ -102,7 +102,7 @@ describe("Bind host durability boundaries", () => {
       type: "tool_completed",
       toolCallId: "tool-read-retry",
       toolName: "workstream_read_resource",
-      pluginId: "avalon_core",
+      pluginId: "rally_core",
       policy,
       result: { output: {}, summary: "verified" },
     } as never);
@@ -118,7 +118,7 @@ describe("Bind host durability boundaries", () => {
       type: "tool_started",
       toolCallId: "tool-view-mixed",
       toolName: "workstream_view_resource",
-      pluginId: "avalon_core",
+      pluginId: "rally_core",
       policy,
       input: { resourceIds: [includedId, skippedId] },
     } as never);
@@ -126,7 +126,7 @@ describe("Bind host durability boundaries", () => {
       type: "tool_completed",
       toolCallId: "tool-view-mixed",
       toolName: "workstream_view_resource",
-      pluginId: "avalon_core",
+      pluginId: "rally_core",
       policy,
       result: {
         summary: "Viewed one of two requested images",
@@ -180,7 +180,7 @@ describe("Bind host durability boundaries", () => {
       type: "tool_started",
       toolCallId: "tool-read-cursor",
       toolName: "workstream_read_resource",
-      pluginId: "avalon_core",
+      pluginId: "rally_core",
       policy,
       input: { cursor: "sealed-cursor" },
     } as never);
@@ -188,7 +188,7 @@ describe("Bind host durability boundaries", () => {
       type: "tool_failed",
       toolCallId: "tool-read-cursor",
       toolName: "workstream_read_resource",
-      pluginId: "avalon_core",
+      pluginId: "rally_core",
       policy,
       error: "The resource changed; restart the read from its resource ID",
       data: { code: "resource_version_changed", details: { resourceId } },
@@ -201,7 +201,7 @@ describe("Bind host durability boundaries", () => {
       type: "tool_started",
       toolCallId: "tool-read-retry",
       toolName: "workstream_read_resource",
-      pluginId: "avalon_core",
+      pluginId: "rally_core",
       policy,
       input: { resourceId },
     } as never);
@@ -209,7 +209,7 @@ describe("Bind host durability boundaries", () => {
       type: "tool_completed",
       toolCallId: "tool-read-retry",
       toolName: "workstream_read_resource",
-      pluginId: "avalon_core",
+      pluginId: "rally_core",
       policy,
       result: { output: { resourceId }, summary: "Read resource" },
     } as never);

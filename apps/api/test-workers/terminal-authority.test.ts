@@ -1452,7 +1452,7 @@ describe("Terminal authority on real workerd", () => {
       await terminal(stub, "recordImportedResource", {
         sandboxGeneration: 1,
         resourceId: "00000000-0000-7000-8000-0000000000e1",
-        destinationPath: ".avalon/resources/one",
+        destinationPath: ".rally/resources/one",
         sourceSha256: "a".repeat(64),
         sizeBytes: 10,
         state: "completed",
@@ -1720,7 +1720,7 @@ describe("Terminal authority on real workerd", () => {
       await terminal(stub, "recordImportedResource", {
         sandboxGeneration: 2,
         resourceId: "00000000-0000-7000-8000-0000000000e2",
-        destinationPath: ".avalon/resources/two",
+        destinationPath: ".rally/resources/two",
         sourceSha256: "b".repeat(64),
         sizeBytes: 20,
         state: "completed",

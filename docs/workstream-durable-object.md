@@ -3672,11 +3672,11 @@ defect of being carried by the native-RPC door and not by `POST
 `subscribe` that follows.* Those are separate invocations and an isolate
 eviction between them is normal, so anything held in memory would be dropped
 silently on exactly the hibernation path most worth measuring. They are two
-traces joined by an `avalon.socket.connection_id` attribute instead.
+traces joined by an `rally.socket.connection_id` attribute instead.
 
 **Consequences:** An operation outside the three traced flows opens no spans, so
 tracing a fourth means naming its flow rather than reusing one. The upgrade and
-the subscription only meet through `avalon.socket.connection_id`, so anything
+the subscription only meet through `rally.socket.connection_id`, so anything
 that changes what a socket attachment carries must keep it. Span timing measures
 I/O and not CPU under workerd's pinned clock, so a future change that puts real
 computation inside the room will not show up in these numbers. Importing

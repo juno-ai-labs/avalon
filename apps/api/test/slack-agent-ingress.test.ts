@@ -285,7 +285,7 @@ describe("Slack Agent durable ingress", () => {
       user: { id: "U1" },
       view: {
         id: "V1",
-        callback_id: "avalon_start_task_submit",
+        callback_id: "rally_start_task_submit",
         state: { values: { prompt: { value: { value: "" } } } },
       },
     }, "body-hash")).resolves.toEqual({
@@ -302,7 +302,7 @@ describe("Slack Agent durable ingress", () => {
       user: { id: "U1" },
       view: {
         id: "V1",
-        callback_id: "avalon_start_task_submit",
+        callback_id: "rally_start_task_submit",
         state: { values: { prompt: { value: { value: "Investigate this" } } } },
       },
     }, "body-hash")).resolves.toEqual({
@@ -322,7 +322,7 @@ describe("Slack Agent durable ingress", () => {
       user: { id: "U1" },
       view: {
         id: "V1",
-        callback_id: "avalon_start_task_submit",
+        callback_id: "rally_start_task_submit",
         private_metadata: JSON.stringify({
           kind: "shortcut",
           channelType: "public",
@@ -664,7 +664,7 @@ describe("work-stream link unfurl card", () => {
           type: "button",
           text: { type: "plain_text", text: "Open in Avalon" },
           url,
-          action_id: "avalon_open_unfurl",
+          action_id: "rally_open_unfurl",
         }],
       });
     }

@@ -115,7 +115,7 @@ provider payloads, and error text are prohibited.
 Keep the registry name provider-neutral. If PostHog has a reserved event for
 the exact observation, translate it in
 `apps/api/src/telemetry/posthog-adapter.ts`, retain the registry name in
-`avalon_event_name`, and test that one occurrence produces one destination
+`rally_event_name`, and test that one occurrence produces one destination
 event. For example, a registered `screen_viewed` observation becomes `$screen`
 with `$screen_name`; it is not also delivered under `screen_viewed`.
 

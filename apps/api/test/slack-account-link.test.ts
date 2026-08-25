@@ -32,7 +32,7 @@ describe("Slack account linking", () => {
 
     const published = slack.calls.find((call) => call.method === "views.publish");
     const connect = connectButton(published?.body.view as Record<string, unknown>);
-    expect(connect).toMatchObject({ action_id: "avalon_connect", style: "primary" });
+    expect(connect).toMatchObject({ action_id: "rally_connect", style: "primary" });
     // The whole point: App Home is published once and stays on screen
     // indefinitely, so it must not carry anything that can expire on it.
     expect(connect).not.toHaveProperty("url");
@@ -49,9 +49,9 @@ describe("Slack account linking", () => {
     const opened = slack.calls.find((call) => call.method === "views.open");
     expect(opened?.body.trigger_id).toBe("trigger-1");
     const view = opened?.body.view as Record<string, unknown>;
-    expect(view.callback_id).toBe("avalon_connect_link");
+    expect(view.callback_id).toBe("rally_connect_link");
     const button = connectButton(view) as { url: string; action_id: string };
-    expect(button.action_id).toBe("avalon_open_connect");
+    expect(button.action_id).toBe("rally_open_connect");
     expect(challengeCount(database)).toBe(1);
 
     const handoff = new URL(button.url);
@@ -70,9 +70,9 @@ describe("Slack account linking", () => {
       // Slack reports the modal a block action came from. Its callback id must
       // not be read as the interaction's own, or this ack falls through to the
       // shortcut path and opens a task modal on top of the handoff.
-      view: { callback_id: "avalon_connect_link", hash: "view-hash" },
-      callback_id: "avalon_connect_link",
-      actions: [{ action_id: "avalon_open_connect", type: "button" }],
+      view: { callback_id: "rally_connect_link", hash: "view-hash" },
+      callback_id: "rally_connect_link",
+      actions: [{ action_id: "rally_open_connect", type: "button" }],
     }, "handoff-hash")).resolves.toEqual({});
 
     expect(slack.calls).toEqual([]);
@@ -88,12 +88,12 @@ describe("Slack account linking", () => {
     // button's own and drop the click into the shortcut fallback.
     await new SlackAgentService(environment(database)).processInteraction({
       ...connectClick(),
-      view: { callback_id: "avalon_some_modal", hash: "view-hash" },
-      callback_id: "avalon_some_modal",
+      view: { callback_id: "rally_some_modal", hash: "view-hash" },
+      callback_id: "rally_some_modal",
     }, "embedded-hash");
 
     const view = slack.calls.find((call) => call.method === "views.open")?.body.view as Record<string, unknown>;
-    expect(view.callback_id).toBe("avalon_connect_link");
+    expect(view.callback_id).toBe("rally_connect_link");
     expect(challengeCount(database)).toBe(1);
   });
 
@@ -175,17 +175,17 @@ describe("Slack account linking", () => {
     // before they were converted. Each payload carries a top-level `callback_id`
     // that would shadow the action id under the old matching.
     const cases = [
-      { actionId: "avalon_preferences", expect: "views.open", view: "avalon_preferences_submit" },
-      { actionId: "avalon_feedback", expect: "views.open", view: "avalon_feedback_submit" },
-      { actionId: "avalon_create_automation", expect: null, view: null },
-      { actionId: "avalon_open_task", expect: null, view: null },
+      { actionId: "rally_preferences", expect: "views.open", view: "rally_preferences_submit" },
+      { actionId: "rally_feedback", expect: "views.open", view: "rally_feedback_submit" },
+      { actionId: "rally_create_automation", expect: null, view: null },
+      { actionId: "rally_open_task", expect: null, view: null },
     ];
     for (const testCase of cases) {
       const database = await seededDatabase();
       const slack = stubSlack();
       await expect(new SlackAgentService(environment(database)).processInteraction({
         ...connectClick(),
-        callback_id: "avalon_some_modal",
+        callback_id: "rally_some_modal",
         actions: [{ action_id: testCase.actionId, type: "button", value: "workstream-1" }],
       }, `route-${testCase.actionId}`)).resolves.toEqual({});
       const opened = slack.calls.find((call) => call.method === "views.open");
@@ -205,11 +205,11 @@ describe("Slack account linking", () => {
 
     await expect(new SlackAgentService(environment(database)).processInteraction({
       ...connectClick(),
-      callback_id: "avalon_some_modal",
+      callback_id: "rally_some_modal",
     }, "foreign-callback-hash")).resolves.toEqual({});
 
     const view = slack.calls.find((call) => call.method === "views.open")?.body.view as Record<string, unknown>;
-    expect(view.callback_id).toBe("avalon_connect_link");
+    expect(view.callback_id).toBe("rally_connect_link");
     expect(challengeCount(database)).toBe(1);
   });
 
@@ -241,7 +241,7 @@ describe("Slack account linking", () => {
     await new SlackAgentService(environment(database)).processInteraction(connectClick(), "unhealthy-hash");
 
     const view = slack.calls.find((call) => call.method === "views.open")?.body.view as Record<string, unknown>;
-    expect(view.callback_id).toBe("avalon_connect_link");
+    expect(view.callback_id).toBe("rally_connect_link");
     expect(challengeCount(database)).toBe(1);
   });
 
@@ -317,7 +317,7 @@ function connectClick() {
     team: { id: "T123" },
     user: { id: "U456" },
     trigger_id: "trigger-1",
-    actions: [{ action_id: "avalon_connect", type: "button" }],
+    actions: [{ action_id: "rally_connect", type: "button" }],
   };
 }
 

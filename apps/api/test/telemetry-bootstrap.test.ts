@@ -10,7 +10,7 @@ const now = "2026-08-12T20:00:00.000Z";
 
 function onboardingEvent(journeyId: string): TelemetryEnvelope {
   return {
-    schema: "com.avalon.telemetry.event",
+    schema: "com.rally.telemetry.event",
     schemaVersion: 1,
     eventId,
     name: "onboarding_region_selected",
@@ -32,7 +32,7 @@ function onboardingEvent(journeyId: string): TelemetryEnvelope {
 
 function lifecycleEvent(): TelemetryEnvelope {
   return {
-    schema: "com.avalon.telemetry.event",
+    schema: "com.rally.telemetry.event",
     schemaVersion: 1,
     eventId,
     name: "application_lifecycle",

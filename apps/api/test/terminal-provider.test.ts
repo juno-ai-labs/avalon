@@ -102,7 +102,7 @@ describe("Daytona Terminal provider", () => {
       workstreamId: "stream-1",
       generation: 1,
       domainAllowList: ["github.com", "*.npmjs.org"],
-      environment: { AVALON_RESOURCE_DIR: "/workspace/.avalon-output" },
+      environment: { AVALON_RESOURCE_DIR: "/workspace/.rally-output" },
     });
     expect(createdSnapshot).toEqual({
       id: "sandbox-1",
@@ -122,11 +122,11 @@ describe("Daytona Terminal provider", () => {
       autoDeleteInterval: -1,
       ttlMinutes: 0,
       domainAllowList: "github.com,*.npmjs.org",
-      envVars: { AVALON_RESOURCE_DIR: "/workspace/.avalon-output" },
+      envVars: { AVALON_RESOURCE_DIR: "/workspace/.rally-output" },
       labels: {
-        "avalon.workspace": "workspace-1",
-        "avalon.workstream": "stream-1",
-        "avalon.generation": "1",
+        "rally.workspace": "workspace-1",
+        "rally.workstream": "stream-1",
+        "rally.generation": "1",
       },
     }, { timeout: 60 });
     expect(clientFactory).toHaveBeenCalledWith({
@@ -402,12 +402,12 @@ describe("Daytona Terminal provider", () => {
       suppressInputEcho: true,
     }, 130);
     expect(executeSessionCommand).toHaveBeenCalledWith("avalon-task-1", {
-      command: expect.stringContaining("avalon_status=$?"),
+      command: expect.stringContaining("rally_status=$?"),
       runAsync: true,
       suppressInputEcho: true,
     }, 130);
     const submittedCommand = executeSessionCommand.mock.calls[0]?.[1].command;
-    expect(submittedCommand).toMatch(/^\(.*; exit "\$avalon_status"\)$/u);
+    expect(submittedCommand).toMatch(/^\(.*; exit "\$rally_status"\)$/u);
     expect(deleteSession).toHaveBeenCalledWith("avalon-task-1");
   });
 
@@ -425,7 +425,7 @@ describe("Daytona Terminal provider", () => {
 
     await expect(provider.writeFile(
       "sandbox-1",
-      "/workspace/.avalon/tmp/write",
+      "/workspace/.rally/tmp/write",
       new Uint8Array([1, 2, 3]),
       controller.signal,
     )).rejects.toThrow("Terminal file transfer cancelled");
@@ -531,7 +531,7 @@ describe("Daytona Terminal provider", () => {
   });
 
   it("reattaches to the one command in a stable provider session after a lost Worker response", async () => {
-    const expectedEnvelope = "(cd -- '/workspace' || exit $?; if [ -f /workspace/.avalon/session.env ]; then . /workspace/.avalon/session.env || exit $?; fi; timeout --signal=TERM --kill-after=5s 120s bash -lc 'printf recovered'; avalon_status=$?; if [ \"$avalon_status\" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n' >&2; fi; exit \"$avalon_status\")";
+    const expectedEnvelope = "(cd -- '/workspace' || exit $?; if [ -f /workspace/.rally/session.env ]; then . /workspace/.rally/session.env || exit $?; fi; timeout --signal=TERM --kill-after=5s 120s bash -lc 'printf recovered'; rally_status=$?; if [ \"$rally_status\" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n' >&2; fi; exit \"$rally_status\")";
     const sessionCommand = {
       id: "cmd-existing",
       command: expectedEnvelope,
@@ -670,7 +670,7 @@ describe("Daytona Terminal provider", () => {
     const deleteSession = vi.fn(async () => undefined);
     const removePublisher = vi.fn(async () => undefined);
     const publisherSandbox = {
-      id: "publisher-1", name: "avalon-publisher", state: "started",
+      id: "publisher-1", name: "rally-publisher", state: "started",
       fs: { uploadFile, downloadFile: vi.fn() },
       process: { createSession, getSession, getSessionCommand, getSessionCommandLogs, executeSessionCommand, deleteSession },
       delete: removePublisher,

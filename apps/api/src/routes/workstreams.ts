@@ -191,9 +191,9 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
     // charged to whichever step closed next.
     await span.step("authority.read", () => requireOpenWorkstreamAuthority(c.env));
     span.setAttributes({
-      "avalon.workstream.attachment_count": body.attachmentIds?.length ?? 0,
-      "avalon.workstream.participant_count": body.participantUserIds?.length ?? 0,
-      ...(operationId ? { "avalon.operation.id": operationId } : {}),
+      "rally.workstream.attachment_count": body.attachmentIds?.length ?? 0,
+      "rally.workstream.participant_count": body.participantUserIds?.length ?? 0,
+      ...(operationId ? { "rally.operation.id": operationId } : {}),
     });
     const created = CreatedWorkstreamSchema.parse(
       await recordFailure(span, "workstream_create_failed", () =>
@@ -203,8 +203,8 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
         }, { span }))
     );
     span.setAttributes({
-      "avalon.workstream.id": created.workstream.id,
-      "avalon.harness_run.id": created.harnessRunId,
+      "rally.workstream.id": created.workstream.id,
+      "rally.harness_run.id": created.harnessRunId,
     });
     if (operationId) {
       const event = apiTelemetryEnvelope(
@@ -280,11 +280,11 @@ workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
       ]),
     );
     span.setAttributes({
-      "avalon.workstream.participant_count": boot.workstream.participants.length,
-      "avalon.workstream.resource_count": boot.workstream.resources.length,
-      "avalon.workstream.harness_status": boot.workstream.harnessStatus,
-      "avalon.boot.message_count": boot.messageFeed.items.length,
-      "avalon.boot.resumed": boot.resumeFeed !== null,
+      "rally.workstream.participant_count": boot.workstream.participants.length,
+      "rally.workstream.resource_count": boot.workstream.resources.length,
+      "rally.workstream.harness_status": boot.workstream.harnessStatus,
+      "rally.boot.message_count": boot.messageFeed.items.length,
+      "rally.boot.resumed": boot.resumeFeed !== null,
     });
     return c.json(WorkstreamBootSchema.parse({
       ...boot.workstream,
@@ -317,9 +317,9 @@ workstreamRoutes.get("/:id/messages", zValidator("param", idParam), zValidator("
     const page = await span.step("workstream.transcript.load", () =>
       client.messages(query.limit, query.before, query.after, query.around));
     span.setAttributes({
-      "avalon.transcript.requested_limit": query.limit,
-      "avalon.transcript.message_count": page.items.length,
-      "avalon.transcript.cursor": query.before !== undefined ? "before" : query.after !== undefined ? "after" : query.around !== undefined ? "around" : "latest",
+      "rally.transcript.requested_limit": query.limit,
+      "rally.transcript.message_count": page.items.length,
+      "rally.transcript.cursor": query.before !== undefined ? "before" : query.after !== undefined ? "after" : query.around !== undefined ? "around" : "latest",
     });
     return c.json(MessagePageSchema.parse(page));
   });
@@ -333,17 +333,17 @@ workstreamRoutes.post("/:id/messages", zValidator("param", idParam), requireSend
     flow: "workstream_message_send",
     identity: { workstreamId: id },
     attributes: {
-      "avalon.transport": "http",
-      "avalon.message.client_id": body.clientMessageId,
-      "avalon.message.attachment_count": body.attachmentIds?.length ?? 0,
-      ...(operationId ? { "avalon.operation.id": operationId } : {}),
+      "rally.transport": "http",
+      "rally.message.client_id": body.clientMessageId,
+      "rally.message.attachment_count": body.attachmentIds?.length ?? 0,
+      ...(operationId ? { "rally.operation.id": operationId } : {}),
     },
   }, async (span) => {
     const client = await authoritativeWorkstreamClient(c, id, { span, flow: "workstream_message_send" });
     const result = await span.step("workstream.message.write", () => client.createMessage(body));
     span.setAttributes({
-      "avalon.agent.invoked": result.agentInvoked,
-      "avalon.harness_run.id": result.harnessRunId,
+      "rally.agent.invoked": result.agentInvoked,
+      "rally.harness_run.id": result.harnessRunId,
     });
     return c.json(CreatedMessageSchema.parse(result), 201);
   });
@@ -406,7 +406,7 @@ workstreamRoutes.get("/:id/socket", zValidator("param", idParam), async (c) => {
     // traces as its own invocation with its own trace id. The ticket id is the
     // attribute both traces carry, and the only thing that joins them.
     span.setAttributes({
-      "avalon.socket.ticket_id": issued.ticketId,
+      "rally.socket.ticket_id": issued.ticketId,
     });
     return c.json(SocketTicketSchema.parse(issued));
   });
@@ -420,7 +420,7 @@ workstreamRoutes.get("/:id/substreams/:substreamId/socket", zValidator("param", 
     const issued = await span.step("workstream.socket.ticket.issue", () =>
       new WorkstreamService(c.env, getAuth(c)).socketTicket(param.id, param.substreamId));
     span.setAttributes({
-      "avalon.socket.ticket_id": issued.ticketId,
+      "rally.socket.ticket_id": issued.ticketId,
     });
     return c.json(SocketTicketSchema.parse(issued));
   });
