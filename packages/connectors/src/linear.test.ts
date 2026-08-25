@@ -274,10 +274,10 @@ describe("Linear connector", () => {
   it("allows personal resource hydration and health checks while rejecting native-agent execution", async () => {
     const adapter = linearAdapter(async (_input, init) => {
       const request = JSON.parse(String(init?.body)) as { query: string };
-      if (request.query.includes("AvalonReadDocument")) return jsonResponse({
+      if (request.query.includes("RallyReadDocument")) return jsonResponse({
         data: { document: { id: "document-1", title: "Personal plan" } },
       });
-      if (request.query.includes("AvalonLinearHealth")) return jsonResponse({ data: { viewer: { id: "linear-user-1" } } });
+      if (request.query.includes("RallyLinearHealth")) return jsonResponse({ data: { viewer: { id: "linear-user-1" } } });
       throw new Error(`Unexpected query: ${request.query}`);
     });
     const connection = personalLinearConnection([LinearCapabilities.read, LinearCapabilities.agent]);
@@ -298,7 +298,7 @@ describe("Linear connector", () => {
   it("hydrates provider resources into bounded agent context", async () => {
     const fetcher: FetchLike = async (_input, init) => {
       const request = JSON.parse(String(init?.body)) as { query: string };
-      expect(request.query).toContain("AvalonReadDocument");
+      expect(request.query).toContain("RallyReadDocument");
       return jsonResponse({
         data: {
           document: { id: "document-1", title: "Design", content: "x".repeat(50_000) },
@@ -317,7 +317,7 @@ describe("Linear connector", () => {
   it("hydrates project updates as their own resource type", async () => {
     const fetcher: FetchLike = async (_input, init) => {
       const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
-      expect(request.query).toContain("AvalonReadProjectUpdate");
+      expect(request.query).toContain("RallyReadProjectUpdate");
       expect(request.variables).toEqual({ id: "update-1" });
       return jsonResponse({
         data: {
@@ -344,7 +344,7 @@ describe("Linear connector", () => {
     let variables: Record<string, unknown> | null = null;
     const fetcher: FetchLike = async (_input, init) => {
       const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
-      expect(request.query).toContain("AvalonUpdateIssue");
+      expect(request.query).toContain("RallyUpdateIssue");
       variables = request.variables;
       return jsonResponse({
         data: {
@@ -481,7 +481,7 @@ describe("Linear connector", () => {
     let variables: Record<string, unknown> | null = null;
     const adapter = linearAdapter(async (_input, init) => {
       const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
-      expect(request.query).toContain("AvalonListWorkflowStates");
+      expect(request.query).toContain("RallyListWorkflowStates");
       variables = request.variables;
       return jsonResponse({
         data: {

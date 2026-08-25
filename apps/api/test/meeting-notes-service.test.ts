@@ -95,7 +95,7 @@ describe("MeetingNotesService", () => {
     expect(request).toContain("<full_transcript>");
     expect(request).toContain("<recent_transcript>");
     expect(request).toContain("Morgan owns the checklist");
-    expect(captured!.systemPrompt).toContain("Avalon Control Tower");
+    expect(captured!.systemPrompt).toContain("Rally Control Tower");
     expect(captured!.systemPrompt).toContain("directed unanswered question");
     expect(captured!.systemPrompt).toContain("complete replacement briefing");
     // The formatting policy's TeX rule is the prompt half of the repair pair
@@ -217,7 +217,7 @@ describe("MeetingNotesService", () => {
     expect(request).not.toContain("THIS RECENT WINDOW MUST NOT BE USED");
     expect(captured!.systemPrompt).toContain("end-of-meeting chief of staff");
     expect(captured!.systemPrompt).toContain("Action items");
-    expect(captured!.systemPrompt).not.toContain("Avalon Control Tower");
+    expect(captured!.systemPrompt).not.toContain("Rally Control Tower");
   });
 
   it("returns a safe API error when the notes loop fails", async () => {
@@ -251,7 +251,7 @@ describe("MeetingNotesService", () => {
       // pass the true next step is one Avalon takes itself, a minute from now.
       // The harness's own code and message stay in the logs, where the person
       // who needs the cause is looking.
-      message: "Avalon could not update Control Tower. The next refresh will try again",
+      message: "Rally could not update Control Tower. The next refresh will try again",
     });
   });
 
@@ -281,7 +281,7 @@ describe("MeetingNotesService", () => {
       status: 502,
       code: "meeting_notes_generation_failed",
       // The final pass has no successor, so it does not promise one.
-      message: "Avalon could not create the final meeting summary",
+      message: "Rally could not create the final meeting summary",
     });
   });
 });

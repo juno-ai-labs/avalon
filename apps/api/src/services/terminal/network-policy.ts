@@ -6,7 +6,7 @@ export const TERMINAL_NETWORK_MANIFEST_VERSION = "terminal-network-v1";
 export const TERMINAL_NETWORK_BASELINE = [
   {
     id: "github_avalon",
-    label: "GitHub and Avalon",
+    label: "GitHub and Rally",
     domains: [
       "api.github.com",
       // The canonical API hosts only. A sandbox reaches Avalon at whatever

@@ -183,7 +183,7 @@ export function isTerminalProviderNotFound(error: unknown): boolean {
 
 class TerminalSandboxInitializationError extends Error {
   constructor() {
-    super("Daytona could not initialize the private Avalon workspace");
+    super("Daytona could not initialize the private Rally workspace");
     this.name = "TerminalSandboxInitializationError";
   }
 }
@@ -435,7 +435,7 @@ export function createDaytonaTerminalProvider(
           undefined,
           120,
         );
-        if (initialized.exitCode !== 0) throw new Error("Avalon workspace initialization failed");
+        if (initialized.exitCode !== 0) throw new Error("Rally workspace initialization failed");
         installFinishedAt = now();
         installedCapabilities = parseInstalledCapabilities(
           initialized.result ?? initialized.artifacts?.stdout ?? "",
@@ -447,7 +447,7 @@ export function createDaytonaTerminalProvider(
           undefined,
           120,
         );
-        if (verified.exitCode !== 0) throw new Error("Avalon workspace verification failed");
+        if (verified.exitCode !== 0) throw new Error("Rally workspace verification failed");
         const finishedAt = now();
         observe({
           operation: "sandbox_bootstrap",
@@ -626,7 +626,7 @@ export function createDaytonaTerminalProvider(
           && sandbox.process.getSessionCommandLogs,
         );
         if (!supportsObservation) {
-          throw new Error("Daytona command observation is unavailable; Avalon refused to execute an unrecoverable command");
+          throw new Error("Daytona command observation is unavailable; Rally refused to execute an unrecoverable command");
         }
         const execution = (async () => {
           let commands: Array<{ id: string; command: string; exitCode?: number | null }> = [];

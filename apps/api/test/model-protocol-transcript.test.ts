@@ -423,14 +423,14 @@ describe("durable UI-to-model transcript projection", () => {
         textContent: "Trace the failed release, identify the owner, and prepare the fix.",
         structuredContent: {
           kind: "suggested_work_expansion",
-          label: "Expanded by Avalon from suggested work",
+          label: "Expanded by Rally from suggested work",
         },
       })],
     );
 
     expect(projection.messages).toEqual([{
       role: "user",
-      content: expect.stringContaining("USER-SELECTED AVALON SUGGESTED-WORK BRIEF"),
+      content: expect.stringContaining("USER-SELECTED RALLY SUGGESTED-WORK BRIEF"),
     }]);
     expect(projection.messages[0]?.content).toContain("untrusted evidence");
     expect(projection.messages[0]?.content).toContain("Trace the failed release");

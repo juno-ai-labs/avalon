@@ -147,7 +147,7 @@ export class TerminalSettingsService {
       affectedWorkstreams: sandboxes.map((sandbox) => ({ id: sandbox.workstream_id, title: sandbox.title })),
       warning: input.mode === "full_internet"
         ? "Full internet lets Terminal code contact arbitrary public destinations. Active sandboxes will stop and stay stopped until the next Terminal tool call."
-        : "Trusted only applies Avalon-managed platform access and workspace-approved domains. Active sandboxes will stop while Daytona applies the policy.",
+        : "Trusted only applies Rally-managed platform access and workspace-approved domains. Active sandboxes will stop while Daytona applies the policy.",
     };
   }
 
@@ -317,7 +317,7 @@ export class TerminalSettingsService {
         }
       }
       await this.failApplication(mutation.id, current, "provider_policy_mismatch");
-      throw new ApiError(502, "terminal_policy_verification_failed", "Daytona did not confirm the requested network policy. Avalon stopped or quarantined every affected sandbox and kept the last verified policy; retry the settings change or contact support.", {
+      throw new ApiError(502, "terminal_policy_verification_failed", "Daytona did not confirm the requested network policy. Rally stopped or quarantined every affected sandbox and kept the last verified policy; retry the settings change or contact support.", {
         reason: failures.slice(0, 10).join("; "),
         sandboxOutcomes: affected.slice(0, 100).map((sandbox) => ({
           workstreamId: sandbox.workstream_id,

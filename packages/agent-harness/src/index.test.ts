@@ -172,7 +172,7 @@ describe("agent harness", () => {
       message: "The second section still needs work",
       activeTask: true,
       connectorMentions: [],
-      addressesAvalon: false,
+      addressesRally: false,
       recentMessages,
     });
     const providerMessages = requestBody!.messages as Array<{ role: string; content: string }>;
