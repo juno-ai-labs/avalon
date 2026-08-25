@@ -583,6 +583,7 @@ describe('Sidebar work-stream markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
+            automationWorkspaceTemplatesAvailable
             automations={[automation]}
             onRunAutomation={onRunAutomation}
             onSignOut={vi.fn()}
@@ -810,6 +811,7 @@ describe('Sidebar work-stream markers', () => {
           <Sidebar
             {...defaultActions}
             automations={[]}
+            meetingRecordingAvailable
             onOpenMeetingNotes={onOpenMeetingNotes}
             onSignOut={vi.fn()}
             workspace={workspace}

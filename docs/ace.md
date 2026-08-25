@@ -42,7 +42,9 @@ member count, slug, and application environment use the same attributes the API
 already evaluates.
 
 After Flagship accepts a PUT, Ace places only the flag key on
-`avalon-product-feature-flag-changes` after Flagship's propagation window. Its
+`avalon-product-feature-flag-changes` after Flagship's documented
+[up-to-30-second propagation window](https://developers.cloudflare.com/flagship/concepts/).
+Its
 consumer keyset-pages every workspace from Global and EU D1, then sends one
 key-and-workspace message to the owning regional queue. The regional API
 consumer RPCs to that workspace's `WorkspaceDO`. The object evaluates the
@@ -100,7 +102,9 @@ reviewed as a new boundary.
   queue.
 - Condition strings are at most 256 characters, descriptions 512 characters,
   nesting is at most five groups, and rollout percentages are 0 through 100.
-  These are Flagship platform limits, not Ace-chosen defensive bounds.
+  The string, description, and nesting limits come from
+  [Flagship's platform limits](https://developers.cloudflare.com/flagship/reference/limits/),
+  not Ace-chosen defensive bounds.
 
 ## Testing
 
@@ -117,15 +121,25 @@ external Flagship management and evaluation APIs; D1, Queue dispatch, Durable
 Object storage, RPC, and WebSockets use the workerd suite where their runtime
 behavior matters.
 
+Ace deliberately has no live local-backend command: a partial Worker without
+its two D1 bindings, Queues, Access audience, and Flagship credentials is a
+misleading approximation that can accidentally write the shared control plane.
+Use the tests and dry-run build for backend changes; use explicit browser
+fixtures when visually exercising the component library.
+
 ## Regional impact
 
-There is one Ace Worker and one Flagship application for both regions. Ace reads
-each regional D1 directly and sends only opaque workspace IDs and flag keys to
-the regional queues. Each regional API then resolves its own D1 placement and
-Durable Object namespace. No workspace row, email address, name, socket, or
-effective flag value crosses between Global and EU. The existing approved
-Flagship attributes do cross to the one global evaluation service as documented
-in [`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
+There is one Ace Worker and one Flagship application for both regions. For an
+Access-authorized operator's directory search, Ace reads each regional D1
+directly and transiently returns matching names, full email addresses, slugs,
+and opaque IDs to that operator's browser. Those lookup fields therefore cross
+the EU data-plane boundary into the shared Ace runtime; Ace does not persist
+them or write them to Flagship. Fan-out sends only opaque workspace IDs and flag
+keys to regional queues, and each regional API alone resolves its Durable
+Object namespace. Workspace content, memberships, sockets, and effective flag
+values do not cross through Ace. The separately approved Flagship attributes do
+cross to the one global evaluation service as documented in
+[`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
 
 ## Security and trust model
 
@@ -170,6 +184,30 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-08-24 — Review hardens live delivery and records Ace's regional exception
+
+**What changed:** Initial desktop reads now fetch immediately despite their
+fail-closed render seed; every Electron surface defaults managed Booleans off;
+meeting controls consume live socket-backed values; queue batches deduplicate
+keys and prove cursor pagination; deployment follows changes to the shared
+Access verifier. Misleading partial local-Ace commands were removed, and the
+regional section now describes the directory fields Ace transiently reads.
+
+**Why:** Review reproduced stale or fail-open application surfaces and showed
+that the earlier residency text contradicted Ace's direct EU D1 binding. It also
+found duplicate full-account enumerations and a deployment trigger that could
+leave Ace on an older verifier after a merge.
+
+**Considered and rejected:** Routing Ace directory search through a new regional
+RPC. The product requirement deliberately makes this internal Access-gated
+application the cross-region lookup plane; adding a bridge would change that
+boundary rather than fix the inaccurate claim.
+
+**Consequences:** A render seed is never treated as a completed server read,
+managed Electron UI remains off until an exact server `true`, one Queue batch
+enumerates each region once per distinct key, and regional documentation must
+continue to name Ace's narrow operator-search exception.
 
 ### 2026-08-24 — Ace manages Suggested Work and workspace template rollouts
 

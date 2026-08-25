@@ -14,6 +14,7 @@ describe('Ace deployment contract', () => {
     expect(workflow).toContain('secrets.CLOUDFLARE_API_TOKEN');
     expect(workflow).toContain('secrets.ACE_FLAGSHIP_API_TOKEN');
     expect(workflow).toContain('https://ace.internal.rallywith.ai/');
+    expect(workflow).toContain('apps/migration-tracker/src/access.ts');
   });
 
   it('provisions the Access application and every enabled-named flag', async () => {

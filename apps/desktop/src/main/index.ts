@@ -1121,8 +1121,9 @@ function observeClientFeatureFlags(flags: ClientFeatureFlags): void {
   meetingRecordingAvailable = flags.meetingRecordingEnabled;
   suggestedWorkAvailable = flags.suggestedWorkEnabled;
   if (changed) {
+    // Only the main-process surfaces are projected here. Renderer surfaces
+    // consume the live workspace-socket cache directly.
     menuBarController.refresh();
-    broadcastApplicationSettingsChanged(desktopApplicationSettings());
   }
 }
 
@@ -1174,7 +1175,6 @@ function desktopApplicationSettings(
   return {
     ...lockdown,
     developerSettingsAvailable,
-    meetingRecordingAvailable,
     // The effective preference, not the stored one. Debug enabled is a
     // per-device choice inside a section the service decides exists at all, so
     // a stored `true` grants nothing once the flag is off. Gating it here

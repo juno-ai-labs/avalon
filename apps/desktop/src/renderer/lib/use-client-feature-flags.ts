@@ -22,6 +22,10 @@ export function useClientFeatureFlags(
     queryFn: ({ signal }) => api!.clientFeatureFlags(signal),
     enabled: api !== null,
     initialData: DEFAULT_CLIENT_FEATURE_FLAGS,
+    initialDataUpdatedAt: 0,
+    // The off defaults are a safe value to render, not a successful read.
+    // Mark them stale so REST starts immediately instead of waiting for the
+    // workspace socket or the first 60-second stale transition.
     staleTime: 60_000,
   });
 }
