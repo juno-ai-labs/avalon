@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, LabelHTMLAttributes, PropsWithChildren, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, HTMLAttributes, LabelHTMLAttributes, PropsWithChildren, ReactNode } from 'react';
 
 export function Button({ variant = 'secondary', ...props }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'secondary' | 'quiet';
@@ -20,8 +20,8 @@ export function Field({ label, children, className = '', ...props }: PropsWithCh
   return <label {...props} className={className}><span>{label}</span>{children}</label>;
 }
 
-export function Panel({ children, className = '' }: PropsWithChildren<{ className?: string }>): React.JSX.Element {
-  return <article className={`ace-panel${className ? ` ${className}` : ''}`}>{children}</article>;
+export function Panel({ children, className = '', ...props }: PropsWithChildren<HTMLAttributes<HTMLElement>>): React.JSX.Element {
+  return <article {...props} className={`ace-panel${className ? ` ${className}` : ''}`}>{children}</article>;
 }
 
 export function StatusDot({ active, label }: { active: boolean; label: string }): React.JSX.Element {
