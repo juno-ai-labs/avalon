@@ -185,6 +185,22 @@ When a save succeeds but clients do not change, inspect in order:
 
 ## Changelog
 
+### 2026-08-25 — Merge deployment invokes Ace's package script explicitly
+
+**What changed:** The Ace deployment workflow now runs
+`pnpm --filter @avalon/ace run deploy`, and its deployment contract pins that
+exact command.
+
+**Why:** pnpm reserves `deploy` as a CLI command. Without `run`, the first
+credentialed Ace release passed every verification gate and then stopped before
+provisioning with `ERR_PNPM_INVALID_DEPLOY_TARGET` instead of invoking the
+package script.
+
+**Considered and rejected:** Renaming the package script only to avoid pnpm's
+command name. The repository-level `deploy:ace` command already invokes it
+correctly with `run`; making the workflow equally explicit fixes the call site
+without changing the documented operator interface.
+
 ### 2026-08-24 — Review hardens live delivery and records Ace's regional exception
 
 **What changed:** Initial desktop reads now fetch immediately despite their

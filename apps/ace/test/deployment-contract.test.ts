@@ -10,7 +10,7 @@ describe('Ace deployment contract', () => {
     const workflow = await readFile(`${repositoryDirectory}/.github/workflows/deploy-ace.yml`, 'utf8');
 
     expect(workflow).toContain('branches: [main]');
-    expect(workflow).toContain('pnpm --filter @avalon/ace deploy');
+    expect(workflow).toContain('pnpm --filter @avalon/ace run deploy');
     expect(workflow).toContain('secrets.CLOUDFLARE_API_TOKEN');
     expect(workflow).toContain('secrets.ACE_FLAGSHIP_API_TOKEN');
     expect(workflow).toContain('https://ace.internal.rallywith.ai/');

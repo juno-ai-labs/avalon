@@ -76,7 +76,7 @@ jobs:
       # audience, deploys the Worker/assets/consumer, and installs the dedicated
       # Flagship-only runtime token as an encrypted Worker secret.
       - name: Provision and deploy Ace
-        run: pnpm --filter @avalon/ace deploy
+        run: pnpm --filter @avalon/ace run deploy
 
       - name: Verify Cloudflare Access protects Ace
         run: |
