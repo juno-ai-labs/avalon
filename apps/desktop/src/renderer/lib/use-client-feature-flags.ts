@@ -10,9 +10,13 @@ export const CLIENT_FEATURE_FLAGS_QUERY_KEY = ['feature-flags'] as const;
 export const DEFAULT_CLIENT_FEATURE_FLAGS: ClientFeatureFlags = ClientFeatureFlagsSchema.parse({});
 
 /**
- * Product features begin off and move only after a schema-valid server answer.
- * The workspace socket writes the same cache key on connect and on live change;
- * this HTTP read covers the short interval before that socket is subscribed.
+ * Every field here moves only after a schema-valid server answer, each toward
+ * its own schema default rather than uniformly toward off: most begin off and
+ * are a rollout a person is opted into, but `digestsEnabled` begins on, the
+ * same fail-open direction `resolveDigestsEnabled` resolves it in server-side
+ * (see `client-feature-flags.ts`). The workspace socket writes the same cache
+ * key on connect and on live change; this HTTP read covers the short interval
+ * before that socket is subscribed.
  */
 export function useClientFeatureFlags(
   api: Pick<RallyApi, 'clientFeatureFlags'> | null,
@@ -23,7 +27,7 @@ export function useClientFeatureFlags(
     enabled: api !== null,
     initialData: DEFAULT_CLIENT_FEATURE_FLAGS,
     initialDataUpdatedAt: 0,
-    // The off defaults are a safe value to render, not a successful read.
+    // The schema defaults are a safe value to render, not a successful read.
     // Mark them stale so REST starts immediately instead of waiting for the
     // workspace socket or the first 60-second stale transition.
     staleTime: 60_000,

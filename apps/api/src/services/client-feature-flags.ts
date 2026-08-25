@@ -2,6 +2,7 @@ import type { ClientFeatureFlags } from "@rally/contracts";
 import type { Env, IdentityAuthContext } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import { resolveControlTowerRefreshSeconds } from "./control-tower-flags";
+import { resolveDigestsEnabled } from "./digest-flags";
 import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 
 /**
@@ -11,18 +12,29 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
  * these decide what the desktop is allowed to offer. Keeping them apart keeps
  * a client-visible flag from inheriting the model resolver's open default.
  *
- * Every *feature* here fails **closed**. A model flag falls back to the Worker
- * variables because an agent still has to run; a client feature has nothing it
- * must do, so an unbound binding, an unreachable Flagship, a missing flag, and
- * a mistyped value all resolve to off.
+ * Every *presentation* flag here fails **closed**. A model flag falls back to
+ * the Worker variables because an agent still has to run; a feature nobody has
+ * been given yet has nothing it must do, so an unbound binding, an unreachable
+ * Flagship, a missing flag, and a mistyped value all resolve to off.
  *
- * One field in the response is not a feature and does not follow that rule:
- * `controlTowerRefreshSeconds` is a cadence, and a recording that never
- * refreshes is not a safe answer to an outage. It is resolved by
- * `control-tower-flags.ts`, which fails to a checked-in default the way a model
- * flag does, and is served here because this is the one route a client asks for
- * server-decided values. Anything else added here that has no off state belongs
- * in a module of its own for the same reason.
+ * Two fields do not follow that rule, for two different reasons:
+ *
+ * - `controlTowerRefreshSeconds` is a cadence, not a feature — a recording
+ *   that never refreshes is not a safe answer to an outage. Resolved by
+ *   `control-tower-flags.ts`, which fails to a checked-in default the way a
+ *   model flag does.
+ * - `digestsEnabled` is a feature, but one that already defaults on for every
+ *   existing person — hiding the Digest settings section is what an operator
+ *   opts someone *into*, not the safe answer to an outage. Resolved by
+ *   `resolveDigestsEnabled` in `digest-flags.ts`, the same function
+ *   `fireDigestSchedule` checks before sending — one evaluation per (user,
+ *   workspace), reused here rather than a second "is it off for the
+ *   workspace" check combined with this one in application code. See
+ *   `docs/digests.md#the-run`.
+ *
+ * Both are served here because this is the one route a client asks for
+ * server-decided values. Anything else added with no safe "off" belongs in a
+ * module of its own for the same reason, and is served from here the same way.
  *
  * **Who gets a feature is a Flagship targeting rule, never a condition in this
  * file.** A cohort encoded here would be invisible from the Flagship console,
@@ -151,6 +163,7 @@ export async function resolveClientFeatureFlagsForSubject(
     meetingRecordingEnabled,
     suggestedWorkEnabled,
     automationWorkspaceTemplatesEnabled,
+    digestsEnabled,
     controlTowerRefreshSeconds,
   ] = await Promise.all([
     resolveBooleanClientFlag(env, subject, DEVELOPER_SETTINGS_FLAG_KEY, context),
@@ -158,6 +171,15 @@ export async function resolveClientFeatureFlagsForSubject(
     resolveBooleanClientFlag(env, subject, MEETING_RECORDING_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, SUGGESTED_WORK_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, AUTOMATION_WORKSPACE_TEMPLATES_FLAG_KEY, context),
+    // `digests-enabled` (`DIGESTS_ENABLED_FLAG_KEY` in `digest-flags.ts`) —
+    // this is the identical one-evaluation-per-(user, workspace) call
+    // `fireDigestSchedule` makes before sending, not a separate or
+    // differently-scoped client-side check. No workspace chosen yet is not
+    // "off": there is nothing to evaluate against, so it reads as the
+    // fail-open default like every other gap.
+    subject.workspaceId
+      ? resolveDigestsEnabled(env, { userId: subject.userId, workspaceId: subject.workspaceId })
+      : Promise.resolve(true),
     // Resolved through its own module: a cadence fails to a working default
     // rather than to off. It reuses this request's loaded attributes through
     // the loader's isolate cache rather than being handed `context`, so both
@@ -174,6 +196,7 @@ export async function resolveClientFeatureFlagsForSubject(
     meetingRecordingEnabled,
     suggestedWorkEnabled,
     automationWorkspaceTemplatesEnabled,
+    digestsEnabled,
     controlTowerRefreshSeconds,
   };
 }

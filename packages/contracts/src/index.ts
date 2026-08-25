@@ -288,8 +288,10 @@ export const CONTROL_TOWER_REFRESH_SECONDS = {
  * Every server-decided feature flag a client is allowed to see, resolved for
  * the signed-in person. Each field defaults to the answer an unreachable flag
  * provider — or a response from an older service that does not know the field —
- * has to reproduce: off for a feature, and today's behavior for a setting that
- * has no off.
+ * has to reproduce. That answer is not the same shape for every field:
+ * **off** for a feature nobody has been given yet, **on** for a feature that is
+ * already on for everyone and whose flag exists only to turn it off, and
+ * today's checked-in behavior for a setting that has no off at all.
  */
 export const ClientFeatureFlagsSchema = z.object({
   /** Whether Application → Developer may be offered on this device. */
@@ -302,6 +304,17 @@ export const ClientFeatureFlagsSchema = z.object({
   suggestedWorkEnabled: z.boolean().default(false),
   /** Whether workspace-template surfaces are shown in Electron for this person. */
   automationWorkspaceTemplatesEnabled: z.boolean().default(false),
+  /**
+   * Whether the Digest settings section may be shown in Electron for this
+   * person. Defaults **true**, the opposite of every other Boolean above: a
+   * digest already sends by default for every existing person, so hiding the
+   * section is the exception a `digests-enabled` rule opts someone into, not
+   * the default state an outage has to reproduce. Resolved by the same
+   * `resolveDigestsEnabled` the scheduler checks before firing — one
+   * evaluation, reused, never a second "is it off for the workspace" check
+   * combined with this one in application code.
+   */
+  digestsEnabled: z.boolean().default(true),
   /**
    * Control Tower's refresh cadence in seconds. `catch` rather than a bare
    * bound: a value outside the range is a provisioning mistake, and degrading
