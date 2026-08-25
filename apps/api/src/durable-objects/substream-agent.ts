@@ -3728,13 +3728,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     };
   }
 
-  protected override armAlarmBeforeDueWork(): Promise<unknown> {
+  protected override armAlarmBeforeDueWork(now: number): Promise<unknown> {
     // Delivery consumes the alarm, so until this returns the object has no
     // wake-up at all. Everything below it awaits the network, and a cancelled
     // continuation never settles — it does not throw, so a `finally` would not
     // run either. Arming first is what makes the sweep floor a floor rather
     // than something reachable only when the work it guards already succeeded.
-    return this.armAlarmDuringRunDrain();
+    return this.armAlarmDuringRunDrain(now);
   }
 
   protected override armAlarmAfterDueWork(): Promise<unknown> {
@@ -3751,8 +3751,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * the entry index rather than `workstream_wakeups` so this and the base agree
    * on when the next timer is due.
    */
-  private async armAlarmDuringRunDrain(): Promise<void> {
-    const now = Date.now();
+  private async armAlarmDuringRunDrain(now: number = Date.now()): Promise<void> {
     const dueAt = minimumTimestamp(
       this.objectStore.nextRegionalEffectDueAt(),
       this.objectStore.nextBlockDashboardDueAt(),
