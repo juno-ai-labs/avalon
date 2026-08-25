@@ -1,8 +1,9 @@
 # Work-stream and automation email addresses
 
 Every work stream and every automation subscription receives one permanent address
-at `automation.rallywith.ai`, generated from a frozen vocabulary and reserved in
-a single Global registry that both regions share. An address is never recomputed,
+on the domain configured when it is issued — `automation.rallywith.ai` today —
+generated from a frozen vocabulary and reserved in a single Global registry that
+both regions share. An address is never recomputed,
 never recycled, and never reassigned — a deleted owner leaves a tombstone rather
 than freeing the name, so a stale sender can never reach a different work stream.
 
@@ -77,10 +78,11 @@ and both owner kinds. The Global control plane owns the historical
 `workstream_email_routes` registry; Global work streams and automations reserve
 there directly, and every non-Global data plane reserves through the named
 `WorkstreamEmailRoutingBridge` RPC binding. The registry's case-insensitive primary
-key is the local part, so a claim is shared across all regions and owner kinds,
-and a name can never be reused by another work stream or automation.
+key is the complete normalized email address. A claim is shared across all regions
+and owner kinds on that domain, while the same local part may safely identify a
+different owner on another platform or future custom domain.
 
-**The ledger records only that an address is taken and where it points.** It holds
+**The ledger records the exact address that is taken and where it points.** It holds
 no lifecycle: no `reserved`/`active`/`disabled` status, no `disabled_at`. Whether
 mail is actually accepted is decided regionally, at delivery, from the owner's own
 row — a work stream must not be archived, an automation must be `status = 'active'`
@@ -91,6 +93,13 @@ nothing for a pause, an archive, or a delete to write here.
 address and then read that regional row, returning the address or refusing with
 `workstream_email_owner_archived` / `automation_not_active`. They are
 a gate, not a transition.
+
+The regional owner also stores the exact issued address. Reconciliation sends
+that full value to Global; it never combines a persisted local part with the
+domain configured on the Worker today. Migration `0097` inferred the two domains
+for pre-existing claims at the Rally cutover boundary and tagged those rows as
+`address_source = 'migration'`. The owner may verify or correct such a row once,
+changing the source to `owner`; allocator- and owner-sourced claims are immutable.
 
 **Each gate reads through the database that owns its row.** An automation's
 `status` and `lifecycle_state` come from the workspace facade, because
@@ -133,6 +142,11 @@ Pausing an automation changes nothing in Global: the claim stands and the
 resolver's `status = 'active'` test refuses the mail. Resuming makes the same
 address deliverable again. An archived or deleted owner keeps its claim forever —
 the row is the tombstone.
+
+The Global webhook resolves the complete normalized recipient address. It does
+not discard the domain and query by local part. This keeps the legacy and Rally
+domains independent today and leaves the registry compatible with custom domains
+where the same generated local part may legitimately belong to another owner.
 
 ### Outbound automation results
 
@@ -296,9 +310,9 @@ sunbird, terrapin, waxbill
 - **There is exactly one reservation namespace, in Global**, shared by every region
   and both owner kinds. A regional Worker never allocates from its own database and
   **fails closed** when the Global registry is unavailable — a second allocator is a
-  second answer to a unique name.
-- **The registry's key is case-insensitive**, so claims and tombstones are shared
-  regardless of how a name is cased.
+  second answer to a unique address.
+- **The registry's full-address key is case-insensitive**, so claims and tombstones
+  are shared regardless of casing, without collapsing two domains into one namespace.
 - **Work-stream mail never starts an agent run.** It attaches as an untrusted
   resource and transcript entry, and nothing more.
 - **An inbound address is a routing identifier, never an authenticator.** The From
@@ -420,6 +434,32 @@ hashes remain; changing the words after them is not.
 
 ## Changelog
 
+### 2026-08-25 — The Global claim key is the full email address
+
+**What changed:** `workstream_email_routes` persists `email_address` as its
+case-insensitive primary key. Allocation, owner reconciliation, and inbound
+routing all use that full value; local parts may repeat on different domains.
+Migration-inferred legacy rows may be verified or corrected exactly once from
+the regional owner's stored address.
+
+**Why:** Changing the minting domain made the local-part-only registry reconstruct
+an old automation as `@automation.rallywith.ai` even though WorkspaceDO still
+held its permanent `@automation.with-avalon.com` address. Opening that automation
+then failed with `automation_email_address_conflict`. The same schema would also
+make a future custom domain share one accidental local-part namespace with every
+other domain.
+
+**Considered and rejected:** Treating the two platform domains as equivalent at
+the regional comparison. That masks this incident but keeps Global unable to
+distinguish two real full addresses, so custom domains would reintroduce the
+ambiguity. Also rejected: rewriting regional legacy addresses, which would break
+addresses already saved outside Rally.
+
+**Consequences:** A domain is part of permanent route identity. Future custom
+domain support must make that domain accepted at ingress, but it does not require
+a registry redesign. Migration provenance is the only state that permits an
+address correction; after owner verification the tombstone is immutable.
+
 ### 2026-08-25 — New addresses are minted on automation.rallywith.ai; the old domain keeps receiving
 
 **What changed:** `WORKSTREAM_EMAIL_DOMAIN` is `automation.rallywith.ai`, and
@@ -432,8 +472,9 @@ switched. An address here is stored per work stream rather than derived, so
 renaming the domain does not move the addresses already issued — and unlike a URL
 we mint, those live in other people's mail clients, contacts, and forwarding
 rules. Refusing them would discard real mail, and a discarded message looks
-exactly like nobody having written. Routing was already keyed by local part, so
-accepting a second domain costs a set membership test.
+exactly like nobody having written. At the time, routing was keyed by local part,
+so accepting a second domain cost only a set membership test; the newer entry
+above records why that key was replaced.
 
 Carrying the arriving domain through matters because the address is attached to
 the work stream and shown back to the reader. Substituting the canonical domain

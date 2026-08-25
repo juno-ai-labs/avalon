@@ -87,8 +87,9 @@ interface StoredResource {
 
 class FakeDatabase {
   prepareCalls = 0;
+  fullAddressRegistry = true;
   readonly routes = new Map<string, {
-    local_part: string;
+    email_address: string;
     region: Region;
     workspace_id: string;
     workstream_id: string | null;
@@ -138,6 +139,9 @@ class FakeDatabase {
   }
 
   first(sql: string, values: unknown[]): Record<string, unknown> | null {
+    if (sql.includes("pragma_table_info('workstream_email_routes')")) {
+      return this.fullAddressRegistry ? { name: "email_address" } : null;
+    }
     if (sql.includes("FROM resend_webhook_receipts")) {
       const receipt = this.routeReceipts.get(String(values[0]));
       return receipt ? {
@@ -148,7 +152,14 @@ class FakeDatabase {
       } : null;
     }
     if (sql.includes("FROM workstream_email_routes")) {
-      return this.routes.get(String(values[0]).toLowerCase()) ?? null;
+      const identity = String(values[0]).toLowerCase();
+      if (this.fullAddressRegistry) return this.routes.get(identity) ?? null;
+      const row = [...this.routes.values()].find((candidate) =>
+        candidate.email_address.slice(0, candidate.email_address.lastIndexOf("@")).toLowerCase() === identity);
+      return row ? {
+        ...row,
+        local_part: row.email_address.slice(0, row.email_address.lastIndexOf("@")),
+      } : null;
     }
     if (sql.includes("FROM automation_subscriptions s") && sql.includes("s.email_address")) {
       const automation = this.automation;
@@ -368,8 +379,8 @@ describe("Resend inbound-email routing", () => {
 
   it("routes only the exact receiving domain to its regional work stream and deduplicates retries", async () => {
     const database = new FakeDatabase();
-    database.routes.set(LOCAL_PART, {
-      local_part: LOCAL_PART,
+    database.routes.set(EMAIL_ADDRESS, {
+      email_address: EMAIL_ADDRESS,
       region: "eu",
       workspace_id: WORKSPACE_ID,
       workstream_id: WORKSTREAM_ID,
@@ -411,10 +422,84 @@ describe("Resend inbound-email routing", () => {
     expect(dispatched).toHaveLength(1);
   });
 
+  it("routes the same local part independently on two accepted domains", async () => {
+    const database = new FakeDatabase();
+    const legacyAddress = `${LOCAL_PART}@${LEGACY_DOMAIN}`;
+    database.routes.set(EMAIL_ADDRESS, {
+      email_address: EMAIL_ADDRESS,
+      region: "global",
+      workspace_id: WORKSPACE_ID,
+      workstream_id: WORKSTREAM_ID,
+      automation_subscription_id: null,
+    });
+    database.routes.set(legacyAddress, {
+      email_address: legacyAddress,
+      region: "eu",
+      workspace_id: "00000000-0000-7000-8000-000000000011",
+      workstream_id: "00000000-0000-7000-8000-000000000012",
+      automation_subscription_id: null,
+    });
+    const dispatch = vi.fn(async (region: Region, input: ResendRegionalEmailInput) => {
+      void region;
+      void input;
+      return {
+        accepted: true as const,
+        duplicate: false,
+        messageId: "message",
+        resourceId: "resource",
+      };
+    });
+    const service = new ResendInboundEmailRoutingService(environment(database, "global"), {
+      now: () => NOW,
+      dispatchInRegion: dispatch,
+    });
+    const raw = eventBody([EMAIL_ADDRESS, legacyAddress]);
+
+    await expect(service.ingest(new TextEncoder().encode(raw), await signedHeaders(raw)))
+      .resolves.toMatchObject({ routedCount: 2 });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch.mock.calls.map(([, input]) => input.emailAddress).sort())
+      .toEqual([EMAIL_ADDRESS, legacyAddress].sort());
+  });
+
+  it("keeps routing while the Worker-first full-address migration is pending", async () => {
+    const database = new FakeDatabase();
+    database.fullAddressRegistry = false;
+    const legacyAddress = `${LOCAL_PART}@${LEGACY_DOMAIN}`;
+    database.routes.set(legacyAddress, {
+      email_address: legacyAddress,
+      region: "eu",
+      workspace_id: WORKSPACE_ID,
+      workstream_id: WORKSTREAM_ID,
+      automation_subscription_id: null,
+    });
+    const dispatch = vi.fn(async (region: Region, input: ResendRegionalEmailInput) => {
+      void region;
+      void input;
+      return {
+        accepted: true as const,
+        duplicate: false,
+        messageId: "message",
+        resourceId: "resource",
+      };
+    });
+    const service = new ResendInboundEmailRoutingService(environment(database, "global"), {
+      now: () => NOW,
+      dispatchInRegion: dispatch,
+    });
+    const raw = eventBody([legacyAddress]);
+
+    await expect(service.ingest(new TextEncoder().encode(raw), await signedHeaders(raw)))
+      .resolves.toMatchObject({ routedCount: 1 });
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith("eu", expect.objectContaining({
+      emailAddress: legacyAddress,
+    }));
+  });
+
   it("distinguishes an automation route and sends only signed metadata to its owning region", async () => {
     const database = new FakeDatabase();
-    database.routes.set(LOCAL_PART, {
-      local_part: LOCAL_PART,
+    database.routes.set(EMAIL_ADDRESS, {
+      email_address: EMAIL_ADDRESS,
       region: "eu",
       workspace_id: WORKSPACE_ID,
       workstream_id: null,
@@ -449,8 +534,8 @@ describe("Resend inbound-email routing", () => {
 
   it("terminally acknowledges a stale active route instead of causing provider retry storms", async () => {
     const database = new FakeDatabase();
-    database.routes.set(LOCAL_PART, {
-      local_part: LOCAL_PART,
+    database.routes.set(EMAIL_ADDRESS, {
+      email_address: EMAIL_ADDRESS,
       region: "eu",
       workspace_id: WORKSPACE_ID,
       workstream_id: null,
