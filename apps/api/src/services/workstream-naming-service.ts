@@ -12,6 +12,7 @@ import { logStructuredEvent } from "../observability/logger";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { publishWorkstreamEvent } from "./integrations";
 import { runStructuredInference } from "./structured-inference";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
  * The longest generated name that is written to a work stream. `title` holds
@@ -161,16 +162,17 @@ export async function refreshWorkstreamName(env: Env, input: {
     // never finished — the isolate went away mid-call — leaves the row in it.
     // This pass is the one thing that comes along afterwards, so it repairs the
     // row rather than stepping over it.
-    const row = await env.DB.prepare(
-      `SELECT w.title, w.title_status, w.objective
-       FROM workstreams w
-      WHERE w.id = ? AND w.workspace_id = ?
-        AND w.title_status IN ('naming', 'automatic')`,
-    ).bind(input.workstreamId, input.workspaceId).first<{
-      title: string;
-      title_status: "naming" | "automatic";
-      objective: string;
-    }>();
+    const identity = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+      .identity();
+    // The eligibility test was a `WHERE` clause because the read was a
+    // statement; it is a test on the row here.
+    const titleStatus: "naming" | "automatic" | null =
+      identity?.title_status === "naming" || identity?.title_status === "automatic"
+        ? identity.title_status
+        : null;
+    const row = identity && titleStatus
+      ? { title: identity.title, title_status: titleStatus, objective: identity.description }
+      : null;
     if (!row) return;
     // The count is over exactly the rows the naming context reads, which is why
     // it is `saidMessages`' own counterpart rather than a predicate written out

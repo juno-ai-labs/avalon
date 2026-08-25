@@ -6,6 +6,7 @@ import { logWarn } from "../observability/logger";
 import { publishWorkstreamEvent } from "./integrations";
 import { resolveConnectorActorIdentities } from "./connector-actor-identity";
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
  * Who a work stream started from a connector conversation belongs to.
@@ -171,12 +172,12 @@ export async function admitConnectorAudience(
     input.workspaceId,
     input.workstreamId,
   );
-  const active = await executionEnv.DB.prepare(
-    `SELECT user_id FROM workstream_participants
-     WHERE workstream_id = ? AND removed_at IS NULL
-       AND user_id IN (SELECT value FROM json_each(?))`,
-  ).bind(input.workstreamId, JSON.stringify(userIds)).all<{ user_id: string }>();
-  const activeUserIds = new Set((active.results ?? []).map((row) => row.user_id));
+  const identity = createIdentityObjectPort(env, input.workspaceId, input.workstreamId);
+  // The `user_id IN (json_each(?))` narrowing is gone with the statement. The
+  // roster of one work stream is small and this call already holds the list it
+  // wants to intersect against, so filtering here costs a `Set` and saves the
+  // authority a bound-parameter list that grows with the audience.
+  const activeUserIds = new Set((await identity.participants()).map((row) => row.user_id));
   const newlyAdmittedUserIds = userIds.filter((userId) => !activeUserIds.has(userId));
   const results = await executionEnv.DB.batch(userIds.map((userId) => buildParticipantUpsertStatement(executionEnv.DB, {
     workspaceId: input.workspaceId,
@@ -189,20 +190,19 @@ export async function admitConnectorAudience(
     throw new Error("Could not admit the connector conversation audience");
   }
   if (newlyAdmittedUserIds.length === 0) return;
-  const participants = await executionEnv.DB.prepare(
-    `SELECT participant.user_id, participant.participation_reason, participant.joined_at
-     FROM workstream_participants participant
-     JOIN workstreams workstream ON workstream.id = participant.workstream_id
-     WHERE participant.workstream_id = ? AND workstream.workspace_id = ?
-       AND participant.removed_at IS NULL
-       AND participant.user_id IN (SELECT value FROM json_each(?))
-     ORDER BY participant.joined_at, participant.user_id`,
-  ).bind(
-    input.workstreamId,
-    input.workspaceId,
-    JSON.stringify(newlyAdmittedUserIds),
-  ).all<{ user_id: string; participation_reason: string; joined_at: string }>();
-  const admittedRows = participants.results ?? [];
+  // The `JOIN workstreams` here proved nothing the object does not already
+  // know: it re-checked that the participant's work stream belongs to this
+  // workspace, which is the identity check the port makes before dispatching.
+  // `joined_at` was the view's ISO rendering of `added_at`; the crossing is
+  // this boundary now, because a participant is about to be published.
+  const admitted = new Set(newlyAdmittedUserIds);
+  const admittedRows = (await identity.participants())
+    .filter((row) => admitted.has(row.user_id))
+    .map((row) => ({
+      user_id: row.user_id,
+      participation_reason: row.participation_reason,
+      joined_at: new Date(row.added_at).toISOString(),
+    }));
   if (admittedRows.length === 0) return;
   const users = await env.DB.prepare(
     `SELECT id, email, name, avatar_url, timezone, created_at FROM users

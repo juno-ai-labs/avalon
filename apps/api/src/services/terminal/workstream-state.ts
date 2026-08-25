@@ -19,7 +19,7 @@ import type { TerminalSandboxProvider } from "./daytona-provider";
 import { withAuthorizedConnection } from "../connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "../connector-credential-envelope";
 import { WorkstreamDirectoryService } from "../workstream-directory-service";
-import { workstreamExecutionEnvironment } from "../workstream-runtime-database";
+import { createIdentityObjectPort } from "../../runtime/identity-port";
 
 export interface TerminalCatalogRepository {
   id: number;
@@ -177,14 +177,11 @@ export class TerminalWorkstreamService {
 
   private async requireParticipant(workstreamId: string): Promise<void> {
     await this.requireVisible(workstreamId);
-    const participant = await (await workstreamExecutionEnvironment(
+    const participant = (await createIdentityObjectPort(
       this.env,
       this.auth.workspaceId,
       workstreamId,
-    )).DB.prepare(
-      `SELECT user_id FROM workstream_participants
-        WHERE workstream_id = ? AND user_id = ? AND removed_at IS NULL`,
-    ).bind(workstreamId, this.auth.userId).first<{ user_id: string }>();
+    ).participants()).find((row) => row.user_id === this.auth.userId);
     if (!participant) throw new ApiError(403, "workstream_participant_required", "Join this work stream before selecting or replacing its Terminal repository.");
   }
 }

@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { encryptString } from "../src/lib/crypto";
@@ -12,6 +12,12 @@ import {
   createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
+import {
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectAll,
+} from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 /**
@@ -160,54 +166,24 @@ describe("who may continue a Slack work stream", () => {
       UPDATE workspace_product_authority_routes SET state = 'active', updated_at = '${at}';
       UPDATE workstream_authority_control SET phase = 'durable_object_open', serving_contract_version = 1, updated_at = '${at}' WHERE id = 1;
     `);
-    // The object's storage, as the runtime SQL port sees it.
-    const objectDatabase = new DatabaseSync(":memory:");
-    databases.push(objectDatabase);
-    objectDatabase.exec(`
-      CREATE TABLE workstreams (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL);
-      CREATE TABLE workstream_participants (
-        workstream_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        added_by_user_id TEXT,
-        participation_reason TEXT,
-        joined_at TEXT,
-        removed_at TEXT,
-        PRIMARY KEY (workstream_id, user_id)
-      );
-    `);
+    // The object's own storage — real schema, real statements — so the
+    // participant reads under test run the storage class rather than a stub of
+    // it, and the writes still travel the runtime SQL port into the same store.
+    const objectStore = testWorkstreamObjectStore();
+    databases.push(objectStore);
     const workstreamId = "019fc4e0-0000-7000-8000-0000000000aa";
-    objectDatabase.prepare("INSERT INTO workstreams (id, workspace_id) VALUES (?, ?)")
-      .run(workstreamId, WORKSPACE);
+    seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId: WORKSPACE });
     const roomEvents: Record<string, unknown>[] = [];
-    const objectStub = {
-      executeRuntimeSql: vi.fn(async (input: {
-        statements: Array<{ sql: string; params: Array<string | number | null> }>;
-      }) => {
-        const results = input.statements.map(({ sql, params }) => {
-          if (/^\s*SELECT/iu.test(sql)) {
-            const rows = objectDatabase.prepare(sql).all(...params) as Array<Record<string, string | number | null>>;
-            return { columns: rows.length > 0 ? Object.keys(rows[0]!) : [], rows, changes: 0 };
-          }
-          const run = objectDatabase.prepare(sql).run(...params);
-          return { columns: [], rows: [], changes: Number(run.changes) };
-        });
-        return { status: 200, bodyJson: JSON.stringify({ results }) };
-      }),
-      publishEvent: vi.fn(async (input: { event: Record<string, unknown> }) => {
-        roomEvents.push(input.event);
-        return { status: 204, bodyJson: "null" };
-      }),
-    };
     const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
-      SUBSTREAM_AGENTS: createCloudflareTestBinding<DurableObjectNamespace>({
-        jurisdiction: () => createCloudflareTestBinding<DurableObjectNamespace>({
-          idFromName: vi.fn(() => createTestDurableObjectId("room-id")),
-          get: vi.fn(() => objectStub),
-        }),
-        idFromName: vi.fn(() => createTestDurableObjectId("room-id")),
-        get: vi.fn(() => objectStub),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
+        extra: {
+          publishEvent: vi.fn(async (input: { event: Record<string, unknown> }) => {
+            roomEvents.push(input.event);
+            return { status: 204, bodyJson: "null" };
+          }),
+        },
       }),
     });
 
@@ -218,9 +194,10 @@ describe("who may continue a Slack work stream", () => {
       addedByUserId: TAYLOR,
     });
 
-    expect(objectDatabase.prepare(
+    expect(workstreamObjectAll(
+      objectStore,
       "SELECT user_id, participation_reason FROM workstream_participants",
-    ).all()).toEqual([{ user_id: TAYLOR, participation_reason: "explicit" }]);
+    )).toEqual([{ user_id: TAYLOR, participation_reason: "explicit" }]);
     // Nothing reached the fenced D1 copy — it aborts writes, it does not skip them.
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM workstream_participants",

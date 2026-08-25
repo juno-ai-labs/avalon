@@ -9,6 +9,7 @@ import { ApiError } from "../lib/api-error";
 import { RPC_BATCH_LIMIT } from "../lib/rpc-contracts";
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 const MAX_ADDRESS_RESERVATION_ATTEMPTS = 1_024;
 /** One bound for both sides of the bridge. See `RPC_BATCH_LIMIT`. */
@@ -73,11 +74,6 @@ interface RouteRow {
   workspace_id: string;
   workstream_id: string | null;
   automation_subscription_id: string | null;
-}
-
-interface LocalWorkstreamEmailRow {
-  email_address: string | null;
-  archived_at: string | null;
 }
 
 interface LocalAutomationEmailRow {
@@ -192,10 +188,8 @@ export class WorkstreamEmailRoutingService {
       input.workspaceId,
       input.workstreamId,
     );
-    const current = await executionEnv.DB.prepare(
-      `SELECT email_address, archived_at
-       FROM workstreams WHERE id = ? AND workspace_id = ?`,
-    ).bind(input.workstreamId, input.workspaceId).first<LocalWorkstreamEmailRow>();
+    const identity = createIdentityObjectPort(this.env, input.workspaceId, input.workstreamId);
+    const current = await identity.identity();
     if (!current) {
       throw new ApiError(404, "workstream_not_found", "Work stream not found");
     }
@@ -215,10 +209,7 @@ export class WorkstreamEmailRoutingService {
          WHERE id = ? AND workspace_id = ? AND email_address IS NULL`,
       ).bind(route.emailAddress, nowIso(), input.workstreamId, input.workspaceId).run();
     }
-    const stored = await executionEnv.DB.prepare(
-      `SELECT email_address, archived_at
-       FROM workstreams WHERE id = ? AND workspace_id = ?`,
-    ).bind(input.workstreamId, input.workspaceId).first<LocalWorkstreamEmailRow>();
+    const stored = await identity.identity();
     if (!stored?.email_address || stored.email_address.toLowerCase() !== route.emailAddress.toLowerCase()) {
       throw new ApiError(409, "workstream_email_address_conflict", "The work stream already has a different email address");
     }
@@ -236,14 +227,8 @@ export class WorkstreamEmailRoutingService {
    * the gate with `no such column` after the address was already reserved. */
   async activateWorkstreamRoute(input: WorkstreamEmailRouteInput): Promise<WorkstreamEmailRoute> {
     const route = await this.ensureWorkstreamAddress(input);
-    const executionEnv = await workstreamExecutionEnvironment(
-      this.env,
-      input.workspaceId,
-      input.workstreamId,
-    );
-    const owner = await executionEnv.DB.prepare(
-      `SELECT archived_at FROM workstreams WHERE id = ? AND workspace_id = ?`,
-    ).bind(input.workstreamId, input.workspaceId).first<{ archived_at: string | null }>();
+    const owner = await createIdentityObjectPort(this.env, input.workspaceId, input.workstreamId)
+      .identity();
     // A row that is not there refuses, like the automation twin below: this
     // gate answers "may mail reach this owner", and an owner it cannot read is
     // not an owner it can vouch for. `ensureWorkstreamAddress` has already

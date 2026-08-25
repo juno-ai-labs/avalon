@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Region } from "@avalon/contracts";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
@@ -10,6 +11,12 @@ import {
 } from "../src/services/resend-inbound-email-service";
 import { __resendRouteTesting, resendInboundRoutes } from "../src/routes/resend";
 import { createCloudflareTestBinding, createTestD1Result, createTestDurableObjectId, createTestDurableObjectInstance, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  seedWorkstreamObjectRoot,
+  testIdentityOperationStub,
+  testWorkstreamObjectStore,
+  workstreamObjectRun,
+} from "./helpers/durable-authority";
 
 const NOW = Date.parse("2026-08-02T18:00:00.000Z");
 const SECRET_BYTES = new TextEncoder().encode("avalon-resend-webhook-test-secret-v1");
@@ -849,6 +856,33 @@ describe("Resend text normalization", () => {
   });
 });
 
+/** Object stores opened for the identity gate, closed after each test. */
+const identityStores: DatabaseSync[] = [];
+
+afterEach(() => {
+  while (identityStores.length > 0) identityStores.pop()?.close();
+});
+
+/**
+ * The work stream's own object, holding exactly what the routed gate matched
+ * on: this fixture's identity, its address, and no archive.
+ */
+function identityStore(): DatabaseSync {
+  const store = testWorkstreamObjectStore();
+  identityStores.push(store);
+  seedWorkstreamObjectRoot(store, {
+    workstreamId: WORKSTREAM_ID,
+    workspaceId: WORKSPACE_ID,
+  });
+  workstreamObjectRun(
+    store,
+    "UPDATE workstreams SET email_address = ? WHERE id = ?",
+    EMAIL_ADDRESS,
+    WORKSTREAM_ID,
+  );
+  return store;
+}
+
 function environment(
   database: FakeDatabase,
   region: Region,
@@ -868,6 +902,12 @@ function environment(
           database.recordAttachment(input.workstreamId, input.resourceId);
           return { status: 200, bodyJson: "{}" };
         },
+        // The address-and-archive gate is the identity authority's read now.
+        // It runs the real storage class over a real object store seeded with
+        // this fixture's work stream, so the gate under test is the one
+        // production runs rather than another arm of the matcher below.
+        executeIdentityOperation: async (input: { operation: string; args: unknown[] }) =>
+          testIdentityOperationStub(identityStore())(input),
         // The routed half of the same move: statements the rewriter classifies
         // as the work stream's own no longer reach `env.DB` directly. Running
         // them back through the fake keeps every assertion in this file on what

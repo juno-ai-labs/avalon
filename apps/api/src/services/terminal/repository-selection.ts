@@ -26,6 +26,7 @@ import type {
 } from "./workstream-state";
 import { TerminalToolError } from "./tools";
 import { createHarnessRunObjectPort } from "../../runtime/harness-run-port";
+import { createIdentityObjectPort } from "../../runtime/identity-port";
 
 interface ConnectionRow {
   id: string;
@@ -87,9 +88,8 @@ async function workstreamBranchRef(
   currentHeadRef: string | null,
 ): Promise<string> {
   if (currentHeadRef && AVALON_BRANCH_PATTERN.test(currentHeadRef)) return currentHeadRef;
-  const workstream = await env.DB.prepare(
-    "SELECT email_address FROM workstreams WHERE workspace_id = ? AND id = ?",
-  ).bind(workspaceId, workstreamId).first<{ email_address: string | null }>();
+  const workstream = await createIdentityObjectPort(env as Env, workspaceId, workstreamId)
+    .identity();
   const localPart = workstream?.email_address?.split("@", 1)[0];
   const slug = localPart && /^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u.test(localPart)
     ? localPart
@@ -118,13 +118,12 @@ export function createTerminalRepositorySelector(
           { reason: "A workspace automation cannot choose a repository until it has explicit repository authority." },
         );
       }
-      const participant = await env.DB.prepare(
-        `SELECT participant.user_id
-           FROM workstream_participants participant
-          WHERE participant.workstream_id = ? AND participant.user_id = ?
-            AND participant.removed_at IS NULL`,
-      ).bind(context.workstreamId, context.executionPrincipal.userId)
-        .first<{ user_id: string }>();
+      const requesterUserId = context.executionPrincipal.userId;
+      const participant = (await createIdentityObjectPort(
+        env,
+        context.workspaceId,
+        context.workstreamId,
+      ).participants()).find((row) => row.user_id === requesterUserId);
       const member = participant
         ? await env.DB.prepare(
           `SELECT user_id FROM workspace_members
