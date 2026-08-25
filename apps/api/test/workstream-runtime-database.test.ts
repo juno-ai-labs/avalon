@@ -62,7 +62,10 @@ describe("work-stream runtime database routing", () => {
     // The seed route has no execution coverage, which is how a rename once
     // stranded one of these on regional D1. Each name it inserts into must
     // route local, or `pnpm db:open-authority` fails on a fresh state.
-    for (const table of ["workstream_participants", "harness_runs", "tool_effects", "messages"]) {
+    // `workstream_participants` left this list with the identity slice: the
+    // seed seats people through that authority now, and a statement still
+    // naming the table has to fail rather than route at a view that is gone.
+    for (const table of ["harness_runs", "tool_effects", "messages"]) {
       expect(__workstreamRuntimeDatabaseTesting.localStatement(
         `INSERT INTO ${table} (id) VALUES (?)`,
       ), table).toBe(true);
