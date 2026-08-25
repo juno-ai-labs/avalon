@@ -6,6 +6,7 @@ import { sha256 } from "../lib/crypto";
 import type { HarnessTool, HarnessToolResult } from "@avalon/agent-harness";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 export const MEMORY_EMBEDDING_MODEL = "@cf/qwen/qwen3-embedding-0.6b" as const;
 
@@ -225,14 +226,7 @@ export async function resolveMemoryAccess(
         WHERE id = ? AND workspace_id = ? AND workstream_id = ?`,
     ).bind(input.harnessRunId, input.workspaceId, input.workstreamId)
       .first<{ parent_tool_call_id: string | null; execution_principal_json: string }>(),
-    env.DB.prepare(
-      `SELECT origin_type, automation_subscription_id
-         FROM workstreams
-        WHERE id = ? AND workspace_id = ?`,
-    ).bind(input.workstreamId, input.workspaceId).first<{
-      origin_type: "ad_hoc" | "automation";
-      automation_subscription_id: string | null;
-    }>(),
+    createIdentityObjectPort(env, input.workspaceId, input.workstreamId).identity(),
   ]);
   if (!run || !workstream) throw new Error("memory_run_context_not_found");
   if (stableJson(JSON.parse(run.execution_principal_json)) !== stableJson(input.executionPrincipal)) {

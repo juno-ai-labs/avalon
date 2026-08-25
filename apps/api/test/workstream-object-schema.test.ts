@@ -9,6 +9,7 @@ import {
   WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
   WORKSTREAM_OBJECT_SCHEMA_VERSION,
 } from "../src/durable-objects/workstream-object-schema";
+import { WorkstreamIdentityStorage } from "../src/durable-objects/workstream-identity-storage";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { rewriteWorkstreamRuntimeSql } from "../src/durable-objects/workstream-runtime-sql";
@@ -427,57 +428,14 @@ describe("the Workstream Durable Object relational schema", () => {
     }
   });
 
-  it("projects the generic runtime's stopped settlement as stopped", () => {
-    const database = new DatabaseSync(":memory:");
-    const storage = objectStorage(database);
-    try {
-      applyWorkstreamObjectSchema(storage, "worker-one", 1_000);
-      database.prepare(
-        `INSERT INTO workstream
-           (id, workstream_key, parent_workspace_key, region, authority_mode,
-            authority_generation, title, description, scope, exact_state,
-            state_reason_code, next_sequence_number, next_attention_ordinal,
-            authority_epoch, scope_epoch, source_authorization_floor, listing_epoch,
-            deletion_epoch, run_revision, created_at, last_people_activity_at,
-            state_changed_at, updated_at)
-         VALUES (1, ?, ?, 'global', 'authoritative', 1, '', '', 'workspace', 'running',
-                 'test', 1, 1, 1, 0, 0, 1, 0, 1, 1000, 1000, 1000, 1000)`,
-      ).run(WORKSTREAM_ID, WORKSPACE_ID);
-      database.prepare(
-        `INSERT INTO substreams
-           (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq,
-            depth, return_mode, origin_part_id, owner_user_id, audience,
-            tool_policy, status, created_at, closed_at)
-         VALUES ('0', 'main', 'none', NULL, NULL, 0, 'none', NULL, NULL,
-                 'workspace', 'full', 'open', 1000, NULL)`,
-      ).run();
-      database.prepare(
-        `INSERT INTO _runtime_harness_runs
-           (id, workspace_id, workstream_id, origin, execution_principal_json,
-            status, started_at, created_at)
-         VALUES (?, ?, ?, 'message', '{}', 'running',
-                 '2026-08-21T00:00:00.000Z', '2026-08-21T00:00:00.000Z')`,
-      ).run(RUN_ID, WORKSPACE_ID, WORKSTREAM_ID);
-      database.prepare(
-        `UPDATE _runtime_harness_runs
-            SET status = 'stopped', completed_at = '2026-08-21T00:00:03.000Z',
-                terminalized_at = '2026-08-21T00:00:03.000Z'
-          WHERE id = ?`,
-      ).run(RUN_ID);
-      database.prepare(
-        `UPDATE _runtime_workstreams
-            SET harness_status = 'idle', updated_at = '2026-08-21T00:00:03.000Z'
-          WHERE id = ?`,
-      ).run(WORKSTREAM_ID);
-
-      expect(database.prepare("SELECT exact_state FROM workstream WHERE id = 1").get())
-        .toEqual({ exact_state: "cancelled" });
-      expect(database.prepare("SELECT harness_status FROM _runtime_workstreams").get())
-        .toEqual({ harness_status: "stopped" });
-    } finally {
-      database.close();
-    }
-  });
+  // `projects the generic runtime's stopped settlement as stopped` was here.
+  // It covered migration 12's compat projection: the shared runtime could only
+  // write `idle` through the retired view, because D1's harness-status CHECK
+  // had no `stopped`, and the object read the already-cancelled latest run as
+  // evidence that this particular idle meant a user stop. Migration 26 retires
+  // that view and every writer reaches the harness-run authority directly, so
+  // there is no longer a projection to test — the run's own status is what a
+  // reader sees.
 
   it("refuses a changed implementation under an already-applied schema version", () => {
     const database = new DatabaseSync(":memory:");
@@ -495,7 +453,7 @@ describe("the Workstream Durable Object relational schema", () => {
     }
   });
 
-  it("makes a re-add through either compatibility view unseen again", () => {
+  it("makes a re-add through the identity authority unseen again", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);
     try {
@@ -524,57 +482,41 @@ describe("the Workstream Durable Object relational schema", () => {
         `SELECT status, participant_epoch, first_opened_at FROM participants WHERE user_id = ?`,
       ).get(AUTHOR_ID) as { status: string; participant_epoch: number; first_opened_at: number | null };
 
-      // Removed, then re-admitted the way `admitConnectorAudience` does it: an
-      // upsert the router strips the conflict clause off, so the view's own
-      // INSTEAD OF trigger is what reactivates the row.
+      // Removed, then re-admitted the way `admitConnectorAudience` does it.
+      // The retired participant view's INSTEAD OF triggers used to reactivate
+      // the row; `admitParticipant` is what does it now, and this is the
+      // behaviour that had to survive the view being dropped.
+      const identity = new WorkstreamIdentityStorage(storage);
       database.prepare(
         `UPDATE participants SET status = 'removed', removed_at = 3000 WHERE user_id = ?`,
       ).run(AUTHOR_ID);
-      database.prepare(rewriteWorkstreamRuntimeSql(
-        `INSERT INTO workstream_participants
-           (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
-         VALUES (?, ?, ?, 'explicit', ?, NULL)
-         ON CONFLICT(workstream_id, user_id) DO UPDATE SET removed_at = NULL`,
-      )).run(WORKSTREAM_ID, AUTHOR_ID, AUTHOR_ID, "2026-08-17T12:00:04.000Z");
+      expect(identity.admitParticipant({
+        userId: AUTHOR_ID,
+        addedByUserId: AUTHOR_ID,
+        reason: "explicit",
+        now: 4000,
+      })).toEqual({ outcome: "readmitted" });
 
-      const afterInsert = readBack();
-      expect(afterInsert.status).toBe("active");
+      const afterReadmit = readBack();
+      expect(afterReadmit.status).toBe("active");
       // The epoch says a new participation began; the marker has to agree.
-      expect(afterInsert.participant_epoch).toBe(1);
-      expect(afterInsert.first_opened_at).toBeNull();
-
-      // The other reactivation path: an update through the same view clearing
-      // `removed_at`.
-      database.prepare(
-        `UPDATE participants SET first_opened_at = 4000 WHERE user_id = ?`,
-      ).run(AUTHOR_ID);
-      database.prepare(
-        `UPDATE participants SET status = 'removed', removed_at = 5000 WHERE user_id = ?`,
-      ).run(AUTHOR_ID);
-      database.prepare(rewriteWorkstreamRuntimeSql(
-        `UPDATE workstream_participants
-            SET participation_reason = 'explicit', added_by_user_id = ?,
-                joined_at = ?, removed_at = NULL
-          WHERE workstream_id = ? AND user_id = ?`,
-      )).run(AUTHOR_ID, "2026-08-17T12:00:06.000Z", WORKSTREAM_ID, AUTHOR_ID);
-
-      const afterUpdate = readBack();
-      expect(afterUpdate.status).toBe("active");
-      expect(afterUpdate.participant_epoch).toBe(2);
-      expect(afterUpdate.first_opened_at).toBeNull();
+      expect(afterReadmit.participant_epoch).toBe(1);
+      expect(afterReadmit.first_opened_at).toBeNull();
 
       // Being removed is not being shown it again: the reset belongs to one
-      // direction of the transition, not to both.
+      // direction of the transition, not to both. A second admission of
+      // somebody already seated changes nothing at all.
       database.prepare(
         `UPDATE participants SET first_opened_at = 6000 WHERE user_id = ?`,
       ).run(AUTHOR_ID);
-      database.prepare(rewriteWorkstreamRuntimeSql(
-        `UPDATE workstream_participants
-            SET participation_reason = 'explicit', added_by_user_id = ?,
-                joined_at = ?, removed_at = ?
-          WHERE workstream_id = ? AND user_id = ?`,
-      )).run(AUTHOR_ID, "2026-08-17T12:00:06.000Z", "2026-08-17T12:00:07.000Z", WORKSTREAM_ID, AUTHOR_ID);
+      expect(identity.admitParticipant({
+        userId: AUTHOR_ID,
+        addedByUserId: AUTHOR_ID,
+        reason: "explicit",
+        now: 7000,
+      })).toEqual({ outcome: "unchanged" });
       expect(readBack().first_opened_at).toBe(6000);
+
     } finally {
       database.close();
     }

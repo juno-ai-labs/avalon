@@ -11,8 +11,9 @@ import {
 import { publishWorkstreamEvent } from "./integrations";
 import { runAutomationFromInboundEmail } from "./automation-service";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
-import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
+import { createIdentityObjectPort } from "../runtime/identity-port";
+import { createMessageObjectPort } from "../runtime/message-port";
 
 const RESEND_RECEIVED_EMAIL_URL = "https://api.resend.com/emails/receiving";
 const DEFAULT_WORKSTREAM_EMAIL_DOMAIN = WORKSTREAM_EMAIL_DOMAIN;
@@ -470,19 +471,20 @@ export class ResendRegionalEmailService {
       targetType,
       workstreamId: parsed.workstreamId!,
     };
-    const executionEnv = await workstreamExecutionEnvironment(
-      this.env,
-      input.workspaceId,
-      input.workstreamId,
-    );
-
-    const workstream = await executionEnv.DB.prepare(
-      `SELECT id, workspace_id, email_address
-       FROM workstreams
-       WHERE id = ? AND workspace_id = ? AND archived_at IS NULL
-         AND email_address = ? COLLATE NOCASE
-       LIMIT 1`,
-    ).bind(input.workstreamId, input.workspaceId, input.emailAddress).first<LocalWorkstreamRow>();
+    // `COLLATE NOCASE` was the statement's; the comparison is a caller's now,
+    // and it is the same comparison — an address a person typed reaches this
+    // in whatever case they typed it.
+    const identity = await createIdentityObjectPort(this.env, input.workspaceId, input.workstreamId)
+      .identity();
+    const workstream: LocalWorkstreamRow | null = identity
+      && identity.archived_at === null
+      && identity.email_address?.toLowerCase() === input.emailAddress.toLowerCase()
+      ? {
+        id: identity.workstream_key,
+        workspace_id: identity.parent_workspace_key,
+        email_address: identity.email_address,
+      }
+      : null;
     if (!workstream) {
       throw new ApiError(404, "email_workstream_not_found", "The email address is not attached to an active work stream");
     }
@@ -560,22 +562,11 @@ export class ResendRegionalEmailService {
       const resourceId = await this.upsertEmailResource(input, safeEmail, payloadRef);
       await this.renewRegionalLease(receiptsDb, input, leaseToken);
       const clientMessageId = await emailClientMessageId(input.resendEmailId);
-      const replayed = await executionEnv.DB.prepare(
-        `SELECT id FROM messages WHERE workstream_id = ? AND client_message_id = ? LIMIT 1`,
-      ).bind(input.workstreamId, clientMessageId).first<{ id: string }>();
+      const messages = createMessageObjectPort(this.env, input.workspaceId, input.workstreamId);
+      const replayed = await messages.messageByClientId({ clientMessageId });
       if (replayed) {
         await this.markRegionalProcessed(receiptsDb, input, payloadRef, leaseToken);
         return { accepted: true, duplicate: true, messageId: replayed.id, resourceId };
-      }
-
-      const sequence = await executionEnv.DB.prepare(
-        `UPDATE workstreams
-         SET next_sequence_number = next_sequence_number + 1
-         WHERE id = ? AND workspace_id = ? AND email_address = ? COLLATE NOCASE
-         RETURNING next_sequence_number - 1 AS sequence_number`,
-      ).bind(input.workstreamId, input.workspaceId, input.emailAddress).first<{ sequence_number: number }>();
-      if (!sequence) {
-        throw new ApiError(409, "email_workstream_changed", "The work stream no longer accepts this email address");
       }
 
       const createdAt = new Date(this.now()).toISOString();
@@ -603,44 +594,44 @@ export class ResendRegionalEmailService {
         attachedByUserId: null,
         relationshipType: "inbound_email",
       });
-      const batchDb = executionEnv.DB;
-      const localStatements = [
-        batchDb.prepare(
-          `INSERT OR IGNORE INTO messages
-           (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-            message_type, text_content, structured_content_json, sequence_number, created_at, edited_at)
-           VALUES (?, ?, ?, ?, 'system', NULL, 'system', ?, ?, ?, ?, NULL)`,
-        ).bind(
-          messageId,
-          clientMessageId,
-          input.workspaceId,
-          input.workstreamId,
-          textContent,
-          JSON.stringify(structuredContent),
-          sequence.sequence_number,
-          createdAt,
-        ),
-        batchDb.prepare(
-          `UPDATE workstreams
-           SET latest_attention_sequence_number = MAX(latest_attention_sequence_number, ?),
-               last_activity_at = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ?`,
-        ).bind(sequence.sequence_number, createdAt, createdAt, input.workstreamId, input.workspaceId),
-      ];
-      const batch = await batchDb.batch(localStatements);
-      if (batch.some((result) => !result.success)) {
-        throw new ApiError(500, "email_persistence_failed", "The inbound email could not be persisted");
+      // Three statements become one append, and the reason they were three was
+      // that none of them could see the others. The sequence number was taken
+      // by an `UPDATE … RETURNING` of its own so the insert could bind it, with
+      // the address re-checked inside that statement because it was the only
+      // place left to put a fence; the update after the insert then raised the
+      // attention marker to the number the insert had used, and the caller read
+      // `changes` off the batch to find out whether its own insert had been
+      // ignored. The transcript authority takes the number, writes the part and
+      // moves both counters in one transaction, and says which of the two
+      // things happened.
+      //
+      // The address is read rather than fenced into the write. It was checked
+      // when this delivery was admitted, and what the fence protected against
+      // — a work stream re-addressed while the lease was held — is a read of
+      // the same authority one call earlier.
+      const stillAddressed = await createIdentityObjectPort(
+        this.env,
+        input.workspaceId,
+        input.workstreamId,
+      ).identity();
+      if (stillAddressed?.email_address?.toLowerCase() !== input.emailAddress.toLowerCase()) {
+        throw new ApiError(409, "email_workstream_changed", "The work stream no longer accepts this email address");
       }
+      const appended = await messages.appendMessage({
+        messageId,
+        clientMessageId,
+        authorType: "system",
+        authorUserId: null,
+        externalActorJson: null,
+        messageType: "system",
+        text: textContent,
+        structuredContentJson: JSON.stringify(structuredContent),
+        producedByRunId: null,
+        now: Date.parse(createdAt),
+      });
       await this.markRegionalProcessed(receiptsDb, input, payloadRef, leaseToken);
-      const messageResult = batch[0]!;
-      if (changes(messageResult) === 0) {
-        const canonical = await executionEnv.DB.prepare(
-          `SELECT id FROM messages WHERE workstream_id = ? AND client_message_id = ? LIMIT 1`,
-        ).bind(input.workstreamId, clientMessageId).first<{ id: string }>();
-        if (!canonical) {
-          throw new ApiError(500, "email_persistence_failed", "The inbound email message could not be persisted");
-        }
-        return { accepted: true, duplicate: true, messageId: canonical.id, resourceId };
+      if (appended.outcome === "replayed") {
+        return { accepted: true, duplicate: true, messageId: appended.messageId, resourceId };
       }
 
       const message: Message = {
@@ -654,7 +645,7 @@ export class ResendRegionalEmailService {
         structuredContent,
         mentions: [],
         attachments: [],
-        sequenceNumber: sequence.sequence_number,
+        sequenceNumber: appended.sequenceNumber,
         createdAt,
         editedAt: null,
       };

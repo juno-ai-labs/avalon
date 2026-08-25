@@ -4,7 +4,6 @@ import {
   type WorkstreamNameContextMessage,
 } from "@avalon/agent-harness";
 import { WorkstreamNameResultSchema } from "@avalon/contracts";
-import { nowIso } from "@avalon/db";
 
 import type { Env } from "../env";
 import { firstNonEmptyLine, truncateUtf16Safe } from "../lib/text";
@@ -12,6 +11,7 @@ import { logStructuredEvent } from "../observability/logger";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { publishWorkstreamEvent } from "./integrations";
 import { runStructuredInference } from "./structured-inference";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
  * The longest generated name that is written to a work stream. `title` holds
@@ -161,16 +161,17 @@ export async function refreshWorkstreamName(env: Env, input: {
     // never finished — the isolate went away mid-call — leaves the row in it.
     // This pass is the one thing that comes along afterwards, so it repairs the
     // row rather than stepping over it.
-    const row = await env.DB.prepare(
-      `SELECT w.title, w.title_status, w.objective
-       FROM workstreams w
-      WHERE w.id = ? AND w.workspace_id = ?
-        AND w.title_status IN ('naming', 'automatic')`,
-    ).bind(input.workstreamId, input.workspaceId).first<{
-      title: string;
-      title_status: "naming" | "automatic";
-      objective: string;
-    }>();
+    const identity = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+      .identity();
+    // The eligibility test was a `WHERE` clause because the read was a
+    // statement; it is a test on the row here.
+    const titleStatus: "naming" | "automatic" | null =
+      identity?.title_status === "naming" || identity?.title_status === "automatic"
+        ? identity.title_status
+        : null;
+    const row = identity && titleStatus
+      ? { title: identity.title, title_status: titleStatus, objective: identity.description }
+      : null;
     if (!row) return;
     // The count is over exactly the rows the naming context reads, which is why
     // it is `saidMessages`' own counterpart rather than a predicate written out
@@ -310,11 +311,9 @@ async function advanceTitle(env: Env, input: {
   title: string | null;
   standingTitle: string;
 }): Promise<void> {
-  const result = await env.DB.prepare(
-    `UPDATE workstreams SET title = COALESCE(?, title), title_status = ?, updated_at = ?
-      WHERE id = ? AND workspace_id = ? AND title_status = ?`,
-  ).bind(input.title, input.to, nowIso(), input.workstreamId, input.workspaceId, input.from).run();
-  if (Number(result.meta.changes ?? 0) === 0) {
+  const result = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+    .rename({ title: input.title, from: input.from, to: input.to, now: Date.now() });
+  if (result.outcome === "superseded") {
     logStructuredEvent(env, "debug", "workstream_name_superseded", {
       workspace_id: input.workspaceId,
       workstream_id: input.workstreamId,

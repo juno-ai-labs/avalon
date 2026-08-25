@@ -1,11 +1,10 @@
 import { ParticipantSchema, type ExternalActor, type Scope } from "@avalon/contracts";
-import { buildParticipantUpsertStatement } from "@avalon/db";
 
 import type { Env } from "../env";
 import { logWarn } from "../observability/logger";
 import { publishWorkstreamEvent } from "./integrations";
 import { resolveConnectorActorIdentities } from "./connector-actor-identity";
-import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
  * Who a work stream started from a connector conversation belongs to.
@@ -164,45 +163,35 @@ export async function admitConnectorAudience(
   // Participant rows live with the work stream, so every statement that touches
   // them has to run under the work stream's authority — post-cutover that is
   // the Durable Object, and the D1 copy is fenced. User profiles stay regional,
-  // which is why the roster read below is split in two instead of joining
-  // `users` from inside the object.
-  const executionEnv = await workstreamExecutionEnvironment(
-    env,
-    input.workspaceId,
-    input.workstreamId,
-  );
-  const active = await executionEnv.DB.prepare(
-    `SELECT user_id FROM workstream_participants
-     WHERE workstream_id = ? AND removed_at IS NULL
-       AND user_id IN (SELECT value FROM json_each(?))`,
-  ).bind(input.workstreamId, JSON.stringify(userIds)).all<{ user_id: string }>();
-  const activeUserIds = new Set((active.results ?? []).map((row) => row.user_id));
-  const newlyAdmittedUserIds = userIds.filter((userId) => !activeUserIds.has(userId));
-  const results = await executionEnv.DB.batch(userIds.map((userId) => buildParticipantUpsertStatement(executionEnv.DB, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    userId,
-    addedByUserId: input.addedByUserId ?? userId,
+  // which is why the profile read below is a second query against D1 rather
+  // than a `users` join from inside the object.
+  const identity = createIdentityObjectPort(env, input.workspaceId, input.workstreamId);
+  // The upsert's `WHERE EXISTS (SELECT 1 FROM workstreams …)` is the identity
+  // check the port makes before it dispatches, and the batch's atomicity was
+  // never across work streams — every statement in it named this one. What the
+  // batch did guarantee, and what one operation per member would not, is that
+  // the whole audience lands or none of it does: a half-applied admission is
+  // one whose survivors are already on the roster when the retry recomputes
+  // who is new, so their `participant_joined` is never published.
+  const seated = await identity.admitParticipants({
+    userIds,
+    addedByUserId: input.addedByUserId,
     reason: "explicit",
-  })));
-  if (results.some((result) => !result.success)) {
-    throw new Error("Could not admit the connector conversation audience");
-  }
-  if (newlyAdmittedUserIds.length === 0) return;
-  const participants = await executionEnv.DB.prepare(
-    `SELECT participant.user_id, participant.participation_reason, participant.joined_at
-     FROM workstream_participants participant
-     JOIN workstreams workstream ON workstream.id = participant.workstream_id
-     WHERE participant.workstream_id = ? AND workstream.workspace_id = ?
-       AND participant.removed_at IS NULL
-       AND participant.user_id IN (SELECT value FROM json_each(?))
-     ORDER BY participant.joined_at, participant.user_id`,
-  ).bind(
-    input.workstreamId,
-    input.workspaceId,
-    JSON.stringify(newlyAdmittedUserIds),
-  ).all<{ user_id: string; participation_reason: string; joined_at: string }>();
-  const admittedRows = participants.results ?? [];
+    now: Date.now(),
+  });
+  // The `JOIN workstreams` here proved nothing the object does not already
+  // know: it re-checked that the participant's work stream belongs to this
+  // workspace, which is the identity check the port makes before dispatching.
+  // `joined_at` was the view's ISO rendering of `added_at`; the crossing is
+  // this boundary now, because a participant is about to be published. The
+  // rows come back from the write, so no second read can disagree with it.
+  const admittedRows = seated
+    .filter((row) => row.outcome !== "unchanged")
+    .map((row) => ({
+      user_id: row.userId,
+      participation_reason: row.participationReason,
+      joined_at: new Date(row.addedAt).toISOString(),
+    }));
   if (admittedRows.length === 0) return;
   const users = await env.DB.prepare(
     `SELECT id, email, name, avatar_url, timezone, created_at FROM users

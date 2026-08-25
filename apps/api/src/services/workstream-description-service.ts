@@ -44,6 +44,7 @@ import { createMessageObjectPort } from "../runtime/message-port";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import { runStructuredInference } from "./structured-inference";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
  * The description a work stream carries between being created and this loop's
@@ -323,7 +324,7 @@ interface WorkstreamDescriptionRow {
   objective: string;
   description_source: string;
   origin_type: string;
-  archived_at: string | null;
+  archived_at: number | null;
 }
 
 interface ClaimRow {
@@ -386,13 +387,19 @@ async function evaluate(
   // needs. Two single-row lookups decide most terminal runs; only a work stream
   // that has both rested and changed pays for the window, and only one that has
   // changed in substance pays for inference.
-  const [workstream, previous] = await Promise.all([
-    env.DB.prepare(
-      `SELECT title, objective, description_source, origin_type, archived_at
-         FROM workstreams WHERE id = ? AND workspace_id = ?`,
-    ).bind(input.workstreamId, input.workspaceId).first<WorkstreamDescriptionRow>(),
+  const [identity, previous] = await Promise.all([
+    createIdentityObjectPort(env, input.workspaceId, input.workstreamId).identity(),
     scheduling.descriptionRefreshState(),
   ]);
+  const workstream: WorkstreamDescriptionRow | null = identity
+    ? {
+      title: identity.title,
+      objective: identity.description,
+      description_source: identity.description_source,
+      origin_type: identity.origin_type,
+      archived_at: identity.archived_at,
+    }
+    : null;
   if (!workstream) return { status: "skipped", reason: "workstream_missing" };
   if (workstream.archived_at != null) return { status: "skipped", reason: "archived" };
   // An automation's work stream describes one run of a saved configuration. Its
@@ -528,30 +535,24 @@ async function evaluate(
   // retitled the work stream while the model was thinking wins: theirs is the
   // more recent statement of intent, and silently overwriting it is the one
   // outcome that would make this loop untrustworthy.
-  const applied = await env.DB.prepare(
-    `UPDATE workstreams
-        SET objective = ?, description_source = 'derived', updated_at = ?
-      WHERE id = ? AND workspace_id = ? AND objective = ?`,
-  ).bind(
-    verdict.description,
-    now.toISOString(),
-    input.workstreamId,
-    input.workspaceId,
-    workstream.objective,
-  ).run();
-  if ((applied.meta?.changes ?? 0) === 0) {
+  const applied = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+    .redescribe({
+      description: verdict.description,
+      expectedDescription: workstream.objective,
+      now: now.getTime(),
+    });
+  if (applied.outcome === "superseded") {
     // `description` is what is in force after this evaluation, and after a
     // refusal that is whatever the other writer put there — not the text this
-    // evaluation read. Re-read it rather than record the superseded value.
-    const inForce = await env.DB.prepare(
-      "SELECT objective FROM workstreams WHERE id = ? AND workspace_id = ?",
-    ).bind(input.workstreamId, input.workspaceId).first<{ objective: string }>();
+    // evaluation read. The authority hands it back from inside the transaction
+    // that refused, rather than leaving this to a second read of a row that
+    // could move again between the two.
     await recordOutcome(env, input, scheduling, claim, {
       decision: "rejected",
       rejectionCode: "description_changed_during_evaluation",
       model: evaluatedModel,
       previousDescription: workstream.objective,
-      description: inForce?.objective ?? null,
+      description: applied.description,
       confidence: proposal.confidence,
       reasoning: proposal.reasoning.slice(0, 2_000),
       windowMessageCount: window.messages.length,

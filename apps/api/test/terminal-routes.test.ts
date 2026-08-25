@@ -19,7 +19,7 @@ import {
   testSubstreamAgentsBinding,
   testWorkstreamContract,
   testWorkstreamObjectStore,
-  workstreamObjectRun,
+  seedWorkstreamObjectParticipant,
 } from "./helpers/durable-authority";
 
 const W = asWorkspaceId("72000000-0000-4000-8000-000000000001");
@@ -56,13 +56,11 @@ function fixture(options: { authenticated?: boolean; role?: "owner" | "member" }
   seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
   // The participant gate reads through the object port, so the creator's
   // membership has to exist there, not only in the regional index.
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstream_participants
-      (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
-     VALUES (?, ?, ?, 'creator', '2026-08-13')`,
-    S, U, U,
-  );
+  seedWorkstreamObjectParticipant(objectStore, {
+    userId: U,
+    participationReason: "creator",
+    addedAt: Date.parse("2026-08-13T00:00:00.000Z"),
+  });
   const objectStores = new Map<string, DatabaseSync>([[S, objectStore]]);
   const env = createTestEnv({
     DB: sqliteD1(database),

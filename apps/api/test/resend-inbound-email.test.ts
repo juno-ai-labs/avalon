@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Region } from "@avalon/contracts";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
@@ -9,7 +10,14 @@ import {
   type ResendRegionalEmailInput,
 } from "../src/services/resend-inbound-email-service";
 import { __resendRouteTesting, resendInboundRoutes } from "../src/routes/resend";
-import { createCloudflareTestBinding, createTestD1Result, createTestDurableObjectId, createTestDurableObjectInstance, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+  workstreamObjectAll,
+  workstreamObjectRootRow,
+} from "./helpers/durable-authority";
 
 const NOW = Date.parse("2026-08-02T18:00:00.000Z");
 const SECRET_BYTES = new TextEncoder().encode("avalon-resend-webhook-test-secret-v1");
@@ -77,19 +85,6 @@ interface StoredResource {
   contentRef: string;
 }
 
-interface StoredMessage {
-  id: string;
-  clientMessageId: string;
-  workspaceId: string;
-  workstreamId: string;
-  authorType: string;
-  messageType: string;
-  textContent: string;
-  structuredContentJson: string;
-  sequenceNumber: number;
-  createdAt: string;
-}
-
 class FakeDatabase {
   prepareCalls = 0;
   readonly routes = new Map<string, {
@@ -111,7 +106,14 @@ class FakeDatabase {
   } | null = null;
   readonly activeMembers = new Map<string, string>();
   readonly resources: StoredResource[] = [];
-  readonly messages: StoredMessage[] = [];
+  /**
+   * The work stream's own object.
+   *
+   * The transcript and the identity gate are its authorities' now, so what
+   * this ingestion wrote is read back from the real storage rather than from
+   * another arm of the matcher below.
+   */
+  readonly objectStore: DatabaseSync = objectStoreFor();
   readonly attachments: Array<{ workstreamId: string; resourceId: string }> = [];
 
   recordAttachment(workstreamId: string, resourceId: string): void {
@@ -121,9 +123,6 @@ class FakeDatabase {
     this.attachments.push({ workstreamId, resourceId });
   }
   automationEmailBudgetAvailable = true;
-  nextSequence = 1;
-  workstreamLastActivityAt: string | null = null;
-  workstreamLatestAttentionSequenceNumber = 0;
 
   prepare(sql: string): FakeStatement {
     this.prepareCalls += 1;
@@ -200,17 +199,6 @@ class FakeDatabase {
         lease_token: receipt.leaseToken,
         lease_expires_at: receipt.leaseExpiresAt,
       } : null;
-    }
-    if (sql.includes("FROM messages")) {
-      const message = this.messages.find((candidate) =>
-        candidate.workstreamId === values[0] && candidate.clientMessageId === values[1]);
-      return message ? { id: message.id } : null;
-    }
-    if (sql.includes("RETURNING next_sequence_number")) {
-      if (values[0] !== WORKSTREAM_ID || values[1] !== WORKSPACE_ID || values[2] !== EMAIL_ADDRESS) return null;
-      const sequenceNumber = this.nextSequence;
-      this.nextSequence += 1;
-      return { sequence_number: sequenceNumber };
     }
     if (sql.includes("FROM resources")) {
       const resource = this.resources.find((candidate) =>
@@ -346,31 +334,6 @@ class FakeDatabase {
       const resource = this.resources.find((candidate) => candidate.id === values[5] && candidate.workspaceId === values[6]);
       if (resource) resource.contentRef = String(values[1]);
       return result(resource ? 1 : 0);
-    }
-    if (sql.includes("INSERT OR IGNORE INTO messages")) {
-      if (this.messages.some((candidate) =>
-        candidate.workstreamId === values[3] && candidate.clientMessageId === values[1])) return result(0);
-      this.messages.push({
-        id: String(values[0]),
-        clientMessageId: String(values[1]),
-        workspaceId: String(values[2]),
-        workstreamId: String(values[3]),
-        authorType: "system",
-        messageType: "system",
-        textContent: String(values[4]),
-        structuredContentJson: String(values[5]),
-        sequenceNumber: Number(values[6]),
-        createdAt: String(values[7]),
-      });
-      return result(1);
-    }
-    if (sql.includes("UPDATE workstreams") && sql.includes("latest_attention_sequence_number")) {
-      this.workstreamLatestAttentionSequenceNumber = Math.max(
-        this.workstreamLatestAttentionSequenceNumber,
-        Number(values[0]),
-      );
-      this.workstreamLastActivityAt = String(values[1]);
-      return result(1);
     }
     throw new Error(`Unexpected run query: ${sql}`);
   }
@@ -611,7 +574,7 @@ describe("regional Resend email ingestion", () => {
       resourceId: null,
     });
     expect(database.resources).toHaveLength(0);
-    expect(database.messages).toHaveLength(0);
+    expect(storedMessages(database)).toHaveLength(0);
     expect(database.automationReceipts.get(automationReceiptKey(RESEND_EMAIL_ID, AUTOMATION_ID)))
       .toMatchObject({
         processedAt: "2026-08-02T18:00:00.000Z",
@@ -704,24 +667,31 @@ describe("regional Resend email ingestion", () => {
       `https://api.resend.com/emails/receiving/${RESEND_EMAIL_ID}`,
       expect.objectContaining({ method: "GET" }),
     );
-    expect(database.messages).toHaveLength(1);
-    expect(database.messages[0]).toMatchObject({
-      authorType: "system",
-      messageType: "system",
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      sequenceNumber: 1,
+    const stored = storedMessages(database);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({
+      author_type: "system",
+      message_type: "system",
+      sequence_number: 1,
     });
-    expect(database.messages[0]!.textContent).toContain("Hello & welcome");
-    expect(database.messages[0]!.textContent).toContain("Untrusted external email");
-    expect(database.messages[0]!.textContent).not.toContain("evil");
-    expect(JSON.parse(database.messages[0]!.structuredContentJson)).toMatchObject({
+    expect(String(stored[0]!.text_content)).toContain("Hello & welcome");
+    expect(String(stored[0]!.text_content)).toContain("Untrusted external email");
+    expect(String(stored[0]!.text_content)).not.toContain("evil");
+    expect(JSON.parse(String(stored[0]!.structured_content_json))).toMatchObject({
       kind: "inbound_email",
       untrusted: true,
       attachmentCount: 1,
     });
     expect(database.attachments).toHaveLength(1);
-    expect(database.workstreamLastActivityAt).toBe("2026-08-02T18:00:00.000Z");
+    // The append moved the work stream's own clock, which the retired counter
+    // update did as a statement of its own after the insert.
+    expect(workstreamObjectRootRow(
+      database.objectStore,
+      "last_people_activity_at, next_attention_ordinal",
+    )).toEqual({
+      last_people_activity_at: Date.parse("2026-08-02T18:00:00.000Z"),
+      next_attention_ordinal: 2,
+    });
     const payload = [...bucket.values.values()][0]!;
     expect(payload).toContain("Hello & welcome");
     expect(payload).not.toContain("evil");
@@ -742,7 +712,7 @@ describe("regional Resend email ingestion", () => {
       resourceId: null,
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(database.messages).toHaveLength(1);
+    expect(storedMessages(database)).toHaveLength(1);
   });
 
   it("validates the regional work-stream address before retrieving content", async () => {
@@ -857,11 +827,53 @@ describe("Resend text normalization", () => {
   });
 });
 
+/** Object stores opened for the identity gate, closed after each test. */
+const identityStores: DatabaseSync[] = [];
+
+afterEach(() => {
+  while (identityStores.length > 0) identityStores.pop()?.close();
+});
+
+/**
+ * The work stream's own object, holding exactly what the routed gate matched
+ * on: this fixture's identity, its address, and no archive. The transcript
+ * this ingestion appends lands here too, which is why one store is shared by
+ * both endpoints rather than made per call.
+ */
+/** The transcript parts this ingestion wrote, in the legacy vocabulary. */
+function storedMessages(database: FakeDatabase) {
+  return workstreamObjectAll(
+    database.objectStore,
+    `SELECT id, client_message_id, author_type, message_type, text_content,
+            structured_content_json, sequence_number
+       FROM messages ORDER BY sequence_number`,
+  );
+}
+
+function objectStoreFor(): DatabaseSync {
+  const store = testWorkstreamObjectStore();
+  identityStores.push(store);
+  seedWorkstreamObjectRoot(store, {
+    workstreamId: WORKSTREAM_ID,
+    workspaceId: WORKSPACE_ID,
+    emailAddress: EMAIL_ADDRESS,
+  });
+  return store;
+}
+
 function environment(
   database: FakeDatabase,
   region: Region,
   bucket: FakeBucket = new FakeBucket(),
 ): Env {
+  const agent = testSubstreamAgentsBinding(database.objectStore, {
+    extra: {
+      attachRuntimeResource: async (input: { workstreamId: string; resourceId: string }) => {
+        database.recordAttachment(input.workstreamId, input.resourceId);
+        return { status: 200, bodyJson: "{}" };
+      },
+    },
+  });
   return createTestEnv({
     DB: database,
     PAYLOADS: bucket,
@@ -869,42 +881,11 @@ function environment(
     // now, not a statement in this service's own batch. The stub records what
     // the port sends so the assertions below stay on the attachment rather than
     // on which database happened to receive it.
-    SUBSTREAM_AGENTS: createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
-      idFromName: () => createTestDurableObjectId("substream"),
-      get: () => createTestDurableObjectInstance({
-        attachRuntimeResource: async (input: { workstreamId: string; resourceId: string }) => {
-          database.recordAttachment(input.workstreamId, input.resourceId);
-          return { status: 200, bodyJson: "{}" };
-        },
-        // The routed half of the same move: statements the rewriter classifies
-        // as the work stream's own no longer reach `env.DB` directly. Running
-        // them back through the fake keeps every assertion in this file on what
-        // the service wrote, not on which side of the port carried it.
-        executeRuntimeSql: async (input: {
-          statements: Array<{ sql: string; params: unknown[] }>;
-        }) => ({
-          status: 200,
-          bodyJson: JSON.stringify({
-            results: await Promise.all(input.statements.map(async ({ sql, params }) => {
-              const statement = database.prepare(sql).bind(...params);
-              // A `RETURNING` update answers with a row, like a select: the
-              // sequence claim is one, and the fake handles it in `first`.
-              if (/^\s*SELECT/iu.test(sql) || /\bRETURNING\b/iu.test(sql)) {
-                const row = await statement.first<Record<string, string | number | null>>();
-                return {
-                  columns: row ? Object.keys(row) : [],
-                  rows: row ? [row] : [],
-                  changes: row ? 1 : 0,
-                };
-              }
-              const executed = await statement.run();
-              return { columns: [], rows: [], changes: Number(executed.meta.changes ?? 0) };
-            })),
-          }),
-        }),
-      }),
-      jurisdiction() { return this as Env["SUBSTREAM_AGENTS"]; },
-    }),
+    // The identity gate and the transcript append are the work stream object's
+    // own operations, run against a real object store by the shared stub, so
+    // this file asserts on what the storage classes wrote. Only the resource
+    // attachment stands in — it is what these tests are about.
+    SUBSTREAM_AGENTS: agent,
     AVALON_REGION: region,
     APP_ENV: "test",
     WORKSTREAM_EMAIL_DOMAIN: DOMAIN,
