@@ -72,7 +72,7 @@ The same Worker source is deployed twice:
 | D1 | global database | EU-jurisdiction database |
 | Agent memory vectors | `avalon-global-memory` Vectorize index | `avalon-eu-memory` Vectorize index |
 | R2 | global bucket | EU-jurisdiction bucket |
-| Inference lakehouse | Global payload archive, Queue, Pipeline stream/sink, and default-jurisdiction R2 Data Catalog | EU payload archive, Queue, Pipeline stream, and EU-jurisdiction R2 Parquet sink |
+| Inference lakehouse | Global payload archive, Queue, Pipeline stream/sink, and default-jurisdiction R2 Data Catalog | Intentionally disabled; EU inference is not archived or exported for analytics |
 | Telemetry R2 | dedicated `avalon-global-telemetry` bucket | dedicated `avalon-eu-telemetry` bucket with EU jurisdiction |
 | Durable Objects | `jurisdiction("us")`, workspace affinity `wnam` or `enam` | `jurisdiction("eu")`, workspace affinity `weur` or `eeur` |
 | Secrets | global key set | independent EU key set |
@@ -86,13 +86,15 @@ Queues and Workflows carry region plus opaque record IDs, never sensitive payloa
 bodies. Every service receives a fixed regional dependency container; repositories
 cannot choose a region from user-controlled object IDs.
 
-Inference analytics follows that rule by archiving the sensitive record in the
-regional payload bucket first and putting only its object key, byte count, and
-SHA-256 on the regional Queue. The same regional Worker validates and sends the
-record through its generated Pipeline stream binding. Global writes to R2 Data
-Catalog; EU writes the same typed Parquet directly to its EU-jurisdiction R2
-bucket because Cloudflare Data Catalog cannot target that jurisdiction. There
-is no shared inference queue, bucket, stream, sink, table, or query surface.
+Global inference analytics follows that rule by archiving the sensitive record
+in the Global payload bucket first and putting only its object key, byte count,
+and SHA-256 on the Global Queue. The Global Worker validates and sends the
+record through its generated Pipeline stream binding into R2 Data Catalog. EU
+inference analytics are intentionally deferred because Cloudflare Data Catalog
+cannot target an EU-jurisdiction bucket and the direct R2 Pipeline alternative
+requires a separate interactive credential lifecycle. The EU Worker returns
+before archive staging and has no inference Queue or Pipeline binding; it never
+falls back to the Global table.
 [`inference-lakehouse.md`](inference-lakehouse.md) owns the full record and
 provisioning contract.
 
@@ -350,6 +352,27 @@ these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
+
+### 2026-08-24 — EU inference analytics are deferred
+
+**What changed:** Only the Global Worker archives inference into R2, Queue,
+Pipeline, and Data Catalog. EU continues to serve model calls but has no
+inference producer, consumer, Pipeline binding, archive staging, or cross-region
+fallback.
+
+**Why:** Cloudflare cannot place Data Catalog in the EU jurisdiction, and its
+direct R2 Pipeline setup requires a separate service credential obtained through
+Wrangler's interactive OAuth flow. Product direction is to accept the EU
+debugging gap instead of adding that manual credential lifecycle.
+
+**Considered and rejected:** Sending EU content to the Global catalog, which
+would cross the workspace boundary; and provisioning a second long-lived R2
+credential, which would make first deployment and rotation a separate manual
+system.
+
+**Consequences:** Global retains maximal lossless inference evidence. The
+absence of an EU row is expected, and responders must not query D1, Workers
+Logs, the empty EU preflight resources, or Global as a substitute.
 
 ### 2026-08-24 — EU inference analytics stays in EU without Data Catalog
 

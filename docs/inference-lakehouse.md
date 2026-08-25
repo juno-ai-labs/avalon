@@ -1,12 +1,16 @@
 # Inference lakehouse
 
-The inference lakehouse records every streaming and structured model request and
-terminal attempt as a regional analytical event. It keeps the exact JSON record
-in the workspace region's payload bucket and delivers a typed projection through
-a regional Cloudflare Queue and Pipeline. Global lands in an Apache Iceberg
-table in R2 Data Catalog. EU lands as the same typed, zstd-compressed Parquet in
-an EU-jurisdiction R2 bucket because Cloudflare Data Catalog
-[does not support non-default jurisdictions](https://developers.cloudflare.com/r2-data-catalog/manage-catalogs/#jurisdiction-restrictions).
+The inference lakehouse records every Global streaming and structured model
+request and terminal attempt as an analytical event. It keeps the exact JSON
+record in Global's payload bucket and delivers a typed projection through a
+Global Cloudflare Queue and Pipeline into an Apache Iceberg table in R2 Data
+Catalog.
+
+EU inference analytics are intentionally deferred. The EU Worker has no
+inference Queue producer, consumer, or Pipeline binding and returns before raw
+archive staging, so EU prompts and responses are not written to analytical R2.
+This avoids exporting EU workspace content to Global while Cloudflare Data
+Catalog [does not support non-default jurisdictions](https://developers.cloudflare.com/r2-data-catalog/manage-catalogs/#jurisdiction-restrictions).
 
 This is an operational data system containing prompts, conversations, tool
 schemas and calls, model output, identifiers, and provider errors. It is not
@@ -17,12 +21,12 @@ product authority, and a capture failure does not change the inference outcome.
 | Path | Responsibility |
 | --- | --- |
 | `packages/agent-harness/src/index.ts`, `bind-runtime.ts` | Emit one exact request event and one terminal attempt event for each structured or streaming provider call. |
-| `apps/api/src/services/inference-lakehouse.ts` | Build the common record, archive it in regional `PAYLOADS`, hash it, and enqueue the pointer without failing the inference. |
+| `apps/api/src/services/inference-lakehouse.ts` | Build the common record, explicitly skip EU, archive Global in `PAYLOADS`, hash it, and enqueue the pointer without failing the inference. |
 | `apps/api/src/queues/inference-lakehouse-consumer.ts` | Validate the pointer and archived bytes, enforce the regional boundary, fit the row to Pipeline's request limit, and send it through `INFERENCE_LAKEHOUSE`. |
-| `config/inference-lakehouse.json` | Source of truth for the regional bucket, stream, sink, pipeline, namespace, table, and binding names. |
+| `config/inference-lakehouse.json` | Source of truth for the Global bucket, stream, sink, pipeline, namespace, table, and binding names. |
 | `config/inference-lakehouse-stream-schema.json` | Immutable structured-stream schema and analytical column contract. |
-| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Idempotent bucket, region-appropriate sink, stream, and pipeline provisioning plus generated-ID binding materialization. |
-| `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | Regional Queue producer/consumer and dead-letter declarations. |
+| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Idempotent Global bucket, catalog, stream, sink, and pipeline provisioning plus generated-ID binding materialization. |
+| `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | Global declares the inference Queue producer/consumer; EU contains the explicit deferral comment and no inference transport. |
 | `.github/workflows/deploy-api.yml` | Runs both resource preflights and deploys the generated Wrangler configs before any inference can target the resources. |
 
 ## How it works
@@ -57,58 +61,52 @@ not a new product substream, and remains queryable through `request_id` and
 canonical IDs flow through the existing workflow input instead of collapsing
 all rows under `workstream_id`.
 
-Before enqueueing, the Worker serializes and validates the complete record,
+In Global, before enqueueing, the Worker serializes and validates the complete record,
 computes its byte length and SHA-256, and writes it to
 `inference-lakehouse/records/<date>/<event-id>.json` in the regional `PAYLOADS`
-bucket. The Queue message contains only schema version, region, event ID, object
+bucket. EU returns before this step. The Global Queue message contains only schema version, region, event ID, object
 key, hash, byte count, and capture time. This extra R2 hand-off is intentional:
 Queue messages cannot hold a large multimodal inference record, while an opaque
 pointer is small, region-safe, and independently verifiable.
 
 ### Queue and Pipeline delivery
 
-`avalon-global-inference-lakehouse` is consumed only by the Global Worker and
-`avalon-eu-inference-lakehouse` only by the EU Worker. The consumer rejects a
-pointer for the other region, loads only its own `PAYLOADS` binding, verifies
+`avalon-global-inference-lakehouse` is consumed only by the Global Worker. The
+consumer rejects a pointer for another region, loads Global's `PAYLOADS` binding, verifies
 the exact byte count and SHA-256, parses the schema again, and sends a one-row
-array through the region's `INFERENCE_LAKEHOUSE` Pipeline binding.
+array through the Global `INFERENCE_LAKEHOUSE` Pipeline binding.
 
 Pipeline ingestion requests have a 5,000,000-byte ceiling. When the array-wrapped
 record would exceed it, the consumer removes only the full `request` and
 `response` JSON from the analytical row and adds `payload_object_key`,
 `payload_sha256`, and `payload_bytes`. Every queryable dimension, failure, usage,
 and metadata field still lands in the analytical projection, while the exact
-record stays at the verified regional R2 pointer. Records below the ceiling also
+record stays at the verified Global R2 pointer. Records below the ceiling also
 remain in R2; the archive is the lossless source and makes redelivery independent of a prior Queue
 acknowledgement.
 
-The Pipeline is a direct `INSERT INTO <sink> SELECT * FROM <stream>`. Both sinks
-write zstd-compressed Parquet with a 300-second rolling interval. Global writes
-to Data Catalog namespace `avalon`, table `llm_inference`; Cloudflare creates the
-namespace and table when the first records arrive. EU writes ordinary Parquet
-under `avalon/llm_inference/year=<UTC year>/month=<month>/day=<day>/hour=<hour>`
-in `avalon-eu-inference-lakehouse`. The schema and row contents are identical;
-only the regional storage/query surface differs.
+The Pipeline is a direct `INSERT INTO <sink> SELECT * FROM <stream>`. Its sink
+writes zstd-compressed Parquet with a 300-second rolling interval to Data Catalog
+namespace `avalon`, table `llm_inference`; Cloudflare creates the namespace and
+table when the first records arrive.
 
 ### Provisioning on merge
 
 The API deployment does all resource work before migrations or Worker upload:
 
-1. `ensure-cloudflare-queues.mjs` creates both regional queues; each Wrangler
-   consumer declaration causes its regional dead-letter queue to be created on
-   first deployment.
-2. `ensure-cloudflare-inference-lakehouse.mjs` creates each regional R2 bucket,
-   enables Global's Data Catalog, and creates the structured stream, immutable
-   region-appropriate sink, and pipeline if they are absent. It derives the EU
-   R2 sink's S3 credentials from the existing deployment API token; it never
-   opens an OAuth flow or requires a separately copied secret. Both immutable
-   sink names include the verified token ID's SHA-256 fingerprint so their
-   credential identity remains observable without exposing the ID, even though
-   Cloudflare redacts credentials from sink reads.
-3. The preflight discovers Cloudflare's generated stream IDs and writes ignored
-   `.wrangler.inference.<region>.json` files containing the Pipeline bindings.
-4. The workflow deploys EU and then Global with those generated configs. Health
-   requires both the Queue and Pipeline binding in staging and production.
+1. `ensure-cloudflare-queues.mjs` creates the Global inference queue; its
+   Wrangler consumer declaration causes the Global dead-letter queue to be
+   created on first deployment. EU declares neither.
+2. `ensure-cloudflare-inference-lakehouse.mjs` creates the Global R2 bucket,
+   enables Data Catalog, and creates the structured stream, immutable sink, and
+   pipeline if they are absent. The immutable sink name includes the verified
+   deployment-token ID's SHA-256 fingerprint without exposing the ID.
+3. The preflight discovers Cloudflare's generated Global stream ID and writes
+   ignored `.wrangler.inference.<region>.json` deploy configs. Only the Global
+   config contains a Pipeline binding.
+4. The workflow deploys EU without inference bindings and then Global with the
+   generated Queue and Pipeline bindings. Health requires them only in Global;
+   EU reports the export as intentionally disabled.
 
 Later merges run the same path. `config/inference-lakehouse.json` declares the
 deployment credential as account-owned, so provisioning uses the account token
@@ -117,17 +115,12 @@ resources are read back and compared to the manifest; immutable schema, sink, or
 SQL drift fails the deployment rather than creating a parallel table or silently
 dropping fields. No resource requires a dashboard or laptop step. The existing
 account-owned deployment token must have
-Workers R2 Storage Admin Read & Write, Object Read & Write on
-`avalon-eu-inference-lakehouse`, Pipelines, Queues, and Worker deployment
-permissions.
-Its token value is installed in a newly created Global Data Catalog sink. For the
-EU R2 sink, the token ID becomes the S3 access key and the SHA-256 of the token
-value becomes its secret access key, as Cloudflare's R2 API-token contract
-specifies; neither derived value is logged or persisted in a generated Wrangler
-file. Replacing that deployment token changes the desired credential-bound sink
-names, so provisioning fails before creating conflicting sinks. Rotating the
-credential therefore requires an explicit immutable sink/pipeline migration,
-not an ordinary secret replacement that silently strands delivery.
+Workers R2 Storage Admin Read & Write, R2 Data Catalog, Pipelines, Queues, and
+Worker deployment permissions. Its token value is installed in the Global Data
+Catalog sink but is never logged or persisted in a generated Wrangler file.
+Replacing that deployment token changes the desired credential-bound sink name,
+so provisioning fails before creating a conflicting sink. Rotating the
+credential therefore requires an explicit immutable sink/pipeline migration.
 
 ## Invariants
 
@@ -159,12 +152,10 @@ not an ordinary secret replacement that silently strands delivery.
 ## Boundary
 
 The harness owns faithful request/attempt events. The lakehouse owns archival,
-transport, analytical shape, and provisioning. The regional `PAYLOADS` bucket
+transport, analytical shape, and provisioning. Global's `PAYLOADS` bucket
 remains a general object store; this module owns only the
 `inference-lakehouse/records/` prefix. Global R2 Data Catalog owns Iceberg
 commits, compaction, namespace/table creation, and query-engine interoperability.
-Cloudflare Pipelines owns the EU Parquet file layout under the manifest's fixed
-prefix and UTC partitions.
 
 The analytical projection is not the work-stream transcript, billing authority,
 model-routing control, or the owning execution object's operational
@@ -176,20 +167,20 @@ as proof that a model call committed product state.
 
 - A capture archive or Queue-send failure emits `inference_lakehouse_stage_failed`
   and does not fail the inference. The object is removed when Queue acceptance
-  itself fails. The harness does await the regional archive and Queue acceptance,
+  itself fails. The harness does await the Global archive and Queue acceptance,
   so their latency is added before or after the provider call; Pipeline and sink
   work is fully off the inference path.
 - Invalid or cross-region pointers are poison: the consumer logs and acknowledges
   them so they cannot retry forever. Missing, corrupt, or schema-invalid archived
-  bytes and Pipeline failures retry and eventually reach the regional DLQ.
+  bytes and Pipeline failures retry and eventually reach the Global DLQ.
 - A Pipeline record above 5,000,000 bytes becomes a pointer-backed analytical row;
-  its exact record remains in regional R2. Queue messages remain far below the
+  its exact record remains in Global R2. Queue messages remain far below the
   Queue's 128 KB message limit because they contain no inference JSON.
 - The consumer uses Cloudflare's defaults of 10 messages, a 5-second batch
   window, and three retries. There is no user-visible dependency that justifies
-  a lower latency or a guessed custom retry number; the regional DLQ is the
+  a lower latency or a guessed custom retry number; the Global DLQ is the
   failure signal.
-- Both sinks roll files every 300 seconds. Global Data Catalog requires at least
+- The Global sink rolls files every 300 seconds. Data Catalog requires at least
   60 seconds to avoid compaction conflicts, and faster analytical visibility is
   not on the inference request path.
 - No retention or lifecycle deletion is configured for the raw archive. That is
@@ -221,7 +212,7 @@ node --test scripts/ensure-cloudflare-inference-lakehouse.test.mjs
 ## Data model
 
 `config/inference-lakehouse-stream-schema.json` is authoritative for the
-analytical shape in both sinks. It uses typed scalar columns for filters and
+analytical shape in the Global sink. It uses typed scalar columns for filters and
 aggregates, JSON columns for lossless nested inference data, and three optional
 payload-pointer columns for a record whose exact JSON cannot fit one Pipeline
 ingestion request. Version 1 has two rows per successful provider call and normally two per failed call: the
@@ -229,14 +220,11 @@ request and terminal attempt.
 
 ## Regional impact
 
-Global uses `avalon-global-inference-lakehouse` resources, default R2
-jurisdiction, and a Data Catalog sink. EU uses
-`avalon-eu-inference-lakehouse`, an ordinary R2 sink, and the `eu` jurisdiction
-for both bucket access and sink configuration. Both use the same binding names
-and immutable stream schema, but querying necessarily branches: Global uses R2
-SQL over `avalon.llm_inference`; EU lists and downloads the incident's UTC
-Parquet partition through the R2 Object API and queries it locally. There is no
-combined account-wide inference table or cross-region fallback.
+Global uses `avalon-global-inference-lakehouse`, default R2 jurisdiction, and a
+Data Catalog sink. EU inference is served normally but produces no lakehouse
+archive, Queue message, Pipeline row, or cross-region fallback. The already
+created empty EU lakehouse bucket and stream are not product bindings and may be
+removed in a separately reviewed infrastructure cleanup.
 
 ## Security and trust model
 
@@ -252,41 +240,41 @@ these JSON fields to Workers Logs, expose the bucket or catalog publicly, or han
 query credentials to product clients. `substream_id` is an identifier, not an
 authorization boundary; a query client still needs regional responder access.
 The Cloudflare administration token remains in deployment configuration and is
-installed only into the immutable sinks as their delivery credential; it is
+installed only into the immutable Global sink as its delivery credential; it is
 never a Worker variable or an inference record.
 
 ## Operations
 
 Start with `inference_lakehouse_stage_failed` for producer-side gaps and
 `inference_lakehouse_delivery_failed` for consumer retries. A non-empty
-`avalon-<region>-inference-lakehouse-dead-letter` queue is the definitive
+`avalon-global-inference-lakehouse-dead-letter` queue is the definitive
 delivery alarm. `inference_lakehouse_delivered` includes only identifiers,
 source, event type, and whether the row used the oversized fallback.
 
-`pnpm cloudflare:resources:check` verifies both existing regional lakehouses and
+`pnpm cloudflare:resources:check` verifies the Global lakehouse and
 all other declared hosted resources without creating anything.
 `pnpm cloudflare:inference-lakehouse:ensure -- --materialize-bindings` is the
 same idempotent path the deployment uses and is break-glass tooling, not a
-required release step. Query Global's `avalon.llm_inference` Iceberg table or
-EU's bounded UTC Parquet files by `event_id`, `inference_request_id`, workspace/
-work-stream/substream/request IDs, model, source, time, success/failure, or usage.
-Follow `payload_object_key` into the same region's payload bucket when the exact
-JSON is needed.
+required release step. Query Global's `avalon.llm_inference` Iceberg table by
+`event_id`, `inference_request_id`, workspace/work-stream/substream/request IDs,
+model, source, time, success/failure, or usage. Follow `payload_object_key` into
+the Global payload bucket when the exact JSON is needed. There is no EU query
+procedure because EU inference is not captured.
 
 For production debugging, follow the API-first, region-selection, bounded query,
 inference-pair interpretation, raw-object verification, and missing-row
 procedure in [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference). Do not
 improvise a D1 query or use the provisioning credential as a general-purpose
-reader. Cloudflare's R2 SQL surface is beta and applies only to Global; its
-invocation syntax may move. The runbook links the current upstream query guide
-and uses the stable R2 Object API for EU while keeping Avalon's table, bucket,
-event, privacy, and authority rules local and stable.
+reader. Cloudflare's R2 SQL surface is beta; its invocation syntax may move. The
+runbook links the current upstream query guide while keeping Avalon's table,
+bucket, event, privacy, and authority rules local and stable. If the workspace
+is EU, stop: absence is expected and the lakehouse cannot diagnose that run.
 
 ## Performance and cost
 
-Each provider call normally creates two payload objects, two Queue messages,
-and two Pipeline/Parquet records. The Queue isolates these analytical writes
-from Pipeline and sink latency; the producer still waits for regional R2 archive
+Each Global provider call normally creates two payload objects, two Queue
+messages, and two Pipeline/Parquet records. EU creates none. The Queue isolates these analytical writes
+from Pipeline and sink latency; the producer still waits for Global R2 archive
 and Queue acceptance. Pipeline ingestion is free; transformation and sink writes
 are usage-priced, and R2 stores both the raw archive and analytical Parquet files.
 This duplication is the explicit price of keeping exact large records
@@ -294,6 +282,30 @@ while retaining queryable columns. Revisit it only with real storage cost or a
 decided retention policy, not a speculative cache or aggregation layer.
 
 ## Changelog
+
+### 2026-08-24 — EU inference analytics are deferred
+
+**What changed:** The manifest, Worker bindings, Queue inventory, health
+contract, capture path, and production runbook now provision and use only the
+Global inference lakehouse. The EU Worker has no inference Queue or Pipeline
+bindings and explicitly skips archive staging.
+
+**Why:** Cloudflare Data Catalog cannot use an EU-jurisdiction bucket. The direct
+R2 Pipeline alternative requires a separate service credential created through
+an interactive OAuth flow in Wrangler; attempts to substitute the deployment
+token failed sink creation before any migration or Worker deployment. Product
+direction is to defer EU analytical inference storage rather than add a second
+credential lifecycle or export EU content to Global.
+
+**Considered and rejected:** Continuing to automate a dedicated EU R2 token,
+which would add token creation, rotation, orphan cleanup, and another immutable
+sink lifecycle; and routing EU records into the Global Catalog, which would
+violate the regional content boundary.
+
+**Consequences:** Global inference remains lossless and queryable through the
+API-only runbook. EU inference remains available to the product but has no raw
+lakehouse evidence for later analysis. The empty EU bucket and stream created by
+failed preflights are inert and are not deleted by this release.
 
 ### 2026-08-24 — Account-owned deployment tokens use their owning verifier
 

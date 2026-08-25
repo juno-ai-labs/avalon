@@ -307,11 +307,12 @@ Every classified provider attempt appends an immutable operational
 decision, outcome, latency, available token/cache/cost counters, and hashed
 credential/workspace identities. Harness-run usage also stores turn/tool
 timings and counts. Provider error bodies and credentials are not retained in
-that recovery ledger. The regional lakehouse separately uses the closed source
-vocabulary `workstream`, `automation_compiler`, `inline_child`,
-`block_dashboard`, and `meeting_notes` for analytical capture.
+that recovery ledger. For Global workspaces, the Global lakehouse separately
+uses the closed source vocabulary `workstream`, `automation_compiler`,
+`inline_child`, `block_dashboard`, and `meeting_notes` for analytical capture.
+EU workspaces intentionally have no analytical inference capture.
 
-The harness also emits the lossless events consumed by the regional
+The harness also emits lossless events that the Global host sends to the
 [`inference lakehouse`](inference-lakehouse.md). A streaming call exposes the
 exact outbound body before inference and its complete normalized response or
 provider error at the terminal attempt. A structured call assigns one request
@@ -320,7 +321,8 @@ successful JSON provider envelope, bounded failure classification, usage,
 latency, response size, repair position, and validation outcome through
 completion. These are explicit host hooks: the portable harness
 does not know about R2, Queue, Pipeline, or residency, and a host's capture
-failure never changes provider routing or run outcome.
+failure or the EU host's intentional no-op never changes provider routing or run
+outcome.
 
 ### Streaming stability
 
@@ -600,7 +602,7 @@ Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and h
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The Bind loop runs inside a long-lived `SubstreamAgent` operation, so an `AbortSignal.timeout()` left armed after a fast tool call retains dead timer work and can keep the isolate active after useful work ended. The rule and its incident are [`runbook.md`](runbook.md).
 
-When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is never written to structured Workers Logs or the object-local operational inference ledger: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose. It is retained only inside the deliberately sensitive regional inference-lakehouse record, alongside the prompt it may quote, so lossless provider diagnosis does not turn the ordinary log surface into a content store.
+When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is never written to structured Workers Logs or the object-local operational inference ledger: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose. For Global inference it is retained only inside the deliberately sensitive inference-lakehouse record, alongside the prompt it may quote, so lossless provider diagnosis does not turn the ordinary log surface into a content store. For EU inference it is not retained for later analysis.
 
 Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and dimensions and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, WebP, HEIF/HEIC, and the primary TIFF path are normalized through Cloudflare Images; the TIFF fallback preflights dimensions before pixel decode, while HEIF has no whole-buffer local fallback. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript. Non-image message attachments contribute a compact manifest only; authorized attachment tools own every byte of text, Office, and PDF hydration.
 
@@ -636,7 +638,7 @@ the mutation before its response failed validation.
 
 The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `resourceId`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`, `attachmentKind`, and `suggestedCall` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into every later lossless inference request record. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
 
-Hosted inference capture has one path: the always-on regional lakehouse. It records exact request and terminal-attempt events through regional R2, Queue, Pipeline, and Data Catalog; the workspace preference, request-only `agent-inference/` writer, and regional D1 index no longer exist. Capture remains best-effort and cannot fail an agent run. Reading a captured record back is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
+Hosted inference capture has one path for Global workspaces: the always-on Global lakehouse. It records exact request and terminal-attempt events through Global R2, Queue, Pipeline, and Data Catalog; the workspace preference, request-only `agent-inference/` writer, and regional D1 index no longer exist. EU inference analytics are intentionally deferred, so EU provider calls have no lakehouse archive or cross-region fallback. Capture remains best-effort and cannot fail an agent run. Reading a captured Global record back is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
 
 Separately, Product analytics records a content-free `agent_tool_started` only
 after the execution plan is durable and replay/ambiguity checks permit a new
@@ -704,6 +706,24 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-24 — EU hosts intentionally discard analytical inference events
+
+**What changed:** The harness still emits the same host-neutral lossless event,
+but only the Global API host persists and transports it. The EU host returns
+before archive staging and has no Queue or Pipeline binding.
+
+**Why:** Cloudflare cannot put Data Catalog in the EU jurisdiction, and the
+direct R2 Pipeline alternative would require a separately bootstrapped
+interactive credential. Product direction is to defer EU inference analytics.
+
+**Considered and rejected:** Teaching the portable harness about region, which
+would couple provider execution to deployment topology; and forwarding EU
+events to Global, which would cross the workspace content boundary.
+
+**Consequences:** Provider execution behavior remains identical in both regions.
+Global retains maximal request and terminal-attempt evidence; EU has no raw
+lakehouse evidence for production debugging.
 
 ### 2026-08-24 — Every terminal run closes its residual receipts, not only a stopped one
 
