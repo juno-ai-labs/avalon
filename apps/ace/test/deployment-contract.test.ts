@@ -114,4 +114,14 @@ describe('Ace deployment contract', () => {
     expect(deploy).toContain("ensureFlag('automation-workspace-templates-enabled'");
     expect(deploy).toContain('variations: { off: false, on: true }');
   });
+
+  it('provisions the digests kill switch on by default, unlike every other managed flag', async () => {
+    const deploy = await readFile(`${aceDirectory}/scripts/deploy.mjs`, 'utf8');
+
+    expect(deploy).toContain("ensureFlag('digests-enabled'");
+    // The one call site that passes a third argument: every other flag relies
+    // on `ensureFlag`'s 'off' default, which would silently stop delivery for
+    // everyone the moment this flag is first provisioned.
+    expect(deploy).toMatch(/ensureFlag\('digests-enabled',[^)]*,\s*'on'\)/);
+  });
 });

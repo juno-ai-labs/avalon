@@ -6,6 +6,7 @@ export const MANAGED_FLAGS = [
   { key: 'meeting-recording-enabled', label: 'Meeting Recording Enabled', description: 'True shows meeting-recording actions in Electron; false hides them without changing API availability.' },
   { key: 'suggested-work-enabled', label: 'Suggested Work Enabled', description: 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.' },
   { key: 'automation-workspace-templates-enabled', label: 'Automation Workspace Templates Enabled', description: 'True shows workspace-template surfaces in Electron; false hides them without changing API availability.' },
+  { key: 'digests-enabled', label: 'Digests Enabled', description: 'True sends scheduled digests as configured; false stops delivery for whoever the rule reaches, without touching their saved schedule, destinations, or cursor.' },
 ] as const;
 
 export const FLAG_ATTRIBUTES = [

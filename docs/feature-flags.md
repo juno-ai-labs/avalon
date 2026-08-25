@@ -11,7 +11,7 @@ section](#a-work-streams-own-model) below.
 
 ## Where the code lives
 
-Three modules read the binding, one per kind, and **nothing else calls
+Four modules read the binding, one per kind, and **nothing else calls
 `env.FLAGS` directly**:
 
 | Module | Owns | Fails |
@@ -19,13 +19,17 @@ Three modules read the binding, one per kind, and **nothing else calls
 | `apps/api/src/services/agent-model-flags.ts` | One flag per model-using agent, and the pin that overrides one | **Open** — to the Worker variables, because an agent still has to run |
 | `apps/api/src/services/client-feature-flags.ts` | The features the desktop polls | **Closed** — to off, because a client feature has nothing it must do |
 | `apps/api/src/services/control-tower-flags.ts` | Control Tower's refresh cadence | **Open** — to the checked-in default, because a cadence has no off |
+| `apps/api/src/services/digest-flags.ts` | The `digests-enabled` kill switch | **Open** — to enabled, because a digest already sends by default and an outage must not silently stop it |
 
 Failure direction is the reason these are separate modules rather than one
 resolver with a parameter. A client feature that fell back the way a model flag
 does would ship an unreleased feature on the first Flagship outage; a cadence
 that failed closed would leave a recording meeting with no briefing at all,
-which is not a safe reading of an outage. Because the pin lives with the model
-flags, every answer to "which model does this run use" still comes from one file.
+which is not a safe reading of an outage; a digest kill switch that failed
+closed would turn every digest off on the first Flagship hiccup, which is a
+product regression triggered by infrastructure rather than a decision anybody
+made. Because the pin lives with the model flags, every answer to "which model
+does this run use" still comes from one file.
 
 The cadence is the one flag whose value has to be the *same* value in two places.
 The desktop reads it through `GET /feature-flags` and snapshots it for the length
@@ -578,9 +582,11 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   separate modules because they fail in opposite directions; a shared resolver
   with a parameter is one place for that direction to be chosen wrongly.
 - **Model flags fail open, client feature flags fail closed, the cadence falls
-  back to the checked-in default.** A client feature that failed open would ship
-  an unreleased feature on the first Flagship outage; a cadence that failed closed
-  would leave a recording meeting with no briefing at all.
+  back to the checked-in default, and the digest kill switch fails open too.**
+  A client feature that failed open would ship an unreleased feature on the
+  first Flagship outage; a cadence that failed closed would leave a recording
+  meeting with no briefing at all; a digest kill switch that failed closed
+  would stop every digest on the first Flagship hiccup.
 - **A route plan is one flag value, never two flags.** A variation change is
   atomic, so an agent can never serve a new default model against the previous
   generation's fallbacks.
@@ -644,12 +650,13 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
 
 ## Boundary
 
-This document owns the `FLAGS` binding, the three resolvers, the attribute loader,
+This document owns the `FLAGS` binding, the four resolvers, the attribute loader,
 and the one thing that overrides a flag. It does not own the agents themselves or
 what they do with the model they are handed:
 
 | For | Read |
 | --- | --- |
+| Why digests need a kill switch, and exactly where it is checked | [`digests.md`](digests.md#the-run) |
 | The run loop, the route plan's failure policy, the inference ledger | [`agent-harness.md`](agent-harness.md) |
 | The `model_override` column and where it is copied | [`data-model.md`](data-model.md) |
 | The cadence's other half, and what a snapshot travels with | [`meeting-notes.md`](meeting-notes.md) |
@@ -735,6 +742,7 @@ correctly provisioned flag.
 | `apps/api/test/agent-model-flags.test.ts` | Each resolver's failure direction, the four unresolved cases, the zod rejection, and that HyperSight honours its flag's fallbacks like every other role. |
 | `apps/api/test/agent-model-override.test.ts` | Pin precedence, the closed id set validated on write and read, and the three run-creation paths that must copy the column. |
 | `apps/api/test/client-feature-flags.test.ts` | That everything but an explicit `true` resolves to off, and that the cadence is clamped to `CONTROL_TOWER_REFRESH_SECONDS`. |
+| `apps/api/test/digest-flags.test.ts` | That everything but an explicit `false` resolves to enabled — the one resolver in this table that fails toward `true`. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Initial private values and per-user live re-evaluation over a real hibernating WebSocket. |
 | `apps/ace/test` | Safe rule vocabulary and Flagship limits, signed-site failure behavior, key-only notification, and cross-region Queue fan-out. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | Initial and live full-contract replacement in the feature-flag cache. |
@@ -785,12 +793,19 @@ name, an address, or anything a person wrote. Widening that set is a data
 decision about both regions at once, not a local change to a loader.
 
 Ace automatically ensures `hypersight-enabled`, `meeting-recording-enabled`,
-`suggested-work-enabled`, and `automation-workspace-templates-enabled` exist as
-Boolean flags whose default is off on every
-merge-to-main deployment. It does not overwrite existing rules. Once created,
-edit those flags through Ace rather than the Flagship dashboard: Flagship's
+`suggested-work-enabled`, `automation-workspace-templates-enabled`, and
+`digests-enabled` exist on every merge-to-main deployment. It does not
+overwrite existing rules. Every one of them defaults off except
+`digests-enabled`, which defaults **on** — a digest already sends by default
+for every existing person, so provisioning it must not be the thing that
+silently stops delivery; see [`digests.md`](digests.md#the-run). Once created,
+edit these flags through Ace rather than the Flagship dashboard: Flagship's
 documented API has no outbound change webhook, so only Ace performs the Queue
-fan-out that wakes connected clients. [`ace.md`](ace.md) owns that release and
+fan-out that wakes connected clients — including for `digests-enabled`, which
+no client reads. That fan-out is not wasted so much as unnecessary: it
+re-evaluates and re-sends the complete client contract regardless of which key
+changed, so a `digests-enabled` save costs the same harmless re-evaluation a
+presentation-flag save already does. [`ace.md`](ace.md) owns that release and
 recovery path.
 
 To provision the app in a fresh account:
@@ -891,6 +906,17 @@ pnpm exec wrangler flagship flags update <APP_ID> developer-settings \
 Withdrawing the section from everyone is `set … -V off`, which overrides every
 rule, and `wrangler flagship flags changelog <APP_ID> developer-settings` is the
 audit trail for who had it when.
+
+To stop every digest, use Ace to set `digests-enabled` to off, or reach it
+directly with `wrangler flagship flags set <APP_ID> digests-enabled -V off`. To
+stop delivery for one cohort while everyone else keeps sending, add a rule
+that serves `off` to that cohort and leave the default at `on` — the inverse
+of how `developer-settings` reaches staff — either in Ace's editor or with
+`wrangler flagship flags update <APP_ID> digests-enabled --add-rule "serve=off; when=workspaceOwnerEmailDomain equals example.com"`.
+`wrangler flagship flags changelog <APP_ID> digests-enabled` is the audit trail
+for who turned digests off and when regardless of which surface made the
+change. See [`digests.md`](digests.md#the-run) for why this flag exists and
+why it fails open rather than closed.
 
 ### Changing an agent's models
 
@@ -1000,6 +1026,33 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-08-25 — A fourth resolver: the digest kill switch
+
+**What changed:** `digest-flags.ts` joins the three resolvers this document
+already named, reading a new `digests-enabled` boolean. It fails open, the
+same direction as the model flags and for the same reason. It is Ace's fifth
+managed flag — the first that is not presentation-only and the first Ace
+provisions on rather than off. `docs/digests.md#the-run` and `docs/ace.md`
+carry the full rationale; this document's tables and provisioning walkthrough
+now include it alongside the other three resolvers.
+
+**Why:** A subsystem whose default failure direction does not match any
+existing resolver needs its own module — the same reasoning that already
+separates the other three. Digests are on by default, so failing this flag
+closed would make a Flagship outage indistinguishable from an operator
+decision to stop sending. It is Ace-managed, despite reading fresh at fire
+time rather than needing a push to a connected client, because a second
+undiscoverable way to change a Boolean flag is worse than one editor doing
+slightly more work than its fan-out strictly needs.
+
+**Consequences:** A caller that wants to know whether digests may fire reads
+`digest-flags.ts`, never `env.FLAGS` directly, exactly as every other kind
+already requires. The Testing table, the Boundary table, and the Invariants
+list here now speak of four resolvers rather than three. Ace's Queue fan-out
+now also fires on a flag no client reads, which is harmless: it always
+re-evaluates and re-sends the complete client contract regardless of which key
+changed.
 
 ### 2026-08-24 — Suggested Work and workspace templates become managed product flags
 
