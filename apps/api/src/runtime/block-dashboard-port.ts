@@ -14,6 +14,7 @@ export type BlockDashboardPortFactory = (
 ) => BlockDashboardObjectPort;
 
 const CONTRACT: ObjectPortContract<WorkstreamBlockDashboardStorage, BlockDashboardOperation> = {
+  authority: "blockDashboard",
   operations: BLOCK_DASHBOARD_OPERATIONS,
   dispatch: (stub, request) => stub.executeBlockDashboardOperation(request),
   failureCode: "block_dashboard_operation_failed",

@@ -229,7 +229,6 @@ import {
 import { workstreamRunLimits } from "./workstream-run-policy";
 import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
-import type { TerminalPortFactory } from "./terminal/object-port";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 import { requireOpenWorkstreamAuthority } from "./workstream-authority";
 
@@ -1971,7 +1970,6 @@ export async function runWorkstreamHarness(
   runtime?: {
     lease: AttemptLease;
     publishRealtime?: boolean;
-    terminalPortFactory?: TerminalPortFactory;
     runtimeResourceAttacher?: WorkstreamRuntimeResourceAttacher;
   },
 ): Promise<WorkstreamHarnessResult> {
@@ -2097,7 +2095,6 @@ export async function runWorkstreamHarness(
     env,
     input,
     runAuthoritySnapshot,
-    runtime?.terminalPortFactory,
     runtime?.runtimeResourceAttacher,
   );
   // Into the frozen surface, not just into Bind's plugin list: authorization,
@@ -4837,7 +4834,6 @@ async function loadHarnessTools(
   env: Env,
   input: WorkstreamWorkflowInput,
   runAuthoritySnapshot?: RunAuthoritySnapshot,
-  inObjectTerminalPort?: TerminalPortFactory,
   inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
 ): Promise<{
   coreTools: HarnessTool[];
@@ -4890,7 +4886,6 @@ async function loadHarnessTools(
   const terminalPlugin = await createAvalonTerminalPlugin(
     env,
     input,
-    inObjectTerminalPort,
     inObjectResourceAttacher,
   );
   // `tools` retains the historical flattened view for API diagnostics and

@@ -14,6 +14,7 @@ export type IdentityPortFactory = (
 ) => IdentityObjectPort;
 
 const CONTRACT: ObjectPortContract<WorkstreamIdentityStorage, IdentityOperation> = {
+  authority: "identity",
   operations: IDENTITY_OPERATIONS,
   dispatch: (stub, request) => stub.executeIdentityOperation(request),
   failureCode: "identity_operation_failed",

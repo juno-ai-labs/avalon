@@ -53,7 +53,8 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/durable-objects/sqlite-migrations.ts` | Shared SQL-only constructor migration runner. |
 | `apps/api/src/durable-objects/migration-reporting.ts` | `withMigrationReport`, which wraps every constructor's migration call and reports the outcome to `avalon-migration-tracker`. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | `apps/api/src/lib/durable-object-namespace.ts` | The only product-object stub resolver; applies jurisdiction, persisted workspace affinity, explicit singleton fallback, and runtime jurisdiction validation. |
-| `apps/api/src/lib/durable-object-self.ts` | Where an object recognizes its own name, so a shared helper addressing "the object that owns this work stream" reaches the caller directly instead of leaving it over RPC and coming back. Every Durable Object class registers here in its constructor. |
+| `apps/api/src/lib/durable-object-self.ts` | Where an object recognizes *itself* — by the id a name resolves to, against the id it has held since its constructor — so a shared helper addressing "the object that owns this work stream" reaches the caller directly instead of leaving it over RPC and coming back. Every Durable Object class registers here in its constructor. |
+| `apps/api/src/runtime/local-authorities.ts` | The one boundary where an object declares what it owns about a work stream — its messages, resources, harness runs, receipts, scheduling, blocks, identity rows, and Terminal — installed on the environment a run is handed, so no port below has to discover whether its authority is local. Holds the ownership rule the endpoints enforce. |
 | `apps/api/src/lib/uuid-v7.ts` | RFC 9562 UUIDv7 generation for cross-socket/Queue event identities; ordering correctness remains in authority-local waterlines. |
 | `apps/api/src/services/workstream-object-client.ts` | Typed Worker-to-`SubstreamAgent` product RPCs. |
 | `apps/api/src/services/workstream-regional-effect-service.ts` | Queue consumer handoff into WorkspaceDO for directory/user/feedback/activity/notification effects. |
@@ -1062,6 +1063,128 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-25 — Identity decides locality, and an object declares what it owns
+
+**What changed:** Four things, one argument.
+
+*Recognition is on the id.* `durableObjectSelfForId` replaces `durableObjectSelf`:
+a resolver derives the id a name resolves to — `idFromName` is a hash and no
+I/O — and compares it with the caller's own `state.id`. The name thunk stays for
+the stand-in stub's `name` and for diagnostics, and decides no routing.
+
+*A self-address the routing cannot see is fatal outside production.* The refusal
+lives in `durableObjectStubForRegion`, the one function every stub in this
+repository comes from, and throws in development and test while logging
+`durable_object_self_addressed_over_rpc` at error in staging and production.
+
+*An object declares its authorities once.* `runtime/local-authorities.ts` carries
+a per-work-stream registry and the ownership rule the endpoints enforce;
+`createObjectPort` consults it for whichever authority its contract names, so all
+eight ports gained the seam at once, and the Terminal port reads the same
+registry. What an object installs is each authority's *endpoint body* —
+`schedulingOperationOutcome` and its six siblings, extracted from their `Request`
+handlers — never the storage instance under it, so a local call answers the same
+`{ ok, value }` or `{ ok: false, error }` a dispatched one does and
+`createObjectPort` reads both with one interpretation.
+`SubstreamAgent.localRuntimeEnvironment` installs all of them in one call, and
+`terminalPortFactory` is gone from the harness options, from `loadHarnessTools`,
+and from `createAvalonTerminalPlugin`, along with the
+`terminal_resident_runtime_incomplete` pairing it required.
+
+*A platform refusal is its own failure code.* `platform_limit_exceeded`, kind
+`platform`, decided in `FatalHarnessPortError` from the platform's own wording.
+
+**Why:** on 2026-08-24 a work stream died mid-run with
+`tool_receipt_persistence_failed` and, under it,
+`D1_ERROR: Subrequest depth limit exceeded`. Its trace holds one alarm invocation
+making fifteen `executeToolReceiptOperation` RPCs to its own object id; from the
+fifteenth on, Cloudflare refused every further subrequest that invocation made.
+The next run in the same work stream, on the same deployed version, made none and
+completed. The full evidence is in
+[`durable-object-self-rpc-audit-2026-08-22.md`](durable-object-self-rpc-audit-2026-08-22.md).
+
+Recognition rested on a name, and a name is withheld until an object's durable
+facts are recorded — so there was a window where an object could not tell that a
+call was to itself, and every call in it went out through the namespace and came
+back. That window was not a routing detail; it was the incident. An id has no
+window: the object has had `state.id` since its constructor, jurisdiction already
+asserted, and the id a name resolves to is computable without reading anything.
+The rule that a name is withheld until identity is durably the object's own still
+holds for names, and stops being load-bearing for routing.
+
+Making the leftover backstop fatal follows from the same move: once routing
+cannot produce a self-address, anything that still reaches one is a caller that
+skipped the resolver, which is a defect and not a slow path. It throws where a
+human is watching and logs where refusing would turn a latent defect into an
+outage.
+
+The authorities boundary is the other half. Locality was being rediscovered per
+call by every helper that needed an authority, through mechanisms invented weeks
+apart — two SQL executors, a Terminal executor threaded through three signatures
+— and the authority that had none is the one that failed. Now the object says
+what it owns, once, and no port below asks.
+
+The failure code is what made the incident expensive to read: Cloudflare enforces
+its subrequest limits by refusing whichever call asks next, so the refusal landed
+on the receipt port and the run blamed a receipt that was never attempted. Same
+reasoning as `provider_unavailable` — the code exists so a failure names the
+system that produced it.
+
+**How it is proved:** `durable-object-self-reference.test.ts` asserts an object
+reaches itself *while it cannot say what it is called* — the incident's state,
+inverted into the guarantee — and that the backstop throws in test, logs in
+production, and stays silent for a sibling and for the same name under another
+binding. `test-workers/durable-object-self-registration.test.ts` proves the same
+on real workerd for all four classes, before their durable facts are written.
+`workstream-tool-receipt-locality.test.ts` gives a port a `SUBSTREAM_AGENTS`
+binding that throws on use, so a port that dispatches fails at the line that
+dispatches, and checks each clause of the ownership rule.
+`test-workers/tool-receipt-authority.test.ts` and
+`test-workers/terminal-authority.test.ts` do the same inside the real object: the
+main child answers with the namespace unusable, a non-main child cannot.
+`test-workers/scheduling-authority.test.ts` builds a scheduling port over the
+environment the real object hands a run and asserts the local call commits the
+sidebar projection, re-derives the alarm index, and refuses against a quarantined
+object with the same `ObjectPortError` code the wire raises — the three things
+carrying the storage would drop, none of which is visible in what the caller gets
+back. `packages/agent-harness/src/index.test.ts` fails a run through a receipt
+port carrying the platform's wording and expects `platform_limit_exceeded`.
+
+**Considered and rejected:** *Writing both identity facts earlier* so the name is
+never withheld — fixes this window and leaves routing keyed on a lookup that can
+fail. *Keeping the fatal check in the name-based resolvers* — after id
+recognition they cannot produce a self-address, so a check there is unreachable
+code that cannot be tested. `durableObjectStubById` had one for the same reason
+and it is gone: its `durableObjectSelfForId` call and the refusal walk the same
+registrations under the same two conditions, so the refusal could never fire,
+and unreachable code shaped like a guard is worse than no guard because the next
+reader counts it as one. The refusal stays in `durableObjectStubForRegion`,
+which answers nothing locally first and is the one function every stub in the
+repository comes from. *Installing each authority's storage* rather than its endpoint — the first shape
+this took, and wrong: an endpoint is not a thin wrapper around its table. It
+refuses a request against an object whose `authority_mode` is no longer
+`authoritative`, runs a mutating operation inside `commitRuntimeMutation` so the
+row and the directory projection that renders it are one commit, and — for
+scheduling — re-derives the timer index and arms the next alarm before answering.
+Carrying the tables would have dropped all three for exactly the callers running
+closest to the data: stale sidebar previews, wake-ups that never fire, and writes
+accepted against a quarantined object. *Threading every authority as a parameter* rather
+than carrying it — the right shape, and it is what `runtimeResourceAttacher` still
+does deliberately, because that one carries a *scope* invariant (it refuses an
+attachment addressed to another work stream) rather than a location. Doing it for
+the rest would rewrite hundreds of signatures for a property the boundary already
+provides.
+
+**What a future change has to respect:** an authority that moves into an object
+gets a name in `LocalWorkstreamAuthorities` and an `authority` on its port
+contract — not a fifth mechanism, and not name recognition, which is now a
+backstop rather than the mechanism. What it installs there is its endpoint, and
+anything an endpoint does above its storage is part of the operation rather than
+a wrapper the local path may skip; a guard added to one belongs in the body both
+paths run, not in the `Request` handler. The ownership rule and the endpoints' guards
+are one rule. And a new failure code answers "which system produced this",
+because that is the only question the code is read to answer.
 
 ### 2026-08-25 — Two atomicities a per-item conversion dropped
 
@@ -2519,7 +2642,7 @@ assigned inside the `blockConcurrencyWhile` callback.
 
 In practice workerd queues external requests behind that callback, so this is
 unlikely to have been reachable — but an in-isolate self-call reaches the method
-through a stub returned by `durableObjectSelf`, and that path does not
+through a stub returned by `durableObjectSelfForId`, and that path does not
 necessarily queue the same way. No test asserts the difference, because an
 honest one would need `blockConcurrencyWhile` not to queue; the value here is
 the restored invariant, not an observable change.

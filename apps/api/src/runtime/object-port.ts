@@ -7,6 +7,7 @@ import type { DurableObjectRpcResult } from "../durable-objects/rpc-result";
 import type { ObjectPortOf } from "../durable-objects/object-port-protocol";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { localWorkstreamAuthority, type ObjectPortAuthority } from "./local-authorities";
 
 /**
  * The object rejected the request itself — a bad protocol or a misrouted stub.
@@ -45,6 +46,14 @@ export interface ObjectPortContract<TStorage, TOperation extends keyof TStorage 
       args: unknown[];
     },
   ) => Promise<DurableObjectRpcResult>;
+  /**
+   * Which authority this port speaks for.
+   *
+   * The name an object installs its own storage under, so a port built inside
+   * that object answers from it instead of resolving a stub back to the object
+   * doing the resolving. See `local-authorities.ts`.
+   */
+  authority: ObjectPortAuthority;
   /** The code a refusal carries when the object named none of its own. */
   failureCode: string;
   /** What a member is told, if this ever reaches one. */
@@ -77,6 +86,10 @@ export function createObjectPort<TStorage, TOperation extends keyof TStorage & s
    */
   localStorage?: TStorage,
 ): ObjectPortOf<TStorage> {
+  // The owning object installs its endpoint here, once, for every port built
+  // below it — the endpoint and not the storage, because the endpoint is what
+  // holds the authority fence, the projection commit, and the alarm re-arm.
+  const resident = localWorkstreamAuthority(env, workspaceId, workstreamId, contract.authority);
   const call = async (operation: TOperation, args: unknown[]): Promise<unknown> => {
     if (localStorage) {
       const method = localStorage[operation] as (...rest: unknown[]) => unknown;
@@ -86,6 +99,15 @@ export function createObjectPort<TStorage, TOperation extends keyof TStorage & s
       // here would not preserve `undefined` end to end — it would only make the
       // Node suite disagree with production about a method that returned one.
       return method.apply(localStorage, args) ?? null;
+    }
+    if (resident) {
+      const body = await resident(operation, args);
+      // Interpreted by the same three lines as a dispatched answer below. A
+      // second interpretation here is how the two paths would drift.
+      if (!body?.ok) {
+        throw new ObjectPortError(body?.error ?? contract.failureCode, contract.failureMessage);
+      }
+      return body.value ?? null;
     }
     const stub = await durableObjectStubForWorkspace(
       env,

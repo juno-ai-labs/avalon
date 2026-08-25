@@ -19,6 +19,8 @@ import { asSubstreamId } from "@avalon/contracts";
 import { substreamAgentName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import { WorkstreamToolReceiptStorage } from "../src/durable-objects/workstream-tool-receipt-storage";
+import type { Env } from "../src/env";
+import { createToolReceiptObjectPort } from "../src/runtime/tool-receipt-port";
 import {
   WORKSPACE_ID,
   WORKSTREAM_ID,
@@ -35,6 +37,7 @@ beforeAll(async () => {
 const RUN = "00000000-0000-7000-8000-00000000rc01";
 const ATTEMPT = "attempt-1";
 const OWNER = "owner-1";
+const OTHER_WORKSTREAM = "00000000-0000-7000-8000-0000000004c9";
 
 let unique = 0;
 /** A fresh object per test; a reused id would carry the last test's rows. */
@@ -503,5 +506,76 @@ describe("tool-receipt authority on real workerd", () => {
       ).one().count;
     });
     expect(afterTerminal).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The run's own path to its receipts, on the object that owns them.
+ *
+ * The Node suite proves the routing decision — which work stream a carried
+ * storage answers for. This proves the wiring that decision rests on is
+ * actually performed by the real object: that the execution environment a run
+ * is handed carries this object's receipt storage, so a receipt operation never
+ * needs the namespace at all.
+ *
+ * The environment is wrapped so `SUBSTREAM_AGENTS` throws on use. A port that
+ * dispatches fails here at the moment it dispatches — including the self-call
+ * that exhausted subrequest depth on 2026-08-24, which succeeded and so could
+ * not be caught by asserting on the answer.
+ */
+describe("a run's execution environment inside the owning object", () => {
+  interface AgentInternals {
+    localRuntimeEnvironment(
+      workspaceId: string,
+      workstreamId: string,
+      substreamId: string,
+    ): Env;
+  }
+
+  /** Every binding but the one a receipt operation must not need. */
+  function withoutAgentNamespace(env: Env): Env {
+    return new Proxy(env, {
+      get(target, property, receiver) {
+        if (property === "SUBSTREAM_AGENTS") {
+          throw new Error("receipt operation left the isolate");
+        }
+        return Reflect.get(target, property, receiver) as unknown;
+      },
+    });
+  }
+
+  it("reaches this work stream's receipts without the namespace", async () => {
+    const stub = agent();
+    await boot(stub);
+
+    const receipts = await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      seedLiveRun(state);
+      const execution = (instance as unknown as AgentInternals)
+        .localRuntimeEnvironment(WORKSPACE_ID, WORKSTREAM_ID, "0");
+      return createToolReceiptObjectPort(
+        withoutAgentNamespace(execution),
+        WORKSPACE_ID,
+        WORKSTREAM_ID,
+      ).receiptsByIds({ effectIntentIds: [] });
+    });
+
+    expect(receipts).toEqual([]);
+  });
+
+  it("still needs the namespace for a work stream this object does not own", async () => {
+    const stub = agent();
+    await boot(stub);
+
+    await expect(runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      const execution = (instance as unknown as AgentInternals)
+        .localRuntimeEnvironment(WORKSPACE_ID, WORKSTREAM_ID, "0");
+      return createToolReceiptObjectPort(
+        withoutAgentNamespace(execution),
+        WORKSPACE_ID,
+        OTHER_WORKSTREAM,
+      ).receiptsByIds({ effectIntentIds: [] });
+    })).rejects.toThrow("receipt operation left the isolate");
   });
 });
