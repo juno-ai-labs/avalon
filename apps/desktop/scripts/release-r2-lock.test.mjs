@@ -1,20 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 import { createR2ReleaseLockClient, withR2ReleaseLock } from './release-r2-lock.mjs';
 
 class FakeR2Client {
   etagCounter = 0;
 
-  failDelete = false;
+  failRelease = false;
 
-  locked = false;
+  exists = false;
 
   lockBody;
 
   lockEtag;
+
+  lockState;
+
+  lockOwner;
 
   events = [];
 
@@ -22,44 +26,55 @@ class FakeR2Client {
     if (command instanceof PutObjectCommand) {
       if (command.input.IfNoneMatch === '*') {
         this.events.push(['acquire', command.input.Body]);
-        if (this.locked) {
+        if (this.exists) {
           const error = new Error('conflict');
           error.name = 'PreconditionFailed';
           error.$metadata = { httpStatusCode: 412 };
           throw error;
         }
       } else {
-        this.events.push(['release', command.input.Body, command.input.IfMatch]);
+        this.events.push([
+          command.input.Metadata?.state ?? 'unknown',
+          command.input.Body,
+          command.input.IfMatch,
+        ]);
         if (
           command.input.IfMatch !== undefined
-          && (!this.locked || command.input.IfMatch !== this.lockEtag)
+          && (!this.exists || command.input.IfMatch !== this.lockEtag)
         ) {
           const error = new Error('generation changed');
           error.name = 'PreconditionFailed';
           error.$metadata = { httpStatusCode: 412 };
           throw error;
         }
+        if (this.failRelease && command.input.Metadata?.state === 'released') {
+          throw new Error('release marker failed');
+        }
       }
-      this.locked = true;
+      this.exists = true;
       this.lockBody = command.input.Body;
+      this.lockOwner = command.input.Metadata?.owner;
+      this.lockState = command.input.Metadata?.state;
       this.etagCounter += 1;
       this.lockEtag = `etag-${this.etagCounter}`;
       return { ETag: this.lockEtag };
     }
-    assert.ok(command instanceof DeleteObjectCommand, 'Expected a lock tombstone delete');
-    this.events.push(['delete']);
-    if (this.failDelete) throw new Error('delete failed');
-    this.locked = false;
-    this.lockBody = undefined;
-    this.lockEtag = undefined;
-    return {};
+    assert.ok(command instanceof HeadObjectCommand, 'Expected a lock metadata read');
+    this.events.push(['head']);
+    if (!this.exists) throw new Error('lock missing');
+    return {
+      ETag: this.lockEtag,
+      Metadata: { owner: this.lockOwner, state: this.lockState },
+    };
   }
 
   recoverAbandonedLock() {
-    if (!this.locked) throw new Error('No abandoned lock to recover');
-    this.locked = false;
+    if (!this.exists) throw new Error('No abandoned lock to recover');
+    this.exists = false;
     this.lockBody = undefined;
     this.lockEtag = undefined;
+    this.lockOwner = undefined;
+    this.lockState = undefined;
     this.events.push(['manual-recovery']);
   }
 }
@@ -91,7 +106,7 @@ test('a second publisher cannot enter while the first holds the remote lock', as
       owner: 'second',
       operation: async () => { secondEntered = true; },
     }),
-    /Another desktop release publisher holds/u,
+    /Another desktop release publisher holds .* owner="first"/u,
   );
   assert.equal(secondEntered, false);
 
@@ -100,8 +115,41 @@ test('a second publisher cannot enter while the first holds the remote lock', as
   assert.deepEqual(client.events, [
     ['acquire', 'first'],
     ['acquire', 'second'],
-    ['release', 'released:first', 'etag-1'],
-    ['delete'],
+    ['head'],
+    ['released', 'released:first', 'etag-1'],
+  ]);
+  assert.equal(client.lockState, 'released');
+});
+
+test('the next publisher atomically acquires the persistent released generation', async () => {
+  const client = new FakeR2Client();
+  const cleanupReports = [];
+  await withR2ReleaseLock({
+    bucket: 'releases',
+    client,
+    key: 'stable/release-publish.lock',
+    owner: 'first',
+    operation: async () => undefined,
+    reportCleanupFailure: (message) => cleanupReports.push(message),
+  });
+  let secondEntered = false;
+  await withR2ReleaseLock({
+    bucket: 'releases',
+    client,
+    key: 'stable/release-publish.lock',
+    owner: 'second',
+    operation: async () => { secondEntered = true; },
+    reportCleanupFailure: (message) => cleanupReports.push(message),
+  });
+  assert.equal(secondEntered, true);
+  assert.deepEqual(cleanupReports, []);
+  assert.deepEqual(client.events, [
+    ['acquire', 'first'],
+    ['released', 'released:first', 'etag-1'],
+    ['acquire', 'second'],
+    ['head'],
+    ['active', 'second', 'etag-2'],
+    ['released', 'released:second', 'etag-3'],
   ]);
 });
 
@@ -140,7 +188,7 @@ test('a resumed old owner cannot delete a newer publisher lock after manual reco
 
   releaseSecond();
   await second;
-  assert.equal(client.locked, false);
+  assert.equal(client.lockState, 'released');
 });
 
 test('the remote lock is released when publication fails', async () => {
@@ -154,12 +202,12 @@ test('the remote lock is released when publication fails', async () => {
     }),
     /publish failed/u,
   );
-  assert.equal(client.locked, false);
+  assert.equal(client.lockState, 'released');
 });
 
 test('a cleanup failure reports the shipped release and lets tag and record steps continue', async () => {
   const client = new FakeR2Client();
-  client.failDelete = true;
+  client.failRelease = true;
   const reports = [];
   const result = await withR2ReleaseLock({
     bucket: 'releases',
@@ -170,9 +218,9 @@ test('a cleanup failure reports the shipped release and lets tag and record step
   });
   assert.equal(result, 'published');
   assert.deepEqual(reports, [
-    'Desktop release publication completed, but its remote lock could not be released at r2://releases/stable/release-publish.lock; confirm no publisher is active and remove only that lock before the next release',
+    'Desktop release publication completed, but its remote lock could not be marked released at r2://releases/stable/release-publish.lock; confirm no publisher is active and recover only that lock before the next release',
   ]);
-  assert.equal(client.locked, true);
+  assert.equal(client.lockState, 'active');
 });
 
 test('account token verification derives an R2 S3 client without exposing the token', async () => {

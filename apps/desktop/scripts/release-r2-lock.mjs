@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
 import { cloudflareErrorCodes } from './release-cloudflare.mjs';
 
@@ -63,6 +63,71 @@ function isConditionalConflict(error) {
     || error?.$metadata?.httpStatusCode === 412;
 }
 
+function activeLockInput({ bucket, key, owner, condition }) {
+  return {
+    Body: owner,
+    Bucket: bucket,
+    CacheControl: 'no-store',
+    ContentType: 'text/plain; charset=utf-8',
+    Key: key,
+    Metadata: { owner, state: 'active' },
+    ...condition,
+  };
+}
+
+function lockHeldError({ bucket, error, key, owner }) {
+  const status = error?.$metadata?.httpStatusCode ?? 'unknown';
+  const ownerContext = typeof owner === 'string' ? `, owner=${JSON.stringify(owner)}` : '';
+  return new Error(
+    `Another desktop release publisher holds r2://${bucket}/${key} (${error?.name ?? 'unknown'}, HTTP ${status}${ownerContext})`,
+    { cause: error },
+  );
+}
+
+async function acquireR2ReleaseLock({ bucket, client, key, owner }) {
+  try {
+    return await client.send(new PutObjectCommand(activeLockInput({
+      bucket,
+      key,
+      owner,
+      condition: { IfNoneMatch: '*' },
+    })));
+  } catch (error) {
+    if (!isConditionalConflict(error)) {
+      throw new Error(`Could not acquire the desktop release lock at r2://${bucket}/${key}`, { cause: error });
+    }
+
+    let current;
+    try {
+      current = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    } catch (headError) {
+      throw new Error(`Could not inspect the desktop release lock at r2://${bucket}/${key}`, { cause: headError });
+    }
+    if (
+      current.Metadata?.state !== 'released'
+      || typeof current.ETag !== 'string'
+      || current.ETag.length === 0
+    ) {
+      throw lockHeldError({ bucket, error, key, owner: current.Metadata?.owner });
+    }
+    try {
+      return await client.send(new PutObjectCommand(activeLockInput({
+        bucket,
+        key,
+        owner,
+        condition: { IfMatch: current.ETag },
+      })));
+    } catch (replacementError) {
+      if (isConditionalConflict(replacementError)) {
+        throw lockHeldError({ bucket, error: replacementError, key });
+      }
+      throw new Error(`Could not acquire the desktop release lock at r2://${bucket}/${key}`, {
+        cause: replacementError,
+      });
+    }
+  }
+}
+
 export async function withR2ReleaseLock({
   bucket,
   client,
@@ -73,26 +138,16 @@ export async function withR2ReleaseLock({
 }) {
   let lockEtag;
   try {
-    const acquired = await client.send(new PutObjectCommand({
-      Body: owner,
-      Bucket: bucket,
-      CacheControl: 'no-store',
-      ContentType: 'text/plain; charset=utf-8',
-      IfNoneMatch: '*',
-      Key: key,
-    }));
+    const acquired = await acquireR2ReleaseLock({ bucket, client, key, owner });
     if (typeof acquired.ETag !== 'string' || acquired.ETag.length === 0) {
       throw new Error('R2 did not return an ETag for the acquired lock');
     }
     lockEtag = acquired.ETag;
   } catch (error) {
     if (isConditionalConflict(error)) {
-      const status = error?.$metadata?.httpStatusCode ?? 'unknown';
-      throw new Error(
-        `Another desktop release publisher holds r2://${bucket}/${key} (${error?.name ?? 'unknown'}, HTTP ${status})`,
-        { cause: error },
-      );
+      throw lockHeldError({ bucket, error, key });
     }
+    if (error instanceof Error && error.message.includes(`r2://${bucket}/${key}`)) throw error;
     throw new Error(`Could not acquire the desktop release lock at r2://${bucket}/${key}`, { cause: error });
   }
 
@@ -108,11 +163,10 @@ export async function withR2ReleaseLock({
 
   let releaseError;
   try {
-    // R2 does not support conditional DeleteObject. First replace this owner's
-    // generation with a tombstone under If-Match, then delete it. If an
-    // operator recovered the lock and another publisher acquired it while this
-    // process was paused, the conditional replacement fails and this owner can
-    // never delete the newer generation.
+    // R2 does not support conditional DeleteObject, so the key always remains.
+    // Every active/released transition is an ETag-conditional PutObject; an old
+    // process therefore has no unconditional cleanup capable of changing a
+    // newer publisher's generation.
     await client.send(new PutObjectCommand({
       Body: `released:${owner}`,
       Bucket: bucket,
@@ -120,11 +174,11 @@ export async function withR2ReleaseLock({
       ContentType: 'text/plain; charset=utf-8',
       IfMatch: lockEtag,
       Key: key,
+      Metadata: { owner, state: 'released' },
     }));
-    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
   } catch (error) {
     releaseError = new Error(
-      `Desktop release publication completed, but its remote lock could not be released at r2://${bucket}/${key}; confirm no publisher is active and remove only that lock before the next release`,
+      `Desktop release publication completed, but its remote lock could not be marked released at r2://${bucket}/${key}; confirm no publisher is active and recover only that lock before the next release`,
       { cause: error },
     );
   }

@@ -95,8 +95,12 @@ export async function verifyPublicReleaseArtifactHash({
         signal: abortController.signal,
       });
       if (!response.ok) {
-        await response.body?.cancel();
         failure = `HTTP ${response.status}`;
+        try {
+          await response.body?.cancel();
+        } catch {
+          // Preserve the provider's status when stream teardown also fails.
+        }
       } else if (!response.body) {
         failure = 'missing response body';
       } else {
