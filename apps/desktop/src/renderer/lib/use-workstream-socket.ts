@@ -10,7 +10,7 @@ import {
   type ServerSocketEvent,
 } from '@rally/contracts';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ApiError,
   mapElicitation,
@@ -1544,5 +1544,8 @@ export function useWorkstreamSocket(
     };
   }, [api, createWorkspaceMessage, enabled, queryClient, resumeState, workstreamId]);
 
-  return { state, activeCompaction, createMessage, loadMessagePage };
+  return useMemo(
+    () => ({ state, activeCompaction, createMessage, loadMessagePage }),
+    [activeCompaction, createMessage, loadMessagePage, state],
+  );
 }
