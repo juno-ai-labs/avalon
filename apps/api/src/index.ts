@@ -4,6 +4,7 @@ import { assertEnvContract, EnvContractError, type Env } from "./env";
 import { misconfiguredResponse } from "./lib/misconfigured-response";
 import { logStructuredEvent } from "./observability/logger";
 import { consumeAccessRevocationQueue } from "./queues/access-revocation-consumer";
+import { consumeAnalyticsLakehouseQueue } from "./queues/analytics-lakehouse-consumer";
 import {
   consumeInferenceLakehouseQueue,
   isInferenceLakehouseQueue,
@@ -15,6 +16,10 @@ import {
 } from "./queues/product-feature-flag-consumer";
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
+import {
+  isAnalyticsLakehouseQueue,
+  recoverUndeliveredAnalyticsLakehouseEvents,
+} from "./services/analytics-lakehouse";
 import { reconcileDigestDefaults } from "./services/digest-service";
 import { processTelemetryOutbox } from "./telemetry/delivery";
 import { processPendingCrashReports } from "./telemetry/crash-processing";
@@ -43,6 +48,7 @@ async function processTelemetry(env: Env): Promise<void> {
   await Promise.all([
     processTelemetryOutbox(env),
     processCrashTelemetry(env),
+    recoverUndeliveredAnalyticsLakehouseEvents(env),
   ]);
   const snapshot = await readTelemetryOperationalSnapshot(env);
   const unhealthy = snapshot.openCircuits > 0
@@ -169,6 +175,11 @@ export default {
     // must still reach open sockets while product mutations are paused.
     if (isProductFeatureFlagQueue(batch.queue)) {
       return consumeProductFeatureFlagQueue(batch, env);
+    }
+    // Accepted analytics is also a projection, so it drains through product
+    // maintenance rather than converting an operational cutover into a DLQ.
+    if (isAnalyticsLakehouseQueue(batch.queue)) {
+      return consumeAnalyticsLakehouseQueue(batch, env);
     }
     // Forced migrations dispatch before the gate too, and for a closely related
     // reason: a migration pass is schema work, not new work-stream work — it

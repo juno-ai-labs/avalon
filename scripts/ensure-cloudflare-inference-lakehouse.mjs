@@ -1,13 +1,13 @@
 /**
- * Ensure the complete Global inference lakehouse exists, then materialize the
- * Global Pipeline ID and an inference-free EU deploy config.
+ * Ensure both complete Global lakehouses exist, then materialize their Global
+ * Pipeline IDs and a lakehouse-free EU deploy config.
  *
  * Pipelines resources are named and idempotently discovered, but a Worker
  * binding requires the stream's generated ID. Keeping that ID in a committed
  * Wrangler file would make first deployment manual. This preflight instead
- * creates the bucket, optional catalog, stream, sink, and pipeline from one manifest,
- * verifies immutable existing resources, and writes ignored configs beside the
- * originals so every relative Wrangler path keeps the same meaning.
+ * creates each bucket, catalog, stream, sink, and pipeline from checked-in
+ * manifests, verifies immutable existing resources, and writes ignored configs
+ * beside the originals so every relative Wrangler path keeps the same meaning.
  */
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -19,6 +19,7 @@ import { parseWranglerConfig } from './wrangler-config.mjs';
 
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const manifestPath = join(repositoryDirectory, 'config/inference-lakehouse.json');
+const analyticsManifestPath = join(repositoryDirectory, 'config/analytics-events-lakehouse.json');
 const API_BASE = 'https://api.cloudflare.com/client/v4';
 const SAFE_BUCKET = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u;
 const SAFE_PIPELINE_ENTITY = /^[a-z][a-z0-9_]{2,127}$/u;
@@ -37,7 +38,7 @@ class CloudflareApiError extends Error {
 
 function required(name, environment) {
   const value = environment[name]?.trim();
-  if (!value) throw new Error(`${name} is required to provision the inference lakehouse`);
+  if (!value) throw new Error(`${name} is required to provision the lakehouses`);
   return value;
 }
 
@@ -77,22 +78,24 @@ function jurisdictionHeaders(region) {
 }
 
 function assertManifest(manifest) {
-  if (manifest.schemaVersion !== 4 || manifest.binding !== 'INFERENCE_LAKEHOUSE') {
-    throw new Error('Unsupported inference lakehouse manifest version or binding');
+  if (manifest.schemaVersion !== 4
+    || !['INFERENCE_LAKEHOUSE', 'ANALYTICS_LAKEHOUSE'].includes(manifest.binding)) {
+    throw new Error('Unsupported lakehouse manifest version or binding');
   }
+  const label = manifest.binding === 'INFERENCE_LAKEHOUSE' ? 'Inference' : 'Analytics events';
   if (!['account', 'user'].includes(manifest.deploymentTokenOwner)) {
-    throw new Error('Inference lakehouse manifest must declare its deployment token owner');
+    throw new Error(`${label} lakehouse manifest must declare its deployment token owner`);
   }
   for (const name of [manifest.namespace, manifest.table]) {
     if (!SAFE_PIPELINE_ENTITY.test(name)) throw new Error(`Unsafe Data Catalog name: ${name}`);
   }
   const regionNames = Object.keys(manifest.regions ?? {}).sort();
   if (JSON.stringify(regionNames) !== JSON.stringify(LAKEHOUSE_REGIONS)) {
-    throw new Error('Inference lakehouse manifest must provision Global only');
+    throw new Error(`${label} lakehouse manifest must provision Global only`);
   }
   for (const regionName of LAKEHOUSE_REGIONS) {
     const region = manifest.regions?.[regionName];
-    if (!region) throw new Error(`Inference lakehouse manifest is missing ${regionName}`);
+    if (!region) throw new Error(`${label} lakehouse manifest is missing ${regionName}`);
     if (!SAFE_BUCKET.test(region.bucket)) throw new Error(`Unsafe ${regionName} lakehouse bucket`);
     for (const [kind, name] of Object.entries({
       stream: region.stream,
@@ -123,18 +126,28 @@ export async function loadInferenceLakehouseManifest() {
   return { ...manifest, streamSchema };
 }
 
+export async function loadAnalyticsLakehouseManifest() {
+  const manifest = assertManifest(JSON.parse(await readFile(analyticsManifestPath, 'utf8')));
+  const schemaPath = join(repositoryDirectory, manifest.streamSchema);
+  const streamSchema = JSON.parse(await readFile(schemaPath, 'utf8'));
+  if (!Array.isArray(streamSchema.fields) || streamSchema.fields.length === 0) {
+    throw new Error('Analytics lakehouse stream schema must declare fields');
+  }
+  return { ...manifest, streamSchema };
+}
+
 async function ensureBucket(client, regionName, region, create, log) {
   const path = `/r2/buckets/${region.bucket}`;
   try {
     const bucket = await apiRequest(client, path, { headers: jurisdictionHeaders(region) });
     if (bucket?.name !== region.bucket) throw new Error(`${regionName} R2 lookup returned the wrong bucket`);
-    log(`Inference lakehouse bucket present: ${regionName}/${region.bucket} (${region.jurisdiction})`);
+    log(`Lakehouse bucket present: ${regionName}/${region.bucket} (${region.jurisdiction})`);
     return;
   } catch (error) {
     if (!isMissing(error, [10006])) throw error;
     if (!create) {
       throw new Error(
-        `Missing inference lakehouse R2 bucket: ${regionName}/${region.bucket}`,
+        `Missing lakehouse R2 bucket: ${regionName}/${region.bucket}`,
         { cause: error },
       );
     }
@@ -144,7 +157,7 @@ async function ensureBucket(client, regionName, region, create, log) {
     headers: jurisdictionHeaders(region),
     body: JSON.stringify({ name: region.bucket }),
   });
-  log(`Created inference lakehouse bucket: ${regionName}/${region.bucket} (${region.jurisdiction})`);
+  log(`Created lakehouse bucket: ${regionName}/${region.bucket} (${region.jurisdiction})`);
 }
 
 async function ensureCatalog(client, regionName, region, create, log) {
@@ -152,15 +165,15 @@ async function ensureCatalog(client, regionName, region, create, log) {
   try {
     const catalog = await apiRequest(client, path, { headers: jurisdictionHeaders(region) });
     if (catalog?.status === 'active') {
-      log(`Inference Data Catalog active: ${regionName}/${region.bucket}`);
+      log(`Lakehouse Data Catalog active: ${regionName}/${region.bucket}`);
       return catalog;
     }
-    if (!create) throw new Error(`Inference Data Catalog is not active: ${regionName}/${region.bucket}`);
+    if (!create) throw new Error(`Lakehouse Data Catalog is not active: ${regionName}/${region.bucket}`);
   } catch (error) {
     if (!isMissing(error, [40401])) throw error;
     if (!create) {
       throw new Error(
-        `Missing inference Data Catalog: ${regionName}/${region.bucket}`,
+        `Missing lakehouse Data Catalog: ${regionName}/${region.bucket}`,
         { cause: error },
       );
     }
@@ -171,9 +184,9 @@ async function ensureCatalog(client, regionName, region, create, log) {
   });
   const catalog = await apiRequest(client, path, { headers: jurisdictionHeaders(region) });
   if (catalog?.status !== 'active') {
-    throw new Error(`Inference Data Catalog did not become active: ${regionName}/${region.bucket}`);
+    throw new Error(`Lakehouse Data Catalog did not become active: ${regionName}/${region.bucket}`);
   }
-  log(`Enabled inference Data Catalog: ${regionName}/${region.bucket}`);
+  log(`Enabled lakehouse Data Catalog: ${regionName}/${region.bucket}`);
   return catalog;
 }
 
@@ -224,7 +237,7 @@ async function deploymentTokenId(client, tokenOwner) {
     ? await apiRequest(client, '/tokens/verify')
     : await apiRequestUrl(client, '/user/tokens/verify');
   if (!SAFE_TOKEN_ID.test(verifiedToken?.id ?? '')) {
-    throw new Error('Cloudflare did not return a valid deployment token ID for the inference sinks');
+    throw new Error('Cloudflare did not return a valid deployment token ID for the lakehouse sinks');
   }
   return verifiedToken.id;
 }
@@ -248,7 +261,7 @@ function newSinkConfig(client, region, manifest) {
       rolling_policy: { interval_seconds: 300 },
     };
   }
-  throw new Error(`Unsupported inference lakehouse sink type: ${region.sinkType}`);
+  throw new Error(`Unsupported lakehouse sink type: ${region.sinkType}`);
 }
 
 function normalizedSql(value) {
@@ -257,7 +270,7 @@ function normalizedSql(value) {
 
 function assertPipeline(pipeline, expectedName, expectedSql) {
   if (pipeline.name !== expectedName || normalizedSql(pipeline.sql ?? '') !== normalizedSql(expectedSql)) {
-    throw new Error(`${expectedName} SQL drifted from the checked-in inference lakehouse manifest`);
+    throw new Error(`${expectedName} SQL drifted from the checked-in lakehouse manifest`);
   }
 }
 
@@ -289,7 +302,7 @@ async function credentialBoundSink(client, region, desiredName) {
 async function ensureStream(client, region, schema, create, log) {
   let stream = await namedEntity(client, 'streams', region.stream);
   if (!stream) {
-    if (!create) throw new Error(`Missing inference Pipeline stream: ${region.stream}`);
+    if (!create) throw new Error(`Missing lakehouse Pipeline stream: ${region.stream}`);
     stream = await apiRequest(client, '/pipelines/v1/streams', {
       method: 'POST',
       body: JSON.stringify({
@@ -300,9 +313,9 @@ async function ensureStream(client, region, schema, create, log) {
         schema,
       }),
     });
-    log(`Created inference Pipeline stream: ${region.stream} (${stream.id})`);
+    log(`Created lakehouse Pipeline stream: ${region.stream} (${stream.id})`);
   } else {
-    log(`Inference Pipeline stream present: ${region.stream} (${stream.id})`);
+    log(`Lakehouse Pipeline stream present: ${region.stream} (${stream.id})`);
   }
   assertStream(stream, region.stream, schema);
   return stream;
@@ -313,7 +326,7 @@ async function ensureSink(client, region, manifest, create, log) {
   const expected = { ...region, sink: sinkName };
   let sink = await credentialBoundSink(client, region, sinkName);
   if (!sink) {
-    if (!create) throw new Error(`Missing inference Pipeline sink: ${sinkName}`);
+    if (!create) throw new Error(`Missing lakehouse Pipeline sink: ${sinkName}`);
     sink = await apiRequest(client, '/pipelines/v1/sinks', {
       method: 'POST',
       body: JSON.stringify({
@@ -323,9 +336,9 @@ async function ensureSink(client, region, manifest, create, log) {
         config: newSinkConfig(client, region, manifest),
       }),
     });
-    log(`Created inference ${region.sinkType} sink: ${sinkName} (${sink.id})`);
+    log(`Created lakehouse ${region.sinkType} sink: ${sinkName} (${sink.id})`);
   } else {
-    log(`Inference ${region.sinkType} sink present: ${sinkName} (${sink.id})`);
+    log(`Lakehouse ${region.sinkType} sink present: ${sinkName} (${sink.id})`);
   }
   assertSink(sink, expected, manifest, client.accountId);
   return sink;
@@ -335,22 +348,21 @@ async function ensurePipeline(client, region, sink, create, log) {
   const sql = `INSERT INTO ${sink.name} SELECT * FROM ${region.stream};`;
   let pipeline = await namedEntity(client, 'pipelines', region.pipeline);
   if (!pipeline) {
-    if (!create) throw new Error(`Missing inference Pipeline: ${region.pipeline}`);
+    if (!create) throw new Error(`Missing lakehouse Pipeline: ${region.pipeline}`);
     pipeline = await apiRequest(client, '/pipelines/v1/pipelines', {
       method: 'POST',
       body: JSON.stringify({ name: region.pipeline, sql }),
     });
-    log(`Created inference Pipeline: ${region.pipeline} (${pipeline.id})`);
+    log(`Created lakehouse Pipeline: ${region.pipeline} (${pipeline.id})`);
   } else {
-    log(`Inference Pipeline present: ${region.pipeline} (${pipeline.id})`);
+    log(`Lakehouse Pipeline present: ${region.pipeline} (${pipeline.id})`);
   }
   assertPipeline(pipeline, region.pipeline, sql);
   return pipeline;
 }
 
-export async function materializeInferenceLakehouseWranglerConfigs(
-  manifest,
-  resources,
+export async function materializeLakehouseWranglerConfigs(
+  provisioned,
   options = {},
 ) {
   const outputDirectory = options.outputDirectory ?? join(repositoryDirectory, 'apps/api');
@@ -358,13 +370,13 @@ export async function materializeInferenceLakehouseWranglerConfigs(
   for (const regionName of WORKER_REGIONS) {
     const sourcePath = join(repositoryDirectory, `apps/api/wrangler.${regionName}.jsonc`);
     const config = parseWranglerConfig(await readFile(sourcePath, 'utf8'));
-    const stream = resources[regionName]?.stream;
-    if (stream) {
-      config.pipelines = [{ binding: manifest.binding, stream: stream.id }];
-    } else {
-      delete config.pipelines;
-    }
-    const outputPath = join(outputDirectory, `.wrangler.inference.${regionName}.json`);
+    const pipelines = provisioned.flatMap(({ manifest, resources }) => {
+      const stream = resources[regionName]?.stream;
+      return stream ? [{ binding: manifest.binding, stream: stream.id }] : [];
+    });
+    if (pipelines.length > 0) config.pipelines = pipelines;
+    else delete config.pipelines;
+    const outputPath = join(outputDirectory, `.wrangler.lakehouses.${regionName}.json`);
     await writeFile(outputPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
     written[regionName] = outputPath;
   }
@@ -397,13 +409,33 @@ export async function ensureInferenceLakehouse(options = {}) {
   }
 
   const configs = options.materializeBindings
-    ? await materializeInferenceLakehouseWranglerConfigs(manifest, resources, options)
+    ? await materializeLakehouseWranglerConfigs([{ manifest, resources }], options)
     : undefined;
   return { manifest, resources, configs };
+}
+
+export async function ensureCloudflareLakehouses(options = {}) {
+  const manifests = options.manifests ?? await Promise.all([
+    loadInferenceLakehouseManifest(),
+    loadAnalyticsLakehouseManifest(),
+  ]);
+  const provisioned = [];
+  for (const manifest of manifests) {
+    const result = await ensureInferenceLakehouse({
+      ...options,
+      manifest,
+      materializeBindings: false,
+    });
+    provisioned.push(result);
+  }
+  const configs = options.materializeBindings
+    ? await materializeLakehouseWranglerConfigs(provisioned, options)
+    : undefined;
+  return { provisioned, configs };
 }
 
 if (isEntryPoint(import.meta.url)) {
   const check = process.argv.includes('--check');
   const materializeBindings = process.argv.includes('--materialize-bindings');
-  await ensureInferenceLakehouse({ create: !check, materializeBindings });
+  await ensureCloudflareLakehouses({ create: !check, materializeBindings });
 }

@@ -59,6 +59,11 @@ defined in [`docs/sandbox.md`](docs/sandbox.md).
   retrieved user content out of logs, tickets, commits, and agent responses.
   EU inference is intentionally not archived, so stop after resolving an EU
   workspace rather than falling back to D1, logs, or a cross-region query.
+  For backend or client analytics events, use
+  [`docs/runbook.md`](docs/runbook.md#querying-analytics-events-in-production):
+  the `avalon.analytics_events` lakehouse is Global-only, queried through R2 SQL
+  and Queue/D1 APIs rather than the web dashboard, and EU stays on the restricted
+  regional telemetry API without a Global fallback.
 
 ## Quality gates
 

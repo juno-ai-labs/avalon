@@ -12,8 +12,8 @@ release/
 .playwright-cli/
 output/
 .wrangler/
-apps/api/.wrangler.inference.*.json
 apps/ace/wrangler.generated.json
+apps/api/.wrangler.lakehouses.*.json
 .vite/
 coverage/
 *.log

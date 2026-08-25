@@ -1,48 +1,13 @@
-import type { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
-import {
-  buildTemplateDatabase,
-  type SqliteTemplateVariant,
-} from "./helpers/migrated-schema";
+import type { DatabaseSync } from "node:sqlite";
+import { describeDatabase, type SqliteTemplateVariant } from "./helpers/migrated-schema";
+import { migratedSchemaDescription } from "./helpers/migrated-schema-snapshots";
 import {
   legacyProductSqliteDatabase,
   migratedSqliteDatabase,
   preRetirementProductSqliteDatabase,
 } from "./helpers/sqlite-d1";
-
-/**
- * The fixtures rebuild a migrated database from a captured shape instead of
- * replaying 95 migrations per test. That is only sound while the rebuilt shape
- * is indistinguishable from the replayed one, and "indistinguishable" has to
- * mean more than "the tables have the same names": a lost trigger, a dropped
- * `ON DELETE`, an index that no longer covers the same columns are all invisible
- * to a schema-name check and all change what a test proves. So this compares
- * everything SQLite will tell us about both databases.
- *
- * It has caught one already — the FTS5 index triggers share a name prefix with
- * the shadow tables the virtual table creates for itself, and the first cut of
- * the shadow-table filter took the triggers with them. Every memory-search test
- * went green against an index nothing wrote to.
- */
-function describeDatabase(database: DatabaseSync): Record<string, unknown> {
-  const described: Record<string, unknown> = {
-    schema: database.prepare(
-      "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name",
-    ).all(),
-    foreignKeysEnforced: database.prepare("PRAGMA foreign_keys").get(),
-  };
-  const tables = (database.prepare(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-  ).all() as Array<{ name: string }>).map(({ name }) => name);
-  for (const table of tables) {
-    described[`${table}::columns`] = database.prepare(`PRAGMA table_info("${table}")`).all();
-    described[`${table}::foreign-keys`] = database.prepare(`PRAGMA foreign_key_list("${table}")`).all();
-    described[`${table}::indexes`] = database.prepare(`PRAGMA index_list("${table}")`).all();
-    described[`${table}::rows`] = database.prepare(`SELECT * FROM "${table}"`).all();
-  }
-  return described;
-}
 
 /**
  * Seeded rows with the one column the chain recomputes on every run removed.
@@ -79,8 +44,10 @@ describe("migrated SQLite fixtures", () => {
 
   for (const [variant, fixture] of variants) {
     it(`rebuilds the ${variant} shape exactly as replaying the migrations leaves it`, () => {
-      const replayed = describeDatabase(buildTemplateDatabase(variant));
-      const rebuilt = describeDatabase(fixture());
+      const replayed = migratedSchemaDescription(variant);
+      const rebuiltDatabase = fixture();
+      const rebuilt = describeDatabase(rebuiltDatabase);
+      rebuiltDatabase.close();
       for (const key of Object.keys(replayed)) {
         if (key.endsWith("::rows")) {
           expect(withoutGenerationStamps(rebuilt[key]), key)
@@ -101,7 +68,8 @@ describe("migrated SQLite fixtures", () => {
     // `resources` row is one of them — so the rebuild has to end there too.
     const enforcementOf = (database: DatabaseSync): number =>
       (database.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys;
-    expect(enforcementOf(buildTemplateDatabase("legacy-product"))).toBe(1);
+    expect((migratedSchemaDescription("legacy-product").foreignKeysEnforced as { foreign_keys: number })
+      .foreign_keys).toBe(1);
     expect(enforcementOf(legacyProductSqliteDatabase())).toBe(1);
     expect(() => legacyProductSqliteDatabase().exec(
       `INSERT INTO workspace_members (workspace_id, user_id, role)
