@@ -763,15 +763,14 @@ messages, and the retry prompt that names the mention.
 as Avalon while every URL it pointed at was already `rallywith.ai`. It was left
 until now because re-applying the manifest is a manual trip to Slack, and doing
 it while the visible labels still said Avalon would have fixed the invisible half
-and needed a second trip. A full cut-over is safe here only because the app has
-no installations yet. With live workspaces it would not be, and the sharp edge
-is not the slash command: `SLACK_RETRYABLE_DENIAL_PREFIXES` matches the text of
-the bot's *own earlier messages*, still sitting in channel history, to recover
-the prompt behind a "try again". Renaming those prefixes with real history in a
-channel would silently stop recovering any denial posted before the deploy — the
-same durable-external-state shape as the action ids, in prose rather than an
-identifier. No history exists, so the prefixes move outright rather than
-carrying a superseded copy nothing could ever match.
+and needed a second trip. The public app is already installed in the Juno Labs
+Slack workspace, so the cut-over treats its channel history as durable external
+state. The sharp edge is not the slash command: `SLACK_RETRYABLE_DENIAL_PREFIXES`
+matches the text of the bot's *own earlier messages* to recover the prompt behind
+a "try again". Renaming those prefixes outright would silently stop recovering a
+denial posted before the deploy — the same durable-external-state shape as the
+action ids, in prose rather than an identifier. Rally prefixes are canonical for
+new messages, while the four Avalon prefixes remain accepted inbound.
 
 Deliberately unchanged: the two superseded OAuth redirect URLs and the
 `with-avalon.com` entry in `unfurl_domains`, both of which keep links and
