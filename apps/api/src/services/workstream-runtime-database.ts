@@ -2,7 +2,6 @@ import { z } from "zod";
 
 import { substreamAgentName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
-import type { SubstreamRuntimeProvisionRequest } from "../durable-objects/substream-agent";
 import type { WorkstreamRuntimeSqlResult } from "../durable-objects/workstream-runtime-sql";
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@avalon/contracts";
 import type { Env } from "../env";
@@ -10,6 +9,8 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { splitSqlStatements } from "../lib/sql-statements";
 import { uuidV7 } from "../lib/uuid-v7";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { createIdentityObjectPort } from "../runtime/identity-port";
+import type { WorkstreamProvisionInput } from "../durable-objects/workstream-identity-storage";
 
 type RuntimeValue = string | number | null;
 
@@ -482,25 +483,9 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
  */
 export async function provisionWorkstreamObject(
   env: Env,
-  input: SubstreamRuntimeProvisionRequest,
+  input: WorkstreamProvisionInput & { workspaceId: string; workstreamId: string },
 ): Promise<void> {
-  const stub = await durableObjectStubForWorkspace(
-    env,
-    env.SUBSTREAM_AGENTS,
-    input.workspaceId,
-    substreamAgentName(
-      env.AVALON_REGION,
-      asWorkspaceId(input.workspaceId),
-      asWorkstreamId(input.workstreamId),
-    ),
-  );
-  const response = await stub.provisionRuntime(input);
-  if (response.status < 200 || response.status >= 300) {
-    const body = rpcResultBody(response) as { error?: unknown } | null;
-    throw new Error(
-      typeof body?.error === "string" ? body.error : "workstream_provision_failed",
-    );
-  }
+  await createIdentityObjectPort(env, input.workspaceId, input.workstreamId).provision(input);
 }
 
 /** Escape hatch for an explicitly regional half of a cross-authority operation. */

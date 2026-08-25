@@ -23,7 +23,6 @@ import {
   HARNESS_RUN_OPERATIONS,
   type HarnessRunObjectPort,
 } from "../../src/durable-objects/workstream-harness-run-protocol";
-import type { SubstreamRuntimeProvisionRequest } from "../../src/durable-objects/substream-agent";
 import { WorkstreamIdentityStorage } from "../../src/durable-objects/workstream-identity-storage";
 import { WorkstreamResourceStorage } from "../../src/durable-objects/workstream-resource-storage";
 import {
@@ -796,10 +795,15 @@ export function testSubstreamAgentsBinding(
       ).run();
       return { status: 200, bodyJson: "{}" };
     }),
-    provisionRuntime: vi.fn((input: SubstreamRuntimeProvisionRequest) => {
-      // The real storage class, not a model of it. This write is the whole
-      // point of the operation, and a double that reproduced it by hand would
-      // be the second implementation that drifts.
+    executeIdentityOperation: vi.fn((input: {
+      workspaceId: string;
+      workstreamId: string;
+      operation: string;
+      args: unknown[];
+    }) => {
+      // The real storage class, not a model of it. The provision's write is
+      // the whole point of the operation, and a double that reproduced it by
+      // hand would be the second implementation that drifts.
       const store = storeFor(input.workstreamId, input.workspaceId);
       const storage = new WorkstreamIdentityStorage(
         createCloudflareTestBinding<DurableObjectStorage>({
@@ -808,9 +812,9 @@ export function testSubstreamAgentsBinding(
           transactionSync: (body: () => unknown) => body(),
           sql: objectSqlStorage(store),
         }),
-      );
-      const outcome = storage.provision({ ...input, now: Date.now() });
-      return { status: 200, bodyJson: JSON.stringify({ ok: true, ...outcome }) };
+      ) as unknown as Record<string, (...args: unknown[]) => unknown>;
+      const value = storage[input.operation]!.apply(storage, input.args);
+      return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
     }),
     refreshTimerAlarm: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
     flushEffectsToWorkstreamDO: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
