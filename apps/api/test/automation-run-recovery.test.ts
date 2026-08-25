@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../src/env";
 import { AutomationService } from "../src/services/automation-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
-import { testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
+import { testSubstreamAgentsBinding, testWorkstreamObjectStore, workstreamObjectGet } from "./helpers/durable-authority";
+import { publishedRunStatus } from "../src/runtime/harness-run-runtime";
 
 interface StoredRun {
   id: string;
@@ -18,36 +19,11 @@ interface StoredRun {
   workflowInstanceId: string | null;
 }
 
-interface StoredHarnessRun {
-  id: string;
-  workspaceId: string;
-  workstreamId: string;
-  status: string;
-  startedAt: string | null;
-  workflowInstanceId: string | null;
-}
-
 interface StoredEmailRoute {
   local_part: string;
   region: "global";
   workspace_id: string;
   workstream_id: string;
-}
-
-interface StoredWorkstreamEmailOwner {
-  id: string;
-  workspace_id: string;
-  email_address: string;
-  archived_at: string | null;
-}
-
-interface StoredOpeningMessage {
-  id: string;
-  clientMessageId: string;
-  workspaceId: string;
-  workstreamId: string;
-  textContent: string;
-  structuredContent: Record<string, unknown>;
 }
 
 class ManualRunDatabase {
@@ -63,16 +39,9 @@ class ManualRunDatabase {
   };
 
   run: StoredRun | null = null;
-  harnessRun: StoredHarnessRun | null = null;
-  workstreamStatus: string | null = null;
-  workstreamCreatorUserId: string | null = null;
-  workstreamParticipantUserId: string | null = null;
-  workstreamScope: "personal" | "workspace" | null = null;
-  workstreamEmailOwner: StoredWorkstreamEmailOwner | null = null;
   /** Every statement that arrived on the work-stream object's port. */
   readonly objectPortSql: string[] = [];
   emailRoute: StoredEmailRoute | null = null;
-  openingMessage: StoredOpeningMessage | null = null;
   attachedResourceId: string | null = null;
   automationResource: {
     id: string;
@@ -80,7 +49,6 @@ class ManualRunDatabase {
     ownerUserId: string;
     archived: boolean;
   } | null = null;
-  workstreamInsertCount = 0;
   automationRunInsertCount = 0;
 
   readonly binding = createTestD1Database({
@@ -113,36 +81,6 @@ class ManualRunStatement {
     if (normalized.includes("FROM automation_subscriptions s JOIN automation_templates")) {
       return this.database.subscription as T;
     }
-    if (normalized.includes("FROM automation_runs r LEFT JOIN harness_runs h")) {
-      if (!normalized.includes("h.parent_tool_call_id IS NULL")) {
-        throw new Error("idempotent automation recovery must ignore inline child runs");
-      }
-      const run = this.database.run;
-      if (!run || run.workspaceId !== this.values[0] || run.subscriptionId !== this.values[1] || run.idempotencyKey !== this.values[2]) {
-        return null;
-      }
-      const harness = this.database.harnessRun;
-      const openingMessage = this.database.openingMessage;
-      return {
-        run_id: run.id,
-        workstream_id: run.workstreamId,
-        run_status: run.status,
-        run_workflow_instance_id: run.workflowInstanceId,
-        harness_run_id: harness?.id ?? null,
-        harness_status: harness?.status ?? null,
-        harness_workflow_instance_id: harness?.workflowInstanceId ?? null,
-        trigger_message_id: openingMessage && openingMessage.clientMessageId === this.values[3]
-          ? openingMessage.id
-          : null,
-      } as T;
-    }
-    if (normalized.includes("archived_at FROM workstreams WHERE id = ? AND workspace_id = ?")) {
-      const owner = this.database.workstreamEmailOwner;
-      if (!owner || owner.id !== this.values[0] || owner.workspace_id !== this.values[1]) {
-        return null;
-      }
-      return { email_address: owner.email_address, archived_at: owner.archived_at } as T;
-    }
     if (normalized.includes("SELECT id AS run_id, workstream_id, status AS run_status")
       && normalized.includes("FROM automation_runs")) {
       const run = this.database.run;
@@ -155,25 +93,6 @@ class ManualRunStatement {
         run_status: run.status,
         run_workflow_instance_id: run.workflowInstanceId,
       } as T;
-    }
-    if (normalized.includes("SELECT id, status, workflow_instance_id FROM harness_runs")) {
-      const harness = this.database.harnessRun;
-      if (!harness || harness.workspaceId !== this.values[0] || harness.workstreamId !== this.values[1]) {
-        return null;
-      }
-      return {
-        id: harness.id,
-        status: harness.status,
-        workflow_instance_id: harness.workflowInstanceId,
-      } as T;
-    }
-    if (normalized.includes("SELECT id FROM messages")) {
-      const message = this.database.openingMessage;
-      if (!message || message.workspaceId !== this.values[0] || message.workstreamId !== this.values[1]
-        || message.clientMessageId !== this.values[2]) {
-        return null;
-      }
-      return { id: message.id } as T;
     }
     if (normalized.includes("FROM automation_resources ar JOIN notes n")) {
       // The open-phase copy reads eligible rows here and attaches each through
@@ -230,19 +149,6 @@ class ManualRunStatement {
       || normalized.startsWith("INSERT OR IGNORE INTO workstream_authority_routes")) {
       // The regional identity anchor and route the runtime bootstrap reserves;
       // product state lives behind the object port below.
-    } else if (normalized.startsWith("INSERT INTO workstreams")) {
-      this.database.workstreamInsertCount += 1;
-      this.database.workstreamStatus = String(this.values[9]);
-      this.database.workstreamCreatorUserId = String(this.values[5]);
-      this.database.workstreamScope = normalized.includes("'personal')") ? "personal" : "workspace";
-      this.database.workstreamEmailOwner = {
-        id: String(this.values[0]),
-        workspace_id: String(this.values[1]),
-        email_address: String(this.values[4]),
-        archived_at: null,
-      };
-    } else if (normalized.startsWith("INSERT INTO workstream_participants")) {
-      this.database.workstreamParticipantUserId = String(this.values[1]);
     } else if (normalized.startsWith("INSERT INTO workstream_email_routes")) {
       if (!this.database.emailRoute) {
         this.database.emailRoute = {
@@ -264,15 +170,6 @@ class ManualRunStatement {
         idempotencyKey: String(this.values[9]),
         workflowInstanceId: null,
       };
-    } else if (normalized.startsWith("INSERT INTO messages")) {
-      this.database.openingMessage = {
-        id: String(this.values[0]),
-        clientMessageId: String(this.values[1]),
-        workspaceId: String(this.values[2]),
-        workstreamId: String(this.values[3]),
-        textContent: String(this.values[4]),
-        structuredContent: JSON.parse(String(this.values[5])) as Record<string, unknown>,
-      };
     } else if (normalized.startsWith("INSERT OR IGNORE INTO workstream_resources")) {
       expect(normalized).toContain("JOIN notes n ON n.resource_id = ar.resource_id");
       expect(normalized).toContain("n.archived_at IS NULL");
@@ -285,24 +182,6 @@ class ManualRunStatement {
       }
     } else if (normalized.startsWith("INSERT INTO workstream_resources")) {
       this.database.attachedResourceId = String(this.values[1]);
-    } else if (normalized.startsWith("INSERT INTO harness_runs")) {
-      this.database.harnessRun = {
-        id: String(this.values[0]),
-        workspaceId: String(this.values[1]),
-        workstreamId: String(this.values[2]),
-        status: "scheduled",
-        startedAt: null,
-        workflowInstanceId: null,
-      };
-    } else if (normalized.startsWith("UPDATE harness_runs SET workflow_instance_id")) {
-      const harness = this.database.harnessRun;
-      if (harness) {
-        harness.workflowInstanceId = String(this.values[0]);
-        if (normalized.includes("status = CASE") && harness.status === "scheduled") {
-          harness.status = "running";
-          harness.startedAt = String(this.values[1]);
-        }
-      }
     } else if (normalized.startsWith("UPDATE automation_runs SET workflow_instance_id")) {
       const run = this.database.run;
       if (run) {
@@ -312,8 +191,6 @@ class ManualRunStatement {
           run.startedAt = String(this.values[1]);
         }
       }
-    } else if (normalized.startsWith("UPDATE workstreams SET harness_status")) {
-      if (this.database.workstreamStatus === "scheduled") this.database.workstreamStatus = "running";
     } else {
       throw new Error(`Unexpected run() query: ${normalized}`);
     }
@@ -330,111 +207,100 @@ class ManualRunStatement {
 }
 
 /**
- * The SubstreamAgent boundary the retired Workflow binding used to play: the
- * runtime SQL port forwards object-owned statements back into the manual
- * database, and `dispatchRun` is the recorded launch edge.
+ * The SubstreamAgent boundary the retired Workflow binding used to play.
+ *
+ * Every object-owned operation — the provision, the transcript, the runs, the
+ * runtime SQL port — runs against a real object database through the shared
+ * stub, so this file asserts on what the storage classes actually wrote. Only
+ * the two edges that are not the object's own state stand in: run dispatch,
+ * which is the recorded launch, and the resource attachment, whose eligibility
+ * rule is what these tests are about. `executeRuntimeSql` is wrapped rather
+ * than replaced so the statements that reach the port stay recorded.
  */
 function agentsBinding(database: ManualRunDatabase, failures: Error[] = []) {
-  const dispatchRun = vi.fn(async () => {
+  const objectStore = testWorkstreamObjectStore();
+  openObjectStores.push(objectStore);
+  const dispatchRun = vi.fn(() => {
     const failure = failures.shift();
     if (failure) throw failure;
     return { status: 200, bodyJson: "{}" };
   });
-  const stub = {
-    dispatchRun,
-    bootstrapRuntime: vi.fn(async () => ({ status: 200, bodyJson: "{}" })),
-    attachRuntimeResource: vi.fn(async (input: { resourceId: string }) => {
-      database.attachedResourceId = input.resourceId;
-      return { status: 200, bodyJson: "{}" };
-    }),
-    /**
-     * The harness-run port, answered from this file's hand-built model.
-     *
-     * The run itself is still created by a routed statement — it is one member
-     * of the work-stream bootstrap batch, which stays atomic until the
-     * transcript moves too — so its record lives in `ManualRunDatabase` beside
-     * the automation row these assertions are written against. Answering the
-     * port from the same model is what keeps the two halves of a half-converted
-     * path talking about the same run. Unknown operations throw rather than
-     * returning nothing, so a new one cannot quietly read as "no such run".
-     */
-    executeHarnessRunOperation: vi.fn((input: { operation: string; args: unknown[] }) => {
-      const stored = database.harnessRun;
-      const value = (() => {
-        switch (input.operation) {
-          case "latestRootRun":
-            return stored === null ? null : {
-              run_id: stored.id,
-              // The port speaks the object's vocabulary, where `scheduled` is
-              // `admitted`; the caller maps it back.
-              status: stored.status === "scheduled" ? "admitted" : stored.status,
-              workflow_instance_id: stored.workflowInstanceId,
-              parent_tool_call_id: null,
-            };
-          case "launchRun": {
-            const { workflowInstanceId, startedAt } = input.args[0] as {
-              workflowInstanceId: string;
-              startedAt: number;
-            };
-            if (!stored) return { outcome: "not_found" };
-            stored.workflowInstanceId = workflowInstanceId;
-            if (stored.status === "scheduled") {
-              stored.status = "running";
-              stored.startedAt = new Date(startedAt).toISOString();
-            }
-            if (database.workstreamStatus === "scheduled") database.workstreamStatus = "running";
-            return { outcome: "launched" };
-          }
-          case "bindWorkflowInstance": {
-            const { workflowInstanceId } = input.args[0] as { workflowInstanceId: string };
-            if (!stored) return { outcome: "not_found" };
-            stored.workflowInstanceId = workflowInstanceId;
-            return { outcome: "bound" };
-          }
-          default:
-            throw new Error(`Unmodelled harness-run operation: ${input.operation}`);
-        }
-      })();
-      return { status: 200, bodyJson: JSON.stringify({ ok: true, value }) };
-    }),
-    executeRuntimeSql: async (input: { statements: Array<{ sql: string; params: unknown[] }> }) => {
-      const results = [];
-      for (const { sql, params } of input.statements) {
-        database.objectPortSql.push(sql);
-        const statement = database.binding.prepare(sql).bind(...params as never[]);
-        if (/^\s*(?:SELECT|WITH)/iu.test(sql)) {
-          const row = await statement.first<Record<string, string | number | null>>();
-          results.push({ columns: row ? Object.keys(row) : [], rows: row ? [row] : [], changes: 0 });
-        } else {
-          const run = await statement.run();
-          results.push({ columns: [], rows: [], changes: Number(run.meta?.changes ?? 1) });
-        }
-      }
-      return { status: 200, bodyJson: JSON.stringify({ results }) };
-    },
-  };
-  // The opening-message lookup goes through the message port, which dispatches
-  // `executeMessageOperation`. That one operation runs against a real object
-  // store — the storage class, its schema and its statements — while the rest
-  // of this stub keeps answering from the fake regional database the other
-  // assertions here are written against.
-  const objectStore = testWorkstreamObjectStore();
-  openObjectStores.push(objectStore);
-  const transcript = testSubstreamAgentsBinding(objectStore);
-  const transcriptStub = transcript.get(transcript.idFromName("transcript"));
-  const stubWithTranscript = new Proxy(stub, {
+  const attachRuntimeResource = vi.fn((input: { resourceId: string }) => {
+    database.attachedResourceId = input.resourceId;
+    return { status: 200, bodyJson: "{}" };
+  });
+  const base = testSubstreamAgentsBinding(objectStore, {
+    extra: { dispatchRun, attachRuntimeResource },
+  });
+  const baseStub = base.get(base.idFromName("substream-agent"));
+  const stub = new Proxy(baseStub, {
     get(target, property, receiver) {
-      return property === "executeMessageOperation"
-        ? Reflect.get(transcriptStub, property)
-        : Reflect.get(target, property, receiver);
+      const value: unknown = Reflect.get(target, property, receiver);
+      if (property !== "executeRuntimeSql") return value;
+      const forward = value as (input: RuntimeSqlRequest) => unknown;
+      return (input: RuntimeSqlRequest) => {
+        for (const statement of input.statements) database.objectPortSql.push(statement.sql);
+        return forward(input);
+      };
     },
   });
   const namespace = {
     idFromName: (name: string) => createTestDurableObjectId(name),
-    get: () => stubWithTranscript,
+    get: () => stub,
     jurisdiction: () => namespace,
   };
-  return { binding: namespace, dispatchRun };
+  return { binding: namespace, dispatchRun, objectStore };
+}
+
+interface RuntimeSqlRequest {
+  statements: Array<{ sql: string; params: unknown[] }>;
+}
+
+/** The work stream the object holds, in the columns these tests assert on. */
+function storedWorkstream(objectStore: DatabaseSync) {
+  return workstreamObjectGet<{
+    id: string;
+    title: string;
+    scope: string;
+    created_by_user_id: string | null;
+    automation_subscription_id: string | null;
+    automation_run_id: string | null;
+    archived_at: string | null;
+    harness_status: string;
+  }>(
+    objectStore,
+    `SELECT id, title, scope, created_by_user_id, automation_subscription_id,
+            automation_run_id, archived_at, harness_status
+       FROM workstreams`,
+  );
+}
+
+/** The opening transcript part the object holds, in the legacy vocabulary. */
+function storedOpeningMessage(objectStore: DatabaseSync) {
+  return workstreamObjectGet<{
+    id: string;
+    client_message_id: string | null;
+    text_content: string;
+    structured_content_json: string | null;
+  }>(
+    objectStore,
+    `SELECT id, client_message_id, text_content, structured_content_json
+       FROM messages WHERE message_type = 'system'`,
+  );
+}
+
+/** The root run the object holds, in the published vocabulary. */
+function storedHarnessRun(objectStore: DatabaseSync) {
+  const run = workstreamObjectGet<{
+    id: string;
+    status: string;
+    workflow_instance_id: string | null;
+  }>(
+    objectStore,
+    `SELECT run_id AS id, status, workflow_instance_id
+       FROM runs WHERE substream_id = '0' AND parent_run_id IS NULL`,
+  );
+  return run === null ? null : { ...run, status: publishedRunStatus(run.status) };
 }
 
 const openObjectStores: DatabaseSync[] = [];
@@ -506,8 +372,8 @@ describe("manual automation run recovery", () => {
       .rejects.toMatchObject({ status: 503, code: "workflow_unavailable" });
 
     expect(database.run).toMatchObject({ status: "scheduled", workflowInstanceId: null });
-    expect(database.harnessRun).toMatchObject({ status: "scheduled", workflowInstanceId: null });
-    expect(database.workstreamEmailOwner).toMatchObject({ archived_at: null });
+    expect(storedHarnessRun(agents.objectStore)).toMatchObject({ status: "scheduled", workflow_instance_id: null });
+    expect(storedWorkstream(agents.objectStore)).toMatchObject({ archived_at: null });
     // `archived_at` left regional D1 with migration 0090 — the work-stream
     // object owns it now. Both reads of it on the create path must therefore
     // arrive on the object's port; one issued against `env.DB` would ask the
@@ -518,7 +384,7 @@ describe("manual automation run recovery", () => {
     expect(archiveReads.length).toBeGreaterThanOrEqual(2);
     const originalRunId = database.run?.id;
     const originalWorkstreamId = database.run?.workstreamId;
-    const originalHarnessRunId = database.harnessRun?.id;
+    const originalHarnessRunId = storedHarnessRun(agents.objectStore)?.id;
 
     const recovered = await service.runNow("subscription-1", "manual-retry-key");
 
@@ -531,11 +397,14 @@ describe("manual automation run recovery", () => {
     expect(agents.dispatchRun).toHaveBeenCalledTimes(2);
     const expectedWorkflowId = `substream-agent:0:${originalHarnessRunId}`;
     expect(database.run).toMatchObject({ status: "running", workflowInstanceId: expectedWorkflowId });
-    expect(database.harnessRun).toMatchObject({ status: "running", workflowInstanceId: expectedWorkflowId });
-    expect(database.workstreamStatus).toBe("running");
+    expect(storedHarnessRun(agents.objectStore)).toMatchObject({
+      status: "running",
+      workflow_instance_id: expectedWorkflowId,
+    });
     expect(database.emailRoute).toMatchObject({ workstream_id: originalWorkstreamId });
-    expect(database.workstreamEmailOwner).toMatchObject({
+    expect(storedWorkstream(agents.objectStore)).toMatchObject({
       id: originalWorkstreamId,
+      harness_status: "running",
       archived_at: null,
     });
 
@@ -586,22 +455,30 @@ describe("manual automation run recovery", () => {
       harnessRunId: first.harnessRunId,
       reused: true,
     });
-    expect(database.workstreamInsertCount).toBe(1);
     expect(database.automationRunInsertCount).toBe(1);
-    expect(database.workstreamScope).toBe("personal");
-    expect(database.workstreamCreatorUserId).toBe(database.subscription.owner_user_id);
-    expect(database.workstreamParticipantUserId).toBe(database.subscription.owner_user_id);
-    expect(database.attachedResourceId).toBe("resource-email-1");
-    expect(database.openingMessage).toMatchObject({
-      clientMessageId: "resend:resend-email-1",
-      workstreamId: first.workstreamId,
-      textContent: opening.textContent,
-      structuredContent: opening.structuredContent,
+    expect(storedWorkstream(agents.objectStore)).toMatchObject({
+      id: first.workstreamId,
+      title: database.subscription.name,
+      scope: "personal",
+      created_by_user_id: database.subscription.owner_user_id,
+      automation_subscription_id: "subscription-1",
+      automation_run_id: first.runId,
     });
+    expect(workstreamObjectGet(
+      agents.objectStore,
+      `SELECT user_id FROM workstream_participants WHERE removed_at IS NULL`,
+    )).toMatchObject({ user_id: database.subscription.owner_user_id });
+    expect(database.attachedResourceId).toBe("resource-email-1");
+    const openingMessage = storedOpeningMessage(agents.objectStore);
+    expect(openingMessage).toMatchObject({
+      client_message_id: "resend:resend-email-1",
+      text_content: opening.textContent,
+    });
+    expect(JSON.parse(openingMessage?.structured_content_json ?? "null")).toEqual(opening.structuredContent);
     expect(agents.dispatchRun).toHaveBeenCalledTimes(1);
     expect(agents.dispatchRun).toHaveBeenCalledWith(expect.objectContaining({
       workstreamId: first.workstreamId,
-      triggerMessageId: database.openingMessage?.id,
+      triggerMessageId: openingMessage?.id,
       automationSubscriptionId: "subscription-1",
     }));
   });
