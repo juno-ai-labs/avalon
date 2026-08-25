@@ -41,6 +41,7 @@ is recorded.
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps the selected/running SubstreamAgent feed and invokes the separate WorkstreamDO control lifecycle. |
+| `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns those two work-stream sockets above the route and retains recently viewed work streams without remounting their connection hooks. |
 | `apps/desktop/src/renderer/lib/api.ts` | Parses every ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
 
 ## How it works
@@ -128,10 +129,15 @@ independently without routing product data through main-process IPC. For
 each selected or still-running work stream, the desktop also maintains one
 WorkstreamDO metadata socket and one SubstreamAgent feed socket. While the
 HyperSight panel is visible it additionally maintains one direct socket per
-configured block. Switching away from an idle work stream closes its
-work-stream-scoped sockets; background-running conversation streams keep their
-metadata/feed sockets, while block sockets close with the panel and recover
-from durable checkpoints when it is opened again.
+configured block. Switching away keeps the exact metadata/feed socket pair
+mounted for at least five minutes, so returning to a recently viewed work stream
+does not spend another ticket request, handshake, subscribe, or snapshot. The
+five-minute clock restarts each time the work stream leaves the foreground;
+background-running conversation streams remain connected beyond it. Block
+sockets still close with the panel and recover from durable checkpoints when it
+is opened again. Access revocation is not delayed: the server closes every
+affected retained socket immediately, and that socket permanently stops
+reconnecting.
 
 The workspace socket carries its authoritative work-stream directory rows plus
 durable topic invalidations for the other D1-owned workspace modules. Its
@@ -474,7 +480,7 @@ client message IDs make reconnect resend idempotent.
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @rally/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @rally/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
-| `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Direct SubstreamAgent feed reconnect/resync, streaming, switching streams, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Direct SubstreamAgent feed reconnect/resync, streaming, exact-connection reuse for five minutes after switching streams, expiry closure, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
 
 **The trap, and it has already cost one bug:** Node's `Response` refuses status
@@ -506,6 +512,31 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-25 — Recently viewed work-stream sockets survive navigation for five minutes
+
+**What changed:** Electron owns WorkstreamDO metadata and SubstreamAgent feed
+sockets in a keyed pool above the active route. A work stream that leaves the
+foreground keeps its exact socket pair for at least five minutes; returning
+within that window reuses the connections, and a running work stream remains
+connected without an expiry.
+
+**Why:** Route ownership closed both sockets immediately even though the person
+was likely to switch back. Reopening paid for two ticket requests, two
+handshakes, two subscriptions, and two snapshots before realtime state was
+current again, while Cloudflare can hibernate the idle connections at no object
+duration cost.
+
+**Considered and rejected:** Keeping only the React Query cache still requires
+fresh subscriptions before it is safe to trust; opening sockets for every work
+stream in the directory would retain connections unrelated to recent use. A
+five-minute recent set preserves the likely back-navigation path without making
+the whole sidebar live.
+
+**Consequences:** Feed and metadata sockets share the same retention lifetime,
+but HyperSight block sockets still follow panel visibility. Access revocation
+still closes retained sockets immediately. Future route refactors must keep the
+pool keyed by work-stream id or they will turn retention into close-and-redial.
 
 ### 2026-08-25 — A lost replay cache no longer discards a healthy socket
 
