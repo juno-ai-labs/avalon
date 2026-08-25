@@ -1016,7 +1016,12 @@ const automationDraftSubmissionJsonSchema = {
           },
           deterministicPrefilter: {
             type: ["string", "null"],
-            description: "A JSON-encoded object used before semantic classification."
+            // The one required key lives inside an opaque JSON string, so
+            // nothing else the model is shown can state it: the schema cannot
+            // constrain the encoded object, and the prose above says only that
+            // a prefilter is declared. Naming it here is what stops a ready
+            // semantic trigger being submitted without it.
+            description: "A JSON-encoded object of deterministic filters applied before semantic classification. A ready semantic_activity trigger must declare exactly one normalized event type as {\"eventType\":\"<declared event type>\"}, optionally alongside that event's declared deterministic filter fields."
           },
           condition: { type: ["string", "null"] },
           resourceId: { type: ["string", "null"] }
@@ -1559,6 +1564,30 @@ export async function compileAutomation(input: {
     },
     {
       definition: AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS[3]!,
+      /**
+       * The draft's real contract is `AutomationDraftSchema`, and the parts of
+       * it that decide whether a submission is accepted — a ready activity
+       * trigger's binding key, its inspected plugin, its declared prefilter
+       * event type, unique memory-table names — are cross-field refinements no
+       * JSON Schema can state, so the declared `inputSchema` accepts arguments
+       * the executor then rejects.
+       *
+       * Without this hook the runtime sees arguments that match everything it
+       * was shown, files the executor's `ZodError` as downstream data
+       * validation, and hands the model "the tool could not validate its data;
+       * retry without changing the arguments". The model obeys: it resubmits
+       * the same draft, is refused identically, and the compile ends with no
+       * draft at all. That is request 8592b3f1 — four identical rejections of
+       * one missing `deterministicPrefilter.eventType`, then
+       * `automation_draft_not_submitted` and a 502 the person could only read
+       * as "try again". Re-running the same parse here is what turns that dead
+       * end into the named field, because it is the one signal that separates a
+       * correctable argument from an external fault.
+       */
+      validateInput: (raw) => {
+        const parsed = AutomationDraftSchema.safeParse(normalizeAutomationDraft(raw));
+        return parsed.success ? null : parsed.error;
+      },
       execute: async (raw) => {
         await input.onDiagnostic?.({
           stage: "normalize",
