@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { IdSchema } from '@avalon/contracts';
+import { isDesktopDeepLinkProtocol } from '@avalon/contracts/desktop-deep-link';
 import type {
   AvalonDesktopBridge,
   DesktopDeepLinkNavigation,
@@ -378,7 +379,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         setDeepLinkError('Avalon received an invalid sign-in link.');
         return;
       }
-      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'workstreams' && deepLink.pathname === '/new') {
+      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'workstreams' && deepLink.pathname === '/new') {
         if (!session?.workspace) {
           setDeepLinkError('Sign in before starting a work stream.');
           return;
@@ -388,7 +389,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         window.location.hash = '/workstreams/new';
         return;
       }
-      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'workstreams') {
+      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'workstreams') {
         const workstreamId = deepLink.pathname.slice(1);
         if (!session?.workspace || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(workstreamId)) {
           setDeepLinkError('Sign in before opening this work-stream link.');
@@ -399,7 +400,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         window.location.hash = `/workstreams/${workstreamId}`;
         return;
       }
-      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'notes') {
+      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'notes') {
         // Sent by the main process when a meeting window closes, so that the
         // recording a person just ended hands them to the note it produced.
         const noteId = deepLink.pathname.slice(1);
@@ -420,7 +421,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return;
       }
       if (
-        deepLink.protocol === 'avalon:'
+        isDesktopDeepLinkProtocol(deepLink.protocol)
         && deepLink.hostname === 'settings'
         && (deepLink.pathname === '/workspace' || deepLink.pathname === '/connections'
           || deepLink.pathname === '/digest')
@@ -434,7 +435,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return;
       }
       if (
-        deepLink.protocol === 'avalon:'
+        isDesktopDeepLinkProtocol(deepLink.protocol)
         && deepLink.hostname === 'automations'
         && deepLink.pathname === '/new'
         && deepLink.search === ''
@@ -448,7 +449,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         window.location.hash = '/automations/new';
         return;
       }
-      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'slack' && deepLink.pathname === '/link') {
+      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'slack' && deepLink.pathname === '/link') {
         const token = deepLink.searchParams.get('token');
         const exactToken = token
           && /^[A-Za-z0-9_-]{20,500}$/u.test(token)
@@ -509,7 +510,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           });
         return;
       }
-      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'invitations' && deepLink.pathname === '/accept') {
+      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'invitations' && deepLink.pathname === '/accept') {
         const token = deepLink.searchParams.get('token');
         const inviteRegion = deepLink.searchParams.get('region');
         if (!token || token.length < 20 || (inviteRegion !== 'global' && inviteRegion !== 'eu')) {
@@ -524,7 +525,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         void queryClient.invalidateQueries({ queryKey: ['workspace-onboarding'] });
         return;
       }
-      if (deepLink.protocol !== 'avalon:' || deepLink.hostname !== 'auth' || deepLink.pathname !== '/complete') {
+      if (!isDesktopDeepLinkProtocol(deepLink.protocol) || deepLink.hostname !== 'auth' || deepLink.pathname !== '/complete') {
         setDeepLinkError('Avalon received an unexpected sign-in link.');
         return;
       }

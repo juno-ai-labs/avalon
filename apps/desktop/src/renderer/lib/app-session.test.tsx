@@ -189,6 +189,28 @@ describe('single-platform desktop identity routing', () => {
     expect(window.localStorage.getItem('avalon:selected-region')).toBeNull();
   });
 
+  // Every other deep-link test here dispatches the legacy scheme, which is what
+  // this matcher was written against and what a pre-rename build still sends.
+  // The scheme a *current* build sends is the one combination none of them
+  // covered: `SignInScreen` asks for a `rallywithai://` return URI, the Worker
+  // echoes the caller's scheme back unchanged by design, and the completion
+  // therefore arrives in a scheme this file used to compare against a literal
+  // `'avalon:'` — rejecting every sign-in with "unexpected sign-in link".
+  it('completes sign in from the scheme a current build mints', async () => {
+    renderProvider();
+    expect(await screen.findByText('global:signed-out')).toBeVisible();
+    await dispatchDeepLink(`rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'a'.repeat(43)}`);
+
+    await waitFor(() => expect(bridge.exchangeDesktopTicket).toHaveBeenCalledWith({
+      apiBaseUrl: 'https://api.with-avalon.com',
+      region: 'global',
+      ticket: 'single-use-ticket-long-enough',
+      attemptId: 'a'.repeat(43),
+    }));
+    expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+  });
+
   it('does not drain a cold-start OAuth callback until runtime endpoints are loaded', async () => {
     let resolveRuntime!: (value: RuntimeConfig) => void;
     bridge.getRuntimeConfig.mockReturnValueOnce(new Promise((resolve) => {

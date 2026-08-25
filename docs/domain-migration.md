@@ -21,7 +21,8 @@ deep-link scheme, and the work-stream email domain.
 | `packages/contracts/src/desktop-deep-link.ts` | The one list of deep-link schemes — minted, legacy, and accepted. Every other surface reads it. |
 | `apps/api/src/lib/workstream-email-address.ts` | The minted email domain and the legacy domains still accepted inbound. |
 | `apps/api/src/services/terminal/network-policy.ts` | The sandbox baseline allowlist, which holds the canonical API hosts only. |
-| `apps/desktop/src/main/index.ts` | `rendererHost` — the `app://rallywithai` origin the Workers' `ALLOWED_ORIGINS` must admit. |
+| `apps/desktop/src/main/index.ts` | `rendererHost` — the `app://rallywithai` origin the Workers' `ALLOWED_ORIGINS` must admit. Also registers every accepted scheme with the operating system and filters what reaches a renderer. |
+| `apps/desktop/src/renderer/lib/app-session.tsx` | The renderer's deep-link matcher — the surface that decides what an arriving link *does*. The fifth surface, and the one a scheme list is easiest to forget in, because it is reached only after the operating system and the main process have both already accepted the link. |
 | `apps/desktop/src/main/message-export.ts` | `MESSAGE_EXPORT_SCHEME` — `rallywithai-export`, in-process only and renamed outright. |
 | `apps/api/test/domain-migration-config.test.ts` | Asserts the deployed configs list both renderer origins, all four site origins, both route sets, and no superseded host in any minted URL. |
 | `apps/api/src/lib/desktop-handoff.ts` | `compatibleDesktopDeepLink` — the one place a deep link is minted in its superseded scheme, for targets the server cannot attribute to a calling build. |
@@ -246,12 +247,57 @@ otherwise still round-trip and no other test would notice.
 `packages/contracts/src/url-schemas.test.ts` covers the schema pair, and
 `apps/api/test/resend-inbound-email.test.ts` covers a legacy-domain recipient
 resolving and reporting the domain it arrived on.
+`apps/desktop/src/renderer/lib/app-session.test.tsx` covers the renderer
+matcher from the *minted* scheme — `completes sign in from the scheme a current
+build mints`. Every other deep-link test in that file dispatches the legacy
+scheme, which is what let a literal `'avalon:'` comparison there survive the
+rename with a full green suite.
 
 Nothing here exercises DNS, certificates, or a provider registration. Those fail
 only in production, which is why they are runbook steps with an explicit order
 rather than assertions.
 
 ## Changelog
+
+### 2026-08-25 — The renderer matches the scheme list too
+
+**What changed:** `apps/desktop/src/renderer/lib/app-session.tsx` compared
+`deepLink.protocol` against a literal `'avalon:'` in all eight of its deep-link
+branches. All eight now call `isDesktopDeepLinkProtocol`. No behaviour was
+intended to change here — this is the renderer catching up to the scheme list
+the other four surfaces already read.
+
+**Why:** Sign-in was broken in production for every current build. `SignInScreen`
+asks for a `rallywithai://auth/complete` return URI, `allowedReturnUri`
+deliberately does not pin the scheme, and the Worker echoes the caller's value
+back unchanged — so the completion arrives in the scheme the calling build
+minted, which the renderer then refused as "Avalon received an unexpected
+sign-in link". Every other link the rename switched failed the same way and for
+the same reason: work-stream, invitation, Slack-link, settings, automation, and
+the `notes` link the main process mints for a closing meeting window. Connector
+OAuth was the one flow that kept working, because `compatibleDesktopDeepLink`
+mints the legacy scheme on purpose — which is why the outage read as
+"sign-in is broken" rather than "deep links are broken".
+
+The scheme list's own comment predicted this exact shape: a copy that fell
+behind "would not fail loudly — it would silently classify a real link as
+untrusted, on one surface only". The list was introduced precisely so five
+surfaces could stop keeping copies, and four of them were converted. The fifth
+is the one furthest from the scheme's definition and the last to see a link, so
+nothing upstream of it could fail first and expose the gap.
+
+**Considered and rejected:** Pinning `DESKTOP_DEEP_LINK_URI` back to the legacy
+scheme to restore sign-in without touching the client. It would have worked, and
+it would have made the renderer's literal correct again by moving the rest of
+the product back to the superseded scheme — reverting the migration to avoid
+fixing the one surface that had not moved.
+
+**Consequences:** The renderer no longer names a scheme, so it needs no edit
+when `avalon:` is finally dropped — the retirement stays a one-line change to
+`LEGACY_DESKTOP_DEEP_LINK_PROTOCOLS`. A test dispatching only the legacy scheme
+is now known to prove nothing about the scheme builds actually mint; the
+matching-side tests are the ones that have to name both, and a new deep-link
+branch should be covered from the minted scheme rather than the convenient one.
 
 ### 2026-08-25 — Accepting a scheme and answering in it are separated
 
