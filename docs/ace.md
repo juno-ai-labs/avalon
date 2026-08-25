@@ -185,6 +185,21 @@ When a save succeeds but clients do not change, inspect in order:
 
 ## Changelog
 
+### 2026-08-25 — Access verification tolerates DNS propagation
+
+**What changed:** The post-deploy Cloudflare Access check now treats a transient
+curl transport failure as an unsuccessful attempt, logs the error, and continues
+through the workflow's existing propagation retries.
+
+**Why:** The first production custom-domain deployment succeeded, but its first
+DNS lookup raced Cloudflare propagation. `set -e` stopped the step on curl exit
+6 before the retry loop could make its second attempt, even though the domain
+resolved and returned Access's 302 redirect seconds later.
+
+**Considered and rejected:** Removing the Access check. A successful Worker
+upload does not prove the internal hostname is protected, so the check remains a
+deployment gate and only expected propagation failures are retried.
+
 ### 2026-08-25 — Merge deployment invokes Ace's package script explicitly
 
 **What changed:** The Ace deployment workflow now runs
