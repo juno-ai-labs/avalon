@@ -802,6 +802,8 @@ The release and the site deployment deliberately keep separate groups. Sharing o
 
 The tag is created locally so the existing guards can verify it against HEAD, and is pushed immediately after the payloads are published and the channel is promoted — before the release config is recorded and before the site is deployed. A release that fails before publication leaves no tag, so the same version can be retried by re-running the workflow or by merging a fix. After publication the release is live to updaters and cannot be retried, because a rebuild is not byte-identical and the immutable-object guard rejects it; the tag therefore has to exist by then, so that the remaining steps can be re-run or dispatched on their own. Pushing the tag with `GITHUB_TOKEN` deliberately does not start another run.
 
+`latest-mac.yml` is also the boundary for orphan recovery. A failed attempt can upload one or more versioned objects before it reaches that final commit point, and a freshly notarized retry will not reproduce their bytes. While the live manifest is absent or still names the preceding version, the publisher replaces a mismatched object under the pending version, verifies the replacement in R2, purges the exact public URL, and verifies the uncached URL before promotion. Once the live manifest names that version, the same mismatch remains a hard failure: published release bytes are never rewritten.
+
 ##### When a release does not happen
 
 Check in this order, because the two causes look different.

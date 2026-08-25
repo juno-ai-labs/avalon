@@ -13,6 +13,7 @@ import {
   loadReleaseDirectory,
   normalizeReleasePrefix,
   parseMacUpdateFeed,
+  reconcileImmutableReleaseObject,
   releaseContentType,
   sha512File,
   verifyFeedArtifact,
@@ -315,26 +316,36 @@ async function verifyR2Hash(key, expectedHash, destination) {
   }
 }
 
-async function uploadImmutableArtifact(artifact, scratchDirectory) {
+async function uploadImmutableArtifact(artifact, scratchDirectory, releaseIsCommitted) {
   const objectName = normalizeObjectName(artifact.objectName ?? artifact.name);
   const key = `${prefix}/${objectName}`;
   const verificationPath = join(scratchDirectory, `verified-${objectName.replaceAll('/', '_')}`);
   const [localHash, metadata] = await Promise.all([sha512File(artifact.path), stat(artifact.path)]);
-  if (await getR2Object(key, verificationPath)) {
-    const existingHash = await sha512File(verificationPath);
-    if (existingHash !== localHash) {
-      throw new Error(`Immutable release key r2://${bucket}/${key} already exists with different bytes`);
-    }
+  const exists = await getR2Object(key, verificationPath);
+  const existingHash = exists ? await sha512File(verificationPath) : undefined;
+  const outcome = await reconcileImmutableReleaseObject({
+    existingHash,
+    localHash,
+    releaseIsCommitted,
+    objectLocation: `r2://${bucket}/${key}`,
+    upload: async () => {
+      await rm(verificationPath, { force: true });
+      await putR2Object(key, artifact.path, {
+        contentType: artifact.contentType ?? releaseContentType(artifact.name),
+        cacheControl: 'public, max-age=31536000, immutable',
+        disposition: `attachment; filename="${basename(artifact.name).replaceAll('"', '')}"`,
+      });
+    },
+  });
+  if (outcome === 'reused') {
     console.log(`Already published immutable artifact ${objectName}`);
   } else {
-    await rm(verificationPath, { force: true });
-    await putR2Object(key, artifact.path, {
-      contentType: artifact.contentType ?? releaseContentType(artifact.name),
-      cacheControl: 'public, max-age=31536000, immutable',
-      disposition: `attachment; filename="${basename(artifact.name).replaceAll('"', '')}"`,
-    });
     await verifyR2Hash(key, localHash, verificationPath);
-    console.log(`Uploaded immutable artifact ${objectName}`);
+    console.log(
+      outcome === 'replaced-orphan'
+        ? `Replaced orphaned pre-manifest artifact ${objectName}`
+        : `Uploaded immutable artifact ${objectName}`,
+    );
   }
   await verifyPublicArtifact(objectName, metadata.size, localHash);
   return { name: objectName, expectedSize: metadata.size, verificationId: localHash };
@@ -446,6 +457,7 @@ try {
 
   const existingManifestPath = join(scratchDirectory, 'existing-latest-mac.yml');
   const hasManifest = await getR2Object(`${prefix}/${latestManifestName}`, existingManifestPath);
+  let releaseIsCommitted = false;
   if (hasManifest) {
     const existingBytes = await readFile(existingManifestPath);
     const existingFeed = parseMacUpdateFeed(existingBytes.toString('utf8'));
@@ -461,6 +473,7 @@ try {
     if (comparison === 0 && !existingBytes.equals(release.manifestBytes)) {
       throw new Error(`Release ${release.feed.version} already has different latest-mac.yml bytes in R2`);
     }
+    releaseIsCommitted = comparison === 0;
   } else if (compareVersions(currentSiteConfig.version, release.feed.version) < 0) {
     assertNextReleaseVersion(currentSiteConfig.version, release.feed.version);
   }
@@ -469,9 +482,13 @@ try {
   // through the public custom domain before either mutable channel pointer moves.
   const immutablePublicArtifacts = [];
   for (const artifact of release.artifacts) {
-    immutablePublicArtifacts.push(await uploadImmutableArtifact(artifact, scratchDirectory));
+    immutablePublicArtifacts.push(
+      await uploadImmutableArtifact(artifact, scratchDirectory, releaseIsCommitted),
+    );
   }
-  immutablePublicArtifacts.push(await uploadImmutableArtifact(checksumsArtifact, scratchDirectory));
+  immutablePublicArtifacts.push(
+    await uploadImmutableArtifact(checksumsArtifact, scratchDirectory, releaseIsCommitted),
+  );
 
   // Query parameters bypass a stale negative cache entry but updater clients do
   // not use them. Purge every exact immutable URL as one fail-closed gate, then
