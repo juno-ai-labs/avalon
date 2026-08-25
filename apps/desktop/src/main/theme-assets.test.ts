@@ -45,7 +45,7 @@ describe('backdrop documents', () => {
     [`${backdropScheme}://elsewhere/air`, 'another host on the scheme'],
     [`${backdropScheme}://theme/../../etc/passwd`, 'a traversal'],
     [`${backdropScheme}://theme/`, 'no theme at all'],
-    ['app://avalon/index.html', "the renderer's own scheme"],
+    ['app://rally/index.html', "the renderer's own scheme"],
     ['not a url', 'nonsense'],
   ])('serves nothing for %s (%s)', (url) => {
     expect(backdropDocumentFor(url, DOCUMENTS)).toBeNull();
@@ -77,7 +77,7 @@ describe('backdrop documents', () => {
    */
   it('is recognisable to the header handler that must skip it', () => {
     expect(isBackdropUrl(backdropUrl('air'))).toBe(true);
-    expect(isBackdropUrl('app://avalon/index.html')).toBe(false);
+    expect(isBackdropUrl('app://rally/index.html')).toBe(false);
   });
 
   it('registers both schemes without the privileges a fetch would need', () => {

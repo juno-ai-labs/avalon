@@ -1,7 +1,7 @@
 # When adding a new HTTP header
 
 Use this checklist whenever the Electron renderer adds or consumes a header on a
-regional API request. The renderer runs at `app://avalon`, so Chromium enforces
+regional API request. The renderer runs at `app://rally`, so Chromium enforces
 CORS before the request reaches the Worker.
 
 ## Request headers
@@ -41,12 +41,12 @@ For a hosted endpoint, verify the real browser preflight shape before releasing:
 
 ```bash
 curl -i -X OPTIONS https://api.rallywith.ai/workstreams \
-  -H 'Origin: app://avalon' \
+  -H 'Origin: app://rally' \
   -H 'Access-Control-Request-Method: POST' \
   -H 'Access-Control-Request-Headers: authorization,content-type,x-example-header'
 ```
 
-Expect `204`, `Access-Control-Allow-Origin: app://avalon`, and the new header in
+Expect `204`, `Access-Control-Allow-Origin: app://rally`, and the new header in
 `Access-Control-Allow-Headers`. Repeat against the EU endpoint when the feature is
 available there.
 

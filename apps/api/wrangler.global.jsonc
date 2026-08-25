@@ -25,7 +25,7 @@
     "TERMINAL_REGION_CAPABILITY": "supported",
     "TERMINAL_EMERGENCY_DISABLED": "false",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
-    "ALLOWED_ORIGINS": "app://avalon,https://rallywith.ai,https://www.rallywith.ai,https://with-avalon.com,https://www.with-avalon.com",
+    "ALLOWED_ORIGINS": "app://rally,app://avalon,https://rallywith.ai,https://www.rallywith.ai,https://with-avalon.com,https://www.with-avalon.com",
     "DESKTOP_DEEP_LINK_URI": "rallywithai://auth/complete",
     "OPENROUTER_PRIMARY_MODEL": "x-ai/grok-4.3",
     "OPENROUTER_FALLBACK_MODELS": "google/gemini-3.6-flash",

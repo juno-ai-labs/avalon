@@ -9,7 +9,7 @@
     "AVALON_REGION": "global",
     "PUBLIC_API_BASE_URL": "https://api.test",
     "PUBLIC_WEB_BASE_URL": "https://app.test",
-    "ALLOWED_ORIGINS": "app://avalon",
+    "ALLOWED_ORIGINS": "app://rally,app://avalon",
     "DESKTOP_DEEP_LINK_URI": "avalon://auth/callback",
     "LOG_LEVEL": "error",
     // Not a credential: lets harness tests reach the provider call itself, so

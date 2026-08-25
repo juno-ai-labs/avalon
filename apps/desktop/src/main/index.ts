@@ -222,7 +222,17 @@ const deepLinkProtocols: readonly string[] = DESKTOP_DEEP_LINK_PROTOCOLS
   .map((scheme) => scheme.replace(/:$/u, ''));
 const isDeepLinkProtocol = isDesktopDeepLinkProtocol;
 const rendererProtocol = 'app';
-const rendererHost = 'avalon';
+/**
+ * The packaged renderer's origin, `app://rally`.
+ *
+ * It is not only an internal name: it is the `Origin` header on every API
+ * request and WebSocket upgrade this process makes, so the regional Workers'
+ * `ALLOWED_ORIGINS` has to admit it. A build shipped before the rename sends
+ * `app://avalon` and cannot be made to send anything else, which is why both
+ * are listed there and why `app://avalon` is removed only once those builds
+ * are gone.
+ */
+const rendererHost = 'rally';
 const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
 /** A signed-in cold launch can pay DNS, TLS, Worker activation, and the
  * canonical regional D1 read. Keep the verification bounded without treating
@@ -541,7 +551,7 @@ protocol.registerSchemesAsPrivileged([{
   // The scheme a saved message is rendered from. Deliberately narrower than the
   // renderer's: an export document is one page of markup that fetches nothing,
   // so it needs an origin of its own and nothing else. Keeping it off
-  // `app://avalon` is the point — a document built out of a model's words never
+  // `app://rally` is the point — a document built out of a model's words never
   // shares an origin with the application.
   scheme: MESSAGE_EXPORT_SCHEME,
   privileges: {
