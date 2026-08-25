@@ -31,13 +31,17 @@ export async function consumeAnalyticsLakehouseQueue(
     }
     try {
       const result = await deliverAnalyticsLakehousePointer(env, parsed.data);
-      logStructuredEvent(env, result.outcome === "delivered" ? "info" : "warn",
+      const level = result.outcome === "delivered" || result.outcome === "duplicate"
+        ? "info"
+        : result.outcome === "rejected" ? "error" : "warn";
+      logStructuredEvent(env, level,
         `analytics_lakehouse_${result.outcome}`, {
         queue: batch.queue,
         event_id: parsed.data.eventId,
         ...(result.outcome === "delivered"
           ? { event_name: result.record.event_name, source: result.record.source }
           : {}),
+        ...(result.outcome === "rejected" ? { reason: result.reason } : {}),
       });
       message.ack();
     } catch (error) {

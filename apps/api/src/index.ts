@@ -18,7 +18,7 @@ import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
 import {
   isAnalyticsLakehouseQueue,
-  recoverPendingAnalyticsLakehouseEvents,
+  recoverUndeliveredAnalyticsLakehouseEvents,
 } from "./services/analytics-lakehouse";
 import { reconcileDigestDefaults } from "./services/digest-service";
 import { processTelemetryOutbox } from "./telemetry/delivery";
@@ -48,7 +48,7 @@ async function processTelemetry(env: Env): Promise<void> {
   await Promise.all([
     processTelemetryOutbox(env),
     processCrashTelemetry(env),
-    recoverPendingAnalyticsLakehouseEvents(env),
+    recoverUndeliveredAnalyticsLakehouseEvents(env),
   ]);
   const snapshot = await readTelemetryOperationalSnapshot(env);
   const unhealthy = snapshot.openCircuits > 0

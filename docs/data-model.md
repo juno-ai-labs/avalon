@@ -556,7 +556,9 @@ The tables have distinct lifecycles rather than one catch-all event store:
 - `telemetry_accepted_events` and `telemetry_delivery_receipts` make event upload
   idempotent. Global accepted rows are an outbox for PostHog; EU accepted rows are
   internal-only. Global rows also carry the independent
-  `analytics_lakehouse_state` pointer-outbox lifecycle; EU keeps it null so no
+  `analytics_lakehouse_state` pointer-outbox lifecycle (`pending`, `queued`,
+  `delivered`, `suppressed`, or terminal `rejected`); EU and pre-feature rows
+  keep it null so no
   event crosses into the Global Data Catalog. `telemetry_eu_events` is an independently expiring semantic
   projection with trusted release, platform, channel, launch/session, and
   operation dimensions for regional funnel and reliability queries.
@@ -734,10 +736,11 @@ perform the regional audit/control write explicitly through
 
 ### 2026-08-24 — Accepted Global telemetry gains a second durable projection
 
-**What changed:** Migration 0095 adds nullable `pending`/`queued`/`delivered`
-analytics-lakehouse state and a delivery timestamp to
-`telemetry_accepted_events`, indexes active Global projection work, and seeds
-still-retained Global rows for backfill. EU rows remain null.
+**What changed:** Migration 0095 adds nullable
+`pending`/`queued`/`delivered`/`suppressed`/`rejected` analytics-lakehouse state
+and a delivery timestamp to `telemetry_accepted_events`, indexes active Global
+projection work newest-first, and seeds new Global inserts. Existing and EU rows
+remain null.
 
 **Why:** A Queue pointer needs a durable source and retry state, while copying
 the already validated envelope into another D1 table would pay twice for the
@@ -749,8 +752,10 @@ limits for valid events, duplicate the canonical row, or couple independent
 PostHog and lakehouse delivery lifecycles.
 
 **Consequences:** D1 remains operational telemetry rather than analytical
-authority. New Global acceptance rows start pending; EU rows and all product
-state remain outside this projection.
+authority. New Global acceptance rows start pending; permanent poison rows stop
+at rejected; historical and EU rows plus all product state remain outside this
+projection. Omitting a historical backfill keeps live recovery from waiting
+behind months of accepted rows.
 
 Shipped in the pull request for this change. See
 [`analytics-lakehouse.md`](analytics-lakehouse.md).
