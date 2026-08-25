@@ -92,9 +92,11 @@ export async function verifyPublicReleaseArtifactHash({
       const response = await fetchImplementation(publicUrl, {
         signal: AbortSignal.timeout(30_000),
       });
-      if (!response.ok || !response.body) {
+      if (!response.ok) {
         await response.body?.cancel();
         failure = `HTTP ${response.status}`;
+      } else if (!response.body) {
+        failure = 'missing response body';
       } else {
         const hash = createHash('sha512');
         for await (const chunk of response.body) hash.update(chunk);

@@ -354,7 +354,9 @@ describe('WorkstreamComposer mention confirmation', () => {
     // membership that is not active — the participants rail already filters for
     // exactly this reason.
     const options = await screen.findAllByRole('option');
-    await within(options[0]!).findByText('A');
+    const firstOption = options[0];
+    if (!firstOption) throw new Error('Expected at least one mention option');
+    await within(firstOption).findByText('A');
     expect(options.map(mentionOptionCopy)).toEqual([{
       badge: 'Person',
       description: 'adam@example.com',
@@ -380,7 +382,9 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.change(composer, { target: { value: '@' } });
 
     const options = await screen.findAllByRole('option');
-    await within(options[0]!).findByText('A');
+    const firstOption = options[0];
+    if (!firstOption) throw new Error('Expected at least one mention option');
+    await within(firstOption).findByText('A');
     expect(options.map(mentionOptionCopy)).toEqual([
       { badge: 'Person', description: 'adam@example.com', label: 'Adam' },
       { badge: 'Person', description: 'bob@example.com · not participating', label: 'Bob Builder' },
