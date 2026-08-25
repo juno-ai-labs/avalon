@@ -58,7 +58,7 @@ export const NotionCapabilities = {
   commentInsert: "notion.comment.insert",
 } as const;
 
-/** Creator-dashboard capabilities required by each Avalon capability. */
+/** Creator-dashboard capabilities required by each Rally capability. */
 export const NotionCapabilitySettings = {
   [NotionCapabilities.read]: ["read_content"],
   [NotionCapabilities.insert]: ["insert_content", "insert_property"],
@@ -580,9 +580,9 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
       url.searchParams.set("redirect_uri", config.redirectUri);
       url.searchParams.set("response_type", "code");
       // Notion's public OAuth flow is authorized by a user even though the
-      // installed integration acts as its bot. Avalon deliberately stores that
+      // installed integration acts as its bot. Rally deliberately stores that
       // bot grant as a workspace connection; this provider parameter does not
-      // define Avalon's connection scope.
+      // define Rally's connection scope.
       url.searchParams.set("owner", "user");
       url.searchParams.set("state", parsed.state);
       return {

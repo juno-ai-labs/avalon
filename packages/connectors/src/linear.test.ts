@@ -70,7 +70,11 @@ describe("Linear connector", () => {
     expect(adapter.manifest).toMatchObject({
       supportedScopes: ["personal", "workspace"],
       surfaces: ["resource", "native_agent"],
-      capabilities: [{ id: LinearCapabilities.agent, kind: "native_agent" }],
+      capabilities: [{
+        id: LinearCapabilities.agent,
+        kind: "native_agent",
+        description: "Delegate and mention Rally in Linear, then continue the work through native agent sessions.",
+      }],
       nativeAgent: {
         capability: LinearCapabilities.agent,
         invocationModes: ["delegation", "mention", "follow_up"],
