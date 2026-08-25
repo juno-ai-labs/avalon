@@ -99,6 +99,21 @@ export function assertNextReleaseVersion(currentVersion, nextVersion) {
   return nextVersion;
 }
 
+export async function reconcileImmutableReleaseObject({
+  existingHash,
+  localHash,
+  releaseIsCommitted,
+  objectLocation,
+  upload,
+}) {
+  if (existingHash === localHash) return 'reused';
+  if (existingHash !== undefined && releaseIsCommitted) {
+    throw new Error(`Immutable release key ${objectLocation} already exists with different bytes`);
+  }
+  await upload();
+  return existingHash === undefined ? 'uploaded' : 'replaced-orphan';
+}
+
 function yamlScalar(value) {
   const trimmed = value.trim();
   if (trimmed.startsWith('"')) return JSON.parse(trimmed);

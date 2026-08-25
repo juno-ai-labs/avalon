@@ -324,7 +324,9 @@ export function WorkstreamComposer({
               role="option"
               type="button"
             >
-              <span className="mention-icon"><Avatar member={candidate.member} size="small" /></span>
+              <span aria-hidden="true" className="mention-icon">
+                <Avatar member={candidate.member} size="small" />
+              </span>
               <span><strong>{candidate.label}</strong><small>{candidate.description}</small></span>
               <Badge>Person</Badge>
             </button>
