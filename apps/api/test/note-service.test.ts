@@ -16,6 +16,8 @@ import {
   testWorkstreamObjectStore,
   workstreamObjectAll,
   workstreamObjectGet,
+  workstreamObjectParticipantRows,
+  workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
@@ -392,23 +394,23 @@ describe("NoteService", () => {
     ]);
     expect(allWorkstreamIds.slice().sort().map((sequencedWorkstreamId) => ({
       id: sequencedWorkstreamId,
-      ...workstreamObjectGet(
+      ...workstreamObjectRootRow<Record<string, number>>(
         objectStores.get(sequencedWorkstreamId)!,
-        `SELECT next_sequence_number, latest_attention_sequence_number
-         FROM workstreams WHERE id = ?`,
-        sequencedWorkstreamId,
-      ) as Record<string, unknown>,
+        "next_sequence_number, next_attention_ordinal",
+      ),
     }))).toEqual([
-      { id: ownerAdHocId, next_sequence_number: 1, latest_attention_sequence_number: 0 },
-      { id: otherAdHocId, next_sequence_number: 2, latest_attention_sequence_number: 1 },
-      { id: workspaceAutomationId, next_sequence_number: 2, latest_attention_sequence_number: 1 },
-      { id: otherAutomationId, next_sequence_number: 2, latest_attention_sequence_number: 1 },
-      { id: ownerAutomationId, next_sequence_number: 1, latest_attention_sequence_number: 0 },
+      // `next_attention_ordinal` is the object's counter; the retired view
+      // rendered it one lower, as `latest_attention_sequence_number`.
+      { id: ownerAdHocId, next_sequence_number: 1, next_attention_ordinal: 1 },
+      { id: otherAdHocId, next_sequence_number: 2, next_attention_ordinal: 2 },
+      { id: workspaceAutomationId, next_sequence_number: 2, next_attention_ordinal: 2 },
+      { id: otherAutomationId, next_sequence_number: 2, next_attention_ordinal: 2 },
+      { id: ownerAutomationId, next_sequence_number: 1, next_attention_ordinal: 1 },
     ]);
     for (const untouchedWorkstreamId of allWorkstreamIds) {
       const store = objectStores.get(untouchedWorkstreamId)!;
       expect(workstreamObjectGet(store, "SELECT COUNT(*) AS count FROM harness_runs")).toEqual({ count: 0 });
-      expect(workstreamObjectGet(store, "SELECT COUNT(*) AS count FROM workstream_participants")).toEqual({ count: 0 });
+      expect(workstreamObjectParticipantRows(store)).toEqual([]);
     }
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM note_privacy_change_outbox WHERE processed_at IS NOT NULL",

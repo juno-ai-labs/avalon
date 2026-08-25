@@ -12,7 +12,7 @@ import {
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  workstreamObjectRun,
+  seedWorkstreamObjectParticipant,
 } from "./helpers/durable-authority";
 
 const userId = asUserId("018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1");
@@ -74,27 +74,20 @@ describe("server-authoritative work-stream creation telemetry", () => {
     // participant roll) lives in the work stream's object since migration
     // 0090; the emitter reaches it through the port.
     const objectStore = testWorkstreamObjectStore();
-    seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId });
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO workstreams
-         (id, workspace_id, title, objective, origin_type, created_by_user_id, scope,
-          model_override, created_at, updated_at, last_activity_at)
-       VALUES (?, ?, 'Task', 'Task', 'ad_hoc', ?, 'personal', 'openai/gpt-5',
-               '2026-08-13T17:00:00.000Z', '2026-08-13T17:00:00.000Z', '2026-08-13T17:00:00.000Z')`,
+    seedWorkstreamObjectRoot(objectStore, {
       workstreamId,
       workspaceId,
+      title: "Task",
+      description: "Task",
+      originType: "ad_hoc",
+      createdByUserId: userId,
+      scope: "personal",
+      modelOverride: "openai/gpt-5",
+    }, Date.parse("2026-08-13T17:00:00.000Z"));
+    seedWorkstreamObjectParticipant(objectStore, {
       userId,
-    );
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO workstream_participants
-         (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
-       VALUES (?, ?, ?, 'creator', '2026-08-13T17:00:00.000Z')`,
-      workstreamId,
-      userId,
-      userId,
-    );
+      participationReason: "creator",
+    }, Date.parse("2026-08-13T17:00:00.000Z"));
     objectStores.set(workstreamId, objectStore);
 
     const input = {

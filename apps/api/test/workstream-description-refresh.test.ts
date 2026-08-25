@@ -24,8 +24,9 @@ import {
   testSubstreamAgentsBinding,
   seedWorkstreamObjectRoot,
   testWorkstreamObjectStore,
-  workstreamObjectGet,
   workstreamObjectRun,
+  workstreamObjectRootRow,
+  applyWorkstreamObjectRootFields,
 } from "./helpers/durable-authority";
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
@@ -83,21 +84,17 @@ function fixture(options: {
   // reads and writes them through the routed environment below.
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
-  seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstreams
-      (id, workspace_id, title, objective, description_source, origin_type, created_by_user_id,
-       harness_status, next_sequence_number, last_activity_at, created_at, updated_at, archived_at)
-     VALUES (?, ?, 'Checkout', ?, ?, ?, ?, 'idle', 1, '2026-08-11', '2026-01-01', '2026-01-01', ?)`,
-    WORKSTREAM_ID,
-    WORKSPACE_ID,
-    options.objective ?? "Look into the payment error Morgan reported on Monday.",
-    options.descriptionSource ?? "derived",
-    options.originType ?? "ad_hoc",
-    USER_ID,
-    options.archived ? "2026-08-01" : null,
-  );
+  seedWorkstreamObjectRoot(objectStore, {
+    workstreamId: WORKSTREAM_ID,
+    workspaceId: WORKSPACE_ID,
+    title: "Checkout",
+    description: options.objective ?? "Look into the payment error Morgan reported on Monday.",
+    descriptionSource: options.descriptionSource ?? "derived",
+    originType: options.originType ?? "ad_hoc",
+    createdByUserId: USER_ID,
+    exactState: "idle",
+    archivedAt: options.archived ? Date.parse("2026-08-01T00:00:00.000Z") : null,
+  });
 
   const prompts: Array<{ system: string; user: string }> = [];
   const proposal = options.proposal ?? {
@@ -232,11 +229,7 @@ function transcriptOf(user: string): unknown[] {
 }
 
 function objective(objectStore: DatabaseSync): string {
-  return (workstreamObjectGet(
-    objectStore,
-    "SELECT objective FROM workstreams WHERE id = ?",
-    WORKSTREAM_ID,
-  ) as { objective: string }).objective;
+  return workstreamObjectRootRow<{ description: string }>(objectStore, "description").description;
 }
 
 /**
@@ -337,11 +330,8 @@ describe("work-stream description refresh", () => {
       description: "Track the 3-D Secure migration for EU card issuers.",
     });
     expect(objective(objectStore)).toBe("Track the 3-D Secure migration for EU card issuers.");
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT description_source FROM workstreams WHERE id = ?",
-      WORKSTREAM_ID,
-    )).toMatchObject({ description_source: "derived" });
+    expect(workstreamObjectRootRow(objectStore, "description_source"))
+      .toMatchObject({ description_source: "derived" });
     expect(refreshRow(objectStore)).toMatchObject({
       decision: "rewritten",
       previous_description: "Look into the payment error Morgan reported on Monday.",
@@ -361,12 +351,9 @@ describe("work-stream description refresh", () => {
   it("refuses to overwrite a description a person changed mid-evaluation", async () => {
     const { objectStore, env } = fixture({
       proposal: () => {
-        workstreamObjectRun(
-          objectStore,
-          "UPDATE workstreams SET objective = ? WHERE id = ?",
-          "Run the EU payments incident review.",
-          WORKSTREAM_ID,
-        );
+        applyWorkstreamObjectRootFields(objectStore, {
+          description: "Run the EU payments incident review.",
+        });
         return {
           decision: "rewrite",
           description: "Track the 3-D Secure migration for EU card issuers.",

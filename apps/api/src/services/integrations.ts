@@ -194,6 +194,7 @@ import { transcriptLister } from "../runtime/message-projection";
 import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 import {
   admitInlineChildAttempt,
   assertInlineChildAttemptOwned,
@@ -1979,9 +1980,14 @@ export async function runWorkstreamHarness(
   // actual authority without copying connector/resource state into the agent.
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const runStartedAtMs = Date.now();
-  const workstream = await env.DB.prepare(
-    `SELECT title, objective FROM workstreams WHERE id = ? AND workspace_id = ? AND archived_at IS NULL`,
-  ).bind(input.workstreamId, input.workspaceId).first<{ title: string; objective: string }>();
+  // The archive gate was a `WHERE` clause because the read was a statement;
+  // it is a test on the row here, and the row carries the object's own column
+  // names — `description` is what the retired view called `objective`.
+  const identity = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+    .identity();
+  const workstream = identity && identity.archived_at === null
+    ? { title: identity.title, objective: identity.description }
+    : null;
   if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
   const initialRun = await createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId)
     .run({ runId: input.harnessRunId });
@@ -2005,7 +2011,11 @@ export async function runWorkstreamHarness(
   }
   const messageId = input.harnessRunId;
   if (!blockDashboardRun) {
-    const persistedHostOutcome = await loadPersistedHarnessFinalOutcome(env.DB, input);
+    const persistedHostOutcome = await loadPersistedHarnessFinalOutcome(
+      createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
+      createMessageObjectPort(env, input.workspaceId, input.workstreamId),
+      input,
+    );
     if (persistedHostOutcome) return persistedHostOutcome;
   }
   const runAuthoritySnapshot = await assertRunAuthorityStillValid(env, input);
@@ -2083,7 +2093,6 @@ export async function runWorkstreamHarness(
   let streamedText = "";
   let modelName: string | null = null;
   let streamStarted = false;
-  let sequenceNumber: number | null = null;
   const harnessTools = await loadHarnessTools(
     env,
     input,
@@ -2199,19 +2208,6 @@ export async function runWorkstreamHarness(
       });
     },
   );
-
-  const ensureSequence = async (): Promise<number> => {
-    if (sequenceNumber != null) return sequenceNumber;
-    const row = await env.DB.prepare(
-      `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1, updated_at = ?
-       WHERE id = ? AND workspace_id = ? RETURNING next_sequence_number - 1 AS sequence_number`,
-    )
-      .bind(nowIso(), input.workstreamId, input.workspaceId)
-      .first<{ sequence_number: number }>();
-    if (!row) throw new Error("Work stream disappeared while the harness was running");
-    sequenceNumber = row.sequence_number;
-    return row.sequence_number;
-  };
 
   const publishEvent = async (event: Record<string, unknown>) => {
     const publishers = [
@@ -3102,16 +3098,17 @@ export async function runWorkstreamHarness(
       eventId: resourceTelemetryEventId(input.harnessRunId, 7),
     }).catch(() => undefined);
   } else if (streamedText) {
-    const at = nowIso();
-    await persistHarnessFinalMessage(env.DB, runs, input, liveness.lease, {
-      id: messageId,
-      sequenceNumber: await ensureSequence(),
-      text: streamedText,
-      createdAt: at,
-    }, {
-      status: terminalResult.status,
-      ...(terminalResult.error ? { error: terminalResult.error } : {}),
-    });
+    await persistHarnessFinalMessage(
+      runs,
+      createMessageObjectPort(env, input.workspaceId, input.workstreamId),
+      input,
+      liveness.lease,
+      { id: messageId, text: streamedText },
+      {
+        status: terminalResult.status,
+        ...(terminalResult.error ? { error: terminalResult.error } : {}),
+      },
+    );
   }
   // Workflow terminalization owns the monotonic state transition and publishes
   // terminal realtime state only after the final message + lifecycle event are
@@ -5665,22 +5662,14 @@ async function assertExecutionPrincipalAuthorized(
 }
 
 async function assertRunAuthorityStillValid(
-  source: Env | D1Database,
+  env: Env,
   input: WorkstreamWorkflowInput,
   expected?: RunAuthoritySnapshot,
 ): Promise<RunAuthoritySnapshot> {
-  const env = "DB" in source ? source as Env : null;
-  const db: D1Database = env ? env.DB : source as D1Database;
+  const db: D1Database = env.DB;
   await assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal);
-  const workstream = await db.prepare(
-    `SELECT archived_at, automation_subscription_id, automation_run_id
-       FROM workstreams
-      WHERE id = ? AND workspace_id = ?`,
-  ).bind(input.workstreamId, input.workspaceId).first<{
-    archived_at: string | null;
-    automation_subscription_id: string | null;
-    automation_run_id: string | null;
-  }>();
+  const workstream = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+    .identity();
   if (!workstream || workstream.archived_at != null) {
     throw new ConnectorError("unauthorized", "Work stream is no longer active");
   }
@@ -5747,11 +5736,15 @@ async function assertRunAuthorityStillValid(
     throw new ConnectorError("unauthorized", "Automation trigger evidence changed");
   }
   if (automation.trigger_activity_id) {
-    const activity = env
-      ? await loadConnectorTriggerContext(env, input.workspaceId, automation.trigger_activity_id)
-      : await db.prepare(
-        "SELECT id FROM activities WHERE id = ? AND workspace_id = ?",
-      ).bind(automation.trigger_activity_id, input.workspaceId).first<{ id: string }>();
+    // The regional `activities` fallback beside this is gone with the union
+    // that made it reachable: this function took `Env | D1Database`, and every
+    // caller passes an `Env`. The evidence a connector run was started from is
+    // the WorkspaceDO's, and a second source for it could only disagree.
+    const activity = await loadConnectorTriggerContext(
+      env,
+      input.workspaceId,
+      automation.trigger_activity_id,
+    );
     if (!activity) throw new ConnectorError("unauthorized", "Automation trigger is no longer available");
   }
   if (automation.trigger_type === "schedule" && automation.has_enabled_schedule !== 1) {
@@ -6735,16 +6728,6 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           context.providerIdempotencyKey,
         );
         const id = await coreWriteEntityId("elicitation", input, providerIdempotencyKey);
-        const existing = await createSchedulingObjectPort(env, input.workspaceId, input.workstreamId)
-          .elicitationExistsForRun({ elicitationId: id, runId: input.harnessRunId });
-        if (existing) {
-          return {
-            output: { elicitationId: id },
-            summary: "Requested human input",
-            providerOperationId: id,
-            halt: "needs_input" as const,
-          };
-        }
         const at = nowIso();
         const elicitation = {
           id, workstreamId: input.workstreamId, harnessRunId: input.harnessRunId,
@@ -6753,64 +6736,34 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           targetUserId: null, status: "open" as const, answer: null,
           answeredByUserId: null, createdAt: at, answeredAt: null,
         };
-        await env.DB.batch([
-          env.DB.prepare(
-            `INSERT INTO elicitations
-             (id, workspace_id, workstream_id, harness_run_id, prompt, response_type,
-              options_json, minimum_selections, maximum_selections, target_user_id,
-              status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
-             ON CONFLICT(id) DO NOTHING`,
-          ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId, args.prompt, args.responseType, JSON.stringify(args.options), args.minimumSelections, args.maximumSelections, null, at),
-          env.DB.prepare(
-            `INSERT INTO messages
-             (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-              message_type, text_content, structured_content_json, sequence_number, created_at, edited_at)
-             SELECT ?, ?, ?, w.id, 'agent', NULL, 'elicitation', '', ?, w.next_sequence_number, ?, NULL
-             FROM workstreams w
-             WHERE w.id = ? AND w.workspace_id = ?
-               AND EXISTS (
-                 SELECT 1 FROM elicitations e
-                 WHERE e.id = ? AND e.workstream_id = w.id AND e.workspace_id = w.workspace_id
-               )
-             ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
-          ).bind(
-            id,
-            `elicitation:${id}`,
-            input.workspaceId,
-            JSON.stringify({ kind: "elicitation", elicitation }),
-            at,
-            input.workstreamId,
-            input.workspaceId,
-            id,
-          ),
-          env.DB.prepare(
-            `UPDATE workstreams
-             SET next_sequence_number = next_sequence_number + 1,
-                 latest_attention_sequence_number = next_sequence_number,
-                 harness_status = 'needs_input', last_activity_at = ?, updated_at = ?
-             WHERE id = ? AND workspace_id = ?
-               AND EXISTS (
-                 SELECT 1 FROM messages
-                 WHERE id = ? AND workstream_id = ? AND workspace_id = ?
-               )
-               AND next_sequence_number = (
-                 SELECT sequence_number FROM messages
-                 WHERE id = ? AND workstream_id = ? AND workspace_id = ?
-               )`,
-          ).bind(
-            at,
-            at,
-            input.workstreamId,
-            input.workspaceId,
-            id,
-            input.workstreamId,
-            input.workspaceId,
-            id,
-            input.workstreamId,
-            input.workspaceId,
-          ),
-        ]);
+        // The replay check used to be a read of its own in front of the batch,
+        // because the batch could not both ask and act. It is the operation's
+        // first statement now, so a retried receipt is answered by the write
+        // that would have collided rather than by a read that might have raced
+        // it. The question is durable either way; only the event and the
+        // telemetry are skipped, because the first attempt already sent them.
+        const opened = await createSchedulingObjectPort(env, input.workspaceId, input.workstreamId)
+          .openElicitation({
+            elicitationId: id,
+            runId: input.harnessRunId,
+            prompt: args.prompt,
+            responseType: args.responseType,
+            optionsJson: JSON.stringify(args.options),
+            minimumSelections: args.minimumSelections,
+            maximumSelections: args.maximumSelections,
+            targetUserId: null,
+            messageId: id,
+            structuredContentJson: JSON.stringify({ kind: "elicitation", elicitation }),
+            now: Date.parse(at),
+          });
+        if (opened.outcome === "exists") {
+          return {
+            output: { elicitationId: id },
+            summary: "Requested human input",
+            providerOperationId: id,
+            halt: "needs_input" as const,
+          };
+        }
         await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, { type: "elicitation_created", elicitation });
         await emitProductUsageTelemetry(env, {
           workspaceId: input.workspaceId,

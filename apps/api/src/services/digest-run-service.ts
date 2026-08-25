@@ -16,12 +16,13 @@ import { readMessage } from "../runtime/message-projection";
 import { launchWorkstreamHarness } from "./workstream-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
-  workstreamExecutionEnvironment,
+  provisionWorkstreamObject,
 } from "./workstream-runtime-database";
 import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
 } from "./workspace-runtime-database";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
  * How far back a person's first ever digest reads. Without a floor, switching a
@@ -217,15 +218,9 @@ export async function fireDigestSchedule(
       // Legacy D1 rows cascade. The DO path leaves a durable, unlistable
       // tombstone because its object identity cannot join this transaction.
       if (workstreamId) {
-        const executionEnv = await workstreamExecutionEnvironment(
-          env,
-          schedule.workspace_id,
-          workstreamId,
-        );
-        await executionEnv.DB.prepare(
-          `UPDATE workstreams SET archived_at = ?, updated_at = ?
-            WHERE id = ? AND system_kind = 'digest'`,
-        ).bind(nowIso(), nowIso(), workstreamId).run().catch(() => undefined);
+        await createIdentityObjectPort(env, schedule.workspace_id, workstreamId)
+          .archiveSystemWorkstream({ systemKind: "digest", now: Date.now() })
+          .catch(() => undefined);
         // A Durable Object identity cannot be deleted transactionally with
         // its parent delivery claim. This authoritative tombstone keeps the
         // never-started system stream unlistable and is safer than a
@@ -322,37 +317,36 @@ async function createDigestWorkstream(
 ): Promise<WorkstreamId> {
   const workstreamId = asWorkstreamId(newId());
   const at = nowIso();
-  const executionEnv = await bootstrapWorkstreamRuntimeEnvironment(
+  await bootstrapWorkstreamRuntimeEnvironment(
     env,
     schedule.workspace_id,
     workstreamId,
   );
-  await executionEnv.DB.batch([
-    executionEnv.DB.prepare(
-      `INSERT INTO workstreams
-         (id, workspace_id, title, objective, origin_type, created_by_user_id,
-          harness_status, last_activity_at, created_at, updated_at, system_kind, scope)
-       VALUES (?, ?, ?, ?, 'ad_hoc', ?, 'idle', ?, ?, ?, 'digest', 'personal')`,
-    ).bind(
-      workstreamId,
-      schedule.workspace_id,
-      // The occurrence is the title because these are no longer one row per
-      // person: a listing with Debug enabled is a list of occurrences, and a
-      // column of identical names would say nothing about which is which. In
-      // their own timezone, because a digest is a time of *their* day.
-      digestWorkstreamTitle(occurrence.plannedFor, schedule.timezone),
-      "Write this person's scheduled digest of what changed since the last one.",
-      schedule.user_id,
-      at, at, at,
-    ),
+  await provisionWorkstreamObject(env, {
+    workspaceId: asWorkspaceId(schedule.workspace_id),
+    workstreamId,
+    // The occurrence is the title because these are no longer one row per
+    // person: a listing with Debug enabled is a list of occurrences, and a
+    // column of identical names would say nothing about which is which. In
+    // their own timezone, because a digest is a time of *their* day.
+    title: digestWorkstreamTitle(occurrence.plannedFor, schedule.timezone),
+    objective: "Write this person's scheduled digest of what changed since the last one.",
+    scope: "personal",
+    originType: "ad_hoc",
+    createdByUserId: schedule.user_id,
     // The recipient is the sole participant, which is what makes every tool the
     // run reaches for resolve against their own access and nobody else's.
-    executionEnv.DB.prepare(
-      `INSERT OR IGNORE INTO workstream_participants
-         (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
-       VALUES (?, ?, ?, 'creator', ?, NULL)`,
-    ).bind(workstreamId, schedule.user_id, schedule.user_id, at),
-  ]);
+    participantUserIds: [schedule.user_id],
+    harnessStatus: "idle",
+    emailAddress: null,
+    emailRouteStatus: null,
+    systemKind: "digest",
+    automationSubscriptionId: null,
+    automationRunId: null,
+    plannedFor: null,
+    modelOverride: null,
+    now: Date.parse(at),
+  });
   // The occurrence is regional coordination state; it references the D1
   // identity anchor but never owns the work-stream record.
   await env.DB.prepare(

@@ -13,6 +13,7 @@ import {
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 
 const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
 
@@ -110,6 +111,21 @@ const SeedProductResultSchema = z.object({
   })),
 }).strict();
 
+/**
+ * The `exact_state` a captured `harnessStatus` restores to.
+ *
+ * The retired `_runtime_workstreams` update trigger's mapping, kept here
+ * because only the seed route speaks the published vocabulary: a fixture is a
+ * recorded API response, and the object stores its own states. Every state the
+ * trigger did not name collapsed to `idle`, and so does every one here.
+ */
+function storedWorkstreamState(harnessStatus: string): string {
+  return ["scheduled", "running", "needs_input", "completed", "failed"]
+    .includes(harnessStatus)
+    ? harnessStatus
+    : "idle";
+}
+
 export const devRoutes = new Hono<{ Bindings: Env }>();
 
 /**
@@ -188,18 +204,15 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
     const routed = await bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, workstream.id);
     const copied: Record<string, number> = {};
 
-    await routed.DB.prepare(
-      `UPDATE workstreams SET title = ?, harness_status = ?, next_sequence_number = ?,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-              last_activity_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-        WHERE id = ? AND workspace_id = ?`,
-    ).bind(
-      workstream.title,
-      workstream.harnessStatus,
-      workstream.nextSequenceNumber,
-      workstream.id,
-      workspaceId,
-    ).run();
+    const identityPort = createIdentityObjectPort(env, workspaceId, workstream.id);
+    await identityPort.seedFromFixture({
+      title: workstream.title,
+      // The fixture speaks the published vocabulary because it was captured
+      // from an API response; the object stores its own.
+      exactState: storedWorkstreamState(workstream.harnessStatus),
+      nextSequenceNumber: workstream.nextSequenceNumber,
+      now: Date.now(),
+    });
 
     const insert = async (
       table: string,
@@ -217,7 +230,18 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
       copied[table] = rows.length;
     };
     const scope = { workspace_id: workspaceId, workstream_id: workstream.id };
-    await insert("workstream_participants", workstream.participants, { workstream_id: workstream.id });
+    // Seated through the identity authority rather than inserted: the
+    // participant view is retired, and the fixture's `joined_at` is the ISO
+    // rendering that view produced.
+    for (const participant of workstream.participants) {
+      await identityPort.admitParticipant({
+        userId: String(participant.user_id),
+        addedByUserId: String(participant.added_by_user_id ?? participant.user_id),
+        reason: String(participant.participation_reason ?? "explicit"),
+        now: Date.parse(String(participant.joined_at ?? new Date().toISOString())),
+      });
+    }
+    copied.workstream_participants = workstream.participants.length;
     await insert("harness_runs", workstream.harnessRuns, scope);
     await insertToolReceipts(routed.DB, workstream.toolInvocations, copied);
     await insert("messages", workstream.messages, scope);

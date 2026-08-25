@@ -16,7 +16,8 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 23;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 26;
+
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1349,7 +1350,126 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "retire the run-scope, plugin-activation and memory-context views",
     statements: harnessRunAuthorityPromotion(),
   },
+  {
+    version: 24,
+    description: "retire the run lifecycle-event view now the final message is an object write",
+    statements: runLifecycleAuthorityPromotion(),
+  },
+  {
+    version: 25,
+    description: "retire the elicitation view now both of its writers are object operations",
+    statements: elicitationAuthorityPromotion(),
+  },
+  {
+    version: 26,
+    description: "retire the identity and participant views, the last two compatibility objects",
+    statements: identityAuthorityPromotion(),
+  },
 ];
+
+/**
+ * Retires the elicitation view, which the scheduling slice could not.
+ *
+ * Its two writers were batches spanning the messages and identity slices — an
+ * elicitation row, a transcript part, and the work stream's counters, written
+ * together because each statement was guarded on the one before it having
+ * landed. Both are single operations on `WorkstreamSchedulingStorage` now, so
+ * the view has neither a reader nor a writer left.
+ *
+ * The view and its two triggers are objects over a table this schema already
+ * declares, so nothing is adopted — the same shape and the same assertion as
+ * the promotions below, for the same reason: a reshaped compat schema should
+ * fail the build rather than produce a migration that quietly patches nothing.
+ */
+function elicitationAuthorityPromotion(): string[] {
+  return compatObjectDrops(/^_runtime_elicitations/, 3, "elicitation");
+}
+
+/**
+ * Retires the identity and participant views, and their four write triggers.
+ *
+ * The last two compatibility views. Production stopped naming `workstreams`
+ * and `workstream_participants` with the identity slice; the fixtures that
+ * still did now seed and read the object's own tables, which is what makes
+ * this droppable at all.
+ */
+function identityAuthorityPromotion(): string[] {
+  return compatObjectDrops(
+    /^_runtime_workstreams$|^_runtime_workstreams_|^_runtime_workstream_participants/,
+    7,
+    "identity",
+  );
+}
+
+/**
+ * The drops that retire one family of compatibility objects.
+ *
+ * Every promotion in this file writes this out by hand: filter the compat
+ * schema for the family's views and triggers, assert the expected count so a
+ * reshaped schema fails the build rather than producing a migration that
+ * quietly patches nothing, and drop the triggers first so none is left
+ * orphaned in `sqlite_schema`.
+ *
+ * The two promotions this file gained last share it; the seven before them
+ * were left alone. Three of those cannot use it — the terminal promotion drops
+ * every trigger it finds rather than a named family, and the tool-receipt one
+ * adopts tables as well as dropping objects — and rewriting the other four
+ * would put a migration nobody is changing into the diff of a conversion
+ * slice. The assertion is what matters and each of them already has it; this
+ * is where a promotion should start, not a cleanup owed to the ones that
+ * predate it.
+ *
+ * `WORKSTREAM_RUNTIME_COMPAT_SCHEMA` keeps declaring what these drop, and has
+ * to: it is what migration 1 applies, so an object replaying from empty
+ * creates each view before a later migration drops it. Deleting a retired
+ * statement from that array rewrites history — and silently, because the
+ * damage lands on the *next* migration that names the view.
+ */
+function compatObjectDrops(names: RegExp, expected: number, family: string): string[] {
+  const compatObjects = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.flatMap((statement) => {
+    const trigger = /CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    if (trigger) return names.test(trigger) ? [`DROP TRIGGER IF EXISTS ${trigger}`] : [];
+    const view = /CREATE VIEW IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    return view && names.test(view) ? [`DROP VIEW IF EXISTS ${view}`] : [];
+  });
+  if (compatObjects.length !== expected) {
+    throw new Error(
+      `expected ${expected} ${family} compat objects, found ${compatObjects.length}`,
+    );
+  }
+  return [
+    ...compatObjects.filter((statement) => statement.startsWith("DROP TRIGGER")),
+    ...compatObjects.filter((statement) => statement.startsWith("DROP VIEW")),
+  ];
+}
+
+
+/**
+ * Retires the lifecycle-event view, which slice 6 could not.
+ *
+ * It survived that slice for one reason: the two functions that publish and
+ * recover a run's final message joined it to `messages`, so it could not go
+ * until the transcript write did. `publishFinalMessage` makes that one
+ * transaction inside the object — the append and the event it records — and
+ * `loadPersistedHarnessFinalOutcome` asks the two authorities separately, so
+ * the join and the view it needed are both gone.
+ */
+function runLifecycleAuthorityPromotion(): string[] {
+  const names = /^_runtime_run_lifecycle_events/;
+  const compatObjects = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.flatMap((statement) => {
+    const trigger = /CREATE TRIGGER IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    if (trigger) return names.test(trigger) ? [`DROP TRIGGER IF EXISTS ${trigger}`] : [];
+    const view = /CREATE VIEW IF NOT EXISTS (\S+)/.exec(statement)?.[1];
+    return view && names.test(view) ? [`DROP VIEW IF EXISTS ${view}`] : [];
+  });
+  if (compatObjects.length !== 2) {
+    throw new Error(`expected two lifecycle compat objects, found ${compatObjects.length}`);
+  }
+  return [
+    ...compatObjects.filter((statement) => statement.startsWith("DROP TRIGGER")),
+    ...compatObjects.filter((statement) => statement.startsWith("DROP VIEW")),
+  ];
+}
 
 /**
  * Retires three of the harness-run slice's six compatibility views.
@@ -1434,13 +1554,13 @@ function resourceAuthorityPromotion(): string[] {
 /**
  * Retires four of the scheduling slice's five compatibility views.
  *
- * `_runtime_elicitations` is deliberately not among them, and its two triggers
- * stay with it. Every *read* of that view is gone, but its two writers are
+ * `_runtime_elicitations` was deliberately not among them, and its two triggers
+ * stayed with it: every *read* of that view was gone, but its two writers were
  * batches spanning the messages and identity slices — an elicitation row, a
  * transcript message, and the work stream's counters, written together because
- * the second statement is guarded on the first having landed. It goes when the
- * messages slice converts what it depends on. Dropping it here would leave
- * those batches with nothing to write through.
+ * the second statement was guarded on the first having landed. Dropping it here
+ * would have left those batches with nothing to write through. Migration 25
+ * retires it, once both writers became single object operations.
  *
  * The other four views and their seven triggers are objects over tables this
  * schema already declares, so nothing is adopted — the same shape as the

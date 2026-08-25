@@ -15,8 +15,9 @@ import { createTestSqlStorage } from "./helpers/sql-storage";
 import {
   openWorkstreamAuthorityForTest,
   testSubstreamAgentsBinding,
-  workstreamObjectAll,
   workstreamObjectGet,
+  workstreamObjectRootRow,
+  workstreamObjectParticipantRows,
 } from "./helpers/durable-authority";
 
 // The real launcher creates the `harness_runs` row the delivery then points at,
@@ -282,12 +283,9 @@ describe("firing a digest occurrence", () => {
     // whether it is listed. Both live in the work stream's own object since the
     // cutover — the D1 row is only the identity anchor.
     const store = onlyObjectStore();
-    expect(workstreamObjectGet(store, "SELECT system_kind, scope FROM workstreams"))
+    expect(workstreamObjectRootRow(store, "system_kind, scope"))
       .toEqual({ system_kind: "digest", scope: "personal" });
-    expect(workstreamObjectAll(
-      store,
-      "SELECT user_id FROM workstream_participants WHERE removed_at IS NULL",
-    )).toEqual([{ user_id: OWNER }]);
+    expect(workstreamObjectParticipantRows(store, "user_id")).toEqual([{ user_id: OWNER }]);
   });
 
   it("gives the next occurrence a work stream of its own", async () => {
@@ -317,11 +315,10 @@ describe("firing a digest occurrence", () => {
     // enough that the sidebar's ellipsis does not eat the time — which is the
     // only thing telling two occurrences on the same day apart. The title is
     // product state, so it lives on each object's root.
-    expect(deliveries.map(({ workstream_id }) => (workstreamObjectGet(
+    expect(deliveries.map(({ workstream_id }) => workstreamObjectRootRow<{ title: string }>(
       objectStoreFor(workstream_id),
-      "SELECT title FROM workstreams WHERE id = ?",
-      workstream_id,
-    ) as { title: string }).title)).toEqual([
+      "title",
+    ).title)).toEqual([
       "Digest · 11 Aug · 5:00 PM",
       "Digest · 11 Aug · 9:00 PM",
     ]);
@@ -379,10 +376,10 @@ describe("firing a digest occurrence", () => {
     // durable, unlistable tombstone, transcript and all.
     expect(database.prepare("SELECT COUNT(*) AS count FROM digest_deliveries").get()).toEqual({ count: 0 });
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });
-    const tombstone = workstreamObjectGet(
+    const tombstone = workstreamObjectRootRow<{ system_kind: string; archived_at: number | null }>(
       onlyObjectStore(),
-      "SELECT system_kind, archived_at FROM workstreams",
-    ) as { system_kind: string; archived_at: string | null };
+      "system_kind, archived_at",
+    );
     expect(tombstone.system_kind).toBe("digest");
     expect(tombstone.archived_at).not.toBeNull();
     expect(workstreamObjectGet(onlyObjectStore(), "SELECT COUNT(*) AS count FROM messages"))

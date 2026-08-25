@@ -26,6 +26,7 @@ import {
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectRun,
+  applyWorkstreamObjectRootFields,
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase } from "./helpers/sqlite-d1";
 
@@ -239,20 +240,14 @@ function fixture(): {
       created_by_user_id: string | null;
       automation_subscription_id: string | null;
     };
-    workstreamObjectRun(
-      store,
-      `INSERT INTO workstreams
-        (id, workspace_id, title, objective, origin_type, created_by_user_id,
-         automation_subscription_id, harness_status, last_activity_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'running', '2026-01-01', '2026-01-01', '2026-01-01')`,
-      workstreamId,
-      WORKSPACE_ID,
-      directory.title,
-      directory.objective,
-      directory.origin_type,
-      directory.created_by_user_id,
-      directory.automation_subscription_id,
-    );
+    applyWorkstreamObjectRootFields(store, {
+      title: directory.title,
+      description: directory.objective,
+      originType: directory.origin_type,
+      createdByUserId: directory.created_by_user_id,
+      automationSubscriptionId: directory.automation_subscription_id,
+      exactState: "running",
+    });
     workstreamObjectRun(
       store,
       `INSERT INTO harness_runs

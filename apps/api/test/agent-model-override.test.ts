@@ -18,6 +18,8 @@ import {
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
+  workstreamObjectParticipantRows,
+  workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
@@ -121,18 +123,28 @@ interface RunWorkstreamRow {
 }
 
 function runWorkstream(objectStore: DatabaseSync, subscriptionId: string): RunWorkstreamRow {
-  return workstreamObjectGet(
+  // One object holds one work stream, so the retired view's
+  // `WHERE automation_subscription_id = ? ORDER BY created_at DESC LIMIT 1`
+  // is an assertion about which store this is rather than a row to pick.
+  const root = workstreamObjectRootRow<{
+    workstream_key: string;
+    automation_subscription_id: string | null;
+    model_override: string | null;
+    scope: string;
+    created_by_user_id: string | null;
+  }>(
     objectStore,
-    `SELECT workstream.id, workstream.model_override, workstream.scope,
-            workstream.created_by_user_id,
-            (SELECT participant.user_id FROM workstream_participants participant
-              WHERE participant.workstream_id = workstream.id
-                AND participant.removed_at IS NULL LIMIT 1) AS participant_user_id
-       FROM workstreams workstream
-      WHERE workstream.automation_subscription_id = ?
-      ORDER BY workstream.created_at DESC LIMIT 1`,
-    subscriptionId,
-  ) as unknown as RunWorkstreamRow;
+    "workstream_key, automation_subscription_id, model_override, scope, created_by_user_id",
+  );
+  expect(root.automation_subscription_id).toBe(subscriptionId);
+  const seated = workstreamObjectParticipantRows<{ user_id: string }>(objectStore, "user_id");
+  return {
+    id: root.workstream_key,
+    model_override: root.model_override,
+    scope: root.scope,
+    created_by_user_id: root.created_by_user_id,
+    participant_user_id: seated[0]?.user_id ?? null,
+  };
 }
 
 describe("automation model override", () => {
@@ -141,7 +153,7 @@ describe("automation model override", () => {
 
     const run = await serviceFor(fixture).runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-1");
 
-    expect(workstreamObjectGet(fixture.objectStore, "SELECT model_override FROM workstreams WHERE id = ?", run.workstreamId))
+    expect(workstreamObjectRootRow(fixture.objectStore, "model_override"))
       .toEqual({ model_override: "openai/gpt-5.6-terra" });
     // The run's expected model is recorded at schedule time, so the pin has to
     // reach `harness_runs` in the same batch that writes the work stream.
@@ -154,7 +166,7 @@ describe("automation model override", () => {
 
     const run = await serviceFor(fixture).runNow(UNPINNED_SUBSCRIPTION_ID, "idempotency-key-2");
 
-    expect(workstreamObjectGet(fixture.objectStore, "SELECT model_override FROM workstreams WHERE id = ?", run.workstreamId))
+    expect(workstreamObjectRootRow(fixture.objectStore, "model_override"))
       .toEqual({ model_override: null });
     expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", run.workstreamId))
       .toEqual({ model: "x-ai/grok-4.3" });
@@ -178,7 +190,7 @@ describe("automation model override", () => {
 
     const run = await serviceFor(fixture, "warn").runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-3");
 
-    expect(workstreamObjectGet(fixture.objectStore, "SELECT model_override FROM workstreams WHERE id = ?", run.workstreamId))
+    expect(workstreamObjectRootRow(fixture.objectStore, "model_override"))
       .toEqual({ model_override: null });
     expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", run.workstreamId))
       .toEqual({ model: "x-ai/grok-4.3" });

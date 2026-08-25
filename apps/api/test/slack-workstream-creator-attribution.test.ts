@@ -9,6 +9,8 @@ import {
   openWorkstreamAuthorityForTest,
   testSubstreamAgentsBinding,
   workstreamObjectGet,
+  workstreamObjectRootRow,
+  workstreamObjectParticipantRows,
 } from "./helpers/durable-authority";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
@@ -78,19 +80,20 @@ describe("Slack work stream creator attribution", () => {
     const objectStore = objectStores.get(created.workstream.id);
     if (!objectStore) throw new Error("expected the creation to open the work-stream object");
     databases.push(objectStore);
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT created_by_user_id FROM workstreams WHERE id = ?",
-      created.workstream.id,
-    )).toEqual({ created_by_user_id: "a0000000-0000-4000-8000-000000000a10" });
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT user_id, participation_reason FROM workstream_participants WHERE workstream_id = ?",
-      created.workstream.id,
-    )).toEqual({
-      user_id: "a0000000-0000-4000-8000-000000000a10",
-      participation_reason: "creator",
-    });
+    // A Slack task arrives titled, so the naming pass has nothing to settle;
+    // an untitled one is left `naming` for it, which is the whole eligibility
+    // test `refreshWorkstreamName` applies.
+    expect(workstreamObjectRootRow(objectStore, "created_by_user_id, title, title_status"))
+      .toEqual({
+        created_by_user_id: "a0000000-0000-4000-8000-000000000a10",
+        title: "Investigate the alert",
+        title_status: "settled",
+      });
+    expect(workstreamObjectParticipantRows(objectStore, "user_id, participation_reason"))
+      .toEqual([{
+        user_id: "a0000000-0000-4000-8000-000000000a10",
+        participation_reason: "creator",
+      }]);
     // Attribution never rewrites authorship: the opening message stays the
     // external Slack member's, so the audit trail keeps the provider identity.
     // The object encodes that authorship as `external` + the actor's json —
@@ -117,6 +120,39 @@ describe("Slack work stream creator attribution", () => {
     });
   });
 
+  it("leaves an untitled Slack task for the naming pass to settle", async () => {
+    const database = seededDatabase();
+    const objectStores = new Map<string, DatabaseSync>();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      AVALON_REGION: "global",
+    });
+
+    const created = await new SlackWorkspaceWorkstreamService(
+      env,
+      asWorkspaceId("b0000000-0000-4000-8000-000000000b10"),
+    ).create({
+      actor,
+      objective: "Investigate the alert",
+      text: "Investigate the alert",
+      clientMessageId: "event:opening",
+      creatorUserId: asUserId("a0000000-0000-4000-8000-000000000a10"),
+      slackOrigin,
+    });
+
+    const objectStore = objectStores.get(created.workstream.id);
+    if (!objectStore) throw new Error("expected the creation to open the work-stream object");
+    databases.push(objectStore);
+    // `automatic` is the first naming pass having *run*, and that is what
+    // proves the provision wrote `naming`: the pass renames under a fence on
+    // `from: "naming"`, so a work stream provisioned `settled` would be
+    // superseded and keep its provisional title for good. The model is
+    // unreachable here, which is the arm that settles to `automatic`.
+    expect(workstreamObjectRootRow(objectStore, "title_status"))
+      .toEqual({ title_status: "automatic" });
+  });
+
   it("leaves the task ownerless when Slack cannot map the member to Avalon", async () => {
     const database = seededDatabase();
     const objectStores = new Map<string, DatabaseSync>();
@@ -139,11 +175,7 @@ describe("Slack work stream creator attribution", () => {
     const objectStore = objectStores.get(created.workstream.id);
     if (!objectStore) throw new Error("expected the creation to open the work-stream object");
     databases.push(objectStore);
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT COUNT(*) AS count FROM workstream_participants WHERE workstream_id = ?",
-      created.workstream.id,
-    )).toEqual({ count: 0 });
+    expect(workstreamObjectParticipantRows(objectStore)).toEqual([]);
     expect(JSON.parse(String((database.prepare(
       "SELECT envelope_json FROM telemetry_accepted_events WHERE event_id = ?",
     ).get(created.workstream.id) as { envelope_json: string }).envelope_json))).toMatchObject({

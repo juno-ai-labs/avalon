@@ -142,6 +142,12 @@ import {
   HarnessRunOperationRequestSchema,
   mutatesRunState,
 } from "./workstream-harness-run-protocol";
+import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
+import {
+  type IdentityOperationRequest,
+  IdentityOperationRequestSchema,
+  mutatesIdentity,
+} from "./workstream-identity-protocol";
 import { WorkstreamResourceStorage } from "./workstream-resource-storage";
 import {
   type ResourceOperationRequest,
@@ -565,6 +571,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   private messages!: WorkstreamMessageStorage;
   private resources!: WorkstreamResourceStorage;
+  private identityRows!: WorkstreamIdentityStorage;
   private harnessRuns!: WorkstreamHarnessRunStorage;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
@@ -624,6 +631,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.scheduling = new WorkstreamSchedulingStorage(state.storage);
       this.messages = new WorkstreamMessageStorage(state.storage);
       this.resources = new WorkstreamResourceStorage(state.storage);
+      this.identityRows = new WorkstreamIdentityStorage(state.storage);
       this.harnessRuns = new WorkstreamHarnessRunStorage(state.storage);
       await this.objectStore.waitUntilReady();
       // Existing one-room-per-workstream objects become the main child during
@@ -794,6 +802,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/internal/harness-runs") {
       return this.acceptHarnessRunOperation(request);
     }
+    if (request.method === "POST" && url.pathname === "/internal/identity") {
+      return this.acceptIdentityOperation(request);
+    }
     if (request.method === "POST" && url.pathname === "/internal/block-dashboard") {
       return this.acceptBlockDashboardOperation(request);
     }
@@ -961,6 +972,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async bootstrapRuntime(input: SubstreamRuntimeBootstrapRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptRuntimeBootstrap(this.rpcRequest(input)));
+  }
+
+  async executeIdentityOperation(input: IdentityOperationRequest): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return objectPortRpcResult(await this.identityOperationOutcome(input));
   }
 
   async dispatchRun(input: WorkstreamWorkflowInput): Promise<DurableObjectRpcResult> {
@@ -1585,6 +1601,51 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         error: error instanceof Error ? error.message : "workstream_runtime_bootstrap_failed",
       }, 409);
     }
+  }
+
+  /**
+   * Write what a system-provisioned work stream is, once its object is open.
+   *
+   * The identity check is `objectPortRefusal`'s, for its reasons: a misrouted
+   * stub must not name another work stream, and a non-authoritative object is
+   * not the one whose writes count. The provision itself is idempotent, so a
+   * producer retrying the bootstrap-then-provision pair is safe.
+   */
+  private async acceptIdentityOperation(request: Request): Promise<Response> {
+    const outcome = await this.identityOperationOutcome(await request.json().catch(() => null));
+    return jsonResponse(outcome.payload, outcome.status);
+  }
+
+  /**
+   * Dispatch one identity operation against this object's own root row.
+   *
+   * The provision runs inside `commitRuntimeMutation` with the directory flag
+   * because it is what makes a system-created work stream appear in a sidebar:
+   * a row whose listing projection is a second commit can be created and never
+   * shown. The reads do not, for the reason every other authority's reads do
+   * not — there is nothing to publish.
+   *
+   * This replaces a bespoke `provisionRuntime` RPC that validated its own body
+   * and re-checked identity inside the product service. Both checks are what
+   * `objectPortRefusal` and this dispatcher already do for the five authorities
+   * beside it, and having them twice meant a provision could be refused by two
+   * different mismatch codes depending on which layer noticed.
+   */
+  private async identityOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
+    const parsed = IdentityOperationRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return { status: 400, payload: { ok: false, error: "invalid_identity_operation" } };
+    }
+    const refusal = this.objectPortRefusal(parsed.data, "workstream_identity_mismatch");
+    if (refusal) return refusal;
+    const method = this.identityRows[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const value = mutatesIdentity(parsed.data.operation)
+      ? await this.product.commitRuntimeMutation(
+        () => method.apply(this.identityRows, parsed.data.args),
+        true,
+      )
+      : method.apply(this.identityRows, parsed.data.args);
+    return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
   private async acceptRunDispatch(request: Request): Promise<Response> {

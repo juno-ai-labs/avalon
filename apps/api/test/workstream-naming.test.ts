@@ -16,8 +16,9 @@ import {
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  workstreamObjectGet,
   workstreamObjectRun,
+  applyWorkstreamObjectRootFields,
+  workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 
 const workspaceId = "00000000-0000-7000-8000-0000000000b0";
@@ -115,12 +116,10 @@ describe("work-stream naming", () => {
       // The rename lands between the model answering and the title being
       // written — exactly the window the conditional update exists to lose.
       // Naming a work stream settles it, which is what makes it untouchable.
-      workstreamObjectRun(
-        objectStoreOf(database),
-        "UPDATE workstreams SET title = ?, title_status = 'settled' WHERE id = ?",
-        "Mucker intro thread",
-        workstreamId,
-      );
+      applyWorkstreamObjectRootFields(
+      objectStoreOf(database),
+      { title: "Mucker intro thread", titleStatus: "settled" },
+    );
     });
     const env = environment(database, published);
 
@@ -189,11 +188,9 @@ describe("work-stream naming", () => {
 
   it("names the work stream again from the conversation once it has five messages", async () => {
     const database = seededDatabase();
-    workstreamObjectRun(
+    applyWorkstreamObjectRootFields(
       objectStoreOf(database),
-      "UPDATE workstreams SET title = ?, title_status = 'automatic' WHERE id = ?",
-      "Draft email to Danny",
-      workstreamId,
+      { title: "Draft email to Danny", titleStatus: "automatic" },
     );
     seedMessages(database, 5);
     const requests: Array<Record<string, unknown>> = [];
@@ -246,11 +243,9 @@ describe("work-stream naming", () => {
 
   it("keeps its one retry when the model cannot be reached at the five-message mark", async () => {
     const database = seededDatabase();
-    workstreamObjectRun(
+    applyWorkstreamObjectRootFields(
       objectStoreOf(database),
-      "UPDATE workstreams SET title = ?, title_status = 'automatic' WHERE id = ?",
-      "Invoice export totals",
-      workstreamId,
+      { title: "Invoice export totals", titleStatus: "automatic" },
     );
     seedMessages(database, 5);
     const published: Array<Record<string, unknown>> = [];
@@ -302,11 +297,7 @@ describe("work-stream naming", () => {
 
   it("counts what the work stream said, not what the harness wrote down", async () => {
     const database = seededDatabase();
-    workstreamObjectRun(
-      objectStoreOf(database),
-      "UPDATE workstreams SET title_status = 'automatic' WHERE id = ?",
-      workstreamId,
-    );
+    applyWorkstreamObjectRootFields(objectStoreOf(database), { titleStatus: "automatic" });
     // An opening request, one reply, and three tool calls. A run ends where
     // tool rows accumulate, and that is one of the two places the second pass
     // is called from — counting them would name this from what the first pass
@@ -341,11 +332,7 @@ describe("work-stream naming", () => {
 
   it("names a work stream again only once, however often the transcript grows", async () => {
     const database = seededDatabase();
-    workstreamObjectRun(
-      objectStoreOf(database),
-      "UPDATE workstreams SET title_status = 'automatic' WHERE id = ?",
-      workstreamId,
-    );
+    applyWorkstreamObjectRootFields(objectStoreOf(database), { titleStatus: "automatic" });
     seedMessages(database, 9);
     const requests: Array<Record<string, unknown>> = [];
     stubOpenRouter(requests, "Mucker download link for danny@mucker.com");
@@ -359,11 +346,7 @@ describe("work-stream naming", () => {
 
   it("leaves a short work stream and a title a person chose alone", async () => {
     const database = seededDatabase();
-    workstreamObjectRun(
-      objectStoreOf(database),
-      "UPDATE workstreams SET title_status = 'automatic' WHERE id = ?",
-      workstreamId,
-    );
+    applyWorkstreamObjectRootFields(objectStoreOf(database), { titleStatus: "automatic" });
     seedMessages(database, 4);
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);
@@ -373,11 +356,9 @@ describe("work-stream naming", () => {
     expect(fetcher).not.toHaveBeenCalled();
 
     seedMessages(database, 6);
-    workstreamObjectRun(
+    applyWorkstreamObjectRootFields(
       objectStoreOf(database),
-      "UPDATE workstreams SET title = ?, title_status = 'settled' WHERE id = ?",
-      "Mucker intro thread",
-      workstreamId,
+      { title: "Mucker intro thread", titleStatus: "settled" },
     );
 
     await refreshWorkstreamName(env, { workspaceId, workstreamId });
@@ -413,15 +394,12 @@ describe("work-stream naming", () => {
 
   it("reads no more of a transcript than it takes to know the work stream is due", async () => {
     const database = seededDatabase();
-    workstreamObjectRun(
-      objectStoreOf(database),
-      "UPDATE workstreams SET title_status = 'settled' WHERE id = ?",
-      workstreamId,
-    );
+    applyWorkstreamObjectRootFields(objectStoreOf(database), { titleStatus: "settled" });
     seedMessages(database, 40);
     const counted: string[] = [];
     const transcriptOperations: string[] = [];
-    const env = environment(database, [], transcriptOperations);
+    const identityOperations: string[] = [];
+    const env = environment(database, [], transcriptOperations, identityOperations);
     const settled = createTestEnv({
       ...env,
       DB: {
@@ -436,14 +414,15 @@ describe("work-stream naming", () => {
     await refreshWorkstreamName(settled, { workspaceId, workstreamId });
 
     // A settled work stream is the overwhelmingly common case, and this runs
-    // after every message and every run: the status has to be a `WHERE` clause
-    // rather than a check in JS after a transcript-wide count. The count used
-    // to ride in that same statement, bounded by its own `LIMIT`; it is a
-    // separate operation now, so the cheaper thing is provable — a settled work
-    // stream does not read the transcript at all.
-    expect(counted).toHaveLength(1);
-    expect(counted[0]).toContain("title_status IN ('naming', 'automatic')");
+    // after every message and every run: it has to decide from the work
+    // stream's own row and stop. The title status used to be a `WHERE` clause
+    // and the message count a subquery beside it in the same statement; both
+    // are separate operations now, which is what makes the cheap path provable
+    // rather than merely intended — one identity read, no transcript at all,
+    // and nothing about this work stream asked of regional D1.
+    expect(identityOperations).toEqual(["identity"]);
     expect(transcriptOperations).toEqual([]);
+    expect(counted.filter((sql) => /workstreams/u.test(sql))).toEqual([]);
   });
 
   it("writes a name a person would read rather than whatever the model returned", () => {
@@ -512,11 +491,10 @@ function seedMessages(database: DatabaseSync, count: number): void {
 }
 
 function workstreamRow(database: DatabaseSync): { title: string; title_status: string } {
-  return workstreamObjectGet(
+  return workstreamObjectRootRow<{ title: string; title_status: string }>(
     objectStoreOf(database),
-    "SELECT title, title_status FROM workstreams WHERE id = ?",
-    workstreamId,
-  ) as { title: string; title_status: string };
+    "title, title_status",
+  );
 }
 
 function title(database: DatabaseSync): string {
@@ -542,6 +520,7 @@ function environment(
   database: DatabaseSync,
   published: Array<Record<string, unknown>>,
   transcriptOperations: string[] = [],
+  identityOperations: string[] = [],
 ): Env {
   const objectStore = objectStoreOf(database);
   // The naming service reads its transcript through the message port, which
@@ -565,13 +544,14 @@ function environment(
       }
       return (id: DurableObjectId) => new Proxy(namespaceTarget.get(id), {
         get(target, property, receiver) {
-          if (property !== "executeMessageOperation") {
-            return Reflect.get(target, property, receiver);
-          }
+          const recorder = property === "executeMessageOperation" ? transcriptOperations
+            : property === "executeIdentityOperation" ? identityOperations
+              : null;
+          if (!recorder) return Reflect.get(target, property, receiver);
           const dispatch = Reflect.get(target, property, receiver) as
             (input: { operation: string }) => unknown;
           return (input: { operation: string }) => {
-            transcriptOperations.push(input.operation);
+            recorder.push(input.operation);
             return dispatch.call(target, input);
           };
         },
@@ -619,22 +599,18 @@ function seededDatabase(): DatabaseSync {
   const objectStore = testWorkstreamObjectStore();
   databases.push(objectStore);
   objectStores.set(database, objectStore);
-  seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO workstreams
-     (id, workspace_id, title, title_status, objective, email_address, email_route_status, origin_type,
-      created_by_user_id, harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
-     VALUES (?, ?, ?, 'naming', ?, ?, 'active', 'ad_hoc', ?, 'running', 2, ?, ?, ?)`,
+  seedWorkstreamObjectRoot(objectStore, {
     workstreamId,
     workspaceId,
-    provisionalTitle,
-    objective,
-    "calm-bright-gentle-otter@automation.with-avalon.com",
-    userId,
-    at,
-    at,
-    at,
-  );
+    title: provisionalTitle,
+    titleStatus: "naming",
+    description: objective,
+    emailAddress: "calm-bright-gentle-otter@automation.with-avalon.com",
+    emailRouteStatus: "active",
+    originType: "ad_hoc",
+    createdByUserId: userId,
+    exactState: "running",
+    nextSequenceNumber: 2,
+  }, Date.parse(at));
   return database;
 }

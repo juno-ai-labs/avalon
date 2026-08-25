@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Region } from "@avalon/contracts";
 import type { Env } from "../src/env";
 import type { ApiError } from "../src/lib/api-error";
@@ -11,6 +12,26 @@ import {
   type WorkstreamEmailRouterRpcResult,
 } from "../src/services/workstream-email-routing-service";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestDurableObjectInstance, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  executeWorkstreamObjectSql,
+  seedWorkstreamObjectRoot,
+  testIdentityOperationStub,
+  testWorkstreamObjectStore,
+  applyWorkstreamObjectRootFields,
+} from "./helpers/durable-authority";
+
+const openStores: DatabaseSync[] = [];
+
+afterEach(() => {
+  while (openStores.length > 0) openStores.pop()?.close();
+});
+
+/** One work stream's object database, closed with the test that opened it. */
+function objectStoreForTest(): DatabaseSync {
+  const store = testWorkstreamObjectStore();
+  openStores.push(store);
+  return store;
+}
 
 const ADDRESS_KEY = "avalon-workstream-routing-test-key-v1";
 const DOMAIN = "automation.with-avalon.com";
@@ -22,15 +43,6 @@ interface RouteRow {
   workstream_id: string | null;
   automation_subscription_id: string | null;
   created_at: string;
-  updated_at: string;
-}
-
-interface LocalWorkstreamRow {
-  id: string;
-  workspace_id: string;
-  email_address: string | null;
-  email_route_status: "reserved" | "active" | "disabled";
-  archived_at: string | null;
   updated_at: string;
 }
 
@@ -67,7 +79,16 @@ class FakeStatement {
 
 class FakeDatabase {
   readonly routes: RouteRow[] = [];
-  readonly workstreams: LocalWorkstreamRow[] = [];
+  /**
+   * The work stream's own object.
+   *
+   * Not another arm of the matcher below: `workstreams` is the identity
+   * authority's table, this service reads and writes it through that
+   * authority's port, and the gate under test is what the real storage class
+   * answers. Empty until a test seeds an owner, which is the state the 404
+   * arm of `activateWorkstreamRoute` is about.
+   */
+  readonly objectStore: DatabaseSync = objectStoreForTest();
   readonly automations: LocalAutomationRow[] = [];
   routeInsertAttempts = 0;
 
@@ -79,12 +100,7 @@ class FakeDatabase {
     return Promise.all(statements.map((statement) => statement.run<T>()));
   }
 
-  first(sql: string, values: unknown[]): RouteRow | LocalWorkstreamRow | LocalAutomationRow | null {
-    if (sql.includes("FROM workstreams WHERE id = ? AND workspace_id = ?")) {
-      const [workstreamId, workspaceId] = values.map(String);
-      return this.workstreams.find((row) =>
-        row.id === workstreamId && row.workspace_id === workspaceId) ?? null;
-    }
+  first(sql: string, values: unknown[]): RouteRow | LocalAutomationRow | null {
     if (sql.includes("FROM automation_subscriptions WHERE id = ? AND workspace_id = ?")) {
       const [automationId, workspaceId] = values.map(String);
       return this.automations.find((row) =>
@@ -147,16 +163,6 @@ class FakeDatabase {
       });
       return result(1);
     }
-    if (sql.includes("UPDATE workstreams") && sql.includes("SET email_address = ?")) {
-      const [emailAddress, updatedAt, workstreamId, workspaceId] = values.map(String);
-      const workstream = this.workstreams.find((row) =>
-        row.id === workstreamId && row.workspace_id === workspaceId && row.email_address == null);
-      if (!workstream) return result(0);
-      workstream.email_address = emailAddress!;
-      workstream.email_route_status = "reserved";
-      workstream.updated_at = updatedAt!;
-      return result(1);
-    }
     if (sql.includes("UPDATE automation_subscriptions") && sql.includes("SET email_address = ?")) {
       const [emailAddress, updatedAt, automationId, workspaceId] = values.map(String);
       const automation = this.automations.find((row) =>
@@ -211,7 +217,7 @@ describe("WorkstreamEmailRoutingService", () => {
       code: "workstream_not_found",
     } satisfies Partial<ApiError>);
 
-    database.workstreams.push(localWorkstream(input, reservation.emailAddress));
+    seedWorkstreamOwner(database, input, reservation.emailAddress);
     await expect(service.activateWorkstreamRoute(input)).resolves.toMatchObject({
       ...input,
       emailAddress: reservation.emailAddress,
@@ -220,7 +226,9 @@ describe("WorkstreamEmailRoutingService", () => {
     // Archiving the owner closes the route without Global being told: the
     // refusal is read from the work stream itself, which is the same row the
     // inbound path consults.
-    database.workstreams[0]!.archived_at = "2026-08-03T00:00:00.000Z";
+    applyWorkstreamObjectRootFields(database.objectStore, {
+      archivedAt: Date.parse("2026-08-03T00:00:00.000Z"),
+    });
     await expect(service.activateWorkstreamRoute(input)).rejects.toMatchObject({
       status: 409,
       code: "workstream_email_owner_archived",
@@ -250,7 +258,7 @@ describe("WorkstreamEmailRoutingService", () => {
       code: "workstream_not_found",
     } satisfies Partial<ApiError>);
 
-    euDatabase.workstreams.push(localWorkstream(input, reservation.emailAddress));
+    seedWorkstreamOwner(euDatabase, input, reservation.emailAddress);
     await expect(euService.activateWorkstreamRoute(input)).resolves.toMatchObject({
       emailAddress: reservation.emailAddress,
     });
@@ -640,18 +648,18 @@ function routeInput(workstreamId: string, region: Region = "global"): Workstream
   };
 }
 
-function localWorkstream(
+/** Give this work stream a durable object of its own, holding its address. */
+function seedWorkstreamOwner(
+  database: FakeDatabase,
   input: WorkstreamEmailRouteInput,
   emailAddress: string | null,
-): LocalWorkstreamRow {
-  return {
-    id: input.workstreamId,
-    workspace_id: input.workspaceId,
-    email_address: emailAddress,
-    email_route_status: "reserved",
-    archived_at: null,
-    updated_at: "2026-08-02T00:00:00.000Z",
-  };
+): void {
+  seedWorkstreamObjectRoot(database.objectStore, {
+    workstreamId: input.workstreamId,
+    workspaceId: input.workspaceId,
+    emailAddress,
+    emailRouteStatus: "reserved",
+  }, Date.parse("2026-08-02T00:00:00.000Z"));
 }
 
 function existingRoute(
@@ -681,24 +689,14 @@ function environment(database: FakeDatabase, overrides: Partial<Env> = {}): Env 
     SUBSTREAM_AGENTS: createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
       idFromName: () => createTestDurableObjectId("substream"),
       get: () => createTestDurableObjectInstance({
+        executeIdentityOperation: async (input: { operation: string; args: unknown[] }) =>
+          testIdentityOperationStub(database.objectStore)(input),
         executeRuntimeSql: async (input: {
-          statements: Array<{ sql: string; params: unknown[] }>;
+          statements: Array<{ sql: string; params: Array<string | number | null> }>;
         }) => ({
           status: 200,
           bodyJson: JSON.stringify({
-            results: await Promise.all(input.statements.map(async ({ sql, params }) => {
-              const statement = database.prepare(sql).bind(...params);
-              if (/^\s*SELECT/iu.test(sql) || /\bRETURNING\b/iu.test(sql)) {
-                const row = await statement.first<Record<string, string | number | null>>();
-                return {
-                  columns: row ? Object.keys(row) : [],
-                  rows: row ? [row] : [],
-                  changes: row ? 1 : 0,
-                };
-              }
-              const executed = await statement.run();
-              return { columns: [], rows: [], changes: Number(executed.meta.changes ?? 0) };
-            })),
+            results: executeWorkstreamObjectSql(database.objectStore, input.statements),
           }),
         }),
       }),

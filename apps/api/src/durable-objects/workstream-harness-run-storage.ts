@@ -24,6 +24,7 @@
  */
 
 import { boundParameterChunks } from "./bound-parameters";
+import { WorkstreamMessageStorage } from "./workstream-message-storage";
 
 /** What a caller proved before it was allowed to write. */
 export interface AttemptFence {
@@ -302,7 +303,21 @@ function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageVa
 }
 
 export class WorkstreamHarnessRunStorage {
-  constructor(private readonly storage: DurableObjectStorage) {}
+  /**
+   * The transcript authority, over this same object storage.
+   *
+   * Composed rather than reimplemented, because publishing a run's final
+   * message is one transaction that has to touch two authorities' tables. The
+   * decision is this one's — whether the attempt may still speak — and the
+   * transcript row belongs to the class that owns `parts`, so `parts` still has
+   * exactly one writer. Both wrap the same `DurableObjectStorage`, so the
+   * nested `transactionSync` is the same transaction rather than a second one.
+   */
+  private readonly messages: WorkstreamMessageStorage;
+
+  constructor(private readonly storage: DurableObjectStorage) {
+    this.messages = new WorkstreamMessageStorage(storage);
+  }
 
   private get sql(): SqlStorage {
     return this.storage.sql;
@@ -1243,6 +1258,89 @@ export class WorkstreamHarnessRunStorage {
       return { outcome: "ownership_lost" };
     }
     return { outcome: "owned" };
+  }
+
+  /**
+   * Publish this attempt's final message, and record that it did.
+   *
+   * The last of the guarded batches, and the only one that spanned two
+   * authorities. Three statements: the transcript insert, a lifecycle event
+   * that `JOIN`ed `messages` to check the insert had landed, and a work-stream
+   * update whose `EXISTS (SELECT 1 FROM messages …)` checked the same thing
+   * again. Both checks exist because a D1 batch cannot branch on its own
+   * progress; inside one transaction there is nothing to check.
+   *
+   * The third statement turns out to have done nothing at all. It assigned
+   * `latest_attention_sequence_number`, which was never a column — the retired
+   * view derived it as `next_attention_ordinal - 1` and its update trigger
+   * ignored every caller that assigned to it. What remains of that statement is
+   * `last_activity_at` and `updated_at`, which is exactly what `appendMessage`
+   * already moves.
+   *
+   * The sequence number is allocated here rather than passed in. The caller
+   * used to reserve one first through a bespoke `UPDATE workstreams SET
+   * next_sequence_number = next_sequence_number + 1 … RETURNING` rewrite, which
+   * burned a number whenever the write was then refused; taking it inside the
+   * transaction that uses it cannot.
+   *
+   * `status` on the lifecycle event is the *published* spelling, unlike the
+   * `terminal` event's. That is deliberate and load-bearing: this event records
+   * the host outcome the caller reported, and recovery reads it back and
+   * compares it against the published terminal set. The `terminal` event
+   * records the run's own state, which is the object's vocabulary.
+   */
+  publishFinalMessage(input: AttemptFence & {
+    messageId: string;
+    text: string;
+    hostOutcomeStatus: string;
+    eventPayloadJson: string;
+    lifecycleEventId: string;
+    /** A stopped run may still publish: the member asked it to stop, not to vanish. */
+    allowCancellationRequested: boolean;
+  }): { outcome: "published" | "replayed"; sequenceNumber: number }
+    | { outcome: "ownership_lost" } {
+    return this.storage.transactionSync(() => {
+      const run = this.run({ runId: input.runId });
+      if (!run
+        || run.parent_tool_call_id !== null
+        || run.legacy_attempt_id !== input.attemptId
+        || run.lease_owner !== input.owner
+        || run.status !== "running"
+        || run.terminalized_at !== null
+        || (!input.allowCancellationRequested && run.cancellation_requested_at !== null)
+        || run.lease_expires_at === null
+        || run.lease_expires_at <= input.now) {
+        return { outcome: "ownership_lost" as const };
+      }
+      const appended = this.messages.appendMessage({
+        messageId: input.messageId,
+        // One final message per run, named after the run. That is what makes a
+        // retry of this whole operation a replay rather than a second message.
+        clientMessageId: `harness:${input.runId}`,
+        authorType: "agent",
+        authorUserId: null,
+        externalActorJson: null,
+        messageType: "text",
+        text: input.text,
+        structuredContentJson: null,
+        producedByRunId: input.runId,
+        now: input.now,
+      });
+      this.recordLifecycleEvent({
+        eventId: input.lifecycleEventId,
+        runId: input.runId,
+        attemptId: input.attemptId,
+        eventKey: "final_message",
+        eventType: "final_message_persisted",
+        status: input.hostOutcomeStatus,
+        memberSafePayloadJson: input.eventPayloadJson,
+        now: input.now,
+      });
+      return {
+        outcome: appended.outcome === "appended" ? "published" as const : "replayed" as const,
+        sequenceNumber: appended.sequenceNumber,
+      };
+    });
   }
 
   /**

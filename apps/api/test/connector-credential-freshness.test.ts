@@ -10,8 +10,14 @@ import {
   withProviderReauthorization,
   type ConnectorConnectionContext,
 } from "@avalon/connectors";
-import { describe, expect, it, vi } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { encryptString } from "../src/lib/crypto";
+import {
+  seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+} from "./helpers/durable-authority";
 import { __connectionServiceTesting } from "../src/services/connection-service";
 import { withAuthorizedConnection } from "../src/services/connector-connection-access";
 import type { CredentialRefreshAdapter } from "../src/services/connector-credential-refresh";
@@ -37,6 +43,12 @@ import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 const STALE_TOKEN = "stale-access-token";
 const FRESH_TOKEN = "rotated-access-token";
 const EXPIRED_AT = "2020-01-01T00:00:00.000Z";
+
+const openStores: DatabaseSync[] = [];
+
+afterEach(() => {
+  while (openStores.length > 0) openStores.pop()?.close();
+});
 
 describe("the credential door", () => {
   it("writes the rotated credential for a row the database believes is broken, and heals nothing", async () => {
@@ -606,9 +618,6 @@ describe("revalidation between model turns", () => {
           bind() { return this; },
           async first() {
             if (sql.includes("FROM workspace_members")) return { status: "active" };
-            if (sql.includes("FROM workstreams")) {
-              return { archived_at: null, automation_subscription_id: null, automation_run_id: null };
-            }
             if (sql.includes("FROM connector_connections")) {
               return {
                 id: FROZEN.connectionId,
@@ -631,9 +640,24 @@ describe("revalidation between model turns", () => {
       },
     });
     const fetcher = vi.fn(async () => new Response("{}"));
+    // The archive gate is the work stream's own authority, not a row in D1.
+    const objectStore = testWorkstreamObjectStore();
+    openStores.push(objectStore);
+    seedWorkstreamObjectRoot(objectStore, {
+      workstreamId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",
+      workspaceId: FROZEN.workspaceId,
+    });
 
     await expect(__integrationTesting.reauthorizeFrozenPlugin(
-      { DB: database, CONNECTOR_CREDENTIALS_KEY: "k", CONNECTOR_CREDENTIALS_KEY_VERSION: "1", TWITTER_API_IO_API_KEY: "k", fetch: fetcher } as never,
+      {
+        DB: database,
+        SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
+        AVALON_REGION: "global",
+        CONNECTOR_CREDENTIALS_KEY: "k",
+        CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+        TWITTER_API_IO_API_KEY: "k",
+        fetch: fetcher,
+      } as never,
       {
         workspaceId: FROZEN.workspaceId,
         workstreamId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",

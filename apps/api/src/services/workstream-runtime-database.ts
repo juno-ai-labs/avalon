@@ -9,6 +9,8 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { splitSqlStatements } from "../lib/sql-statements";
 import { uuidV7 } from "../lib/uuid-v7";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { createIdentityObjectPort } from "../runtime/identity-port";
+import type { WorkstreamProvisionInput } from "../durable-objects/workstream-identity-storage";
 
 type RuntimeValue = string | number | null;
 
@@ -55,17 +57,13 @@ const responseSchema = z.object({
 });
 
 const LOCAL_TABLES = [
-  "workstream_participants",
   "harness_runs",
   "runs",
   "run_steering",
-  "harness_run_lifecycle_events",
   "inference_attempts",
   "message_attachments",
   "message_mentions",
   "messages",
-  "workstreams",
-  "elicitations",
   // The object's own receipt table, not a legacy name: when migration 17
   // retired `tool_invocations` from this list, the dev seed moved to writing
   // `tool_effects` directly — and a statement naming only that table fell
@@ -465,6 +463,26 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
     throw new Error(typeof body?.error === "string" ? body.error : "workstream_runtime_bootstrap_failed");
   }
   return withWorkstreamRuntimeDatabase(env, workspaceId, workstreamId);
+}
+
+/**
+ * Write what a system-provisioned work stream is, on the object that owns it.
+ *
+ * The other half of {@link bootstrapWorkstreamRuntimeEnvironment}: that opens an
+ * empty authoritative object, and this says what the work stream is and who can
+ * see it. The four producers that create a work stream nobody typed into —
+ * automation, a schedule, an activity, a digest — used to write those rows as a
+ * routed batch against `_runtime_workstreams` and `_runtime_workstream_participants`.
+ *
+ * Not `WorkstreamObjectCreationService`, which is the member path: it requires
+ * an opening message and produces a first run, and three of these four have
+ * neither at creation time.
+ */
+export async function provisionWorkstreamObject(
+  env: Env,
+  input: WorkstreamProvisionInput & { workspaceId: string; workstreamId: string },
+): Promise<void> {
+  await createIdentityObjectPort(env, input.workspaceId, input.workstreamId).provision(input);
 }
 
 /** Escape hatch for an explicitly regional half of a cross-authority operation. */

@@ -1063,6 +1063,217 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-25 — Two atomicities a per-item conversion dropped
+
+**What changed:** `createRun` claims its `automation_runs` row before it
+provisions the work stream, and `admitConnectorAudience` seats its whole
+audience through one `admitParticipants` operation instead of `Promise.all` of
+per-member admissions. `admitParticipant`, the plural form and `adoptCreator`
+share one private `seat`.
+
+**Why:** both are the same mistake in two places. A routed batch is atomic
+across everything it names, and converting it statement by statement into
+separate awaits gives that up silently — the code reads fine and every test
+passes, because nothing fails partway through in a test.
+
+`createRun` provisioned first. Two requests carrying one idempotency key both
+pass the lookup that precedes them; the loser's insert hits the unique index,
+and `controlRunInserted` is still false at that point, so the compensation block
+below does nothing. What is left is a work stream in a sidebar, with a
+`listing_epoch` bump and a reserved email address, for a run that does not
+exist and never will. Claiming the control row first makes its unique keys the
+thing that decides who provisions, before anything visible has been written.
+`main` had this order, and the activity consumer in this same stack kept it;
+only this path lost it.
+
+The audience is worse than a lost write, because what it loses is an
+*announcement*. Admitting five members as five operations and throwing on the
+fourth leaves three seated. The retry recomputes who is new against a roster
+that now contains those three, so they fall out of the newly-admitted set and
+their `participant_joined` is never published — and nothing anywhere records
+that it wasn't. One transaction restores what the batch had.
+
+**What a future change has to respect:** `admitParticipants` returns the rows it
+wrote rather than letting the caller read them back. The read was not merely a
+round trip — between the writes and it, a removal can land, and the audience
+would then publish a joining for somebody no longer on the work stream, or drop
+one who is. A caller that needs to know what a write did should be told by the
+write.
+
+The storage class keeps its own `transactionSync` even though every write
+dispatched through `/internal/identity` is already inside
+`commitWithRegionalEffects`'s transaction. That redundancy is deliberate: the
+class is a unit whose atomicity should not depend on which caller reached it.
+It does mean a test driving the endpoint cannot distinguish the two, so the
+workerd spec proves the property the caller depends on — the operation seats all
+or none — rather than which layer provides it.
+
+### 2026-08-25 — The last two compatibility views, and what a migration is
+
+**What changed:** migration 26 drops `_runtime_workstreams`,
+`_runtime_workstream_participants` and their four write triggers. Nothing is
+left in `LOCAL_TABLES` or `TABLE_REWRITES` for either, `packages/db`'s
+work-stream repository is gone, and the `/dev` seed seats people through the
+identity authority. `compatObjectDrops` is the shape every promotion in
+`workstream-object-schema.ts` had written out by hand.
+
+**Why:** the slice before this one left both views declared because their
+remaining callers were fixtures, and said so. That was the wrong stopping
+point: a view nothing reads is a view a new caller can still reach, and the
+routing entry beside it is an invitation. Retiring them turned out to be the
+only way to find the two production writers that were left — `packages/db`'s
+`workstreams.create`, which the Slack path calls and which I had read as dead,
+and the `/dev` seed's participant insert. Neither showed up in a search for
+routed SQL, because both went through a repository.
+
+**The mistake worth recording.** The first attempt deleted the retired
+statements from `WORKSTREAM_RUNTIME_COMPAT_SCHEMA`. That array is not a
+description of today's schema — it is what migration 1 applies, so an object
+replaying from empty creates each view before a later migration drops it.
+Deleting from it rewrites history, and the damage lands on the *next* migration
+that names the view: migration 12 rebuilds the work-stream view and its
+triggers, and the participant first-opened migration derives from the rounded
+trigger rebuilds. Both broke, 608 suites deep, reporting `no such table:
+main._runtime_workstreams` from the schema apply rather than from anything a
+test wrote. **A retired compat statement stays in that array forever; the
+promotion drops it.** That is what every earlier promotion already did, and
+what the assertion inside each one is for.
+
+**What a future change has to respect:** `admitParticipant` bumps
+`participant_epoch` and clears `first_opened_at` when a removed person comes
+back. That was the retired triggers' behaviour and the conversion nearly lost
+it — being put back into a room you were taken out of is being added to it, so
+the person is notified again and the work stream is unseen for them again, and
+the three facts only agree if one write makes them.
+
+Test fixtures state product identity through `seedWorkstreamObjectRoot`'s own
+fields rather than a second statement against a view, and read it back through
+`workstreamObjectRootRow` / `workstreamObjectParticipantRows`. Assertions cross
+the two vocabularies where they actually differ: `next_attention_ordinal` is
+one ahead of the view's `latest_attention_sequence_number`, `exact_state` is
+finer than the `harness_status` bucket, and timestamps are unix milliseconds.
+
+### 2026-08-25 — The identity and elicitation slices, and migration 25
+
+**What changed:** `WorkstreamIdentityStorage` gains the three layers the five
+authorities before it have — a protocol derived from the storage class, a
+Worker-side port, and one `/internal/identity` endpoint — and every routed read
+and write of `workstreams` and `workstream_participants` moves onto it.
+`WorkstreamSchedulingStorage` gains `openElicitation` and
+`answerElicitationExternally`, the last two writers of `_runtime_elicitations`.
+Migration 25 drops that view and its two triggers, and `elicitations` leaves
+`LOCAL_TABLES` and `TABLE_REWRITES`.
+
+**Why:** every one of these was a statement working around not being able to
+read before it wrote.
+
+- The compare-and-swaps — the naming pass on `title_status`, the description
+  loop on `objective`, the email adoption on `email_address IS NULL` — fenced
+  in a `WHERE` clause and then read `meta.changes` to learn what had happened.
+  They decide inside the transaction now and *name* the outcome, and
+  `redescribe` hands back what is in force after a refusal rather than leaving
+  the caller a second read of a row that can move again.
+- The batches that spanned two tables — the Slack creator reconciliation, the
+  elicitation create, the elicitation answer, the inbound-email transcript
+  write — were sequences whose later statements re-stated the earlier ones'
+  effects as `EXISTS` subqueries, because a batch cannot see its own rows. The
+  elicitation create was the clearest: an `INSERT … SELECT … FROM workstreams`
+  to read the sequence number in the statement that consumed it, then a counter
+  update fenced twice more on the part having taken exactly that number.
+- The joins proved nothing. Both telemetry emitters joined `workstreams` to
+  read one column; the connector audience joined it to re-check a workspace the
+  port checks before it dispatches.
+
+`provisionRuntime` goes with them. It was a bespoke RPC that validated its own
+body and re-checked identity inside the product service — both of which the
+shared dispatcher already does — so a provision could be refused under two
+different mismatch codes depending on which layer noticed first.
+
+One behaviour changes on purpose, and one contract narrows.
+`assertRunAuthorityStillValid` took `Env | D1Database`, and the regional
+`activities` fallback that union made reachable is gone: every caller passes an
+`Env`, and the evidence a connector run started from is the WorkspaceDO's, so a
+second source for it could only disagree.
+
+**What a future change has to respect:** `_runtime_workstreams` and
+`_runtime_workstream_participants` were still declared when this entry was
+written, and the deferral was wrong — see the entry above. Migration 26 retires
+them, and doing so is what surfaced the two production writers that a search
+for routed SQL could not see, because both went through a repository.
+
+### 2026-08-25 — The four system producers provision through the object
+
+**What changed:** `WorkstreamIdentityStorage.provision` is the operation the
+four system bootstrap batches become, reached from the Worker as
+`provisionWorkstreamObject`. The digest run service, the schedule executor, the
+activity consumer and the automation service no longer write `workstreams` or
+`workstream_participants` through the compatibility views; the automation
+service's opening message goes to the transcript port and its root run to the
+harness-run port, and the activity consumer's root run does too.
+
+**Why:** these were the last writers of `_runtime_workstreams` and
+`_runtime_workstream_participants` on a creation path, and every one of them
+was a batch that had to know things the object owns — that
+`next_sequence_number` is 2 when an opening message is coming, that
+`latest_attention_sequence_number` is 1, that a fifth `UPDATE` has to follow
+the insert to set `automation_run_id`. The transcript authority takes the
+sequence number and advances both counters itself, so no producer states them.
+
+Not folded into `WorkstreamObjectCreationService`: that is the member path and
+it requires an opening message, a first part and a first run. Three of these
+four producers create an empty work stream and two create no run at all, so
+sharing one entry would make each of that path's invariants conditional.
+
+Atomicity is what this trades, and it is worth naming. The routed batch was
+atomic across tables the object now owns separately — but it was never atomic
+with the regional `automation_runs` row beside it, which is why the
+compensation path in `createRun` exists at all. Three authoritative writes plus
+that same compensation is the guarantee the code already had, expressed where a
+failure is visible.
+
+One behaviour changes on purpose: the activity consumer's batch stamped
+`harness_status = 'running'` on a work stream whose only run it was inserting
+as `scheduled`. The provision writes `scheduled`, and the object moves itself
+to running when the run actually starts. The pre-stamp was a Worker's guess
+about a run that had not been dispatched yet, and a state the object can derive
+is not one a caller should assert.
+
+**What a future change has to respect:** `provision` is idempotent on replay,
+keyed on the bootstrap's own `runtime_bootstrap` reason code — a producer that
+dies between `bootstrapRuntimeAuthority` and this call retries both, and a
+second write would reset counters a first run may have advanced. Its email
+columns are `COALESCE`d rather than overwritten, because the digest and
+activity batches never named them and `email_route_status` is `NOT NULL`. And
+it is a storage class rather than statements inline in a service so the Node
+suite's agent double runs the real write; a double that modelled it would be
+the second implementation, and the model is what drifts.
+
+### 2026-08-24 — The lifecycle-event migration is 24, and the fifth collision
+
+**What changed:** `runLifecycleAuthorityPromotion` is object schema migration
+24, and `WORKSTREAM_OBJECT_SCHEMA_VERSION` is 24. It was written as 22. Also
+corrected: the harness-run entry below said its migration was 22 after that
+slice renumbered to 23, which is a stale reference that reached `main`.
+
+**Why:** 22 went to the accepted-suggestion audience triggers and 23 to the
+harness-run promotion while this branch sat unopened. That is five collisions in
+one afternoon, and this one is the clearest case for a gate: the branch adds a
+migration, the rebase reported no conflict on the array, and the only symptom
+was two entries numbered 22 in a list nothing checks.
+
+It was caught by `grep -oP 'version: \d+' … | sort | uniq -d`, run before the
+merge. Twice now that check has been the only thing between a duplicate and
+`main` — and the stale doc reference above shows the other half of the cost: a
+renumber touches the array, the constant, and every prose mention, and the
+prose is the part no gate reads.
+
+**What a future change has to respect:** the check belongs in CI. Comparing a
+branch's version list against `main`'s for duplicates is a few lines and would
+have caught all five; every one of them was found by hand, and the one time the
+list was not checked, a wrong number shipped. That is a decision for the team
+rather than something to add inside a conversion slice, but the evidence for it
+is now five incidents deep.
+
 ### 2026-08-24 — Two reviews on the converted harness runs, and the rule this slice had broken
 
 **What changed:** a code review and a rebase audit, run separately over the same
@@ -1376,6 +1587,52 @@ of the three. If the product ever settles on a single busy status, retire the
 other two from the CHECK constraint rather than from the fences, so the
 narrowing is enforced where it can be seen.
 
+### 2026-08-24 — The final message crosses two authorities in one transaction
+
+**What changed:** `persistHarnessFinalMessage` and
+`loadPersistedHarnessFinalOutcome` moved onto the ports, through a new
+`publishFinalMessage` operation. Migration 22 drops
+`_runtime_run_lifecycle_events`, the first of the three views slice 6 could not
+retire. `harness-run-runtime.ts` now holds one `D1Database` parameter, and it is
+the regional automation one.
+
+**Why it needed a new shape.** This was the last guarded batch and the only one
+spanning two authorities: a transcript insert, a lifecycle event whose `JOIN
+messages` checked that insert had landed, and a work-stream update whose `EXISTS
+(SELECT 1 FROM messages …)` checked the same thing again. Both checks exist only
+because a D1 batch cannot branch on its own progress.
+
+`WorkstreamHarnessRunStorage` now composes `WorkstreamMessageStorage` over the
+same `DurableObjectStorage`. The decision — whether this attempt may still speak
+— belongs to the run's authority; the transcript row belongs to the class that
+owns `parts`, so `parts` still has exactly one writer. Both wrap the same
+storage, so the nested `transactionSync` is the same transaction rather than a
+second one. That is the pattern to reach for when an operation genuinely spans
+authorities: compose, do not reimplement, and never let a second class write
+another's table.
+
+**The third statement turned out to do nothing.** It assigned
+`latest_attention_sequence_number`, which was never a column — the retired view
+derived it as `next_attention_ordinal - 1` and its update trigger ignored every
+caller that assigned to it. What remains of that statement is `last_activity_at`
+and `updated_at`, which `appendMessage` already moves.
+
+**The sequence number is now allocated where it is used.** `ensureSequence` in
+`integrations.ts` reserved one first through a bespoke `UPDATE workstreams SET
+next_sequence_number = next_sequence_number + 1 … RETURNING` rewrite, then
+passed it in — burning a number whenever the write was refused. It had exactly
+one caller and its memo variable was read nowhere else, so it deletes outright
+and that rewrite loses a consumer.
+
+**What a future change has to respect:** the `final_message` lifecycle event's
+`status` is the *published* spelling, unlike the `terminal` event's. That is
+load-bearing rather than an inconsistency — this event records the host outcome
+the caller reported, and recovery reads it back and compares it against the
+published terminal set, while `terminal` records the run's own state in the
+object's vocabulary. The two events answer different questions and are spelled
+accordingly.
+
+
 ### 2026-08-24 — Four regressions a review caught, and the edits that caused them
 
 **`admitRun` threw where the retired trigger had swallowed.**
@@ -1461,7 +1718,7 @@ for byte unchanged.
 
 ### 2026-08-23 — Three of the six harness-run views retire, and why the other three cannot
 
-**What changed:** migration 22 drops `_runtime_run_scopes`,
+**What changed:** migration 23 drops `_runtime_run_scopes`,
 `_runtime_run_plugin_activations` and `_runtime_run_memory_contexts` with their
 insert triggers, and removes all three from `LOCAL_TABLES` and `TABLE_REWRITES`.
 `freezeRunMemoryContext` moved onto the port to make the third of them possible.
