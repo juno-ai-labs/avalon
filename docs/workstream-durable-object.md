@@ -933,6 +933,7 @@ already have committed across the object boundary.
 | `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. |
 | `workspace_workstream_suggestion_feedback` | Resolved work-stream action feedback indexed for workspace discovery and ranking. The action itself remains in its SubstreamAgent. |
 | `workspace_workstream_effect_receipts` | Message/hash receipts making WorkstreamDO-to-WorkspaceDO effect retries idempotent — directory effects and the regional activity/mention effects alike; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
+| `workspace_batch_dispatches`, `workspace_batch_dispatch_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. |
 | `workspace_activity_events` | Append-only first-party event log with a local AUTOINCREMENT cursor, audience rule, derived title/body, digestibility decision, dedupe key, and source reference. |
 | `workspace_activity_event_targets` | Involvement edges such as mentioned/assigned; these never grant visibility and cascade with the event. |
 | `opportunity_batch_windows`, `opportunity_batch_events` | Debounced connector/message evidence, bounded attempts, Workflow leases, and terminal admission status; both share one not-yet-started token (`pending`), and the import maps legacy `queued` window rows onto it. Repeated mutation or settlement after `completed` is a no-op; a nonterminal lease mismatch remains fenced. |
@@ -1146,9 +1147,11 @@ directory write at all.
 
 **What changed:** The work-stream API now accepts a reusable visibility, pin,
 and half-open activity-time filter for both preview and application, plus a
-discriminated update. WorkspaceDO resolves that filter in one index query. The
-regional Worker publishes one event per selected work stream through the
-existing regional Queue, and each consumer delivery asks that work stream's
+discriminated update. WorkspaceDO resolves that filter in one index query and
+freezes the selected IDs under the generic operation ID. The regional Worker
+publishes one event per selected work stream through the existing regional
+Queue, records each successfully published `sendBatch` chunk, and resumes only
+undispatched IDs when the same operation is retried. Each consumer delivery asks that work stream's
 main SubstreamAgent to apply the update in its authoritative SQLite transaction.
 Per-object receipts make delivery idempotent; archive also stops an active run,
 and both updates reuse the existing regional-effect outbox for sidebar and
@@ -1169,11 +1172,13 @@ mutation is impossible because the rows belong to separate Durable Objects.
 
 **Consequences, and what a future change has to respect:** New groupings build
 the generic filter; they do not add routes. New supported mutations extend the
-shared update union and the one child transaction. Preview and apply resolve
-their own current target set, so the confirmation count is advisory and the
-accepted response reports the exact number actually enqueued. Queue delivery
+shared update union and the one child transaction. Preview remains advisory;
+the first apply freezes the exact current target set and later transport
+retries reuse it. A Queue send may commit before its WorkspaceDO progress RPC,
+so the child receipt remains the final duplicate-delivery fence. Queue delivery
 may outlive the requesting session, so it rechecks active membership and never
-trusts delivery uniqueness or order.
+trusts delivery uniqueness or order. Dispatch receipts intentionally persist:
+deleting a completed operation would let a late HTTP retry select new targets.
 
 ### 2026-08-26 — Notification lifecycle becomes a closed WorkspaceDO protocol
 

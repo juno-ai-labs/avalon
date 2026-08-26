@@ -149,6 +149,27 @@ export type RecencyGroup = 'Last hour' | 'Today' | 'Yesterday' | 'This week' | '
 
 const hourInMilliseconds = 3_600_000;
 
+/** The next instant when a recency heading can change without new data. */
+export function nextRecencyBoundary(
+  items: ReadonlyArray<{ lastActivityAt: string }>,
+  now = new Date(),
+): number {
+  const nowTimestamp = now.getTime();
+  let next = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 1,
+  ).getTime();
+  for (const item of items) {
+    const timestamp = activityTimestamp(item);
+    const leavesLastHourAt = timestamp + hourInMilliseconds;
+    if (Number.isFinite(leavesLastHourAt) && leavesLastHourAt > nowTimestamp) {
+      next = Math.min(next, leavesLastHourAt);
+    }
+  }
+  return next;
+}
+
 /** The server-side range that describes one visible recency heading. */
 export function recencyGroupBatchFilter(
   label: RecencyGroup,

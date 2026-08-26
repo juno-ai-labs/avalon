@@ -37,8 +37,10 @@ import {
   formatDateTime,
   formatRelative,
   groupActivityItems,
+  nextRecencyBoundary,
   recencyGroupBatchFilter,
   workstreamMarkerStatus,
+  type RecencyGroup,
 } from '../lib/format';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
@@ -103,7 +105,8 @@ type RecentSidebarItem =
   | { type: 'workstream'; workstream: WorkstreamSummary; id: string; lastActivityAt: string };
 
 interface WorkstreamBatchTarget {
-  label: string;
+  label: RecencyGroup;
+  operationId: string;
   filter: WorkstreamBatchFilter;
   update: WorkstreamBatchUpdate;
   matchedCount: number;
@@ -892,6 +895,7 @@ export function Sidebar({
   const [batchPreviewing, setBatchPreviewing] = useState(false);
   const [batchApplying, setBatchApplying] = useState(false);
   const [batchError, setBatchError] = useState<string | null>(null);
+  const [batchPreviewFailed, setBatchPreviewFailed] = useState(false);
   const batchPreviewGeneration = useRef(0);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -924,8 +928,21 @@ export function Sidebar({
     () => workstreams.filter((workstream) => workstream.pinPosition === null),
     [workstreams],
   );
+  const [groupedAtMs, setGroupedAtMs] = useState(() => Date.now());
+  useEffect(() => {
+    const now = new Date();
+    const next = nextRecencyBoundary([
+      ...unpinnedWorkstreams,
+      ...notes,
+    ], now);
+    const timer = window.setTimeout(
+      () => setGroupedAtMs(Date.now()),
+      Math.max(1, next - now.getTime() + 1),
+    );
+    return () => window.clearTimeout(timer);
+  }, [groupedAtMs, notes, unpinnedWorkstreams]);
   const groups = useMemo(() => {
-    const groupedAt = new Date();
+    const groupedAt = new Date(groupedAtMs);
     return groupActivityItems<RecentSidebarItem>([
       ...unpinnedWorkstreams.map((workstream) => ({
         type: 'workstream' as const,
@@ -939,11 +956,8 @@ export function Sidebar({
         lastActivityAt: note.lastActivityAt,
         note,
       })),
-    ], groupedAt).map((group) => ({
-      ...group,
-      filter: recencyGroupBatchFilter(group.label, groupedAt),
-    }));
-  }, [notes, unpinnedWorkstreams]);
+    ], groupedAt);
+  }, [groupedAtMs, notes, unpinnedWorkstreams]);
 
   // The visible destination order is one run: the reader's manually arranged
   // pins first, then recent work streams and notes in exactly the order the
@@ -1135,21 +1149,29 @@ export function Sidebar({
   };
 
   const openWorkstreamBatch = (
-    label: string,
-    filter: WorkstreamBatchFilter,
+    label: RecencyGroup,
     update: WorkstreamBatchUpdate,
     visibleCount: number,
   ): void => {
+    const filter = recencyGroupBatchFilter(label, new Date());
     const generation = batchPreviewGeneration.current + 1;
     batchPreviewGeneration.current = generation;
-    setBatchTarget({ label, filter, update, matchedCount: visibleCount });
+    setBatchTarget({
+      label,
+      operationId: crypto.randomUUID(),
+      filter,
+      update,
+      matchedCount: visibleCount,
+    });
     setBatchPreviewing(true);
     setBatchError(null);
+    setBatchPreviewFailed(false);
     void onPreviewWorkstreamBatch(filter).then((matchedCount) => {
       if (batchPreviewGeneration.current !== generation) return;
       setBatchTarget((current) => current ? { ...current, matchedCount } : null);
     }).catch((error: unknown) => {
       if (batchPreviewGeneration.current !== generation) return;
+      setBatchPreviewFailed(true);
       setBatchError(error instanceof Error ? error.message : 'The work streams could not be counted.');
     }).finally(() => {
       if (batchPreviewGeneration.current === generation) setBatchPreviewing(false);
@@ -1161,6 +1183,7 @@ export function Sidebar({
     batchPreviewGeneration.current += 1;
     setBatchTarget(null);
     setBatchError(null);
+    setBatchPreviewFailed(false);
     setBatchPreviewing(false);
   };
 
@@ -1169,7 +1192,11 @@ export function Sidebar({
     setBatchApplying(true);
     setBatchError(null);
     try {
-      await onApplyWorkstreamBatch(crypto.randomUUID(), batchTarget.filter, batchTarget.update);
+      await onApplyWorkstreamBatch(
+        batchTarget.operationId,
+        batchTarget.filter,
+        batchTarget.update,
+      );
       setBatchTarget(null);
     } catch (error) {
       setBatchError(error instanceof Error ? error.message : 'The work streams could not be updated.');
@@ -1633,7 +1660,6 @@ export function Sidebar({
                             className="menu-item"
                             onSelect={() => openWorkstreamBatch(
                               group.label,
-                              group.filter,
                               { kind: 'mark_read' },
                               group.streams.filter((item) => item.type === 'workstream').length,
                             )}
@@ -1644,7 +1670,6 @@ export function Sidebar({
                             className="menu-item menu-item-danger"
                             onSelect={() => openWorkstreamBatch(
                               group.label,
-                              group.filter,
                               { kind: 'archive' },
                               group.streams.filter((item) => item.type === 'workstream').length,
                             )}
@@ -1844,7 +1869,7 @@ export function Sidebar({
             <Button disabled={batchApplying} onClick={closeWorkstreamBatch}>Cancel</Button>
             <Button
               className={batchTarget?.update.kind === 'archive' ? 'button-danger' : 'button-primary'}
-              disabled={batchApplying || batchPreviewing || Boolean(batchError) || batchTarget?.matchedCount === 0}
+              disabled={batchApplying || batchPreviewing || batchPreviewFailed || batchTarget?.matchedCount === 0}
               onClick={() => void submitWorkstreamBatch()}
             >
               Continue
