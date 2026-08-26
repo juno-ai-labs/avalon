@@ -2817,6 +2817,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       lease_id: result.outcome === "claimed" ? result.leaseId : null,
       outcome: result.outcome,
     });
+    // A terminal replay can mean the earlier settle committed and its
+    // post-commit schedule refresh failed. Reconcile here so that failure
+    // cannot strand the terminal receipt past its retention window.
     if (result.outcome === "terminal") await this.refreshSchedule(request.workspaceId);
     return result;
   }
