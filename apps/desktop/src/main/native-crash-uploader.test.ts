@@ -11,16 +11,34 @@ const runtime = {
   launchId: '018f0000-0000-7000-8000-000000000004', channel: 'stable' as const,
 };
 
+/**
+ * The instant every fixture is written at, and the clock the uploader reads.
+ *
+ * `NativeCrashUploader` compares `deleteAfter` against `Date.now()` rather than
+ * a clock it is given, so a fixture pinned to an absolute date ages out of its
+ * own 14-day retention window and the suite dies on a calendar date — see the
+ * 2026-08-26 entry in `docs/telemetry.md` for what that cost. Freezing the
+ * clock fixes it; deriving both from one constant is what stops them drifting
+ * apart the next time a fixture is re-dated.
+ */
+const FIXTURE_NOW = new Date('2026-08-12T20:00:00.000Z');
+/** A fixture instant, staggered off `FIXTURE_NOW` to order the generations. */
+function fixtureTime(offsetMinutes: number): Date {
+  return new Date(FIXTURE_NOW.getTime() + offsetMinutes * 60_000);
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.setSystemTime(new Date('2026-08-12T20:05:00.000Z'));
+  // Five minutes past the fixtures: inside their retention window, and far
+  // short of the 2099 session expiries the authenticated cases use.
+  vi.setSystemTime(fixtureTime(5));
 });
 
 async function fixture(): Promise<{ root: string; dump: string }> {
   const root = await mkdtemp(join(tmpdir(), 'rally-native-upload-'));
   roots.push(root);
   const first = await prepareNativeCrashGeneration({
-    rootDirectory: root, route: 'global', now: new Date('2026-08-12T20:00:00.000Z'),
+    rootDirectory: root, route: 'global', now: fixtureTime(0),
     generationId: '018f0000-0000-7000-8000-000000000001',
     runtime,
   });
@@ -30,7 +48,7 @@ async function fixture(): Promise<{ root: string; dump: string }> {
   bytes.set(new TextEncoder().encode('MDMP'));
   await writeFile(dump, bytes);
   await prepareNativeCrashGeneration({
-    rootDirectory: root, route: 'global', now: new Date('2026-08-12T20:01:00.000Z'),
+    rootDirectory: root, route: 'global', now: fixtureTime(1),
     generationId: '018f0000-0000-7000-8000-000000000002',
     runtime,
   });
@@ -50,7 +68,7 @@ describe('NativeCrashUploader', () => {
     const root = await mkdtemp(join(tmpdir(), 'rally-native-upload-eu-'));
     roots.push(root);
     const first = await prepareNativeCrashGeneration({
-      rootDirectory: root, route: 'eu', now: new Date('2026-08-12T20:00:00.000Z'),
+      rootDirectory: root, route: 'eu', now: fixtureTime(0),
       generationId: '018f0000-0000-7000-8000-000000000021',
       runtime,
     });
@@ -59,7 +77,7 @@ describe('NativeCrashUploader', () => {
     bytes.set(new TextEncoder().encode('MDMP'));
     await writeFile(join(first.activeCrashpadDirectory!, 'completed', 'renderer.dmp'), bytes);
     await prepareNativeCrashGeneration({
-      rootDirectory: root, route: 'eu', now: new Date('2026-08-12T20:01:00.000Z'),
+      rootDirectory: root, route: 'eu', now: fixtureTime(1),
       generationId: '018f0000-0000-7000-8000-000000000022',
       runtime,
     });
@@ -125,7 +143,7 @@ describe('NativeCrashUploader', () => {
   it('uses a Global onboarding capability and leaves a valid EU-designated generation untouched', async () => {
     const { root, dump } = await fixture();
     const euFirst = await prepareNativeCrashGeneration({
-      rootDirectory: root, route: 'eu', now: new Date('2026-08-12T20:02:00.000Z'),
+      rootDirectory: root, route: 'eu', now: fixtureTime(2),
       generationId: '018f0000-0000-7000-8000-000000000098', runtime,
     });
     const euActiveDump = join(euFirst.activeCrashpadDirectory!, 'completed', 'eu.dmp');
@@ -134,7 +152,7 @@ describe('NativeCrashUploader', () => {
     euBytes.set(new TextEncoder().encode('MDMP'));
     await writeFile(euActiveDump, euBytes);
     await prepareNativeCrashGeneration({
-      rootDirectory: root, route: 'global', now: new Date('2026-08-12T20:03:00.000Z'),
+      rootDirectory: root, route: 'global', now: fixtureTime(3),
       generationId: '018f0000-0000-7000-8000-000000000099', runtime,
     });
     const euDirectory = join(root, 'upload', 'eu', '018f0000-0000-7000-8000-000000000098');

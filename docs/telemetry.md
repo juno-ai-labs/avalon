@@ -667,6 +667,52 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-26 — Crash-uploader fixtures and the test clock come from one constant
+
+**The standing trap, first:** `NativeCrashUploader` reads `Date.now()` directly
+at its expiry and session-validity checks rather than taking a clock. Any test of
+it must freeze the clock, and every fixture instant must stay inside the 14-day
+retention window computed from that frozen instant.
+
+**What changed:** the fixture generations in `native-crash-uploader.test.ts`
+derive their instants from a single `FIXTURE_NOW` through a
+`fixtureTime(offsetMinutes)` helper, and the `setSystemTime` freeze that
+`b3325f5` added is derived from the same constant instead of repeating an
+absolute date.
+
+**Why:** `b3325f5` stopped the bleeding — correctly, and under real pressure —
+but froze the clock at one hard-coded instant while the six generation calls kept
+their own. That leaves the relationship between them a convention rather than
+something the code holds: re-date one generation past the window and the suite
+starts failing again, with nothing to point at. The failure it was fixing is
+exactly that shape. The fixtures had been pinned to `2026-08-12T20:00:00Z`, which
+stamps `deleteAfter` 14 days later at `2026-08-26T20:00:00Z`; at that instant all
+seven tests flipped from passing to failing permanently, because the uploader
+purged its own fixtures as expired instead of uploading them. It was not
+intermittent, so no rerun could clear it, and because `deploy-api` gates every
+regional release on `verify` it blocked deploys repository-wide — the
+memory-scope repair in #327 merged at 20:05 and never reached production.
+
+**Considered and rejected:** *Deriving the fixture instants from the real clock.*
+They would never expire, but every run's inputs would differ, which is the
+property `CLAUDE.md` asks tests not to have, and it would hide the asymmetry
+rather than name it. *Replacing `b3325f5`'s `vi.useFakeTimers` with a narrower
+`Date.now` spy* was also rejected: the landed mechanism works, and swapping it
+for a matter of taste is churn on a file two changes have already touched today.
+
+**Consequences:** moving `FIXTURE_NOW` moves the fixtures with it — verified by
+re-dating it to 2020, where all seven still pass. Re-introducing an independent
+fixture date outside the window fails four of them, which is the trap this
+prevents. The two remaining absolute dates in the file are breadcrumb payload,
+attached to the multipart form and never compared against a clock. A sweep of the
+other desktop suites that pin absolute dates found no second instance:
+`message-export`, `telemetry-launch-marker`, `native-crash-generation`,
+`telemetry-reporter`, `telemetry-spool` and `telemetry-identity` all take their
+instants as parameters, and `telemetry-spool` compares `deleteAfter` against the
+injected `acceptedAt`. `NativeCrashUploader` is the only module here that reads a
+clock its own tests cannot set, and giving it an injected clock remains the
+durable repair.
+
 ### 2026-08-26 — Cold launch no longer awaits preference reconciliation
 
 **What changed:** An existing authenticated launch now initializes Product
