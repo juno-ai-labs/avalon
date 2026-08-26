@@ -941,6 +941,41 @@ describe('Rally API wire adapter', () => {
     });
   });
 
+  it('encodes an opening mention with the normal message resolver and seats its identity', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({
+        items: [{ user, role: 'owner', status: 'active', joinedAt: timestamp }],
+      }))
+      .mockResolvedValueOnce(json({
+        workstream: detail,
+        messageId,
+        harnessRunId: null,
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await api.createWorkstream({
+      openingMessage: 'Ask @Adam to review',
+      participantIds: [],
+      mentions: [{ type: 'person', label: 'Adam', userId, connectorType: null }],
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/workspace/members');
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      openingMessage: 'Ask @Adam to review',
+      participantUserIds: [userId],
+      clientMessageId: expect.any(String),
+      attachmentIds: [],
+      mentions: [{
+        type: 'person',
+        userId,
+        connectorType: null,
+        startOffset: 4,
+        endOffset: 9,
+      }],
+    });
+  });
+
   it('acknowledges visible messages and marks a work stream unread through durable read-state endpoints', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({
@@ -1265,6 +1300,32 @@ describe('message mention resolution', () => {
 
     expect(mentions).toEqual([
       { type: 'connector', userId: null, connectorType: 'google', startOffset: 4, endOffset: 17 },
+    ]);
+  });
+
+  it('preserves which same-name person was selected for each occurrence', async () => {
+    const secondUserId = '00000000-0000-7000-8000-000000000012';
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/workspace/members')) {
+        return json({
+          items: [
+            { user: { ...user, name: 'Alex' }, role: 'owner', status: 'active', joinedAt: timestamp },
+            { user: { ...user, id: secondUserId, email: 'other@example.com', name: 'Alex' }, role: 'member', status: 'active', joinedAt: timestamp },
+          ],
+        });
+      }
+      throw new Error(`unexpected request: ${String(input)}`);
+    }));
+    const api = new RallyApi('https://api.rally.test', session);
+
+    const mentions = await api.messageMentionPayload('Ask @Alex then @Alex', [
+      { type: 'person', label: 'Alex', userId, connectorType: null, startOffset: 4, endOffset: 9 },
+      { type: 'person', label: 'Alex', userId: secondUserId, connectorType: null, startOffset: 15, endOffset: 20 },
+    ]);
+
+    expect(mentions).toEqual([
+      { type: 'person', userId, connectorType: null, startOffset: 4, endOffset: 9 },
+      { type: 'person', userId: secondUserId, connectorType: null, startOffset: 15, endOffset: 20 },
     ]);
   });
 });

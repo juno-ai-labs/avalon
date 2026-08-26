@@ -110,9 +110,10 @@ export async function reapExpiredDraftResources(env: Env, workspaceId: string): 
         AND NOT EXISTS (
           SELECT 1 FROM workspace_workstream_resource_links link
            WHERE link.resource_id = resources.id
-        )`,
+        )
+      RETURNING id`,
   ).bind(resource.id, workspaceId, cutoff)));
   // The rows the batch removed, not the rows the select found: a draft that
   // was attached between the two is progress the select would have claimed.
-  return deleted.reduce((count, result) => count + Number(result.meta.changes ?? 0), 0);
+  return deleted.reduce((count, result) => count + result.results.length, 0);
 }

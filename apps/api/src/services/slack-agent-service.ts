@@ -1009,15 +1009,17 @@ export class SlackAgentService {
    */
 
   async linkUser(auth: AuthContext, token: string): Promise<{ linked: true; teamId: string; slackUserId: string }> {
+    this.env = withWorkspaceRuntimeDatabase(this.env, auth.workspaceId);
     const tokenHash = await sha256(token);
     const challenge = await this.loadLinkChallenge(auth, tokenHash);
     const at = nowIso();
-    let results: D1Result<unknown>[];
+    let results: D1Result<Record<string, unknown>>[];
     try {
       results = await this.env.DB.batch([
       this.env.DB.prepare(
         `UPDATE slack_link_challenges SET consumed_at = ?, consumed_by_user_id = ?
-         WHERE token_hash = ? AND consumed_at IS NULL`,
+         WHERE token_hash = ? AND consumed_at IS NULL
+         RETURNING token_hash`,
       ).bind(at, auth.userId, tokenHash),
       this.env.DB.prepare(
         `INSERT INTO slack_user_links
@@ -1032,7 +1034,8 @@ export class SlackAgentService {
            slack_team_id = excluded.slack_team_id,
            slack_user_id = excluded.slack_user_id,
            status = 'active',
-           updated_at = excluded.updated_at`,
+           updated_at = excluded.updated_at
+         RETURNING workspace_id, user_id, slack_team_id, slack_user_id`,
       ).bind(newId(), auth.userId, at, at, tokenHash, at, auth.userId, auth.workspaceId),
       ]);
     } catch (error) {
@@ -1047,7 +1050,13 @@ export class SlackAgentService {
     }
     const [claimed, linked] = results;
     if (!claimed || !linked) throw new ApiError(500, "slack_link_failed", "Slack could not be connected");
-    if (Number(claimed.meta.changes ?? 0) !== 1 || Number(linked.meta.changes ?? 0) !== 1) {
+    const claimedRow = claimed.results[0];
+    const linkedRow = linked.results[0];
+    if (claimedRow?.token_hash !== tokenHash
+      || linkedRow?.workspace_id !== auth.workspaceId
+      || linkedRow.user_id !== auth.userId
+      || linkedRow.slack_team_id !== challenge.slack_team_id
+      || linkedRow.slack_user_id !== challenge.slack_user_id) {
       throw new ApiError(409, "slack_link_consumed", "This Slack connection link was already used or replaced by a newer one; click Connect Rally in Slack to get a new one");
     }
     await this.assignWorkspaceSessions(
@@ -1181,6 +1190,7 @@ export class SlackAgentService {
   }
 
   async previewLink(auth: AuthContext, token: string): Promise<{ teamId: string; slackUserId: string; workspaceName: string }> {
+    this.env = withWorkspaceRuntimeDatabase(this.env, auth.workspaceId);
     const challenge = await this.loadLinkChallenge(auth, await sha256(token));
     return {
       teamId: String(challenge.slack_team_id),

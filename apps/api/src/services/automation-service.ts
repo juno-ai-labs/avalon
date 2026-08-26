@@ -1772,9 +1772,10 @@ export class AutomationService {
         try {
           const deleted = await this.env.DB.prepare(
             `DELETE FROM automation_runs
-              WHERE id = ? AND workspace_id = ? AND workflow_instance_id IS NULL`,
-          ).bind(runId, this.auth.workspaceId).run();
-          if ((deleted.meta.changes ?? 0) !== 1) {
+              WHERE id = ? AND workspace_id = ? AND workflow_instance_id IS NULL
+              RETURNING id`,
+          ).bind(runId, this.auth.workspaceId).first<{ id: string }>();
+          if (deleted?.id !== runId) {
             throw new Error("automation_run_compensation_not_applied", { cause: error });
           }
         } catch (compensationError) {

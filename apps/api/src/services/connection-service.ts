@@ -413,15 +413,16 @@ export class ConnectionService {
             SET config_json = json_set(COALESCE(config_json, '{}'), '$.githubRepositoryAccess', json(?)),
                 updated_at = ?
           WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status <> 'disabled'
-            AND COALESCE(CAST(json_extract(config_json, '$.githubRepositoryAccess.revision') AS INTEGER), 0) = ?`,
+            AND COALESCE(CAST(json_extract(config_json, '$.githubRepositoryAccess.revision') AS INTEGER), 0) = ?
+          RETURNING id`,
       ).bind(
         nextPolicyJson,
         updatedAt,
         connection.id,
         connection.workspace_id,
         input.expectedRevision,
-      ).run();
-    if (Number(update.meta.changes ?? 0) !== 1) {
+      ).first<{ id: string }>();
+    if (!update || update.id !== connection.id) {
       throw new ApiError(409, "github_repository_access_revision_conflict", "GitHub repository access changed. Reload these settings and apply your changes to the current revision.");
     }
     // No compensating write follows. The policy row above is the whole change:
