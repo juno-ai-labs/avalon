@@ -457,6 +457,45 @@ describe("scoped agent memory", () => {
       .toBe((await resolveMemoryAccess(routedEnv(env, second), second)).find((scope) => scope.kind === "automation")?.memoryScopeId);
   });
 
+  it("gives a member's reply under an automation result the ordinary scope union", async () => {
+    const { env } = fixture();
+    // What the send path actually admits when somebody replies to an
+    // automation's result: an ordinary user-principal run, in a work stream
+    // whose origin stays `automation`, carrying no subscription of its own.
+    objectStores.get(AUTOMATION_WORKSTREAM_TWO)!.prepare(
+      "UPDATE runs SET execution_principal_json = ? WHERE run_id = ?",
+    ).run(JSON.stringify({ type: "user", userId: MEMBER_ID }), AUTOMATION_RUN_TWO);
+    const followUp: WorkstreamWorkflowInput = {
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+      workstreamId: AUTOMATION_WORKSTREAM_TWO,
+      harnessRunId: AUTOMATION_RUN_TWO,
+      triggerMessageId: null,
+      automationSubscriptionId: null,
+      activityId: null,
+      executionPrincipal: { type: "user", userId: MEMBER_ID },
+      reason: "human_message",
+    };
+    const scopes = await resolveMemoryAccess(routedEnv(env, followUp), followUp);
+    // Workspace and the member's own memory, and neither of the two scopes this
+    // work stream is not entitled to: not the subscription's automation memory,
+    // which still takes a run that declares the subscription, and not a
+    // work-stream scope, which only an ad-hoc work stream owns.
+    expect(scopes.map((scope) => scope.kind)).toEqual(["workspace", "user"]);
+    expect(scopes.find((scope) => scope.kind === "user")).toMatchObject({
+      ownerId: MEMBER_ID,
+      writable: true,
+    });
+
+    // And a run that does declare one is still held to the work stream it names.
+    const borrowed: WorkstreamWorkflowInput = {
+      ...input("owner"),
+      automationSubscriptionId: AUTOMATION_SUBSCRIPTION_ID,
+    };
+    await expect(resolveMemoryAccess(routedEnv(env, borrowed), borrowed))
+      .rejects.toThrow("memory_automation_workstream_mismatch");
+  });
+
   it("replays receipts and uses revision CAS for updates and invalidation", async () => {
     const { database, env } = fixture();
     const runInput = input("owner");
