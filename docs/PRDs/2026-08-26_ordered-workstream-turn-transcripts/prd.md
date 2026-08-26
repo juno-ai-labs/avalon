@@ -266,6 +266,12 @@ a turn, block, slice, or hydration loop.
     per-block authorization calls or regional authorization joins are allowed.
     Session, membership, participation, or scope revocation invalidates the
     admission rather than waiting for a row-level recheck.
+18. Make first-open transcript work independent of total transcript length.
+    Unread-anchor lookup, five-before/five-after selection, latest-five
+    selection, snapshot bounds, and child hydration must use declared
+    object-local SQLite indexes with bounded candidate reads, no offset walk,
+    no transcript-wide scan or temporary sort, and no intermediate network or
+    regional-authority round trip between the two slices.
 
 ## Non-goals
 
@@ -614,6 +620,14 @@ see. It makes the order shown to a participant match the order the agent used.
     integrity failure and prevents inference. The rejected alternative was
     relying on unit tests alone while runtime projection code, prompt rendering,
     or stored schemas could drift independently.
+20. **Index the boot query shapes, not merely their columns.** The participant
+    sequence and displayable-sequence indexes support forward and reverse
+    bounded traversal for unread neighbors, latest turns, snapshot bounds, and
+    arbitrary ranges. The boot selects both islands inside one admitted
+    object-local operation, unions their turn/response identities, and bulk
+    hydrates children once. The rejected alternatives were an unverified index
+    that SQLite does not select, `OFFSET` pagination, scanning tombstones to find
+    five displayable turns, and independently hydrating overlapping slices.
 
 ## Data model
 
@@ -761,6 +775,61 @@ Large or sensitive raw result bodies stay in their current regional authority;
 the participant turn stores only authorized display references. If Bind saw a
 model-facing derivative of that result, the restricted loop projection stores
 that exact derivative or a lossless pinned reference to it.
+
+#### Required indexed access paths
+
+The substrate schema must make the initial two-range boot and later range reads
+index-driven. Physical table and index names may follow repository conventions,
+but the following access paths are normative:
+
+- A unique B-tree over participant `turn_sequence`. If one physical table ever
+  holds more than one sequence domain, the domain key precedes
+  `turn_sequence` in every index and query below. In today's one-domain-per-
+  `SubstreamAgent` authority, `turn_sequence` alone is the key. This index serves
+  exact anchors, snapshot `MIN`/`MAX`, tombstone-aware range membership, and
+  forward or reverse bounded scans.
+- A partial B-tree over `turn_sequence` for displayable states (`streaming` and
+  `committed`, excluding `retracted`). SQLite may traverse the same B-tree in
+  either direction; a duplicate descending index is not required. This index
+  serves the normalized unread anchor, five displayable predecessors, five
+  displayable successors, and the five latest displayable turns without walking
+  tombstones.
+- A partial unique identity index over `(run_id, model_turn_index)` where both
+  values are non-null for assistant turns, plus ordered child indexes/keys over
+  `(turn_id, block_index)` and response/activity lookup keys beginning with
+  `response_id` and then `assistant_turn_id`. These make hydration proportional
+  to the selected turns and responses rather than transcript length.
+- The member read-state row that supplies the unread high-water line is a point
+  lookup by `user_id` inside the one-work-stream authority. An adapter that
+  stores multiple work streams together must prefix that primary/unique key with
+  the work-stream/domain identity. It may not scan participant/read-state rows
+  to discover the member's anchor.
+
+Within the shared snapshot fence, the substrate normalizes a missing or
+retracted unread high-water line by finding the first displayable
+`turn_sequence >= anchor` and `<= snapshotThroughSequence` with ascending
+`LIMIT 1`. It then reads up to five displayable predecessors with descending
+`LIMIT 5`, up to five successors with ascending `LIMIT 5`, and the live tail
+with `turn_sequence <= snapshotThroughSequence`, descending `LIMIT 5`. No query
+uses `OFFSET`. The full-sequence index establishes actual coverage across any
+skipped tombstones and transcript boundaries.
+
+The unread and latest selectors run in the same admitted Durable Object storage
+operation and snapshot. Their stable turn IDs and referenced response IDs are
+unioned before blocks, activity, authors, mentions, attachments, and resources
+are bulk hydrated, so overlap is fetched once. SQL statement count and
+authorization work remain constant as total transcript length grows; returned
+payload work remains proportional to the selected turns/blocks and existing
+transport-size rules.
+
+Index presence alone is insufficient. The implementation tests the production
+SQL with `EXPLAIN QUERY PLAN` against a large, tombstone-heavy fixture. Every
+anchor, predecessor, successor, latest, bound, and range selector must use its
+declared sequence index, with no full transcript/read-state scan and no
+`USE TEMP B-TREE` sort. The test also asserts the bounded `LIMIT` query shapes,
+batched union hydration, and constant statement count. Wall-clock thresholds are
+not used as correctness assertions because they are noisy and cannot prove the
+access path.
 
 The harness run remains an execution envelope even though it is not a transcript
 row. It has a stable `response_id` linked to the initiating participant turn,
@@ -1074,13 +1143,14 @@ projector or reducer under test.
 | `T8 Breaking cutover` | One idempotent coordinated release establishes the canonical protocol without backfill, dual paths, capability negotiation, or a compatibility window; old desktops are unsupported and cannot receive transcript data through the removed protocol. |
 | `T9 Visible product behavior` | A real desktop window visibly preserves interleaving, gap loading, unread opening, instant jump-to-latest, smooth streaming, parallel activity, and historical timing labels. |
 | `T10 Constant-cost reader admission` | One external boot/range operation or socket admission authorizes once and reuses an epoch-fenced capability across all slices, active state, and hydration; authorization work never scales with returned turns, blocks, or gaps. |
+| `T11 Indexed initial loading` | Unread-anchor, neighbor, latest, bounds, and arbitrary-range production queries choose declared SQLite indexes; the two initial islands share one snapshot and one deduplicated bulk-hydration pass without a full scan, temporary sort, offset walk, or transcript-length-dependent statement count. |
 
 ### Required test layers and artifacts
 
 | Layer | Required target | Responsibility |
 | --- | --- | --- |
 | Pure harness protocol | `packages/agent-harness/src/bind-loop-projection.test.ts` | Fixed-message canonicalization, projector round trips, system-projection revision changes, provider continuation fields, protocol/derivative classification, and mismatch detection. |
-| Substrate and SQL | `apps/api/test/workstream-transcript-substrate.test.ts` using the real object schema through `createTestSqlStorage()` | Schema constraints, transactions, exact range scans, tombstones, immutable payload references, transition ordering, and idempotent clean-cut schema installation. |
+| Substrate and SQL | `apps/api/test/workstream-transcript-substrate.test.ts` using the real object schema through `createTestSqlStorage()` | Schema constraints, transactions, exact indexed range scans, `EXPLAIN QUERY PLAN` assertions, tombstones, immutable payload references, transition ordering, and idempotent clean-cut schema installation. |
 | Real Cloudflare runtime | `apps/api/test-workers/workstream-transcript-runtime.test.ts` | Real `SubstreamAgent`, object-local SQLite, RPC, WebSocket, eviction/hibernation, concurrency, failure boundaries, and snapshot fencing. This suite may not replace the Durable Object or its storage with a double. |
 | Desktop range/state reducer | `apps/desktop/src/renderer/lib/workstream-turn-ranges.test.ts` | Range union/complement, stable identity reconciliation, stream epochs, stale lifecycle rejection, timers, and realtime singleton coverage. |
 | Desktop component | `apps/desktop/src/renderer/screens/workstream-turn-feed.test.tsx` | Ordered DOM blocks, streaming updates, dual initial islands, jump/scroll behavior, generic thinking/timing labels, and accessibility names. |
@@ -1126,6 +1196,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H26 joins_existing_stream_with_utc_start_and_elapsed_baseline` | workerd + desktop + E2E | Start a response before a second client opens the work stream. On first join, assert the active snapshot carries the original `startedAtUtc`, a server `snapshotAtUtc`, and the full prior `elapsedMsAtSnapshot`; the label paints the already-accrued duration immediately, continues from the local monotonic receipt point, and is replaced by canonical terminal duration. |
 | `H27 opens_workstream_mid_stream_with_atomic_checkpoint_and_catchup` | workerd + desktop + E2E | Before the client opens the work stream, stream accumulated text and produce planned, running, completed, and failed parallel tool states plus an active thinking block. Assert the first boot paints the exact accumulated ordered state and timing baselines, retains unread/latest islands, records `resumeAfterEventSequence`, and then applies subsequent text/tool/thinking frames once without waiting for another fetch. |
 | `H28 authorizes_boot_once_for_all_ranges_and_active_state` | API Node + workerd | Open with disjoint unread/latest slices, active stream checkpoints, lifecycle timing, authors, mentions, attachments, and tool blocks. Instrument the typed reader-admission boundary and assert one admission decision for the complete boot, zero per-turn/block calls, and the same admitted capability identity on every internal scan/hydration. Repeat through the initial socket snapshot and assert it reuses the socket admission. |
+| `H29 uses_indexed_bounded_queries_for_initial_ranges` | SQL + workerd | Populate a large history with overlapping unread/latest islands, inspect the exact production SQL with `EXPLAIN QUERY PLAN`, and instrument statement/hydration boundaries. Assert the member anchor is a point lookup; anchor normalization, predecessor, successor, latest, bounds, and coverage/range selectors use the declared sequence indexes in forward/reverse order with their bounded limits; neither selector uses `OFFSET`, a full transcript scan, or a temporary B-tree; and the union of both islands is bulk hydrated once with a statement count independent of total history length. |
 
 ### Required edge-case and failure tests
 
@@ -1170,6 +1241,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E37 rejects_inconsistent_active_interval_timestamp_baseline` | workerd + desktop | Supply a snapshot whose `startedAtUtc`, `snapshotAtUtc`, and `elapsedMsAtSnapshot` cannot describe the same interval revision, then deliver an older consistent snapshot. Assert the inconsistent snapshot is rejected/resynced without resetting the label to zero, and the older revision cannot roll back a newer valid baseline. |
 | `E38 races_midstream_open_with_frame_and_terminal_commit` | workerd + desktop | Publish a token/tool lifecycle frame immediately before, during, and after first-open snapshot assembly, then commit the active turn. Assert snapshot fencing plus catch-up yields every byte/block/revision exactly once, canonical commit reconciles the reserved turn in place, no active overlay survives terminal state, and no middle range is falsely marked covered. |
 | `E39 keeps_authorization_work_constant_across_range_shapes` | API Node + workerd | Run empty, shortened, tombstone-heavy, overlapping, disjoint, and maximum-existing-bound range fixtures with different returned turn/block counts. Assert each external read makes exactly one reader-admission decision, no row hydration triggers authorization, and a participant/scope epoch change invalidates the admitted socket before another snapshot is returned. |
+| `E40 keeps_indexed_plan_for_missing_anchor_tombstones_and_boundaries` | SQL + workerd | Exercise a missing/retracted unread anchor, long tombstone runs, fewer than five turns on either side, empty history, and a snapshot fence below the physical tail. Assert anchor normalization and all directional/latest/range reads retain the declared indexed plans, coverage remains truthful across skipped tombstones, no linear fallback or temporary sort appears, overlap hydrates once, and deliberately removing each required index makes the plan/failure-proof test fail for that access path. |
 
 ### Required algebraic, race, and failure-proof checks
 
@@ -1208,8 +1280,9 @@ coordinated cutover and no compatibility phases:
 1. Implement the shared durable transcript substrate, `SubstreamAgent` adapter,
    restricted Bind ledger/generations, participant projection, exact provider
    boundary checks, reasoning/activity normalization, constant-cost reader
-   admission, canonical REST/socket protocol, and desktop range/feed reducer.
-   The old feed is replaced, not retained beside the new one.
+   admission, the required sequence/displayable/child/read-state indexes,
+   canonical REST/socket protocol, and desktop range/feed reducer. The old feed
+   is replaced, not retained beside the new one.
 2. Implement every required test ID alongside its behavior. The harness, SQL,
    real-workerd, desktop, E2E, failure-injection, and visible-window suites must
    pass before release; compatibility work is not a prerequisite because it is
@@ -1366,7 +1439,7 @@ exist before deployment, stop and revise this release plan before shipping.
     loop payloads nor `loop_sequence` bounds. Subsequent inference nevertheless
     reconstructs from the restricted projection without consulting the desktop
     projection or Global inference lakehouse.
-39. Every required `H01`–`H28` and `E01`–`E39` test is mapped to an actual test
+39. Every required `H01`–`H29` and `E01`–`E40` test is mapped to an actual test
     name and file, passes at its required layer, and has an implementation-PR
     failure-proof record showing the named assertion fails when its protected
     production behavior is deliberately broken. The three generated algebraic
@@ -1390,3 +1463,11 @@ exist before deployment, stop and revise this release plan before shipping.
     reuses the connection's epoch-fenced admission, and revocation invalidates
     that admission; neither path performs per-row authorization or regional
     authorization joins during the transcript scan.
+43. The unread high-water lookup is a keyed point read. Unread anchor
+    normalization, five-before/five-after, latest-five, snapshot-bound, and
+    arbitrary-range production queries use their declared SQLite indexes with
+    bounded traversal and no `OFFSET`, full transcript scan, or temporary sort.
+    Both initial islands are selected within one object-local snapshot and their
+    union is hydrated once; query/statement count does not grow with total
+    transcript length. Required query-plan tests fail when any required index is
+    removed.
