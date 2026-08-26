@@ -1194,6 +1194,10 @@ lease per acquisition, returns its exact expiry to active duplicates, and fences
 settlement by the lease token. Queue delivery count stays transport telemetry,
 not a product attempt generation. The physical `workflow_instance_id` column and
 Workflow binding remain temporarily compatible with already-created instances.
+The object also accepts their frozen `workflowInstanceId` claim/settlement wire
+shape and returns their smaller strict claim result. Queue pointers older than
+the object's authoritative product attempt are terminally acknowledged because
+no redelivery can make that generation current again.
 
 **Why:** WorkspaceDO already owns the canonical event and terminal state, while
 Queue already owns durable retry and dead-letter retention. A one-callback
@@ -1211,7 +1215,10 @@ must remain an ID-only Queue wake followed by typed object RPC, with individual
 ack/retry and authoritative, lease-fenced settlement. Do not infer success from
 Queue drain, treat Queue delivery count as a product generation, or reintroduce
 raw SQL from the consumer. Remove the drain-only Workflow and rename its physical
-owner column only after pre-cutover instances are proven gone.
+owner column only after pre-cutover instances are proven gone. Until then, keep
+both the legacy Workflow wire adapter and same-instance claim replay: a running
+Workflow remains on versioned code and may repeat an RPC whose object mutation
+committed before its step result did.
 
 ### 2026-08-26 — Notification lifecycle becomes a closed WorkspaceDO protocol
 
