@@ -35,6 +35,9 @@ import {
   type WorkstreamSocketStartReason,
   uuidV7,
   workstreamFeedOpenAttemptId,
+  workstreamFeedSourceQueryKey,
+  workstreamRecoveryFeedQueryKey,
+  workstreamSocketSnapshotGenerationQueryKey,
 } from './telemetry';
 import {
   appendDismissedSuggestionId,
@@ -48,7 +51,7 @@ import {
   visibleTranscriptMessages,
 } from './transcript';
 import type { HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkstreamDetail, WorkstreamSummary } from './types';
-import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { evictCachedWorkstream, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import { useWorkspaceSocket } from './workspace-socket';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
@@ -80,6 +83,8 @@ export interface WorkstreamSocketConnection {
   activeCompaction: AgentCompactionState | null;
   createMessage(input: CreateWorkstreamMessageInput): Promise<Message>;
   loadMessagePage(input: LoadWorkstreamMessagePageInput): Promise<MessagePage>;
+  /** Ask the admitted room to replace local base state with one canonical frame. */
+  requestSnapshot(): void;
 }
 
 export type LoadWorkstreamMessagePageInput =
@@ -614,6 +619,8 @@ export function useWorkstreamSocket(
     (input: LoadWorkstreamMessagePageInput): Promise<MessagePage> => loadMessagePageRef.current(input),
     [],
   );
+  const requestSnapshotRef = useRef<() => void>(() => undefined);
+  const requestSnapshot = useCallback((): void => requestSnapshotRef.current(), []);
 
   useEffect(() => {
     attempts.current = 0;
@@ -621,6 +628,7 @@ export function useWorkstreamSocket(
     if (!api || !enabled) {
       setState('idle');
       setSendReady(false);
+      requestSnapshotRef.current = () => undefined;
       createMessageRef.current = () => Promise.reject(new ApiError(
         'The work stream is not ready to receive messages.',
         409,
@@ -815,9 +823,9 @@ export function useWorkstreamSocket(
 
     // Only the dashboard itself. `block-dashboard-preference` is a cache read
     // with no fetcher behind it — the control socket's boot frame and
-    // `GET /workstreams/:id` both write it — so invalidating it can never
-    // refetch, and leaving the call here would read as a repair path that no
-    // longer exists.
+    // `block_dashboard_preference_updated` events write it — so invalidating it
+    // can never refetch, and leaving the call here would read as a repair path
+    // that no longer exists.
     const syncBlockDashboardQueries = (): Promise<unknown> =>
       queryClient.invalidateQueries({ queryKey: ['block-dashboard', workstreamId], exact: true });
 
@@ -849,6 +857,7 @@ export function useWorkstreamSocket(
         snapshotRequestInFlight = false;
       }
     };
+    requestSnapshotRef.current = requestCanonicalSnapshot;
 
     const applyPersonalEvent = (event: PersonalSocketEvent): void => {
       if (event.type === 'block_dashboard_preference_updated') {
@@ -914,6 +923,15 @@ export function useWorkstreamSocket(
 
       if (event.type === 'snapshot') {
         setActiveCompaction(event.activeCompaction);
+        queryClient.setQueryData<number>(
+          workstreamSocketSnapshotGenerationQueryKey(workstreamId),
+          (current) => (current ?? 0) + 1,
+        );
+        queryClient.removeQueries({
+          queryKey: workstreamRecoveryFeedQueryKey(workstreamId),
+          exact: true,
+        });
+        queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
         queryClient.setQueryData(['workstream', workstreamId], mapWorkstreamDetail(event.workstream));
         // The resume window is for *arriving* at a work stream, and only then.
         //
@@ -1227,10 +1245,7 @@ export function useWorkstreamSocket(
         'workstream_access_revoked',
       ));
       setState('unavailable');
-      queryClient.removeQueries({ queryKey: ['messages', workstreamId], exact: true });
-      setCachedWorkstreams(queryClient, (current) =>
-        current?.filter((workstream) => workstream.id !== workstreamId));
-      queryClient.removeQueries({ queryKey: ['workstream', workstreamId], exact: true });
+      evictCachedWorkstream(queryClient, workstreamId);
     };
 
     const scheduleReconnect = (): void => {
@@ -1556,6 +1571,7 @@ export function useWorkstreamSocket(
     return () => {
       closedByEffect = true;
       setSendReady(false);
+      requestSnapshotRef.current = () => undefined;
       openTrace?.end({ outcome: 'unmounted' });
       openTrace = null;
       createMessageRef.current = () => Promise.reject(new ApiError(
@@ -1588,7 +1604,15 @@ export function useWorkstreamSocket(
   }, [api, createWorkspaceMessage, enabled, queryClient, resolvedSocketLeaseId, resumeState, workstreamId]);
 
   return useMemo(
-    () => ({ state, sendReady, workspaceSocketState, activeCompaction, createMessage, loadMessagePage }),
-    [activeCompaction, createMessage, loadMessagePage, sendReady, state, workspaceSocketState],
+    () => ({
+      state,
+      sendReady,
+      workspaceSocketState,
+      activeCompaction,
+      createMessage,
+      loadMessagePage,
+      requestSnapshot,
+    }),
+    [activeCompaction, createMessage, loadMessagePage, requestSnapshot, sendReady, state, workspaceSocketState],
   );
 }

@@ -136,10 +136,12 @@ five-minute clock restarts each time the work stream leaves the foreground;
 background-running conversation streams remain connected beyond it. Holding a
 pointer over any sidebar work-stream row for one second warms only its
 WorkstreamDO control socket before navigation. The SubstreamAgent feed remains
-closed until the work stream is actually opened and its initial reads succeed,
-because subscribing that feed publishes the user as a current viewer. Leaving,
-cancelling the pointer, unmounting the row, or opening it before the second
-passes cancels the warm-up. Once the control socket opens, it can remain for up
+closed until the work stream is actually selected, because subscribing that
+feed publishes the user as a current viewer. Selection immediately admits the
+feed and starts its snapshot while the independently owned control socket
+connects alongside it; neither waits for detail REST or the other's metadata.
+Leaving, cancelling the pointer, unmounting the row, or opening it before the
+second passes cancels the warm-up. Once the control socket opens, it can remain for up
 to five minutes, and a newly qualified hover replaces any other unopened warm
 socket; speculative warming is therefore bounded to one connection. If the
 work stream opens, the retained owner adds its feed without reopening the warm
@@ -530,6 +532,62 @@ what that leaves exposed.
 
 ## Changelog
 
+### 2026-08-26 — Canonical snapshots fence recovery and revocation clears the reader
+
+**What changed:** Every accepted SubstreamAgent snapshot advances a renderer
+generation. REST recovery captures that generation and, after each await,
+keeps the socket-written detail, transcript, cursors, and lineage if the
+generation advanced. Recovery windows are consumed once and cleared by every
+new snapshot. A reopened screen whose retained socket outlived its base caches,
+and mutation paths that need repair, request one canonical frame from that
+socket. Either room's access-revoked close evicts all per-work-stream reader,
+context, HyperSight, and recovery cache families through one shared boundary.
+
+**Why:** Retry deliberately overlaps the reconnecting feed socket. Without a
+fence, a late HTTP answer could replace a newer canonical snapshot that had
+already repaired the screen; retaining its window could replace that snapshot
+again during a later repair. Query caches can also expire while a background
+socket remains connected, and invalidation cannot refetch a deliberately
+disabled REST reader. The two sockets can observe revocation at different
+times, so partial cleanup could leave content from the other room in memory
+after either room said the reader was no longer authorized.
+
+**Considered and rejected:** Cancelling HTTP requests alone still trusts every
+transport and test double to honor abort after it has returned data. Letting
+each socket maintain its own eviction list preserves two security boundaries
+that drift whenever a new work-stream cache family is added.
+
+**Consequences:** A socket snapshot remains authoritative even when it races a
+manual REST retry. REST remains the explicit unavailable-state reader; ordinary
+repair and a cache-empty retained connection use `request_snapshot`. New
+per-work-stream cache families that can contain reader state must be added to
+`evictCachedWorkstream`, and either 1008 close path must continue to call that
+shared boundary.
+
+### 2026-08-25 — Selection immediately admits the feed
+
+**What changed:** The selected work stream admits its pooled SubstreamAgent
+feed immediately, before any detail or transcript query succeeds. Its first
+snapshot fills both renderer caches and makes the feed/composer surface usable.
+The WorkstreamDO control socket starts independently; the feed does not await
+its viewer preference. Hover remains control-only.
+
+**Why:** The former gate waited for a REST boot from SubstreamAgent before
+opening a socket to the same SubstreamAgent for another boot. That serialized
+duplicate authority work on every cold navigation and put the two-second P90
+goal behind two complete network paths.
+
+**Considered and rejected:** Parallel REST and socket boots retain duplicate
+snapshot assembly and an ambiguous canonical winner. Hover feed warm-up would
+publish presence without an open. Making HyperSight preference part of the feed
+snapshot would add a cross-object call to the critical path.
+
+**Consequences:** Presence begins at selection, which is the user action it now
+represents. After the first ticket or handshake failure, the reconnecting state
+exposes Retry for the REST recovery twin while the socket continues reconnecting;
+offline and access-revoked states expose the same manual path. Ordinary navigation
+does not read REST. Retained sockets and access-revocation behavior are unchanged.
+
 ### 2026-08-25 — Opening telemetry names command-queue readiness
 
 **What changed:** `workstream_send_ready` records when a sidebar-opened composer
@@ -599,13 +657,12 @@ boundary: hover still never starts the SubstreamAgent feed.
 connections. Each start can join its regional ticket request, while the
 existing `realtime_socket_state` event remains the source for connected,
 retrying, and stopped outcomes. Both are Product analytics and honor opt-out.
-
 ### 2026-08-25 — A deliberate sidebar hover warms the work-stream control socket
 
 **What changed:** Holding the pointer over a sidebar work-stream row for one
 second opens its pooled WorkstreamDO metadata socket. A shorter hover opens
-nothing. The SubstreamAgent feed is added only after the work stream is opened
-and its initial reads succeed; the already-warm control socket is reused.
+nothing. The SubstreamAgent feed is added when the work stream is selected; the
+already-warm control socket is reused.
 
 **Why:** The five-minute pool removed the repeat cost when switching back to a
 work stream, but the first switch to a listed work stream still waited for its

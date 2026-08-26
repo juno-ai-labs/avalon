@@ -33,7 +33,13 @@ vi.mock('./workspace-socket', () => ({
 vi.mock('./use-workstream-control-socket', () => ({ useWorkstreamControlSocket: vi.fn() }));
 
 import type * as TelemetryModule from './telemetry';
-import { cancelWorkstreamFeedOpen, markWorkstreamFeedOpenStarted } from './telemetry';
+import {
+  cancelWorkstreamFeedOpen,
+  markWorkstreamFeedOpenStarted,
+  workstreamFeedSourceQueryKey,
+  workstreamRecoveryFeedQueryKey,
+  workstreamSocketSnapshotGenerationQueryKey,
+} from './telemetry';
 
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
 vi.mock('./telemetry', async (importOriginal) => ({
@@ -185,13 +191,12 @@ function workstreamDetail(overrides: Partial<WorkstreamDetail> = {}): Workstream
   };
 }
 
-/** `getWorkstream` answers the whole of an open now, not just the detail. */
+/** `getWorkstream` is the complete REST recovery twin of a socket snapshot. */
 function workstreamBoot(overrides: Partial<WorkstreamDetail> = {}): WorkstreamBoot {
   return {
     ...workstreamDetail(overrides),
     messageFeed: { items: [], nextCursor: null, newerCursor: null },
     resumeFeed: null,
-    blockDashboardPreference: { visible: false, updatedAt: null },
   };
 }
 
@@ -579,6 +584,31 @@ describe('useWorkstreamSocket', () => {
       nextCursor: '21',
       newerCursor: null,
     });
+  });
+
+  it('lets a reopened reader request base state from an already-connected room', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000625';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => result.current.requestSnapshot());
+
+    expect(sentFrames(socket)).toEqual([
+      { type: 'subscribe', afterSequence: 0 },
+      { type: 'request_snapshot' },
+    ]);
   });
 
   it('applies personal and shared HyperSight updates without letting stale runs win', async () => {
@@ -1855,6 +1885,11 @@ describe('useWorkstreamSocket', () => {
       harnessStatus: 'completed',
     } as WorkstreamDetail);
     queryClient.setQueryData(['messages', workstreamId], [{ id: 'message-1' }] as Message[]);
+    queryClient.setQueryData(['messages-newer-cursor', workstreamId], 'message-cursor');
+    queryClient.setQueryData(['block-dashboard', workstreamId], { blocks: [{ sensitive: true }] });
+    queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'legacy_page');
+    queryClient.setQueryData(workstreamRecoveryFeedQueryKey(workstreamId), { resumeFeed: null });
+    queryClient.setQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId), 1);
     setCachedWorkstreams(queryClient, [
       { id: workstreamId, title: 'Compensation review' },
       { id: '00000000-7000-7000-8000-000000000406', title: 'August planning' },
@@ -1886,6 +1921,11 @@ describe('useWorkstreamSocket', () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(queryClient.getQueryData(['workstream', workstreamId])).toBeUndefined();
     expect(queryClient.getQueryData(['messages', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData(['messages-newer-cursor', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData(['block-dashboard', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBeUndefined();
+    expect(queryClient.getQueryData(workstreamRecoveryFeedQueryKey(workstreamId))).toBeUndefined();
+    expect(queryClient.getQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId))).toBeUndefined();
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
       { id: '00000000-7000-7000-8000-000000000406', title: 'August planning' },
     ]);
@@ -2274,6 +2314,10 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    queryClient.setQueryData(workstreamRecoveryFeedQueryKey(workstreamId), {
+      messageFeed: { items: [], nextCursor: null, newerCursor: null },
+      resumeFeed: null,
+    });
 
     // Arriving: the reader is behind, so the resume window is what they see.
     act(() => socket.message(snapshotFrame({
@@ -2289,6 +2333,9 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((m) => m.sequenceNumber))
       .toEqual([12]);
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('socket_snapshot');
+    expect(queryClient.getQueryData(workstreamRecoveryFeedQueryKey(workstreamId))).toBeUndefined();
+    expect(queryClient.getQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId))).toBe(1);
 
     // Reconciling: the same frame shape, but the reader has been watching this
     // run. Read acknowledgement stops while the window is unfocused, so their
@@ -2315,6 +2362,7 @@ describe('useWorkstreamSocket', () => {
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((m) => m.sequenceNumber))
       .toEqual([91]);
     expect(queryClient.getQueryData(['messages-newer-cursor', workstreamId])).toBeNull();
+    expect(queryClient.getQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId))).toBe(2);
   });
 
   it('does not re-ask for a snapshot as a run streams under it', async () => {
