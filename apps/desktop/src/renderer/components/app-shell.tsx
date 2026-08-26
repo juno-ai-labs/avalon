@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useMemo, useRef, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import type { WorkstreamBatchFilter } from '@rally/contracts';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
@@ -70,6 +71,22 @@ export function openWorkstreamId(pathname: string): string | null {
     // equal to the one the screen keys its detail query by.
     return id;
   }
+}
+
+/** Mirror the generic directory predicate only to decide whether this route must leave. */
+export function workstreamMatchesBatchFilter(
+  workstream: WorkstreamSummary,
+  filter: WorkstreamBatchFilter,
+): boolean {
+  if (!filter.includeSystem && workstream.systemKind != null) return false;
+  if (filter.pinned !== undefined && (workstream.pinPosition !== null) !== filter.pinned) return false;
+  const activityAt = Date.parse(workstream.lastActivityAt);
+  if (!Number.isFinite(activityAt)) return false;
+  const atOrAfter = filter.lastActivityAt?.atOrAfter;
+  const before = filter.lastActivityAt?.before;
+  if (atOrAfter !== undefined && activityAt < Date.parse(atOrAfter)) return false;
+  if (before !== undefined && activityAt >= Date.parse(before)) return false;
+  return true;
 }
 
 /**
@@ -321,7 +338,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         }}
         onApplyWorkstreamBatch={async (operationId, filter, update) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          return api.applyWorkstreamBatch(operationId, filter, update);
+          const enqueuedCount = await api.applyWorkstreamBatch(operationId, filter, update);
+          const selected = activeWorkstreamId === null
+            ? undefined
+            : workstreams.data?.find((workstream) => workstream.id === activeWorkstreamId);
+          if (update.kind === 'archive' && selected && workstreamMatchesBatchFilter(selected, filter)) {
+            queryClient.removeQueries({ queryKey: ['workstream', selected.id], exact: true });
+            void navigate('/workstreams/new', { replace: true });
+          }
+          return enqueuedCount;
         }}
         onChangeNoteScope={async (note, scope) => {
           if (!api) return;

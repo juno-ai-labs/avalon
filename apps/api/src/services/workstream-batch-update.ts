@@ -16,7 +16,7 @@ import type { AuthContext, Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
-import { logInfo } from "../observability/logger";
+import { logInfo, logWarn } from "../observability/logger";
 
 /** Cloudflare Queues accepts at most 100 messages in one sendBatch call. */
 const QUEUE_SEND_BATCH_SIZE = 100;
@@ -67,14 +67,19 @@ export class WorkstreamBatchUpdateService {
 
   async enqueue(rawRequest: ApplyWorkstreamBatchRequest) {
     const request = ApplyWorkstreamBatchRequestSchema.parse(rawRequest);
-    const workstreamIds = await new WorkstreamDirectoryService(this.env, this.auth)
-      .batchTargets(request.filter);
     const requestHash = workstreamImportHash({
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       filter: request.filter,
       update: request.update,
     });
+    const directory = new WorkstreamDirectoryService(this.env, this.auth);
+    const dispatch = await directory.beginBatchDispatch({
+      operationId: request.operationId,
+      requestHash,
+      filter: request.filter,
+    });
+    const workstreamIds = dispatch.items;
     const events = workstreamIds.map((workstreamId) => ({
       body: WorkstreamBatchUpdateQueueMessageSchema.parse({
         kind: "workstream_batch_update",
@@ -89,19 +94,41 @@ export class WorkstreamBatchUpdateService {
       contentType: "json" as const,
     }));
 
-    await Promise.all(chunks(events, QUEUE_SEND_BATCH_SIZE).map((batch) =>
-      this.env.ACTIVITY_QUEUE.sendBatch(batch)));
+    const published = await Promise.allSettled(
+      chunks(events, QUEUE_SEND_BATCH_SIZE).map(async (batch) => {
+        await this.env.ACTIVITY_QUEUE.sendBatch(batch);
+        await directory.advanceBatchDispatch({
+          operationId: request.operationId,
+          requestHash,
+          workstreamIds: batch.map((message) => message.body.workstreamId),
+        });
+      }),
+    );
+    const failed = published.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failed.length > 0) {
+      logWarn(this.env, "workstream_batch_update_dispatch_failed", {
+        workspace_id: this.auth.workspaceId,
+        operation_id: request.operationId,
+        update_kind: request.update.kind,
+        queue_batch_count: published.length,
+        failed_batch_count: failed.length,
+        reason: failed[0]?.reason instanceof Error ? failed[0].reason.message : "unknown",
+      });
+      throw failed[0]?.reason;
+    }
 
     logInfo(this.env, "workstream_batch_update_enqueued", {
       workspace_id: this.auth.workspaceId,
       operation_id: request.operationId,
       update_kind: request.update.kind,
-      workstream_count: workstreamIds.length,
+      workstream_count: dispatch.targetCount,
       queue_batch_count: Math.ceil(events.length / QUEUE_SEND_BATCH_SIZE),
     });
     return WorkstreamBatchAcceptedSchema.parse({
       operationId: request.operationId,
-      enqueuedCount: workstreamIds.length,
+      enqueuedCount: dispatch.targetCount,
     });
   }
 }

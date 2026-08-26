@@ -7,6 +7,8 @@ import { z } from "zod";
 
 import { workspaceDOName } from "../durable-objects/names";
 import {
+  WorkspaceBatchDispatchAdvanceResultSchema,
+  WorkspaceBatchDispatchBeginResultSchema,
   WorkspaceDirectoryPageSchema,
   WorkspaceDirectoryReadableIdsResultSchema,
 } from "../durable-objects/workspace-directory-protocol";
@@ -58,6 +60,35 @@ export class WorkstreamDirectoryService {
       filter,
     });
     return result.items;
+  }
+
+  async beginBatchDispatch(input: {
+    operationId: string;
+    requestHash: string;
+    filter: WorkstreamBatchFilter;
+  }): Promise<{ items: string[]; targetCount: number }> {
+    const workspace = await this.workspace();
+    return WorkspaceBatchDispatchBeginResultSchema.parse(
+      await workspace.beginWorkstreamBatchDispatch({
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        ...input,
+      }),
+    );
+  }
+
+  async advanceBatchDispatch(input: {
+    operationId: string;
+    requestHash: string;
+    workstreamIds: string[];
+  }): Promise<{ remainingCount: number }> {
+    const workspace = await this.workspace();
+    return WorkspaceBatchDispatchAdvanceResultSchema.parse(
+      await workspace.advanceWorkstreamBatchDispatch({
+        workspaceId: this.auth.workspaceId,
+        ...input,
+      }),
+    );
   }
 
   async plannedForAutomation(

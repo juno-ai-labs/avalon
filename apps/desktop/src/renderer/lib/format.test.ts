@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatDuration,
   groupWorkstreams,
+  nextRecencyBoundary,
   recencyGroupBatchFilter,
   statusLabel,
   workstreamMarkerStatus,
@@ -120,6 +121,13 @@ describe('work-stream presentation rules', () => {
       pinned: false,
       includeSystem: false,
     });
+  });
+
+  it('names the first data-free boundary that can move a row', () => {
+    expect(nextRecencyBoundary([
+      { lastActivityAt: localDate(2026, 7, 7, 10, 0) },
+      { lastActivityAt: localDate(2026, 7, 6, 12, 0) },
+    ], now)).toBe(new Date(2026, 7, 7, 11, 0).getTime());
   });
 
   it('does not describe a gray harness state as a finished project', () => {

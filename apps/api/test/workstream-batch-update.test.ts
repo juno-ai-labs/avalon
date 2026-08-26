@@ -29,28 +29,53 @@ function workstreamId(index: number): string {
   return `00000000-0000-7000-8000-${String(index).padStart(12, "0")}`;
 }
 
-function environment(targets: string[]) {
+function environment(targets: string[], failBatchOnce?: number) {
   const batchUpdateTargets = vi.fn(async () => ({ items: targets }));
+  const dispatched = new Set<string>();
+  const beginWorkstreamBatchDispatch = vi.fn(async () => ({
+    items: targets.filter((target) => !dispatched.has(target)),
+    targetCount: targets.length,
+  }));
+  const advanceWorkstreamBatchDispatch = vi.fn(async (input: { workstreamIds: string[] }) => {
+    input.workstreamIds.forEach((target) => dispatched.add(target));
+    return { remainingCount: targets.length - dispatched.size };
+  });
   const sent: Array<Array<{ body: unknown }>> = [];
+  let batchAttempt = 0;
   const workspaceNamespace = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
     idFromName: (name: string) => createTestDurableObjectId(name),
-    get: () => ({ batchUpdateTargets }),
+    get: () => ({
+      advanceWorkstreamBatchDispatch,
+      batchUpdateTargets,
+      beginWorkstreamBatchDispatch,
+    }),
   });
   const env = createTestEnv({
     APP_ENV: "test",
     AVALON_REGION: "global",
     WORKSPACE_DOS: workspaceNamespace,
     ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({
-      sendBatch: async (messages: Array<{ body: unknown }>) => { sent.push(messages); },
+      sendBatch: async (messages: Array<{ body: unknown }>) => {
+        const attempt = batchAttempt;
+        batchAttempt += 1;
+        if (attempt === failBatchOnce) throw new Error("queue_chunk_failed");
+        sent.push(messages);
+      },
     }),
   });
-  return { batchUpdateTargets, env, sent };
+  return {
+    advanceWorkstreamBatchDispatch,
+    batchUpdateTargets,
+    beginWorkstreamBatchDispatch,
+    env,
+    sent,
+  };
 }
 
 describe("generic work-stream batch updates", () => {
   it("resolves the filter once and sends one Queue event per work stream", async () => {
     const targets = Array.from({ length: 205 }, (_, index) => workstreamId(index + 1));
-    const { batchUpdateTargets, env, sent } = environment(targets);
+    const { beginWorkstreamBatchDispatch, env, sent } = environment(targets);
     const filter = {
       lastActivityAt: {
         atOrAfter: "2026-08-01T00:00:00.000Z",
@@ -66,12 +91,11 @@ describe("generic work-stream batch updates", () => {
       update: { kind: "mark_read" },
     })).resolves.toEqual({ operationId: OPERATION_ID, enqueuedCount: 205 });
 
-    expect(batchUpdateTargets).toHaveBeenCalledOnce();
-    expect(batchUpdateTargets).toHaveBeenCalledWith({
-      workspaceId: WORKSPACE_ID,
-      userId: USER_ID,
+    expect(beginWorkstreamBatchDispatch).toHaveBeenCalledOnce();
+    expect(beginWorkstreamBatchDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: OPERATION_ID,
       filter,
-    });
+    }));
     expect(sent.map((batch) => batch.length)).toEqual([100, 100, 5]);
     const events = sent.flatMap((batch) => batch.map((message) =>
       WorkstreamBatchUpdateQueueMessageSchema.parse(message.body)));
@@ -79,6 +103,29 @@ describe("generic work-stream batch updates", () => {
     expect(events.map((event) => event.workstreamId)).toEqual(targets);
     expect(new Set(events.map((event) => event.operationId))).toEqual(new Set([OPERATION_ID]));
     expect(events.every((event) => event.update.kind === "mark_read")).toBe(true);
+  });
+
+  it("resumes only undispatched Queue chunks after a partial publication failure", async () => {
+    const targets = Array.from({ length: 205 }, (_, index) => workstreamId(index + 1));
+    const { beginWorkstreamBatchDispatch, env, sent } = environment(targets, 1);
+    const request = {
+      operationId: OPERATION_ID,
+      filter: { pinned: false, includeSystem: false },
+      update: { kind: "mark_read" as const },
+    };
+    const service = new WorkstreamBatchUpdateService(env, auth);
+
+    await expect(service.enqueue(request)).rejects.toThrow("queue_chunk_failed");
+    await expect(service.enqueue(request)).resolves.toEqual({
+      operationId: OPERATION_ID,
+      enqueuedCount: 205,
+    });
+
+    expect(beginWorkstreamBatchDispatch).toHaveBeenCalledTimes(2);
+    const accepted = sent.flatMap((batch) => batch.map((message) =>
+      WorkstreamBatchUpdateQueueMessageSchema.parse(message.body).workstreamId));
+    expect(accepted).toHaveLength(targets.length);
+    expect(new Set(accepted)).toEqual(new Set(targets));
   });
 
   it("previews through the same generic filter without enqueueing", async () => {
