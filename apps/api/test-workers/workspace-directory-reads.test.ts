@@ -265,6 +265,65 @@ async function seedFeedback(input: {
 }
 
 describe("what the workspace object answers about its work streams", () => {
+  describe("batchUpdateTargets — generic filtered Queue fan-out", () => {
+    it("selects one viewer-visible unpinned date range without probing children", async () => {
+      const included = await seedWorkstream({
+        title: "Included",
+        lastActivityAt: "2020-03-12T12:00:00.000Z",
+      });
+      const pinned = await seedWorkstream({
+        title: "Pinned",
+        lastActivityAt: "2020-03-13T12:00:00.000Z",
+      });
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec(
+          `INSERT INTO workspace_workstream_pins
+             (user_id, workstream_id, position, created_at, updated_at)
+           VALUES (?, ?, 0, 1, 1)`,
+          OWNER,
+          pinned,
+        );
+      });
+      await seedWorkstream({
+        title: "Too old",
+        lastActivityAt: "2020-03-09T12:00:00.000Z",
+      });
+      await seedWorkstream({
+        title: "Private to somebody else",
+        lastActivityAt: "2020-03-14T12:00:00.000Z",
+        scope: "personal",
+        participants: [OUTSIDER],
+        createdByUserId: OUTSIDER,
+      });
+      await seedWorkstream({
+        title: "System machinery",
+        lastActivityAt: "2020-03-15T12:00:00.000Z",
+        systemKind: "digest",
+      });
+      await seedWorkstream({
+        title: "Already archived",
+        lastActivityAt: "2020-03-16T12:00:00.000Z",
+        archivedAt: "2020-03-17T00:00:00.000Z",
+      });
+
+      const result = await workspace().batchUpdateTargets({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        filter: {
+          lastActivityAt: {
+            atOrAfter: "2020-03-10T00:00:00.000Z",
+            before: "2020-03-20T00:00:00.000Z",
+          },
+          pinned: false,
+          includeSystem: false,
+        },
+      });
+
+      expect(result.items).toEqual([included]);
+      expect(result.items).not.toContain(pinned);
+    });
+  });
+
   describe("lookupWorkstreamDirectory — Slack's unfurl summaries", () => {
     it("returns exactly the ids asked for, and no others", async () => {
       const wanted = await seedWorkstream({

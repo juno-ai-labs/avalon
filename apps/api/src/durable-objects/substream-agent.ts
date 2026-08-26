@@ -15,6 +15,8 @@ import {
   WorkspaceIdSchema,
   WorkstreamIdSchema,
   asSubstreamId,
+  asUserId,
+  asWorkspaceId,
   ServerSocketEventSchema,
   SubstreamDirectSocketEventSchema,
   UpdateWorkstreamRequestSchema,
@@ -105,6 +107,10 @@ import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-data
 import { TerminalObjectPortError } from "../services/terminal/object-port";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import { loadWorkstreamWakeup } from "../services/workstream-wakeup-service";
+import {
+  WorkstreamBatchUpdateQueueMessageSchema,
+  type WorkstreamBatchUpdateQueueMessage,
+} from "../services/workstream-batch-update";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import type { WorkstreamRuntimeResourceAttacher } from "../services/workstream-object-client";
 import {
@@ -900,6 +906,47 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   ): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptProductRequest(this.rpcRequest(input), traced));
+  }
+
+  /**
+   * Trusted regional Queue delivery for one member-initiated batch mutation.
+   * The HTTP request authenticated the person before enqueue; delivery rechecks
+   * active workspace membership, but deliberately does not depend on the login
+   * session still being alive after the durable handoff.
+   */
+  async applyQueuedBatchUpdate(input: WorkstreamBatchUpdateQueueMessage) {
+    await this.initialized;
+    const request = WorkstreamBatchUpdateQueueMessageSchema.parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.workstreamId !== request.workstreamId
+      || this.externalSubstreamId() !== "0"
+      || request.region !== this.env.AVALON_REGION) {
+      return { outcome: "skipped" as const, reason: "workstream_identity_mismatch" };
+    }
+    const membership = await this.activeMembership(
+      asWorkspaceId(request.workspaceId),
+      asUserId(request.userId),
+    );
+    if (!membership) return { outcome: "skipped" as const, reason: "member_revoked" };
+    const auth: AuthContext = {
+      sessionId: `batch:${request.operationId}`,
+      userId: asUserId(request.userId),
+      workspaceId: asWorkspaceId(request.workspaceId),
+      region: this.env.AVALON_REGION,
+      role: membership.role,
+      analyticsWorkspaceId: membership.analytics_workspace_id ?? null,
+    };
+    try {
+      const outcome = await this.product.applyQueuedBatchUpdate(auth, request);
+      return { outcome, reason: null };
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        return { outcome: "skipped" as const, reason: error.code };
+      }
+      throw error;
+    }
   }
 
   async executeRuntimeSql(

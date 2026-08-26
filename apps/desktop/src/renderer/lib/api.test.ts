@@ -918,6 +918,36 @@ describe('Rally API wire adapter', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ archived: true });
   });
 
+  it('previews and enqueues a generic filtered work-stream batch update', async () => {
+    const operationId = '00000000-0000-7000-8000-000000000099';
+    const filter = {
+      lastActivityAt: {
+        atOrAfter: '2026-08-01T00:00:00.000Z',
+        before: '2026-08-08T00:00:00.000Z',
+      },
+      pinned: false,
+      includeSystem: false,
+    } as const;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ matchedCount: 20 }))
+      .mockResolvedValueOnce(json({ operationId, enqueuedCount: 20 }, { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.previewWorkstreamBatch(filter)).resolves.toBe(20);
+    await expect(api.applyWorkstreamBatch(operationId, filter, { kind: 'archive' })).resolves.toBe(20);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://api.rally.test/workstreams/batch/preview');
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ filter });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe('https://api.rally.test/workstreams/batch');
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      operationId,
+      filter,
+      update: { kind: 'archive' },
+    });
+  });
+
   it('creates an attachment-only work stream with its draft resource IDs', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(json({
       workstream: detail,
