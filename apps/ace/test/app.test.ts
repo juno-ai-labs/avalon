@@ -80,4 +80,15 @@ describe('Ace Hono application', () => {
     expect(response.status).toBe(403);
     expect(cloudflare).not.toHaveBeenCalled();
   });
+
+  it('rejects a cross-origin Queue peek before it reaches Cloudflare', async () => {
+    const cloudflare = vi.spyOn(globalThis, 'fetch');
+    const response = await worker.fetch!(new Request(
+      'https://ace.internal.rallywith.ai/api/queues/dead-letters/queue-id/peek',
+      { method: 'POST', headers: { Origin: 'https://attacker.example' } },
+    ), env(), { waitUntil: vi.fn() } as unknown as ExecutionContext);
+
+    expect(response.status).toBe(403);
+    expect(cloudflare).not.toHaveBeenCalled();
+  });
 });
