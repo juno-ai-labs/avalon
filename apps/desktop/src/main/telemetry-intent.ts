@@ -86,7 +86,7 @@ export function parseTelemetryProductIntent(value: unknown): DesktopTelemetryPro
       delete properties['kind'];
       delete properties['operationId'];
       const parsed = TELEMETRY_EVENTS.workstream_feed_visible.properties.safeParse(properties);
-      if (parsed.success && parsed.data.dataReadyDurationMs <= parsed.data.durationMs) return {
+      if (parsed.success) return {
         kind: 'workstream_feed_visible',
         operationId,
         ...parsed.data,

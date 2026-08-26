@@ -77,6 +77,15 @@ describe('parseTelemetryProductIntent', () => {
     expect(parseTelemetryProductIntent(supersededIntent)).toEqual(supersededIntent);
     expect(() => parseTelemetryProductIntent({ ...supersededIntent, supersedingWorkstreamId: undefined }))
       .toThrow('Invalid telemetry intent');
+    expect(parseTelemetryProductIntent({
+      ...supersededIntent,
+      outcome: 'abandoned',
+      supersedingWorkstreamId: undefined,
+    })).toEqual({
+      ...supersededIntent,
+      outcome: 'abandoned',
+      supersedingWorkstreamId: undefined,
+    });
   });
 
   it('refuses a socket transition the registry would not accept', () => {

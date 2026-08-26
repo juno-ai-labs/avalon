@@ -17,7 +17,11 @@ import { clearAllDrafts, readDraftText, writeDraftText } from './draft-cache';
 import { useDraftText } from './use-draft-text';
 import type { RallyApi } from './api';
 import { readDevicePreferences } from './device-preferences';
-import { consumeSurfaceEntrypoint } from './telemetry';
+import {
+  consumeSurfaceEntrypoint,
+  markWorkstreamFeedOpenStarted,
+  workstreamFeedOpenAttemptId,
+} from './telemetry';
 
 let deepLinkListener: ((navigation: DesktopDeepLinkNavigation) => void) | null = null;
 let sessionListener: ((session: DesktopSession | null) => void) | null = null;
@@ -882,6 +886,27 @@ describe('draft cache lifetime across a session', () => {
     act(() => sessionListener?.(null));
 
     await waitFor(async () => expect(await readDraftText('workstream:1')).toBeNull());
+  });
+
+  it('abandons an opening attempt when the session that owns it ends', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    await waitFor(() => expect(sessionListener).not.toBeNull());
+    const workstreamId = '00000000-0000-4000-8000-000000000213';
+    const operationId = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 100);
+    bridge.reportTelemetryProductIntent.mockClear();
+
+    act(() => sessionListener?.(null));
+
+    await waitFor(() => expect(bridge.reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'workstream_open_outcome',
+      operationId,
+      workstreamId,
+      outcome: 'abandoned',
+      durationMs: expect.any(Number),
+    }));
+    expect(workstreamFeedOpenAttemptId(workstreamId)).toBeUndefined();
   });
 
   it('drops every draft when another account takes over the device', async () => {

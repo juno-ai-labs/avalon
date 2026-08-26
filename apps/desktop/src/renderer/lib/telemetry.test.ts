@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  abandonPendingWorkstreamFeedOpen,
+  abandonWorkstreamFeedOpenOutsideRoute,
   javascriptErrorCandidate,
   cancelWorkstreamFeedOpen,
   completeWorkstreamFeedPaint,
@@ -18,7 +20,7 @@ import {
   telemetryVisibility,
   uuidV7,
   workstreamFeedOpenCacheState,
-  workstreamFeedOpenRequestId,
+  workstreamFeedOpenAttemptId,
   workstreamNavigation,
 } from './telemetry';
 
@@ -77,9 +79,9 @@ describe('renderer semantic telemetry helpers', () => {
       100,
       socketLeaseId,
     );
-    expect(markWorkstreamFeedOpenStarted(workstreamId, 'pinned', 'control_warmup', 110))
+    expect(markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 110))
       .toBe(operationId);
-    expect(workstreamFeedOpenRequestId(workstreamId)).toBe(operationId);
+    expect(workstreamFeedOpenAttemptId(workstreamId)).toBe(operationId);
     markWorkstreamFeedCacheState(workstreamId, 'detail_cached');
     expect(workstreamFeedOpenCacheState(workstreamId)).toBe('detail_cached');
     expect(markWorkstreamFeedDataReady(workstreamId, 320)).toBe(true);
@@ -114,7 +116,7 @@ describe('renderer semantic telemetry helpers', () => {
           socketLeaseId,
         },
       });
-    expect(workstreamFeedOpenRequestId(workstreamId)).toBeUndefined();
+    expect(workstreamFeedOpenAttemptId(workstreamId)).toBeUndefined();
   });
 
   it('replaces a pending feed measurement when another sidebar row is chosen', () => {
@@ -138,7 +140,7 @@ describe('renderer semantic telemetry helpers', () => {
     expect(report).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'workstream_open_started', operationId: secondAttempt, workstreamId: second,
     }));
-    expect(workstreamFeedOpenRequestId(first)).toBeUndefined();
+    expect(workstreamFeedOpenAttemptId(first)).toBeUndefined();
     expect(markWorkstreamFeedDataReady(first, 30)).toBe(false);
     markWorkstreamFeedCacheState(second, 'feed_cached');
     expect(workstreamFeedOpenCacheState(second)).toBe('feed_cached');
@@ -218,6 +220,28 @@ describe('renderer semantic telemetry helpers', () => {
       .toBe(returnAttempt);
   });
 
+  it('abandons a pending click when its route is left and starts a fresh clock on return', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportTelemetryProductIntent: report });
+    const workstreamId = '00000000-0000-4000-8000-000000000211';
+    const firstAttempt = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 100);
+
+    abandonWorkstreamFeedOpenOutsideRoute(workstreamId, 140);
+    expect(workstreamFeedOpenAttemptId(workstreamId)).toBe(firstAttempt);
+    abandonWorkstreamFeedOpenOutsideRoute(null, 160);
+
+    expect(report).toHaveBeenCalledWith({
+      kind: 'workstream_open_outcome',
+      operationId: firstAttempt,
+      workstreamId,
+      outcome: 'abandoned',
+      durationMs: 60,
+    });
+    const returnAttempt = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 60_100);
+    expect(returnAttempt).not.toBe(firstAttempt);
+    abandonPendingWorkstreamFeedOpen(60_120);
+  });
+
   it('ends a failed opening with the same attempt and socket lease IDs', () => {
     const report = vi.fn(async () => undefined);
     desktopBridge.mockReturnValue({ reportTelemetryProductIntent: report });
@@ -241,7 +265,7 @@ describe('renderer semantic telemetry helpers', () => {
       durationMs: 45,
       socketLeaseId,
     });
-    expect(workstreamFeedOpenRequestId(workstreamId)).toBeUndefined();
+    expect(workstreamFeedOpenAttemptId(workstreamId)).toBeUndefined();
   });
 
   it('reduces renderer stacks to bounded bundle-relative frame coordinates', () => {

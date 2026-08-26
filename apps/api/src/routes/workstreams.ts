@@ -257,9 +257,13 @@ workstreamRoutes.put("/:id/block-dashboard", zValidator("param", idParam), zVali
 );
 workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
   const id = c.req.valid("param").id;
+  const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
   return requestFlowSpan(c, "workstream.detail.read", {
     flow: "workstream_open",
     identity: { workstreamId: id },
+    attributes: {
+      ...(operationId ? { "rally.operation.id": operationId } : {}),
+    },
   }, async (span) => {
     const client = await authoritativeWorkstreamClient(c, id, { span, flow: "workstream_open" });
     // Everything an open needs, in one response. The room answers the detail and

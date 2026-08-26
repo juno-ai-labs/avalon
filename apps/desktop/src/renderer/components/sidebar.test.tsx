@@ -156,6 +156,7 @@ describe('Sidebar work-stream markers', () => {
   beforeEach(() => {
     window.localStorage.clear();
     copyText.mockReset().mockResolvedValue(undefined);
+    markSurfaceEntrypoint.mockReset();
     markWorkstreamNavigation.mockReset();
     markWorkstreamFeedOpenStarted.mockReset();
     reportTelemetryProductIntent.mockReset();
@@ -230,6 +231,29 @@ describe('Sidebar work-stream markers', () => {
       expect.any(Number),
       socketLeaseId,
     );
+  });
+
+  it('does not start navigation telemetry when the active work-stream row is clicked again', () => {
+    const active = workstream('active-workstream', 'Already open', 'completed');
+    render(
+      <MemoryRouter initialEntries={[`/workstreams/${active.id}`]}>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[active]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: /Already open/u }));
+
+    expect(markWorkstreamFeedOpenStarted).not.toHaveBeenCalled();
+    expect(markWorkstreamNavigation).not.toHaveBeenCalled();
+    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
   });
 
   // The pill answers to how near the pointer is rather than to hovering the

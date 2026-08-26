@@ -138,16 +138,20 @@ clipboard values, prompts, transcripts, or provider content.
 
 A primary sidebar work-stream click emits `workstream_open_started` with one
 opening-attempt operation ID. Its terminal `workstream_open_outcome` is
-`visible`, `superseded`, or `load_failed`; a rapid A to B to A sequence therefore
+`visible`, `superseded`, `abandoned`, or `load_failed`; a rapid A to B to A sequence therefore
 has three attempt IDs and two explicit superseded outcomes instead of silently
 dropping the abandoned work. A duplicate click on the same still-pending row
-retains its first attempt ID, and the already-active row starts nothing. The
+retains its first attempt ID and first-click dimensions, and the already-active
+row starts nothing. Leaving for another surface or ending the owning session
+emits `abandoned`, so returning to the same row starts a fresh clock rather than
+inheriting time spent elsewhere. The
 visible outcome accompanies `workstream_feed_visible`, which records exact
 click-to-data-ready and click-to-first-painted-feed milliseconds, the
 pinned/recent section, the detail/transcript cache state, the pooled-socket
 state at click, the transcript-cache, boot-payload, or rollout-fallback source,
-and only a count bucket for messages. The opening-attempt ID is also the detail
-request's `x-request-id` whenever that open makes a detail request.
+and only a count bucket for messages. Each detail request keeps a unique
+`x-request-id`, including React Query retries, and carries the click ID separately
+as `x-rally-operation-id`; the Worker's `workstream.detail.read` span records both.
 
 Every mounted pooled socket owner has a UUIDv7 socket-lease ID shared by its
 control and feed connections for the owner's full retained lifetime.
@@ -640,6 +644,37 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-25 — Route abandonment and retries cannot corrupt opening latency
+
+**What changed:** A click attempt now terminates as `abandoned` when navigation
+leaves its work stream for another surface or its owning session ends. Painted
+feed reporting reschedules after an effect cleanup without re-latching data
+readiness, which preserves the terminal event under React StrictMode and any
+production dependency change inside the two-frame window. Detail retries now
+mint distinct request IDs while carrying the click ID as the existing Rally
+operation header. The event registry, rather than desktop IPC alone, enforces
+that data-ready time cannot exceed painted time.
+
+**Why:** An interrupted load could stay in the renderer singleton and make a
+later 60 ms return look minutes long. Separately, cancelling the first scheduled
+paint consumed a one-shot latch and left no second schedule, which lost both the
+success event and terminal outcome. Reusing the click ID as every retry's
+request ID also collapsed multiple HTTP attempts in the exact slow tail this
+instrumentation needs to explain.
+
+**Considered and rejected:** Treating non-sidebar navigation as `superseded`
+would claim another work stream caused it; treating it as `load_failed` would
+claim a service failure. WorkstreamScreen unmount cleanup was also rejected
+because StrictMode deliberately simulates that cleanup without the reader
+leaving. Route and session observation represent the actual abandonment. A
+single repeated request ID was rejected because the tracing contract defines it
+per call; the operation header already carries the longer click lifetime.
+
+**Consequences:** Every accepted sidebar click has one terminal outcome, retries
+remain individually diagnosable, and queries must treat `abandoned` separately
+from rapid work-stream switching and load failure. UUID, consent, content, and
+Global-versus-EU boundaries are unchanged.
 
 ### 2026-08-25 — Opening attempts and pooled socket leases have explicit lineage
 
