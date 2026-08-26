@@ -14,6 +14,19 @@ import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 
 const MAX_CONNECTOR_EVENT_QUEUE_BYTES = 120_000;
 
+/**
+ * Two-stage handoff on one Queue:
+ *
+ * 1. `workspace_connector_event` carries the bounded event into WorkspaceDO.
+ * 2. Only after that commit, `connector_event_process` carries IDs and claim
+ *    fences; the consumer reloads the canonical event from WorkspaceDO.
+ *
+ * Ingress is acknowledged only after the second send is accepted. A crash or
+ * send failure therefore replays the idempotent ingest instead of losing the
+ * processing wake-up. Keeping event content out of stage 2 also keeps repeated
+ * processing deliveries and the DLQ content-free. See `docs/connectors.md`.
+ */
+
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -115,7 +128,7 @@ export function workspaceConnectorEventProcessQueueMessage(input: {
   });
 }
 
-/** Enqueue an ID-only processing wake after the canonical event has committed. */
+/** Enqueue the content-free second stage described by the module contract above. */
 export async function enqueueWorkspaceConnectorEventProcess(
   env: Env,
   input: Parameters<typeof workspaceConnectorEventProcessQueueMessage>[0],
