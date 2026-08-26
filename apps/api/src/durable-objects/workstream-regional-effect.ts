@@ -119,6 +119,20 @@ export const WorkstreamParticipantNotificationEffectSchema = z.object({
   actorNameSnapshot: z.string().max(300),
   workstreamTitleSnapshot: ShortTextSchema,
   workstreamObjectiveSnapshot: ShortTextSchema,
+  /**
+   * Whether the title above is a placeholder the naming agent has not replaced.
+   *
+   * A work stream created from the composer has no name yet: creation sets the
+   * title to the opening message's first line cut at 180 characters, and the
+   * naming pass runs after these effects are committed. Naming the work stream
+   * by that string mid-sentence is what a notification must not do — every
+   * other surface re-renders when the real name lands, and an inbox does not.
+   *
+   * Defaulted rather than required because the payload hash is computed over
+   * this object: an effect enqueued by the previous deployment carries no such
+   * field, and a required one would make it unparseable on arrival.
+   */
+  titleIsProvisional: z.boolean().default(false),
   occurredAt: TimestampSchema,
 }).strict();
 

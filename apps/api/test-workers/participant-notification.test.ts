@@ -36,6 +36,7 @@ const SECOND_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a
 const CREATOR_ID = "00000000-0000-7000-8000-0000000006a3";
 const SESSION_ID = "00000000-0000-7000-8000-0000000006a4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000006a5";
+const SECOND_INVITEE_ID = "00000000-0000-7000-8000-0000000006a7";
 
 const AUTH = {
   sessionId: SESSION_ID,
@@ -86,6 +87,11 @@ beforeEach(async () => {
     env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
       VALUES (?, 'invitee@example.com', 'Invitee', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
       .bind(INVITEE_ID),
+    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+      VALUES (?, ?, 'active', 'member', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, SECOND_INVITEE_ID),
+    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+      VALUES (?, 'second@example.com', 'Second Invitee', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
+      .bind(SECOND_INVITEE_ID),
   ]);
   const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
     workspaceDOName("global", WORKSPACE_ID),
@@ -113,9 +119,15 @@ async function product(stub: DurableObjectStub, body: unknown): Promise<{
 
 async function openWorkstream(
   stub: DurableObjectStub,
-  workstreamId = WORKSTREAM_ID,
-  title = "Quarterly planning",
-): Promise<void> {
+  options: {
+    workstreamId?: string;
+    title?: string;
+    participantUserIds?: readonly string[];
+    /** What `POST /workstreams` sends; a connector ingress sends nothing. */
+    notifyParticipants?: boolean;
+  } = {},
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const workstreamId = options.workstreamId ?? WORKSTREAM_ID;
   const opened = await product(stub, {
     operation: "initialize",
     auth: AUTH,
@@ -123,7 +135,7 @@ async function openWorkstream(
       workspaceId: WORKSPACE_ID,
       workstreamId,
       generation: 1,
-      title,
+      title: options.title ?? "Quarterly planning",
       objective: "Draft the quarterly plan",
       descriptionSource: "authored",
       titleStatus: "settled",
@@ -131,7 +143,10 @@ async function openWorkstream(
       creatorUserId: CREATOR_ID,
       openingMessage: "starting the plan",
       clientMessageId: `participant-open-${workstreamId}`,
-      participantUserIds: [],
+      participantUserIds: options.participantUserIds ?? [],
+      ...(options.notifyParticipants === undefined
+        ? {}
+        : { notifyParticipants: options.notifyParticipants }),
       attachmentIds: [],
       modelOverride: null,
       executionPrincipal: { type: "user", userId: CREATOR_ID },
@@ -139,24 +154,71 @@ async function openWorkstream(
     },
   });
   expect(opened.status).toBe(200);
+  return opened;
 }
 
-/** Every regional effect the object has enqueued and not yet acknowledged. */
-async function outbox(stub: DurableObjectStub): Promise<WorkstreamRegionalEffectEnvelope[]> {
-  const rows = await runInDurableObject(stub, (_instance, state) =>
+/**
+ * Every effect the parent object has taken delivery of, with its payload.
+ *
+ * Not read from the child's own outbox: a commit arms the child's alarm for the
+ * current instant (`workstream-object-storage.ts`), and the alarm forwards and
+ * then DELETEs, so any assertion against that table races the drain — the more
+ * effects a path enqueues, the more reliably the read loses. Flushing on demand
+ * and reading the parent is the deterministic half.
+ *
+ * The parent keeps them because nothing here drains it: `wrangler.test.jsonc`
+ * declares the activity queue as a producer with no consumer, so no Queue
+ * message ever arrives to acknowledge an effect out of `durable_outbox`. Its
+ * own alarm only marks rows `inflight`. The one thing that *does* ack without a
+ * consumer is `deliverDirectoryEffectsEagerly`, which runs inside
+ * `acceptSubstreamEffects` under `waitUntil` and covers directory effects only
+ * — so a directory assertion here is read back before that lands rather than
+ * guaranteed, and `directoryEffectFor` below waits for it to settle instead.
+ */
+async function deliveredEffects(
+  stub: DurableObjectStub,
+  workstreamId = WORKSTREAM_ID,
+): Promise<WorkstreamRegionalEffectEnvelope[]> {
+  await (stub as unknown as { flushEffectsToWorkstreamDO(): Promise<unknown> })
+    .flushEffectsToWorkstreamDO();
+  const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+    workstreamDOName("global", WORKSPACE_ID, workstreamId),
+  ));
+  const rows = await runInDurableObject(parent, (_instance, state) =>
     state.storage.sql.exec<{ payload_json: string }>(
-      `SELECT payload_json FROM durable_outbox
-        WHERE channel = 'regional_effect_v1' ORDER BY created_at, message_id`,
+      `SELECT payload_json FROM durable_outbox ORDER BY created_at, message_id`,
     ).toArray());
   return rows.map((row) => WorkstreamRegionalEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
 }
 
 /**
+ * The version a recipient's directory row was written at, read from the parent's
+ * own `projection_keys` rather than from an outbox row.
+ *
+ * That table is the one the delivery gate compares against and it is never
+ * drained, so this is the same number `requiredProjectionVersion` has to match
+ * and it cannot be raced away by the eager directory delivery above.
+ */
+async function viewerProjectionVersion(
+  userId: string,
+  workstreamId = WORKSTREAM_ID,
+): Promise<number> {
+  const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+    workstreamDOName("global", WORKSPACE_ID, workstreamId),
+  ));
+  return runInDurableObject(parent, (_instance, state) =>
+    Number(state.storage.sql.exec<{ next_version: number }>(
+      `SELECT next_version FROM projection_keys WHERE projection_key = ?`,
+      `user:${userId}`,
+    ).toArray()[0]?.next_version ?? 0) - 1);
+}
+
+/**
  * The notification effects the parent object has taken delivery of.
  *
- * Flushing first is what makes this deterministic: the same RPC the create
- * path uses drains the child outbox on demand instead of waiting for the alarm
- * that would otherwise empty it underneath the assertion.
+ * Receipts rather than outbox rows: they are kept for their whole retention
+ * window and keyed by the effect's own message id, so they survive the drain
+ * and answer "was this person told, and how many times" directly.
  */
 async function notificationReceipts(
   stub: DurableObjectStub,
@@ -186,7 +248,7 @@ describe("adding somebody to a work stream", () => {
     });
     expect(added.status).toBe(200);
 
-    const envelopes = await outbox(stub);
+    const envelopes = await deliveredEffects(stub);
     const viewer = envelopes.filter((envelope) => (
       envelope.effect.kind === "directory_user" && envelope.effect.userId === INVITEE_ID
     ));
@@ -222,10 +284,11 @@ describe("adding somebody to a work stream", () => {
     expect(notificationEffect.workstreamTitleSnapshot).toBe("Quarterly planning");
     expect(notificationEffect.workstreamObjectiveSnapshot).toBe("Draft the quarterly plan");
 
-    // The dependency, and the reason the notification is enqueued last: it is
-    // gated on the version the viewer effect above was written at, so the
-    // workspace cannot deliver it before that row lands.
-    expect(notification[0]!.requiredProjectionVersion).toBe(viewer[0]!.sourceVersion);
+    // The dependency, and the reason the notification is enqueued after the
+    // viewer effect: it is gated on the version that row was written at, so the
+    // workspace cannot deliver it before the row lands.
+    expect(notification[0]!.requiredProjectionVersion)
+      .toBe(await viewerProjectionVersion(INVITEE_ID));
     expect(notification[0]!.requiredProjectionVersion).toBeGreaterThan(0);
   });
 
@@ -260,7 +323,7 @@ describe("adding somebody to a work stream", () => {
     const first = agentStub();
     const second = agentStub(SECOND_WORKSTREAM_ID);
     await openWorkstream(first);
-    await openWorkstream(second, SECOND_WORKSTREAM_ID, "Hiring loop");
+    await openWorkstream(second, { workstreamId: SECOND_WORKSTREAM_ID, title: "Hiring loop" });
 
     await product(first, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
     await product(second, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
@@ -289,11 +352,189 @@ describe("adding somebody to a work stream", () => {
     });
     expect(added.status).toBe(200);
 
-    const envelopes = await outbox(stub);
+    const envelopes = await deliveredEffects(stub);
     expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification")).toHaveLength(0);
     expect(envelopes.filter((envelope) => (
       envelope.effect.kind === "activity_event"
       && envelope.effect.eventType === "workstream_participant_added"
     ))).toHaveLength(0);
+  });
+});
+
+describe("naming somebody when the work stream is created", () => {
+  it("tells them the same way adding them afterwards does", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub, { participantUserIds: [INVITEE_ID], notifyParticipants: true });
+
+    const envelopes = await deliveredEffects(stub);
+    const viewer = envelopes.filter((envelope) => (
+      envelope.effect.kind === "directory_user" && envelope.effect.userId === INVITEE_ID
+    ));
+    const activity = envelopes.filter((envelope) => (
+      envelope.effect.kind === "activity_event"
+      && envelope.effect.eventType === "workstream_participant_added"
+    ));
+    const notification = envelopes.filter((envelope) => envelope.effect.kind === "participant_notification");
+    expect([viewer.length, activity.length, notification.length]).toEqual([1, 1, 1]);
+
+    const notificationEffect = notification[0]!.effect;
+    if (notificationEffect.kind !== "participant_notification") {
+      throw new Error("expected a participant notification");
+    }
+    // The same identity the add-afterwards path mints, so the two cannot
+    // notify one person about one participation twice.
+    expect(notificationEffect.intentId).toBe(`participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`);
+    expect(notificationEffect.sourceId).toBe(`participant:${WORKSTREAM_ID}:${INVITEE_ID}:0`);
+    expect(notificationEffect.recipientUserId).toBe(INVITEE_ID);
+    expect(notificationEffect.actorUserId).toBe(CREATOR_ID);
+    expect(notificationEffect.actorNameSnapshot).toBe("Creator");
+    expect(notificationEffect.workstreamTitleSnapshot).toBe("Quarterly planning");
+    expect(notificationEffect.workstreamObjectiveSnapshot).toBe("Draft the quarterly plan");
+
+    const activityEffect = activity[0]!.effect;
+    if (activityEffect.kind !== "activity_event") throw new Error("expected an activity event");
+    expect(activityEffect.targets).toEqual([{ userId: INVITEE_ID, relation: "added" }]);
+    expect(activityEffect.body).toBe("Creator added Invitee to this work stream.");
+
+    // Armed by this recipient's own directory row: the delivery gate refuses to
+    // send until the workspace has reached that version, so nobody is told
+    // about a work stream their sidebar cannot yet show them. Read from the
+    // parent's `projection_keys` — the table the gate itself compares against.
+    expect(notification[0]!.requiredProjectionVersion)
+      .toBe(await viewerProjectionVersion(INVITEE_ID));
+    expect(notification[0]!.requiredProjectionVersion).toBeGreaterThan(0);
+  });
+
+  it("says nothing to the creator about their own work stream", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub);
+
+    const envelopes = await deliveredEffects(stub);
+    expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification")).toHaveLength(0);
+    expect(envelopes.filter((envelope) => (
+      envelope.effect.kind === "activity_event"
+      && envelope.effect.eventType === "workstream_participant_added"
+    ))).toHaveLength(0);
+  });
+
+  it("does not tell somebody twice when they are also added afterwards", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub, { participantUserIds: [INVITEE_ID], notifyParticipants: true });
+
+    const added = await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+    expect(added.status).toBe(200);
+
+    expect(await notificationReceipts(stub))
+      .toEqual([`effect:participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`]);
+  });
+});
+
+describe("who a create is allowed to tell", () => {
+  it("says nothing when the caller did not ask for it", async () => {
+    const stub = agentStub();
+    // The shape a connector ingress sends. `slack-agent-service.ts` hands
+    // `participantUserIds` a Slack channel's resolved roster — which
+    // `CreateWorkstreamRequestSchema` says "can be hundreds" — and nobody in
+    // that channel was added by anybody, so nobody is DMed about it.
+    await openWorkstream(stub, { participantUserIds: [INVITEE_ID, SECOND_INVITEE_ID] });
+
+    const envelopes = await deliveredEffects(stub);
+    expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification"))
+      .toHaveLength(0);
+    expect(envelopes.filter((envelope) => (
+      envelope.effect.kind === "activity_event"
+      && envelope.effect.eventType === "workstream_participant_added"
+    ))).toHaveLength(0);
+    // Seated all the same: not telling somebody is not leaving them out.
+    expect(envelopes.filter((envelope) => (
+      envelope.effect.kind === "directory_user"
+      && (envelope.effect.userId === INVITEE_ID || envelope.effect.userId === SECOND_INVITEE_ID)
+    ))).toHaveLength(2);
+  });
+
+  it("tells every person named, once each, gated on their own row", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub, {
+      participantUserIds: [INVITEE_ID, SECOND_INVITEE_ID],
+      notifyParticipants: true,
+    });
+
+    const envelopes = await deliveredEffects(stub);
+    const notifications = envelopes.flatMap((envelope) => (
+      envelope.effect.kind === "participant_notification"
+        ? [{ effect: envelope.effect, required: envelope.requiredProjectionVersion }]
+        : []
+    ));
+    expect(notifications.map((entry) => entry.effect.recipientUserId).sort())
+      .toEqual([INVITEE_ID, SECOND_INVITEE_ID].sort());
+    expect(notifications.map((entry) => entry.effect.intentId).sort()).toEqual([
+      `participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`,
+      `participant_added:${WORKSTREAM_ID}:${SECOND_INVITEE_ID}:0`,
+    ].sort());
+    // Each is gated on its *own* recipient's projection, not on whichever
+    // viewer effect happened to be written last.
+    for (const entry of notifications) {
+      expect(entry.required).toBe(await viewerProjectionVersion(entry.effect.recipientUserId));
+    }
+    expect(envelopes.flatMap((envelope) => (
+      envelope.effect.kind === "activity_event"
+      && envelope.effect.eventType === "workstream_participant_added"
+        ? [envelope.effect.body] : []
+    )).sort()).toEqual([
+      "Creator added Invitee to this work stream.",
+      "Creator added Second Invitee to this work stream.",
+    ]);
+  });
+
+  it("replays the create without telling the person a second time", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub, { participantUserIds: [INVITEE_ID], notifyParticipants: true });
+    // The ambiguous-response retry, on the same `clientMessageId`. It must
+    // still answer 200: the whole reason the replay branch re-enqueues the
+    // directory snapshot and nothing else is that a notification re-emitted
+    // against a moved root would be refused as a hash conflict and wedge the
+    // create. `openWorkstream` asserts the status.
+    await openWorkstream(stub, { participantUserIds: [INVITEE_ID], notifyParticipants: true });
+
+    expect(await notificationReceipts(stub))
+      .toEqual([`effect:participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`]);
+  });
+
+  it("does not name a work stream the naming agent has not named yet", async () => {
+    const stub = agentStub();
+    // What `POST /workstreams` actually sends: the desktop client supplies no
+    // title, so creation writes the opening message's first line and leaves
+    // `titleStatus` at `naming` until the naming pass lands.
+    const opened = await product(stub, {
+      operation: "initialize",
+      auth: AUTH,
+      input: {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        generation: 1,
+        title: "Can someone dig into why the self-serve funnel dropped this week",
+        objective: "Can someone dig into why the self-serve funnel dropped this week",
+        descriptionSource: "derived",
+        titleStatus: "naming",
+        emailAddress: null,
+        creatorUserId: CREATOR_ID,
+        openingMessage: "Can someone dig into why the self-serve funnel dropped this week",
+        clientMessageId: "participant-open-naming",
+        participantUserIds: [INVITEE_ID],
+        notifyParticipants: true,
+        attachmentIds: [],
+        modelOverride: null,
+        executionPrincipal: { type: "user", userId: CREATOR_ID },
+        reason: "user_message",
+      },
+    });
+    expect(opened.status).toBe(200);
+
+    const notification = (await deliveredEffects(stub))
+      .flatMap((envelope) => envelope.effect.kind === "participant_notification" ? [envelope.effect] : []);
+    expect(notification).toHaveLength(1);
+    // The delivery templates read this to pick copy that does not quote a
+    // placeholder title as if it were the work stream's name.
+    expect(notification[0]!.titleIsProvisional).toBe(true);
   });
 });
