@@ -1154,6 +1154,12 @@ personal work stream, both Enter and the send button stop before a
 nonparticipant mention and ask whether to add the person, explicitly warning
 that without access they cannot see either the mention or the work stream;
 workspace-visible work streams do not raise that false warning.
+The optimistic opening turn carries those same bound spans, and a failed create
+restores text and spans only as one submitted draft generation so a newer draft
+cannot inherit stale mention identities. Workspace-visible sends accept a
+nonparticipant mention without confirmation or seating because active workspace
+membership already grants read access; the authority-side confirmation backstop
+applies only to personal work streams.
 
 **Why:** Selecting a name in the launch composer previously inserted only plain
 `@Name` text and separately added a participant ID. The opening message carried
@@ -1184,7 +1190,11 @@ backstop. Empty mention arrays are omitted from creation
 receipt hashes for rolling-deploy compatibility, while non-empty spans remain
 part of the idempotency identity. The real-workerd test asserts canonical text,
 `part_mentions`, attention, directory projection, and the durable notification
-branch together.
+branch together. Renderer error recovery must treat draft text and its bound
+spans as one snapshot; independently restoring either half can attach an old
+identity to new words. Autocomplete and the mention toolbar follow textarea
+selection semantics: a non-collapsed selected range is replaced, not retained
+after the inserted mention.
 
 ### 2026-08-25 — Notification claims prove the lease they wrote
 

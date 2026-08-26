@@ -2514,7 +2514,7 @@ export class WorkstreamObjectProductService {
     }
     const unconfirmed = personIds.filter((userId) =>
       !this.isParticipant(userId) && !confirmedParticipantUserIds.includes(userId));
-    if (unconfirmed.length > 0) {
+    if (root.scope === "personal" && unconfirmed.length > 0) {
       throw new ApiError(409, "participant_confirmation_required", "Confirm before mentioning a nonparticipant", {
         people: unconfirmed.map((userId) => ({ userId, name: people.get(userId)?.name ?? "Workspace member" })),
       });
