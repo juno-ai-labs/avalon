@@ -123,6 +123,25 @@ export function workstreamRunTiming(
 }
 
 /**
+ * Fence the reused route subtree to the work stream named by the current URL.
+ *
+ * The socket pool deliberately keeps `WorkstreamScreen` mounted while its
+ * route parameter changes. Query observers and socket-owned caches do not all
+ * change in the same React phase, so a render during that handoff can still
+ * hold the previous detail or transcript. Those values remain valid in their
+ * own keyed caches, but they must never paint under the next work stream's URL.
+ */
+export function workstreamPayloadBelongsToRoute(
+  routeWorkstreamId: string,
+  workstream: Pick<WorkstreamDetail, 'id'> | undefined,
+  messages: readonly Pick<Message, 'workstreamId'>[] | undefined,
+): boolean {
+  return workstream?.id === routeWorkstreamId
+    && messages !== undefined
+    && messages.every((message) => message.workstreamId === routeWorkstreamId);
+}
+
+/**
  * Which panel holds the right sidebar. The inspector rail's open state is local
  * and immediate, while HyperSight's is a preference write that can fail and roll
  * back, so the rail holds the slot until that write settles: a failed write can
@@ -1670,7 +1689,12 @@ export function WorkstreamScreen(): React.JSX.Element {
     };
   }, [scheduleReadAcknowledgement]);
 
-  if (!workstream.data || !messages.data) {
+  const payloadBelongsToRoute = workstreamPayloadBelongsToRoute(
+    id,
+    workstream.data,
+    messages.data,
+  );
+  if (!payloadBelongsToRoute) {
     if (
       socketConnection.state === 'reconnecting'
       || socketConnection.state === 'unavailable'
