@@ -62,7 +62,9 @@ function scheduling(instance: unknown): AlarmScheduling {
   return instance as unknown as AlarmScheduling;
 }
 
-async function seedOpenAuthority(): Promise<void> {
+async function seedAuthority(
+  phase: "durable_object_open" | "maintenance_draining",
+): Promise<void> {
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY,
@@ -73,7 +75,7 @@ async function seedOpenAuthority(): Promise<void> {
     )`),
     env.DB.prepare(`INSERT INTO workstream_authority_control
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
-      VALUES (1, 'durable_object_open', 1, 1, 1)`),
+      VALUES (1, ?, 1, 1, 1)`).bind(phase),
     env.DB.prepare(`CREATE TABLE audit_events (
       id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
@@ -87,6 +89,10 @@ async function seedOpenAuthority(): Promise<void> {
       created_at TEXT NOT NULL
     )`),
   ]);
+}
+
+async function seedOpenAuthority(): Promise<void> {
+  await seedAuthority("durable_object_open");
 }
 
 function workspaceStub() {
@@ -176,6 +182,82 @@ describe("the shared Durable Object alarm list", () => {
         now + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
       );
       expect(store.get("schedule", "overdue")?.dueAt).toBe(now - 60_000);
+    });
+  });
+
+  it("routes workspace alarm work through content-free phase instrumentation", async () => {
+    await seedOpenAuthority();
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      const phases: Array<{ phase: string; alarmKind: string | undefined }> = [];
+      let finished = 0;
+      const instrumentPhase = async <T>(
+        phase: string,
+        alarmKind: string | undefined,
+        run: () => Promise<T>,
+      ): Promise<T> => {
+        phases.push({ phase, alarmKind });
+        return run();
+      };
+      (instance as unknown as {
+        instrumentWorkspaceAlarmPhase: typeof instrumentPhase;
+        finishWorkspaceAlarmInstrumentation: () => void;
+      }).instrumentWorkspaceAlarmPhase = instrumentPhase;
+      (instance as unknown as { finishWorkspaceAlarmInstrumentation: () => void })
+        .finishWorkspaceAlarmInstrumentation = () => {
+          finished += 1;
+        };
+
+      new ScheduledAlarmStore(state.storage.sql).schedule({
+        kind: "schedule_bootstrap",
+        key: "workspace",
+        dueAt: Date.now() - 1,
+      });
+
+      await instance.alarm();
+
+      expect(phases).toEqual([
+        { phase: "recovery_rearm", alarmKind: undefined },
+        { phase: "authority_check", alarmKind: undefined },
+        { phase: "stored_target", alarmKind: "schedule_bootstrap" },
+        { phase: "activity_reap", alarmKind: undefined },
+        { phase: "schedule_reconcile", alarmKind: undefined },
+        { phase: "final_rearm", alarmKind: undefined },
+      ]);
+      expect(finished).toBe(1);
+    });
+  });
+
+  it("finishes phase instrumentation when authority defers alarm work", async () => {
+    await seedAuthority("maintenance_draining");
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      const phases: string[] = [];
+      let finished = 0;
+      const instrumentPhase = async <T>(
+        phase: string,
+        _alarmKind: string | undefined,
+        run: () => Promise<T>,
+      ): Promise<T> => {
+        phases.push(phase);
+        return run();
+      };
+      (instance as unknown as {
+        instrumentWorkspaceAlarmPhase: typeof instrumentPhase;
+        finishWorkspaceAlarmInstrumentation: () => void;
+      }).instrumentWorkspaceAlarmPhase = instrumentPhase;
+      (instance as unknown as { finishWorkspaceAlarmInstrumentation: () => void })
+        .finishWorkspaceAlarmInstrumentation = () => {
+          finished += 1;
+        };
+
+      await instance.alarm();
+
+      expect(phases).toEqual(["recovery_rearm", "authority_check"]);
+      expect(finished).toBe(1);
+      expect(await state.storage.getAlarm()).toBeGreaterThan(Date.now());
     });
   });
 
