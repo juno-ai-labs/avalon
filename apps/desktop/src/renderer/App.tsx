@@ -216,7 +216,15 @@ function WorkspaceApp(): React.JSX.Element {
 
   return (
     <WorkspaceSocketProvider api={api!} workspaceId={workspace.data.id}>
-      <HashRouter>
+      {/*
+        A declarative router otherwise wraps its history listener in
+        startTransition. The hash and active sidebar row move first while the
+        previous work-stream screen remains visible, which can put the wrong
+        transcript under the newly selected row. This route tree is small and
+        local; commit its navigation atomically, then let each screen show its
+        own opening state while keyed data arrives.
+      */}
+      <HashRouter useTransitions={false}>
         <TelemetryRouteObserver />
         <WorkstreamSocketResumeProvider scope={`${session?.user.id ?? 'unknown'}:${workspace.data.id}`}>
           <AppShell workspace={workspace.data}>

@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
   getWorkstream: vi.fn(),
 }));
 const retainedSocket = vi.hoisted(() => vi.fn());
+const scrollTranscriptToEnd = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/app-session', () => ({
   useAppSession: () => ({ api, session: null }),
@@ -47,7 +48,7 @@ vi.mock('../lib/use-transcript-follow', () => ({
     onWheel: vi.fn(),
     release: vi.fn(),
     scrollTo: vi.fn(),
-    scrollToEnd: vi.fn(),
+    scrollToEnd: scrollTranscriptToEnd,
   }),
 }));
 
@@ -61,7 +62,7 @@ import {
   workstreamRecoveryFeedQueryKey,
   workstreamSocketSnapshotGenerationQueryKey,
 } from '../lib/telemetry';
-import type { WorkstreamBoot, WorkstreamDetail } from '../lib/types';
+import type { Message, WorkstreamBoot, WorkstreamDetail } from '../lib/types';
 
 const workstreamId = '00000000-0000-7000-8000-000000000650';
 
@@ -107,10 +108,11 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   };
 }
 
-function renderScreen(): QueryClient {
+function renderScreen(seed?: (queryClient: QueryClient) => void): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
+  seed?.(queryClient);
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
@@ -167,6 +169,38 @@ describe('socket-first work-stream open', () => {
     await waitFor(() => expect(requestSnapshot).toHaveBeenCalledTimes(1));
     expect(api.getWorkstream).not.toHaveBeenCalled();
     expect(api.getMessagePage).not.toHaveBeenCalled();
+  });
+
+  it('does not run payload effects until detail and transcript both belong to the route', async () => {
+    const staleWorkstreamId = '00000000-0000-7000-8000-000000000649';
+    const staleBoot = recoveryBoot({ id: staleWorkstreamId, title: 'Stale work stream' });
+    const { messageFeed: _staleFeed, resumeFeed: _staleResume, ...staleDetail } = staleBoot;
+    void _staleFeed;
+    void _staleResume;
+    const queryClient = renderScreen((client) => {
+      client.setQueryData<WorkstreamDetail>(['workstream', workstreamId], staleDetail);
+      client.setQueryData<Message[]>(['messages', workstreamId], [{
+        id: 'stale-message',
+        workstreamId: staleWorkstreamId,
+      } as Message]);
+    });
+
+    expect(screen.getByText('Opening work stream…')).toBeInTheDocument();
+    await act(async () => Promise.resolve());
+    expect(api.getWorkstreamContext).not.toHaveBeenCalled();
+    expect(scrollTranscriptToEnd).not.toHaveBeenCalled();
+
+    const currentBoot = recoveryBoot();
+    const { messageFeed: _currentFeed, resumeFeed: _currentResume, ...currentDetail } = currentBoot;
+    void _currentFeed;
+    void _currentResume;
+    act(() => {
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], currentDetail);
+      queryClient.setQueryData<Message[]>(['messages', workstreamId], []);
+    });
+
+    await waitFor(() => expect(api.getWorkstreamContext).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(scrollTranscriptToEnd).toHaveBeenCalledTimes(1));
   });
 
   it('offers REST recovery after the first socket attempt fails', async () => {

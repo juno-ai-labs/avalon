@@ -21,6 +21,7 @@ import {
   transcriptPageCursor,
   WorkstreamErrorState,
   WorkstreamHeader,
+  workstreamPayloadBelongsToRoute,
   workstreamRunTiming,
   workspaceMemberFromSession,
 } from './workstream';
@@ -83,6 +84,23 @@ describe('transcript cursor pagination', () => {
       .toThrow('Rally received a repeated transcript cursor.');
     expect(() => transcriptPageCursor(page, '30', 'after'))
       .toThrow('Rally received a repeated transcript cursor.');
+  });
+});
+
+describe('work-stream route handoff', () => {
+  it('refuses to paint detail or transcript rows retained from another work stream', () => {
+    const routeWorkstreamId = 'workstream-two';
+    const workstream = { id: routeWorkstreamId };
+    const currentMessages = [{ workstreamId: routeWorkstreamId }];
+
+    expect(workstreamPayloadBelongsToRoute(routeWorkstreamId, workstream, currentMessages)).toBe(true);
+    expect(workstreamPayloadBelongsToRoute(routeWorkstreamId, { id: 'workstream-one' }, currentMessages)).toBe(false);
+    expect(workstreamPayloadBelongsToRoute(
+      routeWorkstreamId,
+      workstream,
+      [{ workstreamId: 'workstream-one' }],
+    )).toBe(false);
+    expect(workstreamPayloadBelongsToRoute(routeWorkstreamId, workstream, undefined)).toBe(false);
   });
 });
 
