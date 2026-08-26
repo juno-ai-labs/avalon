@@ -40,10 +40,27 @@ describe('Product analytics settings controller', () => {
     expect(base.controller.state()).toEqual({
       desiredEnabled: true, effectiveEnabled: false, pending: false,
     });
+    expect(base.controller.admissionEnabled()).toBe(true);
 
     await base.controller.refresh();
     expect(base.controller.state()).toEqual({
       desiredEnabled: true, effectiveEnabled: true, pending: false,
+    });
+  });
+
+  it('closes local admission as well as delivery when the account changes', async () => {
+    const base = harness({
+      productAnalyticsEnabled: true,
+      productAnalyticsPreferenceVersion: 3,
+    });
+    await base.controller.initialize(true);
+    expect(base.controller.admissionEnabled()).toBe(true);
+
+    await base.controller.requireRemoteVerification();
+
+    expect(base.controller.admissionEnabled()).toBe(false);
+    expect(base.controller.state()).toEqual({
+      desiredEnabled: true, effectiveEnabled: false, pending: false,
     });
   });
 

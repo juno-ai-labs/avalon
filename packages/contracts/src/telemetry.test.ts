@@ -284,6 +284,35 @@ describe("telemetry registry", () => {
     }).success).toBe(false);
   });
 
+  it("keeps renderer performance diagnostics closed and content-free", () => {
+    const properties = {
+      flow: "workstream_message_send",
+      clientMessageId: "00000000-0000-4000-8000-000000000102",
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      outcome: "completed",
+      durationMs: 402.7,
+      blockedMs: 0,
+      longTaskCount: "zero",
+      resolveMentionsMs: 2.1,
+      commandRoundTripMs: 400.6,
+      messageLength: "twenty_one_to_one_hundred",
+    };
+    expect(TELEMETRY_EVENTS.renderer_perf_flow.properties.safeParse(properties).success).toBe(true);
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...envelope("renderer_perf_flow", properties),
+      category: "diagnostic",
+      identityScope: "workspace-user",
+    }).success).toBe(true);
+    expect(TELEMETRY_EVENTS.renderer_perf_flow.properties.safeParse({
+      ...properties,
+      messageText: "must not leave the renderer",
+    }).success).toBe(false);
+    expect(TELEMETRY_EVENTS.renderer_perf_flow.properties.safeParse({
+      ...properties,
+      outcome: "message_created",
+    }).success).toBe(false);
+  });
+
   it("accepts route abandonment without a superseding work stream", () => {
     const abandoned = {
       workstreamId: "00000000-0000-4000-8000-000000000101",

@@ -54,6 +54,7 @@ import {
 import type { Env } from "../env";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logStructuredEvent } from "../observability/logger";
+import { inDurableObjectPhase } from "../observability/tracing";
 
 /**
  * A report is re-sent this long after the last accepted one even when nothing
@@ -117,25 +118,31 @@ export async function withMigrationReport<T>(
   context: DurableObjectMigrationReportContext,
   apply: () => T,
 ): Promise<T> {
-  // Read before, not after: the runner returns the versions it applied, but one
-  // of the five call sites hands that return value to a constructor instead, so
-  // the ledger is the only source every site shares.
-  const versionBefore = safeCurrentVersion(context.state.storage);
-  let applied: T;
-  try {
-    // Still the first thing that runs, with no `await` in front of it, so the
-    // migration stays inside the caller's synchronous prologue exactly as
-    // before this function became async.
-    applied = apply();
-  } catch (error) {
-    // Awaited rather than left to `waitUntil` — see the third rule above. The
-    // send swallows its own errors, so this can only delay the throw below,
-    // never replace it.
-    await reportMigrationFailure(context, error);
-    throw error;
-  }
-  reportMigrationSuccess(context, versionBefore);
-  return applied;
+  return inDurableObjectPhase(context.env, "schema_migrate", {
+    component: context.component,
+    className: context.className,
+    latestVersion: context.latestVersion,
+  }, async () => {
+    // Read before, not after: the runner returns the versions it applied, but one
+    // of the five call sites hands that return value to a constructor instead, so
+    // the ledger is the only source every site shares.
+    const versionBefore = safeCurrentVersion(context.state.storage);
+    let applied: T;
+    try {
+      // Still the first thing that runs, with no `await` in front of it, so the
+      // migration stays inside the caller's synchronous prologue exactly as
+      // before this function became async.
+      applied = apply();
+    } catch (error) {
+      // Awaited rather than left to `waitUntil` — see the third rule above. The
+      // send swallows its own errors, so this can only delay the throw below,
+      // never replace it.
+      await reportMigrationFailure(context, error);
+      throw error;
+    }
+    reportMigrationSuccess(context, versionBefore);
+    return applied;
+  });
 }
 
 function reportMigrationFailure(

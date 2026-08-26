@@ -20,6 +20,7 @@ terminates in Rally's EU-isolated Cloudflare resources.
 | `apps/desktop/src/main/telemetry-*.ts` | Route, random identity epochs, local event spool, typed reporter, breadcrumbs, launch markers, and preference-independent reliability collection. |
 | `apps/desktop/src/main/application-open-observer.ts` | Closed cold-start attribution and activation coalescing so explicit deep-link/menu sources outrank Electron's generic Dock/reopen callback. |
 | `apps/desktop/src/main/native-crash-*.ts` | Route-final Crashpad generations and the bounded, authenticated next-launch uploader. |
+| `apps/desktop/src/main/native-performance-log.ts`, `apps/desktop/native/unified-log/UnifiedLog.mm` | Device-only macOS Unified Logging for the closed renderer performance projection; it is not an upload path. |
 | `apps/desktop/src/main/product-analytics-settings.ts` | Local-first disable, fail-closed enable/refresh, preference synchronization, crash invalidation, and spool purge. |
 | `apps/desktop/src/main/index.ts` | Startup ordering, Crashpad start, process observers, IPC sender validation, upload scheduling, and product integration points. |
 | `apps/desktop/src/main/telemetry-intent.ts` | The renderer-intent allowlist and validator every `telemetry:product-intent` call passes through, kept out of the entry point so it can be tested by running it. |
@@ -217,8 +218,10 @@ funnel for correlated desktop runs; it is not mapped to the same reserved event.
 After main has initialized the operating-system login item, Lockdown controller,
 and application icon, it emits one `application_settings_state_v2` with the actual
 enabled and availability booleans, closed icon identifier, and menu-bar state. A
-newly authenticated account receives the same snapshot
-after its Product analytics preference has been verified. Successful Settings
+newly authenticated account receives the same snapshot after its Product
+analytics preference has been verified; an existing authenticated launch uses
+its durable preference immediately while refreshing the canonical value in the
+background. Successful Settings
 interactions emit `application_setting_change_completed_v2` for launch-at-login,
 Lockdown mode, and menu-bar visibility with previous, requested, applied, and
 result fields, or
@@ -304,18 +307,25 @@ workspace name.
 
 ### Preference and local delivery
 
-Authenticated startup treats nonessential telemetry as off until the regional API
-confirms the canonical account preference. A disable is fsynced locally before
+An existing authenticated startup uses the durable device preference to admit
+nonessential events to the local spool before the first window, then reconciles
+the canonical account preference in the background. It does not await that
+regional read. Transmission remains closed until verification, so a canonical
+disable purges the held rows instead of racing them to the service. A new
+account/session transition also treats nonessential telemetry as off until the
+regional API verifies that account, preventing one account's stored choice from
+crossing into another. A disable is fsynced locally before
 the network mutation, invalidates the live Crashpad generation without opening its
 database, stops upload immediately, and purges queued nonessential rows. Enable
 does not become effective until the compare-and-set regional/canonical update is
 acknowledged. Session changes force a fresh fail-closed read. That read has a
 15-second deadline: it remains bounded, but includes cold DNS, TLS, regional
 Worker activation, and the canonical D1 lookup instead of treating a normal
-cold request as an outage after one second. Authenticated launch waits at most
-two seconds for that same request before continuing to the first window; the
-caught request keeps running, and collection remains off until it validates the
-canonical preference.
+cold request as an outage after one second. A successful background refresh
+updates the durable value and releases held rows for upload; a canonical disable
+purges them. A failed cold-launch refresh leaves the last durable same-account
+choice as a local-admission gate, holds its rows for a future verification, and
+is diagnostic rather than a launch gate.
 
 Main validates and writes complete envelopes to an owner-only file spool. Each row
 has a separate deadline file, so corrupt JSON still has an enforceable ceiling.
@@ -499,8 +509,9 @@ WorkstreamDO for work-stream product data.
 - The pre-renderer route request times out after two seconds and falls back to
   Global; an affirmative EU result creates no pre-region dump.
 - The authenticated Product analytics preference read times out after 15
-  seconds. Until it succeeds, nonessential collection remains disabled for the
-  launch; the timeout never falls back to the device's cached opt-in.
+  seconds. Existing same-account launches continue collecting into the durable
+  local spool but do not transmit nonessential rows; new account/session
+  transitions remain fully fail-closed until verification.
 - Local event rows expire after 14 days, with a 2,000-row/8 MiB spool. Corrupt
   rows are quarantined only when their independent deadline is valid; otherwise
   they are deleted immediately.
@@ -655,6 +666,67 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-26 — Cold launch no longer awaits preference reconciliation
+
+**What changed:** An existing authenticated launch now initializes Product
+analytics admission from the durable device choice and starts the canonical
+regional read only after telemetry initialization, without awaiting it.
+Nonessential transmission remains closed until that read succeeds. The strict parsed
+`renderer_perf_flow` record is also written device-locally to macOS Unified
+Logging before the upload gate; the regional event path itself is unchanged.
+
+**Why:** Version 1.171.0 reset remote verification on every authenticated cold
+launch. If its regional read exceeded or failed beyond the two-second launch
+barrier, every nonessential event in that process was suppressed before spool
+admission even when the durable account preference was enabled. That explains
+an observed window with no accepted open, feed-visible, send-ready, or renderer
+phase events and made the local console evidence disappear on quit.
+
+**Considered and rejected:** Waiting longer spends more of the two-second
+product budget without making telemetry reliable. Treating a same-account
+cached enable as untrusted for the whole process preserves fail-closed behavior
+but recreates the loss. Session changes close both local spool admission and
+delivery until the new account is verified, and explicit enable still requires
+the canonical compare-and-set acknowledgement; only ordinary
+cold-launch reconciliation moved off the critical path.
+
+**Consequences:** Early launch events can enter the durable regional spool
+immediately when the stored same-account preference is enabled. Successful
+verification releases them for upload; a canonical disable purges them before
+any nonessential transmission and turns collection off. Local Unified Log
+records never leave the Mac and therefore do not depend on telemetry consent.
+Historical console-only lines from 1.171.0 cannot be reconstructed after their
+renderer exits.
+
+### 2026-08-26 — Renderer performance phases are governed diagnostic events
+
+**What changed:** Added `renderer_perf_flow`, a workspace-user diagnostic event
+for the three latency-critical renderer flows. The renderer emits a closed
+projection with exact total, phase, blocked, and pre-request milliseconds;
+bounded structural counts; closed outcomes; and opaque work-stream/ticket
+correlation identifiers. It travels through typed renderer intent, strict main
+IPC validation, and the existing regional spool. Local `[perf]` output remains
+available, but console objects themselves are not collected.
+
+**Why:** The approved feed-visible and send-ready product totals showed whether
+the two-second goal was missed, and backend traces located server work, but a
+packaged client's local phase line was unavailable after the fact. That left
+the observed delay between ticket completion and socket upgrade ambiguous
+between renderer scheduling, dial, handshake, and service wait.
+
+**Considered and rejected:** Direct renderer-to-PostHog capture bypasses
+preference, regional routing, validation, and the spool. Forwarding the console
+object would make every future annotation exportable by accident. Adding the
+phase list to the product feed-visible event would mix a diagnostic breakdown
+with the authoritative user-visible outcome and its longer retention.
+
+**Consequences:** The event is suppressed whenever Product analytics is not
+effectively enabled, without awaiting a preference fetch on the measured path.
+Global uses the existing PostHog and lakehouse destination; EU remains on the
+regional internal path. Retention is 90 days. Content, URLs, errors, cursors,
+close codes, and unknown annotations are structurally rejected; an unregistered
+phase remains local until governance adds it to the schema.
 
 ### 2026-08-26 — Socket lineage survives an overlapping recovery retry
 

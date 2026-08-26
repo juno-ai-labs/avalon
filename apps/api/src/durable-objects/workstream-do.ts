@@ -588,7 +588,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     // so waking them in sequence pays for two cold starts a person waits
     // through end to end.
     this.wakeMainSubstream(env);
-    this.initialized = state.blockConcurrencyWhile(async () => {
+    this.initialized = this.initializeDurableObject(async () => {
       await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS,

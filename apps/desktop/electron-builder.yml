@@ -48,6 +48,8 @@ mac:
         - "*.png"
     - from: .native-build/system-audio-tap.node
       to: native/system-audio-tap.node
+    - from: .native-build/unified-log.node
+      to: native/unified-log.node
   category: public.app-category.productivity
   extendInfo:
     NSMicrophoneUsageDescription: Rally uses the microphone only when you start dictation or meeting notes.

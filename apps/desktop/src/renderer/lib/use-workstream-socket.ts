@@ -729,8 +729,10 @@ export function useWorkstreamSocket(
       // span as `rally.message.client_id`: the command travels over an
       // already-open socket the platform traces as its own invocation, so this
       // is the only value the renderer and the server both hold.
+      const operationId = uuidV7();
       const trace = startPerfTrace('workstream_message_send', {
         traceId: input.clientId,
+        operationId,
         workstreamId,
       });
       trace.annotate({
@@ -751,7 +753,6 @@ export function useWorkstreamSocket(
             'workstream_socket_unavailable',
           );
         }
-        const operationId = uuidV7();
         reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
         const command: CreateMessageSocketCommand = {
           type: 'create_message',
@@ -766,9 +767,12 @@ export function useWorkstreamSocket(
             attachmentIds: input.attachmentIds ?? [],
           },
         };
-        return await trace.step('command_round_trip', () => createWorkspaceMessage(command));
-      } finally {
+        const message = await trace.step('command_round_trip', () => createWorkspaceMessage(command));
         trace.end();
+        return message;
+      } catch (error) {
+        trace.end({ outcome: 'failed' });
+        throw error;
       }
     };
     // Readiness means the work-stream-specific handler is installed and can

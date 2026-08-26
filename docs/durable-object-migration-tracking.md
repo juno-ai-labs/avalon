@@ -37,6 +37,7 @@ happen.
 | `apps/migration-tracker/src/inventory.ts` | The Cloudflare API sweep: namespaces, then paged object IDs per namespace. |
 | `apps/migration-tracker/src/dispatch.ts` | The fan-out: registry targets in, one command message per object out, one run row recorded. |
 | `apps/api/src/durable-objects/migratable-durable-object.ts` | `MigratableDurableObject` — the base that gives every migrated class its report and its `forceMigration` RPC, and refuses to compile without a declared schema. |
+| `apps/api/src/observability/tracing.ts` | Per-wake `initialize` and `schema_migrate` spans and structured duration rows; these diagnose cold starts without changing tracker delivery. |
 | `apps/api/src/queues/migration-command-consumer.ts` | The regional consumer that turns one command into one `forceMigration` call, and the map of class names to namespace bindings. |
 | `apps/migration-tracker/src/access.ts` | Cloudflare Access assertion verification: signature, issuer, audience. Authorization itself is the Access policy's. |
 | `apps/migration-tracker/src/app.ts`, `views.ts` | The Hono application and the server-rendered site. |
@@ -90,6 +91,17 @@ on this script existing.
 The consumer folds a whole batch into **one registry transaction**, so a herd
 costs one write rather than one per reporter. That is what lets the registry stay
 a single object.
+
+Tracker dedupe does not make an unchanged migration wake invisible to
+operations. Every `withMigrationReport` call is nested in
+`durable_object.schema_migrate` and emits a
+`durable_object_schema_migration` Workers Log row, whether or not the outcome is
+new enough to enqueue. The four migratable classes also route their complete
+constructor input gate through `durable_object.initialize`, with a matching
+`durable_object_initialization` row. These are latency diagnostics, not fleet
+state: they stay in regional Worker traces/logs and never update the registry.
+The workerd clock does not advance through synchronous execution, so `0 ms`
+means no observable clock advance rather than proof that no SQL ran.
 
 ### The sweep
 
@@ -720,6 +732,34 @@ radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
 
 ## Changelog
+
+### 2026-08-26 — Every migration pass and constructor gate is timed
+
+**What changed:** `withMigrationReport` now wraps every schema pass in a custom
+`durable_object.schema_migrate` span and structured timing row. The shared
+`MigratableDurableObject` base owns an instrumented `blockConcurrencyWhile`
+gate for the four migrated product classes, producing the encompassing
+`durable_object.initialize` span and row. Tracker report dedupe and delivery are
+unchanged.
+
+**Why:** An observed 1.95-second socket-upgrade tail ended at an automatic
+Durable Object binding span, but no producer measured how much was constructor
+initialization or schema migration. The tracker recorded only schema state and
+intentionally emitted nothing for most current-schema wakes, so it could not
+answer a latency question.
+
+**Considered and rejected:** Sending every wake to the tracker would couple
+routine hibernation churn to the cross-region queue and single registry object,
+undoing its deploy/build/heartbeat dedupe. A guessed constructor timeout would
+change product behavior without locating the delay. Nested platform spans plus
+one regional structured row per phase expose the timing without either change.
+
+**Consequences:** A cold binding trace can separate the complete constructor
+gate, its nested migration pass, and the residual platform-wake/binding time;
+Workers Logs can aggregate both phases even without a retained trace. Failures
+are logged and marked on the span, then rethrown unchanged. Workerd may report
+`0 ms` for synchronous CPU or SQLite work because its clock is pinned, so a
+zero is not an assertion that no migration work occurred.
 
 ### 2026-08-22 — The tracker can force a class through a migration
 

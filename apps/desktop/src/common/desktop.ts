@@ -136,6 +136,11 @@ export type DesktopTelemetryWorkstreamSocketStartedIntent = {
   operationId: string;
 } & TelemetryEventProperties<'workstream_socket_started'>;
 
+export type DesktopTelemetryRendererPerfFlowIntent = {
+  kind: 'renderer_perf_flow';
+  operationId: string;
+} & TelemetryEventProperties<'renderer_perf_flow'>;
+
 export type DesktopTelemetryWorkstreamOpenLifecycleIntent = {
   [Name in 'workstream_open_started' | 'workstream_open_outcome']:
   { kind: Name; operationId: string } & TelemetryEventProperties<Name>;
@@ -151,6 +156,7 @@ export type DesktopTelemetryProductIntent =
   | DesktopTelemetryWorkstreamFeedVisibleIntent
   | DesktopTelemetryWorkstreamSendReadyIntent
   | DesktopTelemetryWorkstreamSocketStartedIntent
+  | DesktopTelemetryRendererPerfFlowIntent
   | DesktopTelemetryWorkstreamOpenLifecycleIntent
   | { kind: 'command_shortcuts_revealed'; availableCount: number }
   | {
