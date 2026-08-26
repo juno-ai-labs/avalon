@@ -216,10 +216,13 @@ scripts. Test-only changes under Ace, shared contracts, or the Queue provisioner
 remain CI-only and do not redeploy production. The workflow validates the
 repository, creates all declared Queues, clones the migration Access policy,
 ensures all Enabled-named flags exist off by default, injects Ace's returned
-Access audience, deploys the Hono Worker and assets, installs the dedicated Ace
-runtime token as an encrypted secret, and verifies an unauthenticated request
-is redirected by Access. The API deploy and signed desktop release start from
-their existing `packages/**` and `apps/desktop/**` triggers in the same merge.
+Access audience, uses the runtime token to list a dynamically selected Queue
+and perform a non-consuming peek, deploys the Hono Worker and assets, installs
+the token as an encrypted secret, and verifies an unauthenticated request is
+redirected by Access. A missing Queues Edit permission therefore fails the
+deployment before a broken Queues page reaches production. The API deploy and
+signed desktop release start from their existing `packages/**` and
+`apps/desktop/**` triggers in the same merge.
 There is no per-release manual command or dashboard step.
 
 The `api-production` GitHub environment must hold the existing
@@ -253,6 +256,8 @@ timestamp, and shows one provider-defined peek batch with attempts, time, body,
 and metadata. The existing dedicated Ace token and Worker binding remain in
 place and now require Flagship Write plus Queues Edit; their legacy
 Flagship-specific names are retained to avoid a credential migration.
+Deployment now proves the token can perform a non-consuming Queue peek before
+installing it.
 
 **Why:** Dead letters were already the intentionally simple production signal
 for several Queue-driven subsystems, but investigating that signal meant leaving
@@ -272,7 +277,7 @@ D1, route, or other account-administration permissions.
 
 **Consequences:** Cloudflare assigns peek to Queues Edit rather than Queues
 Read, so the runtime credential is no longer Flagship-only and must be rotated
-to add that account permission before the page can work in production. Ace
+to add that account permission before deployment can succeed. Ace
 exposes no Queue mutation route and drops peek's purge refs at the Worker
 boundary, but a runtime compromise has the provider-level Queue write capability
 Cloudflare requires. Peek has no cursor or published batch maximum, so the UI

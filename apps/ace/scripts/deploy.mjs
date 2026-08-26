@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parseWranglerConfig } from '../../../scripts/wrangler-config.mjs';
+import { verifyRuntimeQueuePermissions } from './runtime-token-permissions.mjs';
 
 const appDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
@@ -107,6 +108,7 @@ await Promise.all([
   // must not be the thing that silently stops delivery. See docs/digests.md#the-run.
   ensureFlag('digests-enabled', 'True sends scheduled digests as configured; false stops delivery for whoever the rule reaches and hides the Digest settings section in Electron for them, without touching their saved schedule, destinations, or cursor.', 'on'),
 ]);
+await verifyRuntimeQueuePermissions({ accountId, token: aceRuntimeToken });
 
 const source = await readFile(join(appDirectory, 'wrangler.jsonc'), 'utf8');
 const config = parseWranglerConfig(source);
