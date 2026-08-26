@@ -250,16 +250,14 @@ async function notificationReceipts(
 }
 
 describe("adding somebody to a work stream", () => {
-  it("claims an indexed notification row by its returned lease rather than physical write count", async () => {
+  it("claims an indexed notification row through typed RPC and refuses generic SQL", async () => {
     const intentId = `mention:00000000-0000-7000-8000-0000000006a9:${MISSING_RECIPIENT_ID}`;
     const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
       workspaceDOName("global", WORKSPACE_ID),
     ));
-    const inserted = await workspace.executeRuntimeSql({
-      workspaceId: WORKSPACE_ID,
-      requestId: "00000000-0000-7000-8000-0000000006aa",
-      statements: [{
-        sql: `INSERT INTO workstream_notification_intents
+    await runInDurableObject(workspace, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO workstream_notification_intents
           (intent_id, workspace_id, workstream_id, recipient_user_id,
            source_message_id, source_generation, source_version,
            required_directory_version, notification_kind, payload_json,
@@ -267,30 +265,63 @@ describe("adding somebody to a work stream", () => {
            last_error_code, created_at, updated_at, delivered_at)
          VALUES (?, ?, ?, ?, ?, 1, 1, 1, 'mention', '{}', 'claim-witness-hash',
                  'pending', 0, NULL, NULL, NULL, ?, ?, NULL)`,
-        params: [
-          intentId,
-          WORKSPACE_ID,
-          WORKSTREAM_ID,
-          MISSING_RECIPIENT_ID,
-          "00000000-0000-7000-8000-0000000006a9",
-          "2026-08-25T20:00:00.000Z",
-          "2026-08-25T20:00:00.000Z",
-        ],
+        intentId,
+        WORKSPACE_ID,
+        WORKSTREAM_ID,
+        MISSING_RECIPIENT_ID,
+        "00000000-0000-7000-8000-0000000006a9",
+        "2026-08-25T20:00:00.000Z",
+        "2026-08-25T20:00:00.000Z",
+      );
+    });
+    const genericRead = await workspace.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-0000000006aa",
+      statements: [{
+        sql: "SELECT intent_id FROM workstream_notification_intents WHERE intent_id = ?",
+        params: [intentId],
       }],
     });
-    expect(inserted.status).toBe(200);
+    expect(genericRead.status).toBe(409);
+    expect(genericRead.bodyJson).toContain(
+      "workspace_runtime_table_requires_typed_rpc:workstream_notification_intents",
+    );
 
-    // `state`, `lease_expires_at`, and `updated_at` participate in two indexes,
-    // so workerd reports several physical writes for the one logical claim.
-    // The old `meta.changes === 1` branch returned `busy` here after writing its
-    // own lease and never reached this missing-recipient terminal decision.
+    // The claim still changes indexed columns, but the public result is now a
+    // domain outcome produced inside WorkspaceDO; no caller receives or can
+    // interpret workerd's physical write count. Release it through the typed
+    // transition as well so the delivery service can claim the same row next.
+    const firstClaim = await workspace.claimWorkstreamNotificationIntent({
+      workspaceId: WORKSPACE_ID,
+      intentId,
+    });
+    expect(firstClaim).toMatchObject({
+      outcome: "claimed",
+      intent: { intentId, state: "processing" },
+    });
+    if (firstClaim.outcome !== "claimed") throw new Error("expected typed claim");
+    await expect(workspace.transitionWorkstreamNotificationIntent({
+      workspaceId: WORKSPACE_ID,
+      intentId,
+      leaseId: firstClaim.leaseId,
+      transition: "defer",
+      errorCode: "test_release",
+    })).resolves.toEqual({ outcome: "applied", intentId });
+
     await expect(processWorkstreamNotificationIntent(env, WORKSPACE_ID, intentId))
       .resolves.toBe("skipped");
+    await expect(workspace.claimWorkstreamNotificationIntent({
+      workspaceId: WORKSPACE_ID,
+      intentId,
+    })).resolves.toMatchObject({
+      outcome: "terminal",
+      intent: { intentId, state: "skipped" },
+    });
     await runInDurableObject(workspace, (_instance, state) => {
       expect(state.storage.sql.exec<{ state: string; attempts: number; lease_id: string | null }>(
         `SELECT state, attempts, lease_id FROM workstream_notification_intents WHERE intent_id = ?`,
         intentId,
-      ).one()).toEqual({ state: "skipped", attempts: 1, lease_id: null });
+      ).one()).toEqual({ state: "skipped", attempts: 2, lease_id: null });
     });
   });
 

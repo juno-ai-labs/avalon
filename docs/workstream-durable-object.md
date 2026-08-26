@@ -35,6 +35,7 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/queues/access-revocation-consumer.ts`, `apps/api/src/services/access-revocation.ts` | The only way an open socket is closed for lost access: a queue message per object, and the `revokeSocketAccess` walk it drives. Owned by [`access-revocation.md`](access-revocation.md). |
 | `apps/api/src/durable-objects/workspace-product-schema.ts`, `workspace-product-storage.ts` | Strict WorkspaceDO activity, opportunity/provenance, ranking, and resolved-suggestion schema plus its transaction/lease repository. |
 | `apps/api/src/durable-objects/workspace-domain-schema.ts`, `workspace-runtime-sql.ts` | Strict schemas for connector/Terminal/automation/digest/resource/note/memory/delivery domains and the transactionally executed trusted SQL RPC. |
+| `apps/api/src/durable-objects/workspace-notification-intent-protocol.ts`, `workspace-notification-intent-storage.ts` | Runtime-validated notification claim/transition/maintenance RPC contract and the private WorkspaceDO SQL state machine behind it. |
 | `apps/api/src/services/workspace-runtime-database.ts` | Allowlisted D1-compatible adapter: WorkspaceDO tables use native RPC, underlying control tables use D1, and mixed-authority transactions fail closed. |
 | `apps/api/src/services/sidebar-reads.ts` | The one statement and row mapping per sidebar list, used by WorkspaceDO's batch read and by the REST services that route back into it. |
 | `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute using fenced WorkspaceDO RPC inputs and settlements. |
@@ -920,7 +921,7 @@ already have committed across the object boundary.
 | `notes`, `note_transcript_segments`, `note_privacy_change_outbox` | Note authority, transcript segments and privacy-delivery intent. A note's linked resource is a real local foreign key. |
 | `memory_scopes`, `memory_items`, `memory_mutations`, `memory_index_outbox` | Workspace/user/automation/work-stream memory facts, immutable mutation receipts and vector-index side effects. Work-stream/run IDs are opaque provenance, not foreign keys. |
 | `memory_tables`, `memory_table_columns`, `memory_table_rows`, `memory_table_cells`, `memory_table_mutations` | Typed relational memory tables with local FTS indexes, schema/data revisions and durable mutation history. |
-| `workstream_notification_intents` | Causally fenced person-notification intents, `notification_kind` in (`mention`, `participant_added`). Automation and digest transports keep their idempotency receipts on their own target/receipt rows; all variants are WorkspaceDO-owned. Terminal mention shells are reaped by this object's `notification_intents` maintenance alarm after 30 days. |
+| `workstream_notification_intents` | Causally fenced person-notification intents, `notification_kind` in (`mention`, `participant_added`). Claim, defer, failure, terminal settlement, retention due time, and reap are typed WorkspaceDO RPCs; the generic SQL port refuses this table. Automation and digest transports keep their idempotency receipts on their own target/receipt rows; all variants are WorkspaceDO-owned. Terminal shells are reaped by this object's `notification_intents` maintenance alarm after 30 days. |
 | `workstream_email_receipts` | Inbound-email processing idempotency keyed `(resend_email_id, workstream_id)` with the expiring exclusive lease a Worker holds while it fetches, stores, and posts one email. Claim, renewal, settlement, and failure all serialize in this object once the route is open; the legacy pre-cutover branch settles the same shape in one regional D1 batch instead. |
 | `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds — the signed ticket's external contract and the one departure from the object's unix-ms rule — so the columns carry the unit (`*_s`); the import maps the unitless D1 names over. |
 | `workspace_directory_state` | Singleton monotonically increasing `waterline` used to order page membership/pin reconciliation. |
@@ -1138,6 +1139,36 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-26 — Notification lifecycle becomes a closed WorkspaceDO protocol
+
+**What changed:** Notification delivery no longer routes
+`workstream_notification_intents` statements through the D1-shaped workspace
+database adapter. WorkspaceDO now returns typed `claimed`, `terminal`, `busy`,
+and `missing` outcomes; applies lease-fenced defer, failure, and settlement
+transitions; derives the retention alarm target; and returns exact reaped intent
+IDs. The generic SQL executor refuses the table, including through the
+object-local scheduler adapter.
+
+**Why:** The returned-lease repair stopped one `meta.changes === 1` defect, but
+the lifecycle still exposed storage mechanics to every caller and every future
+branch. A D1-compatible result cannot make workerd's physical `rowsWritten`
+into a domain fact. The object owns the state machine and can return the fact
+directly.
+
+**Considered and rejected:** Leaving the generic path open and standardizing on
+`UPDATE ... RETURNING`. That statement pattern is correct locally, but it is a
+review convention rather than an enforceable boundary; another transition can
+still read `meta.changes`, and the alarm would remain a second raw-SQL caller.
+
+**Consequences, and what a future change has to respect:** Notification SQL is
+private storage implementation. New delivery states, retry rules, or retention
+behavior must extend `workspace-notification-intent-protocol.ts` and the
+WorkspaceDO methods rather than issuing SQL through `env.DB`. The Worker owns
+regional identity and provider calls; WorkspaceDO owns clocks, leases, and
+durable transitions. Real-workerd coverage asserts both that an indexed claim
+reaches its terminal decision and that the generic port returns a typed-only
+refusal.
 
 ### 2026-08-25 — Opening messages carry real person mentions
 

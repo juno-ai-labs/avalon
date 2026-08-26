@@ -26,6 +26,12 @@ private to that object instance.
 - Route before querying. A service typed against `D1Database` may receive
   `WorkspaceRuntimeDatabase`, Rally's D1-shaped adapter over WorkspaceDO SQL.
   The TypeScript interface alone does not establish where a query runs.
+- Prefer a typed domain RPC over a generic SQL adapter once a table has a
+  lifecycle of its own. Keep raw SQL and clocks inside the object, parse both
+  sides of the RPC, and return discriminated outcomes plus identities or lease
+  tokens. If the generic adapter must continue serving adjacent tables,
+  explicitly refuse the typed-only table there so a future raw query fails at
+  the boundary rather than quietly reopening the old path.
 - Use a Queue for a durable asynchronous handoff and typed RPC when the caller
   needs the object's answer before it can continue. The full decision is in
   [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md).
@@ -79,6 +85,11 @@ but each state transition still needs an explicit atomic boundary.
 - Return a typed domain outcome from object-owned lifecycle methods. Outcomes
   such as `claimed`, `busy`, `settled`, `superseded`, and `already_committed`
   are more stable than exposing SQL counters to callers.
+- Let the object own lifecycle time and randomness when the caller has no
+  domain reason to choose them. A claim RPC should generate its lease and
+  expiry inside the authority and return the lease; transition RPCs should
+  accept that lease as their fence. This removes caller-supplied timestamps and
+  lease formats from the invariant.
 - Make replay explicit. Unique constraints, immutable payload hashes, receipts,
   and idempotent terminal transitions should make the repeated request converge
   rather than repeat its side effect.
@@ -151,6 +162,14 @@ updated one `workstream_notification_intents` row, including columns covered by
 two indexes. The claim succeeded, but workerd reported multiple writes. Code
 requiring `meta.changes === 1` treated its own lease as a competing lease,
 returned `busy`, and never called a connector.
+
+The durable repair is stronger than using `RETURNING` through the same generic
+adapter. WorkspaceDO now owns claim, defer, failure, settlement, retention due
+time, and reaping as typed notification RPCs. The Worker can observe only
+domain outcomes and exact returned IDs; the generic WorkspaceDO SQL port
+rejects `workstream_notification_intents` outright. That makes
+`SqlStorageCursor.rowsWritten` unavailable to notification callers, so this
+category cannot recur through a different branch of the same lifecycle.
 
 ## Queries, cursors, and SQL construction
 
@@ -237,3 +256,26 @@ As an audit aid, search affected paths for `meta.changes`, `rowsWritten`,
 leave the object. Classify each occurrence by authority and domain purpose; do
 not replace counters mechanically without understanding the transition they
 were trying to represent.
+
+## Changelog
+
+### 2026-08-26 — Domain RPCs close the notification SQL compatibility path
+
+**What changed:** WorkspaceDO now exposes runtime-validated claim, transition,
+maintenance-target, and reap RPCs for `workstream_notification_intents`. The
+delivery service and workspace alarm use those outcomes, and the generic
+WorkspaceDO SQL executor refuses the table.
+
+**Why:** Returning a lease witness repaired the immediate indexed-write bug but
+still left every notification branch able to reinterpret a D1-shaped storage
+result later. The object already owned the state machine, so SQL was the wrong
+cross-boundary contract.
+
+**Considered and rejected:** Keeping generic SQL and relying on review to use
+`RETURNING` correctly. That preserves the failure category and makes the next
+branch or maintainer rediscover which counters are physical.
+
+**Consequences:** Notification callers cannot observe SQLite counters or write
+the table directly. New lifecycle states and transitions must be added to the
+typed protocol and object storage together, and runtime tests must prove both
+the public outcome and the generic-port refusal.
