@@ -148,6 +148,14 @@ close with the panel and recover from durable checkpoints when it is opened
 again. Access revocation is not delayed: the server closes every affected
 retained socket immediately, and that socket permanently stops reconnecting.
 
+Opening telemetry treats the composer as send-ready only after its active
+work-stream handler is installed and the committed composer crosses a paint.
+That handler submits through the workspace socket's command queue, not either
+pooled work-stream socket, so connecting and reconnecting workspace transports
+can still be client-ready. `workstream_send_ready` records that transport state
+under the sidebar opening ID; it is not proof of delivery or server
+acknowledgement.
+
 The workspace socket carries its authoritative work-stream directory rows plus
 durable topic invalidations for the other D1-owned workspace modules. Its
 `workspace_sync_events.waterline` is monotonic inside the WorkspaceDO and each
@@ -521,6 +529,24 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-25 — Opening telemetry names command-queue readiness
+
+**What changed:** `workstream_send_ready` records when a sidebar-opened composer
+can hand a message to the workspace command queue and which workspace socket
+state existed then.
+
+**Why:** The composer and feed normally paint together, but feed visibility is
+not independent proof that the send handler is installed. Reconnecting does not
+block client queue admission, so connection-open time is not the boundary.
+
+**Considered and rejected:** Using the pooled WorkstreamDO or SubstreamAgent
+socket as the send gate. User commands deliberately travel through WorkspaceDO;
+the child feed rejects them.
+
+**Consequences:** The readiness event can say `reconnecting` without
+contradiction. Delivery and server acknowledgement remain part of the message
+send flow, not the opening milestone.
 
 ### 2026-08-25 — A pooled owner has one traceable socket lease
 

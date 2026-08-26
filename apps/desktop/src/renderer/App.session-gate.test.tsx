@@ -1,8 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../common/desktop';
 import { SessionGate } from './App';
+import {
+  abandonPendingWorkstreamFeedOpen,
+  markWorkstreamFeedOpenStarted,
+  workstreamFeedOpenAttemptId,
+} from './lib/telemetry';
 
 const sessionState = vi.hoisted(() => ({
   api: {
@@ -56,6 +61,7 @@ function renderGate(): void {
 
 describe('SessionGate identity-first ordering', () => {
   afterEach(() => {
+    abandonPendingWorkstreamFeedOpen();
     vi.useRealTimers();
   });
 
@@ -121,6 +127,33 @@ describe('SessionGate identity-first ordering', () => {
       await vi.advanceTimersByTimeAsync(15 * 60 * 1_000);
     });
     expect(sessionState.api.getWorkspaceMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it('abandons a sidebar opening when a workspace error replaces its owning surface', async () => {
+    const workstreamId = '00000000-0000-4000-8000-000000000220';
+    window.history.replaceState({}, '', `/#/workstreams/${workstreamId}`);
+    sessionState.session = {
+      ...identitySession,
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
+    };
+    const firstAttempt = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 100);
+    sessionState.api.getWorkspace.mockRejectedValueOnce(new Error('Regional service unavailable.'));
+    renderGate();
+
+    expect(await screen.findByText('Regional service unavailable.')).toBeVisible();
+    await vi.waitFor(() => expect(workstreamFeedOpenAttemptId(workstreamId)).toBeUndefined());
+
+    sessionState.api.getWorkspace.mockResolvedValueOnce({
+      id: 'workspace-1',
+      name: 'Rally Studio',
+      region: 'global',
+      currentUser: { id: 'user-1', email: 'adam@example.com', name: 'Adam', role: 'owner' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry connection' }));
+    expect(await screen.findByText('workstream')).toBeVisible();
+
+    const retryAttempt = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 60_100);
+    expect(retryAttempt).not.toBe(firstAttempt);
   });
 
   it('shows authenticated invitations before workspace setup', async () => {

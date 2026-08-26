@@ -13,6 +13,7 @@ import {
   noteNavigation,
   reportJavascriptError,
   reportWorkstreamFeedAfterPaint,
+  reportWorkstreamSendReady,
   reportTelemetryProductIntent,
   reportTelemetryScreen,
   telemetryScreenForPath,
@@ -117,6 +118,47 @@ describe('renderer semantic telemetry helpers', () => {
         },
       });
     expect(workstreamFeedOpenAttemptId(workstreamId)).toBeUndefined();
+    expect(reportWorkstreamSendReady(workstreamId, 'reconnecting', 380)).toBe(true);
+    expect(reportWorkstreamSendReady(workstreamId, 'connected', 390)).toBe(false);
+    expect(report).toHaveBeenCalledWith({
+      kind: 'workstream_send_ready',
+      operationId,
+      workstreamId,
+      durationMs: 280,
+      workspaceSocketState: 'reconnecting',
+    });
+  });
+
+  it('records send readiness once when it paints before the feed', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportTelemetryProductIntent: report });
+    const workstreamId = '00000000-0000-4000-8000-000000000214';
+    const operationId = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 100);
+    report.mockClear();
+
+    expect(reportWorkstreamSendReady(workstreamId, 'connecting', 130)).toBe(true);
+    markWorkstreamFeedCacheState(workstreamId, 'cold');
+    markWorkstreamFeedDataReady(workstreamId, 140);
+    expect(completeWorkstreamFeedPaint(workstreamId, 'boot_payload', 'one', 160)?.operationId)
+      .toBe(operationId);
+    expect(reportWorkstreamSendReady(workstreamId, 'connected', 170)).toBe(false);
+    expect(report).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not attach a late send-ready frame to an attempt superseded after feed paint', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportTelemetryProductIntent: report });
+    const first = '00000000-0000-4000-8000-000000000216';
+    const second = '00000000-0000-4000-8000-000000000217';
+    markWorkstreamFeedOpenStarted(first, 'recent', 'retained_pair', 100);
+    markWorkstreamFeedCacheState(first, 'feed_cached');
+    markWorkstreamFeedDataReady(first, 110);
+    completeWorkstreamFeedPaint(first, 'feed_cache', 'one', 120);
+    markWorkstreamFeedOpenStarted(second, 'recent', 'cold', 130);
+    report.mockClear();
+
+    expect(reportWorkstreamSendReady(first, 'connected', 140)).toBe(false);
+    expect(report).not.toHaveBeenCalled();
   });
 
   it('replaces a pending feed measurement when another sidebar row is chosen', () => {

@@ -126,6 +126,11 @@ export type DesktopTelemetryWorkstreamFeedVisibleIntent = {
   operationId: string;
 } & TelemetryEventProperties<'workstream_feed_visible'>;
 
+export type DesktopTelemetryWorkstreamSendReadyIntent = {
+  kind: 'workstream_send_ready';
+  operationId: string;
+} & TelemetryEventProperties<'workstream_send_ready'>;
+
 export type DesktopTelemetryWorkstreamSocketStartedIntent = {
   kind: 'workstream_socket_started';
   operationId: string;
@@ -144,6 +149,7 @@ export type DesktopTelemetryProductIntent =
   | { kind: 'run_requested'; entrypoint: 'composer'; operationId: string }
   | DesktopTelemetryConnectorSetupIntent
   | DesktopTelemetryWorkstreamFeedVisibleIntent
+  | DesktopTelemetryWorkstreamSendReadyIntent
   | DesktopTelemetryWorkstreamSocketStartedIntent
   | DesktopTelemetryWorkstreamOpenLifecycleIntent
   | { kind: 'command_shortcuts_revealed'; availableCount: number }
