@@ -22,7 +22,9 @@ import {
   uuidV7,
   workstreamFeedOpenCacheState,
   workstreamFeedOpenAttemptId,
+  workstreamFeedSourceQueryKey,
   workstreamNavigation,
+  workstreamRecoveryFeedQueryKey,
 } from './telemetry';
 
 const desktopBridge = vi.hoisted(() => vi.fn());
@@ -35,6 +37,14 @@ afterEach(() => {
 });
 
 describe('renderer semantic telemetry helpers', () => {
+  it('keeps work-stream opening lineage and REST windows in distinct cache keys', () => {
+    const workstreamId = '00000000-0000-4000-8000-000000000200';
+    expect(workstreamFeedSourceQueryKey(workstreamId))
+      .toEqual(['workstream-feed-source', workstreamId]);
+    expect(workstreamRecoveryFeedQueryKey(workstreamId))
+      .toEqual(['workstream-recovery-feed', workstreamId]);
+  });
+
   it('maps only planned router destinations to stable screen enums', () => {
     expect(telemetryScreenForPath('/')).toBeNull();
     expect(telemetryScreenForPath('/workstreams/new')).toBe('workspace_home');
