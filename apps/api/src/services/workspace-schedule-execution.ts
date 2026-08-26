@@ -37,6 +37,12 @@ import type {
   WorkspaceDirectoryScheduleTargetsRequest,
   WorkspaceDirectoryScheduleTargetsResult,
 } from "../durable-objects/workspace-directory-protocol";
+import type {
+  WorkspaceNotificationIntentMaintenanceRequest,
+  WorkspaceNotificationIntentMaintenanceTarget,
+  WorkspaceNotificationIntentReapRequest,
+  WorkspaceNotificationIntentReapResult,
+} from "../durable-objects/workspace-notification-intent-protocol";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logStructuredEvent } from "../observability/logger";
@@ -59,7 +65,6 @@ import { createTerminalFinalDiffPreserver, reconcileDueTerminalSandbox } from ".
 import { emitProductUsageTelemetry } from "../telemetry/product-usage";
 import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
-import { reapSettledWorkspaceNotificationIntents } from "./workstream-regional-effect-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
@@ -84,6 +89,15 @@ export interface WorkspaceScheduleDirectory {
   ): Promise<WorkspaceDirectoryScheduleTargetsResult>;
 }
 
+export interface WorkspaceScheduleNotificationIntents {
+  notificationIntentMaintenanceTarget(
+    input: WorkspaceNotificationIntentMaintenanceRequest,
+  ): Promise<WorkspaceNotificationIntentMaintenanceTarget>;
+  reapSettledWorkstreamNotificationIntents(
+    input: WorkspaceNotificationIntentReapRequest,
+  ): Promise<WorkspaceNotificationIntentReapResult>;
+}
+
 export interface WorkspaceScheduleContext {
   /** The regional environment: audit events, Workflows, telemetry, authority. */
   env: Env;
@@ -91,6 +105,7 @@ export interface WorkspaceScheduleContext {
   workspaceEnv: Env;
   workspaceId: string;
   directory: WorkspaceScheduleDirectory;
+  notificationIntents: WorkspaceScheduleNotificationIntents;
 }
 
 /** Every kind of thing a workspace alarm can be waiting on. */
@@ -230,7 +245,12 @@ const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promi
   note_objects: async (ctx) => progressedIf(await reapDeletedNoteObjects(ctx.workspaceEnv, ctx.workspaceId)),
   note_privacy: async (ctx) => progressedIf(await processPendingNotePrivacyNotifications(ctx.workspaceEnv)),
   memory_index: async (ctx) => progressedIf(await processMemoryIndexOutbox(ctx.workspaceEnv, 50, ctx.workspaceId)),
-  notification_intents: async (ctx) => progressedIf(await reapSettledWorkspaceNotificationIntents(ctx.workspaceEnv, ctx.workspaceId)),
+  notification_intents: async (ctx) => progressedIf((
+    await ctx.notificationIntents.reapSettledWorkstreamNotificationIntents({
+      workspaceId: asWorkspaceId(ctx.workspaceId),
+      limit: 500,
+    })
+  ).reapedIntentIds.length),
   slack_ingress: async (ctx) => { await new SlackAgentService(ctx.workspaceEnv).maintainIngress(100, ctx.workspaceId); },
   slack_unfurls: async (ctx) => { await refreshSlackWorkstreamUnfurls(ctx.workspaceEnv, ctx.workspaceId); },
 };
@@ -354,13 +374,6 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
                           WHERE connection.id = link.connection_id AND connection.status <> 'disabled')
            HAVING COUNT(*) > 0`,
   },
-  {
-    scoped: true,
-    sql: `SELECT 'maintenance' AS target_kind, 'notification_intents' AS id,
-                 strftime('%Y-%m-%dT%H:%M:%SZ', MIN(updated_at), '+30 days', '+1 second') AS due_at
-            FROM workstream_notification_intents
-           WHERE workspace_id = ?1 AND state IN ('delivered', 'skipped') HAVING COUNT(*) > 0`,
-  },
 ];
 
 /**
@@ -383,9 +396,12 @@ export async function workspaceScheduleTargets(
       return (query.scoped ? statement.bind(ctx.workspaceId) : statement).all<AlarmTargetRow>();
     }),
   );
-  const workstreamTargets = await ctx.directory.workstreamScheduleTargets({
-    workspaceId: ctx.workspaceId,
-  });
+  const [workstreamTargets, notificationTarget] = await Promise.all([
+    ctx.directory.workstreamScheduleTargets({ workspaceId: ctx.workspaceId }),
+    ctx.notificationIntents.notificationIntentMaintenanceTarget({
+      workspaceId: asWorkspaceId(ctx.workspaceId),
+    }),
+  ]);
   return [
     ...workspaceTargets.flatMap((result) => result.results).map((row) => ({
       kind: row.target_kind,
@@ -397,6 +413,11 @@ export async function workspaceScheduleTargets(
       id: target.workstreamId,
       dueAt: target.dueAt,
     })),
+    ...(notificationTarget.dueAt === null ? [] : [{
+      kind: "maintenance" as const,
+      id: "notification_intents",
+      dueAt: notificationTarget.dueAt,
+    }]),
   ].filter((target): target is WorkspaceScheduleTarget => Number.isFinite(Date.parse(target.dueAt)));
 }
 
