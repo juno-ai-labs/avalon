@@ -6,8 +6,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
+import { completeMentionAtCaret, mentionsStillPresent, upsertMentionIdentity } from '../lib/mention-draft';
 import { formatRelative, workstreamMarkerStatus, workstreamNeedsAttention } from '../lib/format';
 import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
+import type { MentionIdentity } from '../lib/api';
 import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
@@ -30,6 +32,7 @@ interface CreateWorkstreamInput {
   attachments: MessageAttachment[];
   modelOverride: AgentModelOverride | null;
   openingMessage: string;
+  mentions: MentionIdentity[];
   participantIds: string[];
   /**
    * The submit instant the launch surface has been counting from. Seeded onto
@@ -267,7 +270,12 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   // `onSuccess` so the seeded run continues it rather than restarting.
   const opportunityStartedAt = useRef<string | null>(null);
   const draftKey = newWorkstreamDraftKey(workspace.id);
-  const { text: message, setText: setMessage } = useDraftText(draftKey);
+  const {
+    text: message,
+    setText: setMessage,
+    mentions: selectedMentions,
+    setMentions: setSelectedMentions,
+  } = useDraftText(draftKey);
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -342,6 +350,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       return trace.step('create_request', () => api!.createWorkstream({
         openingMessage: input.openingMessage,
         participantIds: input.participantIds,
+        ...(input.mentions.length > 0 ? { mentions: input.mentions } : {}),
         requestId: trace.traceId,
         ...(input.attachmentIds.length > 0 ? { attachmentIds: input.attachmentIds } : {}),
         ...(input.modelOverride ? { modelOverride: input.modelOverride } : {}),
@@ -355,6 +364,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       // screen next to an error about why.
       setLaunching(null);
       setMessage((current) => current.length > 0 ? current : input.openingMessage);
+      setSelectedMentions((current) => current.length > 0 ? current : input.mentions);
     },
     onSettled: () => {
       submittingRef.current = false;
@@ -484,7 +494,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     setTooLong(false);
     submittingRef.current = true;
     const participantIds = selectedMembers.map((member) => member.id);
+    const mentions = [...selectedMentions];
     setMessage('');
+    setSelectedMentions([]);
     const createdAt = new Date().toISOString();
     const attachments = readyAttachments.map((attachment) => ({
       id: attachment.resource!.id,
@@ -504,6 +516,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       attachments,
       modelOverride,
       openingMessage,
+      mentions,
       participantIds,
       startedAt: createdAt,
     });
@@ -537,6 +550,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
 
   const updateMessage = (value: string): void => {
     setMessage(value);
+    setSelectedMentions((current) => mentionsStillPresent(value, current));
     syncMentionQuery(value);
   };
 
@@ -573,39 +587,28 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     });
   };
 
-  /**
-   * Names the person in the opening message and adds them to the work stream
-   * being started. Nothing exists yet to mention someone *into*: `POST
-   * /workstreams` carries participant ids and no mention spans, so a name that
-   * only reached the text would leave with nobody attached to it. Adding here
-   * is the same silent toggle the picker above the composer performs, and shows
-   * in the same avatar row; deleting the text again does not remove them, for
-   * the same reason unticking is that row's job rather than the draft's.
-   */
+  /** Names the person in both the visible draft and its identity-bearing span. */
   const insertMention = (member: WorkspaceMember): void => {
     const textarea = textareaRef.current;
     const caret = textarea?.selectionStart ?? message.length;
-    const before = message.slice(0, caret);
-    const atIndex = before.lastIndexOf('@');
+    const completed = completeMentionAtCaret(message, caret, member.name);
     // The caret has left the mention this list belongs to; there is nothing
     // here to complete, and `slice(0, -1)` would eat the character before it.
-    if (atIndex < 0) {
+    if (!completed) {
       setMentionQuery(null);
       return;
     }
-    const after = message.slice(caret);
-    // One separator, not two: the name brings its own unless the rest of the
-    // line already starts with one.
-    const separator = /^\s/u.test(after) ? '' : ' ';
-    setMessage(`${before.slice(0, atIndex)}@${member.name}${separator}${after}`);
+    setMessage(completed.text);
+    setSelectedMentions((current) => upsertMentionIdentity(current, {
+      type: 'person', label: member.name, userId: member.id, connectorType: null,
+    }));
     if (member.id !== workspace.currentUser.id) {
       setSelectedMembers((current) => current.some((candidate) => candidate.id === member.id) ? current : [...current, member]);
     }
     setMentionQuery(null);
     requestAnimationFrame(() => {
       textarea?.focus();
-      const nextCaret = atIndex + member.name.length + 1 + separator.length;
-      textarea?.setSelectionRange(nextCaret, nextCaret);
+      textarea?.setSelectionRange(completed.caret, completed.caret);
     });
   };
   const participantSummary = participants.length <= 2

@@ -941,6 +941,41 @@ describe('Rally API wire adapter', () => {
     });
   });
 
+  it('encodes an opening mention with the normal message resolver and seats its identity', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({
+        items: [{ user, role: 'owner', status: 'active', joinedAt: timestamp }],
+      }))
+      .mockResolvedValueOnce(json({
+        workstream: detail,
+        messageId,
+        harnessRunId: null,
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await api.createWorkstream({
+      openingMessage: 'Ask @Adam to review',
+      participantIds: [],
+      mentions: [{ type: 'person', label: 'Adam', userId, connectorType: null }],
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/workspace/members');
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      openingMessage: 'Ask @Adam to review',
+      participantUserIds: [userId],
+      clientMessageId: expect.any(String),
+      attachmentIds: [],
+      mentions: [{
+        type: 'person',
+        userId,
+        connectorType: null,
+        startOffset: 4,
+        endOffset: 9,
+      }],
+    });
+  });
+
   it('acknowledges visible messages and marks a work stream unread through durable read-state endpoints', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({

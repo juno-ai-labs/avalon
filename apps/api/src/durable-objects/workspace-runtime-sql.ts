@@ -79,6 +79,11 @@ export function executeWorkspaceRuntimeSql(
       return {
         columns: rows.length === 0 ? [] : Object.keys(rows[0]!),
         rows,
+        // This intentionally preserves workerd's physical-write metric. It is
+        // not SQLite's logical `changes()` count: index and trigger writes can
+        // make one row report more than one. Callers that need a mutation
+        // outcome use RETURNING or a typed object port; see
+        // docs/durable-object-sqlite.md.
         changes: cursor.rowsWritten,
       };
     });

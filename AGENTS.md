@@ -98,6 +98,9 @@ runs cold; limits in
 **Read [`docs/testing.md`](docs/testing.md) before adding a test.** It maps the
 suites to what each one can prove, and holds the two rules below.
 
+**Touching Durable Object SQLite SQL?** Both implementers and reviewers must
+read [`docs/durable-object-sqlite.md`](docs/durable-object-sqlite.md).
+
 - **Default to the real Cloudflare pipeline.** Anything that depends on the
   runtime — Durable Object storage, alarms, hibernation, WebSocket upgrades, D1
   semantics — belongs in `apps/api/test-workers/`, which runs on real workerd
