@@ -104,11 +104,13 @@ try {
   const firstGenerationId = '00000000-0000-7000-8000-000000000001';
   const secondGenerationId = '00000000-0000-7000-8000-000000000002';
   const firstGenerationDirectory = join(scratchDirectory, 'active', firstGenerationId);
+  const firstLaunchAt = new Date();
+  const secondLaunchAt = new Date(firstLaunchAt.getTime() + 60_000);
   await run(executablePath, [
     `--fixture-root=${scratchDirectory}`,
     `--fixture-generation-id=${firstGenerationId}`,
     '--fixture-route=global',
-    '--fixture-now=2026-08-12T20:00:00.000Z',
+    `--fixture-now=${firstLaunchAt.toISOString()}`,
   ], {
     env: { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' },
   });
@@ -130,7 +132,7 @@ try {
     `--fixture-root=${scratchDirectory}`,
     `--fixture-generation-id=${secondGenerationId}`,
     '--fixture-route=global',
-    '--fixture-now=2026-08-12T20:01:00.000Z',
+    `--fixture-now=${secondLaunchAt.toISOString()}`,
   ], {
     env: { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' },
   });
