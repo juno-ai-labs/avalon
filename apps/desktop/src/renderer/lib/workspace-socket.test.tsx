@@ -6,8 +6,8 @@ import {
 } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render } from '@testing-library/react';
-import { useEffect } from 'react';
+import { act, render, screen } from '@testing-library/react';
+import { useEffect, type JSX } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from './types';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
@@ -17,10 +17,29 @@ import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache
 import type * as TelemetryModule from './telemetry';
 
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
+const applicationFocus = vi.hoisted(() => ({
+  foregrounded: false,
+  listeners: new Set<(foregrounded: boolean) => void>(),
+}));
 vi.mock('./telemetry', async (importOriginal) => ({
   ...await importOriginal<typeof TelemetryModule>(),
   reportTelemetryProductIntent,
 }));
+vi.mock('./platform', () => ({
+  desktopBridge: () => ({
+    getApplicationForegroundState: async () => applicationFocus.foregrounded,
+    onApplicationForegroundChanged: (listener: (foregrounded: boolean) => void) => {
+      applicationFocus.listeners.add(listener);
+      return () => applicationFocus.listeners.delete(listener);
+    },
+    observeClientFeatureFlags: async () => undefined,
+  }),
+}));
+
+function setApplicationForeground(foregrounded: boolean): void {
+  applicationFocus.foregrounded = foregrounded;
+  for (const listener of applicationFocus.listeners) listener(foregrounded);
+}
 
 /** Every `realtime_socket_state` this test reported, in order. */
 function socketTelemetry(): unknown[] {
@@ -91,10 +110,198 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   reportTelemetryProductIntent.mockClear();
+  applicationFocus.foregrounded = false;
+  applicationFocus.listeners.clear();
   FakeWebSocket.instances = [];
+  vi.restoreAllMocks();
 });
 
 describe('WorkspaceSocketProvider', () => {
+  it('reports app and work-stream foreground separately and receives viewer-scoped presence', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    applicationFocus.foregrounded = true;
+    const documentFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    const workstreamId = '00000000-0000-7000-8000-000000000002';
+
+    function Probe(): JSX.Element {
+      const workspaceSocket = useWorkspaceSocket();
+      useEffect(() => {
+        workspaceSocket.setForegroundWorkstreamId(workstreamId);
+        return () => workspaceSocket.setForegroundWorkstreamId(null);
+      }, [workspaceSocket.setForegroundWorkstreamId]);
+      return <div>{(workspaceSocket.presenceUserIdsByWorkstream[workstreamId] ?? []).join(',')}</div>;
+    }
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <Probe />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    expect(socket.send).not.toHaveBeenCalledWith(expect.stringContaining('set_presence'));
+    act(() => socket.message({
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000008',
+      waterline: 0,
+      occurredAt: '2026-08-26T20:00:00.000Z',
+      topics: ['workspace_profile'],
+      reason: 'initial',
+    }));
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({
+      type: 'set_presence',
+      revision: 1,
+      applicationState: 'foreground',
+      foregroundWorkstreamId: workstreamId,
+    }));
+
+    act(() => socket.message({
+      type: 'workspace_presence',
+      occurredAt: '2026-08-26T20:00:00.000Z',
+      workstreamId,
+      userIds: ['00000000-0000-7000-8000-000000000003'],
+    }));
+    expect(await screen.findByText('00000000-0000-7000-8000-000000000003')).toBeInTheDocument();
+
+    documentFocus.mockReturnValue(false);
+    act(() => window.dispatchEvent(new Event('blur')));
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({
+      type: 'set_presence',
+      revision: 2,
+      applicationState: 'foreground',
+      foregroundWorkstreamId: null,
+    }));
+
+    act(() => setApplicationForeground(false));
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({
+      type: 'set_presence',
+      revision: 3,
+      applicationState: 'background',
+      foregroundWorkstreamId: null,
+    }));
+  });
+
+  it('drops snapshots on route changes and fails malformed foreground ids closed', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    applicationFocus.foregrounded = true;
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const queryClient = new QueryClient();
+    const firstWorkstreamId = '00000000-0000-7000-8000-000000000002';
+    const secondWorkstreamId = '00000000-0000-7000-8000-000000000004';
+    let setForegroundWorkstreamId: ((workstreamId: string | null) => void) | null = null;
+
+    function Probe(): JSX.Element {
+      const workspaceSocket = useWorkspaceSocket();
+      setForegroundWorkstreamId = workspaceSocket.setForegroundWorkstreamId;
+      return <div>{Object.values(workspaceSocket.presenceUserIdsByWorkstream).flat().join(',')}</div>;
+    }
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket: vi.fn(async () => ({
+            url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+            ticket: 'workspace-ticket',
+            protocols: socketTicketProtocols('workspace-ticket'),
+          })) }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <Probe />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => setForegroundWorkstreamId!(firstWorkstreamId));
+    act(() => socket.message({
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000008',
+      waterline: 0,
+      occurredAt: '2026-08-26T20:00:00.000Z',
+      topics: ['workspace_profile'],
+      reason: 'initial',
+    }));
+    act(() => socket.message({
+      type: 'workspace_presence',
+      occurredAt: '2026-08-26T20:00:00.000Z',
+      workstreamId: firstWorkstreamId,
+      userIds: ['00000000-0000-7000-8000-000000000003'],
+    }));
+    expect(await screen.findByText('00000000-0000-7000-8000-000000000003')).toBeInTheDocument();
+
+    act(() => setForegroundWorkstreamId!(secondWorkstreamId));
+    expect(screen.queryByText('00000000-0000-7000-8000-000000000003')).not.toBeInTheDocument();
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({
+      type: 'set_presence',
+      revision: 2,
+      applicationState: 'foreground',
+      foregroundWorkstreamId: secondWorkstreamId,
+    }));
+
+    act(() => setForegroundWorkstreamId!('not-a-workstream-id'));
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({
+      type: 'set_presence',
+      revision: 3,
+      applicationState: 'foreground',
+      foregroundWorkstreamId: null,
+    }));
+  });
+
+  it.each([
+    { closeCode: 1006, label: 'retryable transport loss' },
+    { closeCode: WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, label: 'permanent access loss' },
+  ])('clears ephemeral presence after $label', async ({ closeCode }) => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000002';
+
+    function Probe(): JSX.Element {
+      const workspaceSocket = useWorkspaceSocket();
+      return <div>{(workspaceSocket.presenceUserIdsByWorkstream[workstreamId] ?? []).join(',')}</div>;
+    }
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket: vi.fn(async () => ({
+            url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+            ticket: 'workspace-ticket',
+            protocols: socketTicketProtocols('workspace-ticket'),
+          })) }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <Probe />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'workspace_presence',
+      occurredAt: '2026-08-26T20:00:00.000Z',
+      workstreamId,
+      userIds: ['00000000-0000-7000-8000-000000000003'],
+    }));
+    expect(await screen.findByText('00000000-0000-7000-8000-000000000003')).toBeInTheDocument();
+
+    act(() => socket.close(closeCode));
+    expect(screen.queryByText('00000000-0000-7000-8000-000000000003')).not.toBeInTheDocument();
+  });
+
   it.each([
     {
       closeCode: WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
@@ -709,7 +916,7 @@ describe('WorkspaceSocketProvider', () => {
     // had got to. A directory request here would be the round trip this frame
     // exists to remove.
     const sent = socket.send.mock.calls.map(([frame]) => JSON.parse(String(frame)) as { type: string });
-    expect(sent.map((frame) => frame.type)).toEqual(['subscribe']);
+    expect(sent.map((frame) => frame.type)).toEqual(['subscribe', 'set_presence']);
   });
 
   it('does not ask for the directory it was just handed', async () => {

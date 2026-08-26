@@ -453,6 +453,17 @@ const applicationLifecycleTelemetry = new ApplicationLifecycleTelemetry((state) 
   const reporter = telemetryReporter;
   if (reporter) void reporter.applicationLifecycle(state).catch(() => undefined);
 });
+let applicationForegrounded: boolean | null = null;
+
+function observeApplicationForeground(foregrounded: boolean): void {
+  const changed = applicationForegrounded !== foregrounded;
+  applicationForegrounded = foregrounded;
+  applicationLifecycleTelemetry.observeFocused(foregrounded);
+  if (!changed) return;
+  for (const window of rallyWindows()) {
+    window.webContents.send('application:foreground-changed', foregrounded);
+  }
+}
 let nativeCrashUploader: NativeCrashUploader | null = null;
 let nativeCrashGenerationActive = false;
 let nativeCrashGenerationInvalidated = false;
@@ -2374,6 +2385,10 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return runtimeConfig();
   });
+  ipcMain.handle('application:foreground-get', (event) => {
+    assertTrustedIpcSender(event);
+    return applicationForegrounded ?? BrowserWindow.getFocusedWindow() !== null;
+  });
   ipcMain.handle('application-settings:get', async (event) => {
     assertTrustedIpcSender(event);
     return desktopApplicationSettings(await lockdownModeController.settings());
@@ -3534,7 +3549,7 @@ if (!singleInstanceLock) {
     // Rally with nothing on screen and nothing in the menu bar, reachable only
     // by hunting for it in the Dock.
     const startsHidden = openedAtLogin && menuBarController.present();
-    if (startsHidden) applicationLifecycleTelemetry.observeFocused(false);
+    if (startsHidden) observeApplicationForeground(false);
     else await createMainWindow();
     await telemetryReporter?.applicationLifecycle('ready');
     await telemetryBreadcrumbs?.add({ kind: 'lifecycle', phase: 'ready' }).catch(() => undefined);
@@ -3583,7 +3598,7 @@ process.on('uncaughtExceptionMonitor', (error, origin) => {
 });
 
 app.on('browser-window-focus', () => {
-  applicationLifecycleTelemetry.observeFocused(true);
+  observeApplicationForeground(true);
 });
 
 app.on('browser-window-blur', () => {
@@ -3591,7 +3606,7 @@ app.on('browser-window-blur', () => {
   // one turn and observe the application as backgrounded only if no Rally
   // window acquired focus.
   setImmediate(() => {
-    applicationLifecycleTelemetry.observeFocused(BrowserWindow.getFocusedWindow() !== null);
+    observeApplicationForeground(BrowserWindow.getFocusedWindow() !== null);
   });
 });
 

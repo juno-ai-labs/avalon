@@ -74,6 +74,7 @@ import {
   type SocketState,
 } from '../lib/use-workstream-socket';
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
+import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
@@ -322,6 +323,8 @@ export function WorkstreamHeader({
   onOpenRail,
   onRename,
   onToggleBlockDashboard,
+  presentUserIds = [],
+  currentUserId = null,
 }: {
   workstream: WorkstreamDetail;
   socketState: SocketState;
@@ -331,6 +334,8 @@ export function WorkstreamHeader({
   onOpenRail: (variant: RailVariant) => void;
   onRename: (title: string) => Promise<void>;
   onToggleBlockDashboard: () => void;
+  presentUserIds?: readonly string[];
+  currentUserId?: string | null;
 }): React.JSX.Element {
   const railOpen = useUiStore((state) => state.railOpen);
   const railVariant = useUiStore((state) => state.railVariant);
@@ -574,7 +579,11 @@ export function WorkstreamHeader({
       <div className="workstream-header-actions window-no-drag">
         <SocketStatusIndicator state={socketState} />
         <button className="participant-header-button" onClick={onAddParticipant} type="button">
-          <AvatarStack members={workstream.participants} />
+          <AvatarStack
+            currentUserId={currentUserId}
+            members={workstream.participants}
+            presentUserIds={presentUserIds}
+          />
           <UserPlus aria-hidden="true" size={13} />
           <span className="sr-only">Add participant</span>
         </button>
@@ -795,6 +804,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
   const navigate = useNavigate();
   const { api, session } = useAppSession();
+  const { presenceUserIdsByWorkstream } = useWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
   const queryClient = useQueryClient();
   const closeRail = useUiStore((state) => state.closeRail);
@@ -1751,6 +1761,8 @@ export function WorkstreamScreen(): React.JSX.Element {
         onOpenRail={openRailVariant}
         onRename={(title) => renameWorkstream.mutateAsync(title).then(() => undefined)}
         onToggleBlockDashboard={() => setBlockDashboardVisible(!blockDashboardOpen)}
+        currentUserId={session?.user.id ?? null}
+        presentUserIds={presenceUserIdsByWorkstream[id] ?? []}
         socketState={socketState}
         workstream={displayedDetail}
       />
