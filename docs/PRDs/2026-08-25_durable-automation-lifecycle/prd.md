@@ -84,8 +84,13 @@ candidates for that automation. WorkspaceDO evaluates those rules beside the
 event authority and delivers only durable, idempotent matches to the
 AutomationAgent. Calendar and interval timers never enter that evaluator set;
 the AutomationAgent schedules them directly through its inherited multi-alarm
-index. A projection can locate or wake an AutomationAgent; it cannot authorize a
-sensitive read or mutation on the object's behalf.
+index. The same WorkspaceDO evaluator index, match receipt, outbox, and ID-only
+Queue wake-up also deliver a canonical resource update to each work stream whose
+authoritative resource link has registered a watch. Only the destination adapter
+differs: an automation match calls AutomationAgent admission, while a resource
+watch appends one idempotent connected-activity update to the watched work
+stream after a current audience check. A projection can locate or wake a target;
+it cannot authorize a sensitive read or mutation on the target's behalf.
 
 SubstreamAgent, BlockDashboardAgent, and AutomationAgent share one extracted
 durable Bind runtime kernel: schema fragments, migrations, run admission and
@@ -178,6 +183,10 @@ behavior and failure containment, not projected scale.
     versioned evaluator grammar whose structure is parsed at every wire and
     storage boundary and whose fields and operators are validated against the
     exact connector event manifest before registration.
+14. Reuse the external-event evaluator, receipt, outbox, and delivery engine for
+    work-stream resource watches, without moving attachment/watch authority or
+    transcript ownership into WorkspaceDO and without creating a second
+    connector-event fan-out pipeline.
 
 ## Non-goals
 
@@ -502,6 +511,59 @@ type ExternalEventPredicateV1 =
     };
 ```
 
+That AutomationAgent-owned envelope is one publisher's wire contract, not a
+reason to build an automation-only matcher. WorkspaceDO compiles every accepted
+automation evaluator and every watched work-stream resource link into the same
+internal registration shape:
+
+```ts
+type WorkspaceExternalEventRegistrationV1 = {
+  registrationId: WorkspaceExternalEventRegistrationId;
+  registrationGeneration: ExternalEventRegistrationGeneration;
+  sourceVersion: ExternalEventRegistrationVersion;
+  sourceHash: CanonicalPayloadHash;
+  evaluator: ExternalEventEvaluatorV1;
+  destination:
+    | {
+        kind: "automation";
+        automationId: AutomationId;
+        authorityGeneration: AutomationAuthorityGeneration;
+      }
+    | {
+        kind: "workstream_resource_update";
+        workstreamId: WorkstreamId;
+        substreamId: SubstreamId;
+        authorityGeneration: WorkstreamAuthorityGeneration;
+        resourceId: ResourceId;
+      };
+};
+```
+
+The internal type is produced only by the registry-aware compiler and is never
+accepted directly from a request. For an automation, it preserves the authored
+rules and deterministic or semantic gate. For a work-stream resource watch, the
+existing versioned resource-link effect is the registration boundary:
+`watchEnabled = true` compiles to the exact resource/connection/event source,
+`always -> match`, `defaultResult = no_match`, and a deterministic gate;
+`watchEnabled = false`, link removal, archival, or a new authority generation
+removes or supersedes that registration. A connector that can report several
+legal update event types produces one registration per exact event type. The
+registration and evaluator identities are deterministic from the watched-link
+identity, destination generation, and event type, so projection replay cannot
+mint a second route. The watch may not add a semantic condition or arbitrary
+predicate because the person's decision was to receive updates for that named
+resource, not to create
+a second hidden automation.
+
+WorkstreamDO/SubstreamAgent remains canonical for the attachment and whether it
+is watched. Its existing durable child-to-parent-to-WorkspaceDO resource-link
+projection supplies resource ID, watch flag, source version, authority
+generation, and hash. WorkspaceDO validates the projected resource against its
+canonical resource/connection record and connector manifest before indexing the
+registration. No request toggles a child flag and writes an evaluator row as one
+pretended cross-object transaction; projection replay and same-version hash
+fences reconcile the two authorities.
+
 The TypeScript aliases illustrate the contract; checked-in strict Zod schemas
 are the runtime authority. Every object rejects unknown keys. Empty strings,
 empty groups, empty operator lists, duplicate evaluator IDs, duplicate rule IDs,
@@ -597,22 +659,43 @@ WorkspaceDO owns the evaluation and delivery transaction boundary:
 ```text
 verified provider event or poll
   -> WorkspaceDO canonical event + parsed evaluation context
-  -> exact (connectionId, eventType) evaluator candidates
+  -> exact (connectionId, eventType, optional resourceId) registrations
   -> ordered deterministic evaluation; optional semantic gate
   -> WorkspaceDO durable delivery receipt + outbox
   -> regional Queue ID-only wake-up
-  -> typed AutomationAgent.deliverExternalEvent
-  -> AutomationAgent lifecycle/generation/receipt recheck + run admission
+  -> destination adapter
+       automation: typed AutomationAgent.deliverExternalEvent
+       resource watch: audience recheck + typed SubstreamAgent append
+  -> destination receipt + WorkspaceDO outbox acknowledgement
 ```
 
-The wake-up contains opaque workspace event, evaluator, revision, and delivery
-receipt identities plus a canonical hash, not the event body. The generated run
-loads its authoritative trigger evidence from WorkspaceDO through a typed port
-after admission. The delivery receipt is unique for the workspace event,
-automation, authority generation, projection version, and evaluator ID, so
-Queue redelivery cannot create a second occurrence. An evaluator update does
-not silently replay old events under new rules; an explicit replay operation
-would be a separate product and authorization decision.
+The wake-up contains opaque workspace event, registration, destination, revision,
+and delivery-receipt identities plus a canonical hash, not the event body. A
+consumer loads the still-authoritative delivery and event from WorkspaceDO,
+then invokes the typed adapter named by the stored destination. The receipt is
+unique for the workspace event, registration ID and generation, and destination
+identity, while also pinning the evaluator source version/hash; Queue redelivery
+cannot create a second automation occurrence or work-stream update.
+
+An automation destination receives the pointer and loads its authoritative
+trigger evidence from WorkspaceDO through a typed port after admission. A
+work-stream destination first loads the current SubstreamAgent resource link,
+watch flag, authority generation, and audience, then requires the event audience
+to contain every active participant; the WorkspaceDO resource index is never
+sufficient authorization. The adapter then loads the bounded title, summary,
+provider, event type, and canonical resource identity from WorkspaceDO and
+idempotently appends one `connected_activity`
+system message using a client message identity derived from the workspace event
+and registration. It publishes the ordinary ordered-turn event only after that
+canonical append commits. A duplicate append returns its existing receipt and
+allows the WorkspaceDO outbox row to settle without publishing twice.
+
+An audience refusal, archived/deleted target, detached resource, disabled watch,
+or stale authority generation is a terminal `not_delivered` receipt with a safe
+reason code, not an append and not an infinite retry. A transient target or
+transport failure leaves the shared outbox pending for retry. An evaluator or
+watch update does not silently replay old events under new rules; an explicit
+replay operation would be a separate product and authorization decision.
 
 Timer triggers use none of this path. Calendar and interval definitions are
 parsed into the accepted AutomationAgent definition, including an explicit or
@@ -621,25 +704,35 @@ entries. “Every weekday at 9am Pacific” is therefore calculated and admitted
 the AutomationAgent that owns the automation. WorkspaceDO neither receives a
 timer evaluator nor wakes the object for that occurrence.
 
+A connector poll needed to observe changes to a watched resource is different
+from an automation timer. It remains WorkspaceDO-owned connector-ingestion work
+and uses that object's existing multi-alarm scheduling and provider checkpoint.
+Its normalized result re-enters the same canonical event/evaluator path as a
+webhook; it does not append directly to a work stream from the poll handler.
+
 ### Workspace surfaces and projections
 
 WorkspaceDO stores the minimum projections needed to answer workspace-shaped
-questions without waking every automation:
+questions without waking every automation or watched work stream:
 
 - the automation sidebar entry visible to each viewer;
 - monotonic lifecycle, title, scope, badge, and next-run summary fields;
-- complete, generation-fenced external-event evaluator snapshots and the exact
-  connection/event index needed for local candidate selection; and
-- an authority version and AutomationAgent ID for routing.
+- complete, generation-fenced automation evaluators and watched work-stream
+  resource-link registrations in one exact connection/event/resource candidate
+  index; and
+- the authority version and typed destination identity needed for routing.
 
-The AutomationAgent publishes those projections through a durable outbox, and
-WorkspaceDO applies them idempotently and monotonically. Projection failure may
-delay a sidebar summary but cannot roll back or mutate the automation. The
-automation overview and every write read the object directly. Before disclosing
-sensitive configuration or generated content, the serving path rechecks the
-current authoritative object and, for generated content, the owning
-SubstreamAgent's reader audience rather than trusting a possibly stale
-workspace projection.
+The AutomationAgent publishes its projections through a durable outbox.
+Watched resource-link state follows the existing SubstreamAgent -> WorkstreamDO
+-> Queue -> WorkspaceDO effect path. WorkspaceDO applies both idempotently and
+monotonically and compiles them through the same registration boundary.
+Projection failure may delay a sidebar summary, automation event, or resource
+update but cannot roll back or mutate either source authority. The automation
+overview and every write read the object directly. Before disclosing sensitive
+configuration or generated content, the serving path rechecks the current
+authoritative object and, for generated content or a connected-activity append,
+the owning SubstreamAgent's reader audience rather than trusting a possibly
+stale workspace projection.
 
 Shared template discovery remains in WorkspaceDO. Adopting a template pins or
 copies an immutable template version into a new AutomationAgent. Publishing an
@@ -811,6 +904,18 @@ None yet.
     a connector schema change fail during event processing instead of at a
     boundary.
 
+16. **Automation triggers and work-stream resource watches share event
+    delivery infrastructure, not product authority.** WorkspaceDO compiles both
+    into one typed registration index and uses one evaluation receipt/outbox
+    engine. AutomationAgent still owns its evaluator set and occurrence;
+    SubstreamAgent still owns its watched link, audience, and appended system
+    message. *Rejected:* retaining the current direct-watch scan and append as a
+    second fan-out loop beside automation evaluation, which would duplicate
+    event/resource matching, retries, and receipts; and making WorkspaceDO's
+    inverted link authoritative for the append, which would let a stale
+    projection disclose restricted activity after participant or watch state
+    changed.
+
 ## Data model
 
 The exact table names belong to the implementation plan and migrations. The
@@ -819,8 +924,8 @@ authority split is fixed by this PRD:
 | Authority | Canonical records |
 | --- | --- |
 | AutomationAgent SQLite | Immutable automation identity and workspace/region fence; lifecycle and revision; draft canonical facts plus author-visible `transcript_sequence` and restricted `loop_sequence` projections from the shared ordered transcript substrate; attachments, active checkpoints, activities, and event fences; compiled and accepted definition revisions; elicitation; local Bind runtime ledger; canonical timer configuration and due work; the shared `_internal_durable_alarms` index; the compiled external-event evaluator snapshot and projection receipts; run occurrence admission/idempotency/history plus content-free child execution projections and their receipts; automation memory/table definitions; resource and connector references; delivery targets and receipts; projection/registration outbox and receipts; tombstone. |
-| WorkspaceDO SQLite | Automation directory projections; viewer visibility summaries; validated external-event evaluator snapshots and exact connection/event candidate index; canonical normalized events and closed evaluation contexts; evaluator delivery receipts/outbox; shared template/version catalog; connector connections and workspace resources; membership-derived routing inputs. |
-| Generated SubstreamAgent SQLite | Ordered-turn canonical facts, participant transcript and restricted Bind-loop projections; participants and reader audience; run scope; Bind execution, tools, activity/checkpoints and output; work-stream resources and memory provenance; content-free automation-run projection outbox. |
+| WorkspaceDO SQLite | Automation directory projections; viewer visibility summaries; validated automation evaluators and watched work-stream resource registrations in one exact connection/event/resource candidate index; canonical normalized events and closed evaluation contexts; destination-typed evaluation delivery receipts/outbox; shared template/version catalog; connector connections and workspace resources; membership-derived routing inputs. |
+| Generated SubstreamAgent SQLite | Ordered-turn canonical facts, participant transcript and restricted Bind-loop projections; participants and reader audience; run scope; Bind execution, tools, activity/checkpoints and output; authoritative work-stream resource links/watch flags and memory provenance; idempotent connected-activity message receipts; content-free automation-run and resource-link projection outbox. |
 | Global control-plane D1 | Permanent inbound-email address route and tombstone, plus the existing region/workspace routing facts needed before a regional object can be selected. |
 
 Object identity is derived from the existing automation subscription ID, so a
@@ -907,6 +1012,14 @@ never-reuse/tombstone rules.
   workspace automation may be discoverable to workspace members while each
   generated run remains private to its admitted participants. Readers recheck
   the authoritative SubstreamAgent audience before content is returned.
+- A resource-update destination rechecks the authoritative SubstreamAgent link,
+  watch flag, authority generation, and complete active-participant audience
+  immediately before append. WorkspaceDO's inverted resource index is discovery
+  only. Restricted activity is appended only when its audience contains the
+  complete work-stream audience; one overlapping reader never suffices.
+- External-event Queue messages contain identifiers and hashes, not provider or
+  work-stream content. The consumer loads the bounded event projection from the
+  regional WorkspaceDO only after it claims the stored destination receipt.
 - Inbound-email runs retain sender validation and the restricted connector/web
   tool policy. Moving admission into AutomationAgent does not broaden what
   untrusted mail can invoke.
@@ -974,26 +1087,32 @@ or model overrides.
    than retaining `draft_conversation_json` as a fallback. In-flight
    request-scoped runs settle on the old path before the authority fence flips.
 6. Add the full-snapshot AutomationAgent-to-WorkspaceDO evaluator projection,
-   exact candidate index, receipt-backed WorkspaceDO evaluation outbox, and
-   ID-only delivery wake-up. The same-version payload hash fence and
-   generation-aware AutomationAgent admission must be live before any external
-   activity automation migrates.
-7. Migrate paused and manual-only active automations, then timer, external
+   shared destination-typed registration compiler, exact candidate index,
+   receipt-backed WorkspaceDO evaluation outbox, and ID-only delivery wake-up.
+   The same-version payload hash fence and generation-aware destination
+   admission must be live before any external activity automation or resource
+   watch migrates.
+7. Compile the existing versioned watched-resource link projection into the
+   shared registration index and add its typed SubstreamAgent delivery adapter.
+   Migrate the current direct-watch resource scan/append behind the same
+   authority fence, then remove that parallel fan-out loop; do not retain it as
+   fallback after the per-workspace cutover.
+8. Migrate paused and manual-only active automations, then timer, external
    activity, and inbound-email automations. Each migration fences old trigger
    admission, imports and hash-verifies canonical state, arms object-local
    timers or acknowledges the external evaluator snapshot as applicable,
    updates the directory projection, and only then flips the per-automation
    authority marker.
-8. Replace direct SubstreamAgent writes to workspace-owned `automation_runs`
+9. Replace direct SubstreamAgent writes to workspace-owned `automation_runs`
    with the versioned child-to-AutomationAgent projection. Suppress generated
    children from global work-stream listability and make the automation home
    consume its paged object-local run list before enabling the new authority for
    active automations.
-9. Reconcile schedule occurrences, evaluator delivery receipts, inbound-email
+10. Reconcile schedule occurrences, evaluator delivery receipts, inbound-email
    receipts, and run idempotency keys across the cut so every trigger is either
    absent or present once. A migrated object never falls back to writable legacy
    rows.
-10. After both regions have no legacy automation authorities and rollback
+11. After both regions have no legacy automation authorities and rollback
    evidence has expired, remove the WorkspaceDO canonical automation/schedule
    rows, old compiler endpoint, and compatibility paths. Keep only the new
    projections and shared workspace authorities.
@@ -1095,6 +1214,24 @@ state; the flag must not silently reopen a stale writer.
     transitions is calculated, armed, recovered, and admitted entirely by
     AutomationAgent. No timer evaluator or timer occurrence is written to or
     delivered by WorkspaceDO.
+21. Attach one provider resource to two work streams, enable both watches, and
+    configure an automation for the same update. One canonical WorkspaceDO event
+    enters one candidate/evaluation engine and creates exactly three typed
+    destination receipts: one automation occurrence and one connected-activity
+    message in each work stream. No legacy direct-watch scan or second event copy
+    participates.
+22. Duplicate and reorder the watched-link projection, Queue wake-up, child
+    append result, and WorkspaceDO acknowledgement. Each work stream contains
+    one update. Disable or detach the watch, archive the work stream, or advance
+    its authority generation while a delivery is pending; the destination
+    recheck appends nothing and settles a terminal safe refusal rather than
+    retrying forever.
+23. Route workspace-visible and restricted resource updates into personal and
+    workspace-scoped watched work streams. The append succeeds only when the
+    canonical event audience contains every current active participant. Prove
+    that a stale WorkspaceDO resource-link projection, one overlapping reader,
+    or an ID-only Queue message cannot disclose the event, and that no provider
+    content appears in Queue or DLQ payloads.
 
 ## Open questions
 
