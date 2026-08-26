@@ -2,7 +2,12 @@ import { tracing } from "cloudflare:workers";
 import type { Context } from "hono";
 
 import type { HonoAppEnv } from "../env";
-import { logStructuredEvent, type LogEnv, type LogFields } from "./logger";
+import {
+  diagnosticErrorCode,
+  logStructuredEvent,
+  type LogEnv,
+  type LogFields,
+} from "./logger";
 
 /**
  * Custom spans for the three latency-critical work-stream flows: starting a
@@ -199,6 +204,66 @@ export function inSpan<T>(
   return tracing.enterSpan(name, (span: RuntimeSpan) => {
     applyAttributes(span, attributes);
     return run(tracedSpan(span));
+  });
+}
+
+export interface DurableObjectPhaseOptions {
+  component: string;
+  className: string;
+  latestVersion: number;
+  /** Includes synchronous constructor work that ran before the span opened. */
+  startedAt?: number;
+}
+
+/**
+ * Names the two previously opaque portions of a Durable Object cold wake.
+ *
+ * The runtime binding span remains the end-to-end clock. These nested spans
+ * make its initialization and schema pass visible; subtracting initialization
+ * from the binding span leaves platform wake and binding transport rather than
+ * conflating all three. The log row remains queryable even when a trace is not.
+ */
+export function inDurableObjectPhase<T>(
+  env: LogEnv,
+  phase: "initialize" | "schema_migrate",
+  options: DurableObjectPhaseOptions,
+  run: () => Promise<T>,
+): Promise<T> {
+  const spanName = `durable_object.${phase}`;
+  const event = phase === "initialize"
+    ? "durable_object_initialization"
+    : "durable_object_schema_migration";
+  const startedAt = options.startedAt ?? Date.now();
+  return inSpan(spanName, {
+    "rally.component": options.component,
+    "rally.durable_object.class": options.className,
+    "rally.migration.latest_version": options.latestVersion,
+  }, async (span) => {
+    try {
+      const result = await run();
+      logStructuredEvent(env, "info", event, {
+        component: options.component,
+        class_name: options.className,
+        phase,
+        status: "completed",
+        latest_version: options.latestVersion,
+        duration_ms: Math.max(0, Date.now() - startedAt),
+      });
+      return result;
+    } catch (error) {
+      const code = diagnosticErrorCode(error, `durable_object_${phase}_failed`);
+      span.setError(code);
+      logStructuredEvent(env, "error", event, {
+        component: options.component,
+        class_name: options.className,
+        phase,
+        status: "failed",
+        code,
+        latest_version: options.latestVersion,
+        duration_ms: Math.max(0, Date.now() - startedAt),
+      });
+      throw error;
+    }
   });
 }
 

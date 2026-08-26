@@ -621,7 +621,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       instance: this,
     });
     this.keepAliveLease = new DurableAgentKeepAlive(async () => { await this.armNextAlarm(); });
-    this.initialized = state.blockConcurrencyWhile(async () => {
+    this.initialized = this.initializeDurableObject(async () => {
       // The store applies this object's schema in its own constructor, so the
       // report wrapper goes around the construction rather than around a
       // migration call this class makes itself. It happens here rather than in

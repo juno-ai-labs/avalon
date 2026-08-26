@@ -40,6 +40,7 @@ describe('Product analytics settings controller', () => {
     expect(base.controller.state()).toEqual({
       desiredEnabled: true, effectiveEnabled: false, pending: false,
     });
+    expect(base.controller.admissionEnabled()).toBe(true);
 
     await base.controller.refresh();
     expect(base.controller.state()).toEqual({
