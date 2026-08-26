@@ -18,7 +18,6 @@ import {
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  seedWorkstreamObjectParticipant,
   workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 
@@ -58,16 +57,38 @@ const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
   ensureAutomationAddress.mockClear();
+  vi.restoreAllMocks();
 });
 
-function serviceFor(database: DatabaseSync): AutomationService {
+function serviceFor(
+  database: DatabaseSync,
+  substreamAgents: DurableObjectNamespace = testSubstreamAgentsBinding(database, {
+    objectStores: storesFor(database),
+  }),
+): AutomationService {
   const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
-    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores: storesFor(database) }),
+    SUBSTREAM_AGENTS: substreamAgents,
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-      extra: { refreshSchedule: async () => ({ alarmAt: null }) },
+      extra: {
+        refreshSchedule: async () => ({ alarmAt: null }),
+        readableWorkstreamIds: async (input: { userId: string; workstreamIds: string[] }) => {
+          const placeholders = input.workstreamIds.map(() => "?").join(", ");
+          const rows = database.prepare(
+            `SELECT directory.workstream_id FROM workspace_workstream_directory directory
+             LEFT JOIN workspace_workstream_viewers viewer
+               ON viewer.workstream_id = directory.workstream_id
+              AND viewer.user_id = ?
+              AND viewer.authority_generation = directory.authority_generation
+             WHERE directory.workstream_id IN (${placeholders})
+               AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+             ORDER BY directory.workstream_id`,
+          ).all(input.userId, ...input.workstreamIds) as Array<{ workstream_id: string }>;
+          return { items: rows.map((row) => row.workstream_id) };
+        },
+      },
     }),
   });
   return new AutomationService(env, auth);
@@ -139,16 +160,35 @@ function runCount(database: DatabaseSync): number {
 }
 
 describe("automation lifecycle", () => {
-  it("returns only run work streams the requesting member may read", async () => {
+  it("loads detail from the authorized subscription without reconciling its email or authorizing twice", async () => {
+    const database = seededDatabase();
+    const runs = vi.spyOn(AutomationService.prototype, "runs");
+
+    await expect(serviceFor(database).get("00000000-0000-7000-8000-000000000007"))
+      .resolves.toMatchObject({
+        emailAddress: "calm-bright-gentle-otter@automation.with-avalon.com",
+        recentRuns: [],
+      });
+
+    expect(ensureAutomationAddress).not.toHaveBeenCalled();
+    expect(runs).not.toHaveBeenCalled();
+  });
+
+  it("returns projected-readable legacy and workspace runs without waking run work streams", async () => {
     const database = seededDatabase();
     const visibleWorkstreamId = "00000000-0000-7000-8000-000000000041";
     const privateWorkstreamId = "00000000-0000-7000-8000-000000000042";
+    const workspaceWorkstreamId = "00000000-0000-7000-8000-000000000046";
     const otherUserId = "00000000-0000-7000-8000-000000000043";
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
       VALUES ('${otherUserId}', 'google-other', 'other@example.com', 'Other', '2026-01-01', '2026-01-01');
       INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
       VALUES ('${auth.workspaceId}', '${otherUserId}', 'member', 'active', '2026-01-01');
+      UPDATE automation_subscriptions
+         SET scope = 'workspace', owner_user_id = NULL,
+             execution_principal_json = '{"type":"workspace","workspaceId":"${auth.workspaceId}"}'
+       WHERE id = '00000000-0000-7000-8000-000000000007';
       INSERT INTO workstreams
         (id, workspace_id, title, objective, origin_type, automation_subscription_id,
          harness_status, next_sequence_number, last_activity_at, created_at, updated_at, scope)
@@ -156,38 +196,63 @@ describe("automation lifecycle", () => {
         ('${visibleWorkstreamId}', '${auth.workspaceId}', 'Visible run', '', 'automation',
          '00000000-0000-7000-8000-000000000007', 'completed', 1, '2026-01-02', '2026-01-02', '2026-01-02', 'personal'),
         ('${privateWorkstreamId}', '${auth.workspaceId}', 'Other member run', '', 'automation',
-         '00000000-0000-7000-8000-000000000007', 'completed', 1, '2026-01-03', '2026-01-03', '2026-01-03', 'personal');
+         '00000000-0000-7000-8000-000000000007', 'completed', 1, '2026-01-03', '2026-01-03', '2026-01-03', 'personal'),
+        ('${workspaceWorkstreamId}', '${auth.workspaceId}', 'Workspace run', '', 'automation',
+         '00000000-0000-7000-8000-000000000007', 'completed', 1, '2026-01-04', '2026-01-04', '2026-01-04', 'workspace');
+      INSERT INTO workspace_workstream_directory
+        (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+         title, description, preview, scope, exact_state, system_kind, last_activity_at,
+         completed_at, archived_at, email_address, origin_type, origin_label,
+         created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+         title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+         next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+         source_created_at, source_updated_at, projected_at)
+      VALUES
+        ('${visibleWorkstreamId}', 1, 1, 'event-visible', 'hash-visible', 'Visible run', '', '',
+         'personal', 'completed', NULL, 1, 1, NULL, NULL, 'automation', NULL,
+         '${auth.userId}', '00000000-0000-7000-8000-000000000007', NULL, NULL,
+         'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1),
+        ('${privateWorkstreamId}', 1, 1, 'event-private', 'hash-private', 'Other member run', '', '',
+         'personal', 'completed', NULL, 1, 1, NULL, NULL, 'automation', NULL,
+         '${otherUserId}', '00000000-0000-7000-8000-000000000007', NULL, NULL,
+         'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1),
+        ('${workspaceWorkstreamId}', 1, 1, 'event-workspace', 'hash-workspace', 'Workspace run', '', '',
+         'workspace', 'completed', NULL, 1, 1, NULL, NULL, 'automation', NULL,
+         '${otherUserId}', '00000000-0000-7000-8000-000000000007', NULL, NULL,
+         'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1);
+      INSERT INTO workspace_workstream_viewers
+        (workstream_id, user_id, authority_generation, waterline, source_event_id,
+         payload_hash, is_participant, unread_count, you_are_mentioned, listable,
+         seen_attention_ordinal, manual_unread_from_ordinal, manual_unread_generation,
+         latest_mention_attention_ordinal, projected_at)
+      VALUES
+        ('${visibleWorkstreamId}', '${auth.userId}', 1, 1, 'viewer-visible', 'viewer-hash-visible',
+         1, 0, 0, 1, 0, NULL, 0, 0, 1),
+        ('${privateWorkstreamId}', '${otherUserId}', 1, 1, 'viewer-private', 'viewer-hash-private',
+         1, 0, 0, 1, 0, NULL, 0, 0, 1);
       INSERT INTO automation_runs
         (id, workspace_id, automation_subscription_id, workstream_id, trigger_type, status, created_at)
       VALUES
         ('00000000-0000-7000-8000-000000000044', '${auth.workspaceId}',
          '00000000-0000-7000-8000-000000000007', '${visibleWorkstreamId}', 'schedule', 'completed', '2026-01-02'),
         ('00000000-0000-7000-8000-000000000045', '${auth.workspaceId}',
-         '00000000-0000-7000-8000-000000000007', '${privateWorkstreamId}', 'schedule', 'completed', '2026-01-03');
+         '00000000-0000-7000-8000-000000000007', '${privateWorkstreamId}', 'schedule', 'completed', '2026-01-03'),
+        ('00000000-0000-7000-8000-000000000047', '${auth.workspaceId}',
+         '00000000-0000-7000-8000-000000000007', '${workspaceWorkstreamId}', 'schedule', 'completed', '2026-01-04');
     `);
 
-    const readers: Array<[string, string]> = [
-      [visibleWorkstreamId, auth.userId],
-      [privateWorkstreamId, otherUserId],
-    ];
-    for (const [workstreamId, readerId] of readers) {
-      const objectStore = testWorkstreamObjectStore();
-      databases.push(objectStore);
-      seedWorkstreamObjectRoot(objectStore, {
-        workstreamId,
-        workspaceId: auth.workspaceId,
-        scope: "personal",
-        createdByUserId: readerId,
-      });
-      seedWorkstreamObjectParticipant(objectStore, {
-        userId: readerId,
-        participationReason: "creator",
-      });
-      storesFor(database).set(workstreamId, objectStore);
-    }
+    const substreamAgents = testSubstreamAgentsBinding(database, {
+      objectStores: storesFor(database),
+    });
 
-    await expect(serviceFor(database).runs("00000000-0000-7000-8000-000000000007"))
-      .resolves.toMatchObject({ items: [{ workstreamId: visibleWorkstreamId }] });
+    await expect(serviceFor(database, substreamAgents).runs("00000000-0000-7000-8000-000000000007"))
+      .resolves.toMatchObject({
+        items: [
+          { workstreamId: workspaceWorkstreamId },
+          { workstreamId: visibleWorkstreamId },
+        ],
+      });
+    expect(substreamAgents.get).not.toHaveBeenCalled();
   });
 
   it("drops an archived draft from the automation list and from every read of it", async () => {
@@ -489,6 +554,8 @@ function seededDatabase(): DatabaseSync {
   // The alarm's draft arm reads the object's links table, which no regional
   // snapshot has ever carried.
   createWorkspaceObjectTable(database, "workspace_workstream_resource_links");
+  createWorkspaceObjectTable(database, "workspace_workstream_directory");
+  createWorkspaceObjectTable(database, "workspace_workstream_viewers");
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('00000000-0000-7000-8000-000000000002', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01');

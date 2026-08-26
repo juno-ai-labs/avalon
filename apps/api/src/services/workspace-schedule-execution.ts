@@ -130,6 +130,7 @@ interface ScheduleRow {
 
 interface AutomationSourceRow {
   subscription_id: string;
+  scope: "personal" | "workspace";
   audience_user_id: string;
   execution_principal_json: string;
   model_override: string | null;
@@ -622,6 +623,7 @@ async function startAutomation(
 
   const source = await workspaceEnv.DB.prepare(
     `SELECT s.id AS subscription_id,
+            s.scope,
             COALESCE(s.owner_user_id, t.owner_user_id) AS audience_user_id,
             s.execution_principal_json,
             s.model_override,
@@ -684,7 +686,7 @@ async function startAutomation(
         workstreamId: asWorkstreamId(workstreamId),
         title: source.template_name,
         objective: source.template_description || source.instructions,
-        scope: "personal",
+        scope: source.scope,
         originType: "automation",
         createdByUserId: source.audience_user_id,
         participantUserIds: [source.audience_user_id],
