@@ -1197,7 +1197,12 @@ Workflow binding remain temporarily compatible with already-created instances.
 The object also accepts their frozen `workflowInstanceId` claim/settlement wire
 shape and returns their smaller strict claim result. Queue pointers older than
 the object's authoritative product attempt are terminally acknowledged because
-no redelivery can make that generation current again.
+no redelivery can make that generation current again. The row persists its
+processing orchestrator: Queue leases expire, but a drain-only Workflow remains
+exclusive until settlement because its processing step can perform multiple
+separately timed retries. An active `NULL` discriminator is a row written before
+the migration and therefore a Workflow claim, since Queue claims did not yet
+exist.
 
 **Why:** WorkspaceDO already owns the canonical event and terminal state, while
 Queue already owns durable retry and dead-letter retention. A one-callback
@@ -1218,7 +1223,8 @@ raw SQL from the consumer. Remove the drain-only Workflow and rename its physica
 owner column only after pre-cutover instances are proven gone. Until then, keep
 both the legacy Workflow wire adapter and same-instance claim replay: a running
 Workflow remains on versioned code and may repeat an RPC whose object mutation
-committed before its step result did.
+committed before its step result did. Do not replace the persisted orchestrator
+with an ID-format inference or a longer guessed Workflow timeout.
 
 ### 2026-08-26 — Notification lifecycle becomes a closed WorkspaceDO protocol
 

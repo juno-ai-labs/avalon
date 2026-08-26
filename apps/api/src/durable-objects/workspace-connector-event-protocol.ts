@@ -88,13 +88,14 @@ export const WorkspaceConnectorEventClaimResultSchema = z.discriminatedUnion("ou
     outcome: z.literal("claimed"),
     event: WorkspaceConnectorEventSchema,
     processingLeaseId: z.string().min(1).max(100),
-    processingLeaseExpiresAt: z.number().int().nonnegative(),
+    processingLeaseExpiresAt: z.number().int().nonnegative().nullable(),
   }).strict(),
   z.object({ outcome: z.literal("processed") }).strict(),
   z.object({
     outcome: z.literal("busy"),
     reason: z.enum([
       "active_lease_not_expired",
+      "legacy_workflow_active",
       "failed_attempt_not_advanced",
     ]),
     retryAt: z.number().int().nonnegative().nullable(),
