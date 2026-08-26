@@ -69,6 +69,15 @@ participant feed is an authorized projection of the same committed facts, not
 the source from which private protocol-only messages or model-facing derivatives
 are guessed.
 
+Deployment is a single coordinated breaking cutover. Rally has no production
+users or production transcript-continuity obligation at the time of this
+decision, so the implementation does not carry a legacy feed, dual-read or
+dual-write path, capability-negotiated protocol, or historical backfill. The
+backend may require the new desktop version immediately; downloading that
+version is an acceptable prerequisite to opening a work stream. If the no-user
+assumption becomes false before release, this PRD must be revisited rather than
+quietly adding compatibility machinery during implementation.
+
 ## Terminology and definitions
 
 These terms are normative. A persisted record has one explicit kind; callers
@@ -273,13 +282,11 @@ a turn, block, slice, or hydration loop.
 4. **Write canonical transcript content on every token.** The bounded active
    stream checkpoint remains the recovery mechanism while a turn is open; the
    canonical turn commits at the model-turn boundary.
-5. **Guess historical interleaving without complete evidence.** A legacy Global
-   run may be backfilled when its raw inference records, accepted turn IDs, and
-   durable tool receipts form a complete, internally consistent protocol and
-   reconcile with its stored aggregate text. A run with missing evidence remains
-   visibly legacy; Rally does not infer placement from timestamps. The Global
-   inference archive is migration evidence, never a runtime transcript
-   dependency, and EU runs without such evidence are not fabricated.
+5. **Migrate or preserve pre-cutover transcript history.** There are no
+   production users whose stored work-stream history must survive this cutover.
+   The implementation does not backfill from the Global inference archive,
+   retain legacy envelopes, or infer historical interleaving. Non-production
+   stale transcript rows may be discarded by the idempotent schema cutover.
 6. **Introduce cross-work-stream transcript search, a global transcript index,
    or cross-region transcript movement.** The owning `SubstreamAgent` remains
    authoritative.
@@ -482,7 +489,10 @@ see. It makes the order shown to a participant match the order the agent used.
 
 ## Decision log
 
-None yet.
+- **2026-08-26 — Use a single breaking release.** Rally has no production users,
+  so requiring a new desktop download and breaking older desktop protocols is
+  acceptable. Do not build a compatibility window or historical migration. If
+  that premise changes before release, revisit the PRD before deployment.
 
 ## Key design decisions
 
@@ -553,13 +563,14 @@ None yet.
    channel for hidden internal records. A tombstone occupies a position only
    when a previously participant-visible reserved turn produced no displayable
    content or was retracted.
-12. **Backfill only from a complete protocol proof.** Eligible legacy Global
-    runs are deterministically rebuilt from accepted raw inference turns and
-    durable tool receipts, then reconciled against the stored aggregate text and
-    tool cardinality before becoming canonical. Every other legacy run retains
-    its stored ordering through a legacy envelope. The rejected alternative was
-    heuristically distributing old text around tool timestamps, which would turn
-    an unprovable guess into canonical history.
+12. **Make one breaking protocol cutover.** The canonical turn/range/activity
+    protocol replaces the existing work-stream feed in one coordinated backend
+    and desktop release. The server accepts only the new protocol; old desktops
+    are unsupported and may fail closed without a guaranteed error shape. There
+    is no capability negotiation, dual emission, dual read/write, historical
+    backfill, or compatibility window. The rejected alternative was paying
+    implementation and test cost for transitional behavior when Rally has no
+    production users or transcript continuity to preserve.
 13. **Signal activity edges; do not stream a clock.** Durable start/stop edges
     and snapshot baselines make the backend authoritative about work while the
     desktop's monotonic clock makes the active label smooth and cheap. The
@@ -698,10 +709,11 @@ canonicalize(project(loop_id, state_revision))
 
 The request-boundary record stores the loop revision, system-projection revision,
 renderer/projector versions, and both hashes. For newly canonical state, the
-healer changing the reconstructed array is itself a mismatch; legacy input may
-be healed once only as part of `state_initialized`, after which the healed output
-is the durable baseline. A mismatch fails before provider inference rather than
-silently allowing Bind and the durable transcript to fork.
+healer changing the reconstructed array is itself a mismatch. Initial input may
+be healed before `state_initialized`; the exact post-healing output becomes the
+first durable baseline and there is no pre-cutover reconstruction path. A
+mismatch fails before provider inference rather than silently allowing Bind and
+the durable transcript to fork.
 
 Failed or abandoned provider attempts, partial response bytes, and route-reset
 text do not enter the accepted Bind loop state because Bind did not accept them
@@ -711,13 +723,10 @@ exact tool-result message becomes durable before `runToolCall` returns it to
 Bind. Parallel tools may settle in any order, but their accepted protocol
 messages project in the call order Bind uses.
 
-The Global raw-inference lakehouse may seed a one-time or background legacy
-backfill, but the live projector never queries it. A backfill promotes a legacy
-run only after proving one accepted successful response per Bind turn, stable
-turn/call ordering, complete required payloads, agreement with durable receipts,
-and equality with the stored aggregate assistant text and tool count. Capture
-gaps, retention gaps, ambiguous attempts, or absence of an EU archive leave the
-run in its honest legacy envelope.
+Neither deployment nor replay queries the Global raw-inference lakehouse to
+construct participant turns or Bind state. Canonical history begins at the
+breaking cutover; pre-cutover aggregate rows are not converted, wrapped, or
+served through the new protocol.
 
 ### Participant transcript projection
 
@@ -1060,9 +1069,9 @@ projector or reducer under test.
 | `T3 Live ordering and concurrency` | Response tokens remain immediately streamable while text, thinking, and multiple tool calls start and settle independently without changing model-declared display order. |
 | `T4 Range and gap truth` | Snapshot-fenced range responses report what was actually inspected, and the desktop computes loaded islands and gaps correctly for empty, shortened, overlapping, disjoint, and realtime-extended history. |
 | `T5 Activity-time truth` | Response, plugin, invocation, and observable-thinking timers use authoritative UTC starts, first-join/reconnect elapsed baselines, lifecycle edges, and interval unions; local ticking never requires server clock frames and survives late join, pause, sleep, reconnect, and history load. |
-| `T6 Recovery and idempotency` | Worker loss, Durable Object eviction/hibernation, socket replay, retries, duplicate events, compaction, and cutover resume without loss, duplication, reordering, or identity reuse. |
+| `T6 Recovery and idempotency` | Worker loss, Durable Object eviction/hibernation, socket replay, retries, duplicate events, and compaction recover without loss, duplication, reordering, or identity reuse. |
 | `T7 Authorization and locality` | Participant APIs reveal neither restricted payloads nor restricted bounds, and Global/EU authorities never use one another as transcript or inference-archive fallbacks. |
-| `T8 Compatibility and migration` | Capable and legacy clients receive their declared protocols, complete legacy evidence can be reconciled deterministically, and incomplete evidence remains an honest legacy envelope. |
+| `T8 Breaking cutover` | One idempotent coordinated release establishes the canonical protocol without backfill, dual paths, capability negotiation, or a compatibility window; old desktops are unsupported and cannot receive transcript data through the removed protocol. |
 | `T9 Visible product behavior` | A real desktop window visibly preserves interleaving, gap loading, unread opening, instant jump-to-latest, smooth streaming, parallel activity, and historical timing labels. |
 | `T10 Constant-cost reader admission` | One external boot/range operation or socket admission authorizes once and reuses an epoch-fenced capability across all slices, active state, and hydration; authorization work never scales with returned turns, blocks, or gaps. |
 
@@ -1071,7 +1080,7 @@ projector or reducer under test.
 | Layer | Required target | Responsibility |
 | --- | --- | --- |
 | Pure harness protocol | `packages/agent-harness/src/bind-loop-projection.test.ts` | Fixed-message canonicalization, projector round trips, system-projection revision changes, provider continuation fields, protocol/derivative classification, and mismatch detection. |
-| Substrate and SQL | `apps/api/test/workstream-transcript-substrate.test.ts` using the real object schema through `createTestSqlStorage()` | Schema constraints, transactions, exact range scans, tombstones, immutable payload references, transition ordering, and legacy reconciliation queries. |
+| Substrate and SQL | `apps/api/test/workstream-transcript-substrate.test.ts` using the real object schema through `createTestSqlStorage()` | Schema constraints, transactions, exact range scans, tombstones, immutable payload references, transition ordering, and idempotent clean-cut schema installation. |
 | Real Cloudflare runtime | `apps/api/test-workers/workstream-transcript-runtime.test.ts` | Real `SubstreamAgent`, object-local SQLite, RPC, WebSocket, eviction/hibernation, concurrency, failure boundaries, and snapshot fencing. This suite may not replace the Durable Object or its storage with a double. |
 | Desktop range/state reducer | `apps/desktop/src/renderer/lib/workstream-turn-ranges.test.ts` | Range union/complement, stable identity reconciliation, stream epochs, stale lifecycle rejection, timers, and realtime singleton coverage. |
 | Desktop component | `apps/desktop/src/renderer/screens/workstream-turn-feed.test.tsx` | Ordered DOM blocks, streaming updates, dual initial islands, jump/scroll behavior, generic thinking/timing labels, and accessibility names. |
@@ -1110,8 +1119,8 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H19 renders_openrouter_thinking_lifecycle_generically` | harness + desktop | Replay fixed OpenRouter reasoning-detail edges; assert the same normalized lifecycle/order/timing contract without exposing text, encrypted details, or signatures. |
 | `H20 rebases_active_timers_after_reconnect` | workerd + desktop | Miss lifecycle edges, reconnect with the original `startedAtUtc`, `snapshotAtUtc`, and `elapsedMsAtSnapshot`, and assert the local monotonic baseline rebases once and later terminal `durationMs` becomes authoritative. |
 | `H21 survives_hibernation_during_active_stream` | workerd | Stream text and parallel activity, hibernate/evict the object, reconnect, and assert exact checkpoint prefix, lifecycle state, loop revision, and subsequent frames appear once. |
-| `H22 backfills_complete_global_legacy_proof` | SQL | Supply complete inference turns, receipts, aggregate text, and counts; assert deterministic canonical turns/ledger and reconciliation hashes without runtime lakehouse reads. |
-| `H23 serves_legacy_and_capable_clients_concurrently` | workerd + desktop | Subscribe one client per capability; assert each receives only its declared projection while both converge on equivalent participant content and terminal state. |
+| `H22 deploys_canonical_protocol_as_the_only_feed` | workerd + desktop | Install the new object schema, backend protocol, and current desktop fixture; assert first open, range loading, streaming, replay, and terminal history use only canonical turns/activity and register no legacy emitter, reader, or capability branch. |
+| `H23 starts_canonical_history_without_legacy_backfill` | SQL + workerd | Seed non-production pre-cutover aggregate rows, run the idempotent cutover twice, and create a new response. Assert the old rows are neither converted nor returned, the inference archive is never queried, and canonical sequence/history begins solely from post-cutover activity. |
 | `H24 keeps_participant_and_restricted_projections_linked` | SQL + workerd | Read participant ranges and resume inference from the same committed facts; assert shared opaque identities, authorized visible content, and exact private replay without deriving either projection from the other. |
 | `H25 compacts_twice_across_distinct_events_and_resumes_second_generation` | workerd | Accept activity, commit compaction event A, accept additional assistant/tool activity, then commit distinct compaction event B. Assert two `state_replaced` transitions with distinct event/source revisions, three ordered loop generations, retention of both exact replacements, unchanged participant history, and post-eviction replay from B with the exact next provider array. Replay either event ID and assert idempotency rather than a third replacement generation. |
 | `H26 joins_existing_stream_with_utc_start_and_elapsed_baseline` | workerd + desktop + E2E | Start a response before a second client opens the work stream. On first join, assert the active snapshot carries the original `startedAtUtc`, a server `snapshotAtUtc`, and the full prior `elapsedMsAtSnapshot`; the label paints the already-accrued duration immediately, continues from the local monotonic receipt point, and is replaced by canonical terminal duration. |
@@ -1148,13 +1157,13 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E24 does_not_double_count_nested_or_overlapping_intervals` | harness + desktop | Duplicate and overlap response/plugin/tool intervals; assert normalized unions and idempotent terminal totals at every scope. |
 | `E25 hides_restricted_payloads_and_bounds_from_all_participant_surfaces` | API Node + workerd | Exercise REST, socket, range, export, search, logs, and telemetry fixtures; assert no system inputs, protocol/derived payloads, exact private results, reasoning details, or `loop_sequence` bounds escape. |
 | `E26 rejects_unauthorized_range_before_returning_bounds` | workerd | Request an existing and nonexistent range as a nonparticipant; assert authorization failure reveals neither snapshot bounds nor existence through coverage shape. |
-| `E27 never_falls_back_across_regions` | API Node + workerd | Make the owning regional authority unavailable with the other region populated; assert no transcript, restricted state, payload, legacy archive, or range read crosses regions. |
-| `E28 keeps_incomplete_and_eu_legacy_runs_legacy` | SQL | Remove each required Global proof component and supply an EU run without archive evidence; assert no guessed interleaving and an explicit legacy envelope. |
+| `E27 never_falls_back_across_regions` | API Node + workerd | Make the owning regional authority unavailable with the other region populated; assert no transcript, restricted state, payload, inference archive, or range read crosses regions. |
+| `E28 never_queries_inference_archive_during_cutover_or_replay` | SQL + workerd | Make Global and EU inference archives unavailable and seed misleading pre-cutover records. Assert schema cutover, first open, range reads, and Bind replay make no archive request and never fabricate a participant turn or model message from those records. |
 | `E29 rolls_back_activation_if_system_projection_commit_fails` | workerd | Fail `system_projection_changed`; assert the plugin/skill activation is not visible to Bind and the previous system revision remains current. |
 | `E30 survives_crash_at_every_compaction_boundary` | workerd | Crash before replacement commit, after commit/before old-array discard, and after discard; assert restart selects exactly one valid generation and never combines old/new arrays. |
 | `E31 replays_socket_frames_without_duplicate_tokens_or_blocks` | workerd + desktop | Disconnect at token, tool-start, tool-stop, and turn-commit boundaries; assert replay plus snapshot reconciliation produces each token/block/lifecycle revision once. |
 | `E32 preserves_streaming_under_parallel_start_complete_error_burst` | workerd + desktop | Burst parallel tool start/success/error events while text tokens continue; assert token delivery is not blocked or batched behind lifecycle processing. |
-| `E33 keeps_old_client_protocol_stable_during_cutover` | workerd | Mix legacy envelopes before the cutover and canonical turns after it; assert one stable participant order and unchanged old-client decoding until the supported floor advances. |
+| `E33 rejects_old_desktop_protocol_after_cutover` | API Node + workerd | Connect with the prior desktop protocol after cutover. Assert it cannot receive transcript bounds/content or socket admission, no legacy fallback/emission path executes, no particular compatibility error body is required, and the current desktop connects successfully to the same authority. |
 | `E34 makes_substrate_conformance_mandatory_for_new_authority_adapter` | harness/API contract | Run the shared adapter suite against `SubstreamAgent` and a deliberately incomplete fixture adapter; assert the real adapter passes and the missing range/replay capability fails conformance. |
 | `E35 excludes_automation_wizard_from_all_new_paths` | API Node + desktop | Exercise automation draft storage and UI fixtures; assert no new substrate schema, protocol event, range contract, or renderer behavior is invoked for the explicitly out-of-scope wizard. |
 | `E36 does_not_conflate_duplicate_compaction_delivery_with_a_second_event` | SQL + workerd | Deliver compaction event A twice and a distinct event B once, including out-of-order retry delivery. Assert A creates exactly one replacement generation, B creates exactly one later generation, event/source identities remain distinguishable, and the active generation never rolls back from B to A. |
@@ -1191,61 +1200,34 @@ and the real-window desktop flow. Any flaky failure encountered is fixed or
 explicitly reported under the repository's flaky-test rule; retries are not an
 accepted implementation of this requirement.
 
-## Rollout
+## Implementation and deployment
 
-1. Add the shared durable transcript substrate, its authority adapter contract,
-   restricted loop ledger/generations, participant projection, canonical
-   message encoding, and conformance suite. Cover stable turn/block/activity
-   storage, exact loop reconstruction, snapshot fencing, range scanning, actual
-   coverage, tombstones, and start/stop revision fencing.
-2. Change the Bind host boundary so post-healing non-system initialization,
-   system-projection revisions, exact accepted assistant messages, protocol-only
-   and model-facing derived messages, exact tool results, and compaction
-   replacements are required durable commits before Bind advances. Compare
-   canonical projection hashes before every provider call.
-3. Normalize observable OpenAI reasoning-item events and OpenRouter
-   `reasoning_details` lifecycle boundaries into generic thinking blocks. Keep
-   provider-only reasoning payloads in the restricted projection when replay
-   requires them, keep them out of the participant projection, and emit no
-   thinking block for providers or models without observable evidence.
-4. Adopt the substrate in `SubstreamAgent` without changing the existing feed.
-   Replace repeated nested `authorize()` calls with one explicit reader
-   admission passed through detail, unread/latest range, active-state, and bulk
-   hydration reads; attach the epoch-fenced form to admitted sockets. Historical
-   rows remain readable. Deterministically backfill only legacy Global runs that
-   pass the complete-evidence reconciliation; retain every other run as a legacy
-   envelope.
-5. Teach the desktop to understand both the legacy message protocol and the new
-   turn/activity protocol. It stores coverage as ranges, reconciles streamed and
-   committed versions by stable ID, ignores stale lifecycle revisions, and uses
-   a local monotonic clock for active labels after applying authoritative UTC
-   start plus elapsed-at-snapshot baselines, including on first join to an
-   already-running response.
-6. Replace first-open `messageFeed`/`resumeFeed` behavior for capable clients
-   with the two named initial turn ranges from one snapshot. Retain both islands
-   in the desktop cache, open at unread when present, and make **Jump to latest**
-   select the prefetched latest island without fetching.
-7. Advertise the new protocol in the work-stream socket subscription. The
-   backend emits turn and activity-edge events only to a client that declares
-   support; older desktop releases continue receiving their current projection
-   during the compatibility window.
-8. Enable new-turn, loop-transition, and activity persistence at an object-local
-   cutover sequence. A snapshot may contain legacy envelopes before the cutover
-   and canonical turns after it, but one stable participant-visible sequence
-   orders the combined result.
-9. Move canonical REST pages, socket snapshots, realtime events, model replay,
-   terminal delivery, and exports to the turn projection. Remove the legacy
-   emission path only after the supported desktop floor understands the new
-   protocol.
-10. Implement the required test IDs alongside the behavior each rollout step
-    introduces. No phase is complete with deferred coverage: its harness, SQL,
-    real-workerd, desktop, E2E, failure-injection, and visible-window cases must
-    pass at the layer assigned by this PRD before the next phase relies on it.
+Implementation may be developed in dependency order, but deployment has one
+coordinated cutover and no compatibility phases:
 
-The cutover is deploy-driven and idempotent. It requires no dashboard mutation,
-manual data rewrite, or cross-region coordination. Rollback leaves already
-committed canonical turns readable and resumes the compatible projection; it
-never rewrites their sequence positions.
+1. Implement the shared durable transcript substrate, `SubstreamAgent` adapter,
+   restricted Bind ledger/generations, participant projection, exact provider
+   boundary checks, reasoning/activity normalization, constant-cost reader
+   admission, canonical REST/socket protocol, and desktop range/feed reducer.
+   The old feed is replaced, not retained beside the new one.
+2. Implement every required test ID alongside its behavior. The harness, SQL,
+   real-workerd, desktop, E2E, failure-injection, and visible-window suites must
+   pass before release; compatibility work is not a prerequisite because it is
+   deliberately absent.
+3. Run one idempotent release operation that installs the object-local schema,
+   deploys the backend that accepts only the new transcript protocol, and
+   publishes the matching desktop version. The app may require that version to
+   be downloaded before a work stream opens. Older desktops are unsupported and
+   are not served a fallback feed; this PRD does not require a special
+   compatibility response.
+
+There is no data migration job, inference-archive backfill, dual write, dual
+read, capability negotiation, compatibility window, staged client floor, or
+manual dashboard/cross-region step. Non-production pre-cutover transcript rows
+need not remain readable. A backend rollback is not required to understand new
+canonical rows; use a forward fix rather than preserving the removed protocol
+solely for rollback. If production users or transcript-continuity requirements
+exist before deployment, stop and revise this release plan before shipping.
 
 ## Acceptance
 
@@ -1278,7 +1260,7 @@ never rewrites their sequence positions.
     every unobserved earlier interval marked as a gap.
 11. Tests exercise live streaming, activity timing, parallel
     success/failure/ambiguous tools, retry resets, hibernation/reconnect,
-    canonical snapshots, disjoint range merge, legacy/new cutover history,
+    canonical snapshots, disjoint range merge, the breaking protocol cutover,
     compaction generations, Worker-loss reconstruction, and exact Bind-state
     projection on the real Durable Object pipeline where runtime behavior is
     involved.
@@ -1374,11 +1356,12 @@ never rewrites their sequence positions.
 36. Failed provider attempts, abandoned partial output, and route-reset bytes do
     not enter accepted Bind state. The next epoch may replace transient display
     text without changing the last durable loop revision.
-37. A complete Global legacy fixture is deterministically backfilled only when
-    accepted inference turns, durable receipts, aggregate assistant text, and
-    tool count all reconcile. Removing or altering any required record leaves
-    the run in its legacy envelope. An EU fixture without an archive is never
-    inferred.
+37. One idempotent coordinated release installs the canonical schema, deploys
+    the canonical-only backend protocol, and publishes the matching desktop.
+    Pre-cutover rows are not backfilled or served, no inference archive is
+    queried, and an older desktop cannot receive transcript bounds or content
+    through a compatibility projection. No stable old-client error shape is
+    required.
 38. Participant range reads and coverage metadata reveal neither restricted
     loop payloads nor `loop_sequence` bounds. Subsequent inference nevertheless
     reconstructs from the restricted projection without consulting the desktop
