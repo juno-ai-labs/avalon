@@ -98,6 +98,23 @@ test('the packaged Crashpad fixture owns its clean-runner bundler dependency', a
   );
 });
 
+test('the packaged Crashpad fixture cannot expire before its upload assertion', async () => {
+  const fixture = await readFile(
+    join(repositoryDirectory, 'apps/desktop/scripts/telemetry-crashpad-fixture.mjs'),
+    'utf8',
+  );
+
+  assert.match(fixture, /const firstLaunchAt = new Date\(\);/u);
+  assert.match(fixture, /const secondLaunchAt = new Date\(firstLaunchAt\.getTime\(\) \+ 60_000\);/u);
+  assert.match(fixture, /`--fixture-now=\$\{firstLaunchAt\.toISOString\(\)\}`/u);
+  assert.match(fixture, /`--fixture-now=\$\{secondLaunchAt\.toISOString\(\)\}`/u);
+  assert.doesNotMatch(
+    fixture,
+    /--fixture-now=\d{4}-\d{2}-\d{2}T/u,
+    'A fixed launch date eventually crosses the production 14-day deletion deadline',
+  );
+});
+
 test('private telemetry artifacts are published to both isolated regional telemetry buckets but excluded from the app', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const builder = await readFile(join(repositoryDirectory, 'apps/desktop/electron-builder.yml'), 'utf8');
