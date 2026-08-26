@@ -1,12 +1,13 @@
 # Ace internal administration
 
 Ace is Avalon's internal administration Worker at
-`https://ace.internal.rallywith.ai`. Its first surface manages five Boolean
-product flags in Cloudflare Flagship: four presentation controls for Electron
-and one operational kill switch for scheduled digest delivery. It is
-intentionally a skeleton: new internal tools extend the same Hono application
-and Ace-owned component library instead of creating another operator site or
-visual language.
+`https://ace.internal.rallywith.ai`. Its feature-flag surface manages five
+Boolean product flags in Cloudflare Flagship: four presentation controls for
+Electron and one operational control for scheduled digest delivery. Its Queues
+surface lists every actively configured Cloudflare dead-letter queue, its live
+backlog, and a non-consuming peek at its messages. New internal tools extend the
+same Hono application and Ace-owned component library instead of creating
+another operator site or visual language.
 
 ## Where the code lives
 
@@ -17,6 +18,7 @@ visual language.
 | `apps/ace/src/protocol.ts` | The managed flags, safe targeting attributes, all Flagship operators, and Flagship's request limits. |
 | `apps/ace/src/directory.ts` | Read-only user and workspace search across both regional D1 databases. |
 | `apps/ace/src/flagship.ts` | Flagship reads and writes plus the post-write change notification. |
+| `apps/ace/src/cloudflare-queue-admin.ts` | Active dead-letter discovery, realtime backlog metrics, and non-consuming message peeks through Cloudflare's REST API. |
 | `apps/ace/src/queues.ts` | Account-wide workspace enumeration and regional fan-out. |
 | `apps/ace/src/client/components/ui.tsx` | Ace's shared controls and panels; future pages extend these components. |
 | `apps/ace/src/client/main.tsx`, `styles.css` | Feature-flag application and responsive visual system. |
@@ -56,6 +58,17 @@ complete client flag contract per connected user and privately sends the values
 to that user's sockets. A subscribe response performs the same evaluation, so
 reconnect is the reconciliation path.
 
+`GET /api/queues/dead-letters` lists account Queues through Cloudflare's REST
+API. A Queue is classified as a dead-letter queue only when a live consumer's
+`dead_letter_queue` field points to it; Ace does not infer operational meaning
+from an `-dead-letter` name. It then calls the per-Queue metrics endpoint for
+the realtime `backlog_count`, `backlog_bytes`, and oldest message timestamp.
+Selecting one calls `POST .../messages/peek` for one provider-defined batch.
+Cloudflare publishes no maximum for peek's optional `batch_size`, so Ace does
+not invent one. Peek does not lease, acknowledge, retry, or remove a message.
+Ace deliberately discards Cloudflare's returned purge reference, so this first
+Queues surface has no delete capability.
+
 ## Invariants
 
 - Product Boolean names end in **Enabled**, and their keys end in `-enabled`, so
@@ -79,14 +92,22 @@ reconnect is the reconciliation path.
   clients stale until reconnect.
 - Access policy lives in Cloudflare Access. Ace verifies provenance and does not
   duplicate an employee-domain allowlist in application code.
+- Queue identity comes from Cloudflare's returned resource ID and active
+  consumer relationship. A caller cannot supply another account Queue ID to the
+  peek route and turn this page into an arbitrary message browser.
+- The message `ref` returned by Cloudflare never reaches the client. It is the
+  capability needed to purge a peeked message, and deletion is not in this
+  surface's contract.
 
 ## Boundary
 
-Ace owns internal administration UI and the write workflow for its explicit
-managed-flag allowlist. Flagship owns flag configuration, evaluation, and its
-changelog. Regional D1 owns identity, membership, and workspace lookup data;
-Ace reads it directly and writes none of it. Regional API Workers own their
-Durable Object namespaces and the socket protocol.
+Ace owns internal administration UI, the write workflow for its explicit
+managed-flag allowlist, and the read-only operator view over active Queue dead
+letters. Flagship owns flag configuration, evaluation, and its changelog.
+Cloudflare Queues owns queue configuration, backlog metrics, message retention,
+and peek semantics. Regional D1 owns identity, membership, and workspace lookup
+data; Ace reads it directly and writes none of it. Regional API Workers own
+their Durable Object namespaces and the socket protocol.
 
 Ace does not manage agent-model flags or the Control Tower cadence. Those
 retain their existing operational paths in
@@ -109,6 +130,12 @@ reviewed as a new boundary.
 - Malformed Queue messages are acknowledged as poison; transient D1, Queue, RPC,
   and Flagship failures retry and eventually reach the configured dead-letter
   queue.
+- Queue backlog metrics are best effort because Cloudflare's distributed
+  counter may be approximate. A failure for one metrics request leaves that
+  Queue visible with “Metrics unavailable” rather than hiding the DLQ.
+- Cloudflare exposes no cursor on peek. The backlog count states when more exist;
+  this first surface does not pretend it can paginate what the provider cannot
+  paginate or guess a defensive batch ceiling the team has not chosen.
 - Condition strings are at most 256 characters, descriptions 512 characters,
   nesting is at most five groups, and rollout percentages are 0 through 100.
   The string, description, and nesting limits come from
@@ -118,8 +145,9 @@ reviewed as a new boundary.
 ## Testing
 
 `pnpm --filter @rally/ace test` covers Access failure, same-origin mutation,
-the exact Flagship-and-Queue write contract, the safe attribute vocabulary,
-operators, nesting, and regional fan-out. `pnpm --filter @rally/ace typecheck`
+active DLQ discovery, metrics, non-consuming peek, the exact
+Flagship-and-Queue write contract, the safe attribute vocabulary, operators,
+nesting, and regional fan-out. `pnpm --filter @rally/ace typecheck`
 checks both browser and Worker programs; `pnpm --filter @rally/ace build`
 builds the Vite client and performs a Wrangler dry run. API workerd tests cover
 the real Queue dispatch and Durable Object WebSocket behavior. Desktop tests
@@ -150,6 +178,15 @@ values do not cross through Ace. The separately approved Flagship attributes do
 cross to the one global evaluation service as documented in
 [`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
 
+The Queues page is account-wide and therefore shows both Global and EU DLQs in
+the same Access-protected Ace runtime. Current Queue contracts carry operational
+pointers and identifiers rather than product content, but EU dead letters can
+include EU workspace, user, session, object, and activity IDs. Displaying those
+identifiers to an authorized internal operator in shared Ace is an explicit
+cross-regional administration boundary. It does not load referenced D1, R2, or
+Durable Object content, and it must not grow such a dereference without a new
+regional review.
+
 ## Security and trust model
 
 Ace treats request headers, URL parameters, JSON, directory queries, Flagship
@@ -158,10 +195,17 @@ admission, but the Worker still verifies the signed assertion and its audience.
 Mutations require same origin and a fixed managed-key schema.
 
 The deployment credential stays in GitHub Actions. Ace receives a separate
-encrypted `CLOUDFLARE_FLAGSHIP_API_TOKEN` secret whose account permission is
-Flagship Write only. That credential can change flags but cannot deploy Workers,
-change Access policy, read D1, or administer the account. No token is compiled
-into the Vite bundle or stored as a Worker variable.
+encrypted `CLOUDFLARE_FLAGSHIP_API_TOKEN` secret with only Flagship Write and
+Queues Edit on the Rally Cloudflare account. The binding keeps its historical
+name so the existing secret remains in place while its token is rotated.
+Cloudflare requires Queues Edit for the
+non-consuming `messages/peek` endpoint; Queues Read alone can list Queues and
+metrics but cannot view message bodies. The token can change flags and could use
+other Queue mutation endpoints, so Ace keeps its API routes on an explicit
+read/peek allowlist and never exposes Cloudflare's purge reference. It cannot
+deploy Workers, change Access policy, read D1, or administer other account
+products. No token is compiled into the Vite bundle or stored as a plain Worker
+variable.
 
 ## Operations
 
@@ -172,17 +216,23 @@ scripts. Test-only changes under Ace, shared contracts, or the Queue provisioner
 remain CI-only and do not redeploy production. The workflow validates the
 repository, creates all declared Queues, clones the migration Access policy,
 ensures all Enabled-named flags exist off by default, injects Ace's returned
-Access audience, deploys the Hono Worker and assets, installs the dedicated
-Flagship token as an encrypted secret, and verifies an unauthenticated request
-is redirected by Access. The API deploy and signed desktop release start from
-their existing `packages/**` and `apps/desktop/**` triggers in the same merge.
+Access audience, uses the runtime token to list a dynamically selected Queue
+and perform a non-consuming peek, deploys the Hono Worker and assets, installs
+the token as an encrypted secret, and verifies an unauthenticated request is
+redirected by Access. A missing Queues Edit permission therefore fails the
+deployment before a broken Queues page reaches production. The API deploy and
+signed desktop release start from their existing `packages/**` and
+`apps/desktop/**` triggers in the same merge.
 There is no per-release manual command or dashboard step.
 
 The `api-production` GitHub environment must hold the existing
-`CLOUDFLARE_ACCOUNT_ID` variable, deployment `CLOUDFLARE_API_TOKEN`, and
-Flagship-only `ACE_FLAGSHIP_API_TOKEN`. The deployment token needs Access Apps
+`CLOUDFLARE_ACCOUNT_ID` variable, deployment `CLOUDFLARE_API_TOKEN`, and Ace
+runtime `ACE_FLAGSHIP_API_TOKEN`. The GitHub secret keeps its historical name to
+avoid a credential-name migration, while the token stored in it now needs
+Flagship Write and Queues Edit. The deployment token needs Access Apps
 and Policies Write in addition to the existing Worker, Queue, D1-binding, and
-route permissions. Only `ACE_FLAGSHIP_API_TOKEN` needs Flagship read/write.
+route permissions. `ACE_FLAGSHIP_API_TOKEN` must not receive deployment,
+Access, D1, R2, or Worker permissions.
 These are one-time environment prerequisites, not values committed to the
 repository; once present, releases have no per-merge manual step.
 
@@ -196,6 +246,44 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-08-25 — Queues exposes live dead-letter backlogs and non-consuming message inspection
+
+**What changed:** Ace gained a Queues navigation section backed only by
+Cloudflare's REST API. It derives the active DLQ set from Queue consumer
+configuration, reads each realtime backlog count, byte size, and oldest
+timestamp, and shows one provider-defined peek batch with attempts, time, body,
+and metadata. The existing dedicated Ace token and Worker binding remain in
+place and now require Flagship Write plus Queues Edit; their legacy
+Flagship-specific names are retained to avoid a credential migration.
+Deployment now proves the token can perform a non-consuming Queue peek before
+installing it.
+
+**Why:** Dead letters were already the intentionally simple production signal
+for several Queue-driven subsystems, but investigating that signal meant leaving
+the internal operator application and using Cloudflare directly. Operators need
+the size and the actual failed envelope together to distinguish one poison
+message from a growing delivery failure.
+
+**Considered and rejected:** HTTP pull followed by no acknowledgement. It can
+return bodies, but it leases every inspected message and temporarily changes
+what another consumer can see. Cloudflare's newer `messages/peek` endpoint is a
+closer contract because messages remain available for later peek or pull.
+Classifying DLQs by the repository's naming convention was also rejected: a
+name is compatibility text, while the consumer's live `dead_letter_queue`
+relationship is the provider's authority. Finally, giving Ace the deployment
+token was rejected because Queue inspection does not justify Worker, Access,
+D1, route, or other account-administration permissions.
+
+**Consequences:** Cloudflare assigns peek to Queues Edit rather than Queues
+Read, so the runtime credential is no longer Flagship-only and must be rotated
+to add that account permission before deployment can succeed. Ace
+exposes no Queue mutation route and drops peek's purge refs at the Worker
+boundary, but a runtime compromise has the provider-level Queue write capability
+Cloudflare requires. Peek has no cursor or published batch maximum, so the UI
+uses the provider-defined batch and the independent backlog count instead of
+inventing a ceiling. EU Queue identifiers can now be read in the shared internal
+Ace runtime; product content is not dereferenced.
 
 ### 2026-08-25 — Targeting rules gain drag-to-reorder
 

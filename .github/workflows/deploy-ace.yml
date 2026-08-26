@@ -85,8 +85,11 @@ jobs:
       # This one command is the complete Ace release transaction. It clones the
       # migration site's Access policy into an Ace-specific application,
       # ensures both off-by-default Flagship flags, injects the returned Access
-      # audience, deploys the Worker/assets/consumer, and installs the dedicated
-      # Flagship-only runtime token as an encrypted Worker secret.
+      # audience, proves the runtime token can peek a dynamically selected
+      # Queue, deploys the Worker/assets/consumer, and installs that token as an
+      # encrypted Worker secret. The existing
+      # GitHub secret name is retained for compatibility; its token is scoped to
+      # Flagship Write and Queues Edit, never deployment or Access permissions.
       - name: Provision and deploy Ace
         run: pnpm --filter @rally/ace run deploy
 
