@@ -9,6 +9,7 @@ import { Button, EmptyState, LoadingState } from './components/primitives';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue } from './lib/app-session';
 import {
+  abandonPendingWorkstreamFeedOpen,
   abandonWorkstreamFeedOpenOutsideRoute,
   installRendererErrorTelemetry,
   consumeSurfaceEntrypoint,
@@ -175,6 +176,7 @@ function WorkspaceApp(): React.JSX.Element {
   });
 
   useEffect(() => {
+    if (workspace.error) abandonPendingWorkstreamFeedOpen();
     endSessionFor(workspace.error, { signOut, signOutIfCredentialCleared });
   }, [signOut, signOutIfCredentialCleared, workspace.error]);
 
