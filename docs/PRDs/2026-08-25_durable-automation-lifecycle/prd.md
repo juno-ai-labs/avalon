@@ -187,6 +187,10 @@ behavior and failure containment, not projected scale.
     work-stream resource watches, without moving attachment/watch authority or
     transcript ownership into WorkspaceDO and without creating a second
     connector-event fan-out pipeline.
+15. Provide reviewed event-family, canonical resource-relationship, canonical
+    person, and bounded sensitive-content vocabulary sufficient for the Slack,
+    Linear, Granola, GitHub, and Notion trigger intents in this PRD, and refuse
+    activation when a connector cannot yet normalize the required evidence.
 
 ## Non-goals
 
@@ -230,6 +234,12 @@ behavior and failure containment, not projected scale.
     context, and safe default inform the local grammar. Automation routing stays
     regional and workspace-authoritative, and this PRD does not add a Flagship
     binding, percentage rollout, or remote flag dependency.
+12. **Running ordinary evaluator rules as custom Workers for Platforms or
+    Dynamic Workers code.** The listed product triggers compile into a closed
+    predicate and source vocabulary and need no user-programmable runtime. A
+    future explicitly programmable trigger product may reconsider sandboxed
+    code, but it is not a compatibility escape hatch for a connector field or
+    event family the manifest forgot to declare.
 
 ## Product behavior
 
@@ -498,6 +508,24 @@ type ExternalEventPredicateV1 =
       value: boolean;
     }
   | {
+      kind: "person_id";
+      attribute: string;
+      operator: "equals" | "not_equals";
+      value: PersonId;
+    }
+  | {
+      kind: "person_id_array";
+      attribute: string;
+      operator: "has";
+      value: PersonId;
+    }
+  | {
+      kind: "person_id_array";
+      attribute: string;
+      operator: "has_any" | "has_all" | "has_none";
+      value: NonEmptyArray<PersonId>;
+    }
+  | {
       kind: "string_array";
       attribute: string;
       operator: "has";
@@ -616,24 +644,87 @@ but evaluation sees a separate closed context containing only fields declared
 for that exact connector event type. The connector normalizer creates that
 context, and WorkspaceDO parses it against the same manifest descriptor at
 ingress and again when loading it for processing. Evaluators cannot use dotted
-paths or spread arbitrary `metadata`, `subject`, `actor`, provider payload, or
-transcript content into their context. If a product needs “Linear ticket state
-changed,” for example, the Linear descriptor first declares typed fields such
-as `changedFields: string_array`, `previousStateId: string`, and
-`stateId: string`; only then can an accepted evaluator refer to them. A new
-Gmail or Granola field follows the same manifest-first path.
+paths or spread arbitrary `metadata`, `subject`, `actor`, or provider payload
+into their context.
 
-Representative compiled rules are intentionally small:
+A connector may deliberately declare a bounded normalized content field such as
+Slack `messageText: string`. That declaration is reviewed connector code, not a
+path supplied by the architect. It identifies the field as sensitive evaluator
+input, permits the ordinary type-compatible string operators such as
+case-sensitive `contains`, and keeps the value regional and out of evaluator
+projections, indexes, receipts, logs, telemetry, and Queue messages. WorkspaceDO
+reads it only from the canonical event while evaluating. Raw bodies and an
+entire Granola or Notion transcript are never evaluator context merely because a
+substring operator exists.
 
-| Intent | Exact source event | Ordered filter |
+The connector field vocabulary expands beyond today's scalar types with
+`person_id` and `person_id_array`. Their values are canonical Rally person IDs
+resolved from the event's verified external identities. Rules select a person
+through the directory and store that ID; they never freeze a mutable display
+name or put an email address into evaluator configuration. An unresolved or
+ambiguous person cannot be accepted for a person predicate. A later event with
+no verified mapping simply lacks that person ID and does not match.
+
+Resource relationships are source selectors rather than string predicates.
+WorkspaceDO derives a closed `relatedResourceIds` set by resolving the event's
+manifest-declared provider entity and parent keys against canonical workspace
+resources. The optional `source.resourceId` matches membership in that set. This
+one mechanism represents “in this Linear project,” “in this Granola folder,”
+“in this GitHub repository,” and “on this Notion page” without comparing names,
+URLs, or provider-specific IDs in generic rules. A connector must declare and
+normalize the relationship before the architect may propose it.
+
+Connector manifests may also declare named event families such as
+`slack.message.created` or `notion.page.updated`. A family is a strict non-empty
+set of event types already declared by that same manifest. It is authoring
+vocabulary only: acceptance records the manifest revision and expands the family
+to one exact-source evaluator per current event type. Adding an event type to the
+family later does not silently broaden an accepted automation; adoption creates
+a reviewed definition revision. Wildcard prefixes and regular expressions over
+event type names are illegal.
+
+If a webhook does not carry a required field or relationship, the connector may
+perform one authorized bounded enrichment during normalization before the
+canonical event commits. It may not fetch once per evaluator. Until the
+normalizer can reliably populate and parse that context, draft review names the
+trigger as unsupported and acceptance refuses it rather than installing a rule
+that can never match.
+
+The required conformance vocabulary is:
+
+| Product intent | Accepted exact event expansion | Resource selector and predicate |
 | --- | --- | --- |
-| Run for every new Gmail message | `email.received` | `always -> match` |
-| Run when a Linear ticket moves to the configured completed state | `linear.issue.update` | `all(changedFields has "stateId", stateId equals "<accepted-state-id>") -> match` |
-| Run for every new Granola transcript | `note.generated` | `always -> match` |
+| New message in a Slack channel | `slack.message.posted`, `slack.message.replied` from declared family `slack.message.created` | selected `slack_channel` resource; `always` |
+| New Slack message containing `foobar` | same family | selected channel when named; `messageText contains "foobar"` |
+| A selected Linear project changes | `linear.project.update` and `linear.project.remove` from declared family `linear.project.changed` | selected `linear_project` resource; `always` |
+| A ticket in a Linear project changes | `linear.issue.create`, `linear.issue.update`, and `linear.issue.remove` from declared family `linear.issue.changed` | selected parent `linear_project` resource through the issue's normalized project relation; `always` |
+| A new Granola transcript is added | `note.generated` | `always` |
+| A new Granola transcript is added to a folder | `note.generated` | selected `granola_folder` resource through normalized folder relations; `always` |
+| A selected person has a new Granola transcript | `note.generated` | `participantPersonIds has <PersonId>` |
+| Any pull request is merged in a repository | `github.pull_request.merged` | selected `github_repository` resource; `always` |
+| A new pull request is opened in a repository | `github.pull_request.opened` | selected repository; `always` |
+| A release is made for an application | `github.release.published` after review resolves “made” to published rather than draft-created | repository resource bound to the application; `always` |
+| A new repository is created | `github.repository.created` | connection only because the repository resource does not exist before this event; `always` |
+| A new Notion page is created | `notion.page.created` | connection, or selected parent page/data source when named; `always` |
+| A Notion page is updated | `notion.page.content_updated` and `notion.page.properties_updated` from declared family `notion.page.updated` | selected `notion_page` resource when named; `always` |
+| A selected person comments on any Notion page | `notion.comment.created` | `authorPersonIds has <PersonId>` |
+| A selected Notion page receives a comment | `notion.comment.created` | selected parent `notion_page` resource; `always` |
 
-The Linear example is not legal until its manifest and normalizer declare and
-populate those state fields. The accepted state ID is a frozen configuration
-value, not a display name resolved differently on each event.
+These rows are acceptance requirements, not claims about today's descriptors.
+The current Slack descriptor lacks `messageText`; Linear lacks the typed parent
+project/change vocabulary; Granola lacks folder and participant-person fields;
+and Notion lacks canonical author-person fields. Those manifest/normalizer
+changes must land before the corresponding trigger is advertised or accepted.
+GitHub already declares the named event types and repository field, but the
+repository relationship still compiles to the canonical resource selector so a
+rename does not alter the rule.
+
+The same rule shape also supports a precise Linear state transition once its
+descriptor declares `changedFields: string_array`, `previousStateId: string`,
+and `stateId: string`:
+`all(changedFields has "stateId", stateId equals "<accepted-state-id>")`.
+The accepted state ID is a frozen configuration value, not a display name
+resolved differently on each event.
 
 The deterministic grammar borrows Cloudflare Flagship's
 [ordered first-match rules and nested conditions](https://developers.cloudflare.com/flagship/targeting/),
@@ -653,6 +744,76 @@ implementation adds a predicate-depth, rule-count, or payload-size ceiling for
 resource safety, that ceiling and its refusal behavior require the repository's
 separate defensive-limit decision; it cannot appear as an unexplained schema
 number.
+
+#### Why ordinary evaluators are not dynamic code
+
+[Workers for Platforms](https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/)
+is designed for a platform that dynamically deploys untrusted code written by
+customers or AI into isolated user Workers. Its
+[dispatch architecture](https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/how-workers-for-platforms-works/)
+adds a namespace, dynamic dispatch Worker, one deployed user Worker per program,
+and optional outbound Worker; the outbound layer can
+[control or deny external `fetch()`](https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/configuration/outbound-workers/).
+That is valuable when arbitrary customer code is the product. It is not needed
+to compare a declared event field, person, or resource relationship.
+
+[Dynamic Workers](https://developers.cloudflare.com/dynamic-workers/) are a
+lower-level and closer alternative for on-demand sandboxed evaluation. A loader
+Worker supplies code at runtime and either creates a fresh isolate with
+[`load()` or opportunistically reuses one by immutable ID with `get()`](https://developers.cloudflare.com/dynamic-workers/getting-started/).
+The loader chooses the structured data and capability bindings the code receives
+and can set
+[`globalOutbound: null` to block `fetch()` and `connect()`](https://developers.cloudflare.com/dynamic-workers/usage/egress-control/).
+This removes the dispatch namespace and per-program deployment lifecycle, but
+it does not turn arbitrary code into a statically legal evaluator.
+
+| Dimension | Closed evaluator grammar | Workers for Platforms | Dynamic Workers |
+| --- | --- | --- | --- |
+| Legality | Structure, field, operator, source, identity, and relationship are parsed before activation | Syntax can be checked before deployment; behavior is known only at runtime | Syntax can be checked before loading; behavior is known only at runtime |
+| Determinism | Pure evaluation over one immutable context; no clock, randomness, network, or side effects | Must constrain runtime APIs, bindings, and outbound behavior | Loader can provide no bindings and block outbound access, but clock, randomness, computation, exceptions, and returned shape remain code behavior |
+| Data boundary | Exact manifest-declared fields only | Dispatcher chooses event data and bindings supplied to a deployed user Worker | Loader chooses serialized `env`, request data, service bindings, and global outbound behavior for each code identity |
+| Failure point | Invalid rules fail draft review or activation | Deployment, dispatch, CPU, subrequest, exception, and response-parse failures join processing | Code retrieval/bundling, isolate load, CPU, exception, and response-parse failures join processing |
+| Versioning | Definition revision and canonical evaluator hash | Script upload, deployed version, dispatch target, code hash, and rollback are additional authorities | Accepted code/config hash must name immutable loader input; warm-isolate reuse is opportunistic and never state authority |
+| Required expressiveness | Covers every conformance case above | Adds arbitrary computation that none of the required cases uses | Adds arbitrary computation that none of the required cases uses |
+
+The default evaluator therefore remains the closed grammar. This preserves the
+requirement that illegal rules cannot be created and keeps a connector omission
+visible where the automation is reviewed. Generating custom code for either
+runtime to compensate for a missing `messageText`, project relation, folder
+relation, or person mapping would hide an incomplete connector contract until
+production events arrive.
+
+A future product explicitly offering programmable triggers remains a separate
+PRD and trigger kind. For a stateless predicate, Dynamic Workers are the better
+initial primitive: `load()` creates a fresh Worker for each one-time evaluation,
+avoiding warm-isolate globals as hidden history, without creating a second
+deployment namespace. The loader can pass one closed event context with no
+capability bindings, and `globalOutbound: null` can deny network access. The
+accepted code/config hash still identifies the exact immutable loader input.
+Workers for Platforms becomes the better candidate only if Rally is
+intentionally hosting independently deployed, longer-lived customer applications
+rather than evaluating a function.
+
+Either choice must provide only the same closed versioned event context, bind no
+connector credentials or product-state stores, deny outbound network access by
+default, pin the compatibility date plus code/config hash in the accepted
+definition and delivery receipt, apply team-approved
+[per-invocation resource limits](https://developers.cloudflare.com/dynamic-workers/usage/limits/),
+parse a strict side-effect-free `{ matches: boolean }` response, treat exceptions
+or malformed responses as `no_match`, and feed matches into this same WorkspaceDO
+receipt/outbox engine. It must prevent user code from retaining or emitting
+sensitive evaluator input through logs or Tail Workers, and prove Global/EU
+residency rather than assuming isolate sandboxing answers jurisdiction. No
+custom-code path may append a work-stream message or admit an automation run
+directly.
+
+[Dynamic Worker Durable Object Facets](https://developers.cloudflare.com/dynamic-workers/usage/durable-object-facets/)
+are explicitly not an evaluator implementation. A facet gives dynamic code its
+own isolated SQLite state under a supervisor Durable Object. Mutable per-program
+state would make the same event and evaluator revision produce history-dependent
+answers and create another authority to migrate, recover, authorize, and delete.
+Facets may be useful for a future hosted-application product, but they do not
+replace AutomationAgent or SubstreamAgent and are not used for trigger matching.
 
 WorkspaceDO owns the evaluation and delivery transaction boundary:
 
@@ -916,6 +1077,19 @@ None yet.
     projection disclose restricted activity after participant or watch state
     changed.
 
+17. **Ordinary triggers use the closed evaluator grammar, not generated custom
+    code.** Every required Slack, Linear, Granola, GitHub, and Notion intent is a
+    typed combination of exact event expansion, a canonical resource selector,
+    a canonical person predicate, or a bounded declared content predicate. This
+    keeps legality, data access, evaluation, versioning, and failure behavior in
+    one reviewed contract. *Rejected:* compiling ordinary triggers to Workers
+    for Platforms or Dynamic Workers code, which adds code lifecycle and runtime
+    failure without adding required expressiveness and can turn a missing
+    connector field into a production-only failure. A future programmable-trigger
+    product remains a separate explicit trigger kind; Dynamic Workers are the
+    preferred initial primitive for its stateless matcher, and matches still
+    enter the shared WorkspaceDO receipt/outbox boundary.
+
 ## Data model
 
 The exact table names belong to the implementation plan and migrations. The
@@ -1008,6 +1182,15 @@ never-reuse/tombstone rules.
   and actor records, transcript text, and credentials cannot become evaluator
   attributes. Unknown fields, operators, schema versions, and same-version hash
   conflicts fail closed at the receiving boundary.
+- A manifest-declared sensitive content field is bounded at normalization and
+  remains regional. It may be read in-place for evaluation but is excluded from
+  evaluator projections, candidate indexes, receipts, Queue and DLQ messages,
+  logs, and telemetry. Declaring one content field never admits the enclosing
+  raw message, page, note, or transcript body.
+- Person predicates store canonical Rally person IDs selected through the
+  directory, never names or email addresses. Resource selectors store canonical
+  workspace resource IDs and match normalized relationships, never mutable
+  provider names, URLs, or unreviewed provider identifiers.
 - Generated work-stream audience is independent of automation scope. A
   workspace automation may be discoverable to workspace members while each
   generated run remains private to its admitted participants. Readers recheck
@@ -1068,10 +1251,15 @@ or model overrides.
    against the aggregate run-level transcript protocol that cutover removes.
 2. Replace `deterministicFilters` and `deterministicPrefilter` records with the
    strict predicate schemas and branded registry-aware compiler. Make connector
-   normalizers emit a closed evaluation context for each declared event type;
-   add descriptor fields such as Linear state-change attributes before any rule
-   may reference them. Prove this conversion on the current Gmail, Linear, and
-   Granola trigger fixtures without retaining an arbitrary-metadata fallback.
+   normalizers emit a closed evaluation context for each declared event type.
+   Add the reviewed event families and context needed by the conformance table:
+   bounded Slack message text; Linear project/issue change families and parent
+   project relations; Granola folder and participant-person relations; GitHub
+   repository relations plus the precise opened, merged, published, and created
+   expansions; and Notion page-update families, parent-page relations, and
+   author-person mappings. Prove the conversion on current connector fixtures
+   without retaining an arbitrary-metadata fallback, and keep each unsupported
+   trigger unavailable until its descriptor and normalizer are complete.
 3. Extract the remaining durable Bind execution kernel behind existing hosts,
    proving no product behavior change in SubstreamAgent and
    BlockDashboardAgent. Add AutomationAgent as a `ScheduledDurableObject`
@@ -1232,6 +1420,35 @@ state; the flag must not silently reopen a stale writer.
     that a stale WorkspaceDO resource-link projection, one overlapping reader,
     or an ID-only Queue message cannot disclose the event, and that no provider
     content appears in Queue or DLQ payloads.
+24. Compile and evaluate table-driven fixtures for every row in the required
+    conformance vocabulary: Slack channel messages and `foobar` content; Linear
+    project and project-ticket changes; Granola note creation globally, in a
+    folder, and involving a selected person; GitHub pull-request opened/merged,
+    release published, and repository created; and Notion page created/updated,
+    selected-person comment, and selected-page comment. Each accepted intent
+    expands to the exact event types, resource selector, and typed predicates
+    stated in the table and creates one delivery per logical event.
+25. Attempt to accept each conformance trigger with its required event family,
+    field, relationship, or external-identity mapping removed from the connector
+    manifest/normalizer. Review reports that trigger as unsupported and
+    activation refuses it. Restore the declaration, accept the automation, then
+    add a new event type to its named family; the active evaluator snapshot does
+    not broaden until a reviewed definition revision is accepted.
+26. Evaluate a Slack message containing `foobar` and one without it, including a
+    missing `messageText` context. Only the first matches. Verify the bounded
+    message text never enters an evaluator projection, index, receipt, Queue or
+    DLQ message, log, or telemetry event. Repeat person and resource fixtures
+    across provider renames; canonical IDs continue to match, while unresolved
+    or ambiguous people and absent resource relationships fail closed.
+27. Prove the ordinary evaluator compiler, registration path, and event handler
+    have neither a Workers for Platforms dispatch dependency nor a Dynamic
+    Workers loader dependency and execute every required conformance case through
+    the closed grammar. A future programmable-trigger kind, if separately
+    implemented, cannot call run admission or work-stream append directly and
+    can produce only a parsed match result for the same WorkspaceDO delivery
+    transaction. Its accepted code/config hash is immutable, it has no bindings
+    or outbound network, uses a fresh `load()` isolate for each evaluation, and
+    cannot observe warm-isolate globals or persisted facet state.
 
 ## Open questions
 
