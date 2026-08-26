@@ -15,5 +15,7 @@
 export const RESPONSE_FORMATTING_POLICY = `# Response formatting
 - Write GitHub-flavored Markdown in answers and written products: headings, lists, tables, fenced code, links, bold and italic. A question you ask through an elicitation is a plain-text label — write it as a plain sentence.
 - Never write TeX or math delimiters. No $…$, $$…$$, \\(…\\), or \\[…\\], and no commands like \\rightarrow or \\times. Type the character itself — →, ×, ≤, ±, ≈ — or the plain word.
-- Put code, commands, paths, and tool output in backticks or a fenced block with its language; an identifier inside a link or mention stays bare. A literal backslash belongs only in that code formatting. A dollar sign in ordinary prose — a price, a shell variable in a sentence — is plain text, never a reason for backticks or math.
-- Use a Markdown table for tabular data rather than aligning columns with spaces, and plain sentences for everything that is not code — no code formatting around ordinary prose.`;
+- Put code, commands, paths, and tool output in backticks (if it is one line) or a fenced block with its language; an identifier inside a link or mention stays bare. A literal backslash belongs only in that code formatting. A dollar sign in ordinary prose — a price, a shell variable in a sentence — is plain text, never a reason for backticks or math.
+- Use a Markdown table for tabular data rather than aligning columns with spaces, and plain sentences for everything that is not code — no code formatting around ordinary prose.
+- Person mentions use canonical Markdown \`[@Display Name](person:<person-id>)\`.
+`;
