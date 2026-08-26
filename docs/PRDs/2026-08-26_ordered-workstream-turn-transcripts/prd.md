@@ -84,7 +84,7 @@ version is an acceptable prerequisite to opening a work stream. If the no-user
 assumption becomes false before release, this PRD must be revisited rather than
 quietly adding compatibility machinery during implementation.
 
-## Terminology and definitions
+### Terminology and definitions
 
 These terms are normative. A persisted record has one explicit kind; callers
 may not choose a different classification based on the provider role or whether
@@ -106,6 +106,12 @@ the content would be useful in the participant feed.
   that references canonical fact/payload IDs. A projection row does not become
   the owner of referenced text, result, or provider payload merely because an
   API flattens the join when returning it.
+- **Field naming:** conceptual storage records and SQL columns use
+  `snake_case`; TypeScript properties and JSON wire fields use `camelCase`.
+  Thus `transcript_sequence` and `timing_accuracy` are exposed as
+  `transcriptSequence` and `timingAccuracy`. Symbolic names in equations are
+  definitions rather than wire fields. A spelling change across layers never
+  creates a second semantic field.
 - **Participant transcript entry:** a top-level ordering/lifecycle row in the
   participant-visible work-stream projection, returned only after reader
   admission. It has a stable `transcript_sequence`, references its canonical
@@ -134,10 +140,27 @@ the content would be useful in the participant feed.
   substream, participant/scope epochs, and regional authority. Every range
   slice, active checkpoint, lifecycle record, and bulk hydration within that
   operation reuses the same admission.
+- **Unread high-water line and unread anchor:** the participant's durable read
+  state identifies the first unread attention ordinal; today it is exposed as
+  `firstUnreadSequenceNumber`. After admission, the substrate adapter resolves
+  that ordinal to the first matching displayable conversation turn and exposes
+  its participant `transcript_sequence` as the slice's `anchorSequence`.
+  Participant-safe status entries never become unread anchors. If there is no
+  unread state, the unread slice is `null` with
+  `unreadReason = no_unread`. If the source ordinal is below retained history,
+  beyond the snapshot, or resolves only to missing/retracted turns with no later
+  displayable turn at the fence, the slice is `null` with
+  `unreadReason = anchor_unavailable`; the initial viewport is the prefetched
+  latest slice in both null cases.
 - **Bind loop state:** the complete ordered, post-healing provider-message array
   Bind will submit at a model-call boundary, or the complete ordered array after
   Bind accepts an assistant or tool-result transition. It includes the current
   system projection and every active non-system message.
+- **Bind loop identity and generation:** `loop_id` is the existing harness run
+  identity—`harnessRunId` on the TypeScript/wire boundary and `run_id` in
+  storage—because one admitted harness run owns one Bind loop.
+  `loop_generation` starts at 1 for `state_initialized` and increments exactly
+  once for each successfully committed `state_replaced` compaction.
 - **Bind loop projection row:** a restricted ordering/generation row with a
   monotonic `loop_sequence` that references the exact canonical facts Bind
   consumes or accepts, including private protocol facts, model-facing
@@ -161,6 +184,25 @@ the content would be useful in the participant feed.
   derivative and is not appended to `loop_sequence`. Loading or unloading a
   plugin or skill durably advances the system-projection revision before Bind
   uses the replacement head.
+- **Provider request boundary / `bind_messages_at_request_boundary`:** the exact
+  ordered `prepared.messages` array returned by
+  `validateAndHealMessages` immediately before provider I/O in
+  `packages/agent-harness/src/bind-runtime.ts`. It is the live Bind value
+  compared with the substrate projection; it is not pre-healing
+  `input.messages`.
+- **Socket event fence / `resumeAfterEventSequence`:** the
+  `SubstreamAgent` room's durable monotonic `realtime_state.event_sequence`
+  captured in the same object-local snapshot as transcript bounds, both initial
+  slices, active checkpoints, and activity baselines. It is independent of
+  `transcript_sequence`, `loop_sequence`, and checkpoint revisions. The
+  snapshot represents every relevant event at or below the fence; catch-up and
+  live delivery accept only room events with `sequence` strictly greater than
+  it.
+- **Recovered upper-bound timing:** an interval has an authoritative start but
+  no observed stop. Its stop is the earliest recovery or reaper observation
+  after which Rally knows the work had ended, so `duration_ms` means “at most
+  this long,” not an exact duration. Participant history qualifies that value
+  and never presents it with observed precision.
 - **Lossless reconstruction / perfect semantic accuracy:** canonicalizing the
   substrate projection and the Bind array at the provider boundary produces the
   same ordered encoding and hash. Message order, content-part order, roles,
@@ -661,12 +703,16 @@ as complete.
 The initial authorized `SubstreamAgent` boot/snapshot returns two independently
 described slices from one transcript snapshot:
 
-1. **Unread slice.** When the unread high-water anchor—represented by
-   `firstUnreadSequenceNumber` today—exists, include that anchored turn, up to
-   five preceding displayable turns, and up to five following displayable
-   turns. Clip naturally at the beginning or snapshot end. When there is no
-   unread turn, this named slice is `null`; the work stream opens on the latest
-   slice.
+1. **Unread slice.** Resolve the durable unread high-water line to the
+   participant `transcript_sequence` described in the definitions, then include
+   that anchored displayable turn, up to five preceding displayable turns, and
+   up to five following displayable turns. Clip naturally at the beginning or
+   snapshot end. A missing/retracted target normalizes to the first later
+   displayable turn at the same snapshot fence. When no unread state exists, or
+   when an expired/beyond-fence target has no retained displayable successor,
+   this named slice is `null` with `unreadReason = no_unread` or
+   `anchor_unavailable` respectively; the work stream opens on the already
+   prefetched latest slice.
 2. **Latest slice.** Include the five latest displayable turns at or below
    `snapshotThroughSequence`, clipped when the transcript contains fewer than
    five.
@@ -714,10 +760,7 @@ see. It makes the order shown to a participant match the order the agent used.
 
 ## Decision log
 
-- **2026-08-26 — Use a single breaking release.** Rally has no production users,
-  so requiring a new desktop download and breaking older desktop protocols is
-  acceptable. Do not build a compatibility window or historical migration. If
-  that premise changes before release, revisit the PRD before deployment.
+None yet.
 
 ## Key design decisions
 
@@ -748,8 +791,8 @@ see. It makes the order shown to a participant match the order the agent used.
    begins. This prevents an observable tool start from preceding the assistant
    turn that proposed it and preserves the existing rule that effects are
    planned durably before execution.
-5. **Separate stable order from mutable lifecycle.** `turnSequence` and block
-   indexes never change. Every tool invocation carries a monotonic revision;
+5. **Separate stable order from mutable lifecycle.** `transcript_sequence` and
+   block indexes never change. Every tool invocation carries a monotonic revision;
    `started`, `completed`, `failed`, and ambiguous-effect updates apply in place
    only when newer. Parallel timing therefore changes status but never order.
 6. **Keep active streaming separate from canonical content.** Coalesced token
@@ -1052,6 +1095,9 @@ physical projection row:
   first kind is `context_compaction`.
 - `run_id` and `model_turn_index`: present for assistant turns and unique
   together within a run.
+- `attention_ordinal`: nullable participant read/unread order for displayable
+  conversation turns; safe status entries and non-attention-bearing turns carry
+  `null`. It is distinct from `transcript_sequence`.
 - `state`: `streaming`, `committed`, or `retracted` for conversation turns;
   `active`, `completed`, `failed`, `cancelled`, or `abandoned` for status events.
 - `lifecycle_revision`, UTC start/stop timestamps, canonical duration, timing
@@ -1073,9 +1119,12 @@ Each assistant turn projects ordered blocks by stable canonical payload IDs:
   member-visible reasoning payload. It exists only when normalized provider
   events prove an observable reasoning item occurred.
 
-`block_index` is display order inside the assistant turn. `call_index` is tool
-order inside the provider assistant message and remains the source for returning
-parallel results to Bind. Neither is derived from start or completion time.
+`block_index` is zero-based, dense display order and restarts inside each
+assistant turn; `(turn_id, block_index)` uniquely identifies one block.
+`call_index` is zero-based and dense within the provider assistant message's
+ordered tool-call array and remains the source for returning parallel results to
+Bind. It restarts for each provider assistant message. Neither index is derived
+from start or completion time.
 Large or sensitive raw result bodies stay in their current regional authority;
 the participant projection references only authorized display facts. If Bind saw
 a model-facing derivative of that result, the restricted loop projection
@@ -1109,6 +1158,13 @@ but the following access paths are normative:
   serves the normalized unread anchor, five displayable-turn predecessors, five
   displayable-turn successors, and the five latest displayable turns without
   walking tombstones or counting status entries against the requested five.
+- A partial B-tree over `(attention_ordinal, transcript_sequence)` for
+  conversation turns where `attention_ordinal IS NOT NULL`. The authority first
+  compares the source ordinal with the retained attention floor; a lower value
+  is `anchor_unavailable`. Otherwise this index resolves the existing
+  participant unread high-water ordinal to the first retained displayable
+  `transcript_sequence` at or after that ordinal with ascending `LIMIT 1`; it
+  never scans turns or treats a status event as unread.
 - A partial B-tree over `(status_event_kind, state, transcript_sequence)` for
   rows where `entry_kind = 'status_event'`. It finds active compaction newer than
   the latest conversation turn without scanning historical entries. The
@@ -1120,17 +1176,24 @@ but the following access paths are normative:
   `response_id` and then `assistant_turn_id`. These make hydration proportional
   to the selected turns and responses rather than transcript length.
 - The member read-state row that supplies the unread high-water line is a point
-  lookup by `user_id` inside the one-work-stream authority. An adapter that
-  stores multiple work streams together must prefix that primary/unique key with
-  the work-stream/domain identity. It may not scan participant/read-state rows
-  to discover the member's anchor.
+  lookup by `user_id` inside the one-work-stream authority. The substrate
+  resolves that attention ordinal through the declared attention index to one
+  `transcript_sequence`; it does not reinterpret the ordinal as a transcript
+  sequence. An adapter that stores multiple work streams together must prefix
+  that primary/unique key with the work-stream/domain identity. It may not scan
+  participant/read-state rows to discover the member's anchor.
 
-Within the shared snapshot fence, the substrate normalizes a missing or
-retracted unread high-water line by finding the first displayable
+Within the shared snapshot fence, the substrate first rejects an ordinal below
+the retained attention floor, then resolves an in-range attention ordinal to a
+retained displayable turn through the attention index. If that
+turn is missing or retracted, it normalizes by finding the first displayable
 `transcript_sequence >= anchor` and `<= snapshotThroughSequence` with ascending
-`LIMIT 1`. It then reads up to five displayable predecessors with descending
-`LIMIT 5`, up to five successors with ascending `LIMIT 5`, and the live tail
-with `transcript_sequence <= snapshotThroughSequence`, descending `LIMIT 5`.
+`LIMIT 1`. If neither lookup can produce a retained turn, it returns the
+declared `anchor_unavailable` fallback rather than silently clamping to an
+unrelated oldest row. It otherwise reads up to five displayable predecessors
+with descending `LIMIT 5`, up to five successors with ascending `LIMIT 5`,
+and the live tail with
+`transcript_sequence <= snapshotThroughSequence`, descending `LIMIT 5`.
 The unread boundary-to-boundary span and the latest span from its earliest
 selected conversation turn—or earliest available entry when it selects no
 turn—through the snapshot fence are then read through the full-sequence index,
@@ -1189,9 +1252,10 @@ with these fields:
   `timing_accuracy`: `observed` or `upper_bound`.
 
 Normal starts and stops have observed timing. If a crash or ambiguous external
-effect leaves only the later recovery/reaper boundary known, the stored duration
-is an upper bound and the historical UI must qualify it rather than presenting
-false precision. Repeated working episodes—for example, a response paused for
+effect leaves only the later recovery/reaper boundary known, Rally uses the
+earliest observation after which it knows work had ended. The stored duration
+is an upper bound and the historical UI qualifies it as **at most …** rather
+than presenting false precision. Repeated working episodes—for example, a response paused for
 member input and later resumed—are separate intervals. The response's displayed
 total is the union of its non-overlapping intervals, including a locally
 advancing active interval; it is never inferred by adding plugin or tool totals.
@@ -1290,7 +1354,12 @@ The first-open boot/snapshot groups two such responses under stable purposes:
 
 ```json
 {
+  "snapshot": {
+    "earliestAvailableSequence": 1,
+    "throughSequence": 87
+  },
   "initialTranscriptRanges": {
+    "unreadReason": null,
     "unread": {
       "anchorSequence": 32,
       "coverage": { "startInclusive": 27, "endExclusive": 38 },
@@ -1303,7 +1372,7 @@ The first-open boot/snapshot groups two such responses under stable purposes:
         "entryKind": "conversation_turn",
         "turnId": "turn_active_9",
         "transcriptSequence": 87,
-        "state": "active",
+        "state": "streaming",
         "streamEpoch": 2,
         "checkpointRevision": 14,
         "blocks": []
@@ -1315,9 +1384,18 @@ The first-open boot/snapshot groups two such responses under stable purposes:
     "activeTurnId": "turn_active_9",
     "streamEpoch": 2,
     "checkpointRevision": 14,
-    "startedAtUtc": "2026-08-26T17:00:00.000Z",
-    "snapshotAtUtc": "2026-08-26T17:07:42.000Z",
-    "elapsedMsAtSnapshot": 462000
+    "activities": [{
+      "activityId": "activity_response_9",
+      "intervalId": "interval_response_9_1",
+      "kind": "response_work",
+      "state": "active",
+      "revision": 3,
+      "completedDurationMs": 0,
+      "startedAtUtc": "2026-08-26T17:00:00.000Z",
+      "snapshotAtUtc": "2026-08-26T17:07:42.000Z",
+      "elapsedMsAtSnapshot": 462000,
+      "timingAccuracy": "observed"
+    }]
   }],
   "resumeAfterEventSequence": 412
 }
@@ -1329,9 +1407,17 @@ latest slice abbreviates the accumulated active turn's ordered block payload;
 the real response includes its checkpointed blocks and lifecycle revisions.
 The actual endpoints may be wider when selecting five displayable turns scans
 across tombstones, or narrower at transcript and transport boundaries. `unread`
-is nullable when `firstUnreadSequenceNumber` is null. Both entries use the same
-`snapshot.throughSequence`; they are never assembled from different transcript
-moments.
+is nullable with the declared `unreadReason` when no usable anchor exists. The
+active response array carries one normalized activity record in this shape for
+each active response, assistant-turn, plugin, tool, thinking, and compaction
+scope; completed prior intervals contribute `completedDurationMs`, while
+`checkpointRevision` remains content-only. Both named slices, every active
+checkpoint/lifecycle baseline, `resumeAfterEventSequence`, and the advertised
+earliest/through bounds are captured against the one top-level `snapshot`;
+they are never assembled from different transcript moments. The client verifies
+both slices against that shared descriptor, installs activity baselines by
+`activityId`, `intervalId`, and `revision`, and then accepts room events only
+when `event.sequence > resumeAfterEventSequence`.
 
 `coverage` is the range the authority actually scanned. If an existing
 transport-size rule shortens a response, `endExclusive` stops at the scanned
@@ -1339,6 +1425,42 @@ boundary rather than echoing the requested bound. The client stores normalized
 non-overlapping intervals and computes gaps as the complement inside
 `[earliestAvailableSequence, throughSequence + 1)`. For example, coverage of
 `[1, 21)` and `[41, 61)` inside `[1, 88)` has gaps `[21, 41)` and `[61, 88)`.
+
+### Oversized indivisible turns
+
+A complete conversation turn can exceed the existing encoded response/socket
+bound even when each individual text or tool block is valid. Range shortening
+cannot solve that case: returning the same one turn again would strand the
+client at its sequence. The canonical protocol therefore never uses
+`message_page_too_large` as the terminal result for an authorized canonical
+turn.
+
+When the inline turn would exceed an existing transport bound, the range
+response returns a small complete turn envelope at that
+`transcriptSequence`: stable entry/turn identity, role/state/revision,
+attribution, block count, and an immutable `turnManifestRef`. The referenced
+manifest preserves every `block_index`, block kind, lifecycle identity, and
+canonical payload ID without copying payload bytes into the projection.
+Individual large participant-safe payloads are likewise represented by opaque
+`payloadId`, byte length, media type, and canonical hash. The IDs are
+authority-scoped handles, not raw R2/object keys.
+
+The admitted client hydrates the manifest and payloads through a region-local
+authorized byte-range stream whose chunks obey the existing transport rules.
+One hydration operation performs one reader admission and reuses it for all
+chunks; it never performs authorization per block or byte range. Manifest and
+payload chunks are not transcript entries and consume no
+`transcript_sequence`. The client verifies the pinned revision, byte length,
+and hash before replacing the loading presentation.
+
+Receiving the envelope truthfully covers that transcript sequence, so the
+client can continue loading both older and newer turns while the large turn
+hydrates. It tracks payload hydration separately from transcript range
+coverage. A missing, changed, unauthorized, or failed payload produces a
+retryable block/turn-specific error and never causes the transcript gap loader
+to request the same sequence forever or substitute restricted/model-facing
+content. This is an out-of-line representation of the same canonical facts,
+not permission to split one conversation turn across transcript ranges.
 
 The shared substrate defines this request/response and range arithmetic once.
 An owning Durable Object may expose it through a surface-specific authenticated
@@ -1424,6 +1546,12 @@ continuation envelopes, or `loop_sequence` bounds. Ordinary logs may record opaq
 system-projection revisions, projector versions, and hashes, but never restricted
 payloads.
 
+Participant turn-manifest and payload hydration reuses the same work-stream
+reader-admission contract and returns only participant-safe canonical facts.
+Opaque hydration handles reveal neither regional object keys nor restricted
+payload existence; authorization failure is indistinguishable from unavailable
+participant content at that read boundary.
+
 Tool arguments, results, and failures retain their existing display
 sanitization and result-reference rules. Lifecycle events are accepted only for
 the matching run, turn, invocation, and newer revision; model-supplied IDs do
@@ -1471,12 +1599,18 @@ sequence even when the harness run is unchanged.
 ## Test objectives and required test suite
 
 The tests below are implementation deliverables, not examples or optional
-follow-up work. The implementation pull request must map every test ID to its
-actual test file and test name in the PR description. An implementer may split a
-listed target file when that makes ownership clearer, but may not omit or weaken
-the stated objective or assertions. Tests use fixed protocol fixtures and
-literal expectations; they do not generate the expected result by calling the
-projector or reducer under test.
+follow-up work. The implementation pull request must map every named `H*` and
+`E*` test ID to its actual test file and test name, and map every `T*`
+objective to the target suites/files that collectively prove it. An implementer
+may split a listed target file when that makes ownership clearer, but may not
+omit or weaken the stated objective or assertions. Tests use fixed protocol
+fixtures and literal expectations; they do not generate the expected result by
+calling the projector or reducer under test.
+
+Acceptance criteria and named tests have a many-to-many relationship: one
+criterion may require several runtime layers, and one fixture may prove several
+criteria. Their counts are not expected to match; the implementation PR's
+mapping makes the coverage explicit.
 
 ### Test objectives
 
@@ -1485,14 +1619,14 @@ projector or reducer under test.
 | `T1 Protocol fidelity` | The restricted substrate reconstructs the exact accepted Bind loop state, including the freshly rendered system head, message/content-part order, roles, IDs, exact strings, and provider continuation fields. |
 | `T2 Causal durability and single ownership` | Every semantic datum has one canonical owner; required participant and Bind-loop rows reference that fact and commit atomically before Bind, tool dispatch, terminal publication, or compaction can advance past it. |
 | `T3 Live ordering and concurrency` | Response tokens remain immediately streamable while text, thinking, and multiple tool calls start and settle independently without changing model-declared display order. |
-| `T4 Range and gap truth` | Snapshot-fenced transcript-entry ranges report what was actually inspected, and the desktop computes loaded islands and gaps correctly for empty, shortened, overlapping, disjoint, status-bearing, and realtime-extended history. |
+| `T4 Range, gap, and payload-hydration truth` | Snapshot-fenced transcript-entry ranges report what was actually inspected, the desktop computes loaded islands and gaps correctly for empty, shortened, overlapping, disjoint, status-bearing, and realtime-extended history, and an oversized indivisible turn advances coverage through its manifest while its canonical payload hydrates independently. |
 | `T5 Activity-time truth` | Response, plugin, invocation, and observable-thinking timers use authoritative UTC starts, first-join/reconnect elapsed baselines, lifecycle edges, and interval unions; local ticking never requires server clock frames and survives late join, pause, sleep, reconnect, and history load. |
-| `T6 Recovery and idempotency` | Worker loss, Durable Object eviction/hibernation, socket replay, retries, duplicate events, and compaction recover without loss, duplication, reordering, or identity reuse. |
+| `T6 Recovery and idempotency` | Worker loss, Durable Object eviction/hibernation, socket replay strictly beyond the durable `resumeAfterEventSequence`, retries, duplicate events, and compaction recover without loss, duplication, reordering, or identity reuse. |
 | `T7 Authorization and locality` | Participant APIs reveal neither restricted payloads nor restricted bounds, and Global/EU authorities never use one another as transcript or inference-archive fallbacks. |
-| `T8 Breaking cutover` | One idempotent coordinated release establishes the canonical protocol without backfill, dual paths, capability negotiation, or a compatibility window; old desktops are unsupported and cannot receive transcript data through the removed protocol. |
+| `T8 Breaking cutover` | One idempotent coordinated release establishes a quiescent old-protocol boundary and the canonical protocol without backfill, dual paths, capability negotiation, or a compatibility window; no pre-cutover run crosses the schema boundary, and old desktops cannot receive transcript data through the removed protocol. |
 | `T9 Visible product behavior` | A real desktop window visibly preserves interleaving, gap loading, unread opening, instant jump-to-latest, smooth streaming, parallel activity, and historical timing labels. |
 | `T10 Constant-cost reader admission` | One external boot/range operation or socket admission authorizes once and reuses an epoch-fenced capability across all slices, active state, and hydration; authorization work never scales with returned entries, blocks, or gaps. |
-| `T11 Indexed initial loading` | Unread-anchor, neighbor, latest, bounds, and arbitrary-range production queries choose declared SQLite indexes; the two initial islands share one snapshot and one deduplicated bulk-hydration pass without a full scan, temporary sort, offset walk, or transcript-length-dependent statement count. |
+| `T11 Indexed initial loading` | Attention-ordinal resolution, unread-anchor, neighbor, latest, bounds, and arbitrary-range production queries choose declared SQLite indexes; the two initial islands share one snapshot and one deduplicated bulk-hydration pass without a full scan, temporary sort, offset walk, or transcript-length-dependent statement count. |
 | `T12 Future compaction status` | Every automatic compaction has one durably ordered participant-safe status entry with active/terminal revisions, UTC timing and reconnect baselines, truthful failure/recovery, and no compacted-context disclosure; the current reducer preserves it so future UI can render happening/happened labels without a storage migration. |
 | `T13 Product-nested activity` | Response, assistant-turn, plugin, tool, thinking, and compaction scopes project as one stable hierarchy across live edges, reconnect, ranges, and history; siblings remain parallel/ordered, parents use wall-clock unions, and equivalent flat or nested persistence shapes produce the same product tree. |
 | `T14 End-to-end open performance` | Client-monotonic click-to-usable-open measurement covers the correct visible target, both prefetched islands, active snapshot/socket fence, and composer state; controlled real-window evidence meets p50 ≤ 1,000 ms and p90 ≤ 2,000 ms and production telemetry preserves cohort visibility without content. |
@@ -1502,9 +1636,9 @@ projector or reducer under test.
 | Layer | Target | Responsibility |
 | --- | --- | --- |
 | Pure harness protocol | `packages/agent-harness/src/bind-loop-projection.test.ts` | Fixed-message canonicalization, projector round trips, system-projection revision changes, provider continuation fields, protocol/derivative classification, and mismatch detection. |
-| Substrate and SQL | `apps/api/test/workstream-transcript-substrate.test.ts` using the real object schema through `createTestSqlStorage()` | Single-owner fact schema, projection references, atomic cross-projection transactions, exact indexed range scans, `EXPLAIN QUERY PLAN` assertions, tombstones, immutable payload references, transition ordering, and idempotent clean-cut schema installation. |
+| Substrate and SQL | `apps/api/test/workstream-transcript-substrate.test.ts` using the real object schema through `createTestSqlStorage()` | Single-owner fact schema, projection references, atomic cross-projection transactions, exact attention/range index scans, `EXPLAIN QUERY PLAN` assertions, tombstones, immutable turn-manifest/payload references, transition ordering, and idempotent clean-cut schema installation. |
 | Real Cloudflare runtime | `apps/api/test-workers/workstream-transcript-runtime.test.ts` | Real `SubstreamAgent`, object-local SQLite, RPC, WebSocket, eviction/hibernation, concurrency, failure boundaries, and snapshot fencing. This suite may not replace the Durable Object or its storage with a double. |
-| Desktop range/state reducer | `apps/desktop/src/renderer/lib/workstream-turn-ranges.test.ts` | Range union/complement, stable turn/status-entry reconciliation, nested activity ancestry and sibling order, stream epochs, stale lifecycle rejection, timers, hidden compaction-entry retention, and realtime singleton coverage. |
+| Desktop range/state reducer | `apps/desktop/src/renderer/lib/workstream-turn-ranges.test.ts` | Range union/complement, stable turn/status-entry reconciliation, independent manifest/payload hydration state, nested activity ancestry and sibling order, stream epochs/event fences, stale lifecycle rejection, timers, hidden compaction-entry retention, and realtime singleton coverage. |
 | Desktop component | `apps/desktop/src/renderer/screens/workstream-turn-feed.test.tsx` | Ordered DOM blocks, streaming updates, dual initial islands, jump/scroll behavior, generic thinking/timing labels, and accessibility names. |
 | Full local member pipeline | Extend `scripts/e2e-local.mjs` and `scripts/e2e-local-oracles.test.mjs` | Public API/socket behavior against opened Durable Object authority, including real provider interleaving when credentials are configured and a fixed scripted-provider fixture in CI. |
 | End-to-end performance acceptance | Extend the production-path local E2E driver with a work-stream-open benchmark mode and write its raw timing/report artifact outside the repository. | Real Electron click-to-visible-and-usable durations across declared warm/cold, unread/latest, disjoint, large-history, and mid-stream cohorts; report combined and cohort p50/p90. This is release evidence, not an API microbenchmark or a new per-test timeout. |
@@ -1525,13 +1659,13 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H02 streams_first_text_token_before_turn_commit` | workerd + desktop | Hold provider-turn completion after the first token; assert the token paints, no tool dispatch has occurred, and the eventual canonical commit reconciles the same turn without duplication. |
 | `H03 runs_parallel_tools_in_declared_order` | workerd + desktop | Declare multiple tools in one assistant message, settle them out of order with success and failure, and assert cards stay in call-index order while lifecycle states advance independently. |
 | `H04 persists_assistant_before_dispatch_and_tool_result_before_bind` | workerd | Read durable rows at both execution fences; assert the full assistant/tool plan exists before dispatch and the exact model-facing tool result exists before the next model call. |
-| `H05 reconstructs_fixed_bind_fixture_exactly` | harness + SQL | Persist a literal fixture containing system, participant, protocol-only, derived, assistant/tool, and continuation fields; assert the literal canonical encoding and hash at each boundary. |
+| `H05 reconstructs_fixed_bind_fixture_exactly` | harness + SQL | Persist a literal fixture containing system, participant, protocol-only, derived, assistant/tool, and continuation fields; assert `loop_id = harnessRunId = run_id`, generation 1 at initialization, and the literal canonical encoding/hash at each boundary. |
 | `H06 regenerates_system_after_plugin_activation` | harness + workerd | Activate a plugin during the loop; assert a durable projection revision precedes use, the regenerated system head contains the new activation, non-system ordering is unchanged, and both hashes match. |
 | `H07 records_protocol_and_derivative_provenance` | harness + SQL | Persist a continuation nudge, compaction summary, recalled-memory wrapper, trigger wrapper, interrupt wrapper, and tool result; assert their explicit kinds and required/no-source identities match the definitions. |
-| `H08 compacts_and_resumes_the_same_loop_generation` | workerd | Commit an exact compaction replacement, evict the object, resume, and assert the next provider array equals the pre-eviction projected generation while earlier ledger/history remains queryable. |
+| `H08 compacts_and_resumes_the_same_loop_generation` | workerd | Commit an exact compaction replacement, assert `loop_generation` advances exactly once from 1 to 2 under the same `loop_id/run_id`, evict the object, resume, and assert the next provider array equals the pre-eviction projected generation while earlier ledger/history remains queryable. |
 | `H09 loads_disjoint_ranges_and_reports_middle_gap` | SQL + desktop | Load `[1,21)` and `[41,61)` against snapshot 87; assert exact actual coverage, gaps `[21,41)` and `[61,88)`, stable ordering, and no inferred coverage from row count. |
 | `H10 merges_overlapping_ranges_idempotently` | SQL + desktop | Load overlapping ranges in both arrival orders; assert one copy per stable transcript entry, normalized coverage union, and identical final state. |
-| `H11 opens_with_unread_and_latest_islands` | workerd + desktop | Return unread `−5/+5` and five latest turns from one fence; assert unread paints first, both islands are cached, and the uncovered middle remains a gap. |
+| `H11 opens_with_unread_and_latest_islands` | workerd + desktop | Resolve the durable attention ordinal, then return five turns before/after the unread anchor and five latest turns. Assert the one top-level earliest/through snapshot descriptor fences both slices, active state, and `resumeAfterEventSequence`; unread paints first, both islands are cached, and the uncovered middle remains a gap. |
 | `H12 jumps_to_prefetched_latest_without_fetch` | desktop + E2E | From a disjoint unread opening, invoke **Jump to latest**; assert the latest island paints immediately and the range transport receives no request. |
 | `H13 lazy_loads_only_adjacent_gap_and_preserves_anchor` | desktop | Scroll toward each loaded edge; assert only the adjacent uncovered interval is requested, inserted turns do not move the visible anchor, and overlap is de-duplicated. |
 | `H14 extends_latest_coverage_with_realtime_singletons` | workerd + desktop | Receive turns newer than the opening fence; assert each adds only its singleton interval and remains immediately reachable from **Jump to latest**. |
@@ -1546,10 +1680,10 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H23 starts_canonical_history_without_legacy_backfill` | SQL + workerd | Seed non-production pre-cutover aggregate rows, run the idempotent cutover twice, and create a new response. Assert the old rows are neither converted nor returned, the inference archive is never queried, and canonical sequence/history begins solely from post-cutover activity. |
 | `H24 keeps_participant_and_restricted_projections_linked_without_copying_payloads` | SQL + workerd | Commit an assistant turn used by both views, an exact model-facing tool result plus participant-safe summary, provider continuation metadata plus render-safe content, and compaction status plus private replacement. Inspect durable rows and read participant ranges/resume inference: assert identical assistant text exists under one canonical payload ID referenced by both orderings; genuinely different safe/private facts have different owners and visibility; no projection table contains an independent payload copy. Exact private replay must not derive from the participant view, and the participant view must not expose the restricted fact. |
 | `H25 compacts_twice_across_distinct_events_and_resumes_second_generation` | workerd | Accept activity, commit compaction event A, accept additional assistant/tool activity, then commit distinct compaction event B. Assert two `state_replaced` transitions with distinct event/source revisions, three ordered loop generations, retention of both exact replacements, unchanged participant conversation turns plus two separately ordered safe compaction status entries, and post-eviction replay from B with the exact next provider array. For each event, assert the restricted replacement and terminal safe-status revision commit atomically while retaining separate canonical facts. Replay either event ID and assert idempotency rather than a third replacement generation or status entry. |
-| `H26 joins_existing_stream_with_utc_start_and_elapsed_baseline` | workerd + desktop + E2E | Start a response before a second client opens the work stream. On first join, assert the active snapshot carries the original `startedAtUtc`, a server `snapshotAtUtc`, and the full prior `elapsedMsAtSnapshot`; the label paints the already-accrued duration immediately, continues from the local monotonic receipt point, and is replaced by canonical terminal duration. |
-| `H27 opens_workstream_mid_stream_with_atomic_checkpoint_and_catchup` | workerd + desktop + E2E | Before the client opens the work stream, stream accumulated text and produce planned, running, completed, and failed parallel tool states plus an active thinking block. Assert the first boot paints the exact accumulated ordered state and timing baselines, retains unread/latest islands, records `resumeAfterEventSequence`, and then applies subsequent text/tool/thinking frames once without waiting for another fetch. |
+| `H26 joins_existing_stream_with_utc_start_and_elapsed_baseline` | workerd + desktop + E2E | Start a response before a second client opens the work stream. On first join, assert every active scope carries `activityId`, `intervalId`, lifecycle `revision`, `completedDurationMs`, original `startedAtUtc`, server `snapshotAtUtc`, full prior `elapsedMsAtSnapshot`, and `timingAccuracy`; the label paints completed plus active duration immediately, continues from the local monotonic receipt point, and is replaced by canonical terminal duration. |
+| `H27 opens_workstream_mid_stream_with_atomic_checkpoint_and_catchup` | workerd + desktop + E2E | Before the client opens the work stream, stream accumulated text and produce planned, running, completed, and failed parallel tool states plus an active thinking block. Assert the first boot paints the exact accumulated ordered state and revision-fenced timing baselines, retains unread/latest islands, and captures one top-level earliest/through snapshot plus `resumeAfterEventSequence` from the same object-local boundary. Apply only later room events and assert subsequent text/tool/thinking frames appear once without another fetch. |
 | `H28 authorizes_boot_once_for_all_ranges_and_active_state` | API Node + workerd | Open with disjoint unread/latest slices, active stream checkpoints, lifecycle timing, authors, mentions, attachments, compaction status, and tool blocks. Instrument the typed reader-admission boundary and assert one admission decision for the complete boot, zero per-entry/block calls, and the same admitted capability identity on every internal scan/hydration. Repeat through the initial socket snapshot and assert it reuses the socket admission. |
-| `H29 uses_indexed_bounded_queries_for_initial_ranges` | SQL + workerd | Populate a large tombstone/status history with overlapping unread/latest islands and an active compaction after the latest conversation turn, inspect the exact production SQL with `EXPLAIN QUERY PLAN`, and instrument statement/hydration boundaries. Assert the member anchor is a point lookup; anchor normalization, predecessor, successor, latest, active-status, bounds, and coverage/range selectors use the declared indexes in forward/reverse order with their bounded limits; neither selector uses `OFFSET`, a full transcript scan, or a temporary B-tree; and the union of both islands/status is bulk hydrated once with a statement count independent of total history length. |
+| `H29 uses_indexed_bounded_queries_for_initial_ranges` | SQL + workerd | Populate a large attention/tombstone/status history with overlapping unread/latest islands and an active compaction after the latest conversation turn, inspect the exact production SQL with `EXPLAIN QUERY PLAN`, and instrument statement/hydration boundaries. Assert the member read state is a point lookup; retained-attention-floor comparison, attention-to-transcript resolution, anchor normalization, predecessor, successor, latest, active-status, bounds, and coverage/range selectors use the declared indexes in forward/reverse order with their bounded limits; neither selector uses `OFFSET`, a full transcript scan, or a temporary B-tree; and the union of both islands/status is bulk hydrated once with a statement count independent of total history length. |
 | `H30 persists_compaction_lifecycle_for_future_rendering` | SQL + workerd + desktop reducer | Begin automatic compaction between two conversation turns. Assert one participant-safe `context_compaction` entry is durably ordered before mutation, its active snapshot/reconnect state includes the original UTC start plus elapsed baseline, and one SQLite transaction commits the exact restricted replacement fact/loop reference plus that same safe entry's `completed` revision. Assert canonical duration survives cold/range load, the current reducer retains but need not paint it, and a fixed future-view projection can produce **Context automatically compacting** or **… compacting for 2m 34s**, then **Context automatically compacted** or **… compacted in 2m 34s**, without reading restricted payloads. |
 | `H31 projects_nested_activity_with_parallel_tool_children` | SQL + workerd + desktop reducer | Run one response with two assistant turns. Under the first turn, stream thinking plus two ordered plugin blocks whose tool children start and settle in parallel/out of order; place compaction under the second turn. Assert live, reconnect, range, and cold projections produce response → assistant turn → plugin → tool ancestry with thinking/compaction at their causal turn, stable sibling order, independent child labels, parent wall-clock unions, no double counting, and uninterrupted response-text token streaming. Run the same fixture through a flat-row adapter and a nested in-memory fixture and assert identical product projection without requiring identical persistence. |
 | `H32 benchmarks_complete_workstream_open_distribution` | real Electron + local E2E performance lane | From an already-running authenticated desktop, exercise declared warm/cold cache and object, unread/latest, overlapping/disjoint, large-history, and mid-stream cohorts through the production click/navigation path. Stop each client-monotonic sample only when the target range is visibly committed, both islands and active fence are resident, and the composer is usable. Preserve raw samples and environment metadata; assert the combined distribution is p50 ≤ 1,000 ms and p90 ≤ 2,000 ms and report every cohort separately. |
@@ -1574,11 +1708,11 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E14 projects_parallel_tool_results_in_bind_call_order` | harness + workerd | Settle tools in reverse and mixed order; assert durable completion facts retain real timing while Bind's accepted tool messages project in its defined call order. |
 | `E15 commits_terminal_state_only_after_final_turn` | workerd | Race run settlement against final assistant persistence; assert terminal publication references the committed final turn and never exposes concatenated or missing narration. |
 | `E16 reports_empty_range_as_covered` | SQL + desktop | Scan an interval containing no displayable rows; assert actual coverage advances and the client does not refetch it indefinitely. |
-| `E17 reports_shortened_range_actual_coverage_only` | SQL + desktop | Trigger the existing response-size shortening boundary; assert claimed coverage stops at the last inspected sequence, not the requested end or returned-row count. |
+| `E17 reports_shortened_range_actual_coverage_only` | SQL + desktop | Trigger the existing response-size shortening boundary with multiple inline-eligible turns; assert claimed coverage stops at the last inspected sequence, not the requested end or returned-row count. The indivisible-turn case belongs to E45 and may not terminate here as `message_page_too_large`. |
 | `E18 preserves_tombstone_and_never_reuses_sequence` | SQL + workerd | Reserve a turn that becomes non-displayable; assert a covered tombstone, stable sequence, and a later turn receiving a new sequence. |
 | `E19 does_not_fill_old_gaps_from_new_realtime_turn` | desktop | Start with an earlier gap and receive a newer socket turn; assert only the new singleton is covered and the old gap remains requestable. |
 | `E20 fences_range_against_concurrent_append_and_mutation` | workerd | Append a turn and update tool status during a range scan; assert membership/order remain at the snapshot fence while authorized mutable status follows its declared revision rule. |
-| `E21 handles_unread_near_start_end_and_missing` | SQL + desktop | Test unread at first sequence, within five of either edge, already inside latest five, absent, and beyond retained history; assert bounded slices, correct de-duplication, and declared fallback. |
+| `E21 handles_unread_near_start_end_and_missing` | SQL + desktop | Resolve unread attention ordinals at the first retained turn, within five of either edge, already inside latest five, on a missing/retracted turn with a later displayable successor, below retained history, beyond the snapshot, and absent. Assert indexed resolution, bounded slices, de-duplication, successor normalization, and exact null fallbacks: `anchor_unavailable` for expired/beyond-fence/no-successor anchors and `no_unread` for absent state, with the prefetched latest slice as initial viewport. |
 | `E22 rejects_stale_range_response_after_new_snapshot` | desktop | Resolve an older range request after a newer snapshot; assert it cannot lower bounds, replace newer revisions, or erase singleton coverage. |
 | `E23 recovers_timer_after_sleep_and_clock_skew` | desktop | Advance client wall clock independently of monotonic time, suspend, and resume with authoritative UTC timestamps plus elapsed baseline; assert the client does not use naive local `Date.now() - startedAtUtc`, produces no negative/jumped duration, and accepts canonical terminal replacement. |
 | `E24 does_not_double_count_nested_or_overlapping_intervals` | harness + desktop | Duplicate and overlap response/plugin/tool intervals; assert normalized unions and idempotent terminal totals at every scope. |
@@ -1591,17 +1725,19 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E31 replays_socket_frames_without_duplicate_tokens_or_blocks` | workerd + desktop | Disconnect at token, tool-start, tool-stop, and turn-commit boundaries; assert replay plus snapshot reconciliation produces each token/block/lifecycle revision once. |
 | `E32 preserves_streaming_under_parallel_start_complete_error_burst` | workerd + desktop | Burst parallel tool start/success/error events while text tokens continue; assert token delivery is not blocked or batched behind lifecycle processing. |
 | `E33 rejects_old_desktop_protocol_after_cutover` | API Node + workerd | Connect with the prior desktop protocol after cutover. Assert it cannot receive transcript bounds/content or socket admission, no legacy fallback/emission path executes, no particular compatibility error body is required, and the current desktop connects successfully to the same authority. |
-| `E34 makes_substrate_conformance_mandatory_for_new_authority_adapter` | harness/API contract | Run the shared adapter suite against `SubstreamAgent` and a deliberately incomplete fixture adapter; assert the real adapter passes and the missing range/replay capability fails conformance. |
+| `E34 makes_substrate_conformance_mandatory_for_new_authority_adapter` | harness/API contract | Run the shared adapter conformance suite against `SubstreamAgent`, which must pass, and a deliberately incomplete test-only adapter implementing only part of the required range/replay contract, which must fail for the omitted capability. |
 | `E35 excludes_automation_wizard_from_all_new_paths` | API Node + desktop | Exercise automation draft storage and UI fixtures; assert no new substrate schema, protocol event, range contract, or renderer behavior is invoked for the explicitly out-of-scope wizard. |
 | `E36 does_not_conflate_duplicate_compaction_delivery_with_a_second_event` | SQL + workerd | Deliver compaction event A twice and a distinct event B once, including out-of-order retry delivery. Assert A creates exactly one replacement generation, B creates exactly one later generation, event/source identities remain distinguishable, and the active generation never rolls back from B to A. |
-| `E37 rejects_inconsistent_active_interval_timestamp_baseline` | workerd + desktop | Supply a snapshot whose `startedAtUtc`, `snapshotAtUtc`, and `elapsedMsAtSnapshot` cannot describe the same interval revision, then deliver an older consistent snapshot. Assert the inconsistent snapshot is rejected/resynced without resetting the label to zero, and the older revision cannot roll back a newer valid baseline. |
-| `E38 races_midstream_open_with_frame_and_terminal_commit` | workerd + desktop | Publish a token/tool lifecycle frame immediately before, during, and after first-open snapshot assembly, then commit the active turn. Assert snapshot fencing plus catch-up yields every byte/block/revision exactly once, canonical commit reconciles the reserved turn in place, no active overlay survives terminal state, and no middle range is falsely marked covered. |
+| `E37 rejects_inconsistent_active_interval_timestamp_baseline` | workerd + desktop | Supply a snapshot whose `activityId`, `intervalId`, lifecycle `revision`, `completedDurationMs`, `startedAtUtc`, `snapshotAtUtc`, and `elapsedMsAtSnapshot` cannot describe the same interval revision, then deliver an older consistent snapshot. Assert the inconsistent snapshot is rejected/resynced without resetting the label to zero, and the older interval/revision cannot roll back a newer valid baseline or completed total. |
+| `E38 races_midstream_open_with_frame_and_terminal_commit` | workerd + desktop | Publish a token/tool lifecycle frame immediately before, during, and after first-open snapshot assembly, then commit the active turn. Assert both slices, top-level transcript bounds, active checkpoint/activity revisions, and `resumeAfterEventSequence` share one object-local boundary; applying only room events strictly above that fence yields every byte/block/revision exactly once, canonical commit reconciles the reserved turn in place, no active overlay survives terminal state, and no middle range is falsely marked covered. |
 | `E39 keeps_authorization_work_constant_across_range_shapes` | API Node + workerd | Run empty, shortened, tombstone/status-heavy, overlapping, disjoint, and maximum-existing-bound range fixtures with different returned entry/block counts. Assert each external read makes exactly one reader-admission decision, no row hydration triggers authorization, and a participant/scope epoch change invalidates the admitted socket before another snapshot is returned. |
-| `E40 keeps_indexed_plan_for_missing_anchor_tombstones_and_boundaries` | SQL + workerd | Exercise a missing/retracted unread anchor, long tombstone runs, fewer than five turns on either side, empty history, and a snapshot fence below the physical tail. Assert anchor normalization and all directional/latest/range reads retain the declared indexed plans, coverage remains truthful across skipped tombstones, no linear fallback or temporary sort appears, overlap hydrates once, and deliberately removing each required index makes the plan/failure-proof test fail for that access path. |
+| `E40 keeps_indexed_plan_for_missing_anchor_tombstones_and_boundaries` | SQL + workerd | Exercise attention-ordinal resolution, a missing/retracted unread anchor, an expired attention floor, long tombstone runs, fewer than five turns on either side, empty history, and a snapshot fence below the physical tail. Assert attention/anchor normalization and all directional/latest/range reads retain the declared indexed plans, coverage remains truthful across skipped tombstones, no linear fallback or temporary sort appears, overlap hydrates once, and deliberately removing each required index makes the plan/failure-proof test fail for that access path. |
 | `E41 closes_compaction_status_truthfully_without_leaking_payload` | SQL + workerd + desktop reducer | Fail start-entry persistence; separately crash/fail/cancel after start but before replacement; inject failure between the replacement write and terminal safe-status update inside their transaction; then exercise duplicate/out-of-order delivery. Assert a failed required start write prevents compaction mutation; the injected partial completion rolls back both replacement and terminal status; otherwise there is one stable entry per compaction, monotonic active-to-completed/failed/cancelled/abandoned state, recovered upper-bound timing where exact stop is unavailable, no permanently active marker, no participant summary/messages/token counts/private bounds, no Bind projection of the safe marker, no compaction marker counted against the five requested conversation turns, and indexed range/reconnect recovery without duplication. |
 | `E42 rejects_or_repairs_orphaned_and_regressive_nested_activity` | SQL + workerd + desktop reducer | Deliver child-before-parent, stale reparenting, duplicate child stops, one sibling stop while another remains active, a parent terminal edge before required children settle, and a reconnect snapshot missing an active child's ancestor. Assert arrival order cannot define/reparent siblings; stale/duplicate edges are ignored; the parent stays active and counts overlap once; an inconsistent snapshot is rejected/resynced or repaired from canonical ancestry; range merges never duplicate nodes; and no storage implementation is required to persist a recursive tree. |
 | `E43 does_not_finish_open_metric_at_partial_stale_or_failed_state` | desktop + E2E | Independently delay authorization, unread/latest ranges, active checkpoint/fence, renderer commit, and composer readiness; begin with stale cached content; then fail and cancel separate opens. Assert the monotonic clock starts once at member intent, never restarts, and cannot stop on API completion, skeleton/header/first-row/stale paint, or only one range. Success records exactly once after the full usable condition; failed/cancelled opens record their outcome and elapsed time but never enter successful percentiles. |
 | `E44 rolls_back_canonical_fact_and_required_projections_atomically` | SQL + workerd | For assistant acceptance, exact tool-result acceptance, and compaction completion, inject failure after canonical fact insertion and after each required participant/Bind projection write. Assert the object-local SQLite transaction leaves no orphan fact, independent duplicate payload, advanced sequence/revision, one-sided projection, dispatchable tool plan, completed safe status without a replacement, or replacement visible without its completed safe status. Retry each transition and assert exactly one owning fact plus the required stable projection references commit. |
+| `E45 hydrates_oversized_indivisible_turn_without_stranding_range` | workerd + desktop | Create one valid turn whose combined text/tool blocks and then whose block manifest exceed the existing encoded page/socket bound. Assert the range returns one small envelope with stable sequence and immutable `turnManifestRef` rather than `message_page_too_large`; accepting it advances transcript coverage exactly once and permits older/newer range loading. Hydrate manifest and payload byte ranges under one admission, verify revision/length/hash, then inject missing, tampered, unauthorized, interrupted, duplicate, and out-of-order chunks. Assert only the turn/payload hydration state retries or errors, no restricted fallback appears, and transcript gap coverage never regresses or loops. |
+| `E46 prevents_pre_cutover_run_from_crossing_schema_boundary` | workerd + release-contract | Seed queued, active, paused, and externally unsettled old-protocol runs while racing new admission with the coordinated cutover. Assert admission is fenced first; the release operation either observes quiescence/cancelled-abandoned non-production state and installs the canonical-only schema or aborts before schema mutation. No run reads/writes both protocols, no legacy dual-write/reader remains, and a new post-cutover run uses only canonical facts/projections. |
 
 ### Required algebraic, race, and failure-proof checks
 
@@ -1650,17 +1786,22 @@ coordinated cutover and no compatibility phases:
    pass before release. Capture the declared real-window work-stream-open
    performance artifact and confirm its p50/p90 goal before release;
    compatibility work is not a prerequisite because it is deliberately absent.
-3. Run one idempotent release operation that installs the object-local schema,
-   deploys the backend that accepts only the new transcript protocol, and
-   publishes the matching desktop version. The app may require that version to
-   be downloaded before a work stream opens. Older desktops are unsupported and
-   are not served a fallback feed; this PRD does not require a special
-   compatibility response.
+3. Run one idempotent release operation. Before schema mutation, it fences
+   admission of new old-protocol runs and verifies that no queued, active,
+   paused, or externally unsettled pre-cutover harness run can cross the
+   boundary. Existing non-production runs may finish before the fence or be
+   explicitly cancelled/abandoned and discarded; if quiescence cannot be
+   established, the operation aborts before changing transcript storage. It then
+   installs the object-local schema, deploys the backend that accepts only the
+   new transcript protocol, and publishes the matching desktop version. The app
+   may require that version to be downloaded before a work stream opens. Older
+   desktops are unsupported and are not served a fallback feed; this PRD does
+   not require a special compatibility response.
 
 There is no data migration job, inference-archive backfill, dual write, dual
 read, capability negotiation, compatibility window, staged client floor, or
 manual dashboard/cross-region step. Non-production pre-cutover transcript rows
-need not remain readable. A backend rollback is not required to understand new
+and cancelled/abandoned pre-cutover runs need not remain readable. A backend rollback is not required to understand new
 canonical rows; use a forward fix rather than preserving the removed protocol
 solely for rollback. If production users or transcript-continuity requirements
 exist before deployment, stop and revise this release plan before shipping.
@@ -1711,11 +1852,16 @@ exist before deployment, stop and revise this release plan before shipping.
 14. A first open with an unread anchor returns, in one boot/snapshot response,
     an unread slice containing the anchor plus up to five displayable turns on
     each side and a latest slice containing five displayable turns. Both slices
-    share one snapshot fence and report independent actual coverage. Safe status
-    entries within either selected transcript span are returned in sequence but
-    do not count against those conversation-turn quantities.
-15. A first open with no unread anchor returns a null unread slice and the five
-    latest displayable turns, and positions the transcript at that latest slice.
+    share one top-level earliest/through snapshot descriptor with active state
+    and `resumeAfterEventSequence`, and report independent actual coverage. Safe
+    status entries within either selected transcript span are returned in
+    sequence but do not count against those conversation-turn quantities.
+15. A first open with no unread state returns a null unread slice with
+    `unreadReason = no_unread`; an expired/beyond-fence/missing anchor with no
+    retained displayable successor returns `anchor_unavailable`. Both return
+    the five latest displayable turns and position the transcript there. A
+    missing/retracted anchor with a retained successor normalizes to that
+    successor instead of becoming a status event or an unrelated oldest turn.
 16. Overlapping initial slices render each turn once and union their coverage.
     Disjoint slices leave the middle marked as a gap rather than downloading or
     claiming it.
@@ -1745,9 +1891,11 @@ exist before deployment, stop and revise this release plan before shipping.
     resumption opens a new one. The live and historical response label sums the
     non-overlapping working intervals and excludes the paused gap.
 24. After application sleep, hibernation, socket reconnect, or a missed edge,
-    an active snapshot rebases the desktop from its original `startedAtUtc`,
-    server `snapshotAtUtc`, and `elapsedMsAtSnapshot`; a terminal snapshot
-    replaces local elapsed time with canonical `durationMs`.
+    an active snapshot identifies each baseline by `activityId`, `intervalId`,
+    and lifecycle `revision`, then rebases the desktop from
+    `completedDurationMs`, original `startedAtUtc`, server `snapshotAtUtc`,
+    `elapsedMsAtSnapshot`, and `timingAccuracy`; a terminal snapshot replaces
+    local elapsed time with canonical `durationMs`.
 25. Response-text token deltas remain immediately renderable while response,
     plugin, tool, and thinking start/stop edges arrive independently. Parallel
     tool start/complete/error traffic neither blocks nor batches text streaming.
@@ -1762,7 +1910,9 @@ exist before deployment, stop and revise this release plan before shipping.
     encrypted reasoning payload, signature, or hidden provider-attempt detail.
     Recovery-only timing boundaries are marked as upper bounds rather than
     displayed with false precision.
-29. At initialization, the restricted projection recreates the complete
+29. At initialization, `loop_id` equals the admitted
+    `harnessRunId`/`run_id`, `loop_generation` starts at 1 and advances once
+    per successful compaction replacement, and the restricted projection recreates the complete
     post-healing Bind message array by rendering the system head from its durable
     versioned prompt/activation state and appending the exact participant-derived
     messages, compaction prefix, and protocol-only prompt context. The
@@ -1798,8 +1948,9 @@ exist before deployment, stop and revise this release plan before shipping.
 36. Failed provider attempts, abandoned partial output, and route-reset bytes do
     not enter accepted Bind state. The next epoch may replace transient display
     text without changing the last durable loop revision.
-37. One idempotent coordinated release installs the canonical schema, deploys
-    the canonical-only backend protocol, and publishes the matching desktop.
+37. One idempotent coordinated release first fences old-protocol run admission
+    and establishes a quiescent boundary, then installs the canonical schema,
+    deploys the canonical-only backend protocol, and publishes the matching desktop.
     Pre-cutover rows are not backfilled or served, no inference archive is
     queried, and an older desktop cannot receive transcript bounds or content
     through a compatibility projection. No stable old-client error shape is
@@ -1808,22 +1959,26 @@ exist before deployment, stop and revise this release plan before shipping.
     loop payloads nor `loop_sequence` bounds. Subsequent inference nevertheless
     reconstructs from the restricted projection without consulting the desktop
     projection or Global inference lakehouse.
-39. Every required `H01`–`H32` and `E01`–`E44` test is mapped to an actual test
+39. Every `T1`–`T14` objective is mapped to its proving suites/files, and every
+    required `H01`–`H32` and `E01`–`E46` test is mapped to an actual test
     name and file, passes at its required layer, and has an implementation-PR
     failure-proof record showing the named assertion fails when its protected
     production behavior is deliberately broken. The three generated algebraic
     and state-machine suites, updated local behavioral lane, and real-window
     desktop acceptance flow also pass; none is deferred to a follow-up PR.
 40. A client that first opens or reconnects to a response already in progress
-    receives the active interval's original UTC start and a server-observed UTC
-    snapshot plus elapsed baseline. It immediately displays the time accrued
+    receives each active scope's stable activity/interval identity, lifecycle
+    revision, completed duration, original UTC start, server-observed UTC
+    snapshot, elapsed baseline, and timing accuracy. It immediately displays the time accrued
     before subscription, then advances locally without periodic server ticks;
     client wall-clock skew cannot reset, make negative, or become the authority
     for that duration.
 41. Opening a work stream mid-response paints its accumulated text, ordered
     tool/thinking blocks, current lifecycle states, and already-accrued timing
-    from the initial boot snapshot. The snapshot's event fence makes subsequent
-    socket catch-up and live frames exact-once at the boundary, while the unread
+    from the initial boot snapshot. The top-level transcript bounds, both
+    slices, active state, and durable room `resumeAfterEventSequence` share one
+    boundary; accepting only greater room sequences makes subsequent socket
+    catch-up and live frames exact-once, while the unread
     and latest range islands retain truthful coverage and **Jump to latest**
     remains immediate.
 42. A complete REST boot or range request performs one reader-admission decision
@@ -1832,8 +1987,9 @@ exist before deployment, stop and revise this release plan before shipping.
     reuses the connection's epoch-fenced admission, and revocation invalidates
     that admission; neither path performs per-row authorization or regional
     authorization joins during the transcript scan.
-43. The unread high-water lookup is a keyed point read. Unread anchor
-    normalization, five-before/five-after, latest-five, snapshot-bound, and
+43. The unread high-water lookup is a keyed point read. Attention-ordinal
+    resolution, unread anchor normalization, five-before/five-after,
+    latest-five, snapshot-bound, and
     arbitrary-range production queries use their declared SQLite indexes with
     bounded traversal and no `OFFSET`, full transcript scan, or temporary sort.
     Both initial islands are selected within one object-local snapshot and their
@@ -1880,3 +2036,17 @@ exist before deployment, stop and revise this release plan before shipping.
     provider continuation metadata only because those semantics genuinely
     differ. A failed projection write rolls back the whole transition rather
     than leaving dual sources, an orphan fact, or a one-sided accepted state.
+48. A participant-visible turn that exceeds the existing inline frame/page
+    bound returns one covered turn envelope and immutable
+    `turnManifestRef`/payload IDs instead of `message_page_too_large`. Manifest
+    and payload bytes hydrate through one admitted regional byte-range stream,
+    with revision/length/hash verification. Transcript coverage advances on the
+    envelope and remains independent of payload hydration, so missing or failed
+    payload bytes can show a turn-specific retry/error without stranding every
+    older or newer sequence or exposing restricted content.
+49. No queued, active, paused, or externally unsettled old-protocol run crosses
+    the breaking schema boundary. The single release operation fences admission
+    first and either reaches quiescence—finishing or explicitly
+    cancelling/abandoning disposable non-production runs—before mutation, or
+    aborts without installing the new schema. It never introduces legacy
+    dual-write, a downgrade reader, or a compatibility phase.
