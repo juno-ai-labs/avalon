@@ -4,8 +4,9 @@
 >
 > Preserve model-turn order across assistant text and tool activity, and require
 > the same gap-aware durable transcript substrate wherever the work-stream
-> harness saves a replayable LLM conversation; the automation wizard remains a
-> separate change. Companion:
+> harness saves a replayable LLM conversation. Add durable response, plugin,
+> tool, and observable-thinking timing without server clock ticks; the automation
+> wizard remains a separate change. Companion:
 > [state](state.md). Subsystem references:
 > [agent harness](../../agent-harness.md),
 > [work-stream Durable Objects](../../workstream-durable-object.md),
@@ -46,6 +47,14 @@ Text still reaches the feed token by token. Parallel tools still start and
 settle independently. The change is where those events attach and how their
 durable order is represented, not a conversion of streaming or tool execution
 into a serialized batch.
+
+The same contract adds participant-visible activity timing. The response
+execution envelope and each plugin block receive durable working-started and
+working-stopped edges; an observable provider reasoning item receives thinking
+edges. While an edge is open, the desktop advances **Working for …** or
+**Thinking for …** from a local monotonic clock. The backend does not stream
+clock ticks. Once stopped, the authority supplies the canonical duration used
+for **Worked for …** or **Thought for …** on every historical load.
 
 ## Motivation
 
@@ -98,6 +107,14 @@ reproduce the same pagination failure. The range contract therefore belongs
 beside the canonical turn store used by `SubstreamAgent`, below REST, socket,
 model replay, and desktop projections.
 
+Timing has the same live-versus-history problem. Today execution timestamps and
+durations exist in operational run and tool ledgers, but they are not an ordered,
+participant-visible transcript contract. Recomputing a live label from repeated
+server strings would waste traffic and drift after sleep or reconnect; deriving
+history from whatever lifecycle rows happen to remain would make the live and
+cold-load views disagree. Timing therefore needs durable lifecycle edges and a
+canonical terminal duration beside the turn and tool identities they describe.
+
 ## Goals
 
 1. Render assistant narration and tool activity in the order of the original
@@ -125,7 +142,16 @@ model replay, and desktop projections.
 9. Keep turn identities and sequence positions stable across retries,
    reconnects, tool lifecycle updates, pagination, and realtime delivery.
 10. Preserve regional authority and each transcript surface's existing
-   visibility rules.
+    visibility rules.
+11. Show live and historical elapsed wall-clock time for the full response and
+    for each plugin activity block, including correct behavior when plugins or
+    calls execute in parallel.
+12. Send only lifecycle edges and authoritative reconnect baselines for timing;
+    let the desktop advance an active label locally without server clock ticks or
+    interference with response-text token streaming.
+13. When a provider exposes an observable reasoning item, render a separate,
+    ordered, generically labeled thinking block with the same live and historical
+    timing guarantees, without exposing private chain-of-thought.
 
 ## Non-goals
 
@@ -161,6 +187,17 @@ model replay, and desktop projections.
     compaction checkpoints, active-output checkpoints, and final derived block
     results are not authoritative replayable conversations and do not adopt the
     range substrate merely because they contain model-related text.
+11. **Stream elapsed-time strings or clock ticks from the backend.** The backend
+    sends authoritative start, stop, snapshot-baseline, and revision data. The
+    desktop owns presentation ticking while an activity is open.
+12. **Claim CPU time, provider-billed time, or summed child duration.** These
+    labels describe participant-observed wall-clock intervals. Overlapping
+    plugin or tool calls do not make the full-response duration grow twice as
+    fast.
+13. **Infer or reveal hidden chain-of-thought.** Rally does not fabricate a
+    thinking block from generic response latency, display raw reasoning text,
+    decrypt encrypted reasoning, or relabel ordinary provider wait time as
+    thinking.
 
 ## Product behavior
 
@@ -187,6 +224,66 @@ On reconnect, the feed restores the active turn from its checkpoint before
 accepting catch-up frames. On cold reload, it reads the same canonical turn and
 block structure used by live delivery. The two paths therefore converge on one
 ordering rather than applying separate placement rules.
+
+### Working, worked, and thinking timing blocks
+
+The response started by a participant turn has one response-level activity
+indicator. It changes to **Working for …** when the harness run is admitted and
+actually begins work, excluding time spent queued before execution. It stops
+only after the final assistant turn is canonically committed, when one exists,
+and the run reaches a terminal outcome. A run that pauses for member input,
+cancellation, or another non-working state closes its current interval;
+resumption opens a new interval. The live label shows the sum of completed
+intervals plus the locally advancing active interval. History shows that
+canonical sum as **Worked for …**.
+
+Durations render at whole-second precision in the compact style shown by
+**Working for 7m 42s** and **Worked for 7m 42s**. The desktop may refresh only
+when the displayed value changes and must not make every tick an assistive-live
+announcement; the authoritative start/stop lifecycle remains accessible.
+
+Each plugin activity block follows the same rule. It starts when the first tool
+invocation in that plugin block actually starts and stops when every invocation
+declared for that block has completed, failed, been cancelled, or reached an
+ambiguous terminal receipt state. Multiple invocations from the same plugin in
+one assistant turn form one plugin block; a later assistant turn creates a new
+block so intervening narration remains in the right place. For parallel calls,
+the plugin duration is the wall-clock union from the earliest child start to the
+last child settlement, not the sum of child durations. Different plugin blocks
+may be active at the same time, while the response-level timer advances only
+once. Individual invocation timestamps remain available to render or diagnose
+each tool card, but do not control its display order.
+
+The backend emits one monotonic-revision `activity_started` edge for each opened
+interval and one `activity_stopped` edge for every normal or abnormal terminal
+transition. It never emits periodic elapsed-time updates. The desktop snapshots
+its local monotonic clock when it receives an active interval and updates the
+formatted label locally. A reconnect or canonical snapshot supplies an
+authoritative `elapsedMsAtSnapshot`; the desktop rebases to it instead of
+trusting wall-clock time accumulated while the process was asleep or offline.
+The stop edge supplies authoritative `durationMs`, after which the local clock
+is no longer consulted. Duplicate or late edges are ignored by revision.
+
+When the provider exposes an actual reasoning output item, it appears as a
+separate ordered thinking block. Its live label is **Thinking for …** and its
+terminal label is **Thought for …**. The interval starts on the first normalized
+reasoning-item, reasoning-summary, or reasoning-detail event and normally stops
+on that item's done boundary. When a provider streams reasoning details without
+an explicit done event, the adapter closes the interval at the next
+non-reasoning output boundary or response terminal and records that the boundary
+was normalized. No observable reasoning start means no thinking block, even if
+the provider took a long time to return ordinary output.
+
+This is supported by current provider protocols, with different fidelity. The
+[OpenAI Responses streaming reference](https://platform.openai.com/docs/api-reference/responses-streaming)
+defines reasoning output items plus reasoning-summary and reasoning-text stream
+events with added/delta/done boundaries. The
+[OpenRouter reasoning-token guide](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
+defines ordered `reasoning_details`, including streamed summary, encrypted, and
+raw-text variants, while noting that some models do not return reasoning tokens.
+Rally normalizes only the lifecycle evidence common to those protocols. The
+member-visible block remains generic and timed; provider summaries, raw text,
+encrypted bytes, and signatures are not displayed as chain-of-thought.
 
 A history request asks for a half-open range of top-level turn sequences. For
 example, `[1, 21)` means turns 1 through 20, and `[21, 41)` means turns 21
@@ -326,6 +423,29 @@ None yet.
     Exact model-turn ordering begins at the cutover boundary. The rejected
     alternative was heuristically distributing old text around tool timestamps,
     which would turn an unprovable guess into canonical history.
+13. **Signal activity edges; do not stream a clock.** Durable start/stop edges
+    and snapshot baselines make the backend authoritative about work while the
+    desktop's monotonic clock makes the active label smooth and cheap. The
+    rejected alternative was emitting a new string or token every second, which
+    couples presentation cadence to transport health and competes with response
+    text streaming.
+14. **Measure wall-clock interval unions, not child sums.** Response timing is
+    the union of its working intervals. A plugin block spans its earliest child
+    start through its last child settlement. This preserves the time a member
+    actually waited when tools overlap; adding parallel child durations would
+    overstate elapsed time.
+15. **Keep response, plugin, and invocation timing at distinct scopes.** The
+    response execution envelope owns the full-response total, each ordered
+    plugin block owns its group duration, and each tool invocation retains its
+    own lifecycle timing. The rejected alternative was deriving every label
+    from one run total or one tool row, neither of which can represent parallel
+    work truthfully.
+16. **Create thinking blocks only from provider evidence.** Provider reasoning
+    events establish a generic timed block and its order. Rally does not infer
+    reasoning from silence or display provider reasoning payloads. The rejected
+    alternative was treating all pre-text latency as thinking, which would
+    mislabel queueing, network delay, moderation, and provider work that the
+    protocol does not identify.
 
 ## Data model
 
@@ -368,12 +488,95 @@ Each assistant turn has ordered blocks:
   receipt ID, model `call_index`, plugin/tool attribution, display summary,
   lifecycle state, lifecycle revision, and the existing durable result/error
   reference.
+- A thinking block has `block_index`, provider-turn/stream-epoch attribution,
+  lifecycle revision, and one or more timing intervals. It contains no
+  member-visible reasoning payload. It exists only when normalized provider
+  events prove an observable reasoning item occurred.
 
 `block_index` is display order inside the assistant turn. `call_index` is tool
 order inside the provider assistant message and remains the source for returning
 parallel results to Bind. Neither is derived from start or completion time.
 Large or sensitive result bodies stay in their current regional authority; the
 turn stores only the authorized display and replay references.
+
+The harness run remains an execution envelope even though it is not a transcript
+row. It has a stable `response_id` linked to the initiating participant turn,
+and every assistant turn it produces references that response. Any range that
+returns a member turn also returns the referenced response envelope metadata,
+deduplicated by `response_id`; doing so provides the full-response timing label
+without claiming that unloaded transcript turns inside the response are
+covered.
+
+Activity timing is stored in the same regional authority as conceptual records
+with these fields:
+
+- `activity_id`, `response_id`, and `kind`: `response_work`, `plugin_work`,
+  `tool_work`, or `thinking`.
+- Optional scope keys as appropriate: `assistant_turn_id`, `block_index`,
+  `plugin_id`, and `tool_invocation_id`. Internal provider-attempt data is not a
+  member-visible key.
+- One or more intervals with stable identity, monotonic `revision`,
+  `started_at`, nullable `stopped_at`, and terminal `duration_ms`.
+- Canonical `total_duration_ms` equal to the union of the activity's completed
+  intervals; active snapshots add the current interval separately.
+- Lifecycle state: `active`, `completed`, `failed`, `cancelled`, `ambiguous`, or
+  `abandoned`, plus the existing authorized display outcome.
+- `boundary_source`: `rally`, `provider`, `normalized`, or `recovered`, and
+  `timing_accuracy`: `observed` or `upper_bound`.
+
+Normal starts and stops have observed timing. If a crash or ambiguous external
+effect leaves only the later recovery/reaper boundary known, the stored duration
+is an upper bound and the historical UI must qualify it rather than presenting
+false precision. Repeated working episodes—for example, a response paused for
+member input and later resumed—are separate intervals. The response's displayed
+total is the union of its non-overlapping intervals, including a locally
+advancing active interval; it is never inferred by adding plugin or tool totals.
+
+Realtime lifecycle edges are conceptually:
+
+```json
+{
+  "type": "activity_started",
+  "activityId": "activity_123",
+  "intervalId": "interval_2",
+  "kind": "plugin_work",
+  "responseId": "response_9",
+  "assistantTurnId": "turn_34",
+  "pluginId": "github",
+  "revision": 3,
+  "activeIntervalElapsedMsAtEvent": 0,
+  "completedDurationMsAtEvent": 0
+}
+```
+
+```json
+{
+  "type": "activity_stopped",
+  "activityId": "activity_123",
+  "intervalId": "interval_2",
+  "kind": "plugin_work",
+  "revision": 4,
+  "outcome": "completed",
+  "intervalDurationMs": 462000,
+  "totalDurationMs": 462000,
+  "timingAccuracy": "observed"
+}
+```
+
+A boot, reconnect, or range response returns the canonical completed total and
+each active interval's `elapsedMsAtSnapshot` at the response's snapshot boundary.
+The desktop atomically rebases its monotonic presentation clock on those values.
+Activity edges and response-text deltas are independent ordered event types:
+neither waits for, batches, or acknowledges the other, and parallel plugin/tool
+lifecycle edges may arrive in any completion order.
+
+Provider adapters retain any exact opaque reasoning envelope required for
+lossless provider continuation—including OpenRouter detail order, signatures,
+or encrypted fields—in the existing regional model-protocol authority, separate
+from the participant projection. Retries close or abandon the old stream
+epoch's open thinking interval before a new epoch can start another. The visible
+thinking duration is the union of the observable intervals attached to that
+ordered block; provider route or attempt identity is not exposed.
 
 The range request is conceptually:
 
@@ -486,6 +689,14 @@ not select another turn. Structured logs and telemetry may carry opaque turn,
 run, range, and invocation identifiers, but not response text, tool arguments,
 tool output, or provider error prose.
 
+Provider reasoning is not participant content. Raw reasoning text, encrypted
+reasoning, signatures, and provider-only attempt metadata are never rendered,
+included in participant snapshots, or copied into ordinary logs or telemetry.
+If exact opaque reasoning details must be retained for provider continuation,
+they stay in the regional model-protocol authority under the transcript's
+existing access controls. The participant projection exposes only the generic
+thinking lifecycle and its timing.
+
 No new defensive limit is introduced. The existing authorized page and encoded
 frame bounds continue to shorten actual coverage explicitly. Any future
 retention boundary must advance `earliestAvailableSequence` and preserve a
@@ -497,7 +708,9 @@ silently make an unloaded range look complete.
 No tool, plugin, skill, or authority is added. The agent continues to choose and
 execute tools under the current Bind and receipt contracts. The visible feed
 now preserves narration that occurred between model turns instead of moving it
-into a final run-level answer.
+into a final run-level answer. Timing signals observe those existing lifecycle
+transitions; they do not authorize a call, change dispatch order, or keep a run
+alive.
 
 Subsequent inference reads the canonical turn projection, not a separate
 display-only ordering. Resume, retry, and compaction therefore see the same
@@ -509,26 +722,34 @@ identity and sequence even when the harness run is unchanged.
 ## Rollout
 
 1. Add the shared durable transcript substrate, its authority adapter contract,
-   and one conformance suite for stable turn/block storage, snapshot fencing,
-   range scanning, actual coverage, tombstones, and canonical projection.
-2. Adopt it in `SubstreamAgent` without changing the existing feed. Historical
-   rows remain readable, and no guessed backfill is performed.
-3. Teach the desktop to understand both the legacy message protocol and the new
-   turn protocol. It stores coverage as ranges, reconciles streamed and
-   committed versions by turn ID, and ignores unknown stale lifecycle
-   revisions.
-4. Replace first-open `messageFeed`/`resumeFeed` behavior for capable clients
+   and one conformance suite for stable turn/block/activity storage, snapshot
+   fencing, range scanning, actual coverage, tombstones, canonical projection,
+   and start/stop revision fencing.
+2. Normalize observable OpenAI reasoning-item events and OpenRouter
+   `reasoning_details` lifecycle boundaries into generic thinking blocks. Keep
+   provider-only reasoning payloads out of the participant projection, and emit
+   no thinking block for providers or models without observable evidence.
+3. Adopt the substrate in `SubstreamAgent` without changing the existing feed.
+   Historical rows remain readable, and no guessed interleaving or historical
+   timing backfill is performed.
+4. Teach the desktop to understand both the legacy message protocol and the new
+   turn/activity protocol. It stores coverage as ranges, reconciles streamed and
+   committed versions by stable ID, ignores stale lifecycle revisions, and uses
+   a local monotonic clock for active labels after applying authoritative
+   baselines.
+5. Replace first-open `messageFeed`/`resumeFeed` behavior for capable clients
    with the two named initial turn ranges from one snapshot. Retain both islands
    in the desktop cache, open at unread when present, and make **Jump to latest**
    select the prefetched latest island without fetching.
-5. Advertise the new protocol in the work-stream socket subscription. The
-   backend emits turn events only to a client that declares support; older
-   desktop releases continue receiving their current projection during the
-   compatibility window.
-6. Enable new-turn persistence at an object-local cutover sequence. A snapshot
-   may contain legacy envelopes before the cutover and canonical turns after it,
-   but one stable participant-visible sequence orders the combined result.
-7. Move canonical REST pages, socket snapshots, realtime events, model replay,
+6. Advertise the new protocol in the work-stream socket subscription. The
+   backend emits turn and activity-edge events only to a client that declares
+   support; older desktop releases continue receiving their current projection
+   during the compatibility window.
+7. Enable new-turn and activity persistence at an object-local cutover sequence.
+   A snapshot may contain legacy envelopes before the cutover and canonical
+   turns after it, but one stable participant-visible sequence orders the
+   combined result.
+8. Move canonical REST pages, socket snapshots, realtime events, model replay,
    terminal delivery, and exports to the turn projection. Remove the legacy
    emission path only after the supported desktop floor understands the new
    protocol.
@@ -566,10 +787,11 @@ never rewrites their sequence positions.
    empty covered positions do not trigger repeated fetches.
 10. Receiving realtime turn 88 adds only `[88, 89)` to coverage and leaves
     every unobserved earlier interval marked as a gap.
-11. Tests exercise live streaming, parallel success/failure/ambiguous tools,
-    retry resets, hibernation/reconnect, canonical snapshots, disjoint range
-    merge, legacy/new cutover history, and exact model-protocol projection on
-    the real Durable Object pipeline where runtime behavior is involved.
+11. Tests exercise live streaming, activity timing, parallel
+    success/failure/ambiguous tools, retry resets, hibernation/reconnect,
+    canonical snapshots, disjoint range merge, legacy/new cutover history, and
+    exact model-protocol projection on the real Durable Object pipeline where
+    runtime behavior is involved.
 12. The transcript-substrate conformance suite passes against `SubstreamAgent`,
     including empty ranges, tombstones, response shortening, disjoint ranges,
     overlap, snapshot fencing, and realtime extension.
@@ -594,3 +816,36 @@ never rewrites their sequence positions.
 18. Realtime turns received after the opening snapshot extend the latest loaded
     island one singleton range at a time and remain immediately reachable by
     **Jump to latest**.
+19. When a response starts actual execution, the feed paints **Working for …**
+    from one start edge and advances it locally. No periodic server frame or
+    response token is required to update the label.
+20. A response stop edge freezes an authoritative duration. Cold reload and a
+    disjoint range load show the same **Worked for …** value without replaying
+    live timing events.
+21. Each plugin block independently shows **Working for …** and **Worked for
+    …**. Parallel calls within one plugin measure earliest start through last
+    settlement; overlapping plugins advance simultaneously; the response total
+    equals elapsed response wall time rather than the sum of plugin durations.
+22. Tool completion, failure, cancellation, and ambiguous receipt outcomes all
+    close the matching invocation/plugin interval exactly once. A late or
+    duplicate start/stop edge cannot reopen or regress a newer terminal state.
+23. Pausing for member input closes the current response-work interval, and
+    resumption opens a new one. The live and historical response label sums the
+    non-overlapping working intervals and excludes the paused gap.
+24. After application sleep, hibernation, socket reconnect, or a missed edge,
+    an active snapshot rebases the desktop from `elapsedMsAtSnapshot`; a terminal
+    snapshot replaces local elapsed time with canonical `durationMs`.
+25. Response-text token deltas remain immediately renderable while response,
+    plugin, tool, and thinking start/stop edges arrive independently. Parallel
+    tool start/complete/error traffic neither blocks nor batches text streaming.
+26. OpenAI reasoning-item events and OpenRouter reasoning-detail streams each
+    produce an ordered generic **Thinking for …** block when observable and a
+    stable **Thought for …** duration when closed. A model that exposes no
+    reasoning event produces no thinking block.
+27. Provider retries and route resets close or abandon stale thinking intervals
+    before accepting the next stream epoch. Their lifecycle cannot reset
+    committed narration, tool blocks, or response-work timing.
+28. Participant snapshots, rendered DOM, logs, and telemetry contain no raw or
+    encrypted reasoning payload, signature, or hidden provider-attempt detail.
+    Recovery-only timing boundaries are marked as upper bounds rather than
+    displayed with false precision.
