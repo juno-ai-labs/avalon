@@ -1266,12 +1266,15 @@ export class AutomationService {
       `SELECT * FROM automation_runs WHERE workspace_id = ? AND automation_subscription_id = ?
        ORDER BY created_at DESC LIMIT ?`,
     ).bind(this.auth.workspaceId, id, Math.min(limit, 100)).all<Record<string, unknown>>();
-    // Loading the subscription above is the authorization boundary for its run
-    // history. A second per-run audience check is redundant: a member who can
-    // read the automation can read the work streams created by its runs. More
-    // importantly, consulting each child here wakes one SubstreamAgent per row,
-    // turning an otherwise bounded SQL read into linear cold-start latency.
-    return { items: (result.results ?? []).map(toAutomationRun) };
+    const runs = (result.results ?? []).map(toAutomationRun);
+    if (runs.length === 0) return { items: [] };
+    const readableIds = new Set(await new WorkstreamDirectoryService(this.env, this.auth)
+      .readableIds(runs.map((run) => run.workstreamId)));
+    // New runs copy the automation scope, so loading the subscription is their
+    // authorization boundary. The one parent-object projection read preserves the
+    // narrower audience of personal objects created before that invariant,
+    // without waking one SubstreamAgent per history row.
+    return { items: runs.filter((run) => readableIds.has(run.workstreamId)) };
   }
 
   async nextRun(id: string) {

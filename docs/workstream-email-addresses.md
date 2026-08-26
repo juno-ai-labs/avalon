@@ -475,6 +475,8 @@ creates a second reader model beside the work stream's own scope and participant
 repair must complete on the lifecycle path that owns them. Detail serves the
 stored address. Every run producer must copy the automation scope, and every
 email resource remains readable exactly where its attached work stream is.
+Pre-change personal run objects keep their projected participant boundary in
+automation history until their durable scope is explicitly migrated.
 
 ### 2026-08-25 — The Global claim key is the full email address
 

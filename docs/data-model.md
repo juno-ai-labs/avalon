@@ -758,7 +758,9 @@ perform the regional audit/control write explicitly through
 work stream with the subscription's scope. Personal automations remain
 participant-readable; workspace automations create workspace-readable work
 streams. Automation detail also reads run history through its already-authorized
-subscription instead of authorizing the same subscription twice.
+subscription instead of authorizing the same subscription twice. Its one
+batched WorkspaceDO directory/viewer read preserves the narrower audience of
+pre-change personal run objects without per-run child RPCs.
 
 **Why:** `automation_subscriptions.scope` is the product's declared user/workspace
 boundary. Discarding it at execution made workspace automations shareable while
@@ -773,7 +775,9 @@ visibility model across detail, directory, sockets, and resources.
 **What a future change has to respect:** Each run stores its audience on its own
 work stream at creation. Public run-history routes must authorize the
 subscription; internal reads reached from an already-authorized detail request
-must not repeat that query.
+must not repeat that query. Historical personal run objects remain filtered by
+the WorkspaceDO viewer projection until a durable scope migration replaces that
+compatibility boundary.
 
 ### 2026-08-25 — Email route identity includes the domain
 
