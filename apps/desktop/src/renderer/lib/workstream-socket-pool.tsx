@@ -129,7 +129,7 @@ function RetainedWorkstreamSocket({
   useLayoutEffect(() => {
     if (background) onAdmit(workstreamId);
   }, [background, onAdmit, workstreamId]);
-  const feedEnabled = background || admitted;
+  const feedEnabled = active || background || admitted;
   const initialReason = controlWarm && !feedEnabled
     ? 'hover_warmup'
     : active ? 'active_workstream' : background ? 'background_workstream' : 'retained_workstream';
