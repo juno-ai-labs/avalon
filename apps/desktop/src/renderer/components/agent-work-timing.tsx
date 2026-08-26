@@ -9,6 +9,9 @@ export interface AgentWorkTimingProps {
   durationMs: number;
   /** Start of the active segment. Omit it to keep the active total paused. */
   startedAt?: number;
+  monotonicStartedAt?: number;
+  activeVerb?: string;
+  completedVerb?: string;
 }
 
 export function AgentCompactionIndicator(): React.JSX.Element {
@@ -37,23 +40,28 @@ export function AgentCompactionIndicator(): React.JSX.Element {
 
 export function AgentWorkTiming({
   active,
+  activeVerb = 'working',
+  completedVerb = 'worked',
   durationMs,
+  monotonicStartedAt,
   startedAt,
 }: AgentWorkTimingProps): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    if (!active || startedAt === undefined) return;
+    if (!active || (startedAt === undefined && monotonicStartedAt === undefined)) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 100);
     return () => window.clearInterval(timer);
-  }, [active, startedAt]);
+  }, [active, monotonicStartedAt, startedAt]);
 
-  const running = active && startedAt !== undefined;
+  const running = active && (monotonicStartedAt !== undefined || startedAt !== undefined);
   const activeDuration = running
-    ? Math.max(0, now - startedAt)
+    ? monotonicStartedAt !== undefined
+      ? Math.max(0, performance.now() - monotonicStartedAt)
+      : Math.max(0, now - startedAt!)
     : 0;
-  const verb = active ? 'working' : 'worked';
+  const verb = active ? activeVerb : completedVerb;
   const label = `${verb} for ${formatDuration(durationMs + activeDuration) ?? '0ms'}`;
   const accessibleLabel = active ? 'Rally is working' : label;
 

@@ -31,3 +31,6 @@ minimumReleaseAgeExclude:
 auditConfig:
   ignoreGhsas:
     - GHSA-qwww-vcr4-c8h2
+
+patchedDependencies:
+  '@juno-ai/bind@13.0.0': patches/@juno-ai__bind@13.0.0.patch

@@ -62,6 +62,7 @@ import {
 } from "../services/workspace-runtime-database";
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
 import type { RegionalEffectCommand, WorkstreamObjectStore } from "./workstream-object-storage";
+import { WorkstreamTranscriptStorage } from "./workstream-transcript-storage";
 
 type SqlRow = Record<string, SqlStorageValue>;
 
@@ -348,6 +349,7 @@ export class WorkstreamObjectProductService {
     private readonly storage: DurableObjectStorage,
     private readonly objectStore: WorkstreamObjectStore,
     private readonly env: Env,
+    private readonly transcript = new WorkstreamTranscriptStorage(storage),
   ) {}
 
   private workspaceDatabase(workspaceId: string): D1Database {
@@ -570,6 +572,14 @@ export class WorkstreamObjectProductService {
           workspaceId: input.workspaceId,
           workstreamId: input.workstreamId,
         })).model;
+    const transcriptMessage = await this.transcript.prepareParticipantMessage({
+      turnId: messageId,
+      actor: "human",
+      authorUserId: input.creatorUserId,
+      text: prepared.text,
+      createdAtUtc: new Date(now).toISOString(),
+      attentionOrdinal: 1,
+    });
     this.storage.transactionSync(() => {
       this.storage.sql.exec(
         `UPDATE workstream SET authority_mode = 'authoritative', authority_generation = ?,
@@ -626,6 +636,7 @@ export class WorkstreamObjectProductService {
          VALUES (?, 0, 1, NULL, 0, ?, 0, ?)`,
         input.creatorUserId, now, now,
       );
+      this.transcript.appendPreparedParticipantMessage(transcriptMessage);
       prepared.mentions.forEach((mention, index) => {
         this.storage.sql.exec(
           `INSERT INTO part_mentions
@@ -1300,7 +1311,7 @@ export class WorkstreamObjectProductService {
     resumeFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>> | null;
   }> {
     const workstream = await this.get(auth, viewers);
-    return { workstream, ...await this.bootFeeds(auth, workstream.firstUnreadSequenceNumber) };
+    return { workstream, ...await this.bootFeeds(auth, workstream.firstUnreadSequenceNumber, true) };
   }
 
   /**
@@ -1309,17 +1320,18 @@ export class WorkstreamObjectProductService {
    * `boot` has no way to know about, so re-reading it there would be a second
    * pass for a worse answer.
    */
-  async bootFeeds(auth: AuthContext, resumeAt: number | null): Promise<{
+  async bootFeeds(auth: AuthContext, resumeAt: number | null, authorizationAlreadyChecked = false): Promise<{
     messageFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>>;
     resumeFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>> | null;
   }> {
-    const messageFeed = await this.messages(auth, BOOT_LATEST_MESSAGES);
+    if (!authorizationAlreadyChecked) await this.authorize(auth);
+    const messageFeed = await this.messagesAfterAdmission(auth, BOOT_LATEST_MESSAGES);
     const oldestOnPage = messageFeed.items[0]?.sequenceNumber;
     // Skipped when the reader's position is already on the newest page: a
     // second copy of the same messages is not worth the frame.
     const resumeFeed = resumeAt !== null
       && (oldestOnPage === undefined || resumeAt < oldestOnPage)
-      ? await this.messages(auth, BOOT_RESUME_MESSAGES, undefined, undefined, resumeAt)
+      ? await this.messagesAfterAdmission(auth, BOOT_RESUME_MESSAGES, undefined, undefined, resumeAt)
       : null;
     return { messageFeed, resumeFeed };
   }
@@ -1381,6 +1393,16 @@ export class WorkstreamObjectProductService {
     around?: number,
   ): Promise<{ items: Message[]; nextCursor: string | null; newerCursor: string | null }> {
     await this.authorize(auth);
+    return this.messagesAfterAdmission(auth, limit, before, after, around);
+  }
+
+  private async messagesAfterAdmission(
+    auth: AuthContext,
+    limit: number,
+    before?: number,
+    after?: number,
+    around?: number,
+  ): Promise<{ items: Message[]; nextCursor: string | null; newerCursor: string | null }> {
     if (around !== undefined) {
       const olderLimit = Math.max(1, Math.min(50, Math.floor(limit / 4)));
       const newerLimit = Math.max(1, limit - olderLimit);
@@ -2671,6 +2693,14 @@ export class WorkstreamObjectProductService {
     const now = Date.now();
     const messageId = uuidV7(now);
     const runId = shouldInvoke ? asHarnessRunId(uuidV7(now)) : null;
+    const transcriptMessage = await this.transcript.prepareParticipantMessage({
+      turnId: messageId,
+      actor: "human",
+      authorUserId: auth.userId,
+      text: prepared.text,
+      createdAtUtc: new Date(now).toISOString(),
+      attentionOrdinal: root.next_attention_ordinal,
+    });
     const affectedUsers = [...new Set([auth.userId, ...personIds, ...confirmedParticipantUserIds])];
     const committed = await this.objectStore.commitWithRegionalEffects<LocalMessageWrite>(
       (sql) => {
@@ -2743,6 +2773,8 @@ export class WorkstreamObjectProductService {
                    0, 'text', NULL, ?, ?)`,
           messageId, sequence, attention, auth.userId, prepared.text, input.clientMessageId, now, now,
         );
+        transcriptMessage.input.attentionOrdinal = attention;
+        this.transcript.appendPreparedParticipantMessage(transcriptMessage);
         input.attachmentIds.forEach((resourceId, position) => {
           const row = attachmentRows.find((candidate) => String(candidate.id) === resourceId)!;
           const descriptor = {

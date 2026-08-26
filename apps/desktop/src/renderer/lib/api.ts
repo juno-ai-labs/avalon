@@ -1424,6 +1424,7 @@ export class RallyApi {
     });
     return {
       ...mapWorkstreamDetail(raw),
+      transcript: raw.transcript,
       // Undefined, not empty, when the Worker predates this field — the caller
       // falls back to fetching a page rather than showing an empty transcript.
       messageFeed: raw.messageFeed

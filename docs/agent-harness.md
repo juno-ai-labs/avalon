@@ -26,6 +26,29 @@ internal `block_dashboard` / `BlockDashboardAgent` name.
 
 ## How it works
 
+### Exact Bind-loop durability
+
+The host mirrors Bind's accepted message state as an append/replacement ledger,
+not as an aggregate participant transcript. Initialization stores the healed
+system plus non-system messages. Assistant acceptance, each exact tool-result
+message, protocol-only user messages, provider-validation reconciliation, and
+compaction replacement advance a monotonic state revision. Compaction also
+advances a generation; a stale revision or generation is refused.
+
+Immediately before every provider request, Rally reconstructs the ledger's
+message array and compares its canonical SHA-256 with the validated array Bind
+will send. The equality includes the newly rendered system projection and its
+renderer/input revision. A mismatch or failed persistence port stops the run
+before the model-facing state can advance. This makes `input.messages` an exact
+provider-boundary value even though Bind's internal `state.messages` remains
+private and may be replaced by compaction.
+
+Assistant streaming remains independent: token deltas continue over the room
+while durable lifecycle edges are recorded at accepted turn/tool boundaries.
+Each Bind model turn has its own stable participant turn ID, so text before a
+tool batch, parallel tool blocks in declared call order, and narration after the
+batch cannot be collapsed back into one aggregate row.
+
 ### Addressing
 
 Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered. Uncertain messages invoke only when an active task or explicit tool context exists. The label is not exposed in the UI.
@@ -768,6 +791,27 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-26 — Every Bind provider boundary is losslessly reproducible
+
+**What changed:** The Bind adapter now emits revisioned state transitions for
+initialization, validation reconciliation, assistant messages, exact tool
+results, protocol-only messages, and compaction replacement. The work-stream
+host durably commits those transitions and records an equality hash before each
+provider request.
+
+**Why:** Bind's private message array is the real continuation state. Aggregate
+assistant text plus tool lifecycle rows omitted protocol messages, exact tool
+results, healing, and compaction replacement, so recovery could neither prove
+nor recreate what the provider consumed.
+
+**Considered and rejected:** Treating `input.messages` as a permanent copy of
+Bind state and reconstructing old interleaving heuristically. `input.messages`
+is only the admitted input; the ledger follows every later accepted mutation.
+
+**Consequences:** A run cannot continue when transcript persistence or boundary
+equality fails. The system prompt remains a deterministic runtime projection,
+but its rendered bytes and revision participate in every equality check.
 
 ### 2026-08-26 — A run's own subscription decides whether it is an automation run
 

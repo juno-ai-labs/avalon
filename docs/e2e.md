@@ -268,6 +268,42 @@ Use a test workspace with two members, Adam and Samantha.
 
 Pass evidence: one work stream, two persistent participants, no Rally participant, one persisted attachment, one completed harness run, and no participant row for the viewer.
 
+## Ordered transcript and mid-stream-open acceptance
+
+1. Open a work stream whose first unread turn is at least ten conversation
+   turns behind the tail. Confirm first paint contains the first-unread turn,
+   five conversation turns before and after it, and the latest five turns from
+   one snapshot. Confirm **Jump to latest** moves immediately without a network
+   wait and scrolling fills only the adjacent middle gap without moving the
+   visible anchor.
+2. Run a response that emits text, starts two plugin tools in parallel, settles
+   one successfully and one with an error in the reverse order, and then emits
+   more text. Confirm the DOM order is first text, the two tools in declared
+   call order with independent terminal states, then later text. Confirm tokens
+   continue painting while the lifecycle burst occurs.
+3. Leave and reopen while that run is still streaming. Confirm accumulated text,
+   planned/running/settled tool blocks, active thinking when provider evidence
+   exists, and response/plugin/tool timers appear from the snapshot. The active
+   labels begin at the server elapsed baseline and advance locally; terminal
+   labels use the durable duration.
+4. Trigger automatic compaction twice in one long-lived work stream. After each
+   event, reconnect and confirm the run continues from the newest exact
+   generation, both safe compaction status histories remain distinct, and no
+   old private summary or system prompt is visible in the participant feed.
+5. Inspect provider-boundary test evidence for the run and confirm the
+   reconstructed message-array hash equals the Bind array hash at every request.
+   Repeat after transcript healing and after each compaction replacement.
+6. Verify `workstream_open` click-to-visible-and-usable results against the
+   product targets: p50 at or under one second and p90 at or under two seconds.
+   Record renderer total duration; server snapshot duration alone is only a
+   lower-bound proxy.
+
+Pass evidence: stable turn/block IDs, explicit covered ranges and known gaps,
+no duplicated/reordered tokens or tool blocks, reconnect-safe UTC timing,
+two exact compaction generations, provider-boundary hash equality, and p50/p90
+opening measurements from the visible desktop boundary. The automation wizard
+is not part of this flow.
+
 ## PRD flow 2 — recurring web automation
 
 Use a stable public topic with authoritative sources, such as a cloud provider's model-release catalog.

@@ -76,6 +76,17 @@ import {
   normalizeToolArguments,
   validateToolArguments,
 } from "./tool-arguments";
+import {
+  applyBindLoopTransition,
+  BIND_SYSTEM_RENDERER_VERSION,
+  hashBindLoop,
+  projectBindLoopMessages,
+  verifyBindProviderBoundary,
+  type BindLoopMessage,
+  type BindLoopProjectionState,
+  type BindLoopTransition,
+  type BindSystemProjection,
+} from "./bind-loop-projection";
 
 const OPENROUTER_PROVIDER = providerIdSchema.parse("openrouter");
 const DEFAULT_CATALOG_TOKENS = 2_500;
@@ -517,7 +528,43 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
   let terminalCompactionOutputTokens = 0;
   let terminalCompactionModelTimeMs = 0;
   let completedByTool = false;
+  let bindLoopProjection: BindLoopProjectionState | null = null;
   const toolCallPositions = new Map<string, { turn: number; index: number }>();
+  const commitBindTransition = async (transition: BindLoopTransition): Promise<void> => {
+    await requiredPort(
+      "run_state_persistence_failed",
+      "Bind loop transition persistence failed",
+      () => input.onBindLoopTransition?.(transition),
+    );
+    bindLoopProjection = applyBindLoopTransition(bindLoopProjection, transition);
+  };
+  const systemProjection = async (
+    message: OpenAI.ChatCompletionMessageParam,
+    revision: number,
+  ): Promise<BindSystemProjection> => ({
+    revision,
+    rendererVersion: BIND_SYSTEM_RENDERER_VERSION,
+    inputHash: await hashBindLoop(message),
+    message: toBindLoopMessage(message),
+  });
+  const persistAcceptedToolMessage = async (
+    toolMessage: OpenAI.ChatCompletionToolMessageParam,
+    callIndex: number,
+  ): Promise<void> => {
+    if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
+    const toolCallId = toolMessage.tool_call_id;
+    const position = toolCallPositions.get(toolCallId);
+    await commitBindTransition({
+      kind: "tool_result_accepted",
+      loopId: input.harnessRunId,
+      generation: bindLoopProjection.generation,
+      stateRevision: bindLoopProjection.stateRevision + 1,
+      message: toBindLoopMessage(toolMessage),
+      turnId: `${input.harnessRunId}:turn:${position?.turn ?? stableTurnIndex}`,
+      toolCallId,
+      callIndex,
+    });
+  };
   const emit = async (event: HarnessEvent): Promise<void> => {
     try {
       await input.onEvent(event);
@@ -560,6 +607,18 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       index: issue.index,
       healed: issue.healed,
     })));
+    const initialSystemMessage = healed.messages[0];
+    if (!initialSystemMessage || initialSystemMessage.role !== "system") {
+      throw new Error("bind_loop_system_message_missing");
+    }
+    await commitBindTransition({
+      kind: "state_initialized",
+      loopId: input.harnessRunId,
+      generation: 1,
+      stateRevision: 1,
+      systemProjection: await systemProjection(initialSystemMessage, 1),
+      nonSystemMessages: healed.messages.slice(1).map(toBindLoopMessage),
+    });
 
     const selectedContextWindowTokens = (): number => {
       const selectedModel = model ?? input.config.primaryModel;
@@ -688,6 +747,43 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           systemMessage,
           compactionCheckpointMessage(summary, appendix),
         ];
+        const checkpoint = {
+          trigger,
+          summary,
+          // The host recreates the current system projection from its durable
+          // renderer inputs. Only the compacted continuation is checkpointed.
+          messages: fromOpenAiMessages(persistedMessages.slice(1)),
+          model: routed.result.model,
+          contextTokensBeforeCompaction,
+          contextWindowTokens,
+          inputTokens,
+          outputTokens,
+          costCents: compactionCostCents,
+        };
+        if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
+        const replacementTransition: Extract<BindLoopTransition, { kind: "state_replaced" }> = {
+          kind: "state_replaced",
+          loopId: input.harnessRunId,
+          generation: bindLoopProjection.generation,
+          nextGeneration: bindLoopProjection.generation + 1,
+          stateRevision: bindLoopProjection.stateRevision + 1,
+          systemProjection: await systemProjection(systemMessage, bindLoopProjection.systemProjection.revision),
+          nonSystemMessages: compactedMessages.slice(1).map(toBindLoopMessage),
+          compactionEventId: `${input.harnessRunId}:compaction:${currentCompactionIndex}`,
+        };
+        await requiredPort(
+          "run_state_persistence_failed",
+          "Compaction checkpoint persistence failed",
+          async () => {
+            if (input.onBindCompaction) {
+              await input.onBindCompaction({ checkpoint, transition: replacementTransition });
+            } else {
+              await input.compaction?.persist?.(checkpoint);
+              await input.onBindLoopTransition?.(replacementTransition);
+            }
+          },
+        );
+        bindLoopProjection = applyBindLoopTransition(bindLoopProjection, replacementTransition);
         return {
           messages: compactedMessages,
           inputTokens,
@@ -696,23 +792,6 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           costCents: compactionCostCents,
           persist: async () => {
             try {
-              await requiredPort("run_state_persistence_failed", "Compaction checkpoint persistence failed", () => input.compaction?.persist?.({
-                trigger,
-                summary,
-                // Without the system message: the host replays this as the
-                // transcript prefix of a later run, which renders its own current
-                // system prompt. Everything left is plain text, so nothing here
-                // needs the attachment scrubbing an earlier preserved-message
-                // checkpoint did — a data: URL or file part can no longer reach a
-                // stored checkpoint at all.
-                messages: fromOpenAiMessages(persistedMessages.slice(1)),
-                model: routed.result.model,
-                contextTokensBeforeCompaction,
-                contextWindowTokens,
-                inputTokens,
-                outputTokens,
-                costCents: compactionCostCents,
-              }));
               await emit({
                 type: "compaction_finished",
                 compactionIndex: currentCompactionIndex,
@@ -824,6 +903,38 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           index: issue.index,
           healed: issue.healed,
         })));
+        if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
+        const preparedSystemMessage = prepared.messages[0];
+        if (!preparedSystemMessage || preparedSystemMessage.role !== "system") {
+          throw new Error("bind_loop_system_message_missing");
+        }
+        const currentSystem = bindLoopProjection.systemProjection.message;
+        const nextSystemRevision = await hashBindLoop(currentSystem) === await hashBindLoop(preparedSystemMessage)
+          ? bindLoopProjection.systemProjection.revision
+          : bindLoopProjection.systemProjection.revision + 1;
+        await commitBindTransition({
+          kind: "state_reconciled",
+          loopId: input.harnessRunId,
+          generation: bindLoopProjection.generation,
+          stateRevision: bindLoopProjection.stateRevision + 1,
+          systemProjection: await systemProjection(preparedSystemMessage, nextSystemRevision),
+          nonSystemMessages: prepared.messages.slice(1).map(toBindLoopMessage),
+          reason: "provider_validation",
+        });
+        if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
+        const boundary = await verifyBindProviderBoundary({
+          loopId: input.harnessRunId,
+          generation: bindLoopProjection.generation,
+          stateRevision: bindLoopProjection.stateRevision,
+          systemProjectionRevision: bindLoopProjection.systemProjection.revision,
+          projectedMessages: projectBindLoopMessages(bindLoopProjection),
+          bindMessages: prepared.messages.map(toBindLoopMessage),
+        });
+        await requiredPort(
+          "run_state_persistence_failed",
+          "Bind provider boundary persistence failed",
+          () => input.onBindProviderBoundary?.(boundary),
+        );
         stableTurnIndex += 1;
         const routed = await routeOpenRouterTurn({
           input,
@@ -864,6 +975,16 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               ? { tool_calls: routed.result.toolCalls }
               : {}),
         };
+        if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
+        await commitBindTransition({
+          kind: "assistant_accepted",
+          loopId: input.harnessRunId,
+          generation: bindLoopProjection.generation,
+          stateRevision: bindLoopProjection.stateRevision + 1,
+          message: toBindLoopMessage(message),
+          turnId: `${input.harnessRunId}:turn:${stableTurnIndex}`,
+          modelTurnIndex: stableTurnIndex,
+        });
         return {
           message,
           inputTokens: turnInputTokens,
@@ -875,23 +996,19 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       runToolCall: async (toolCall) => {
         if (signal.aborted) throw abortReason(signal);
         if (toolCall.type !== "function") {
-          return {
-            toolMessage: toolResultMessage(toolCall.id, {
+          return { toolMessage: toolResultMessage(toolCall.id, {
               success: false,
               kind: "validation",
               error: "Custom tool calls are not supported by this runtime",
-            }),
-          };
+            }) };
         }
         const dispatched = runtime.resolveTool(toolCall.function.name);
         if (!dispatched) {
-          return {
-            toolMessage: toolResultMessage(toolCall.id, {
+          return { toolMessage: toolResultMessage(toolCall.id, {
               success: false,
               kind: "authz",
               error: `Tool ${toolCall.function.name} is not active or authorized`,
-            }),
-          };
+            }) };
         }
         const policy: HarnessToolPolicyIdentity = {
           canonicalToolName: dispatched.tool.definition.name,
@@ -913,13 +1030,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             phase: "validation",
             outcome: "definitive_failure",
           });
-          return {
-            toolMessage: toolResultMessage(toolCall.id, {
+          return { toolMessage: toolResultMessage(toolCall.id, {
               success: false,
               kind: "validation",
               error: "Tool arguments were not valid JSON; correct them and try again",
-            }),
-          };
+            }) };
         }
         // Models sometimes serialize schema-declared numbers as JSON strings.
         // Normalize that one unambiguous representation before hashing or durable
@@ -957,13 +1072,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             toolCallId: receiptId,
             code: beforeToolCallDecision.code,
           });
-          return {
-            toolMessage: toolResultMessage(toolCall.id, {
+          return { toolMessage: toolResultMessage(toolCall.id, {
               success: false,
               kind: "authz",
               error: beforeToolCallDecision.message,
-            }),
-          };
+            }) };
         }
         const completed = await requiredPort(
           "tool_receipt_persistence_failed",
@@ -1142,14 +1255,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           // for "structured recovery context safe to expose to the model".
           // Excess keys on the result object are silently discarded by
           // `toolResultMessage`, which a spread would not have revealed.
-          return {
-            toolMessage: toolResultMessage(toolCall.id, {
+          return { toolMessage: toolResultMessage(toolCall.id, {
               success: false,
               kind: argumentValidationError ? "validation" : "external",
               error: message,
               ...(!argumentValidationError && structured ? { data: structured } : {}),
-            }),
-          };
+            }) };
         } finally {
           // After the catch body, so every `toolSignal.aborted` read above still
           // sees the abort that happened; disposing only clears the pending
@@ -1180,6 +1291,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         await requiredPort("run_state_persistence_failed", "Run liveness renewal failed", () => input.onLiveness?.("after_tool"));
         return harnessResultOutcome(toolCall.id, toolResult, () => { completedByTool = true; });
       },
+      beforeToolMessageAccepted: persistAcceptedToolMessage,
       onAssistantMessage: (message) => {
         content += message;
       },
@@ -1191,6 +1303,18 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 cumulativeToolCalls,
               });
               await compactTerminalTurn();
+              if (nudge?.trim()) {
+                if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
+                await commitBindTransition({
+                  kind: "protocol_user_appended",
+                  loopId: input.harnessRunId,
+                  generation: bindLoopProjection.generation,
+                  stateRevision: bindLoopProjection.stateRevision + 1,
+                  message: { role: "user", content: nudge },
+                  origin: "protocol",
+                  sourceId: null,
+                });
+              }
               return nudge ?? null;
             },
           }
@@ -2391,6 +2515,12 @@ function parseModelMessageContentPart(value: unknown): ModelMessageContentPart |
 
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toBindLoopMessage(value: unknown): BindLoopMessage {
+  const cloned = JSON.parse(JSON.stringify(value)) as unknown;
+  if (!isRecordValue(cloned)) throw new Error("bind_loop_message_not_an_object");
+  return cloned;
 }
 
 function modelMessagesContainFile(messages: RunHarnessInput["messages"]): boolean {
