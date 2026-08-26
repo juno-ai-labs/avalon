@@ -2,7 +2,13 @@ import { LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { RallyApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
-import { completeMentionAtCaret, mentionsStillPresent, upsertMentionIdentity } from '../lib/mention-draft';
+import {
+  completeMentionAtCaret,
+  mentionsInTrimmedText,
+  rebaseMentionIdentities,
+  resolveMentionPayload,
+  upsertMentionIdentity,
+} from '../lib/mention-draft';
 import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
 import { NO_MENTIONS, useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
@@ -132,7 +138,7 @@ export function WorkstreamComposer({
     // `toLowerCase`, not `toLocaleLowerCase`: this has to agree with
     // `mention-highlight.ts`, which uses the locale-independent one so a Turkish
     // dotted I does not make a name highlighted here unmatched there.
-    setSelectedMentions((current) => mentionsStillPresent(value, current));
+    setSelectedMentions((current) => rebaseMentionIdentities(text, value, current));
     syncMentionQuery(value);
   };
 
@@ -226,8 +232,18 @@ export function WorkstreamComposer({
       return;
     }
     setText(completed.text);
-    const identity: MentionIdentity = { type: 'person', label: candidate.label, userId: candidate.member.id, connectorType: null };
-    setSelectedMentions((current) => upsertMentionIdentity(current, identity));
+    const identity: MentionIdentity = {
+      type: 'person',
+      label: candidate.label,
+      userId: candidate.member.id,
+      connectorType: null,
+      startOffset: completed.startOffset,
+      endOffset: completed.endOffset,
+    };
+    setSelectedMentions((current) => upsertMentionIdentity(
+      rebaseMentionIdentities(text, completed.text, current),
+      identity,
+    ));
     setMentionQuery(null);
     requestAnimationFrame(() => {
       textarea?.focus();
@@ -236,20 +252,28 @@ export function WorkstreamComposer({
   };
 
   const send = async (): Promise<void> => {
-    const trimmed = text.trim();
+    const submitted = mentionsInTrimmedText(text, selectedMentions);
+    const trimmed = submitted.text;
     if ((!trimmed && readyAttachmentCount === 0) || uploading) return;
-    const selectedPersonIds = new Set(selectedMentions.flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []));
+    const resolvedPersonIds = new Set(resolveMentionPayload(
+      trimmed,
+      submitted.mentions,
+      members
+        .filter((member) => (member.status ?? 'active') === 'active')
+        .map((member) => ({
+          type: 'person', label: member.name, userId: member.id, connectorType: null,
+        })),
+    ).flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []));
     const nonparticipants = members.filter((member) => {
+      if ((member.status ?? 'active') !== 'active') return false;
       if (participantIds.has(member.id)) return false;
-      const escapedName = member.name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-      const typedMention = new RegExp(`(?:^|[\\s([{])@${escapedName}(?=$|[\\s\\p{P}])`, 'iu').test(trimmed);
-      return selectedPersonIds.has(member.id) || typedMention;
+      return resolvedPersonIds.has(member.id);
     });
     if (workstream.scope === 'personal' && nonparticipants.length > 0) {
-      setPendingConfirmation({ text: trimmed, mentions: [...selectedMentions], members: nonparticipants });
+      setPendingConfirmation({ text: trimmed, mentions: submitted.mentions, members: nonparticipants });
       return;
     }
-    const mentions = [...selectedMentions];
+    const mentions = submitted.mentions;
     const revision = draftRevisionRef.current;
     resetDraft();
     try {

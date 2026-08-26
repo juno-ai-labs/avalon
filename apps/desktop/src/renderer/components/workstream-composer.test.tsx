@@ -330,6 +330,28 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it('does not treat a shorter prefix name as the person who was mentioned', async () => {
+    const shortBob: WorkspaceMember = {
+      id: 'user-4', name: 'Bob', email: 'short-bob@example.com', timezone: 'America/Los_Angeles',
+    };
+    renderComposer(
+      vi.fn(async () => undefined),
+      false,
+      undefined,
+      { ...workstream, scope: 'personal' },
+      [creator, shortBob, bob],
+    );
+
+    fireEvent.change(screen.getByLabelText('Message the work stream'), {
+      target: { value: 'Please ask @Bob Builder.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    expect(await screen.findByRole('heading', { name: 'Add participant?' })).toBeVisible();
+    expect(screen.getByText('bob@example.com')).toBeVisible();
+    expect(screen.queryByText('short-bob@example.com')).not.toBeInTheDocument();
+  });
+
   it('starts a mention where the caret is rather than at the end of the draft', async () => {
     renderComposer();
     const composer = screen.getByLabelText('Message the work stream');

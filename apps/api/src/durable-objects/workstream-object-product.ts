@@ -465,10 +465,7 @@ export class WorkstreamObjectProductService {
     }
     const requestedPersonIds = [...new Set(input.mentions.flatMap((mention) =>
       mention.type === "person" && mention.userId ? [mention.userId] : []))];
-    // A person mention is an audience decision as well as message metadata. A
-    // direct API caller cannot create a durable mention for somebody who is
-    // absent from the personal work stream it creates.
-    const memberIds = [...new Set([
+    const candidateMemberIds = [...new Set([
       input.creatorUserId,
       ...input.participantUserIds,
       ...requestedPersonIds,
@@ -476,9 +473,9 @@ export class WorkstreamObjectProductService {
     const members = await this.env.DB.prepare(
       `SELECT user_id FROM workspace_members
         WHERE workspace_id = ? AND status = 'active'
-          AND user_id IN (${memberIds.map(() => "?").join(",")})`,
-    ).bind(input.workspaceId, ...memberIds).all<{ user_id: string }>();
-    if ((members.results ?? []).length !== memberIds.length) {
+          AND user_id IN (${candidateMemberIds.map(() => "?").join(",")})`,
+    ).bind(input.workspaceId, ...candidateMemberIds).all<{ user_id: string }>();
+    if ((members.results ?? []).length !== candidateMemberIds.length) {
       throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
     }
     const workspaceDatabase = this.workspaceDatabase(input.workspaceId);
@@ -534,9 +531,9 @@ export class WorkstreamObjectProductService {
     // visible range. The client sends identity and offsets, not Markdown; the
     // object owns the durable spelling and target.
     const needsNames = input.mentions.length > 0
-      || (input.notifyParticipants && memberIds.some((userId) => userId !== input.creatorUserId));
+      || (input.notifyParticipants && candidateMemberIds.some((userId) => userId !== input.creatorUserId));
     const names = needsNames
-      ? await this.messageUsers(memberIds)
+      ? await this.messageUsers(candidateMemberIds)
       : new Map<string, UserRow>();
     const mentionPeople = new Map<string, MentionPerson>([...names].map(([userId, user]) => [userId, {
       id: user.id,
@@ -546,6 +543,13 @@ export class WorkstreamObjectProductService {
     const prepared = prepareMentionMarkdown(input.openingMessage, input.mentions, mentionPeople);
     const mentionedPersonIds = [...new Set(prepared.mentions.flatMap((mention) =>
       mention.type === "person" && mention.userId ? [mention.userId] : []))];
+    // Only a mention that survived authoritative visible-range validation can
+    // grant mention-derived access. Raw IDs are candidates, not audience.
+    const memberIds = [...new Set([
+      input.creatorUserId,
+      ...input.participantUserIds,
+      ...mentionedPersonIds,
+    ])];
     // Everybody the creator explicitly invited, minus the creator and anyone
     // who receives the more specific mention notification. One action must not
     // become both "you were added" and "you were mentioned" in Slack.
@@ -2472,18 +2476,9 @@ export class WorkstreamObjectProductService {
       };
     }
 
-    if (root.scope === "personal" && input.confirmedParticipantUserIds.length > 0) {
-      const currentAudience = this.readerAudience(root);
-      if (currentAudience.scope !== "personal") throw new Error("personal_reader_audience_expected");
-      this.assertAcceptedContentContains({
-        scope: "personal",
-        userIds: [...new Set([...currentAudience.userIds, ...input.confirmedParticipantUserIds])],
-      });
-    }
-
-    const personIds = [...new Set(input.mentions.flatMap((mention) =>
+    const requestedPersonIds = [...new Set(input.mentions.flatMap((mention) =>
       mention.type === "person" && mention.userId ? [mention.userId] : []))];
-    const allMemberIds = [...new Set([auth.userId, ...personIds, ...input.confirmedParticipantUserIds])];
+    const allMemberIds = [...new Set([auth.userId, ...requestedPersonIds, ...input.confirmedParticipantUserIds])];
     const people = new Map<string, MentionPerson>();
     if (allMemberIds.length > 0) {
       const placeholders = allMemberIds.map(() => "?").join(",");
@@ -2502,14 +2497,28 @@ export class WorkstreamObjectProductService {
         throw new ApiError(422, "invalid_workspace_member", "A mentioned person is not an active workspace member");
       }
     }
+    const prepared = prepareMentionMarkdown(input.text, input.mentions, people);
+    const personIds = [...new Set(prepared.mentions.flatMap((mention) =>
+      mention.type === "person" && mention.userId ? [mention.userId] : []))];
+    // Confirmation is authority for an accepted mention, not a second generic
+    // participant-add API. A malformed or spoofed range cannot smuggle its raw
+    // target into the audience after canonicalization rejects it.
+    const confirmedParticipantUserIds = input.confirmedParticipantUserIds.filter((userId) => personIds.includes(userId));
+    if (root.scope === "personal" && confirmedParticipantUserIds.length > 0) {
+      const currentAudience = this.readerAudience(root);
+      if (currentAudience.scope !== "personal") throw new Error("personal_reader_audience_expected");
+      this.assertAcceptedContentContains({
+        scope: "personal",
+        userIds: [...new Set([...currentAudience.userIds, ...confirmedParticipantUserIds])],
+      });
+    }
     const unconfirmed = personIds.filter((userId) =>
-      !this.isParticipant(userId) && !input.confirmedParticipantUserIds.includes(userId));
+      !this.isParticipant(userId) && !confirmedParticipantUserIds.includes(userId));
     if (unconfirmed.length > 0) {
       throw new ApiError(409, "participant_confirmation_required", "Confirm before mentioning a nonparticipant", {
         people: unconfirmed.map((userId) => ({ userId, name: people.get(userId)?.name ?? "Workspace member" })),
       });
     }
-    const prepared = prepareMentionMarkdown(input.text, input.mentions, people);
     const attachmentRows = input.attachmentIds.length === 0 ? [] : (await this.workspaceDatabase(
       auth.workspaceId,
     ).prepare(
@@ -2548,7 +2557,7 @@ export class WorkstreamObjectProductService {
     const now = Date.now();
     const messageId = uuidV7(now);
     const runId = shouldInvoke ? asHarnessRunId(uuidV7(now)) : null;
-    const affectedUsers = [...new Set([auth.userId, ...personIds, ...input.confirmedParticipantUserIds])];
+    const affectedUsers = [...new Set([auth.userId, ...personIds, ...confirmedParticipantUserIds])];
     const committed = await this.objectStore.commitWithRegionalEffects<LocalMessageWrite>(
       (sql) => {
         const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
@@ -2593,7 +2602,7 @@ export class WorkstreamObjectProductService {
           // Writing into a work stream is a stronger statement than opening it.
           auth.userId, auth.userId, now, now, now,
         );
-        for (const userId of input.confirmedParticipantUserIds) {
+        for (const userId of confirmedParticipantUserIds) {
           sql.exec(
             `INSERT INTO participants
                (user_id, participation_reason, added_by_user_id, status, participant_epoch,
