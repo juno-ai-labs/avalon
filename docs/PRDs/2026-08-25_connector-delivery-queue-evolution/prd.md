@@ -137,12 +137,14 @@ available from strict message kinds and structured logs.
    generated once when the canonical event is admitted and remains stable over
    Queue retries. It is not a formatted external platform identifier and does
    not rely on Cloudflare's Queue message ID being stable across deliveries.
-3. **Use Queue delivery attempts to fence concurrent replay.** The consumer
-   derives the claim attempt from the message's initial attempt plus
-   Cloudflare's delivery attempt. WorkspaceDO refuses an equal or older active
-   Queue claim, including one from the same owner, while allowing a later
-   delivery to recover interrupted processing. A failed settled claim may be
-   reclaimed safely.
+3. **Use authority-issued leases to fence concurrent replay.** WorkspaceDO
+   generates a fresh lease token on every Queue acquisition and returns its exact
+   expiry. An active duplicate is `busy` until that expiry; after it, a successor
+   can recover interrupted processing. Every settlement carries the acquired
+   token, so an expired handler cannot overwrite its successor. The 15-minute
+   duration matches both Cloudflare Queue's maximum consumer wall time and the
+   retiring Workflow step timeout, so takeover cannot overlap a still-live
+   invocation.
 4. **Keep canonical state in WorkspaceDO.** The Queue carries an ID-only wake-up
    after ingress. Claims return the event body, and settlement is a typed domain
    RPC; callers never interpret SQLite write metadata.
@@ -161,15 +163,18 @@ available from strict message kinds and structured logs.
 The canonical connector tables remain in WorkspaceDO. The claim protocol now
 calls the owner `processingOwnerId` and records whether Queue or legacy
 Workflow orchestration is claiming. The physical SQLite column remains
-`workflow_instance_id` during the compatibility window so the newly deployed
-WorkspaceDO and an already-running Workflow can read and fence the same row.
+`workflow_instance_id` during the compatibility window, but its current meaning
+is the acquisition lease token. A legacy Workflow uses its instance ID as that
+token; a Queue acquisition receives a new WorkspaceDO-generated UUID. This lets
+new object code and an already-running Workflow read and fence the same row.
 Renaming that column is cleanup after the Workflow binding is retired, not a
 precondition for correctness.
 
 `processing_attempt`, `processing_status`, error, and terminal timestamps stay
-authoritative. For Queue processing, the attempt advances with native delivery
-attempts. For a legacy Workflow it retains its numbered Workflow-attempt
-meaning.
+authoritative. `processing_attempt` retains its bounded legacy/redrive meaning;
+native Queue delivery attempts are independent transport telemetry. This is
+necessary because a compatibility pointer may begin at attempt 5 and still need
+all native Queue redeliveries to recover a failed or expired claim.
 
 The shared Queue accepts two strict connector variants:
 
@@ -232,11 +237,13 @@ gate. There is no dual write and no dashboard mutation.
    `connector_event_process` message to the same `ACTIVITY_QUEUE`, acknowledges
    ingress, and never calls `CONNECTOR_EVENT_WORKFLOW.create`.
 2. An injected transient processing failure settles `failed`, requests an
-   individual Queue retry, reclaims with the same stable owner on a later Queue
-   attempt, settles `processed`, and acknowledges.
+   individual Queue retry, reclaims with the same stable owner and a fresh lease
+   even when the pointer begins at legacy attempt 5, settles `processed`, and
+   acknowledges.
 3. Real-workerd coverage proves duplicate/provider ingress convergence,
-   processed replay, settlement fencing, an equal active Queue claim returning
-   `busy`, and a later failed claim being reclaimable.
+   processed replay, stale-lease settlement fencing, an active Queue claim
+   returning `busy` with its exact retry time, expired-lease recovery, and a
+   later failed claim being reclaimable at the legacy attempt ceiling.
 4. Wrong-region process messages acknowledge with a correlated skipped
    terminal log; unparseable legacy messages retain their existing behavior.
 5. No new Queue, DLQ, binding, or deployment-script inventory is present in

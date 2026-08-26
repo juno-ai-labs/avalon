@@ -386,7 +386,10 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
   const connectorProcess = WorkspaceConnectorEventProcessQueueMessageSchema.safeParse(message.body);
   if (connectorProcess.success) {
     const input = connectorProcess.data;
-    const processingAttempt = Math.min(5, input.processingAttempt + Math.max(0, message.attempts - 1));
+    // `processingAttempt` is the legacy/redrive generation and remains bounded
+    // by its own protocol. Queue delivery count is transport telemetry, not a
+    // claim generation; WorkspaceDO returns a fresh lease for every acquisition.
+    const processingAttempt = input.processingAttempt;
     if (input.region !== env.AVALON_REGION) {
       logInfo(env, "connector_event_process_terminal", {
         workspace_id: input.workspaceId,
@@ -418,6 +421,12 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
         processing_attempt: processingAttempt,
         queue_attempts: message.attempts,
         outcome: claim.outcome,
+        processing_lease_id: claim.outcome === "claimed" ? claim.processingLeaseId : null,
+        processing_lease_expires_at: claim.outcome === "claimed"
+          ? claim.processingLeaseExpiresAt
+          : claim.outcome === "busy"
+            ? claim.retryAt
+            : null,
       });
       if (claim.outcome === "processed") {
         logInfo(env, "connector_event_process_terminal", {
@@ -433,6 +442,9 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
         return;
       }
       if (claim.outcome === "busy") {
+        const retryDelaySeconds = claim.retryAt === null
+          ? null
+          : Math.max(1, Math.ceil((claim.retryAt - Date.now()) / 1_000));
         logInfo(env, "connector_event_process_deferred", {
           workspace_id: input.workspaceId,
           connector_event_id: input.eventId,
@@ -441,9 +453,11 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
           outcome: "busy",
           reason: claim.reason,
           queue_attempts: message.attempts,
-          retry_delay_seconds: 30,
+          retry_at: claim.retryAt,
+          retry_delay_seconds: retryDelaySeconds,
         });
-        message.retry({ delaySeconds: 30 });
+        if (retryDelaySeconds === null) message.retry();
+        else message.retry({ delaySeconds: retryDelaySeconds });
         return;
       }
 
@@ -458,6 +472,7 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
           workspaceId: input.workspaceId,
           eventId: input.eventId,
           processingOwnerId: input.processingOwnerId,
+          processingLeaseId: claim.processingLeaseId,
           outcome: "failed",
           error: reason,
         });
@@ -469,6 +484,7 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
           connection_id: claim.event.activity.connectionId,
           connector_event_id: input.eventId,
           processing_owner_id: input.processingOwnerId,
+          processing_lease_id: claim.processingLeaseId,
           processing_attempt: processingAttempt,
           outcome: "failed",
           reason: errorCode,
@@ -484,6 +500,7 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
         workspaceId: input.workspaceId,
         eventId: input.eventId,
         processingOwnerId: input.processingOwnerId,
+        processingLeaseId: claim.processingLeaseId,
         outcome: "processed",
         error: null,
       });
@@ -493,6 +510,7 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
         connection_id: claim.event.activity.connectionId,
         connector_event_id: input.eventId,
         processing_owner_id: input.processingOwnerId,
+        processing_lease_id: claim.processingLeaseId,
         processing_attempt: processingAttempt,
         outcome: "processed",
         reason: "authoritative_event_settled",

@@ -43,6 +43,7 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
       connector_event_id: input.eventId,
       workflow_instance_id: input.workflowInstanceId,
       workflow_attempt: input.attempt,
+      processing_lease_id: claim.outcome === "claimed" ? claim.processingLeaseId : null,
       outcome: claim.outcome,
     });
     if (claim.outcome === "processed") {
@@ -86,6 +87,7 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
           workspaceId: input.workspaceId,
           eventId: input.eventId,
           processingOwnerId: input.workflowInstanceId,
+          processingLeaseId: claim.processingLeaseId,
           outcome: "failed",
           error: reason,
         });
@@ -135,6 +137,7 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
         workspaceId: input.workspaceId,
         eventId: input.eventId,
         processingOwnerId: input.workflowInstanceId,
+        processingLeaseId: claim.processingLeaseId,
         outcome: "processed",
         error: null,
       });

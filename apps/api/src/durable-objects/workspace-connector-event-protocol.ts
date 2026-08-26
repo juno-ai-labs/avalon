@@ -77,20 +77,25 @@ export const WorkspaceConnectorEventClaimResultSchema = z.discriminatedUnion("ou
   z.object({
     outcome: z.literal("claimed"),
     event: WorkspaceConnectorEventSchema,
+    processingLeaseId: z.string().min(1).max(100),
+    processingLeaseExpiresAt: z.number().int().nonnegative(),
   }).strict(),
   z.object({ outcome: z.literal("processed") }).strict(),
   z.object({
     outcome: z.literal("busy"),
     reason: z.enum([
-      "active_other_owner",
-      "active_attempt_not_advanced",
+      "active_lease_not_expired",
       "failed_attempt_not_advanced",
     ]),
+    retryAt: z.number().int().nonnegative().nullable(),
   }).strict(),
 ]);
 
 export const WorkspaceConnectorEventSettleRequestSchema = WorkspaceConnectorEventRequestSchema.extend({
   processingOwnerId: z.string().min(1).max(100),
+  // Optional only for Workflow instances whose persisted claim step predates
+  // Queue leases. New Queue and Workflow callers always send the returned lease.
+  processingLeaseId: z.string().min(1).max(100).optional(),
   outcome: z.enum(["processed", "failed"]),
   error: z.string().max(1_000).nullable(),
 }).strict();

@@ -17,6 +17,7 @@ import {
 } from "../src/services/workspace-connector-event-ingress";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { uuidV7 } from "../src/lib/uuid-v7";
 
 const { routeContextually } = __testing;
 
@@ -108,7 +109,7 @@ function workspaceNamespace(database: DatabaseSync): Env["WORKSPACE_DOS"] {
   const connectorEvents = new Map<string, {
     event: WorkspaceConnectorEvent;
     status: "pending" | "processing" | "processed" | "failed";
-    ownerId: string | null;
+    leaseId: string | null;
     attempt: number;
   }>();
   const namespace = {
@@ -179,7 +180,7 @@ function workspaceNamespace(database: DatabaseSync): Env["WORKSPACE_DOS"] {
           connectorEvents.set(input.ingressEventId, {
             event: input.event,
             status: "pending",
-            ownerId: null,
+            leaseId: null,
             attempt: -1,
           });
         }
@@ -202,31 +203,43 @@ function workspaceNamespace(database: DatabaseSync): Env["WORKSPACE_DOS"] {
         const stored = connectorEvents.get(input.eventId);
         if (!stored) throw new Error("connector_event_not_found");
         if (stored.status === "processed") return { outcome: "processed" as const };
-        if (stored.status === "processing" && stored.ownerId !== input.processingOwnerId) {
-          return { outcome: "busy" as const, reason: "active_other_owner" as const };
+        if (stored.status === "processing") {
+          return {
+            outcome: "busy" as const,
+            reason: "active_lease_not_expired" as const,
+            retryAt: Date.now() + 15 * 60_000,
+          };
         }
-        if (
-          stored.status === "processing"
-          && input.orchestrator === "queue"
-          && input.attempt <= stored.attempt
-        ) return { outcome: "busy" as const, reason: "active_attempt_not_advanced" as const };
-        if (
-          stored.status === "failed"
-          && (input.attempt < stored.attempt
-            || (input.attempt === stored.attempt && stored.ownerId !== input.processingOwnerId))
-        ) return { outcome: "busy" as const, reason: "failed_attempt_not_advanced" as const };
+        if (stored.status === "failed" && input.attempt < stored.attempt) {
+          return {
+            outcome: "busy" as const,
+            reason: "failed_attempt_not_advanced" as const,
+            retryAt: null,
+          };
+        }
+        const processingLeaseId = input.orchestrator === "workflow"
+          ? input.processingOwnerId
+          : uuidV7();
+        const processingLeaseExpiresAt = Date.now() + 15 * 60_000;
         stored.status = "processing";
-        stored.ownerId = input.processingOwnerId;
+        stored.leaseId = processingLeaseId;
         stored.attempt = input.attempt;
-        return { outcome: "claimed" as const, event: stored.event };
+        return {
+          outcome: "claimed" as const,
+          event: stored.event,
+          processingLeaseId,
+          processingLeaseExpiresAt,
+        };
       },
       settleConnectorEvent: async (input: {
         eventId: string;
         processingOwnerId: string;
+        processingLeaseId?: string;
         outcome: "processed" | "failed";
       }) => {
         const stored = connectorEvents.get(input.eventId);
-        if (!stored || stored.status !== "processing" || stored.ownerId !== input.processingOwnerId) {
+        const processingLeaseId = input.processingLeaseId ?? input.processingOwnerId;
+        if (!stored || stored.status !== "processing" || stored.leaseId !== processingLeaseId) {
           throw new Error("connector_event_settlement_fenced");
         }
         stored.status = input.outcome;
@@ -441,6 +454,9 @@ describe("connector event Queue boundary", () => {
     const retry = vi.fn();
     const body = await workspaceConnectorEventQueueMessage({
       connectorType: "github",
+      // A legacy Workflow can redrive at the old ceiling. Native Queue retries
+      // must still reacquire there rather than saturating their own generation.
+      attempt: 5,
       activity: {
         id: activityId,
         workspaceId: WORKSPACE,
@@ -496,7 +512,7 @@ describe("connector event Queue boundary", () => {
       workspaceId: WORKSPACE,
       eventId: activityId,
       processingOwnerId: expect.any(String),
-      processingAttempt: 0,
+      processingAttempt: 5,
     }));
     expect(env.CONNECTOR_EVENT_WORKFLOW.create).not.toHaveBeenCalled();
     expect(info).toHaveBeenCalledWith(expect.objectContaining({
