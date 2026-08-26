@@ -3977,6 +3977,28 @@ describe("Durable Objects in the Workers runtime", () => {
       workflowInstanceId: `connector-event-${firstId}-4`,
       attempt: 5,
     })).resolves.toEqual({ outcome: "busy" });
+    await runInDurableObject(stub, (_instance, state) => {
+      // Simulate an active claim written before migration 12 added the
+      // orchestrator discriminator, and age it past the Queue lease window.
+      state.storage.sql.exec(
+        `UPDATE workspace_connector_events
+            SET processing_orchestrator = NULL, claimed_at = ?
+          WHERE event_id = ?`,
+        Date.now() - 15 * 60_000 - 1,
+        firstId,
+      );
+    });
+    await expect(stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId: "00000000-0000-7000-8000-000000000306",
+      attempt: 5,
+      orchestrator: "queue",
+    })).resolves.toEqual({
+      outcome: "busy",
+      reason: "legacy_workflow_active",
+      retryAt: null,
+    });
     await stub.settleConnectorEvent({
       workspaceId: WORKSPACE_ID,
       eventId: firstId,

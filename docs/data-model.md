@@ -765,7 +765,12 @@ For Queue claims the stable processing owner is correlation identity, not the
 lease; WorkspaceDO creates a fresh lease on every acquisition. During the drain
 window, WorkspaceDO also translates the frozen pre-cutover
 `workflowInstanceId` RPC payloads and projects the old strict claim response;
-versioned Workflow code cannot migrate its wire contract after creation.
+versioned Workflow code cannot migrate its wire contract after creation. The
+stored `processing_orchestrator` makes lease semantics explicit: Queue claims
+expire, while Workflow claims remain exclusive until settlement because their
+processing step can retry several independently timed attempts. `NULL` on an
+active row is the migration-safe spelling of a pre-cutover Workflow claim;
+Queue claims did not exist before the discriminator was added.
 
 **Why:** A one-callback Workflow duplicated Queue retry and WorkspaceDO terminal
 state, and required an external instance-ID contract unrelated to product
@@ -782,8 +787,8 @@ rather than SQLite write metadata. Settlement must remain fenced by the returned
 lease, and native Queue delivery count must not be overloaded as a product
 generation. A pointer behind the authoritative product generation is terminally
 stale and must be acknowledged, not retried toward the DLQ. Remove the legacy
-wire adapter and rename the physical compatibility column only after the
-Workflow binding is safely retired.
+wire adapter, its `NULL` discriminator compatibility, and rename the physical
+compatibility column only after the Workflow binding is safely retired.
 
 ### 2026-08-25 — Automation runs copy the subscription audience
 

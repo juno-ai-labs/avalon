@@ -82,6 +82,11 @@ but each state transition still needs an explicit atomic boundary.
 - Fence every late writer with the lease, attempt, generation, or expected
   version it acquired. Object serialization does not stop work resumed after an
   `await` from becoming stale relative to a newer event.
+- Persist the kind of claimant when takeover rules differ by orchestrator. Do
+  not infer Workflow versus Queue ownership from an ID prefix, timeout, or
+  caller-supplied template. A migration may deliberately assign semantic
+  meaning to `NULL` for pre-migration rows when the set of possible historical
+  writers proves that meaning; document and runtime-test that cutover fact.
 - Return a typed domain outcome from object-owned lifecycle methods. Outcomes
   such as `claimed`, `busy`, `settled`, `superseded`, and `already_committed`
   are more stable than exposing SQL counters to callers.
@@ -258,6 +263,27 @@ not replace counters mechanically without understanding the transition they
 were trying to represent.
 
 ## Changelog
+
+### 2026-08-26 — Persist claimant kind when lease semantics differ
+
+**What changed:** The guide now requires an explicit stored orchestrator when
+different claimant kinds have different safe takeover rules, and permits a
+documented `NULL` compatibility meaning only when historical writers make it
+unambiguous.
+
+**Why:** A Queue handler has one bounded invocation, while a durable Workflow
+can perform several independently timed retry attempts. Giving both the same
+elapsed-time lease can let Queue processing overlap a still-live Workflow, and
+guessing the claimant from an ID format repeats the external-identifier mistake
+that typed protocols were meant to remove.
+
+**Considered and rejected:** Extending every Workflow lease to a calculated
+duration. Scheduling gaps are not bounded by the sum of configured attempt
+timeouts, so a larger guessed number still cannot prove the old handler stopped.
+
+**Consequences:** Takeover decisions read authoritative claimant kind alongside
+the lease. Compatibility migrations and real-workerd tests must prove how rows
+created before the discriminator are interpreted.
 
 ### 2026-08-26 — Domain RPCs close the notification SQL compatibility path
 
