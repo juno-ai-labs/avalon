@@ -18,7 +18,6 @@ import {
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  seedWorkstreamObjectParticipant,
   workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 
@@ -60,12 +59,17 @@ afterEach(() => {
   ensureAutomationAddress.mockClear();
 });
 
-function serviceFor(database: DatabaseSync): AutomationService {
+function serviceFor(
+  database: DatabaseSync,
+  substreamAgents: DurableObjectNamespace = testSubstreamAgentsBinding(database, {
+    objectStores: storesFor(database),
+  }),
+): AutomationService {
   const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
-    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores: storesFor(database) }),
+    SUBSTREAM_AGENTS: substreamAgents,
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: { refreshSchedule: async () => ({ alarmAt: null }) },
     }),
@@ -139,7 +143,7 @@ function runCount(database: DatabaseSync): number {
 }
 
 describe("automation lifecycle", () => {
-  it("returns only run work streams the requesting member may read", async () => {
+  it("returns every run authorized by the automation without waking run work streams", async () => {
     const database = seededDatabase();
     const visibleWorkstreamId = "00000000-0000-7000-8000-000000000041";
     const privateWorkstreamId = "00000000-0000-7000-8000-000000000042";
@@ -166,28 +170,18 @@ describe("automation lifecycle", () => {
          '00000000-0000-7000-8000-000000000007', '${privateWorkstreamId}', 'schedule', 'completed', '2026-01-03');
     `);
 
-    const readers: Array<[string, string]> = [
-      [visibleWorkstreamId, auth.userId],
-      [privateWorkstreamId, otherUserId],
-    ];
-    for (const [workstreamId, readerId] of readers) {
-      const objectStore = testWorkstreamObjectStore();
-      databases.push(objectStore);
-      seedWorkstreamObjectRoot(objectStore, {
-        workstreamId,
-        workspaceId: auth.workspaceId,
-        scope: "personal",
-        createdByUserId: readerId,
-      });
-      seedWorkstreamObjectParticipant(objectStore, {
-        userId: readerId,
-        participationReason: "creator",
-      });
-      storesFor(database).set(workstreamId, objectStore);
-    }
+    const substreamAgents = testSubstreamAgentsBinding(database, {
+      objectStores: storesFor(database),
+    });
 
-    await expect(serviceFor(database).runs("00000000-0000-7000-8000-000000000007"))
-      .resolves.toMatchObject({ items: [{ workstreamId: visibleWorkstreamId }] });
+    await expect(serviceFor(database, substreamAgents).runs("00000000-0000-7000-8000-000000000007"))
+      .resolves.toMatchObject({
+        items: [
+          { workstreamId: privateWorkstreamId },
+          { workstreamId: visibleWorkstreamId },
+        ],
+      });
+    expect(substreamAgents.get).not.toHaveBeenCalled();
   });
 
   it("drops an archived draft from the automation list and from every read of it", async () => {

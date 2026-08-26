@@ -20,7 +20,6 @@ import { isReconnectRequiredConnectorError } from "./connector-connection-access
 import type { AutomationCompilerStreamEvent } from "@rally/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
-import { workstreamAudienceAllowsUser } from "../lib/audience-containment";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { automationModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
@@ -51,7 +50,6 @@ import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { createMessageObjectPort } from "../runtime/message-port";
 import {
   attachWorkstreamRuntimeResource,
-  readWorkstreamRuntimeAudience,
 } from "./workstream-object-client";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
@@ -1268,20 +1266,12 @@ export class AutomationService {
       `SELECT * FROM automation_runs WHERE workspace_id = ? AND automation_subscription_id = ?
        ORDER BY created_at DESC LIMIT ?`,
     ).bind(this.auth.workspaceId, id, Math.min(limit, 100)).all<Record<string, unknown>>();
-    const items: ReturnType<typeof toAutomationRun>[] = [];
-    // Keep these reads serial: one history request must not turn a long run list
-    // into enough simultaneous Durable Object calls to exhaust the Worker's
-    // outbound connection allowance.
-    for (const row of result.results ?? []) {
-      const run = toAutomationRun(row);
-      const audience = await readWorkstreamRuntimeAudience(
-        this.env,
-        this.auth.workspaceId,
-        run.workstreamId,
-      );
-      if (workstreamAudienceAllowsUser(audience, this.auth.userId)) items.push(run);
-    }
-    return { items };
+    // Loading the subscription above is the authorization boundary for its run
+    // history. A second per-run audience check is redundant: a member who can
+    // read the automation can read the work streams created by its runs. More
+    // importantly, consulting each child here wakes one SubstreamAgent per row,
+    // turning an otherwise bounded SQL read into linear cold-start latency.
+    return { items: (result.results ?? []).map(toAutomationRun) };
   }
 
   async nextRun(id: string) {
