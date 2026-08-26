@@ -43,7 +43,11 @@ import {
   reportTelemetryProductIntent,
   telemetryCountBucket,
   telemetryVisibility,
+  type WorkstreamFeedSource,
   workstreamFeedOpenAttemptId,
+  workstreamFeedSourceQueryKey,
+  workstreamRecoveryFeedQueryKey,
+  workstreamSocketSnapshotGenerationQueryKey,
   workstreamNavigation,
 } from '../lib/telemetry';
 import {
@@ -72,7 +76,7 @@ import {
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -93,6 +97,15 @@ export function workspaceMemberFromSession(session: DesktopSession | null): Work
     ...(session.user.avatarUrl ? { avatarUrl: session.user.avatarUrl } : {}),
     role: session.workspace.role,
   };
+}
+
+type WorkstreamRecoveryFeed = Pick<WorkstreamBoot, 'messageFeed' | 'resumeFeed'>;
+
+function detailFromRecoveryBoot(boot: WorkstreamBoot): WorkstreamDetail {
+  const { messageFeed, resumeFeed, ...detail } = boot;
+  void messageFeed;
+  void resumeFeed;
+  return detail;
 }
 
 export function workstreamRunTiming(
@@ -286,7 +299,6 @@ export function WorkstreamHeader({
   socketState,
   blockDashboardOpen,
   blockDashboardAvailable = false,
-  blockDashboardPreferencePending,
   onAddParticipant,
   onOpenRail,
   onRename,
@@ -296,7 +308,6 @@ export function WorkstreamHeader({
   socketState: SocketState;
   blockDashboardOpen: boolean;
   blockDashboardAvailable?: boolean;
-  blockDashboardPreferencePending: boolean;
   onAddParticipant: () => void;
   onOpenRail: (variant: RailVariant) => void;
   onRename: (title: string) => Promise<void>;
@@ -554,7 +565,6 @@ export function WorkstreamHeader({
           <IconButton
             className={clsx('panel-toggle', 'block-dashboard-toggle', blockDashboardOpen && 'is-active')}
             aria-pressed={blockDashboardOpen}
-            disabled={blockDashboardPreferencePending}
             label={blockDashboardOpen ? 'Hide HyperSight' : 'Show HyperSight'}
             onClick={onToggleBlockDashboard}
           >
@@ -840,31 +850,38 @@ export function WorkstreamScreen(): React.JSX.Element {
     return () => window.clearTimeout(timeout);
   }, [resourceDialogOpen, resourceSearch]);
 
-  // The one fetcher for `['workstream', id]`. Both this query and the transcript
-  // query below fetch that key, and only one of the two runs — TanStack dedups
-  // onto whichever it starts first, which is hook declaration order. A queryFn
-  // that writes the panel preference sitting beside one that does not would make
-  // that ordering load-bearing, so neither has a side effect the other lacks.
+  // These fetchers are recovery paths, not the normal open. Selecting a work
+  // stream admits its feed socket immediately; the first snapshot populates
+  // both query keys. Keeping the REST readers attached to disabled observers
+  // gives the reconnecting/unavailable Retry button an explicit canonical fallback
+  // without racing a second boot against the room on every navigation.
   const initialFeedCacheState = useMemo(() => (
     queryClient.getQueryData(['messages', id]) !== undefined
       ? 'feed_cached'
       : queryClient.getQueryData(['workstream', id]) !== undefined ? 'detail_cached' : 'cold'
   ), [id, queryClient]);
-  const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal) => {
-    const detail = await api!.getWorkstream(id, signal, workstreamFeedOpenAttemptId(id));
-    // The detail carries the panel preference for the case where it arrives
-    // before the control socket's boot frame. Null means this frame did not
-    // carry it — the SubstreamAgent snapshot embeds the same shape and leaves
-    // it null — so it must not be written as `false`.
-    if (detail.blockDashboardPreference) {
-      queryClient.setQueryData(['block-dashboard-preference', id], detail.blockDashboardPreference);
+  const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal): Promise<WorkstreamDetail> => {
+    const snapshotGeneration = queryClient.getQueryData<number>(
+      workstreamSocketSnapshotGenerationQueryKey(id),
+    ) ?? 0;
+    const boot = await api!.getWorkstream(id, signal, workstreamFeedOpenAttemptId(id));
+    if ((queryClient.getQueryData<number>(
+      workstreamSocketSnapshotGenerationQueryKey(id),
+    ) ?? 0) !== snapshotGeneration) {
+      const socketDetail = queryClient.getQueryData<WorkstreamDetail>(['workstream', id]);
+      if (socketDetail) return socketDetail;
+      throw new Error('Socket snapshot superseded REST work-stream recovery');
     }
-    return detail;
+    queryClient.setQueryData<WorkstreamRecoveryFeed>(workstreamRecoveryFeedQueryKey(id), {
+      messageFeed: boot.messageFeed,
+      resumeFeed: boot.resumeFeed,
+    });
+    return detailFromRecoveryBoot(boot);
   }, [api, id, queryClient]);
-  const workstream = useQuery({
+  const workstream = useQuery<WorkstreamDetail>({
     queryKey: ['workstream', id],
     queryFn: ({ signal }) => fetchWorkstreamDetail(signal),
-    enabled: Boolean(api && id),
+    enabled: false,
     staleTime: 5_000,
   });
   const telemetryOpenedWorkstreamRef = useRef<string | null>(null);
@@ -898,11 +915,23 @@ export function WorkstreamScreen(): React.JSX.Element {
   const messages = useQuery({
     queryKey: ['messages', id],
     queryFn: async ({ signal }) => {
+      const snapshotGeneration = queryClient.getQueryData<number>(
+        workstreamSocketSnapshotGenerationQueryKey(id),
+      ) ?? 0;
+      const socketMessagesIfSuperseded = (): Message[] | undefined => {
+        const currentGeneration = queryClient.getQueryData<number>(
+          workstreamSocketSnapshotGenerationQueryKey(id),
+        ) ?? 0;
+        if (currentGeneration === snapshotGeneration) return undefined;
+        return queryClient.getQueryData<Message[]>(['messages', id]);
+      };
       const detail = await queryClient.fetchQuery({
         queryKey: ['workstream', id],
         queryFn: ({ signal: detailSignal }) => fetchWorkstreamDetail(detailSignal),
         staleTime: 5_000,
       });
+      const socketMessagesAfterDetail = socketMessagesIfSuperseded();
+      if (socketMessagesAfterDetail !== undefined) return socketMessagesAfterDetail;
       // No second request: the detail above carries both windows. `resumeFeed`
       // is where this reader stopped, which is what the screen scrolls to, so
       // it is preferred whenever the room sent one. They are not contiguous, so
@@ -911,7 +940,14 @@ export function WorkstreamScreen(): React.JSX.Element {
       // The fetch is the rollout fallback, not the normal path: a Worker that
       // predates the boot payload sends neither window, and an empty transcript
       // would be the wrong reading of that.
-      const page = detail.resumeFeed ?? detail.messageFeed ?? await api!.getMessagePage(id, {
+      const recoveryFeed = queryClient.getQueryData<WorkstreamRecoveryFeed>(
+        workstreamRecoveryFeedQueryKey(id),
+      );
+      const bootPage = recoveryFeed?.resumeFeed ?? recoveryFeed?.messageFeed;
+      if (recoveryFeed) {
+        queryClient.removeQueries({ queryKey: workstreamRecoveryFeedQueryKey(id), exact: true });
+      }
+      const page = bootPage ?? await api!.getMessagePage(id, {
         ...(detail.firstUnreadSequenceNumber !== null
           ? { around: detail.firstUnreadSequenceNumber }
           : {}),
@@ -920,6 +956,12 @@ export function WorkstreamScreen(): React.JSX.Element {
         // cache the reader has left.
         signal,
       });
+      const socketMessagesAfterPage = socketMessagesIfSuperseded();
+      if (socketMessagesAfterPage !== undefined) return socketMessagesAfterPage;
+      queryClient.setQueryData<WorkstreamFeedSource>(
+        workstreamFeedSourceQueryKey(id),
+        bootPage ? 'boot_payload' : 'legacy_page',
+      );
       const previous = queryClient.getQueryData<Message[]>(['messages', id]);
       const pageOldestSequence = page.items.reduce(
         (oldest, message) => Math.min(oldest, message.sequenceNumber),
@@ -938,7 +980,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       );
       return reconcileCanonicalTranscript(previous, canonicalMessages, detail.harnessStatus);
     },
-    enabled: Boolean(api && id),
+    enabled: false,
     staleTime: 2_000,
   });
   useEffect(() => {
@@ -946,24 +988,31 @@ export function WorkstreamScreen(): React.JSX.Element {
       cancelWorkstreamFeedOpen(id, performance.now(), readSocketOpenContext().socketLeaseId);
     }
   }, [id, messages.isError, readSocketOpenContext, workstream.isError]);
+  const feedSource = useQuery<WorkstreamFeedSource | null>({
+    queryKey: workstreamFeedSourceQueryKey(id),
+    queryFn: async () => null,
+    enabled: false,
+    initialData: null,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
   const initialFeedTelemetrySnapshot = useMemo<{
-    feedSource: 'feed_cache' | 'boot_payload' | 'legacy_page';
+    feedSource: WorkstreamFeedSource;
     messageCount: ReturnType<typeof telemetryCountBucket>;
   } | null>(() => {
     if (!workstream.data || !messages.data) return null;
+    const resolvedFeedSource = initialFeedCacheState === 'feed_cached'
+      ? 'feed_cache'
+      : feedSource.data;
+    if (!resolvedFeedSource) return null;
     return {
-      feedSource: initialFeedCacheState === 'feed_cached'
-        ? 'feed_cache'
-        : workstream.data.resumeFeed !== undefined || workstream.data.messageFeed !== undefined
-          ? 'boot_payload'
-          : 'legacy_page',
+      feedSource: resolvedFeedSource,
       messageCount: telemetryCountBucket(messages.data.length),
     };
-  }, [initialFeedCacheState, messages.data, workstream.data]);
+  }, [feedSource.data, initialFeedCacheState, messages.data, workstream.data]);
   useWorkstreamFeedOpenTelemetry({
     cacheState: initialFeedCacheState,
     feedSource: initialFeedTelemetrySnapshot?.feedSource,
-    isReady: workstream.isSuccess && messages.isSuccess,
+    isReady: Boolean(workstream.data && messages.data),
     messageCount: initialFeedTelemetrySnapshot?.messageCount,
     readSocketOpenContext,
     workstreamId: id,
@@ -971,12 +1020,12 @@ export function WorkstreamScreen(): React.JSX.Element {
   const deferredContext = useQuery({
     queryKey: ['workstream-context', id, workstream.data?.automationSubscriptionId ?? null],
     queryFn: ({ signal }) => api!.getWorkstreamContext(id, workstream.data?.automationSubscriptionId, signal),
-    enabled: Boolean(api && id && workstream.isSuccess && messages.isSuccess),
+    enabled: Boolean(api && id && workstream.data && messages.data),
     staleTime: 5_000,
   });
-  // No request of its own any more. Two frames carry it — the control socket's
-  // boot metadata and `GET /workstreams/:id` — and both write this key, so the
-  // query is a cache read with no fetcher behind it.
+  // No request and no open gate of its own. The independently-started control
+  // socket writes the preference when it arrives; until then the dashboard is
+  // simply closed and the feed remains fully usable.
   const blockDashboardPreference = useQuery<BlockDashboardPreference | null>({
     queryKey: ['block-dashboard-preference', id],
     queryFn: async () => null,
@@ -1039,8 +1088,13 @@ export function WorkstreamScreen(): React.JSX.Element {
   const socketConnection = useRetainedWorkstreamSocket(
     api,
     id,
-    workstream.isSuccess && messages.isSuccess,
+    Boolean(api && id),
   );
+  const requestSocketSnapshot = socketConnection.requestSnapshot;
+  useEffect(() => {
+    if (socketConnection.state !== 'connected' || (workstream.data && messages.data)) return;
+    requestSocketSnapshot();
+  }, [messages.data, requestSocketSnapshot, socketConnection.state, workstream.data]);
   useWorkstreamSendReadyTelemetry({
     isReady: socketConnection.sendReady,
     workspaceSocketState: socketConnection.workspaceSocketState,
@@ -1309,18 +1363,17 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   const stop = useMutation({
     mutationFn: () => api!.stopHarness(id),
-    onSuccess: () => void Promise.all([
-      workstream.refetch(),
-      queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
-    ]),
+    onSuccess: () => {
+      requestSocketSnapshot();
+      void queryClient.invalidateQueries({ queryKey: ['workstream-context', id] });
+    },
   });
 
   const retry = useMutation({
     mutationFn: () => api!.retryHarness(id),
     onSuccess: async () => {
+      requestSocketSnapshot();
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
-        queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
         queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
       ]);
@@ -1384,9 +1437,8 @@ export function WorkstreamScreen(): React.JSX.Element {
       previousMessage,
       submit: async () => {
         await api!.answerElicitation(id, elicitationId, answer, customResponse);
+        requestSocketSnapshot();
         await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
-          queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
           queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
           queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
         ]);
@@ -1478,9 +1530,8 @@ export function WorkstreamScreen(): React.JSX.Element {
       });
       queryClient.setQueryData<Message[]>(['messages', id], (current) => insertMessage(current, created));
       attachmentDraft.consume();
+      requestSocketSnapshot();
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
-        queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
         queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
       ]);
@@ -1518,11 +1569,11 @@ export function WorkstreamScreen(): React.JSX.Element {
           ? { ...current, suggestions: [...(current.suggestions ?? []), pending] }
           : current);
       } else {
-        void workstream.refetch();
+        requestSocketSnapshot();
       }
       throw error;
     }
-    await Promise.all([messages.refetch(), workstream.refetch()]);
+    requestSocketSnapshot();
   };
 
   useEffect(() => {
@@ -1590,11 +1641,11 @@ export function WorkstreamScreen(): React.JSX.Element {
       setCachedWorkstreams(queryClient, (current) =>
         current?.map((item) => item.id === id ? { ...item, ...updated } : item));
     }).catch(() => {
-      void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });
+      requestSocketSnapshot();
     }).finally(() => {
       if (readAckInFlightRef.current === ackKey) readAckInFlightRef.current = null;
     });
-  }, [api, id, queryClient, transcript, transcriptVirtualizer]);
+  }, [api, id, queryClient, requestSocketSnapshot, transcript, transcriptVirtualizer]);
 
   const scheduleReadAcknowledgement = useCallback((): void => {
     if (readAckTimerRef.current !== null) window.clearTimeout(readAckTimerRef.current);
@@ -1619,17 +1670,25 @@ export function WorkstreamScreen(): React.JSX.Element {
     };
   }, [scheduleReadAcknowledgement]);
 
-  if (workstream.isLoading || messages.isLoading) {
+  if (!workstream.data || !messages.data) {
+    if (
+      socketConnection.state === 'reconnecting'
+      || socketConnection.state === 'unavailable'
+      || workstream.error
+      || messages.error
+    ) {
+      return (
+        <WorkstreamErrorState
+          description={workstream.error?.message ?? messages.error?.message
+            ?? (socketConnection.state === 'reconnecting'
+              ? 'The live connection could not be opened. Try the recovery reader while Rally reconnects.'
+              : 'This work stream is unavailable.')}
+          onRetry={() => void Promise.all([workstream.refetch(), messages.refetch()])}
+          workstreamId={id}
+        />
+      );
+    }
     return <OpeningState label="Opening work stream…" />;
-  }
-  if (workstream.error || messages.error || !workstream.data) {
-    return (
-      <WorkstreamErrorState
-        description={workstream.error?.message ?? messages.error?.message ?? 'This work stream is unavailable.'}
-        onRetry={() => void Promise.all([workstream.refetch(), messages.refetch()])}
-        workstreamId={id}
-      />
-    );
   }
 
   const detail = workstream.data;
@@ -1655,16 +1714,12 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   return (
     <div className="workstream-screen">
-      {/* The HyperSight control is disabled only while the stored preference is
-          still unknown. Disabling it for the write as well would blur it
-          mid-click — Chromium blurs a focused element as it is disabled — so
-          the sidebar would capture the body rather than the toggle and have
-          nothing to hand focus back to when it closes. The write is optimistic;
-          there is nothing to wait for. */}
+      {/* The HyperSight preference is independent metadata, never an open or
+          interaction gate. The control is optimistic even before the control
+          socket's first metadata frame arrives. */}
       <WorkstreamHeader
         blockDashboardAvailable={featureFlags.data?.hypersightEnabled === true}
         blockDashboardOpen={blockDashboardOpen}
-        blockDashboardPreferencePending={blockDashboardPreference.isPending}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onOpenRail={openRailVariant}
         onRename={(title) => renameWorkstream.mutateAsync(title).then(() => undefined)}

@@ -6,6 +6,7 @@ import {
   reportWorkstreamFeedAfterPaint,
   type TelemetryCountBucket,
   type WorkstreamFeedCacheState,
+  type WorkstreamFeedSource,
   workstreamFeedOpenAttemptId,
 } from './telemetry';
 
@@ -18,7 +19,7 @@ export function useWorkstreamFeedOpenTelemetry({
   workstreamId,
 }: {
   cacheState: WorkstreamFeedCacheState;
-  feedSource: 'feed_cache' | 'boot_payload' | 'legacy_page' | undefined;
+  feedSource: WorkstreamFeedSource | undefined;
   isReady: boolean;
   messageCount: TelemetryCountBucket | undefined;
   readSocketOpenContext: () => { socketLeaseId?: string };

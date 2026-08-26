@@ -1382,12 +1382,13 @@ export class RallyApi {
   }
 
   /**
-   * The whole of an open, in one request.
+   * The REST recovery twin of the socket snapshot.
    *
-   * Returns the detail plus both transcript windows and the viewer's panel
-   * preference, which used to be three further requests. The caller decides
-   * which window to render; `resumeFeed` is where this reader stopped and is
-   * null when that is already the newest page.
+   * Returns the detail plus both transcript windows in one request. The
+   * viewer-specific HyperSight preference belongs to the independently started
+   * WorkstreamDO control socket. The caller decides which window to render;
+   * `resumeFeed` is where this reader stopped and is null when that is already
+   * the newest page.
    */
   async getWorkstream(id: string, signal?: AbortSignal, openAttemptId?: string): Promise<WorkstreamBoot> {
     const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
@@ -1413,7 +1414,6 @@ export class RallyApi {
           newerCursor: raw.resumeFeed.newerCursor,
         }
         : null,
-      blockDashboardPreference: raw.blockDashboardPreference,
     };
   }
 

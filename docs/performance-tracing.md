@@ -259,10 +259,15 @@ inside it. `rally.snapshot.trims` is worth reading beside the byte size. A
 subscription snapshot also records `rally.subscribe.snapshot_reason` as
 `initial` or `history_unavailable`, so hibernation recovery can be separated
 from a cold open. The trim loop re-serializes the whole frame per dropped
-message, and that count is the only place its cost appears. `GET /:id` and
-`GET /:id/messages` carry the same flow for `sequence_ahead` and for the rare
-`history_unavailable` fallback after snapshot failure or catch-up overflow;
-ordinary lost replay history is repaired by the subscription snapshot itself.
+message, and that count is the only place its cost appears. Normal navigation
+issues neither detail nor transcript REST reads. `GET /:id` and
+`GET /:id/messages` carry the same flow only for explicit recovery after
+`sequence_ahead`, a failed or overflowed `history_unavailable` snapshot, or a
+person choosing Retry after the first connection failure or an unavailable
+state; ordinary lost replay history is repaired by the subscription snapshot
+itself. A first ticket or handshake failure exposes that Retry action as soon
+as the socket enters
+`reconnecting`; no guessed fallback timeout is part of the measurement.
 
 **`workstream_message_send`** — the desktop sends over the workspace command
 socket, so `workstream.message.send` on WorkspaceDO is the trace to read:
@@ -352,8 +357,9 @@ This module owns latency diagnosis for the three named flows and nothing else.
   explicitly approved `workstream_feed_visible` and `workstream_send_ready`
   events are the exceptions that measure exact sidebar-click-to-feed-paint,
   data-ready, and painted-send-handler durations. Their shared opening operation
-  ID correlates them to the detail flow, but neither exports this tracer's phase
-  list, long-task buffer, URLs, or other diagnostic state. A span
+  ID correlates them to socket attempts and retained leases; an explicit REST
+  recovery also carries it into the detail flow. Neither event exports this
+  tracer's phase list, long-task buffer, URLs, or other diagnostic state. A span
   and a `perf_flow` row remain diagnostics, subject to Workers Traces and Workers
   Logs retention, and reach no destination adapter through this module.
 - **It is not the run ledger.** A harness run's duration, tokens, and cost are
@@ -537,6 +543,33 @@ both signals rather than trusting the comment there to survive.
 
 ## Changelog
 
+### 2026-08-25 — The socket snapshot is the cold-open clock
+
+**What changed:** A selected work stream starts its feed subscription before
+detail or transcript data exists, and the first valid socket `snapshot` now
+ends the normal renderer open. Detail and transcript HTTP spans under
+`workstream_open` represent recovery only. The WorkstreamDO control socket is
+started independently and its HyperSight preference does not end or delay the
+feed trace. Product telemetry names this path `socket_snapshot` so it remains
+separate from cache and HTTP recovery cohorts.
+
+**Why:** The previous renderer serialized `GET /workstreams/:id` and socket
+admission even though both caused the same SubstreamAgent to assemble canonical
+detail and transcript state. That made the request trace useful for diagnosis
+but guaranteed its latency was paid before the already-instrumented socket
+phases could begin.
+
+**Considered and rejected:** Racing REST against the socket would make the
+measured winner depend on duplicate object work and would retain two normal
+open shapes. Extending the flow until optional control metadata arrives would
+measure HyperSight readiness rather than the stated message-feed-and-send goal.
+
+**Consequences:** For cold-open percentiles, filter renderer outcomes to
+`socket_snapshot` and join ticket, upgrade, accept, and subscribe traces. A
+failed first socket attempt exposes the manual HTTP recovery while reconnecting,
+without adding a fallback timeout. HTTP rows are a recovery cohort and must not
+be mixed into the normal-open distribution.
+
 ### 2026-08-25 — Client send readiness has its own opening milestone
 
 **What changed:** A sidebar opening now emits `workstream_send_ready` after the
@@ -631,7 +664,6 @@ joins an uncached open on the opening operation/request ID and must not treat it
 as authorization or as a Cloudflare trace ID. A `feed_cache` open has no detail
 request to join by design. The newer entry above owns correlation to socket
 attempts and retained leases.
-
 ### 2026-08-25 — Subscription snapshots name replay-loss recovery
 
 **What changed:** `workstream.room.socket.subscribe` records
