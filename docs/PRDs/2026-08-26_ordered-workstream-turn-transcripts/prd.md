@@ -22,7 +22,10 @@ streaming, canonical history, reconnect, model replay, and paginated loading.
 Its ordering unit is a model turn rather than a whole harness run. An assistant
 turn has a stable identity and contains ordered text and tool-call blocks; tool
 results update their matching blocks without moving them. A later assistant
-turn is a later transcript turn even when it belongs to the same run.
+turn is a later transcript turn even when it belongs to the same run. The same
+top-level sequence can also contain typed participant-safe status entries, such
+as a context-compaction lifecycle marker; those are not model messages and never
+enter Bind state.
 
 That contract is a shared durable LLM-transcript substrate, not logic private to
 the desktop route. Within the work-stream/harness architecture covered by this
@@ -32,8 +35,8 @@ range/coverage contract. Today the transcript authority is `SubstreamAgent`. A
 future in-scope transcript-owning Durable Object joins the same contract rather
 than creating another opaque message array.
 
-The backend also describes exactly which half-open turn ranges each response
-covers. The desktop merges those ranges into a coverage set, so it can tell the
+The backend also describes exactly which half-open transcript-entry ranges each
+response covers. The desktop merges those ranges into a coverage set, so it can tell the
 difference between a loaded interval, an intentional tombstone, a range not yet
 requested, and a newly arrived realtime turn beyond the original snapshot.
 
@@ -84,11 +87,19 @@ These terms are normative. A persisted record has one explicit kind; callers
 may not choose a different classification based on the provider role or whether
 the content would be useful in the participant feed.
 
-- **Participant transcript turn:** a top-level item in the canonical
+- **Participant transcript entry:** a top-level item in the canonical
   participant-visible work-stream projection, returned only after reader
-  admission. It has a stable `turn_sequence` and may contain ordered text,
-  thinking, and tool blocks. It is not filtered or re-authorized row by row and
-  is not the source of truth for reconstructing private Bind state.
+  admission. It has a stable `transcript_sequence` and exactly one kind:
+  `conversation_turn` or `status_event`. It is not filtered or re-authorized row
+  by row and is not the source of truth for reconstructing private Bind state.
+- **Participant transcript turn:** a `conversation_turn` entry representing a
+  human, assistant, or participant-visible system message. It may contain
+  ordered text, thinking, and tool blocks and is never split across ranges.
+- **Participant status event:** a participant-safe lifecycle entry ordered
+  between conversation turns. The first required kind is `context_compaction`.
+  It carries only generic lifecycle, revision, UTC timing, and optional display
+  duration metadata; it never carries the compacted messages, summary, token
+  counts, provider reasoning, or restricted loop bounds.
 - **Reader admission:** the single authorization decision for one external
   transcript read operation or admitted socket. It binds the reader to the
   authenticated session/membership generation, workspace, work stream,
@@ -176,8 +187,8 @@ indistinguishable and can create silent holes or repeated fetch loops.
 Fixing only the work-stream REST response would leave the underlying transcript
 substrate undefined and the next durable work-stream agent surface free to
 reproduce the same pagination failure. The range contract therefore belongs
-beside the canonical turn store used by `SubstreamAgent`, below REST, socket,
-model replay, and desktop projections.
+beside the canonical transcript-entry store used by `SubstreamAgent`, below
+REST, socket, model replay, and desktop projections.
 
 Timing has the same live-versus-history problem. Today execution timestamps and
 durations exist in operational run and tool ledgers, but they are not an ordered,
@@ -216,15 +227,17 @@ a turn, block, slice, or hydration loop.
    model-call boundary and the state produced by each accepted assistant/tool
    transition. Store the exact state when lossless reconstruction from parts
    cannot be proven.
-5. Let a client load arbitrary blocks of complete turns and compute every gap
-   inside a known snapshot without inferring coverage from returned content.
+5. Let a client load arbitrary blocks of complete transcript entries and
+   compute every gap inside a known snapshot without splitting a conversation
+   turn or inferring coverage from returned content.
 6. Deliver both initial range slices in the first work-stream boot/snapshot
    response: the first unread turn with up to five preceding and five following
    turns, and the five latest turns. Opening at unread and jumping to the bottom
    must require no follow-up fetch before those messages can paint.
-7. Put turn persistence, snapshot fencing, range scanning, actual-coverage
-   reporting, tombstones, and canonical model projection in one shared durable
-   transcript substrate rather than reimplementing them in each route.
+7. Put transcript-entry persistence, snapshot fencing, range scanning,
+   actual-coverage reporting, tombstones, and canonical model projection in one
+   shared durable transcript substrate rather than reimplementing them in each
+   route.
 8. Require every in-scope Durable Object that saves an authoritative replayable
    LLM transcript to use that substrate. The current required adopter is
    `SubstreamAgent`; REST, socket, replay, and desktop paths may not implement
@@ -247,9 +260,11 @@ a turn, block, slice, or hydration loop.
 14. Keep restricted protocol-only messages and model-facing derivatives—such as
     compaction replacements, synthetic nudges, trigger/memory wrappers, interrupt
     wrappers, exact model-facing tool results, and provider continuation
-    envelopes—durable without exposing them through participant range bounds or
-    feed payloads. Recreate the system message from durable versioned prompt and
-    plugin/skill activation state.
+    envelopes—durable without exposing their payloads through participant range
+    bounds or feed payloads. A separate participant-safe compaction status event
+    may expose only that compaction started/stopped and its timing. Recreate the
+    system message from durable versioned prompt and plugin/skill activation
+    state.
 15. Prove the lossless projection continuously: before each provider call, the
     canonical reconstruction and Bind's post-healing message array must have the
     same ordered canonical encoding and hash.
@@ -272,6 +287,14 @@ a turn, block, slice, or hydration loop.
     object-local SQLite indexes with bounded candidate reads, no offset walk,
     no transcript-wide scan or temporary sort, and no intermediate network or
     regional-authority round trip between the two slices.
+19. Preserve enough participant-safe, durably ordered compaction lifecycle data
+    to render **Context automatically compacting** while active and **Context
+    automatically compacted** after success in a future desktop release, with
+    optional elapsed copy such as **Context automatically compacting for 2m
+    34s** or **Context automatically compacted in 2m 34s**. Starts, reconnect
+    baselines, terminal durations, failures, retries, and two distinct
+    compactions must be reconstructable without exposing the compacted context
+    or changing Bind's private projection.
 
 ## Non-goals
 
@@ -296,8 +319,10 @@ a turn, block, slice, or hydration loop.
 6. **Introduce cross-work-stream transcript search, a global transcript index,
    or cross-region transcript movement.** The owning `SubstreamAgent` remains
    authoritative.
-7. **Make compaction delete or reorder the durable participant transcript.**
-   Compaction continues to affect model context only.
+7. **Make compaction delete or reorder prior participant entries.** Compaction
+   changes model context and adds/updates its own participant-safe status event;
+   it never changes the identity, sequence, content, or coverage of earlier
+   conversation turns or status events.
 8. **Define new defensive page, duration, tool, or token ceilings.** Existing
    reviewed transport bounds remain in force. Any new number requires its own
    product decision.
@@ -324,6 +349,13 @@ a turn, block, slice, or hydration loop.
     normalized append-only protocol ledger plus exact replacement checkpoints is
     acceptable when its projector is versioned and proven lossless. The
     requirement is equality with Bind state, not one prescribed physical shape.
+15. **Ship the final compaction-status presentation in this PR.** This PR must
+    persist and transport the typed lifecycle needed by a future renderer, and
+    the current desktop must tolerate/store it without corrupting ranges. Exact
+    iconography, whether active elapsed time is shown, and final visual treatment
+    are deferred. The future copy may use **Context automatically compacting**,
+    **Context automatically compacted**, and optionally **… for 2m 34s** while
+    active or **… in 2m 34s** after completion.
 
 ## Product behavior
 
@@ -424,9 +456,56 @@ Rally normalizes only the lifecycle evidence common to those protocols. The
 member-visible block remains generic and timed; provider summaries, raw text,
 encrypted bytes, and signatures are not displayed as chain-of-thought.
 
-A history request asks for a half-open range of top-level turn sequences. For
-example, `[1, 21)` means turns 1 through 20, and `[21, 41)` means turns 21
-through 40. Each response says which interval the server actually inspected.
+### Future context-compaction status
+
+Before automatic compaction begins mutating the active Bind generation, the
+substrate durably reserves one `context_compaction` participant status entry at
+its exact `transcript_sequence` and opens its lifecycle revision. The safe entry
+contains an opaque `compactionEventId`, `trigger = automatic`, optional
+`responseId`, lifecycle state, authoritative `startedAtUtc`, and timing
+accuracy. It does not contain the old messages, replacement summary, token
+counts, prompt content, `loop_sequence`, or provider payload.
+
+The same entry advances to `completed` only after the exact restricted
+`state_replaced` transition is durable. Its terminal revision records
+`stoppedAtUtc` and canonical `durationMs`. A future desktop can therefore render
+**Context automatically compacting** from the active revision and **Context
+automatically compacted** from the completed revision, optionally appending a
+formatted active **for 2m 34s** or terminal **in 2m 34s** duration. Timing is
+always stored when observed; whether to show it is a presentation choice. If
+compaction fails, is cancelled, or is abandoned during recovery, the lifecycle
+closes with that truthful state instead of being rewritten as completed or
+remaining active forever.
+
+When linked to an active response, compaction time lies within the response's
+wall-clock work union and is never added again as a child duration.
+
+Socket delivery uses the same monotonic-revision start/stop edges as other
+activities and never streams clock ticks. A first open or reconnect during
+compaction includes the original UTC start, `snapshotAtUtc`, and authoritative
+elapsed baseline, so a future active label can begin at the already-accrued
+duration. Recovery after a durable replacement but before its stop edge closes
+the event idempotently with a recovered upper-bound timestamp. Duplicate start,
+completion, or recovery delivery cannot create another entry or change its
+sequence.
+
+Compaction status entries share participant transcript ordering and range
+coverage but are not conversation turns and never project into Bind. The
+five-before/five-after and latest-five selection counts remain counts of
+displayable conversation turns; every status entry inside the selected
+`transcript_sequence` span is returned as well. The latest span runs from the
+fifth-latest conversation turn, or the earliest available entry when fewer
+exist, through the snapshot fence; an active compaction newer than the latest
+conversation turn is therefore included with its active-state baseline. The
+current desktop range reducer must retain and reconcile this typed entry but may
+leave it visually hidden until the dedicated presentation ships. Two separate
+compactions create two separate stable entries and lifecycle histories.
+
+A history request asks for a half-open range of top-level transcript-entry
+sequences. For example, `[1, 21)` means entries 1 through 20, and `[21, 41)`
+means entries 21 through 40. Each response says which interval the server
+actually inspected.
+
 The desktop unions those intervals and can show or request the complement as
 known gaps. Empty covered ranges and retracted tombstones count as covered;
 they do not cause an endless request for rows that will never appear.
@@ -502,10 +581,13 @@ see. It makes the order shown to a participant match the order the agent used.
 
 ## Key design decisions
 
-1. **Make a model turn the top-level durable ordering unit.** A harness run is
-   an execution envelope that may contain many assistant turns and tool-result
-   exchanges. It is not a display row. The rejected alternative was retaining
-   one assistant row per run and trying to splice tool cards into substrings of
+1. **Make a transcript entry the top-level durable ordering unit and a model
+   turn the conversational unit.** A harness run is an execution envelope that
+   may contain many assistant turns and tool-result exchanges. It is not a
+   display row. Conversation entries preserve complete model turns; typed safe
+   status entries can occupy the same feed sequence without pretending to be
+   model messages. The rejected alternative was retaining one assistant row per
+   run and trying to splice tool cards or operational markers into substrings of
    mutable text; that creates synthetic anchors the provider never supplied and
    still cannot make durable replay exact.
 2. **Keep ordered blocks inside each assistant turn.** An assistant turn owns
@@ -556,19 +638,21 @@ see. It makes the order shown to a participant match the order the agent used.
    slices, which delays first paint and defeats gap-aware lazy loading. These
    counts are product-selected prefetch sizes, not defensive ceilings.
 10. **Implement the contract once in the durable transcript substrate.** The
-   substrate owns stable turn/block identities, sequence allocation, snapshot
-   fences, range scans, actual coverage, tombstones, and model-protocol
-   projection. `SubstreamAgent` and any future in-scope transcript-owning
-   Durable Object supply their authority and visibility policy through adapters.
-   The rejected alternative was duplicating range arithmetic and transcript
-   reconstruction in each route or object, which would make equal gaps mean
-   different things on different agent surfaces.
+   substrate owns stable entry/turn/block identities, sequence allocation,
+   snapshot fences, range scans, actual coverage, tombstones, safe status
+   lifecycles, and model-protocol projection. `SubstreamAgent` and any future
+   in-scope transcript-owning Durable Object supply their authority and
+   visibility policy through adapters. The rejected alternative was duplicating
+   range arithmetic and transcript reconstruction in each route or object,
+   which would make equal gaps mean different things on different agent
+   surfaces.
 11. **Use an audience-specific sequence domain.** Private model instructions,
-   operational events, and rows a participant could never read do not consume
-   advertised turn positions. Coverage metadata is therefore not a side
-   channel for hidden internal records. A tombstone occupies a position only
-   when a previously participant-visible reserved turn produced no displayable
-   content or was retracted.
+    private operational events, and rows a participant could never read do not
+    consume advertised transcript positions. Typed participant-safe status
+    events do. Coverage metadata is therefore not a side channel for hidden
+    internal records. A tombstone occupies a position only when a previously
+    participant-visible reserved turn produced no displayable content or was
+    retracted.
 12. **Make one breaking protocol cutover.** The canonical turn/range/activity
     protocol replaces the existing work-stream feed in one coordinated backend
     and desktop release. The server accepts only the new protocol; old desktops
@@ -601,10 +685,11 @@ see. It makes the order shown to a participant match the order the agent used.
     mislabel queueing, network delay, moderation, and provider work that the
     protocol does not identify.
 17. **Keep participant order and model-protocol order as separate projections of
-    one authority.** Participant `turn_sequence` excludes private protocol-only
-    messages and model-facing wrappers; restricted `loop_sequence` includes every
-    non-system message Bind consumes or accepts. The current system message is a
-    versioned projection of durable prompt inputs and activated plugins/skills.
+    one authority.** Participant `transcript_sequence` excludes private
+    protocol-only messages and model-facing wrappers; restricted `loop_sequence`
+    includes every non-system message Bind consumes or accepts. The current
+    system message is a versioned projection of durable prompt inputs and
+    activated plugins/skills.
     The rejected alternatives were leaking private rows through feed coverage
     and rebuilding model state from an intentionally filtered UI view.
 18. **Persist accepted protocol transitions before Bind advances.** The exact
@@ -628,6 +713,15 @@ see. It makes the order shown to a participant match the order the agent used.
     hydrates children once. The rejected alternatives were an unverified index
     that SQLite does not select, `OFFSET` pagination, scanning tombstones to find
     five displayable turns, and independently hydrating overlapping slices.
+21. **Project compaction lifecycle, never compacted context.** Reserve a typed
+    participant status entry when compaction begins and terminalize that same
+    entry only after the restricted replacement is durable. Store safe UTC
+    timing and lifecycle revisions so a future client can render active and
+    completed labels. The replacement messages, summary, token counts, private
+    bounds, and provider payload remain restricted. The rejected alternatives
+    were deriving a historical marker from a later checkpoint, which loses live
+    and failure state, and exposing the private summary as a participant system
+    message.
 
 ## Data model
 
@@ -640,7 +734,7 @@ The required authority inventory at the time of this PRD is:
 
 | Saved LLM conversation | Authority | Scope in this PRD |
 | --- | --- | --- |
-| Work-stream main feed and any future independently addressable substream | `SubstreamAgent` | In scope: replace direct `parts` pagination/projection with canonical turns, blocks, range coverage, and a restricted lossless Bind-loop projection. |
+| Work-stream main feed and any future independently addressable substream | `SubstreamAgent` | In scope: replace direct `parts` pagination/projection with canonical conversation turns, safe status entries, blocks, range coverage, and a restricted lossless Bind-loop projection. |
 | HyperSight execution | Source `SubstreamAgent` | In scope through its source transcript. `BlockDashboardAgent` stores only derived dispatch/output state and does not create a second transcript. |
 | Automation-creation draft conversation | `WorkspaceDO` | Explicitly out of scope: a separate PR will migrate its saved transcript, range loading, streaming, and UI. |
 
@@ -656,7 +750,7 @@ PRD and moves in its separate PR.
 
 The substrate stores a restricted model-protocol record alongside the
 participant transcript. It is not returned by participant history APIs and does
-not use `turn_sequence`. Its job is to make the state Bind actually consumes and
+not use `transcript_sequence`. Its job is to make the state Bind actually consumes and
 produces durable across Worker loss, retry, code deployment, and compaction.
 
 At run initialization, Rally persists the exact post-healing ordered non-system
@@ -744,15 +838,22 @@ served through the new protocol.
 
 ### Participant transcript projection
 
-Each owning authority stores one audience-visible transcript turn with these
+Each owning authority stores audience-visible transcript entries with these
 conceptual fields:
 
-- `turn_id`: stable opaque identity.
-- `turn_sequence`: monotonic sequence allocated once and never reused.
-- `role`: `human`, `assistant`, or participant-visible `system`.
+- `entry_id`: stable opaque identity.
+- `transcript_sequence`: monotonic sequence allocated once and never reused.
+- `entry_kind`: `conversation_turn` or `status_event`.
+- `turn_id` and `role`: present for conversation turns; role is `human`,
+  `assistant`, or participant-visible `system`.
+- `status_event_id` and `status_event_kind`: present for status entries; the
+  first kind is `context_compaction`.
 - `run_id` and `model_turn_index`: present for assistant turns and unique
   together within a run.
-- `state`: `streaming`, `committed`, or `retracted`.
+- `state`: `streaming`, `committed`, or `retracted` for conversation turns;
+  `active`, `completed`, `failed`, `cancelled`, or `abandoned` for status events.
+- `lifecycle_revision`, UTC start/stop timestamps, canonical duration, timing
+  accuracy, and safe trigger metadata for status events.
 - `created_at`, `committed_at`, and the existing attribution/visibility data.
 
 Each assistant turn has ordered blocks:
@@ -782,18 +883,24 @@ The substrate schema must make the initial two-range boot and later range reads
 index-driven. Physical table and index names may follow repository conventions,
 but the following access paths are normative:
 
-- A unique B-tree over participant `turn_sequence`. If one physical table ever
-  holds more than one sequence domain, the domain key precedes
-  `turn_sequence` in every index and query below. In today's one-domain-per-
-  `SubstreamAgent` authority, `turn_sequence` alone is the key. This index serves
-  exact anchors, snapshot `MIN`/`MAX`, tombstone-aware range membership, and
-  forward or reverse bounded scans.
-- A partial B-tree over `turn_sequence` for displayable states (`streaming` and
-  `committed`, excluding `retracted`). SQLite may traverse the same B-tree in
+- A unique B-tree over participant `transcript_sequence`. If one physical table
+  ever holds more than one sequence domain, the domain key precedes
+  `transcript_sequence` in every index and query below. In today's
+  one-domain-per-`SubstreamAgent` authority, `transcript_sequence` alone is the
+  key. This index serves exact anchors, snapshot `MIN`/`MAX`, tombstone-aware
+  range membership, and forward or reverse bounded scans.
+- A partial B-tree over `transcript_sequence` for displayable conversation turns
+  where `entry_kind = 'conversation_turn'` and
+  `state IN ('streaming', 'committed')`. SQLite may traverse the same B-tree in
   either direction; a duplicate descending index is not required. This index
-  serves the normalized unread anchor, five displayable predecessors, five
-  displayable successors, and the five latest displayable turns without walking
-  tombstones.
+  serves the normalized unread anchor, five displayable-turn predecessors, five
+  displayable-turn successors, and the five latest displayable turns without
+  walking tombstones or counting status entries against the requested five.
+- A partial B-tree over `(status_event_kind, state, transcript_sequence)` for
+  rows where `entry_kind = 'status_event'`. It finds active compaction newer than
+  the latest conversation turn without scanning historical entries. The
+  full-sequence range read returns terminal/intervening status entries inside
+  selected spans.
 - A partial unique identity index over `(run_id, model_turn_index)` where both
   values are non-null for assistant turns, plus ordered child indexes/keys over
   `(turn_id, block_index)` and response/activity lookup keys beginning with
@@ -807,29 +914,32 @@ but the following access paths are normative:
 
 Within the shared snapshot fence, the substrate normalizes a missing or
 retracted unread high-water line by finding the first displayable
-`turn_sequence >= anchor` and `<= snapshotThroughSequence` with ascending
+`transcript_sequence >= anchor` and `<= snapshotThroughSequence` with ascending
 `LIMIT 1`. It then reads up to five displayable predecessors with descending
 `LIMIT 5`, up to five successors with ascending `LIMIT 5`, and the live tail
-with `turn_sequence <= snapshotThroughSequence`, descending `LIMIT 5`. No query
-uses `OFFSET`. The full-sequence index establishes actual coverage across any
-skipped tombstones and transcript boundaries.
+with `transcript_sequence <= snapshotThroughSequence`, descending `LIMIT 5`.
+The unread boundary-to-boundary span and the latest span from its earliest
+selected conversation turn—or earliest available entry when it selects no
+turn—through the snapshot fence are then read through the full-sequence index,
+so intervening or trailing status events and tombstones have truthful coverage.
+No query uses `OFFSET`.
 
 The unread and latest selectors run in the same admitted Durable Object storage
 operation and snapshot. Their stable turn IDs and referenced response IDs are
-unioned before blocks, activity, authors, mentions, attachments, and resources
-are bulk hydrated, so overlap is fetched once. SQL statement count and
-authorization work remain constant as total transcript length grows; returned
-payload work remains proportional to the selected turns/blocks and existing
-transport-size rules.
+unioned with stable status-entry IDs before blocks, activity, authors, mentions,
+attachments, and resources are bulk hydrated, so overlap is fetched once. SQL
+statement count and authorization work remain constant as total transcript
+length grows; returned payload work remains proportional to the selected
+entries/blocks and existing transport-size rules.
 
 Index presence alone is insufficient. The implementation tests the production
-SQL with `EXPLAIN QUERY PLAN` against a large, tombstone-heavy fixture. Every
-anchor, predecessor, successor, latest, bound, and range selector must use its
-declared sequence index, with no full transcript/read-state scan and no
-`USE TEMP B-TREE` sort. The test also asserts the bounded `LIMIT` query shapes,
-batched union hydration, and constant statement count. Wall-clock thresholds are
-not used as correctness assertions because they are noisy and cannot prove the
-access path.
+SQL with `EXPLAIN QUERY PLAN` against a large fixture containing tombstones and
+compaction status entries. Every anchor, predecessor, successor, latest, bound,
+status-event, and range selector must use its declared sequence index, with no
+full transcript/read-state scan and no `USE TEMP B-TREE` sort. The test also
+asserts the bounded `LIMIT` query shapes, batched union hydration, and constant
+statement count. Wall-clock thresholds are not used as correctness assertions
+because they are noisy and cannot prove the access path.
 
 The harness run remains an execution envelope even though it is not a transcript
 row. It has a stable `response_id` linked to the initiating participant turn,
@@ -842,11 +952,11 @@ covered.
 Activity timing is stored in the same regional authority as conceptual records
 with these fields:
 
-- `activity_id`, `response_id`, and `kind`: `response_work`, `plugin_work`,
-  `tool_work`, or `thinking`.
+- `activity_id`, optional `response_id`, and `kind`: `response_work`,
+  `plugin_work`, `tool_work`, `thinking`, or `context_compaction`.
 - Optional scope keys as appropriate: `assistant_turn_id`, `block_index`,
-  `plugin_id`, and `tool_invocation_id`. Internal provider-attempt data is not a
-  member-visible key.
+  `plugin_id`, `tool_invocation_id`, and `status_event_id`. Internal
+  provider-attempt or compaction-payload data is not a member-visible key.
 - One or more intervals with stable identity, monotonic `revision`, an
   authoritative RFC 3339 UTC `started_at`, nullable RFC 3339 UTC `stopped_at`,
   and terminal `duration_ms`.
@@ -941,7 +1051,7 @@ The response is conceptually:
     "startInclusive": 1,
     "endExclusive": 21
   },
-  "turns": []
+  "entries": []
 }
 ```
 
@@ -949,17 +1059,19 @@ The first-open boot/snapshot groups two such responses under stable purposes:
 
 ```json
 {
-  "initialTurnRanges": {
+  "initialTranscriptRanges": {
     "unread": {
       "anchorSequence": 32,
       "coverage": { "startInclusive": 27, "endExclusive": 38 },
-      "turns": []
+      "entries": []
     },
     "latest": {
       "coverage": { "startInclusive": 83, "endExclusive": 88 },
-      "turns": [{
+      "entries": [{
+        "entryId": "entry_turn_active_9",
+        "entryKind": "conversation_turn",
         "turnId": "turn_active_9",
-        "sequence": 87,
+        "transcriptSequence": 87,
         "state": "active",
         "streamEpoch": 2,
         "checkpointRevision": 14,
@@ -1057,14 +1169,15 @@ advances or invalidates the relevant generation and closes the socket before it
 can receive another snapshot; revocation propagation/sweeping replaces repeated
 read-time checks, not security.
 
-The participant `turn_sequence` domain is materialized at write time from
-participant-visible turns only. Restricted system/protocol rows and other
-substreams never occupy it, so an authorized range read is a direct indexed scan
-rather than a per-row authorization filter or join. The number of authorization
-decisions and regional authorization queries is therefore constant as page size,
-block count, and gap count grow. The unread and latest slices in one boot share
-the same decision. Bulk author/resource hydration may remain batched, but may not
-introduce per-turn authorization calls.
+The participant `transcript_sequence` domain is materialized at write time from
+participant-visible conversation turns and safe status entries only. Restricted
+system/protocol rows, compaction payloads, and other substreams never occupy it,
+so an authorized range read is a direct indexed scan rather than a per-row
+authorization filter or join. The number of authorization decisions and
+regional authorization queries is therefore constant as page size, block count,
+and gap count grow. The unread and latest slices in one boot share the same
+decision. Bulk author/resource hydration may remain batched, but may not
+introduce per-entry authorization calls.
 
 Because the participant sequence domain excludes restricted rows, its gaps and
 upper bound do not disclose private system prompts, hidden operational rows, or
@@ -1136,14 +1249,15 @@ projector or reducer under test.
 | `T1 Protocol fidelity` | The restricted substrate reconstructs the exact accepted Bind loop state, including the freshly rendered system head, message/content-part order, roles, IDs, exact strings, and provider continuation fields. |
 | `T2 Causal durability` | Every state transition required for later inference is durable before Bind, tool dispatch, terminal publication, or compaction can advance past it. |
 | `T3 Live ordering and concurrency` | Response tokens remain immediately streamable while text, thinking, and multiple tool calls start and settle independently without changing model-declared display order. |
-| `T4 Range and gap truth` | Snapshot-fenced range responses report what was actually inspected, and the desktop computes loaded islands and gaps correctly for empty, shortened, overlapping, disjoint, and realtime-extended history. |
+| `T4 Range and gap truth` | Snapshot-fenced transcript-entry ranges report what was actually inspected, and the desktop computes loaded islands and gaps correctly for empty, shortened, overlapping, disjoint, status-bearing, and realtime-extended history. |
 | `T5 Activity-time truth` | Response, plugin, invocation, and observable-thinking timers use authoritative UTC starts, first-join/reconnect elapsed baselines, lifecycle edges, and interval unions; local ticking never requires server clock frames and survives late join, pause, sleep, reconnect, and history load. |
 | `T6 Recovery and idempotency` | Worker loss, Durable Object eviction/hibernation, socket replay, retries, duplicate events, and compaction recover without loss, duplication, reordering, or identity reuse. |
 | `T7 Authorization and locality` | Participant APIs reveal neither restricted payloads nor restricted bounds, and Global/EU authorities never use one another as transcript or inference-archive fallbacks. |
 | `T8 Breaking cutover` | One idempotent coordinated release establishes the canonical protocol without backfill, dual paths, capability negotiation, or a compatibility window; old desktops are unsupported and cannot receive transcript data through the removed protocol. |
 | `T9 Visible product behavior` | A real desktop window visibly preserves interleaving, gap loading, unread opening, instant jump-to-latest, smooth streaming, parallel activity, and historical timing labels. |
-| `T10 Constant-cost reader admission` | One external boot/range operation or socket admission authorizes once and reuses an epoch-fenced capability across all slices, active state, and hydration; authorization work never scales with returned turns, blocks, or gaps. |
+| `T10 Constant-cost reader admission` | One external boot/range operation or socket admission authorizes once and reuses an epoch-fenced capability across all slices, active state, and hydration; authorization work never scales with returned entries, blocks, or gaps. |
 | `T11 Indexed initial loading` | Unread-anchor, neighbor, latest, bounds, and arbitrary-range production queries choose declared SQLite indexes; the two initial islands share one snapshot and one deduplicated bulk-hydration pass without a full scan, temporary sort, offset walk, or transcript-length-dependent statement count. |
+| `T12 Future compaction status` | Every automatic compaction has one durably ordered participant-safe status entry with active/terminal revisions, UTC timing and reconnect baselines, truthful failure/recovery, and no compacted-context disclosure; the current reducer preserves it so future UI can render happening/happened labels without a storage migration. |
 
 ### Required test layers and artifacts
 
@@ -1152,7 +1266,7 @@ projector or reducer under test.
 | Pure harness protocol | `packages/agent-harness/src/bind-loop-projection.test.ts` | Fixed-message canonicalization, projector round trips, system-projection revision changes, provider continuation fields, protocol/derivative classification, and mismatch detection. |
 | Substrate and SQL | `apps/api/test/workstream-transcript-substrate.test.ts` using the real object schema through `createTestSqlStorage()` | Schema constraints, transactions, exact indexed range scans, `EXPLAIN QUERY PLAN` assertions, tombstones, immutable payload references, transition ordering, and idempotent clean-cut schema installation. |
 | Real Cloudflare runtime | `apps/api/test-workers/workstream-transcript-runtime.test.ts` | Real `SubstreamAgent`, object-local SQLite, RPC, WebSocket, eviction/hibernation, concurrency, failure boundaries, and snapshot fencing. This suite may not replace the Durable Object or its storage with a double. |
-| Desktop range/state reducer | `apps/desktop/src/renderer/lib/workstream-turn-ranges.test.ts` | Range union/complement, stable identity reconciliation, stream epochs, stale lifecycle rejection, timers, and realtime singleton coverage. |
+| Desktop range/state reducer | `apps/desktop/src/renderer/lib/workstream-turn-ranges.test.ts` | Range union/complement, stable turn/status-entry reconciliation, stream epochs, stale lifecycle rejection, timers, hidden compaction-entry retention, and realtime singleton coverage. |
 | Desktop component | `apps/desktop/src/renderer/screens/workstream-turn-feed.test.tsx` | Ordered DOM blocks, streaming updates, dual initial islands, jump/scroll behavior, generic thinking/timing labels, and accessibility names. |
 | Full local member pipeline | Extend `scripts/e2e-local.mjs` and `scripts/e2e-local-oracles.test.mjs` | Public API/socket behavior against opened Durable Object authority, including real provider interleaving when credentials are configured and a fixed scripted-provider fixture in CI. |
 | Visible desktop acceptance | Add this feature's flow to `docs/e2e.md` and capture the exercised desktop window as required by the repository's visible-change rule. | Human-visible order, scroll anchoring, live clocks, parallel cards, reconnect, cold reload, and historical labels. |
@@ -1177,7 +1291,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H07 records_protocol_and_derivative_provenance` | harness + SQL | Persist a continuation nudge, compaction summary, recalled-memory wrapper, trigger wrapper, interrupt wrapper, and tool result; assert their explicit kinds and required/no-source identities match the definitions. |
 | `H08 compacts_and_resumes_the_same_loop_generation` | workerd | Commit an exact compaction replacement, evict the object, resume, and assert the next provider array equals the pre-eviction projected generation while earlier ledger/history remains queryable. |
 | `H09 loads_disjoint_ranges_and_reports_middle_gap` | SQL + desktop | Load `[1,21)` and `[41,61)` against snapshot 87; assert exact actual coverage, gaps `[21,41)` and `[61,88)`, stable ordering, and no inferred coverage from row count. |
-| `H10 merges_overlapping_ranges_idempotently` | SQL + desktop | Load overlapping ranges in both arrival orders; assert one copy per stable turn, normalized coverage union, and identical final state. |
+| `H10 merges_overlapping_ranges_idempotently` | SQL + desktop | Load overlapping ranges in both arrival orders; assert one copy per stable transcript entry, normalized coverage union, and identical final state. |
 | `H11 opens_with_unread_and_latest_islands` | workerd + desktop | Return unread `−5/+5` and five latest turns from one fence; assert unread paints first, both islands are cached, and the uncovered middle remains a gap. |
 | `H12 jumps_to_prefetched_latest_without_fetch` | desktop + E2E | From a disjoint unread opening, invoke **Jump to latest**; assert the latest island paints immediately and the range transport receives no request. |
 | `H13 lazy_loads_only_adjacent_gap_and_preserves_anchor` | desktop | Scroll toward each loaded edge; assert only the adjacent uncovered interval is requested, inserted turns do not move the visible anchor, and overlap is de-duplicated. |
@@ -1189,14 +1303,15 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H19 renders_openrouter_thinking_lifecycle_generically` | harness + desktop | Replay fixed OpenRouter reasoning-detail edges; assert the same normalized lifecycle/order/timing contract without exposing text, encrypted details, or signatures. |
 | `H20 rebases_active_timers_after_reconnect` | workerd + desktop | Miss lifecycle edges, reconnect with the original `startedAtUtc`, `snapshotAtUtc`, and `elapsedMsAtSnapshot`, and assert the local monotonic baseline rebases once and later terminal `durationMs` becomes authoritative. |
 | `H21 survives_hibernation_during_active_stream` | workerd | Stream text and parallel activity, hibernate/evict the object, reconnect, and assert exact checkpoint prefix, lifecycle state, loop revision, and subsequent frames appear once. |
-| `H22 deploys_canonical_protocol_as_the_only_feed` | workerd + desktop | Install the new object schema, backend protocol, and current desktop fixture; assert first open, range loading, streaming, replay, and terminal history use only canonical turns/activity and register no legacy emitter, reader, or capability branch. |
+| `H22 deploys_canonical_protocol_as_the_only_feed` | workerd + desktop | Install the new object schema, backend protocol, and current desktop fixture; assert first open, range loading, streaming, replay, and terminal history use only canonical transcript entries/activity and register no legacy emitter, reader, or capability branch. |
 | `H23 starts_canonical_history_without_legacy_backfill` | SQL + workerd | Seed non-production pre-cutover aggregate rows, run the idempotent cutover twice, and create a new response. Assert the old rows are neither converted nor returned, the inference archive is never queried, and canonical sequence/history begins solely from post-cutover activity. |
 | `H24 keeps_participant_and_restricted_projections_linked` | SQL + workerd | Read participant ranges and resume inference from the same committed facts; assert shared opaque identities, authorized visible content, and exact private replay without deriving either projection from the other. |
-| `H25 compacts_twice_across_distinct_events_and_resumes_second_generation` | workerd | Accept activity, commit compaction event A, accept additional assistant/tool activity, then commit distinct compaction event B. Assert two `state_replaced` transitions with distinct event/source revisions, three ordered loop generations, retention of both exact replacements, unchanged participant history, and post-eviction replay from B with the exact next provider array. Replay either event ID and assert idempotency rather than a third replacement generation. |
+| `H25 compacts_twice_across_distinct_events_and_resumes_second_generation` | workerd | Accept activity, commit compaction event A, accept additional assistant/tool activity, then commit distinct compaction event B. Assert two `state_replaced` transitions with distinct event/source revisions, three ordered loop generations, retention of both exact replacements, unchanged participant conversation turns plus two separately ordered safe compaction status entries, and post-eviction replay from B with the exact next provider array. Replay either event ID and assert idempotency rather than a third replacement generation or status entry. |
 | `H26 joins_existing_stream_with_utc_start_and_elapsed_baseline` | workerd + desktop + E2E | Start a response before a second client opens the work stream. On first join, assert the active snapshot carries the original `startedAtUtc`, a server `snapshotAtUtc`, and the full prior `elapsedMsAtSnapshot`; the label paints the already-accrued duration immediately, continues from the local monotonic receipt point, and is replaced by canonical terminal duration. |
 | `H27 opens_workstream_mid_stream_with_atomic_checkpoint_and_catchup` | workerd + desktop + E2E | Before the client opens the work stream, stream accumulated text and produce planned, running, completed, and failed parallel tool states plus an active thinking block. Assert the first boot paints the exact accumulated ordered state and timing baselines, retains unread/latest islands, records `resumeAfterEventSequence`, and then applies subsequent text/tool/thinking frames once without waiting for another fetch. |
-| `H28 authorizes_boot_once_for_all_ranges_and_active_state` | API Node + workerd | Open with disjoint unread/latest slices, active stream checkpoints, lifecycle timing, authors, mentions, attachments, and tool blocks. Instrument the typed reader-admission boundary and assert one admission decision for the complete boot, zero per-turn/block calls, and the same admitted capability identity on every internal scan/hydration. Repeat through the initial socket snapshot and assert it reuses the socket admission. |
-| `H29 uses_indexed_bounded_queries_for_initial_ranges` | SQL + workerd | Populate a large history with overlapping unread/latest islands, inspect the exact production SQL with `EXPLAIN QUERY PLAN`, and instrument statement/hydration boundaries. Assert the member anchor is a point lookup; anchor normalization, predecessor, successor, latest, bounds, and coverage/range selectors use the declared sequence indexes in forward/reverse order with their bounded limits; neither selector uses `OFFSET`, a full transcript scan, or a temporary B-tree; and the union of both islands is bulk hydrated once with a statement count independent of total history length. |
+| `H28 authorizes_boot_once_for_all_ranges_and_active_state` | API Node + workerd | Open with disjoint unread/latest slices, active stream checkpoints, lifecycle timing, authors, mentions, attachments, compaction status, and tool blocks. Instrument the typed reader-admission boundary and assert one admission decision for the complete boot, zero per-entry/block calls, and the same admitted capability identity on every internal scan/hydration. Repeat through the initial socket snapshot and assert it reuses the socket admission. |
+| `H29 uses_indexed_bounded_queries_for_initial_ranges` | SQL + workerd | Populate a large tombstone/status history with overlapping unread/latest islands and an active compaction after the latest conversation turn, inspect the exact production SQL with `EXPLAIN QUERY PLAN`, and instrument statement/hydration boundaries. Assert the member anchor is a point lookup; anchor normalization, predecessor, successor, latest, active-status, bounds, and coverage/range selectors use the declared indexes in forward/reverse order with their bounded limits; neither selector uses `OFFSET`, a full transcript scan, or a temporary B-tree; and the union of both islands/status is bulk hydrated once with a statement count independent of total history length. |
+| `H30 persists_compaction_lifecycle_for_future_rendering` | SQL + workerd + desktop reducer | Begin automatic compaction between two conversation turns. Assert one participant-safe `context_compaction` entry is durably ordered before mutation, its active snapshot/reconnect state includes the original UTC start plus elapsed baseline, the exact restricted replacement commits before that same entry reaches `completed`, canonical duration survives cold/range load, the current reducer retains but need not paint it, and a fixed future-view projection can produce **Context automatically compacting** or **… compacting for 2m 34s**, then **Context automatically compacted** or **… compacted in 2m 34s**, without reading restricted payloads. |
 
 ### Required edge-case and failure tests
 
@@ -1240,8 +1355,9 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E36 does_not_conflate_duplicate_compaction_delivery_with_a_second_event` | SQL + workerd | Deliver compaction event A twice and a distinct event B once, including out-of-order retry delivery. Assert A creates exactly one replacement generation, B creates exactly one later generation, event/source identities remain distinguishable, and the active generation never rolls back from B to A. |
 | `E37 rejects_inconsistent_active_interval_timestamp_baseline` | workerd + desktop | Supply a snapshot whose `startedAtUtc`, `snapshotAtUtc`, and `elapsedMsAtSnapshot` cannot describe the same interval revision, then deliver an older consistent snapshot. Assert the inconsistent snapshot is rejected/resynced without resetting the label to zero, and the older revision cannot roll back a newer valid baseline. |
 | `E38 races_midstream_open_with_frame_and_terminal_commit` | workerd + desktop | Publish a token/tool lifecycle frame immediately before, during, and after first-open snapshot assembly, then commit the active turn. Assert snapshot fencing plus catch-up yields every byte/block/revision exactly once, canonical commit reconciles the reserved turn in place, no active overlay survives terminal state, and no middle range is falsely marked covered. |
-| `E39 keeps_authorization_work_constant_across_range_shapes` | API Node + workerd | Run empty, shortened, tombstone-heavy, overlapping, disjoint, and maximum-existing-bound range fixtures with different returned turn/block counts. Assert each external read makes exactly one reader-admission decision, no row hydration triggers authorization, and a participant/scope epoch change invalidates the admitted socket before another snapshot is returned. |
+| `E39 keeps_authorization_work_constant_across_range_shapes` | API Node + workerd | Run empty, shortened, tombstone/status-heavy, overlapping, disjoint, and maximum-existing-bound range fixtures with different returned entry/block counts. Assert each external read makes exactly one reader-admission decision, no row hydration triggers authorization, and a participant/scope epoch change invalidates the admitted socket before another snapshot is returned. |
 | `E40 keeps_indexed_plan_for_missing_anchor_tombstones_and_boundaries` | SQL + workerd | Exercise a missing/retracted unread anchor, long tombstone runs, fewer than five turns on either side, empty history, and a snapshot fence below the physical tail. Assert anchor normalization and all directional/latest/range reads retain the declared indexed plans, coverage remains truthful across skipped tombstones, no linear fallback or temporary sort appears, overlap hydrates once, and deliberately removing each required index makes the plan/failure-proof test fail for that access path. |
+| `E41 closes_compaction_status_truthfully_without_leaking_payload` | SQL + workerd + desktop reducer | Fail start-entry persistence, then separately crash/fail/cancel after start but before replacement, after replacement but before stop, and during duplicate/out-of-order delivery. Assert a failed required start write prevents compaction mutation; otherwise there is one stable entry per compaction, monotonic active-to-completed/failed/cancelled/abandoned state, recovered upper-bound timing where exact stop is unavailable, no permanently active marker, no participant summary/messages/token counts/private bounds, no Bind projection of the safe marker, no compaction marker counted against the five requested conversation turns, and indexed range/reconnect recovery without duplication. |
 
 ### Required algebraic, race, and failure-proof checks
 
@@ -1280,9 +1396,11 @@ coordinated cutover and no compatibility phases:
 1. Implement the shared durable transcript substrate, `SubstreamAgent` adapter,
    restricted Bind ledger/generations, participant projection, exact provider
    boundary checks, reasoning/activity normalization, constant-cost reader
-   admission, the required sequence/displayable/child/read-state indexes,
-   canonical REST/socket protocol, and desktop range/feed reducer. The old feed
-   is replaced, not retained beside the new one.
+   admission, participant-safe compaction status persistence, the required
+   sequence/displayable/status/child/read-state indexes, canonical REST/socket
+   protocol, and desktop range/feed reducer. The old feed is replaced, not
+   retained beside the new one. The reducer retains compaction status entries;
+   their dedicated visual component may ship later.
 2. Implement every required test ID alongside its behavior. The harness, SQL,
    real-workerd, desktop, E2E, failure-injection, and visible-window suites must
    pass before release; compatibility work is not a prerequisite because it is
@@ -1348,7 +1466,9 @@ exist before deployment, stop and revise this release plan before shipping.
 14. A first open with an unread anchor returns, in one boot/snapshot response,
     an unread slice containing the anchor plus up to five displayable turns on
     each side and a latest slice containing five displayable turns. Both slices
-    share one snapshot fence and report independent actual coverage.
+    share one snapshot fence and report independent actual coverage. Safe status
+    entries within either selected transcript span are returned in sequence but
+    do not count against those conversation-turn quantities.
 15. A first open with no unread anchor returns a null unread slice and the five
     latest displayable turns, and positions the transcript at that latest slice.
 16. Overlapping initial slices render each turn once and union their coverage.
@@ -1421,7 +1541,9 @@ exist before deployment, stop and revise this release plan before shipping.
 34. Compaction durably commits the exact replacement generation before discarding
     the prior active array. Reconstructing after Worker loss produces the same
     next provider message array, while the pre-compaction restricted ledger and
-    participant transcript remain intact.
+    participant conversation turns remain intact. The separately ordered safe
+    compaction status entry contains lifecycle/timing only and never projects
+    into that provider message array.
 35. An immutable out-of-line model-facing payload is changed, deleted, or made
     unavailable in a fault-injection test. Replay fails with a protocol-integrity
     error and never substitutes a summary, display payload, placeholder, or
@@ -1439,7 +1561,7 @@ exist before deployment, stop and revise this release plan before shipping.
     loop payloads nor `loop_sequence` bounds. Subsequent inference nevertheless
     reconstructs from the restricted projection without consulting the desktop
     projection or Global inference lakehouse.
-39. Every required `H01`–`H29` and `E01`–`E40` test is mapped to an actual test
+39. Every required `H01`–`H30` and `E01`–`E41` test is mapped to an actual test
     name and file, passes at its required layer, and has an implementation-PR
     failure-proof record showing the named assertion fails when its protected
     production behavior is deliberately broken. The three generated algebraic
@@ -1471,3 +1593,13 @@ exist before deployment, stop and revise this release plan before shipping.
     union is hydrated once; query/statement count does not grow with total
     transcript length. Required query-plan tests fail when any required index is
     removed.
+44. Automatic compaction reserves one stable participant-safe status entry
+    before mutation. Active snapshots carry its original UTC start and elapsed
+    baseline; success becomes visible only after the restricted replacement is
+    durable and carries canonical terminal duration. Failure/cancellation/
+    recovery closes the same entry truthfully. Range and realtime delivery can
+    therefore support future **Context automatically compacting** and **Context
+    automatically compacted**, optionally **… compacting for 2m 34s** or **…
+    compacted in 2m 34s**, without a storage migration or disclosure of compacted
+    context. The current desktop preserves the typed entry but its final visual
+    rendering remains out of scope.
