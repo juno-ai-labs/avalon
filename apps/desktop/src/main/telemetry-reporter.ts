@@ -12,6 +12,7 @@ import type { ApplicationIconId } from '../common/application-icons';
 import type {
   DesktopTelemetryConnectorSetupIntent,
   DesktopTelemetryProductIntent,
+  DesktopTelemetryRendererPerfFlowIntent,
   DesktopTelemetrySemanticIntent,
   DesktopTelemetryWorkstreamFeedVisibleIntent,
   DesktopTelemetryWorkstreamSendReadyIntent,
@@ -90,7 +91,10 @@ export interface TelemetryReporterOptions {
   spool: TelemetrySpool;
   identity: () => TelemetryIdentity;
   route: () => 'global' | 'eu';
+  /** Local admission gate. */
   productAnalyticsEnabled: () => boolean;
+  /** Canonical delivery gate; defaults to the admission gate. */
+  productAnalyticsDeliveryEnabled?: () => boolean;
   crashReportingEligible?: () => boolean;
   authenticatedSession: () => Promise<AuthenticatedTelemetrySession | null>;
   anonymousSession: () => AnonymousTelemetrySession | null;
@@ -188,7 +192,8 @@ export class TelemetryReporter {
       | Omit<DesktopTelemetryWorkstreamFeedVisibleIntent, 'operationId'>
       | Omit<DesktopTelemetryWorkstreamSendReadyIntent, 'operationId'>
       | WorkstreamOpenLifecycleProperties
-      | Omit<DesktopTelemetryWorkstreamSocketStartedIntent, 'operationId'>,
+      | Omit<DesktopTelemetryWorkstreamSocketStartedIntent, 'operationId'>
+      | Omit<DesktopTelemetryRendererPerfFlowIntent, 'operationId'>,
     windowContext?: TelemetryWindowContext,
     operationId?: string,
   ): Promise<void> {
@@ -523,7 +528,12 @@ export class TelemetryReporter {
   private async flushUnlocked(): Promise<void> {
     const now = this.options.now();
     const rows = await this.options.spool.ready(now).catch(() => []);
-    for (const row of rows) await this.deliver(row, now);
+    for (const row of rows) {
+      if (row.event.category !== 'essential'
+        && !(this.options.productAnalyticsDeliveryEnabled?.()
+          ?? this.options.productAnalyticsEnabled())) continue;
+      await this.deliver(row, now);
+    }
   }
 
   private async deliver(row: TelemetrySpoolRow, now: Date): Promise<void> {

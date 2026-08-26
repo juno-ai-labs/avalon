@@ -42,6 +42,7 @@ test('the packaged app explains microphone and native system audio without reque
   assert.match(contents, /^\s+NSAudioCaptureUsageDescription:\s+\S.+$/mu);
   assert.doesNotMatch(contents, /NSScreenCaptureUsageDescription/u);
   assert.match(contents, /from:\s+\.native-build\/system-audio-tap\.node/u);
+  assert.match(contents, /from:\s+\.native-build\/unified-log\.node/u);
 });
 
 test('nested components require the Rally Developer ID team', () => {
