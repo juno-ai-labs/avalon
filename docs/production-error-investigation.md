@@ -58,10 +58,10 @@ evidence disproves its premise.
 | GitHub Actions and Cloudflare deployment state | Which commit passed which checks, what deployed, and when the active version changed | Whether propagation was complete at the start of an arbitrary metric bucket unless timestamps are compared |
 
 Some deployed resource names still contain `avalon` as compatibility
-identifiers. Treat configuration and the active binding as authoritative; a
-legacy physical name does not mean an old product build is serving traffic, and
-renaming a resource in an investigation can point at a different or nonexistent
-dataset.
+identifiers. The presence of that legacy name is not evidence that an old
+product build is serving traffic. Treat configuration and the active binding as
+authoritative; renaming a resource during an investigation can point at a
+different or nonexistent dataset.
 
 ## A flexible investigation loop
 
@@ -92,10 +92,10 @@ point:
    supported, what was ruled out, and what remains unobserved. A small
    reproducible unknown is better than an overconfident root cause.
 
-For before/after comparisons, use equal completed windows when possible and
-report both counts and rates. Changes in traffic, scheduled-work volume, or
-client release adoption can make a raw-count improvement look larger or smaller
-than it is.
+For before/after comparisons, use identically sized completed windows when
+possible and report both counts and rates. Changes in traffic, scheduled-work
+volume, or client release adoption can make a raw-count improvement look larger
+or smaller than it is.
 
 ## Where and how to look
 
@@ -269,11 +269,15 @@ Common examples include:
 The recent WorkspaceDO alarm investigation is the canonical example. The
 pre-work recovery arm once created an immediately due second alarm. Cloudflare
 counted the redundant queued delivery as an alarm `clientDisconnected`, nearly
-one for every successful alarm. After the scheduler change, remaining
-disconnect outcomes were correlated with
-`workspace_scheduled_alarm_phase_started`. No phase-start row meant the queued
-delivery never entered Rally application work; it was not a WebSocket failure
-or lost scheduled work. The phase instrumentation and interpretation live in
+one for every successful alarm. After the scheduler change, investigators first
+confirmed that the active version emitted phase events, the sampled objects had
+already migrated and were hot, and the relevant logs were retained and
+unsampled. A remaining disconnect with no
+`workspace_scheduled_alarm_phase_started` row then established the bounded
+finding that the observed delivery never entered instrumented Rally work.
+Correlated successful alarm invocations and authoritative scheduling state
+ruled out lost scheduled work; the alarm invocation type ruled out a WebSocket
+failure. The phase instrumentation and interpretation live in
 [`durable-object-alarms.md`](durable-object-alarms.md#workspace-phase-instrumentation).
 
 ## Common false negatives
@@ -363,6 +367,11 @@ hypothesis.
 
 Production evidence is still production data, even when it is called
 “telemetry.”
+
+The collection, redaction, sampling, and destination contracts remain owned by
+[`telemetry.md`](telemetry.md) and
+[`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md); use
+their current rules when this summary and an owning document differ.
 
 - Begin with aggregate and promoted content-free fields. Retrieve event
   properties, trace attributes, or raw model records only when the narrower
