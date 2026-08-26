@@ -134,6 +134,21 @@ continues that task and marks the installation for reconnect. The mark is a diag
 gate: later prompts still reach Slack and fail on Slack's answer if the scope is really gone —
 see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
 
+Mention delivery logs each candidate lookup and its terminal routing decision.
+`slack_notification_lookup_candidate` distinguishes a valid active human from
+team mismatch, deleted user, bot, missing scope, and no match;
+`slack_notification_destination_resolved`,
+`slack_notification_conversation_opened`, and
+`slack_notification_chunk_terminal` retain the connection, Slack team, user,
+DM channel, client-message, and provider-message IDs. The final
+`slack_notification_terminal` records either `sent` or the exact skip reason
+(`no_active_workspace_installation`, `multiple_confirmed_links`,
+`ambiguous_email_lookup`, or `no_email_lookup_match`). A provider exception or
+partial multi-chunk send is `slack_notification_delivery_incomplete`. These
+opaque IDs are deliberate correlation fields, not message content; email
+addresses, notification text, tokens, and provider response bodies stay out of
+logs.
+
 1. An unlinked member clicks **Connect Rally** — on App Home, or on the private
    prompt Rally sends when a task it is running for them needs a Rally account
    of its own.
@@ -750,6 +765,28 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 This document predates the [module document](module-documents.md) convention and
 had no changelog until the entries below; the reasoning behind everything above them
 was not recorded and is not reconstructed here.
+
+### 2026-08-25 — Slack notification routing is observable by destination
+
+**What changed:** Person-notification delivery now logs every identity lookup,
+resolved installation and Slack destination, opened DM, accepted message chunk,
+terminal skip, complete send, and partial/provider failure. Correlation includes
+Rally and Slack IDs but excludes notification content and email addresses.
+
+**Why:** A drained activity Queue did not answer whether Slack was skipped for
+an inactive or ambiguous recipient, accepted a message in an unexpected team or
+DM, failed after a partial chunk, or was never reached. Those cases previously
+collapsed into a return value consumed by the email fallback.
+
+**Considered and rejected:** Logging only Slack API failures and logging the
+recipient email or rendered message were rejected. The former leaves expected
+terminal skips and successful-but-misdirected sends invisible; the latter adds
+content that is unnecessary when stable provider IDs identify the destination.
+
+**What a future change has to respect:** Every Slack notification branch needs
+a stable, queryable outcome and destination IDs when known. Do not remove an ID
+because it belongs to Slack; do not replace it with mutable profile fields or
+message content.
 
 ### 2026-08-25 — The directory contact moved to Rally help
 

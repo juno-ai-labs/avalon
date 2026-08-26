@@ -44,7 +44,7 @@ import {
 } from "../lib/durable-object-namespace";
 import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { uuidV7 } from "../lib/uuid-v7";
-import { logWarn } from "../observability/logger";
+import { logInfo, logWarn } from "../observability/logger";
 import { identityAttributes, inFlowSpan } from "../observability/tracing";
 import {
   acceptsNewWorkstreamWork,
@@ -1946,7 +1946,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     this.assertWorkspace(request.workspaceId);
     const activity = request.event.activity;
-    return WorkspaceConnectorEventIngestResultSchema.parse(
+    const result = WorkspaceConnectorEventIngestResultSchema.parse(
       this.state.storage.transactionSync(() => {
         const receipt = this.state.storage.sql.exec<{
           payload_hash: string;
@@ -2085,6 +2085,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         };
       }),
     );
+    logInfo(this.env, "connector_event_authority_ingested", {
+      workspace_id: request.workspaceId,
+      connection_id: activity.connectionId,
+      connector_type: request.event.connectorType,
+      provider: activity.provider,
+      ingress_event_id: request.ingressEventId,
+      connector_event_id: result.eventId,
+      duplicate: result.duplicate,
+      processing_status: result.processingStatus,
+      processing_attempt: result.processingAttempt,
+      outcome: "committed",
+    });
+    return result;
   }
 
   async connectorEvent(input: WorkspaceConnectorEventRequest): Promise<WorkspaceConnectorEvent | null> {
@@ -2104,7 +2117,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceConnectorEventClaimRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    return WorkspaceConnectorEventClaimResultSchema.parse(
+    const result = WorkspaceConnectorEventClaimResultSchema.parse(
       this.state.storage.transactionSync(() => {
         const row = this.state.storage.sql.exec<WorkspaceConnectorEventRow & {
           workflow_instance_id: string | null;
@@ -2142,6 +2155,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         };
       }),
     );
+    logInfo(this.env, "connector_event_authority_claimed", {
+      workspace_id: request.workspaceId,
+      connector_event_id: request.eventId,
+      workflow_instance_id: request.workflowInstanceId,
+      workflow_attempt: request.attempt,
+      outcome: result.outcome,
+    });
+    return result;
   }
 
   async settleConnectorEvent(input: WorkspaceConnectorEventSettleRequest): Promise<void> {
@@ -2163,7 +2184,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.eventId,
       request.workflowInstanceId,
     ).toArray().length;
-    if (changed === 1) return;
+    if (changed === 1) {
+      logInfo(this.env, "connector_event_authority_terminal", {
+        workspace_id: request.workspaceId,
+        connector_event_id: request.eventId,
+        workflow_instance_id: request.workflowInstanceId,
+        outcome: request.outcome,
+        reason: "settlement_committed",
+      });
+      return;
+    }
     const settled = this.state.storage.sql.exec<{
       processing_status: WorkspaceConnectorEventRow["processing_status"];
       workflow_instance_id: string | null;
@@ -2175,7 +2205,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (
       settled?.workflow_instance_id === request.workflowInstanceId
       && settled.processing_status === request.outcome
-    ) return;
+    ) {
+      logInfo(this.env, "connector_event_authority_terminal", {
+        workspace_id: request.workspaceId,
+        connector_event_id: request.eventId,
+        workflow_instance_id: request.workflowInstanceId,
+        outcome: request.outcome,
+        reason: "settlement_replayed",
+      });
+      return;
+    }
+    logWarn(this.env, "connector_event_authority_settlement_failed", {
+      workspace_id: request.workspaceId,
+      connector_event_id: request.eventId,
+      workflow_instance_id: request.workflowInstanceId,
+      requested_outcome: request.outcome,
+      authoritative_outcome: settled?.processing_status ?? "missing",
+      authoritative_workflow_instance_id: settled?.workflow_instance_id ?? null,
+      reason: "settlement_fenced",
+    });
     throw new Error("connector_event_settlement_fenced");
   }
 

@@ -1201,7 +1201,40 @@ Filter `event = perf_flow` with a `flow` and a `duration_ms` threshold, group by
 [`performance-tracing.md`](performance-tracing.md) holds the span names, the
 attribute registry, and the investigation procedure.
 
-Correlate by `request_id`, `workspace_id`, `region`, `workflow_step`, and `connection_id`. Compiler events additionally carry stage, schema, provider/model, fallback attempt, latency, response size, app version, and sanitized validation paths. Logs must never include prompts, email bodies, connector content, credentials, file contents, or model context.
+Correlate by `request_id`, `workspace_id`, `region`, `workflow_step`, and
+`connection_id`. Pure identifiers are not PII in Rally's logging policy and
+should be retained whenever they disambiguate a path: this includes Rally
+entity IDs and provider identifiers such as Slack team, user, channel,
+client-message, and message timestamp IDs or Linear issue IDs. Do not replace
+them with mutable names or email addresses. Compiler events additionally carry
+stage, schema, provider/model, fallback attempt, latency, response size, app
+version, and sanitized validation paths. Logs must never include prompts, email
+bodies, connector content, credentials, file contents, email addresses, or
+model context.
+
+Connector adapters add two deliberately redundant structured layers:
+
+| Event | Level and meaning | Useful fields |
+| --- | --- | --- |
+| `connector_operation_started` | `debug`; an adapter lifecycle branch was entered | `connector_type`, `operation`, IDs relevant to the branch |
+| `connector_operation_finished` | `info` for success, `warn` for expected refusal/degraded health, `error` for unexpected failure | preceding fields plus `outcome`, `code`, `duration_ms`, and bounded counts or provider operation ID |
+| `connector_provider_request_started` | `debug`; the shared provider transport was entered | `connector_type`, `provider_origin`, `method` |
+| `connector_provider_request_finished` | `info` for HTTP success, `warn` for non-5xx provider refusal, `error` for 5xx or transport failure | preceding fields plus `outcome`, `status` or `code`, and `duration_ms` |
+| `connector_credential_reauthorization_started` / `connector_credential_reauthorization_finished` | `warn` when a fresh credential is refused; `info` when refresh and retry recover it; `warn` or `error` when they do not | connector and connection IDs, `outcome`, `code`, `rotation_source` |
+| `connector_credential_refresh_started` / `connector_credential_refresh_finished` | `debug` at refresh entry, then `info`, `warn`, or `error` at its terminal result | preceding fields plus `reason` and `rotation_source` |
+| `connector_provider_retry_started` | `debug`; a rejected call is about to be repeated once with refreshed credentials | preceding fields plus `reason = credential_refreshed` |
+
+Production's normal `LOG_LEVEL=info` retains terminal outcomes while omitting
+the high-volume start rows. Temporarily setting a region to `debug` adds both
+starts, letting an operator distinguish “never entered” from “entered and did
+not reach a terminal log.” Query one operation first by `connection_id`, then
+`connector_type` and `operation`; ID-shaped tool arguments appear with a
+`provider_` prefix (for example `provider_channel_id` or `provider_issue_id`).
+Use provider request rows to determine whether
+the adapter called out and what HTTP class returned. Provider URLs are reduced
+to their origin. Tool arguments, results, webhook payloads, provider error
+messages, OAuth state, health text, headers, credentials, and response bodies
+are never fields in these events.
 
 ### Root-run analytics
 
