@@ -102,6 +102,9 @@ export const WORKSPACE_LOCAL_TABLES = [
   "memory_table_rows_fts",
   "memory_table_cells",
   "memory_table_mutations",
+  // Kept in the router only so an accidental generic statement reaches
+  // WorkspaceDO's explicit typed-RPC-only refusal instead of falling through
+  // to regional D1 as a misleading `no such table` failure.
   "workstream_notification_intents",
   "workspace_workstream_pins",
   "workstream_email_receipts",

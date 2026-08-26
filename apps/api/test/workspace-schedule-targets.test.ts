@@ -14,6 +14,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import {
+  reapSettledWorkspaceNotificationIntents,
+  workspaceNotificationIntentMaintenanceTarget,
+} from "../src/durable-objects/workspace-notification-intent-storage";
+import {
   runWorkspaceScheduleTarget,
   terminalReconcileOutcome,
   workspaceScheduleTargets,
@@ -21,6 +25,7 @@ import {
   type WorkspaceScheduleTarget,
 } from "../src/services/workspace-schedule-execution";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestSqlStorage } from "./helpers/sql-storage";
 import { sqliteD1 } from "./helpers/sqlite-d1";
 
 const WORKSPACE_ID = "00000000-0000-7000-8000-0000000000a1";
@@ -56,6 +61,10 @@ function scheduleContext(database: DatabaseSync): WorkspaceScheduleContext {
     AVALON_REGION: "global",
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({ delete: async () => undefined }),
   });
+  const storage = createCloudflareTestBinding<DurableObjectStorage>({
+    transactionSync: (body: () => unknown) => body(),
+    sql: createTestSqlStorage(database),
+  });
   return {
     env,
     workspaceEnv: env,
@@ -63,6 +72,12 @@ function scheduleContext(database: DatabaseSync): WorkspaceScheduleContext {
     directory: {
       workstreamScheduleTargets: async () => ({ items: [] }),
       plannedAutomationWorkstream: async () => null,
+    },
+    notificationIntents: {
+      notificationIntentMaintenanceTarget: async (input) =>
+        workspaceNotificationIntentMaintenanceTarget(storage, input.workspaceId),
+      reapSettledWorkstreamNotificationIntents: async (input) =>
+        reapSettledWorkspaceNotificationIntents(storage, input, Date.now()),
     },
   };
 }

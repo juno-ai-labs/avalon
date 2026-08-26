@@ -1731,6 +1731,10 @@ describe("Slack ingress maintenance reaps link challenges", () => {
         workstreamScheduleTargets: async () => ({ items: [] }),
         plannedAutomationWorkstream: async () => null,
       },
+      notificationIntents: {
+        notificationIntentMaintenanceTarget: async () => ({ dueAt: null }),
+        reapSettledWorkstreamNotificationIntents: async () => ({ reapedIntentIds: [] }),
+      },
     };
     const slackIngress = (targets: WorkspaceScheduleTarget[]) =>
       targets.filter((target) => target.kind === "maintenance" && target.id === "slack_ingress");
