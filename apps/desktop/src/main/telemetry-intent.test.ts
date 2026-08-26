@@ -103,6 +103,33 @@ describe('parseTelemetryProductIntent', () => {
     });
   });
 
+  it('admits a correlated renderer timing projection and rejects console-only fields', () => {
+    const intent = {
+      kind: 'renderer_perf_flow',
+      operationId: '018f22f2-4c22-7abc-8def-0123456789ab',
+      flow: 'workstream_open',
+      workstreamId: '00000000-0000-4000-8000-000000000201',
+      outcome: 'snapshot',
+      durationMs: 814.2,
+      blockedMs: 10.1,
+      longTaskCount: 'one',
+      socketTicketMs: 212.4,
+      dialMs: 2.1,
+      handshakeMs: 480.2,
+      firstFrameMs: 119.5,
+      attempts: 'zero',
+      sinceEffectMs: 8.4,
+      ticketId: '018f22f2-4c22-7abc-8def-0123456789ac',
+      clientMessageId: '00000000-0000-4000-8000-000000000202',
+      messageCount: 'six_to_twenty',
+    };
+    expect(parseTelemetryProductIntent(intent)).toEqual(intent);
+    expect(() => parseTelemetryProductIntent({ ...intent, afterSequence: 42 }))
+      .toThrow('Invalid telemetry intent');
+    expect(() => parseTelemetryProductIntent({ ...intent, operationId: 'not-v7' }))
+      .toThrow('Invalid telemetry intent');
+  });
+
   it('refuses a socket transition the registry would not accept', () => {
     // A property the contract does not declare. The registry parse is strict,
     // so this is refused rather than quietly stripped and sent.

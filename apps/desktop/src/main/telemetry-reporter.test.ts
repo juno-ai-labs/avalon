@@ -15,6 +15,7 @@ const identity = {
 
 async function harness(input: {
   enabled?: boolean;
+  deliveryEnabled?: () => boolean;
   route?: 'global' | 'eu';
   auth?: { apiBaseUrl: string; accessToken: string; workspace: boolean; route: 'global' | 'eu' } | null;
   anonymous?: { capability: string; journeyId: string; expiresAt: string } | null;
@@ -31,6 +32,7 @@ async function harness(input: {
     identity: () => identity,
     route: () => input.route ?? 'global',
     productAnalyticsEnabled: () => input.enabled ?? true,
+    productAnalyticsDeliveryEnabled: input.deliveryEnabled,
     authenticatedSession: async () => input.auth ?? null,
     anonymousSession: () => input.anonymous ?? null,
     refreshAnonymousSession: input.refreshAnonymous,
@@ -417,6 +419,53 @@ describe('TelemetryReporter', () => {
     });
   });
 
+  it('spools correlated renderer phase timings only while diagnostics are enabled', async () => {
+    const auth = {
+      apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global' as const,
+    };
+    const operationId = '018f0000-0000-7000-8000-000000000020';
+    const properties = {
+      kind: 'renderer_perf_flow' as const,
+      flow: 'workstream_open' as const,
+      workstreamId: '00000000-0000-4000-8000-000000000105',
+      outcome: 'snapshot' as const,
+      durationMs: 852.4,
+      blockedMs: 14.2,
+      longTaskCount: 'one' as const,
+      socketTicketMs: 220.1,
+      dialMs: 3.2,
+      handshakeMs: 487.6,
+      firstFrameMs: 141.5,
+      attempts: 'zero' as const,
+      sinceEffectMs: 12.7,
+      ticketId: '018f22f2-4c22-7abc-8def-012345678901',
+      messageCount: 'six_to_twenty' as const,
+    };
+    const enabled = await harness({ auth });
+    await enabled.reporter.semanticProductIntent(properties, undefined, operationId);
+    const [row] = await enabled.spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(row?.event).toMatchObject({
+      name: 'renderer_perf_flow',
+      source: 'desktop-renderer',
+      category: 'diagnostic',
+      identityScope: 'workspace-user',
+      context: { operationId },
+      properties: {
+        flow: 'workstream_open',
+        outcome: 'snapshot',
+        socketTicketMs: 220.1,
+        handshakeMs: 487.6,
+      },
+    });
+
+    const disabled = await harness({ auth, enabled: false });
+    await disabled.reporter.semanticProductIntent(properties, undefined, operationId);
+    expect(await disabled.spool.ready(new Date('2026-08-12T20:00:01.000Z'))).toEqual([]);
+    expect(disabled.reporter.inspector()).toMatchObject([
+      { name: 'renderer_perf_flow', validation: 'suppressed' },
+    ]);
+  });
+
   it('spools correlated work-stream paint and socket-start measurements without content', async () => {
     const { reporter, spool } = await harness({
       auth: {
@@ -566,6 +615,30 @@ describe('TelemetryReporter', () => {
     const body = JSON.parse(String(request?.body));
     expect(body.installationId).toBe(identity.installationId);
     expect(body.events[0]).toMatchObject({ name: 'screen_viewed', identityScope: 'workspace-user' });
+    expect(await spool.ready(new Date('2026-08-12T20:01:00.000Z'))).toEqual([]);
+  });
+
+  it('spools product events before canonical verification and delivers them only after it succeeds', async () => {
+    let verified = false;
+    const { reporter, spool, fetch } = await harness({
+      enabled: true,
+      deliveryEnabled: () => verified,
+      auth: { apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global' },
+    });
+    fetch.mockResolvedValue(new Response(JSON.stringify({
+      results: [{ result: 'accepted', eventId: '018f0000-0000-7000-8000-000000000010' }],
+    }), { status: 202, headers: { 'content-type': 'application/json' } }));
+
+    await reporter.screenViewed('workspace_home');
+    await reporter.flush();
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await spool.ready(new Date('2026-08-12T20:01:00.000Z'))).toHaveLength(1);
+
+    verified = true;
+    await reporter.flush();
+
+    expect(fetch).toHaveBeenCalledOnce();
     expect(await spool.ready(new Date('2026-08-12T20:01:00.000Z'))).toEqual([]);
   });
 

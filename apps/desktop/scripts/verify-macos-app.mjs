@@ -252,6 +252,13 @@ verifyNestedComponent(
   'Rally Core Audio tap',
   { expectEntitlements: false },
 );
+const unifiedLogPath = join(resourcesDirectory, 'native/unified-log.node');
+verifyNestedComponent(
+  unifiedLogPath,
+  unifiedLogPath,
+  'Rally unified-log bridge',
+  { expectEntitlements: false },
+);
 
 if (mode === 'release') {
   const updateConfigPath = join(appPath, 'Contents/Resources/app-update.yml');

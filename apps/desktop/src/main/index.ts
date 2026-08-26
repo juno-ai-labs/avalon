@@ -165,6 +165,11 @@ import {
   type NativeSystemAudioBinding,
 } from './native-system-audio';
 import {
+  NativePerformanceLog,
+  nativeUnifiedLogAddonPath,
+  type NativeUnifiedLogBinding,
+} from './native-performance-log';
+import {
   migrateLegacyUserDataStoredSessionFile,
   migrateLegacyStoredSessionFile,
   migrateSupersededSessionDirectory,
@@ -241,10 +246,6 @@ const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
  * canonical regional D1 read. Keep the verification bounded without treating
  * a normal cold request as an outage. */
 const PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS = 15_000;
-/** Preference verification may outlive the first window. Collection remains
- * fail-closed until it finishes, while the product never presents a long blank
- * launch because a regional request is merely slow. */
-const PRODUCT_ANALYTICS_LAUNCH_BARRIER_MS = 2_000;
 /** Well inside the flag's poll interval, so a lost poll costs one round rather
  * than blocking the next. */
 const DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS = 15_000;
@@ -303,6 +304,12 @@ async function reportTelemetryProductIntent(
   windowContext?: TelemetryWindowContext,
 ): Promise<void> {
   const intent = parseTelemetryProductIntent(value);
+  if (process.platform === 'darwin' && intent.kind === 'renderer_perf_flow') {
+    // Local persistence is independent of account telemetry consent: it never
+    // leaves the Mac, and remains available in Console.app even when the
+    // regional reporter suppresses or cannot upload the event.
+    nativePerformanceLog.write(intent);
+  }
   const operation: NewTelemetryBreadcrumb | null = intent.kind === 'workspace_create_requested'
     ? { kind: 'operation', operation: 'workspace_create', state: 'requested' }
     : intent.kind === 'workspace_activation_requested'
@@ -349,7 +356,8 @@ async function reportTelemetryProductIntent(
     case 'workstream_send_ready':
     case 'workstream_open_started':
     case 'workstream_open_outcome':
-    case 'workstream_socket_started': {
+    case 'workstream_socket_started':
+    case 'renderer_perf_flow': {
       const { operationId, ...semanticIntent } = intent;
       await telemetryReporter.semanticProductIntent(semanticIntent, windowContext, operationId);
       return;
@@ -483,6 +491,19 @@ const nativeSystemAudioController = new NativeSystemAudioController(() => {
   });
   return requireNativeModule(addonPath) as NativeSystemAudioBinding;
 });
+const nativePerformanceLog = new NativePerformanceLog(
+  () => {
+    if (process.platform !== 'darwin') throw new Error('macOS Unified Logging is unavailable');
+    return requireNativeModule(nativeUnifiedLogAddonPath({
+      currentDirectory,
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+    })) as NativeUnifiedLogBinding;
+  },
+  () => app.getVersion(),
+  () => new Date(),
+  (error) => logWarn('rally', 'could not write renderer performance data to macOS Unified Logging', error),
+);
 
 function telemetryWindowContext(contents: WebContents): TelemetryWindowContext | undefined {
   const window = BrowserWindow.fromWebContents(contents);
@@ -1578,7 +1599,8 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
       return telemetryIdentity;
     },
     route: () => telemetryRoute.route,
-    productAnalyticsEnabled: () => productAnalyticsSettingsController.state().effectiveEnabled,
+    productAnalyticsEnabled: () => productAnalyticsSettingsController.admissionEnabled(),
+    productAnalyticsDeliveryEnabled: () => productAnalyticsSettingsController.state().effectiveEnabled,
     crashReportingEligible: () => telemetryContinuouslyEligible,
     authenticatedSession: telemetryAuthenticatedSession,
     anonymousSession: () => telemetryRoute.anonymous,
@@ -3415,20 +3437,12 @@ if (!singleInstanceLock) {
     // renderer window can issue concurrent session requests.
     const launchAuth = await loadStoredAuth();
     try {
+      // The durable device choice admits early events to the local spool. A
+      // cold regional preference read is reconciliation, not a launch
+      // dependency: waiting here both spent the opening budget and suppressed
+      // every nonessential event produced before the request settled. Delivery
+      // remains closed until the canonical read below succeeds.
       await productAnalyticsSettingsController.initialize(launchAuth !== null);
-      if (launchAuth) {
-        // Catch on the underlying promise before the launch deadline can win:
-        // verification keeps running in the background and must never become
-        // an unhandled rejection after the first window is allowed through.
-        const refresh = productAnalyticsSettingsController.refresh().catch((error: unknown) => {
-          logWarn('rally', 'could not synchronize the Product analytics preference', error);
-        });
-        await withDeadline(
-          refresh,
-          PRODUCT_ANALYTICS_LAUNCH_BARRIER_MS,
-          'Product analytics preference verification continues after launch',
-        ).catch(() => undefined);
-      }
     } catch (error) {
       logWarn('rally', 'could not synchronize the Product analytics preference', error);
     }
@@ -3438,6 +3452,17 @@ if (!singleInstanceLock) {
       // Telemetry is observational. A disk, Crashpad, or route-gate failure
       // cannot prevent the product from opening.
       logWarn('rally', 'could not initialize telemetry', error);
+    }
+    if (launchAuth) {
+      // Never awaited by launch or by the renderer's first telemetry intents.
+      // A canonical disable purges the held nonessential rows; a failed read
+      // leaves them durable and keeps delivery closed for a future retry.
+      void productAnalyticsSettingsController.refresh()
+        .then(() => telemetryReporter?.applicationSettingsState(applicationSettingsTelemetryState()))
+        .then(() => { flushTelemetryAndRetryLink(); })
+        .catch((error: unknown) => {
+          logWarn('rally', 'could not synchronize the Product analytics preference', error);
+        });
     }
     // Launching with a credential already on disk broadcasts no session change,
     // so the first poll is asked for here. Developer stays closed until it

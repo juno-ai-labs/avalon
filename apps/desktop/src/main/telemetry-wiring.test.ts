@@ -31,14 +31,14 @@ describe('Electron telemetry wiring', () => {
     expect(productAnalyticsController).toContain('new TelemetryBreadcrumbRing');
   });
 
-  it('gives regional Product analytics preference verification a cold-network deadline', () => {
+  it('reconciles Product analytics in the background without suppressing cold-launch events', () => {
     const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
     const request = source.match(
       /async function requestProductAnalyticsPreference\(\)[\s\S]*?\n\}\n\nasync function syncProductAnalyticsPreference/u,
     )?.[0];
 
     expect(source).toContain('const PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS = 15_000;');
-    expect(source).toContain('const PRODUCT_ANALYTICS_LAUNCH_BARRIER_MS = 2_000;');
+    expect(source).not.toContain('PRODUCT_ANALYTICS_LAUNCH_BARRIER_MS');
     expect(request).toBeDefined();
     expect(request).toContain(
       'signal: AbortSignal.timeout(PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS)',
@@ -49,12 +49,15 @@ describe('Electron telemetry wiring', () => {
       /const launchAuth = await loadStoredAuth\(\);[\s\S]*?await initializeTelemetry\(launchAuth\);/u,
     )?.[0];
     expect(launch).toBeDefined();
-    expect(launch).not.toContain(
-      'if (launchAuth) await productAnalyticsSettingsController.refresh();',
+    expect(launch).toContain('productAnalyticsSettingsController.initialize(launchAuth !== null);');
+    expect(launch).not.toContain('productAnalyticsSettingsController.refresh()');
+    expect(source).toContain('void productAnalyticsSettingsController.refresh()');
+    expect(source).toContain(
+      'productAnalyticsEnabled: () => productAnalyticsSettingsController.admissionEnabled()',
     );
-    expect(launch).toContain('productAnalyticsSettingsController.refresh().catch');
-    expect(launch).toContain('PRODUCT_ANALYTICS_LAUNCH_BARRIER_MS');
-    expect(launch).toContain('await withDeadline(');
+    expect(source).toContain(
+      'productAnalyticsDeliveryEnabled: () => productAnalyticsSettingsController.state().effectiveEnabled',
+    );
   });
 
   it('observes real Electron application focus transitions', () => {

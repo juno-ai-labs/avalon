@@ -350,7 +350,7 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       },
       (drain) => this.state.waitUntil(drain),
     );
-    this.initialized = state.blockConcurrencyWhile(async () => {
+    this.initialized = this.initializeDurableObject(async () => {
       await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS,

@@ -127,6 +127,19 @@ export function parseTelemetryProductIntent(value: unknown): DesktopTelemetryPro
       };
       break;
     }
+    case 'renderer_perf_flow': {
+      if (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId)) break;
+      const properties = { ...candidate };
+      delete properties['kind'];
+      delete properties['operationId'];
+      const parsed = TELEMETRY_EVENTS.renderer_perf_flow.properties.safeParse(properties);
+      if (parsed.success) return {
+        kind: 'renderer_perf_flow',
+        operationId,
+        ...parsed.data,
+      };
+      break;
+    }
     case 'command_shortcuts_revealed':
       if (exact('kind', 'availableCount')
         && typeof candidate['availableCount'] === 'number'
