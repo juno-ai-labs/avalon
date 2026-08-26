@@ -125,6 +125,7 @@ const screen = z.enum([
 ]);
 const applicationIcon = z.enum(TELEMETRY_APPLICATION_ICON_IDS);
 const resourceId = z.string().uuid();
+const uuidV7Id = z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7");
 const visibility = z.enum(["private", "public"]);
 const resourceCount = z.number().int().min(0).max(100);
 const connectorType = z.enum(TELEMETRY_CONNECTOR_TYPES);
@@ -334,6 +335,34 @@ export const TELEMETRY_EVENTS = {
     properties: realtimeSocketProperties,
     propertyClassifications: {
       socket: "operational", state: "operational", cause: "operational", attempts: "operational",
+    },
+    priority: "normal",
+    regionalRetention: "90-days",
+  }),
+  workstream_socket_started: event({
+    ...common,
+    name: "workstream_socket_started",
+    definition: "The desktop began one WorkstreamDO control or SubstreamAgent feed connection attempt, including its ticket request.",
+    productQuestion: "Why are work-stream sockets started, which kind starts, and how much connection work comes from initial admission versus reconnects?",
+    sources: ["desktop-renderer"],
+    authoritativeSource: "desktop-renderer",
+    category: "product",
+    identityScopes: ["workspace-user"],
+    properties: z.object({
+      workstreamId: resourceId,
+      socketLeaseId: uuidV7Id,
+      openAttemptId: uuidV7Id.optional(),
+      socket: z.enum(["workstream_control", "substream_feed"]),
+      reason: z.enum(["hover_warmup", "active_workstream", "background_workstream", "retained_workstream", "reconnect"]),
+      attempts: countBucket,
+    }).strict(),
+    propertyClassifications: {
+      workstreamId: "product",
+      socketLeaseId: "operational",
+      openAttemptId: "operational",
+      socket: "operational",
+      reason: "operational",
+      attempts: "operational",
     },
     priority: "normal",
     regionalRetention: "90-days",
@@ -658,6 +687,98 @@ export const TELEMETRY_EVENTS = {
     }).strict(),
     propertyClassifications: {
       workstreamId: "product", visibility: "product", navigation: "product", origin: "product", pinned: "product",
+    },
+    priority: "normal",
+    regionalRetention: "13-months",
+  }),
+  workstream_feed_visible: event({
+    ...common,
+    name: "workstream_feed_visible",
+    definition: "A work stream opened from the desktop sidebar painted its initial message feed.",
+    productQuestion: "How long does a sidebar click take to produce a painted message feed, and is the delay before data readiness or browser paint?",
+    sources: ["desktop-renderer"],
+    authoritativeSource: "desktop-renderer",
+    category: "product",
+    identityScopes: ["workspace-user"],
+    properties: z.object({
+      workstreamId: resourceId,
+      socketLeaseId: uuidV7Id.optional(),
+      durationMs: z.number().int().nonnegative(),
+      dataReadyDurationMs: z.number().int().nonnegative(),
+      sidebarSection: z.enum(["pinned", "recent"]),
+      cacheState: z.enum(["feed_cached", "detail_cached", "cold"]),
+      socketPoolState: z.enum(["retained_pair", "control_warmup", "cold"]),
+      feedSource: z.enum(["feed_cache", "boot_payload", "legacy_page"]),
+      messageCount: countBucket,
+    }).strict().superRefine((properties, context) => {
+      if (properties.dataReadyDurationMs > properties.durationMs) {
+        context.addIssue({ code: "custom", message: "data-ready duration cannot exceed painted duration" });
+      }
+    }),
+    propertyClassifications: {
+      workstreamId: "product",
+      socketLeaseId: "operational",
+      durationMs: "operational",
+      dataReadyDurationMs: "operational",
+      sidebarSection: "product",
+      cacheState: "operational",
+      socketPoolState: "operational",
+      feedSource: "operational",
+      messageCount: "product",
+    },
+    priority: "normal",
+    regionalRetention: "13-months",
+  }),
+  workstream_open_started: event({
+    ...common,
+    name: "workstream_open_started",
+    definition: "The desktop accepted a primary sidebar click that began one work-stream opening attempt.",
+    productQuestion: "How many sidebar opening attempts begin, including attempts later superseded or failed?",
+    sources: ["desktop-renderer"],
+    authoritativeSource: "desktop-renderer",
+    category: "product",
+    identityScopes: ["workspace-user"],
+    properties: z.object({
+      workstreamId: resourceId,
+      sidebarSection: z.enum(["pinned", "recent"]),
+      socketPoolState: z.enum(["retained_pair", "control_warmup", "cold"]),
+      socketLeaseId: uuidV7Id.optional(),
+    }).strict(),
+    propertyClassifications: {
+      workstreamId: "product",
+      sidebarSection: "product",
+      socketPoolState: "operational",
+      socketLeaseId: "operational",
+    },
+    priority: "normal",
+    regionalRetention: "13-months",
+  }),
+  workstream_open_outcome: event({
+    ...common,
+    name: "workstream_open_outcome",
+    definition: "One sidebar work-stream opening attempt reached a visible feed, was superseded by another sidebar click, was abandoned by other navigation, or failed to load.",
+    productQuestion: "What fraction of sidebar opening attempts become visible, fail, are superseded by another work stream, or are abandoned for another surface?",
+    sources: ["desktop-renderer"],
+    authoritativeSource: "desktop-renderer",
+    category: "product",
+    identityScopes: ["workspace-user"],
+    properties: z.object({
+      workstreamId: resourceId,
+      outcome: z.enum(["visible", "superseded", "abandoned", "load_failed"]),
+      durationMs: z.number().int().nonnegative(),
+      socketLeaseId: uuidV7Id.optional(),
+      supersedingWorkstreamId: resourceId.optional(),
+    }).strict().superRefine((properties, context) => {
+      if ((properties.outcome === "superseded") !== (properties.supersedingWorkstreamId !== undefined)) {
+        context.addIssue({ code: "custom", message: "superseding work stream must appear only for a superseded opening" });
+      }
+    }),
+    propertyClassifications: {
+      workstreamId: "product",
+      outcome: "operational",
+      durationMs: "operational",
+      socketLeaseId: "operational",
+      supersedingWorkstreamId: "product",
     },
     priority: "normal",
     regionalRetention: "13-months",

@@ -699,21 +699,30 @@ describe('Workspace settings', () => {
     const notionCard = (await screen.findByText('Notion')).closest('article');
     expect(notionCard).not.toBeNull();
     expect(screen.getByText(/workspace automations use only the connections explicitly bound to them/iu)).toBeVisible();
-    const personalButton = within(notionCard!).getByRole('button', { name: 'Connect for me' });
+    const personalButton = await waitFor(() => {
+      const button = within(notionCard!).getByRole('button', { name: 'Connect for me' });
+      // A disabled ConnectorButton exposes its tooltip wrapper as the named
+      // role=button while hiding the native button. `toBeEnabled` accepts that
+      // span, so require the actual clickable element before firing the event.
+      expect(button.tagName).toBe('BUTTON');
+      return button;
+    });
     // Enabled before clicked, as the workspace button below already is. The
     // card renders as soon as the provider name does, while this button stays
     // disabled until the connector catalog resolves — and a click on a disabled
     // button is a silent no-op, so without this the test fails under load with
     // "Number of calls: 0" rather than with anything about Notion.
-    await waitFor(() => expect(personalButton).toBeEnabled());
     fireEvent.click(personalButton);
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'notion',
       'you',
       ['notion.personal.mcp'],
     ));
-    const workspaceButton = within(notionCard!).getByRole('button', { name: 'Connect workspace' });
-    await waitFor(() => expect(workspaceButton).toBeEnabled());
+    const workspaceButton = await waitFor(() => {
+      const button = within(notionCard!).getByRole('button', { name: 'Connect workspace' });
+      expect(button.tagName).toBe('BUTTON');
+      return button;
+    });
     fireEvent.click(workspaceButton);
 
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
@@ -1972,6 +1981,10 @@ describe('Closing the settings window with Escape', () => {
     api.getWorkspaceInvitations.mockResolvedValue([]);
     api.getConnections.mockResolvedValue([]);
     api.getAvailableConnectorTypes.mockResolvedValue([]);
+    api.getTerminalWorkspaceSettings.mockResolvedValue({
+      availability: 'supported', mode: 'trusted_only', revision: 1, verificationState: 'verified',
+      customDomains: [], remainingCustomSlots: 7, failureCode: null,
+    });
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({}));
     api.getDigestSchedule.mockResolvedValue({
       id: '00000000-0000-4000-8000-000000000001',
@@ -1986,6 +1999,7 @@ describe('Closing the settings window with Escape', () => {
       lastDeliveredAt: null,
     });
     getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
+    getTelemetryInspector.mockResolvedValue([]);
   });
 
   it('closes the settings window', () => {

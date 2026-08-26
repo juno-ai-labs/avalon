@@ -24,7 +24,7 @@ terminates in Rally's EU-isolated Cloudflare resources.
 | `apps/desktop/src/main/index.ts` | Startup ordering, Crashpad start, process observers, IPC sender validation, upload scheduling, and product integration points. |
 | `apps/desktop/src/main/telemetry-intent.ts` | The renderer-intent allowlist and validator every `telemetry:product-intent` call passes through, kept out of the entry point so it can be tested by running it. |
 | `apps/desktop/src/renderer/lib/telemetry.ts` | Narrow renderer facade for registered screen, product-intent, and error-candidate calls. |
-| `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, WorkstreamDO-control, SubstreamAgent-feed, and per-block HyperSight hooks. |
+| `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, WorkstreamDO-control, SubstreamAgent-feed, and per-block HyperSight hooks; it also reports every WorkstreamDO-control and SubstreamAgent-feed connection start. |
 | `apps/api/src/routes/telemetry.ts` | Bounded bootstrap, anonymous/authenticated event, identity-link, preference, and crash-ingest routes. |
 | `apps/api/src/routes/telemetry-operations.ts`, `apps/api/src/telemetry/operator-auth.ts` | Bearer-authenticated, role-restricted regional status, replay, raw-crash access, and EU analysis HTTP surface. |
 | `apps/api/src/telemetry/` | Regional collector, identity/preference logic, PostHog adapter, EU sink, replay, crash processing, operations, and lifecycle jobs. |
@@ -135,6 +135,34 @@ create/open/reopen plus transcription start/pause/resume/complete with their
 actual audio-source class. These events may carry opaque work-stream, message,
 note, automation, and run UUIDs for pathing and joins, but never titles, bodies,
 clipboard values, prompts, transcripts, or provider content.
+
+A primary sidebar work-stream click emits `workstream_open_started` with one
+opening-attempt operation ID. Its terminal `workstream_open_outcome` is
+`visible`, `superseded`, `abandoned`, or `load_failed`; a rapid A to B to A sequence therefore
+has three attempt IDs and two explicit superseded outcomes instead of silently
+dropping the abandoned work. A duplicate click on the same still-pending row
+retains its first attempt ID and first-click dimensions, and the already-active
+row starts nothing. Leaving for another surface or ending the owning session
+emits `abandoned`, so returning to the same row starts a fresh clock rather than
+inheriting time spent elsewhere. The
+visible outcome accompanies `workstream_feed_visible`, which records exact
+click-to-data-ready and click-to-first-painted-feed milliseconds, the
+pinned/recent section, the detail/transcript cache state, the pooled-socket
+state at click, the transcript-cache, boot-payload, or rollout-fallback source,
+and only a count bucket for messages. Each detail request keeps a unique
+`x-request-id`, including React Query retries, and carries the click ID separately
+as `x-rally-operation-id`; the Worker's `workstream.detail.read` span records both.
+
+Every mounted pooled socket owner has a UUIDv7 socket-lease ID shared by its
+control and feed connections for the owner's full retained lifetime.
+`workstream_socket_started` records that lease plus a distinct socket-attempt
+operation ID before every ticket request; the latter remains the ticket request
+ID. A socket attempt that begins while an opening is pending also records that
+opening-attempt ID. A hover-warmed or retained socket may predate the click, so
+the opening start/outcome and feed event record the serving lease ID instead of
+falsely claiming the click started it. Global lakehouse/PostHog rows can thus
+join one click to its requests, socket attempts, and pre-existing pooled lease
+without putting a route or title in an event.
 
 Work-stream collaboration records authoritative participant changes, resource
 attach/detach/watch/preview/open-source outcomes, stop/retry actions, unread
@@ -616,6 +644,106 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-25 — Route abandonment and retries cannot corrupt opening latency
+
+**What changed:** A click attempt now terminates as `abandoned` when navigation
+leaves its work stream for another surface or its owning session ends. Painted
+feed reporting reschedules after an effect cleanup without re-latching data
+readiness, which preserves the terminal event under React StrictMode and any
+production dependency change inside the two-frame window. Detail retries now
+mint distinct request IDs while carrying the click ID as the existing Rally
+operation header. The event registry, rather than desktop IPC alone, enforces
+that data-ready time cannot exceed painted time.
+
+**Why:** An interrupted load could stay in the renderer singleton and make a
+later 60 ms return look minutes long. Separately, cancelling the first scheduled
+paint consumed a one-shot latch and left no second schedule, which lost both the
+success event and terminal outcome. Reusing the click ID as every retry's
+request ID also collapsed multiple HTTP attempts in the exact slow tail this
+instrumentation needs to explain.
+
+**Considered and rejected:** Treating non-sidebar navigation as `superseded`
+would claim another work stream caused it; treating it as `load_failed` would
+claim a service failure. WorkstreamScreen unmount cleanup was also rejected
+because StrictMode deliberately simulates that cleanup without the reader
+leaving. Route and session observation represent the actual abandonment. A
+single repeated request ID was rejected because the tracing contract defines it
+per call; the operation header already carries the longer click lifetime.
+
+**Consequences:** Every accepted sidebar click has one terminal outcome, retries
+remain individually diagnosable, and queries must treat `abandoned` separately
+from rapid work-stream switching and load failure. UUID, consent, content, and
+Global-versus-EU boundaries are unchanged.
+
+### 2026-08-25 — Opening attempts and pooled socket leases have explicit lineage
+
+**What changed:** Added `workstream_open_started` and terminal
+`workstream_open_outcome` events under one click-scoped operation ID. Rapid
+switches emit `superseded`; query failures emit `load_failed`; painted feeds emit
+`visible`. Each retained socket owner now has one socket-lease ID shared by its
+control and feed starts. Socket-start events retain their per-attempt request ID
+and additionally carry the lease plus the pending opening ID when one exists;
+opening events record the lease that served them.
+
+**Why:** Work-stream and launch IDs were too broad, while the earlier operation
+ID survived only on successful feed paint and the detail request. Replacing a
+pending A measurement with B prevented misattribution but erased A, and the
+separate socket request IDs could not connect a click to socket work. Pooled
+sockets made parent-only correlation incomplete because a hover-warmed or
+retained connection can legitimately begin before the click that consumes it.
+
+**Considered and rejected:** Treating rapid switches as duplicate delivery
+would confuse user cancellation with ingestion retry; `eventId` already handles
+the latter. Reusing one operation ID for socket attempts and the click would
+collapse distinct ticket requests. Adding only the opening ID to socket starts
+would still strand pre-click warmups. The lease-plus-attempt model preserves
+both the pooled lifetime and each actual request.
+
+**Consequences:** One opening attempt has exactly one started event and at most
+one terminal outcome; the feed metric remains success-only while the outcome
+event supplies its denominator. Socket volume still counts every actual start.
+The identifiers are opaque UUIDv7 values governed as operational Product
+analytics, with the existing opt-out and Global-versus-EU routing unchanged.
+
+### 2026-08-25 — Sidebar-to-painted-feed latency and every work-stream socket start are measurable
+
+**What changed:** Added `workstream_feed_visible`, emitted after a sidebar click
+has committed its initial transcript and crossed one browser paint, with exact
+total and data-ready milliseconds plus cache, pool, feed-source, sidebar, and
+message-count dimensions. The click-scoped operation ID is reused as the detail
+request ID. Added `workstream_socket_started` at the two work-stream socket
+loops before every ticket request; it records control/feed kind, initial or
+reconnect reason, retry bucket, and a matching operation/request ID.
+
+**Why:** `workstream_opened` proved only that detail eventually loaded, local
+perf lines died with the renderer, and socket-connected events began after the
+initial feed gate. None could calculate average or percentile click-to-feed
+latency, split data wait from paint delay, distinguish a cold open from a
+hover-warmed control socket or retained pair, or count starts whose ticket or
+handshake never succeeded. The user explicitly required this production
+measurement and required pooled sockets and every start reason to be visible.
+
+**Considered and rejected:** Duration buckets cannot produce averages or P50,
+P75, P90, and P99. Joining `workstream_opened` to clicks by timestamp is
+ambiguous during rapid navigation. Treating a warmed control socket as a warm
+feed is false: hover opens no SubstreamAgent connection or presence. Reporting
+only successful socket connections omits ticket and handshake failures, while
+instrumenting each pool caller would miss reconnects and future admission paths.
+Direct renderer-to-PostHog capture was rejected because it bypasses consent,
+regional routing, validation, and the durable spool.
+
+**Consequences:** These remain Product analytics: opted-out accounts emit
+neither; Global events can reach PostHog and the Global lakehouse, while EU
+events remain on the regional internal path. Exact milliseconds are an explicit
+exception to the usual coarse product-duration vocabulary because the approved
+question is a percentile distribution; the schemas stay closed and retain no
+content. Paint latency covers successful sidebar opens only; the newer
+opening-outcome contract above supplies the attempt denominator. Socket-start volume counts
+attempts, not unique sockets, and reconnect storms are intentionally visible.
+`feed_cache` is authoritative whenever the transcript query already held data;
+such an open correctly has no matching detail request even though its
+interaction operation ID remains present.
 
 ### 2026-08-25 — The envelope schema identifier is ai.rallywith.telemetry.event
 

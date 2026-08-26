@@ -9,6 +9,7 @@ import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 import type * as TelemetryModule from './telemetry';
+import { cancelWorkstreamFeedOpen, markWorkstreamFeedOpenStarted } from './telemetry';
 
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
 vi.mock('./telemetry', async (importOriginal) => ({
@@ -20,6 +21,12 @@ function socketTelemetry(): unknown[] {
   return reportTelemetryProductIntent.mock.calls
     .map(([intent]) => intent as { kind: string })
     .filter((intent) => intent.kind === 'realtime_socket_state');
+}
+
+function socketStartedTelemetry(): Array<Record<string, unknown>> {
+  return reportTelemetryProductIntent.mock.calls
+    .map(([intent]) => intent as Record<string, unknown>)
+    .filter((intent) => intent['kind'] === 'workstream_socket_started');
 }
 
 class FakeWebSocket extends EventTarget {
@@ -214,13 +221,20 @@ describe('useWorkstreamControlSocket', () => {
     vi.useFakeTimers();
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
-    const getWorkstreamControlSocketTicket = vi.fn(async () => ({
-      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
-      ticket: 'control-ticket',
-      protocols: socketTicketProtocols('control-ticket'),
-    }));
+    const getWorkstreamControlSocketTicket = vi.fn(async (id: string, requestId?: string) => {
+      void id;
+      void requestId;
+      return {
+        url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
+        ticket: 'control-ticket',
+        protocols: socketTicketProtocols('control-ticket'),
+      };
+    });
+    const openAttemptId = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 0);
     renderHook(
-      () => useWorkstreamControlSocket({ getWorkstreamControlSocketTicket }, workstreamId, true),
+      () => useWorkstreamControlSocket(
+        { getWorkstreamControlSocketTicket }, workstreamId, true, 'hover_warmup',
+      ),
       { wrapper: wrapper(queryClient) },
     );
     await flushPromises();
@@ -232,9 +246,30 @@ describe('useWorkstreamControlSocket', () => {
     });
     await flushPromises();
     expect(getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(2);
+    const started = socketStartedTelemetry();
+    expect(started).toHaveLength(2);
+    expect(new Set(started.map((intent) => intent['socketLeaseId']))).toHaveLength(1);
+    expect(started[0]?.['socketLeaseId']).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(started.map(({ operationId, ...intent }) => {
+      expect(operationId).toMatch(/^[0-9a-f-]{36}$/u);
+      delete intent['socketLeaseId'];
+      return intent;
+    })).toEqual([
+      {
+        kind: 'workstream_socket_started', workstreamId, socket: 'workstream_control',
+        openAttemptId, reason: 'hover_warmup', attempts: 'zero',
+      },
+      {
+        kind: 'workstream_socket_started', workstreamId, socket: 'workstream_control',
+        openAttemptId, reason: 'reconnect', attempts: 'one',
+      },
+    ]);
+    expect(getWorkstreamControlSocketTicket.mock.calls.map((call) => call[1]))
+      .toEqual(started.map((intent) => intent['operationId']));
     const second = FakeWebSocket.instances[1]!;
     act(() => second.open());
     expect(second.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe' }));
+    cancelWorkstreamFeedOpen(workstreamId, 100);
   });
 
   it('reports its own connections under the control socket rather than the feed', async () => {

@@ -72,6 +72,47 @@ export function parseTelemetryProductIntent(value: unknown): DesktopTelemetryPro
       };
       break;
     }
+    case 'workstream_feed_visible': {
+      const hasSocketLeaseId = candidate['socketLeaseId'] !== undefined;
+      if (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId)
+        || !(hasSocketLeaseId ? exact(
+          'kind', 'operationId', 'workstreamId', 'socketLeaseId', 'durationMs', 'dataReadyDurationMs',
+          'sidebarSection', 'cacheState', 'socketPoolState', 'feedSource', 'messageCount',
+        ) : exact(
+          'kind', 'operationId', 'workstreamId', 'durationMs', 'dataReadyDurationMs',
+          'sidebarSection', 'cacheState', 'socketPoolState', 'feedSource', 'messageCount',
+        ))) break;
+      const properties = { ...candidate };
+      delete properties['kind'];
+      delete properties['operationId'];
+      const parsed = TELEMETRY_EVENTS.workstream_feed_visible.properties.safeParse(properties);
+      if (parsed.success) return {
+        kind: 'workstream_feed_visible',
+        operationId,
+        ...parsed.data,
+      };
+      break;
+    }
+    case 'workstream_socket_started': {
+      const hasOpenAttemptId = candidate['openAttemptId'] !== undefined;
+      if (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId)
+        || !(hasOpenAttemptId
+          ? exact(
+            'kind', 'operationId', 'workstreamId', 'socketLeaseId', 'openAttemptId',
+            'socket', 'reason', 'attempts',
+          )
+          : exact('kind', 'operationId', 'workstreamId', 'socketLeaseId', 'socket', 'reason', 'attempts'))) break;
+      const properties = { ...candidate };
+      delete properties['kind'];
+      delete properties['operationId'];
+      const parsed = TELEMETRY_EVENTS.workstream_socket_started.properties.safeParse(properties);
+      if (parsed.success) return {
+        kind: 'workstream_socket_started',
+        operationId,
+        ...parsed.data,
+      };
+      break;
+    }
     case 'command_shortcuts_revealed':
       if (exact('kind', 'availableCount')
         && typeof candidate['availableCount'] === 'number'
@@ -95,6 +136,26 @@ export function parseTelemetryProductIntent(value: unknown): DesktopTelemetryPro
         };
       }
       break;
+    case 'workstream_open_started':
+    case 'workstream_open_outcome': {
+      if (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId)) break;
+      const optionalKeys = candidate['kind'] === 'workstream_open_started'
+        ? ['socketLeaseId']
+        : ['socketLeaseId', 'supersedingWorkstreamId'];
+      const requiredKeys = candidate['kind'] === 'workstream_open_started'
+        ? ['kind', 'operationId', 'workstreamId', 'sidebarSection', 'socketPoolState']
+        : ['kind', 'operationId', 'workstreamId', 'outcome', 'durationMs'];
+      const actualKeys = Object.keys(candidate);
+      if (!requiredKeys.every((key) => actualKeys.includes(key))
+        || actualKeys.some((key) => !requiredKeys.includes(key) && !optionalKeys.includes(key))) break;
+      const properties = { ...candidate };
+      delete properties['kind'];
+      delete properties['operationId'];
+      const kind = candidate['kind'];
+      const parsed = TELEMETRY_EVENTS[kind].properties.safeParse(properties);
+      if (parsed.success) return { kind, operationId, ...parsed.data } as DesktopTelemetryProductIntent;
+      break;
+    }
   }
   const semanticKind = candidate['kind'];
   if (typeof semanticKind === 'string' && (

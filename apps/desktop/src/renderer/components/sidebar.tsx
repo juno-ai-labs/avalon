@@ -35,9 +35,10 @@ import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import { formatDateTime, formatRelative, groupActivityItems, workstreamMarkerStatus } from '../lib/format';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
-import { useWorkstreamSocketHoverWarmup } from '../lib/workstream-socket-pool';
+import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import {
   markSurfaceEntrypoint,
+  markWorkstreamFeedOpenStarted,
   markWorkstreamNavigation,
   reportTelemetryProductIntent,
   telemetryVisibility,
@@ -443,6 +444,7 @@ function WorkstreamRow({
 }): React.JSX.Element {
   const location = useLocation();
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
+  const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
   // The row is a cache entry, not a read: nothing here refetches, so the grace
   // is what ends a skeleton whose rename never arrived. Read
   // `lib/naming-skeleton.ts` before changing when it comes down.
@@ -531,9 +533,19 @@ function WorkstreamRow({
             onClick={(event) => {
               if (event.defaultPrevented || event.button !== 0
                 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              const destination = `/workstreams/${workstream.id}`;
+              if (location.pathname === destination) return;
+              const socketContext = socketOpenContext();
+              markWorkstreamFeedOpenStarted(
+                workstream.id,
+                workstream.pinPosition === null ? 'recent' : 'pinned',
+                socketContext.state,
+                performance.now(),
+                socketContext.socketLeaseId,
+              );
               markWorkstreamNavigation(
                 workstream.id,
-                /^\/workstreams\/[^/]+$/u.test(location.pathname) && location.pathname !== `/workstreams/${workstream.id}`,
+                /^\/workstreams\/[^/]+$/u.test(location.pathname),
               );
               markSurfaceEntrypoint(workstream.pinPosition === null ? 'sidebar_recent' : 'sidebar_pinned');
             }}

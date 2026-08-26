@@ -13,11 +13,18 @@ import type {
   DesktopTelemetryConnectorSetupIntent,
   DesktopTelemetryProductIntent,
   DesktopTelemetrySemanticIntent,
+  DesktopTelemetryWorkstreamFeedVisibleIntent,
+  DesktopTelemetryWorkstreamOpenLifecycleIntent,
+  DesktopTelemetryWorkstreamSocketStartedIntent,
 } from '../common/desktop';
 import type { ApplicationOpenEntrypoint, ApplicationOpenPhase } from './application-open-observer';
 import type { TelemetryIdentity } from './telemetry-identity';
 import { uuidV7 } from './telemetry-identity';
 import type { TelemetrySpool, TelemetrySpoolRow } from './telemetry-spool';
+
+type WorkstreamOpenLifecycleProperties = DesktopTelemetryWorkstreamOpenLifecycleIntent extends infer Intent
+  ? Intent extends { operationId: string } ? Omit<Intent, 'operationId'> : never
+  : never;
 
 export type TelemetryScreen =
   | 'onboarding_welcome'
@@ -175,7 +182,11 @@ export class TelemetryReporter {
   }
 
   semanticProductIntent(
-    intent: DesktopTelemetrySemanticIntent | Omit<DesktopTelemetryConnectorSetupIntent, 'operationId'>,
+    intent: DesktopTelemetrySemanticIntent
+      | Omit<DesktopTelemetryConnectorSetupIntent, 'operationId'>
+      | Omit<DesktopTelemetryWorkstreamFeedVisibleIntent, 'operationId'>
+      | WorkstreamOpenLifecycleProperties
+      | Omit<DesktopTelemetryWorkstreamSocketStartedIntent, 'operationId'>,
     windowContext?: TelemetryWindowContext,
     operationId?: string,
   ): Promise<void> {
