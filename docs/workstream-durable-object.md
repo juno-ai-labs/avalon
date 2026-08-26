@@ -1253,6 +1253,60 @@ must end in a terminal, deferred, or failure event with content-free IDs and a
 stable reason; Queue acknowledgement alone must never be presented as provider
 delivery.
 
+
+### 2026-08-25 — Automation opens stay on their authorized workspace state
+
+**What changed:** Automation detail uses its first authorized subscription row
+for the stored email address and calls an internal bounded run-history reader.
+The standalone run-history route retains the subscription authorization. The
+manual, scheduled, and activity-triggered provisioners now copy subscription
+scope to each generated WorkstreamDO. One batched WorkspaceDO directory read
+filters the bounded history IDs so pre-change personal run objects remain
+visible only to their projected participants.
+
+**Why:** Re-reading the same subscription did not change the permission result,
+and re-verifying an owner-verified email route made a regional detail read wait
+on Global. A generated object's scope must also agree with the automation's
+declared user/workspace audience so its native detail, directory, socket, and
+resource checks all enforce the same rule.
+
+**Considered and rejected:** Caching Global verification and adding an
+automation-specific reader exception inside WorkstreamDO. The former keeps an
+unnecessary cross-region dependency; the latter makes stored scope cease to be
+the reader authority.
+
+**What a future change has to respect:** Public entry points authorize once,
+then use internal helpers for subordinate reads. Route repair remains a
+lifecycle operation, and every automation run producer supplies the subscription
+scope during object provisioning.
+
+### 2026-08-25 — Automation history stops waking every run object
+
+**What changed:** An authorized automation detail or run-history read now returns
+its bounded `automation_runs` rows after one batched WorkspaceDO
+directory/viewer query. It no longer calls
+`SubstreamAgent.readerAudience` once per run before returning them, while legacy
+personal runs retain their narrower projected audience.
+
+**Why:** Reading an automation is the authorization boundary for the work streams
+created by that automation. Rechecking every generated work stream did not add a
+distinct permission decision, but it did wake one child object per history row.
+For an automation with 18 runs, production traces showed 18 child RPCs and
+double-digit request latency while cold children initialized their schemas and
+alarms.
+
+**Considered and rejected:** Parallelizing the child reads. That keeps the
+redundant authorization check, turns one history request into a burst of Durable
+Object calls, and retains latency whenever the outbound-connection allowance
+bounds the burst.
+
+**What a future change has to respect:** Loading the automation subscription
+remains mandatory before returning its runs. Until every historical generated
+object has the automation's scope, the single batched directory/viewer read is
+also mandatory. Direct content moves and reads that do not derive their
+authority from an already-authorized automation still use the current reader
+audience owned by the work stream.
+
 ### 2026-08-25 — Hibernation replay misses stay on the child socket
 
 **What changed:** When a resume cursor is behind the durable room sequence but

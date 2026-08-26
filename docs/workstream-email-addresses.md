@@ -128,11 +128,13 @@ ad-hoc work stream does not become workspace-readable merely because its email
 resource has no automation subscription.
 
 Mail sent to an active **automation** address creates a new automation run and a
-new **private** work stream, with the automation owner recorded as creator and
-participant. The received message is its explicit opening input and attached
-resource, labelled as untrusted external data before it reaches the model. A
-provider retry uses the Resend email ID as the idempotency key, so it resolves to
-the same work stream and run. Receipt rows use reclaimable processing
+new work stream with the automation's `personal` or `workspace` scope. The
+automation owner is recorded as creator and participant; for a personal
+automation that participant list is also the reader boundary, while workspace
+membership admits readers to a workspace automation's runs. The received message
+is its explicit opening input and attached resource, labelled as untrusted
+external data before it reaches the model. A provider retry uses the Resend email
+ID as the idempotency key, so it resolves to the same work stream and run. Receipt rows use reclaimable processing
 leases so an interrupted delivery can continue after the lease expires. The
 work-stream email receipt, the automation receipt, its rate window and the
 resulting product state are all WorkspaceDO rows; the Global address ledger
@@ -449,6 +451,32 @@ Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
 
 ## Changelog
+
+### 2026-08-25 — Automation detail is regional and runs inherit automation scope
+
+**What changed:** Opening automation detail now returns the stored regional
+address without consulting the Global route registry. Manual, inbound-email,
+scheduled, and activity-triggered runs copy the subscription's `personal` or
+`workspace` scope onto the work stream they create.
+
+**Why:** Address allocation and one-time route repair are lifecycle writes, not a
+steady-state read obligation. Making every detail open re-verify an already
+stored address added a cross-region dependency to an otherwise regional read.
+Separately, the automation scope is its declared sharing boundary; forcing every
+generated run to personal made a workspace automation visible while hiding the
+work it produced from the workspace.
+
+**Considered and rejected:** Retaining Global verification as defense in depth,
+or authorizing every generated work stream through a separate automation rule.
+The former makes Global availability and latency part of opening; the latter
+creates a second reader model beside the work stream's own scope and participants.
+
+**What a future change has to respect:** Route reservation, activation, and
+repair must complete on the lifecycle path that owns them. Detail serves the
+stored address. Every run producer must copy the automation scope, and every
+email resource remains readable exactly where its attached work stream is.
+Pre-change personal run objects keep their projected participant boundary in
+automation history until their durable scope is explicitly migrated.
 
 ### 2026-08-25 — The Global claim key is the full email address
 

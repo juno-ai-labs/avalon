@@ -48,6 +48,16 @@ export const WorkspaceDirectoryVisibilityRequestSchema = z.object({
   workstreamId: IdSchema,
 }).strict();
 
+export const WorkspaceDirectoryReadableIdsRequestSchema = z.object({
+  workspaceId: IdSchema,
+  userId: IdSchema,
+  workstreamIds: z.array(IdSchema).min(1).max(100),
+}).strict();
+
+export const WorkspaceDirectoryReadableIdsResultSchema = z.object({
+  items: z.array(IdSchema).max(100),
+}).strict();
+
 export const WorkspaceDirectoryVisibleIdsRequestSchema = z.object({
   workspaceId: IdSchema,
   userId: IdSchema,
@@ -294,6 +304,8 @@ export const WorkspaceRegionalEffectApplyResultSchema = z.object({
 export type WorkspaceDirectoryListRequest = z.infer<typeof WorkspaceDirectoryListRequestSchema>;
 export type WorkspaceDirectoryPage = z.infer<typeof WorkspaceDirectoryPageSchema>;
 export type WorkspaceDirectoryVisibilityRequest = z.infer<typeof WorkspaceDirectoryVisibilityRequestSchema>;
+export type WorkspaceDirectoryReadableIdsRequest = z.infer<typeof WorkspaceDirectoryReadableIdsRequestSchema>;
+export type WorkspaceDirectoryReadableIdsResult = z.infer<typeof WorkspaceDirectoryReadableIdsResultSchema>;
 export type WorkspaceDirectoryVisibleIdsRequest = z.infer<typeof WorkspaceDirectoryVisibleIdsRequestSchema>;
 export type WorkspaceDirectoryVisibleIdsPage = z.infer<typeof WorkspaceDirectoryVisibleIdsPageSchema>;
 export type WorkspaceDirectoryExistsRequest = z.infer<typeof WorkspaceDirectoryExistsRequestSchema>;

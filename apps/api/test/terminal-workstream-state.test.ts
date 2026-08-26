@@ -10,6 +10,7 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
+  seedWorkstreamObjectParticipant,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectRun,
@@ -51,21 +52,23 @@ function fixture() {
   const objectStore = testWorkstreamObjectStore();
   databases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
+  seedWorkstreamObjectParticipant(objectStore, { userId: U, participationReason: "creator" });
   const objectStores = new Map<string, DatabaseSync>([[S, objectStore]]);
+  const canReadWorkstream = vi.fn(async () => true);
   const env = createTestEnv({
     DB: sqliteD1(database), AVALON_REGION: "global", TERMINAL_REGION_CAPABILITY: "supported",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
     // Visibility is answered by the WorkspaceDO directory after the cutover;
     // the fixture member is the creator-participant, so it reads as visible.
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-      extra: { canReadWorkstream: async () => true },
+      extra: { canReadWorkstream },
     }),
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: vi.fn(async () => undefined) }),
     DAYTONA_API_KEY: "key", DAYTONA_API_URL: "https://app.daytona.io/api", DAYTONA_TARGET: "us",
     DAYTONA_TERMINAL_SNAPSHOT: "snapshot", TERMINAL_EMERGENCY_DISABLED: "false",
   });
   const auth: AuthContext = { sessionId: "session", userId: U, workspaceId: W, region: "global", role: "member" };
-  return { database, objectStore, env, auth, service: new TerminalWorkstreamService(env, auth) };
+  return { database, objectStore, env, auth, canReadWorkstream, service: new TerminalWorkstreamService(env, auth) };
 }
 
 describe("Terminal work-stream state", () => {
@@ -106,5 +109,17 @@ describe("Terminal work-stream state", () => {
       localFilesRetained: true,
       repository: { id: 42, fullName: "owner/repo", baseRef: "main", baseSha: "a".repeat(40), headRef: `avalon/${S}` },
     });
+  });
+
+  it("starts fresh using the participant authority without repeating directory visibility", async () => {
+    const { canReadWorkstream, service } = fixture();
+
+    await expect(service.startFresh(S)).resolves.toMatchObject({
+      availability: "supported",
+      state: "absent",
+      repository: null,
+    });
+
+    expect(canReadWorkstream).not.toHaveBeenCalled();
   });
 });

@@ -534,6 +534,33 @@ describe("what the workspace object answers about its work streams", () => {
   });
 
   describe("canReadWorkstream — what the activity router is allowed to route into", () => {
+    it("filters a bounded set through one directory audience read", async () => {
+      const shared = await seedWorkstream({
+        title: "Workspace scoped batch",
+        lastActivityAt: "2026-08-17T08:00:00.000Z",
+        scope: "workspace",
+        participants: [OUTSIDER],
+      });
+      const mine = await seedWorkstream({
+        title: "My private batch",
+        lastActivityAt: "2026-08-17T08:01:00.000Z",
+        scope: "personal",
+        participants: [OWNER],
+      });
+      const theirs = await seedWorkstream({
+        title: "Their private batch",
+        lastActivityAt: "2026-08-17T08:02:00.000Z",
+        scope: "personal",
+        participants: [OUTSIDER],
+      });
+
+      await expect(workspace().readableWorkstreamIds({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        workstreamIds: [theirs, shared, mine],
+      })).resolves.toEqual({ items: [shared, mine].sort() });
+    });
+
     it("admits a participant and a workspace-scoped work stream alike", async () => {
       const shared = await seedWorkstream({
         title: "Workspace scoped",
