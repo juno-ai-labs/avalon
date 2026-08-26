@@ -2,7 +2,10 @@ import { WorkstreamSchema, type Workstream } from "@rally/contracts";
 import { z } from "zod";
 
 import { workspaceDOName } from "../durable-objects/names";
-import { WorkspaceDirectoryPageSchema } from "../durable-objects/workspace-directory-protocol";
+import {
+  WorkspaceDirectoryPageSchema,
+  WorkspaceDirectoryReadableIdsResultSchema,
+} from "../durable-objects/workspace-directory-protocol";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -31,6 +34,16 @@ export class WorkstreamDirectoryService {
       userId: this.auth.userId,
       workstreamId,
     });
+  }
+
+  async readableIds(workstreamIds: string[]): Promise<string[]> {
+    if (workstreamIds.length === 0) return [];
+    const workspace = await this.workspace();
+    return WorkspaceDirectoryReadableIdsResultSchema.parse(await workspace.readableWorkstreamIds({
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      workstreamIds,
+    })).items;
   }
 
   async plannedForAutomation(

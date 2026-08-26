@@ -104,6 +104,8 @@ import {
   WorkspaceDirectoryLookupRequestSchema,
   WorkspaceDirectoryLookupResultSchema,
   WorkspaceDirectoryRecentRequestSchema,
+  WorkspaceDirectoryReadableIdsRequestSchema,
+  WorkspaceDirectoryReadableIdsResultSchema,
   WorkspaceDirectoryNotificationRequestSchema,
   WorkspaceDirectoryNotificationStateSchema,
   WorkspaceDirectoryPageSchema,
@@ -133,6 +135,8 @@ import {
   type WorkspaceDirectoryLookupRequest,
   type WorkspaceDirectoryLookupResult,
   type WorkspaceDirectoryRecentRequest,
+  type WorkspaceDirectoryReadableIdsRequest,
+  type WorkspaceDirectoryReadableIdsResult,
   type WorkspaceDirectoryPage,
   type WorkspaceDirectoryPinRequest,
   type WorkspaceDirectoryPlannedAutomationRequest,
@@ -2763,6 +2767,30 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceDirectoryVisibilityRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return this.directoryVisible(request.userId, request.workstreamId);
+  }
+
+  async readableWorkstreamIds(
+    input: WorkspaceDirectoryReadableIdsRequest,
+  ): Promise<WorkspaceDirectoryReadableIdsResult> {
+    await this.initialized;
+    const request = WorkspaceDirectoryReadableIdsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const placeholders = request.workstreamIds.map(() => "?").join(", ");
+    const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
+      `SELECT directory.workstream_id FROM workspace_workstream_directory directory
+       LEFT JOIN workspace_workstream_viewers viewer
+         ON viewer.workstream_id = directory.workstream_id
+        AND viewer.user_id = ?
+        AND viewer.authority_generation = directory.authority_generation
+       WHERE directory.workstream_id IN (${placeholders})
+         AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+       ORDER BY directory.workstream_id`,
+      request.userId,
+      ...request.workstreamIds,
+    ).toArray();
+    return WorkspaceDirectoryReadableIdsResultSchema.parse({
+      items: rows.map((row) => row.workstream_id),
+    });
   }
 
   async visibleWorkstreamIds(input: WorkspaceDirectoryVisibleIdsRequest): Promise<WorkspaceDirectoryVisibleIdsPage> {

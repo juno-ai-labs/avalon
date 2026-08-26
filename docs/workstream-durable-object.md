@@ -1260,7 +1260,9 @@ delivery.
 for the stored email address and calls an internal bounded run-history reader.
 The standalone run-history route retains the subscription authorization. The
 manual, scheduled, and activity-triggered provisioners now copy subscription
-scope to each generated WorkstreamDO.
+scope to each generated WorkstreamDO. One batched WorkspaceDO directory read
+filters the bounded history IDs so pre-change personal run objects remain
+visible only to their projected participants.
 
 **Why:** Re-reading the same subscription did not change the permission result,
 and re-verifying an owner-verified email route made a regional detail read wait
@@ -1281,8 +1283,10 @@ scope during object provisioning.
 ### 2026-08-25 — Automation history stops waking every run object
 
 **What changed:** An authorized automation detail or run-history read now returns
-its bounded `automation_runs` rows directly from WorkspaceDO. It no longer calls
-`SubstreamAgent.readerAudience` once per run before returning them.
+its bounded `automation_runs` rows after one batched WorkspaceDO
+directory/viewer query. It no longer calls
+`SubstreamAgent.readerAudience` once per run before returning them, while legacy
+personal runs retain their narrower projected audience.
 
 **Why:** Reading an automation is the authorization boundary for the work streams
 created by that automation. Rechecking every generated work stream did not add a
@@ -1297,9 +1301,11 @@ Object calls, and retains latency whenever the outbound-connection allowance
 bounds the burst.
 
 **What a future change has to respect:** Loading the automation subscription
-remains mandatory before returning its runs. Direct content moves and reads that
-do not derive their authority from an already-authorized automation still use
-the current reader audience owned by the work stream.
+remains mandatory before returning its runs. Until every historical generated
+object has the automation's scope, the single batched directory/viewer read is
+also mandatory. Direct content moves and reads that do not derive their
+authority from an already-authorized automation still use the current reader
+audience owned by the work stream.
 
 ### 2026-08-25 — Hibernation replay misses stay on the child socket
 
