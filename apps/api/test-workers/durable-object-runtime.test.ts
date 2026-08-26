@@ -3942,6 +3942,52 @@ describe("Durable Objects in the Workers runtime", () => {
       processingStatus: "pending",
       processingAttempt: -1,
     });
+    const legacyWorkflowId = `connector-event-${firstId}-5`;
+    const legacyClaim = WorkspaceConnectorEventClaimResultSchema.parse(
+      await stub.claimConnectorEvent({
+        workspaceId: WORKSPACE_ID,
+        eventId: firstId,
+        processingOwnerId: legacyWorkflowId,
+        attempt: 5,
+        orchestrator: "workflow",
+      }),
+    );
+    expect(legacyClaim).toMatchObject({
+      outcome: "claimed",
+      processingLeaseId: legacyWorkflowId,
+    });
+    if (legacyClaim.outcome !== "claimed") throw new Error("expected legacy Workflow claim");
+    const replayedLegacyClaim = WorkspaceConnectorEventClaimResultSchema.parse(
+      await stub.claimConnectorEvent({
+        workspaceId: WORKSPACE_ID,
+        eventId: firstId,
+        processingOwnerId: legacyWorkflowId,
+        attempt: 5,
+        orchestrator: "workflow",
+      }),
+    );
+    expect(replayedLegacyClaim).toMatchObject({
+      outcome: "claimed",
+      processingLeaseId: legacyWorkflowId,
+    });
+    await expect(stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId: `connector-event-${firstId}-4`,
+      attempt: 5,
+      orchestrator: "workflow",
+    })).resolves.toMatchObject({
+      outcome: "busy",
+      reason: "active_lease_not_expired",
+    });
+    await stub.settleConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId: legacyWorkflowId,
+      processingLeaseId: legacyWorkflowId,
+      outcome: "failed",
+      error: "legacy Workflow retry handoff",
+    });
     const processingOwnerId = "00000000-0000-7000-8000-000000000304";
     const claim = WorkspaceConnectorEventClaimResultSchema.parse(await stub.claimConnectorEvent({
       workspaceId: WORKSPACE_ID,

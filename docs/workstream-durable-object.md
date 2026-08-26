@@ -669,7 +669,7 @@ upgrades because that platform flow must return a 101 `Response`; lint rejects
 | connector ingress Worker | regional Queue | Cloudflare Queue | one bounded normalized event plus region/workspace/ingress UUID/content hash per workspace target; raw bytes remain in R2 |
 | regional Queue Worker | WorkspaceDO | typed RPC | complete normalized connector event plus content hash; object-local provider/dedupe constraints and ingress receipt choose the canonical ID |
 | regional Queue Worker | regional Queue | Cloudflare Queue | after authoritative ingress, an ID-only connector-process pointer returns to the same `ACTIVITY_QUEUE`; native per-message retry and the existing DLQ own redelivery |
-| regional Queue Worker | WorkspaceDO | typed RPC | claim/load/terminal settlement against the canonical connector event; a stable owner plus advancing Queue attempt fences active duplicates |
+| regional Queue Worker | WorkspaceDO | typed RPC | claim/load/terminal settlement against the canonical connector event; WorkspaceDO-issued expiring leases fence active duplicates and stale settlement, while Queue attempts remain transport telemetry |
 | legacy ConnectorEventWorkflow | WorkspaceDO | typed RPC | drain-only compatibility for instances created before the Queue-processing cutover; no new instance is created |
 | WorkspaceDO alarm | WorkOpportunityWorkflow | Workflow binding | a deterministic instance receives only workspace, lease, and attempt fences; no model input body is copied into Workflow state |
 | WorkOpportunityWorkflow | WorkspaceDO | typed RPC | loads claimed source state and atomically persists admission/provenance or ranking/resolution settlement |
