@@ -30,6 +30,7 @@ const WorkspaceNotificationIntentClaimedSchema = WorkspaceNotificationIntentSumm
   sourceGeneration: z.number().int().positive(),
   requiredDirectoryVersion: z.number().int().positive(),
   payloadJson: z.string().min(1),
+  state: z.literal("processing"),
 }).strict();
 
 export const WorkspaceNotificationIntentClaimResultSchema = z.discriminatedUnion("outcome", [
