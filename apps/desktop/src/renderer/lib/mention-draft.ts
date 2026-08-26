@@ -1,11 +1,27 @@
 import type { MentionIdentity } from './api';
 
+export interface ResolvedMentionIdentity {
+  type: 'person' | 'connector';
+  userId: string | null;
+  connectorType: string | null;
+  startOffset: number;
+  endOffset: number;
+}
+
+interface CandidateMatch {
+  candidate: MentionIdentity;
+  candidateOrder: number;
+  bound: boolean;
+  startOffset: number;
+  endOffset: number;
+}
+
 /** Complete the `@query` immediately before the caret with one visible name. */
 export function completeMentionAtCaret(
   text: string,
   caret: number,
   label: string,
-): { text: string; caret: number } | null {
+): { text: string; caret: number; startOffset: number; endOffset: number } | null {
   const before = text.slice(0, caret);
   const atIndex = before.lastIndexOf('@');
   if (atIndex < 0) return null;
@@ -14,29 +30,170 @@ export function completeMentionAtCaret(
   return {
     text: `${before.slice(0, atIndex)}@${label}${separator}${after}`,
     caret: atIndex + label.length + 1 + separator.length,
+    startOffset: atIndex,
+    endOffset: atIndex + label.length + 1,
   };
 }
 
-/** Keep only selected identities whose visible label is still in the draft. */
-export function mentionsStillPresent(
-  text: string,
+/**
+ * Move selected mention spans through one textarea edit and discard a span
+ * when the edit touches its visible `@Name`. Legacy unbound draft identities
+ * remain label-based until the user selects them again.
+ */
+export function rebaseMentionIdentities(
+  previousText: string,
+  nextText: string,
   mentions: readonly MentionIdentity[],
 ): MentionIdentity[] {
-  const normalized = text.toLowerCase();
-  return mentions.filter((mention) => normalized.includes(`@${mention.label.toLowerCase()}`));
+  if (previousText === nextText) return [...mentions];
+  let prefix = 0;
+  while (prefix < previousText.length && prefix < nextText.length
+    && previousText[prefix] === nextText[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < previousText.length - prefix && suffix < nextText.length - prefix
+    && previousText[previousText.length - suffix - 1] === nextText[nextText.length - suffix - 1]) suffix += 1;
+  const previousEditEnd = previousText.length - suffix;
+  const nextEditEnd = nextText.length - suffix;
+  const shift = nextEditEnd - previousEditEnd;
+  const normalized = nextText.toLowerCase();
+
+  return mentions.flatMap((mention) => {
+    if (mention.startOffset === undefined || mention.endOffset === undefined) {
+      return normalized.includes(`@${mention.label.toLowerCase()}`) ? [mention] : [];
+    }
+    if (mention.endOffset <= prefix) return [mention];
+    if (mention.startOffset >= previousEditEnd) {
+      return [{
+        ...mention,
+        startOffset: mention.startOffset + shift,
+        endOffset: mention.endOffset + shift,
+      }];
+    }
+    return [];
+  });
 }
 
-/** One identity per provider target, while preserving the latest visible label. */
+/** Align draft spans with the trimmed value sent over the wire. */
+export function mentionsInTrimmedText(
+  text: string,
+  mentions: readonly MentionIdentity[],
+): { text: string; mentions: MentionIdentity[] } {
+  const withoutLeading = text.trimStart();
+  const leadingAdjusted = rebaseMentionIdentities(text, withoutLeading, mentions);
+  const trimmed = withoutLeading.trimEnd();
+  return {
+    text: trimmed,
+    mentions: rebaseMentionIdentities(withoutLeading, trimmed, leadingAdjusted),
+  };
+}
+
+/** One identity per visible range; the same person may be named twice. */
 export function upsertMentionIdentity(
   mentions: readonly MentionIdentity[],
   identity: MentionIdentity,
 ): MentionIdentity[] {
+  const bound = identity.startOffset !== undefined && identity.endOffset !== undefined;
   return [
     ...mentions.filter((mention) => !(
-      mention.type === identity.type
-      && mention.userId === identity.userId
-      && mention.connectorType === identity.connectorType
+      bound
+        ? mention.startOffset === identity.startOffset && mention.endOffset === identity.endOffset
+        : mention.type === identity.type
+          && mention.userId === identity.userId
+          && mention.connectorType === identity.connectorType
     )),
     identity,
   ];
+}
+
+function visibleMatches(text: string, candidate: MentionIdentity): boolean {
+  if (candidate.startOffset === undefined || candidate.endOffset === undefined) return false;
+  if (candidate.startOffset < 0 || candidate.endOffset <= candidate.startOffset || candidate.endOffset > text.length) return false;
+  const visible = text.slice(candidate.startOffset, candidate.endOffset);
+  if (visible.toLowerCase() !== `@${candidate.label}`.toLowerCase()) return false;
+  const before = text[candidate.startOffset - 1];
+  const after = text[candidate.endOffset];
+  return (candidate.startOffset === 0 || /[\s([{]/u.test(before ?? ''))
+    && (candidate.endOffset === text.length || /[\s\p{P}]/u.test(after ?? ''));
+}
+
+/**
+ * Resolve visible mention spans without losing the identity selected for a
+ * particular occurrence. Ambiguous hand-typed same-name ranges are omitted;
+ * an explicit bound selection is the only evidence that can disambiguate them.
+ */
+export function resolveMentionPayload(
+  text: string,
+  selected: readonly MentionIdentity[],
+  discovered: readonly MentionIdentity[],
+): ResolvedMentionIdentity[] {
+  const selectedLabels = new Set(selected.map((candidate) => candidate.label.toLowerCase()));
+  const candidates = [
+    ...selected.map((candidate) => ({ candidate, bound: candidate.startOffset !== undefined && candidate.endOffset !== undefined })),
+    ...discovered
+      .filter((candidate) => !selectedLabels.has(candidate.label.toLowerCase()))
+      .map((candidate) => ({ candidate, bound: false })),
+  ];
+  const matches: CandidateMatch[] = [];
+  candidates.forEach(({ candidate, bound }, candidateOrder) => {
+    if (bound) {
+      if (!visibleMatches(text, candidate)) return;
+      matches.push({
+        candidate,
+        candidateOrder,
+        bound,
+        startOffset: candidate.startOffset!,
+        endOffset: candidate.endOffset!,
+      });
+      return;
+    }
+    const escaped = candidate.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    const expression = new RegExp(`@${escaped}(?=$|[\\s\\p{P}])`, 'giu');
+    for (const match of text.matchAll(expression)) {
+      const startOffset = match.index;
+      if (startOffset !== 0 && !/[\s([{]/u.test(text[startOffset - 1] ?? '')) continue;
+      matches.push({
+        candidate,
+        candidateOrder,
+        bound,
+        startOffset,
+        endOffset: startOffset + match[0].length,
+      });
+    }
+  });
+  matches.sort((left, right) => left.startOffset - right.startOffset
+    || right.endOffset - left.endOffset
+    || Number(right.bound) - Number(left.bound)
+    || left.candidateOrder - right.candidateOrder);
+
+  const resolved: ResolvedMentionIdentity[] = [];
+  let cursor = 0;
+  for (let index = 0; index < matches.length;) {
+    const first = matches[index]!;
+    const sameRange = matches.slice(index).filter((match) => (
+      match.startOffset === first.startOffset && match.endOffset === first.endOffset
+    ));
+    index += sameRange.length;
+    if (first.startOffset < cursor) continue;
+    const bound = sameRange.filter((match) => match.bound);
+    const eligible = bound.length > 0 ? bound : sameRange;
+    const targets = new Set(eligible.map((match) => (
+      `${match.candidate.type}:${match.candidate.userId ?? ''}:${match.candidate.connectorType ?? ''}`
+    )));
+    // Plain text cannot identify which of two same-named people the author
+    // meant. Persist no identity rather than attaching the wrong one.
+    if (targets.size !== 1) {
+      cursor = first.endOffset;
+      continue;
+    }
+    const chosen = eligible[0]!;
+    resolved.push({
+      type: chosen.candidate.type,
+      userId: chosen.candidate.userId,
+      connectorType: chosen.candidate.connectorType,
+      startOffset: chosen.startOffset,
+      endOffset: chosen.endOffset,
+    });
+    cursor = chosen.endOffset;
+  }
+  return resolved;
 }

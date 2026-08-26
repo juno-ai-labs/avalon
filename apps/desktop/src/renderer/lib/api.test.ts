@@ -1302,6 +1302,32 @@ describe('message mention resolution', () => {
       { type: 'connector', userId: null, connectorType: 'google', startOffset: 4, endOffset: 17 },
     ]);
   });
+
+  it('preserves which same-name person was selected for each occurrence', async () => {
+    const secondUserId = '00000000-0000-7000-8000-000000000012';
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/workspace/members')) {
+        return json({
+          items: [
+            { user: { ...user, name: 'Alex' }, role: 'owner', status: 'active', joinedAt: timestamp },
+            { user: { ...user, id: secondUserId, email: 'other@example.com', name: 'Alex' }, role: 'member', status: 'active', joinedAt: timestamp },
+          ],
+        });
+      }
+      throw new Error(`unexpected request: ${String(input)}`);
+    }));
+    const api = new RallyApi('https://api.rally.test', session);
+
+    const mentions = await api.messageMentionPayload('Ask @Alex then @Alex', [
+      { type: 'person', label: 'Alex', userId, connectorType: null, startOffset: 4, endOffset: 9 },
+      { type: 'person', label: 'Alex', userId: secondUserId, connectorType: null, startOffset: 15, endOffset: 20 },
+    ]);
+
+    expect(mentions).toEqual([
+      { type: 'person', userId, connectorType: null, startOffset: 4, endOffset: 9 },
+      { type: 'person', userId: secondUserId, connectorType: null, startOffset: 15, endOffset: 20 },
+    ]);
+  });
 });
 
 describe('socket ticket transport', () => {

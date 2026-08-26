@@ -1170,8 +1170,12 @@ outbox effects. A separate launch-only span finder was also rejected in favor
 of the resolver already used for ordinary workspace messages.
 
 **Consequences, and what a future change has to respect:** Mention identities
-must survive draft editing and cross the create API as spans; participant IDs
-alone are not mention metadata. A person selected as both participant and
+must survive draft editing and cross the create API as occurrence-bound spans;
+participant IDs alone are not mention metadata, and a display name cannot
+disambiguate two people who share it. Hand-typed ambiguous names remain plain
+text. Only person spans accepted by authoritative visible-range validation may
+derive audience or consume a participant confirmation; raw mention IDs are
+candidates, never access grants. A person selected as both participant and
 mention receives the specific mention notification, not an additional
 participant-added notification. The personal-work-stream confirmation must be
 shared by every submit gesture and must run before optimistic insertion; the
