@@ -533,7 +533,7 @@ no projection fallback when that object is unavailable.
   workspace routes it matches.
 - `WorkspaceDO.workspace_connector_events` stores the complete authoritative
   normalized connector event. Its provider identity and connection-scoped dedupe
-  constraints select one canonical event; processing status, Workflow instance,
+  constraints select one canonical event; processing status, processing owner,
   claim, error, and settlement timestamps stay beside the body. The separate
   `workspace_connector_event_ingress_receipts` maps each Queue/provider ingress
   UUID and content hash to that canonical event.
@@ -542,8 +542,9 @@ no projection fallback when that object is unavailable.
   source, and permanently fences D1 writers. Live provider ingress resolves an
   opaque global/regional route and sends the bounded normalized event through
   the workspace's regional Queue. The consumer commits it to exactly one
-  WorkspaceDO and then starts its Workflow. Large/raw provider bytes stay in R2;
-  D1 is never an event-body relay.
+  WorkspaceDO and then sends an ID-only processing pointer back to that same
+  Queue. A later delivery claims and settles the canonical event by typed RPC.
+  Large/raw provider bytes stay in R2; D1 is never an event-body relay.
   Global provider receipts and setup routes may remain in D1 only when they
   exist before a workspace can be selected.
 - `resource_watches` records explicit direct relationships.
@@ -751,6 +752,29 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-26 — Connector processing ownership becomes Queue-native
+
+**What changed:** The canonical connector event keeps processing owner, attempt,
+status, error, and terminal timestamps in WorkspaceDO while the existing
+regional `ACTIVITY_QUEUE` owns redelivery. The consumer sends an ID-only process
+pointer after ingress and uses typed claim/settle RPCs. The physical
+`workflow_instance_id` column remains temporarily so pre-cutover Workflow
+instances and Queue deliveries fence the same row.
+
+**Why:** A one-callback Workflow duplicated Queue retry and WorkspaceDO terminal
+state, and required an external instance-ID contract unrelated to product
+identity.
+
+**Considered and rejected:** Splitting the regional activity Queue was rejected
+without capacity or isolation evidence. Renaming the SQLite column during the
+behavioral cutover was rejected because it would prevent an already-running
+Workflow from completing against the new object code.
+
+**What a future change has to respect:** WorkspaceDO remains canonical, Queue
+messages remain bounded and region-local, and callers use typed domain outcomes
+rather than SQLite write metadata. Rename the physical owner column only after
+the legacy Workflow binding is safely retired.
 
 ### 2026-08-25 — Automation runs copy the subscription audience
 

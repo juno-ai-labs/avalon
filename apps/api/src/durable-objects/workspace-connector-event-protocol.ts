@@ -39,6 +39,17 @@ export const WorkspaceConnectorEventQueueMessageSchema = z.object({
   request: WorkspaceConnectorEventIngestRequestSchema,
 }).strict();
 
+/** Opaque Queue wake-up for canonical processing after ingress commits. */
+export const WorkspaceConnectorEventProcessQueueMessageSchema = z.object({
+  kind: z.literal("connector_event_process"),
+  schemaVersion: z.literal(1),
+  region: RegionSchema,
+  workspaceId: WorkspaceIdSchema,
+  eventId: IdSchema,
+  processingOwnerId: z.string().uuid(),
+  processingAttempt: z.number().int().min(0).max(5),
+}).strict();
+
 export const WorkspaceConnectorEventIngestResultSchema = z.object({
   eventId: IdSchema,
   duplicate: z.boolean(),
@@ -52,8 +63,9 @@ export const WorkspaceConnectorEventRequestSchema = z.object({
 }).strict();
 
 export const WorkspaceConnectorEventClaimRequestSchema = WorkspaceConnectorEventRequestSchema.extend({
-  workflowInstanceId: z.string().min(1).max(100),
+  processingOwnerId: z.string().min(1).max(100),
   attempt: z.number().int().min(0).max(5),
+  orchestrator: z.enum(["queue", "workflow"]).default("workflow"),
 }).strict();
 
 export const WorkspaceConnectorEventClaimResultSchema = z.discriminatedUnion("outcome", [
@@ -62,11 +74,18 @@ export const WorkspaceConnectorEventClaimResultSchema = z.discriminatedUnion("ou
     event: WorkspaceConnectorEventSchema,
   }).strict(),
   z.object({ outcome: z.literal("processed") }).strict(),
-  z.object({ outcome: z.literal("busy") }).strict(),
+  z.object({
+    outcome: z.literal("busy"),
+    reason: z.enum([
+      "active_other_owner",
+      "active_attempt_not_advanced",
+      "failed_attempt_not_advanced",
+    ]),
+  }).strict(),
 ]);
 
 export const WorkspaceConnectorEventSettleRequestSchema = WorkspaceConnectorEventRequestSchema.extend({
-  workflowInstanceId: z.string().min(1).max(100),
+  processingOwnerId: z.string().min(1).max(100),
   outcome: z.enum(["processed", "failed"]),
   error: z.string().max(1_000).nullable(),
 }).strict();
@@ -83,6 +102,9 @@ export type WorkspaceConnectorEvent = z.infer<typeof WorkspaceConnectorEventSche
 export type WorkspaceConnectorEventIngestRequest = z.infer<typeof WorkspaceConnectorEventIngestRequestSchema>;
 export type WorkspaceConnectorEventIngestResult = z.infer<typeof WorkspaceConnectorEventIngestResultSchema>;
 export type WorkspaceConnectorEventQueueMessage = z.infer<typeof WorkspaceConnectorEventQueueMessageSchema>;
+export type WorkspaceConnectorEventProcessQueueMessage = z.infer<
+  typeof WorkspaceConnectorEventProcessQueueMessageSchema
+>;
 export type WorkspaceConnectorEventRequest = z.infer<typeof WorkspaceConnectorEventRequestSchema>;
 export type WorkspaceConnectorEventClaimRequest = z.infer<typeof WorkspaceConnectorEventClaimRequestSchema>;
 export type WorkspaceConnectorEventClaimResult = z.infer<typeof WorkspaceConnectorEventClaimResultSchema>;

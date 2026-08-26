@@ -2,9 +2,11 @@ import type { NormalizedActivity } from "@rally/contracts";
 
 import {
   WorkspaceConnectorEventQueueMessageSchema,
+  WorkspaceConnectorEventProcessQueueMessageSchema,
   WorkspaceConnectorEventSchema,
   type WorkspaceConnectorEvent,
   type WorkspaceConnectorEventQueueMessage,
+  type WorkspaceConnectorEventProcessQueueMessage,
 } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
 import { sha256Hex } from "../lib/crypto";
@@ -95,6 +97,48 @@ export async function enqueueWorkspaceConnectorEvent(
     ingress_event_id: message.request.ingressEventId,
     attempt: message.attempt,
     payload_bytes: payloadBytes,
+    outcome: "queued",
+  });
+}
+
+export function workspaceConnectorEventProcessQueueMessage(input: {
+  region: WorkspaceConnectorEventProcessQueueMessage["region"];
+  workspaceId: WorkspaceConnectorEventProcessQueueMessage["workspaceId"];
+  eventId: string;
+  processingOwnerId: string;
+  processingAttempt: number;
+}): WorkspaceConnectorEventProcessQueueMessage {
+  return WorkspaceConnectorEventProcessQueueMessageSchema.parse({
+    kind: "connector_event_process",
+    schemaVersion: 1,
+    ...input,
+  });
+}
+
+/** Enqueue an ID-only processing wake after the canonical event has committed. */
+export async function enqueueWorkspaceConnectorEventProcess(
+  env: Env,
+  input: Parameters<typeof workspaceConnectorEventProcessQueueMessage>[0],
+): Promise<void> {
+  const message = workspaceConnectorEventProcessQueueMessage(input);
+  try {
+    await env.ACTIVITY_QUEUE.send(message);
+  } catch (error) {
+    logWarn(env, "connector_event_process_enqueue_failed", {
+      workspace_id: message.workspaceId,
+      connector_event_id: message.eventId,
+      processing_owner_id: message.processingOwnerId,
+      processing_attempt: message.processingAttempt,
+      reason: diagnosticErrorCode(error, "queue_send_failed"),
+      error_name: error instanceof Error ? error.name : typeof error,
+    });
+    throw error;
+  }
+  logInfo(env, "connector_event_process_enqueued", {
+    workspace_id: message.workspaceId,
+    connector_event_id: message.eventId,
+    processing_owner_id: message.processingOwnerId,
+    processing_attempt: message.processingAttempt,
     outcome: "queued",
   });
 }
