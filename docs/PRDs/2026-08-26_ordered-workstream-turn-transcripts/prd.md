@@ -184,7 +184,8 @@ but the current host boundary does not make it a durable product invariant.
 1. Render assistant narration and tool activity in the order of the original
    model protocol, during the run and after a cold reload.
 2. Preserve immediate response-text token streaming, route-reset behavior,
-   smooth reveal, scroll following, reconnect, and canonical reconciliation.
+   smooth reveal, scroll following, reconnect, canonical reconciliation, and
+   first opening of a work stream while its response is already streaming.
 3. Allow independent tools from one assistant turn to start, complete, or fail
    in parallel while their cards remain in the model-declared order.
 4. Make the durable substrate sufficient to recreate, with perfect semantic
@@ -310,10 +311,16 @@ restart its reveal animation, move the viewport, or wait for the whole run.
 Route fallback resets only the abandoned text for that model turn and retains
 already committed turns and tool cards.
 
-On reconnect, the feed restores the active turn from its checkpoint before
-accepting catch-up frames. On cold reload, it reads the same canonical turn and
-block structure used by live delivery. The two paths therefore converge on one
-ordering rather than applying separate placement rules.
+On a first open while a response is already streaming, the boot snapshot paints
+the active turn's accumulated checkpoint, ordered text/tool/thinking blocks,
+current lifecycle revisions, and activity baselines before accepting catch-up
+frames. It also returns a socket event fence from the same snapshot. The client
+then applies only newer frames, so opening mid-stream neither starts from an
+empty bubble nor duplicates the boundary token or tool update. Reconnect uses
+the same snapshot-plus-fence rule. On cold reload after completion, the feed
+reads the same canonical turn and block structure used by live delivery. These
+paths therefore converge on one ordering rather than applying separate
+placement rules.
 
 ### Working, worked, and thinking timing blocks
 
@@ -419,6 +426,15 @@ the unread slice.
 The five-message counts refer to displayable top-level transcript turns, the
 canonical message unit after this migration. Nested text and tool blocks do not
 consume additional positions in either prefetch count.
+
+If a response is active when the work stream opens, its reserved active turn is
+included in the latest slice with its accumulated checkpoint revision and
+stream epoch. The same boot response includes the active response/plugin/tool/
+thinking lifecycle revisions, UTC timing baselines, and
+`resumeAfterEventSequence` captured at the snapshot boundary. The unread slice
+may still be the initial viewport, but the active latest island is ready for an
+instant **Jump to latest**. Neither the active checkpoint nor its event fence
+claims coverage for any otherwise unloaded middle range.
 
 If unread is outside the latest slice, the interval between them remains a
 known gap. Approaching either edge through virtualized infinite scrolling asks
@@ -841,15 +857,34 @@ The first-open boot/snapshot groups two such responses under stable purposes:
     },
     "latest": {
       "coverage": { "startInclusive": 83, "endExclusive": 88 },
-      "turns": []
+      "turns": [{
+        "turnId": "turn_active_9",
+        "sequence": 87,
+        "state": "active",
+        "streamEpoch": 2,
+        "checkpointRevision": 14,
+        "blocks": []
+      }]
     }
-  }
+  },
+  "activeResponses": [{
+    "responseId": "response_9",
+    "activeTurnId": "turn_active_9",
+    "streamEpoch": 2,
+    "checkpointRevision": 14,
+    "startedAtUtc": "2026-08-26T17:00:00.000Z",
+    "snapshotAtUtc": "2026-08-26T17:07:42.000Z",
+    "elapsedMsAtSnapshot": 462000
+  }],
+  "resumeAfterEventSequence": 412
 }
 ```
 
 The example has no tombstones and enough turns on both sides, so the unread
 slice covers five turns before sequence 32, the anchor, and five after it. The
-actual endpoints may be wider when selecting five displayable turns scans
+latest slice abbreviates the accumulated active turn's ordered block payload;
+the real response includes its checkpointed blocks and lifecycle revisions.
+The actual endpoints may be wider when selecting five displayable turns scans
 across tombstones, or narrower at transcript and transport boundaries. `unread`
 is nullable when `firstUnreadSequenceNumber` is null. Both entries use the same
 `snapshot.throughSequence`; they are never assembled from different transcript
@@ -1037,6 +1072,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H24 keeps_participant_and_restricted_projections_linked` | SQL + workerd | Read participant ranges and resume inference from the same committed facts; assert shared opaque identities, authorized visible content, and exact private replay without deriving either projection from the other. |
 | `H25 compacts_twice_across_distinct_events_and_resumes_second_generation` | workerd | Accept activity, commit compaction event A, accept additional assistant/tool activity, then commit distinct compaction event B. Assert two `state_replaced` transitions with distinct event/source revisions, three ordered loop generations, retention of both exact replacements, unchanged participant history, and post-eviction replay from B with the exact next provider array. Replay either event ID and assert idempotency rather than a third replacement generation. |
 | `H26 joins_existing_stream_with_utc_start_and_elapsed_baseline` | workerd + desktop + E2E | Start a response before a second client opens the work stream. On first join, assert the active snapshot carries the original `startedAtUtc`, a server `snapshotAtUtc`, and the full prior `elapsedMsAtSnapshot`; the label paints the already-accrued duration immediately, continues from the local monotonic receipt point, and is replaced by canonical terminal duration. |
+| `H27 opens_workstream_mid_stream_with_atomic_checkpoint_and_catchup` | workerd + desktop + E2E | Before the client opens the work stream, stream accumulated text and produce planned, running, completed, and failed parallel tool states plus an active thinking block. Assert the first boot paints the exact accumulated ordered state and timing baselines, retains unread/latest islands, records `resumeAfterEventSequence`, and then applies subsequent text/tool/thinking frames once without waiting for another fetch. |
 
 ### Required edge-case and failure tests
 
@@ -1079,6 +1115,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E35 excludes_automation_wizard_from_all_new_paths` | API Node + desktop | Exercise automation draft storage and UI fixtures; assert no new substrate schema, protocol event, range contract, or renderer behavior is invoked for the explicitly out-of-scope wizard. |
 | `E36 does_not_conflate_duplicate_compaction_delivery_with_a_second_event` | SQL + workerd | Deliver compaction event A twice and a distinct event B once, including out-of-order retry delivery. Assert A creates exactly one replacement generation, B creates exactly one later generation, event/source identities remain distinguishable, and the active generation never rolls back from B to A. |
 | `E37 rejects_inconsistent_active_interval_timestamp_baseline` | workerd + desktop | Supply a snapshot whose `startedAtUtc`, `snapshotAtUtc`, and `elapsedMsAtSnapshot` cannot describe the same interval revision, then deliver an older consistent snapshot. Assert the inconsistent snapshot is rejected/resynced without resetting the label to zero, and the older revision cannot roll back a newer valid baseline. |
+| `E38 races_midstream_open_with_frame_and_terminal_commit` | workerd + desktop | Publish a token/tool lifecycle frame immediately before, during, and after first-open snapshot assembly, then commit the active turn. Assert snapshot fencing plus catch-up yields every byte/block/revision exactly once, canonical commit reconciles the reserved turn in place, no active overlay survives terminal state, and no middle range is falsely marked covered. |
 
 ### Required algebraic, race, and failure-proof checks
 
@@ -1298,7 +1335,7 @@ never rewrites their sequence positions.
     loop payloads nor `loop_sequence` bounds. Subsequent inference nevertheless
     reconstructs from the restricted projection without consulting the desktop
     projection or Global inference lakehouse.
-39. Every required `H01`–`H26` and `E01`–`E37` test is mapped to an actual test
+39. Every required `H01`–`H27` and `E01`–`E38` test is mapped to an actual test
     name and file, passes at its required layer, and has an implementation-PR
     failure-proof record showing the named assertion fails when its protected
     production behavior is deliberately broken. The three generated algebraic
@@ -1310,3 +1347,9 @@ never rewrites their sequence positions.
     before subscription, then advances locally without periodic server ticks;
     client wall-clock skew cannot reset, make negative, or become the authority
     for that duration.
+41. Opening a work stream mid-response paints its accumulated text, ordered
+    tool/thinking blocks, current lifecycle states, and already-accrued timing
+    from the initial boot snapshot. The snapshot's event fence makes subsequent
+    socket catch-up and live frames exact-once at the boundary, while the unread
+    and latest range islands retain truthful coverage and **Jump to latest**
+    remains immediate.
