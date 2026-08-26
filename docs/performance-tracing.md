@@ -554,7 +554,9 @@ confuses queue admission with delivery. Server acknowledgement remains the
 existing `workstream_message_send` flow rather than a third reading of readiness.
 
 **Consequences:** Product analytics can compare feed and send-ready percentiles
-by operation ID. Cloudflare spans and renderer phase traces remain unchanged.
+by operation ID. A workspace-level service error abandons the click before its
+same-work-stream retry can reuse that clock. Cloudflare spans and renderer phase
+traces remain unchanged.
 
 ### 2026-08-25 — Detail retries separate request identity from opening identity
 
