@@ -151,13 +151,13 @@ function activeDeadLetterQueues(queues: CloudflareQueue[]): Array<{
   name: string;
   sourceQueues: string[];
 }> {
-  const sourcesByDeadLetterName = new Map<string, string[]>();
+  const sourcesByDeadLetterName = new Map<string, Set<string>>();
   for (const queue of queues) {
     if (typeof queue.queue_name !== 'string') continue;
     for (const consumer of queue.consumers ?? []) {
       if (!consumer.dead_letter_queue) continue;
-      const sources = sourcesByDeadLetterName.get(consumer.dead_letter_queue) ?? [];
-      sources.push(queue.queue_name);
+      const sources = sourcesByDeadLetterName.get(consumer.dead_letter_queue) ?? new Set<string>();
+      sources.add(queue.queue_name);
       sourcesByDeadLetterName.set(consumer.dead_letter_queue, sources);
     }
   }
@@ -166,7 +166,7 @@ function activeDeadLetterQueues(queues: CloudflareQueue[]): Array<{
     const identity = queueIdentity(queue);
     if (!identity) return [];
     const sourceQueues = sourcesByDeadLetterName.get(identity.name);
-    return sourceQueues ? [{ ...identity, sourceQueues: sourceQueues.slice().sort() }] : [];
+    return sourceQueues ? [{ ...identity, sourceQueues: [...sourceQueues].sort() }] : [];
   });
 }
 

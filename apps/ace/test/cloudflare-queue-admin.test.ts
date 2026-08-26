@@ -18,7 +18,10 @@ const accountQueues = [
   {
     queue_id: 'source-id',
     queue_name: 'avalon-global-activities',
-    consumers: [{ dead_letter_queue: 'avalon-global-activities-dead-letter' }],
+    consumers: [
+      { dead_letter_queue: 'avalon-global-activities-dead-letter' },
+      { dead_letter_queue: 'avalon-global-activities-dead-letter' },
+    ],
   },
   {
     queue_id: 'dead-letter-id',
@@ -71,6 +74,45 @@ describe('Cloudflare dead-letter Queue administration', () => {
       cloudflare(accountQueues.slice(2), { result_info: { page: 1, total_pages: 1 } }),
     );
     await expect(listDeadLetterQueues(env())).resolves.toEqual([]);
+  });
+
+  it('keeps every DLQ visible when one realtime metrics request fails', async () => {
+    const queues = [
+      ...accountQueues,
+      {
+        queue_id: 'second-source-id',
+        queue_name: 'avalon-regional-events',
+        consumers: [{ dead_letter_queue: 'avalon-regional-events-dead-letter' }],
+      },
+      {
+        queue_id: 'second-dead-letter-id',
+        queue_name: 'avalon-regional-events-dead-letter',
+        consumers: [],
+      },
+    ];
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(cloudflare(queues, { result_info: { page: 1, total_pages: 1 } }))
+      .mockResolvedValueOnce(Response.json({
+        success: false,
+        errors: [{ code: 10_001, message: 'metrics temporarily unavailable' }],
+      }, { status: 503 }))
+      .mockResolvedValueOnce(cloudflare({ backlog_bytes: 100, backlog_count: 1 }));
+
+    await expect(listDeadLetterQueues(env())).resolves.toEqual([
+      {
+        id: 'second-dead-letter-id',
+        name: 'avalon-regional-events-dead-letter',
+        sourceQueues: ['avalon-regional-events'],
+        metrics: { backlogBytes: 100, backlogCount: 1, oldestMessageTimestampMs: null },
+      },
+      {
+        id: 'dead-letter-id',
+        name: 'avalon-global-activities-dead-letter',
+        sourceQueues: ['avalon-global-activities'],
+        metrics: null,
+        metricsError: 'Cloudflare Queues request failed (503): metrics temporarily unavailable · code 10001',
+      },
+    ]);
   });
 
   it('peeks without an Ace-chosen batch cap, leasing messages, or exposing purge refs', async () => {
