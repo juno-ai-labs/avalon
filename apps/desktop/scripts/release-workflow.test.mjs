@@ -98,6 +98,39 @@ test('the packaged Crashpad fixture owns its clean-runner bundler dependency', a
   );
 });
 
+test('the packaged Crashpad fixture cannot expire before its upload assertion', async () => {
+  const fixture = await readFile(
+    join(repositoryDirectory, 'apps/desktop/scripts/telemetry-crashpad-fixture.mjs'),
+    'utf8',
+  );
+
+  assert.match(
+    fixture,
+    /const firstLaunchAt = new Date\(\);/u,
+    'The fixture must compute its first launch from a live clock',
+  );
+  assert.match(
+    fixture,
+    /const secondLaunchAt = new Date\(firstLaunchAt\.getTime\(\)[ \t]*\+[ \t]*60_000\);/u,
+    'The fixture must keep its second launch one minute after the first',
+  );
+  assert.match(
+    fixture,
+    /`--fixture-now=\$\{firstLaunchAt\.toISOString\(\)\}`/u,
+    'The first launch argument must use the run-relative timestamp',
+  );
+  assert.match(
+    fixture,
+    /`--fixture-now=\$\{secondLaunchAt\.toISOString\(\)\}`/u,
+    'The second launch argument must use the run-relative timestamp',
+  );
+  assert.doesNotMatch(
+    fixture,
+    /^[ \t]*['"`]--fixture-now=\d{4}-\d{2}-\d{2}T/mu,
+    'A fixed launch date eventually crosses the production 14-day deletion deadline',
+  );
+});
+
 test('private telemetry artifacts are published to both isolated regional telemetry buckets but excluded from the app', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const builder = await readFile(join(repositoryDirectory, 'apps/desktop/electron-builder.yml'), 'utf8');
