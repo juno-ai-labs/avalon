@@ -380,6 +380,9 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     return;
   }
 
+  // Processing retries intentionally carry no event body. WorkspaceDO became
+  // authoritative at ingress, so claim returns the canonical event; copying it
+  // here would retain content in retries/DLQ without eliminating this RPC.
   const connectorProcess = WorkspaceConnectorEventProcessQueueMessageSchema.safeParse(message.body);
   if (connectorProcess.success) {
     const input = connectorProcess.data;
