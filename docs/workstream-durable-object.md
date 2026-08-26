@@ -689,11 +689,15 @@ RPC is retained only for the maintenance/bootstrap activation fence that must
 materialize the initial directory row before the D1 route opens. Runtime state
 transitions never use that shortcut.
 
-Creation replays are repair operations. If the authoritative child transaction
-committed but building or delivering its parent snapshot failed, repeating
-`initialize` rebuilds the `common` and `user:<id>` effects. `projection_keys`
-suppresses an already-delivered identical snapshot, so retries close a missing
-directory gap without producing sidebar churn.
+Creation replays are repair operations, and they repair the directory only. If
+the authoritative child transaction committed but building or delivering its
+parent snapshot failed, repeating `initialize` rebuilds the `common` and
+`user:<id>` effects and nothing else — the participant activity event and
+notification a first pass would have emitted are deliberately not re-enqueued,
+because a notification is versioned on a projection key it only reads and would
+be refused under a new payload hash. `projection_keys` suppresses an
+already-delivered identical snapshot, so retries close a missing directory gap
+without producing sidebar churn.
 
 Mention intent delivery rechecks current D1 membership and WorkspaceDO-owned
 destination state only after WorkspaceDO reports the required viewer-directory version. This prevents an
@@ -802,6 +806,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Somebody loses access while holding sockets | A queue message per object closes their sockets; a failed hop retries and then dead-letters. Nothing else closes them, so a message that is never published leaves the socket open until the client reconnects. See [`access-revocation.md`](access-revocation.md). |
 | RPC or Queue duplicates/reorders effects | Stable IDs/hashes deduplicate immutable effects; generation/version orders WorkspaceDO state and delivery receipts. |
 | WorkspaceDO, parent, or Queue unavailable | The source outbox remains pending and alarms retry with bounded backoff. User transcript commits are not rolled back. |
+| Crash between `initialize`'s root commit and its effect commit | The work stream exists and the retry replays it, but the invited participants' activity event and notification are lost permanently — the replay re-enqueues directory effects only, and a hand-add of somebody already active is a no-op, so nothing recovers them. Deliberate: the alternative wedges the create. |
 | D1 unavailable during a user command | Command fails closed before mutation because current session/membership cannot be established. |
 | Model/tool wait exceeds the attempt lease | Heartbeats extend an owned attempt; after genuine abandonment a new executor waits for expiry and replays through receipts. |
 | Substream child not provisioned | No feed ticket should be issued; the object must not bootstrap product authority from an untrusted socket route. |
@@ -834,6 +839,17 @@ compaction recovery, HyperSight checkpoint recovery/revocation, socket
 revocation across all four roles, obsolete queued
 run coalescing, stale-arrival rejection, per-block parent head-of-line delivery,
 ticket replay, and the read-only child socket.
+`test-workers/participant-notification.test.ts` covers what seating somebody
+enqueues, on both the create and the add-afterwards paths, and it is where the
+one trap in asserting on effects is recorded: **never read the child's own
+`durable_outbox`.** A commit arms the child's alarm for the current instant and
+the alarm forwards and then deletes, so any assertion against that table races
+the drain and gets quietly greener the fewer effects a path enqueues — an
+absence assertion written that way passes vacuously. Flush with
+`flushEffectsToWorkstreamDO` and read the parent, and take a projection version
+from the parent's `projection_keys` rather than from an outbox row, because the
+eager directory delivery inside `acceptSubstreamEffects` acknowledges directory
+rows out of the parent outbox without any Queue consumer.
 Node tests cover migration
 rollback/hash drift/ahead versions, normalized product SQL, compatibility-view
 replay deduplication and same-row tool settlement, authorization — including
@@ -1107,6 +1123,97 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-25 — Being named at creation tells the person, when the caller says to
+
+**What changed:** `initialize` emits, per invited participant, the same activity
+event and `participant_notification` that `addParticipant` does, behind that
+person's own viewer effect — but only when the caller passes the new
+`notifyParticipants`, which `POST /workstreams` sets and nothing else does. Both
+paths now build those two effects in one place, `participantAddedEffects`, and
+both mint the same identities (`participant:<work stream>:<user>:<epoch>` and
+`participant_added:<…>`), with a literal zero epoch at creation because the rows
+are inserted by the same call. The notification carries `titleIsProvisional`, and
+the Slack and email templates use it to avoid quoting a title the naming agent has
+not written yet. The two person-notification emails and both regions' Resend
+sender display names now say Rally.
+
+**Why:** the 2026-08-22 entry below, *Being added to a work stream tells the
+person*, closed with "Also rejected: notifying people named in
+`participantUserIds` at creation, which is a different path with a different
+audience question, left for its own change." Half of that was wrong and half was
+right, and the split is the whole of this entry.
+
+Wrong: it is not a different path in any way that matters. The new-work-stream
+screen has an "Add people" step, so being picked there is how most people are put
+in a work stream, and every one of them reached `participants` with only their
+sidebar row enqueued — no Slack DM, no email, and no `activity_events` row for the
+digest to fall back on. The hole was permanent rather than late, because the
+repair anybody reaches for does not work: adding somebody already active is a
+deliberate no-op that emits only the viewer effect, so a second, manual add tells
+them nothing either. That is the same "a colleague added to a work stream, told by
+nobody, who then could not find it" report the entry below was written to close,
+arriving through the door it left open.
+
+Right, and this is the part the first attempt at this change got wrong: there
+*is* a second audience question, and `participantUserIds` is where it lives.
+`CreateWorkstreamRequestSchema` says so where its `.max(25)` used to be — "a
+connector conversation is the other kind of caller and is routinely larger — a
+Slack channel's resolved audience can be hundreds" — and `slack-agent-service.ts`
+is that caller: when a linked member mentions the bot in a channel, the resolved
+roster goes straight into this field. Notifying it would have DMed up to fifty
+people, on somebody else's behalf, that they were "added" to a work stream nobody
+added them to, in a thread they were already reading — and only when the person
+who typed had linked their Slack account, because the unlinked branch provisions
+instead. So the decision moved to the caller, exactly as `scope` did and for the
+same reason: an audience is something an ingress *knows*, never something the
+state-holder infers.
+
+**Considered and rejected:** gating on `slackOrigin` being absent. It infers the
+answer from a value that means something else, so the next ingress to reach
+`initialize` inherits a decision instead of being made to state one.
+
+Also rejected: re-emitting the notification from the replay branch, which repairs
+an effect-construction failure through `enqueueDirectorySnapshot`. A directory
+effect is safe to re-enqueue because it *writes* the projection key it is
+versioned on, so an unchanged snapshot is skipped and a changed one advances. A
+notification only *reads* that key, so re-emitting one after the root has moved
+recomputes a different `requiredProjectionVersion`, and the parent refuses the
+same message id under a new payload hash — `child_effect_receipts` is keyed
+`(substream_id, message_id)` and its retention is 180 days, so the naive repair
+would wedge that work stream's creation for six months rather than lose one
+notification. Closing the window properly means giving `initialize` one
+transaction, which it cannot have while `commitWithRegionalEffects` asserts the
+authority this call is what establishes.
+
+**Consequences, and what a future change has to respect:**
+
+- **The two paths mint one identity per participation and must keep doing so.**
+  The epoch is zero at creation precisely so a later hand-add of the same person
+  converges on the intent already enqueued rather than minting a second.
+- **A notification effect must appear after its own recipient's viewer effect in
+  the returned array — not immediately after it.** The dependency is resolved in
+  the same `commitWithRegionalEffects` loop pass that wrote the key, so any
+  earlier position in the same array works; `createMessage` groups all viewer
+  effects ahead of all notifications and is correct. Adjacency is not the rule,
+  and a change that treats it as one will reject a legitimate grouping.
+- **A caller that seats somebody decides whether to tell them.** `provision` and
+  `admitConnectorAudience` are the two paths that seat people and do not, today,
+  and both are live rather than hypothetical: the four system producers each seat
+  a single owner the work stream is *for*, where "X added you" would be wrong, and
+  the connector audience is people already reading the conversation. Neither
+  question is settled here; what is settled is that the object will not answer it
+  for them.
+- **The crash window between `initialize`'s root commit and its effect commit
+  still loses the notification, and losing it is unrepairable by hand** for the
+  same no-op reason the original bug was. That is a smaller and quieter failure
+  than a create that cannot be retried, and it is the trade this entry accepts.
+- **A notification must not name a work stream by a title the naming agent has
+  not written.** Creation sets the title to the opening message's first line cut
+  at 180 characters and the objective to the same line cut at 4,000, and naming
+  runs after these effects commit. Every other surface re-renders when the real
+  name lands; an inbox does not, so `titleIsProvisional` exists and the templates
+  branch on it rather than quoting a fragment and then printing it twice.
 
 ### 2026-08-25 — Hibernation replay misses stay on the child socket
 
