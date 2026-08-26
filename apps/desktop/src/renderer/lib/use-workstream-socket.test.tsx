@@ -191,10 +191,26 @@ function workstreamDetail(overrides: Partial<WorkstreamDetail> = {}): Workstream
   };
 }
 
+function emptyTranscriptSnapshot(): WorkstreamBoot['transcript'] {
+  return {
+    snapshotId: '00000000-0000-7000-8000-000000000777',
+    snapshotThrough: 0,
+    eventSequence: 0,
+    snapshotAtUtc: '2026-07-31T19:00:00.000Z',
+    unreadAnchorSequence: null,
+    unreadReason: 'no_unread',
+    ranges: [],
+    activities: [],
+    activeActivities: [],
+    activeTurns: [],
+  };
+}
+
 /** `getWorkstream` is the complete REST recovery twin of a socket snapshot. */
 function workstreamBoot(overrides: Partial<WorkstreamDetail> = {}): WorkstreamBoot {
   return {
     ...workstreamDetail(overrides),
+    transcript: emptyTranscriptSnapshot(),
     messageFeed: { items: [], nextCursor: null, newerCursor: null },
     resumeFeed: null,
   };
@@ -270,6 +286,7 @@ function snapshotFrame(input: {
     sequence: input.sequence,
     occurredAt: '2026-07-31T19:20:00.000Z',
     workstream: wireWorkstreamDetail(input.workstream),
+    transcript: emptyTranscriptSnapshot(),
     messageFeed: { items: input.messages ?? [], nextCursor: null, newerCursor: null },
     resumeFeed: input.resumeFeed ?? null,
     activeStreams: [],
@@ -1016,7 +1033,7 @@ describe('useWorkstreamSocket', () => {
 
     expect(transcript).toHaveLength(1);
     expect(transcript[0]).toMatchObject({
-      id: messageId,
+      id: 'turn-cold-join',
       text: 'Already streamed and live',
       streaming: true,
     });
@@ -1050,7 +1067,7 @@ describe('useWorkstreamSocket', () => {
 
     const merged = mergeCanonicalTranscript(checkpoint, canonical);
 
-    expect(merged.map((message) => message.id)).toEqual([canonical[0]?.id, messageId]);
+    expect(merged.map((message) => message.id)).toEqual([canonical[0]?.id, 'turn-cold-order']);
     expect(merged[1]?.realtimeOrder?.anchorSequenceNumber).toBe(40);
   });
 
@@ -1133,7 +1150,7 @@ describe('useWorkstreamSocket', () => {
       reset: false,
       delta: 'lo',
     }, workstreamId, cursors);
-    expect(transcript.find((message) => message.id === messageId)?.text).toBe('Hello');
+    expect(transcript.find((message) => message.id === 'turn-one')?.text).toBe('Hello');
 
     transcript = applyStreamingSocketEvent(transcript, {
       type: 'stream_started',
@@ -1191,10 +1208,11 @@ describe('useWorkstreamSocket', () => {
       reset: false,
       delta: ' stale',
     }, workstreamId, cursors);
-    expect(transcript.find((message) => message.id === messageId)?.text).toBe('Hello world');
+    expect(transcript.find((message) => message.id === 'turn-one')?.text).toBe('Hello');
+    expect(transcript.find((message) => message.id === 'turn-two')?.text).toBe(' world');
   });
 
-  it('appends Bind post-tool turns and keeps tool order across REST refreshes', async () => {
+  it('appends Bind post-tool turns without coalescing narration around tools', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const frames = stubAnimationFrames();
     const queryClient = new QueryClient();
@@ -1313,7 +1331,11 @@ describe('useWorkstreamSocket', () => {
     await frames.flush();
 
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])
-      ?.find((message) => message.id === assistantMessageId)?.text).toBe('I will check. Here is the result.');
+      ?.filter((message) => message.id === 'turn-one' || message.id === 'turn-two')
+      .map((message) => [message.id, message.text])).toEqual([
+        ['turn-one', 'I will check. '],
+        ['turn-two', 'Here is the result.'],
+      ]);
 
     const assistantMessage: Message = {
       id: assistantMessageId,
@@ -1358,9 +1380,10 @@ describe('useWorkstreamSocket', () => {
     const live = queryClient.getQueryData<Message[]>(['messages', workstreamId]) ?? [];
     expect(live.map((message) => message.id)).toEqual([
       humanMessage.id,
+      'turn-one',
       `tool-${toolOneId}`,
       `tool-${toolTwoId}`,
-      assistantMessage.id,
+      'turn-two',
     ]);
 
     const refreshedBeforePersistence = mergeCanonicalTranscript(live, [humanMessage, assistantMessage]);
@@ -1588,7 +1611,7 @@ describe('useWorkstreamSocket', () => {
       delta: 'The first attempt, mostly unrevealed.',
     }, workstreamId, cursors, { paced: true });
     // Partially reveal the first attempt, then let a reset replace it.
-    cursors.get(messageId)!.revealed = 9;
+    cursors.get('turn-retry')!.revealed = 9;
     transcript = applyStreamingSocketEvent(transcript, {
       type: 'stream_delta',
       sequence: 2,
@@ -1603,8 +1626,8 @@ describe('useWorkstreamSocket', () => {
 
     // The retracted text disappears at once — the reveal clamps back to the
     // turn's start — and the replacement paces in from there.
-    expect(transcript.find((message) => message.id === messageId)?.text).toBe('');
-    expect(cursors.get(messageId)).toMatchObject({
+    expect(transcript.find((message) => message.id === 'turn-retry')?.text).toBe('');
+    expect(cursors.get('turn-retry')).toMatchObject({
       receivedText: 'A fresh attempt.',
       revealed: 0,
     });
