@@ -47,6 +47,7 @@ import {
   workstreamFeedOpenAttemptId,
   workstreamFeedSourceQueryKey,
   workstreamRecoveryFeedQueryKey,
+  workstreamSocketSnapshotGenerationQueryKey,
   workstreamNavigation,
 } from '../lib/telemetry';
 import {
@@ -860,7 +861,17 @@ export function WorkstreamScreen(): React.JSX.Element {
       : queryClient.getQueryData(['workstream', id]) !== undefined ? 'detail_cached' : 'cold'
   ), [id, queryClient]);
   const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal): Promise<WorkstreamDetail> => {
+    const snapshotGeneration = queryClient.getQueryData<number>(
+      workstreamSocketSnapshotGenerationQueryKey(id),
+    ) ?? 0;
     const boot = await api!.getWorkstream(id, signal, workstreamFeedOpenAttemptId(id));
+    if ((queryClient.getQueryData<number>(
+      workstreamSocketSnapshotGenerationQueryKey(id),
+    ) ?? 0) !== snapshotGeneration) {
+      const socketDetail = queryClient.getQueryData<WorkstreamDetail>(['workstream', id]);
+      if (socketDetail) return socketDetail;
+      throw new Error('Socket snapshot superseded REST work-stream recovery');
+    }
     queryClient.setQueryData<WorkstreamRecoveryFeed>(workstreamRecoveryFeedQueryKey(id), {
       messageFeed: boot.messageFeed,
       resumeFeed: boot.resumeFeed,
@@ -904,11 +915,23 @@ export function WorkstreamScreen(): React.JSX.Element {
   const messages = useQuery({
     queryKey: ['messages', id],
     queryFn: async ({ signal }) => {
+      const snapshotGeneration = queryClient.getQueryData<number>(
+        workstreamSocketSnapshotGenerationQueryKey(id),
+      ) ?? 0;
+      const socketMessagesIfSuperseded = (): Message[] | undefined => {
+        const currentGeneration = queryClient.getQueryData<number>(
+          workstreamSocketSnapshotGenerationQueryKey(id),
+        ) ?? 0;
+        if (currentGeneration === snapshotGeneration) return undefined;
+        return queryClient.getQueryData<Message[]>(['messages', id]);
+      };
       const detail = await queryClient.fetchQuery({
         queryKey: ['workstream', id],
         queryFn: ({ signal: detailSignal }) => fetchWorkstreamDetail(detailSignal),
         staleTime: 5_000,
       });
+      const socketMessagesAfterDetail = socketMessagesIfSuperseded();
+      if (socketMessagesAfterDetail !== undefined) return socketMessagesAfterDetail;
       // No second request: the detail above carries both windows. `resumeFeed`
       // is where this reader stopped, which is what the screen scrolls to, so
       // it is preferred whenever the room sent one. They are not contiguous, so
@@ -921,6 +944,9 @@ export function WorkstreamScreen(): React.JSX.Element {
         workstreamRecoveryFeedQueryKey(id),
       );
       const bootPage = recoveryFeed?.resumeFeed ?? recoveryFeed?.messageFeed;
+      if (recoveryFeed) {
+        queryClient.removeQueries({ queryKey: workstreamRecoveryFeedQueryKey(id), exact: true });
+      }
       const page = bootPage ?? await api!.getMessagePage(id, {
         ...(detail.firstUnreadSequenceNumber !== null
           ? { around: detail.firstUnreadSequenceNumber }
@@ -930,6 +956,8 @@ export function WorkstreamScreen(): React.JSX.Element {
         // cache the reader has left.
         signal,
       });
+      const socketMessagesAfterPage = socketMessagesIfSuperseded();
+      if (socketMessagesAfterPage !== undefined) return socketMessagesAfterPage;
       queryClient.setQueryData<WorkstreamFeedSource>(
         workstreamFeedSourceQueryKey(id),
         bootPage ? 'boot_payload' : 'legacy_page',
@@ -1062,6 +1090,11 @@ export function WorkstreamScreen(): React.JSX.Element {
     id,
     Boolean(api && id),
   );
+  const requestSocketSnapshot = socketConnection.requestSnapshot;
+  useEffect(() => {
+    if (socketConnection.state !== 'connected' || (workstream.data && messages.data)) return;
+    requestSocketSnapshot();
+  }, [messages.data, requestSocketSnapshot, socketConnection.state, workstream.data]);
   useWorkstreamSendReadyTelemetry({
     isReady: socketConnection.sendReady,
     workspaceSocketState: socketConnection.workspaceSocketState,
@@ -1330,18 +1363,17 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   const stop = useMutation({
     mutationFn: () => api!.stopHarness(id),
-    onSuccess: () => void Promise.all([
-      workstream.refetch(),
-      queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
-    ]),
+    onSuccess: () => {
+      requestSocketSnapshot();
+      void queryClient.invalidateQueries({ queryKey: ['workstream-context', id] });
+    },
   });
 
   const retry = useMutation({
     mutationFn: () => api!.retryHarness(id),
     onSuccess: async () => {
+      requestSocketSnapshot();
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
-        queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
         queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
       ]);
@@ -1405,9 +1437,8 @@ export function WorkstreamScreen(): React.JSX.Element {
       previousMessage,
       submit: async () => {
         await api!.answerElicitation(id, elicitationId, answer, customResponse);
+        requestSocketSnapshot();
         await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
-          queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
           queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
           queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
         ]);
@@ -1499,9 +1530,8 @@ export function WorkstreamScreen(): React.JSX.Element {
       });
       queryClient.setQueryData<Message[]>(['messages', id], (current) => insertMessage(current, created));
       attachmentDraft.consume();
+      requestSocketSnapshot();
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
-        queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
         queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
       ]);
@@ -1539,11 +1569,11 @@ export function WorkstreamScreen(): React.JSX.Element {
           ? { ...current, suggestions: [...(current.suggestions ?? []), pending] }
           : current);
       } else {
-        void workstream.refetch();
+        requestSocketSnapshot();
       }
       throw error;
     }
-    await Promise.all([messages.refetch(), workstream.refetch()]);
+    requestSocketSnapshot();
   };
 
   useEffect(() => {
@@ -1611,11 +1641,11 @@ export function WorkstreamScreen(): React.JSX.Element {
       setCachedWorkstreams(queryClient, (current) =>
         current?.map((item) => item.id === id ? { ...item, ...updated } : item));
     }).catch(() => {
-      void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });
+      requestSocketSnapshot();
     }).finally(() => {
       if (readAckInFlightRef.current === ackKey) readAckInFlightRef.current = null;
     });
-  }, [api, id, queryClient, transcript, transcriptVirtualizer]);
+  }, [api, id, queryClient, requestSocketSnapshot, transcript, transcriptVirtualizer]);
 
   const scheduleReadAcknowledgement = useCallback((): void => {
     if (readAckTimerRef.current !== null) window.clearTimeout(readAckTimerRef.current);

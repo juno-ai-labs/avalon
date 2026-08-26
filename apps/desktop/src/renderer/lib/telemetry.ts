@@ -42,6 +42,13 @@ export function workstreamRecoveryFeedQueryKey(
   return ['workstream-recovery-feed', workstreamId];
 }
 
+/** Monotonic fence that prevents a late REST recovery from replacing a socket snapshot. */
+export function workstreamSocketSnapshotGenerationQueryKey(
+  workstreamId: string,
+): readonly ['workstream-socket-snapshot-generation', string] {
+  return ['workstream-socket-snapshot-generation', workstreamId];
+}
+
 interface PendingWorkstreamFeedOpen {
   workstreamId: string;
   operationId: string;

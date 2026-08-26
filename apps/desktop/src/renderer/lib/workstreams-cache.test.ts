@@ -1,6 +1,11 @@
 import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
-import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import {
+  evictCachedWorkstream,
+  mergeCachedWorkstreamPage,
+  setCachedWorkstreams,
+  WORKSTREAMS_QUERY_KEY,
+} from './workstreams-cache';
 import type { WorkstreamSummary } from './types';
 
 function summary(): WorkstreamSummary {
@@ -58,5 +63,40 @@ describe('setCachedWorkstreams', () => {
       laterPage,
       debugRow,
     ]);
+  });
+
+  it('evicts every per-work-stream cache family after access revocation', () => {
+    const queryClient = new QueryClient();
+    const workstreamId = summary().id;
+    const other = { ...summary(), id: '00000000-0000-7000-8000-000000000002' };
+    setCachedWorkstreams(queryClient, [summary(), other]);
+    const prefixes = [
+      'workstream',
+      'messages',
+      'messages-cursor',
+      'messages-newer-cursor',
+      'workstream-feed-source',
+      'workstream-recovery-feed',
+      'workstream-socket-snapshot-generation',
+      'workstream-context',
+      'block-dashboard',
+      'block-dashboard-preference',
+      'terminal-workstream',
+      'dismissed-suggestion-ids',
+    ];
+    for (const prefix of prefixes) {
+      queryClient.setQueryData([prefix, workstreamId], { sensitive: true });
+      queryClient.setQueryData([prefix, other.id], { retained: true });
+    }
+    queryClient.setQueryData(['workstream-context', workstreamId, null], { sensitive: true });
+
+    evictCachedWorkstream(queryClient, workstreamId);
+
+    for (const prefix of prefixes) {
+      expect(queryClient.getQueryData([prefix, workstreamId])).toBeUndefined();
+      expect(queryClient.getQueryData([prefix, other.id])).toEqual({ retained: true });
+    }
+    expect(queryClient.getQueryData(['workstream-context', workstreamId, null])).toBeUndefined();
+    expect(queryClient.getQueryData(WORKSTREAMS_QUERY_KEY)).toEqual([other]);
   });
 });
