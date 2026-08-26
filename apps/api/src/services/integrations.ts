@@ -6368,7 +6368,8 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           systemMessage: [
             "Search memory before writing so you update or invalidate an existing fact instead of duplicating it.",
             "For an update or invalidation, copy the memory item ID and revision exactly from the latest search result and search again after a revision conflict.",
-            "Choose the narrowest durable scope: workstream for this ad-hoc task, automation for future runs of this installed automation, user for one person's durable preferences, and workspace for shared organizational knowledge.",
+            "Choose the narrowest durable scope this run authorizes: workstream for this work stream alone, automation for future runs of this installed automation, user for one person's durable preferences, and workspace for shared organizational knowledge.",
+            "Not every run authorizes every kind, and nothing here tells you which it has: if a write is refused, the refusal names the kinds this run does have — retry with the narrowest of those, or say the fact could not be stored durably.",
             "Do not store secrets, raw provider data, transient execution state, speculative conclusions, or facts already represented by an authoritative connected system.",
             "Treat recalled memory as fallible context and verify it when correctness matters.",
           ].join(" "),

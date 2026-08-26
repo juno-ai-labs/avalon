@@ -41,6 +41,7 @@ const RUN_ONE = asHarnessRunId("00000000-0000-4000-8000-000000000021");
 const RUN_TWO = asHarnessRunId("00000000-0000-4000-8000-000000000022");
 const AUTOMATION_RUN_ONE = asHarnessRunId("00000000-0000-4000-8000-000000000023");
 const AUTOMATION_RUN_TWO = asHarnessRunId("00000000-0000-4000-8000-000000000024");
+const AUTOMATION_FOLLOW_UP_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000025");
 const AUTOMATION_SUBSCRIPTION_ID = "00000000-0000-4000-8000-000000000031";
 
 class SqliteD1Statement {
@@ -174,6 +175,20 @@ function fixture(): {
 } {
   const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
+  // This snapshot stops at 0089, so it still carries the four owner-validation
+  // triggers migration 0036 put on `memory_scopes` — and 0090 dropped them all
+  // when memory moved into WorkspaceDO, whose `memory_scopes` has only an
+  // immutability trigger. Leaving them here would let the fixture enforce rules
+  // the code under test is now solely responsible for: remove the guard in
+  // `resolveMemoryAccess` and a test would still fail, on
+  // `memory_scope_workstream_owner_invalid` raised by a constraint production
+  // retired, rather than on the union it asserts.
+  database.exec(`
+    DROP TRIGGER IF EXISTS memory_scopes_validate_workstream_owner;
+    DROP TRIGGER IF EXISTS memory_scopes_validate_automation_owner;
+    DROP TRIGGER IF EXISTS memory_scopes_validate_user_owner;
+    DROP TRIGGER IF EXISTS memory_scopes_validate_workspace_owner;
+  `);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES
       ('${OWNER_ID}', 'memory-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
@@ -437,7 +452,9 @@ describe("scoped agent memory", () => {
     await expect(memoryTool(env, memberInput, "add").execute(
       { scopeKind: "workspace", text: "Members cannot write this", rationale: "Unauthorized" },
       toolContext(memberInput, "member-workspace-write"),
-    )).rejects.toThrow("memory_scope_not_writable:workspace");
+    // The refusal names what this run may write instead, because `scopeKind`
+    // offers every kind and a bare code left the model nothing to retry with.
+    )).rejects.toThrow(/may read workspace memory but not write it.*may write: user, workstream/);
   });
 
   it("shares one automation scope across every workstream from a subscription", async () => {
@@ -457,26 +474,39 @@ describe("scoped agent memory", () => {
       .toBe((await resolveMemoryAccess(routedEnv(env, second), second)).find((scope) => scope.kind === "automation")?.memoryScopeId);
   });
 
-  it("gives a member's reply under an automation result the ordinary scope union", async () => {
+  it("gives a run with no subscription the ordinary union in an automation work stream", async () => {
     const { env } = fixture();
-    // What the send path actually admits when somebody replies to an
-    // automation's result: an ordinary user-principal run, in a work stream
-    // whose origin stays `automation`, carrying no subscription of its own.
+    // The reply's own run, not the automation's rewritten: `admitRun` inserts a
+    // new row for the trigger message once the run before it has terminalized —
+    // `runs_mutating_substream_uq` permits one live run per substream — and the
+    // work stream's origin stays `automation` underneath both.
     objectStores.get(AUTOMATION_WORKSTREAM_TWO)!.prepare(
-      "UPDATE runs SET execution_principal_json = ? WHERE run_id = ?",
-    ).run(JSON.stringify({ type: "user", userId: MEMBER_ID }), AUTOMATION_RUN_TWO);
-    const followUp: WorkstreamWorkflowInput = {
+      "UPDATE runs SET status = 'completed' WHERE run_id = ?",
+    ).run(AUTOMATION_RUN_TWO);
+    workstreamObjectRun(
+      objectStores.get(AUTOMATION_WORKSTREAM_TWO)!,
+      `INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status,
+         attempt_id, attempt_number, lease_owner, lease_expires_at, heartbeat_at, created_at)
+       VALUES (?, ?, ?, 'human_message', ?, 'running', 'attempt-follow-up', 1,
+               'lease-follow-up', '2099-01-01T00:00:00.000Z', '2026-01-01', '2026-01-01')`,
+      AUTOMATION_FOLLOW_UP_RUN,
+      WORKSPACE_ID,
+      AUTOMATION_WORKSTREAM_TWO,
+      JSON.stringify({ type: "user", userId: MEMBER_ID }),
+    );
+    const reply: WorkstreamWorkflowInput = {
       region: "global",
       workspaceId: WORKSPACE_ID,
       workstreamId: AUTOMATION_WORKSTREAM_TWO,
-      harnessRunId: AUTOMATION_RUN_TWO,
+      harnessRunId: AUTOMATION_FOLLOW_UP_RUN,
       triggerMessageId: null,
       automationSubscriptionId: null,
       activityId: null,
       executionPrincipal: { type: "user", userId: MEMBER_ID },
       reason: "human_message",
     };
-    const scopes = await resolveMemoryAccess(routedEnv(env, followUp), followUp);
+    const scopes = await resolveMemoryAccess(routedEnv(env, reply), reply);
     // Workspace and the member's own memory, and neither of the two scopes this
     // work stream is not entitled to: not the subscription's automation memory,
     // which still takes a run that declares the subscription, and not a
@@ -486,8 +516,38 @@ describe("scoped agent memory", () => {
       ownerId: MEMBER_ID,
       writable: true,
     });
+    // Asserted rather than implied: this member is not an owner or admin, and
+    // admitting the run must not have made workspace memory writable to them.
+    expect(scopes.find((scope) => scope.kind === "workspace")?.writable).toBe(false);
+    // And the automation's items stay unreachable through the search this run
+    // does perform — the scope list above is the union, this is its effect.
+    const planted = await memoryTool(env, input("workspace", 1), "add").execute(
+      { scopeKind: "automation", text: "Vendor floor is chartreuse", rationale: "Future runs need this" },
+      toolContext(input("workspace", 1), "plant-automation-memory"),
+    );
+    expect(planted.output).toMatchObject({ scopeKind: "automation" });
+    expect((await memorySearch(routedEnv(env, reply), reply, "vendor floor chartreuse")).results)
+      .toEqual([]);
 
-    // And a run that does declare one is still held to the work stream it names.
+    // The same branch admits a workspace principal, which is what an
+    // automation's own continuation reaches it as — a scheduled wake-up or a
+    // digest declares no subscription either. It gets workspace memory alone:
+    // no person to own a user scope, and still no scope of its own.
+    const wakeup = { ...input("workspace", 1), automationSubscriptionId: null };
+    expect((await resolveMemoryAccess(routedEnv(env, wakeup), wakeup)).map((scope) => scope.kind))
+      .toEqual(["workspace"]);
+
+    // And the tool surface still offers a scope kind this run cannot reach —
+    // `scopeKind` is the full static enum — so the model's recovery from
+    // picking it is the executor's refusal, not a resolved scope.
+    await expect(memoryTool(env, reply, "add").execute(
+      { scopeKind: "workstream", text: "Reply thread note", rationale: "Should not resolve" },
+      toolContext(reply, "add-workstream-under-automation"),
+    )).rejects.toThrow(/cannot reach workstream memory.*scopes are: workspace, user/);
+  });
+
+  it("holds a run that declares a subscription to the work stream it names", async () => {
+    const { env } = fixture();
     const borrowed: WorkstreamWorkflowInput = {
       ...input("owner"),
       automationSubscriptionId: AUTOMATION_SUBSCRIPTION_ID,
