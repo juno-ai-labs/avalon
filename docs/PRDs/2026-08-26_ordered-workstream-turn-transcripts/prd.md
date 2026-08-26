@@ -5,8 +5,9 @@
 > Preserve model-turn order across assistant text and tool activity, and require
 > the same gap-aware durable transcript substrate wherever the work-stream
 > harness saves a replayable LLM conversation. Add durable response, plugin,
-> tool, and observable-thinking timing without server clock ticks; the automation
-> wizard remains a separate change. Companion:
+> tool, and observable-thinking timing without server clock ticks, plus a
+> lossless reconstruction of Bind's exact loop state; the automation wizard
+> remains a separate change. Companion:
 > [state](state.md). Subsystem references:
 > [agent harness](../../agent-harness.md),
 > [work-stream Durable Objects](../../workstream-durable-object.md),
@@ -55,6 +56,57 @@ edges. While an edge is open, the desktop advances **Working for …** or
 **Thinking for …** from a local monotonic clock. The backend does not stream
 clock ticks. Once stopped, the authority supplies the canonical duration used
 for **Worked for …** or **Thought for …** on every historical load.
+
+The substrate also owns a restricted, lossless model-protocol projection. At
+every accepted Bind loop boundary, Rally must either durably store the exact
+ordered message state Bind uses or durably store lossless ordered parts whose
+versioned projector recreates that state with perfect semantic accuracy. The
+participant feed is an authorized projection of the same committed facts, not
+the source from which private protocol-only messages or model-facing derivatives
+are guessed.
+
+## Terminology and definitions
+
+These terms are normative. A persisted record has one explicit kind; callers
+may not choose a different classification based on the provider role or whether
+the content would be useful in the participant feed.
+
+- **Participant transcript turn:** a top-level, authorization-filtered item in
+  the member-visible work-stream history. It has a stable `turn_sequence` and
+  may contain ordered text, thinking, and tool blocks. It is not the source of
+  truth for reconstructing private Bind state.
+- **Bind loop state:** the complete ordered, post-healing provider-message array
+  Bind will submit at a model-call boundary, or the complete ordered array after
+  Bind accepts an assistant or tool-result transition. It includes the current
+  system projection and every active non-system message.
+- **Protocol-only message:** an exact non-system message created by the harness
+  for loop control or private protocol context, recorded with
+  `origin_kind = protocol` and no participant/source-event identity. Examples
+  are a continuation nudge and a compaction-summary checkpoint encoded with a
+  `user` role. A provider role such as `user` does not make it a participant
+  turn.
+- **Model-facing derivative:** an exact non-system provider message or wrapper
+  produced from another durable product fact, recorded with
+  `origin_kind = derived` and a required source-event, source-turn, or tool
+  receipt identity. Examples are the provider-facing form of recalled memory, a
+  scheduled trigger, a human interrupt, or a tool result. The durable source and
+  the member-visible rendering do not substitute for this exact wrapper.
+- **System projection:** the single leading system message rendered from durable
+  versioned prompt inputs, authorization state, and plugin/skill activation
+  revisions. It is neither a protocol-only message nor a model-facing
+  derivative and is not appended to `loop_sequence`. Loading or unloading a
+  plugin or skill durably advances the system-projection revision before Bind
+  uses the replacement head.
+- **Lossless reconstruction / perfect semantic accuracy:** canonicalizing the
+  substrate projection and the Bind array at the provider boundary produces the
+  same ordered encoding and hash. Message order, content-part order, roles,
+  names, IDs, exact strings, and provider continuation fields are significant;
+  JSON object-key order is not.
+
+The classification boundary is provenance: a derivative must point to the
+durable fact it wraps; a protocol-only message is itself the durable harness
+control fact. The system message always uses the separate system-projection
+contract. No record can be both protocol-only and derived.
 
 ## Motivation
 
@@ -115,6 +167,14 @@ history from whatever lifecycle rows happen to remain would make the live and
 cold-load views disagree. Timing therefore needs durable lifecycle edges and a
 canonical terminal duration beside the turn and tool identities they describe.
 
+Bind itself maintains the exact ordered `state.messages` array while a run is
+executing, but that array lives only in the Worker isolate. Rally currently
+initializes it from a projected transcript, concatenates every completed
+assistant message into one host string, persists tool lifecycle rows separately,
+and discards the array when the run ends. A compaction replaces the live array
+with a summary checkpoint. The correct history therefore exists transiently,
+but the current host boundary does not make it a durable product invariant.
+
 ## Goals
 
 1. Render assistant narration and tool activity in the order of the original
@@ -123,9 +183,11 @@ canonical terminal duration beside the turn and tool identities they describe.
    smooth reveal, scroll following, reconnect, and canonical reconciliation.
 3. Allow independent tools from one assistant turn to start, complete, or fail
    in parallel while their cards remain in the model-declared order.
-4. Make the durable transcript sufficient to reconstruct the exact ordered
-   model protocol for later inference, modulo deliberate result redaction or
-   unavailable large result bodies.
+4. Make the durable substrate sufficient to recreate, with perfect semantic
+   accuracy, the complete ordered message state Bind used at every accepted
+   model-call boundary and the state produced by each accepted assistant/tool
+   transition. Store the exact state when lossless reconstruction from parts
+   cannot be proven.
 5. Let a client load arbitrary blocks of complete turns and compute every gap
    inside a known snapshot without inferring coverage from returned content.
 6. Deliver both initial range slices in the first work-stream boot/snapshot
@@ -138,7 +200,7 @@ canonical terminal duration beside the turn and tool identities they describe.
 8. Require every in-scope Durable Object that saves an authoritative replayable
    LLM transcript to use that substrate. The current required adopter is
    `SubstreamAgent`; REST, socket, replay, and desktop paths may not implement
-   competing notions of coverage above it.
+   competing notions of coverage or model-loop reconstruction above it.
 9. Keep turn identities and sequence positions stable across retries,
    reconnects, tool lifecycle updates, pagination, and realtime delivery.
 10. Preserve regional authority and each transcript surface's existing
@@ -152,6 +214,15 @@ canonical terminal duration beside the turn and tool identities they describe.
 13. When a provider exposes an observable reasoning item, render a separate,
     ordered, generically labeled thinking block with the same live and historical
     timing guarantees, without exposing private chain-of-thought.
+14. Keep restricted protocol-only messages and model-facing derivatives—such as
+    compaction replacements, synthetic nudges, trigger/memory wrappers, interrupt
+    wrappers, exact model-facing tool results, and provider continuation
+    envelopes—durable without exposing them through participant range bounds or
+    feed payloads. Recreate the system message from durable versioned prompt and
+    plugin/skill activation state.
+15. Prove the lossless projection continuously: before each provider call, the
+    canonical reconstruction and Bind's post-healing message array must have the
+    same ordered canonical encoding and hash.
 
 ## Non-goals
 
@@ -168,9 +239,13 @@ canonical terminal duration beside the turn and tool identities they describe.
 4. **Write canonical transcript content on every token.** The bounded active
    stream checkpoint remains the recovery mechanism while a turn is open; the
    canonical turn commits at the model-turn boundary.
-5. **Invent historical interleaving that was never stored.** Legacy runs are
-   projected faithfully from their existing rows and remain visibly legacy;
-   Rally does not guess where concatenated text used to sit between tools.
+5. **Guess historical interleaving without complete evidence.** A legacy Global
+   run may be backfilled when its raw inference records, accepted turn IDs, and
+   durable tool receipts form a complete, internally consistent protocol and
+   reconcile with its stored aggregate text. A run with missing evidence remains
+   visibly legacy; Rally does not infer placement from timestamps. The Global
+   inference archive is migration evidence, never a runtime transcript
+   dependency, and EU runs without such evidence are not fabricated.
 6. **Introduce cross-work-stream transcript search, a global transcript index,
    or cross-region transcript movement.** The owning `SubstreamAgent` remains
    authoritative.
@@ -198,6 +273,10 @@ canonical terminal duration beside the turn and tool identities they describe.
     thinking block from generic response latency, display raw reasoning text,
     decrypt encrypted reasoning, or relabel ordinary provider wait time as
     thinking.
+14. **Require a duplicated full-array snapshot after every mutation.** A
+    normalized append-only protocol ledger plus exact replacement checkpoints is
+    acceptable when its projector is versioned and proven lossless. The
+    requirement is equality with Bind state, not one prescribed physical shape.
 
 ## Product behavior
 
@@ -418,11 +497,13 @@ None yet.
    channel for hidden internal records. A tombstone occupies a position only
    when a previously participant-visible reserved turn produced no displayable
    content or was retracted.
-12. **Do not backfill guessed interleaving.** Existing combined run messages
-    retain their stored ordering and are projected through a legacy envelope.
-    Exact model-turn ordering begins at the cutover boundary. The rejected
-    alternative was heuristically distributing old text around tool timestamps,
-    which would turn an unprovable guess into canonical history.
+12. **Backfill only from a complete protocol proof.** Eligible legacy Global
+    runs are deterministically rebuilt from accepted raw inference turns and
+    durable tool receipts, then reconciled against the stored aggregate text and
+    tool cardinality before becoming canonical. Every other legacy run retains
+    its stored ordering through a legacy envelope. The rejected alternative was
+    heuristically distributing old text around tool timestamps, which would turn
+    an unprovable guess into canonical history.
 13. **Signal activity edges; do not stream a clock.** Durable start/stop edges
     and snapshot baselines make the backend authoritative about work while the
     desktop's monotonic clock makes the active label smooth and cheap. The
@@ -446,6 +527,26 @@ None yet.
     alternative was treating all pre-text latency as thinking, which would
     mislabel queueing, network delay, moderation, and provider work that the
     protocol does not identify.
+17. **Keep participant order and model-protocol order as separate projections of
+    one authority.** Participant `turn_sequence` excludes private protocol-only
+    messages and model-facing wrappers; restricted `loop_sequence` includes every
+    non-system message Bind consumes or accepts. The current system message is a
+    versioned projection of durable prompt inputs and activated plugins/skills.
+    The rejected alternatives were leaking private rows through feed coverage
+    and rebuilding model state from an intentionally filtered UI view.
+18. **Persist accepted protocol transitions before Bind advances.** The exact
+    accepted assistant message and declared tool calls become durable before any
+    tool dispatch; each exact model-facing tool result becomes durable before
+    Bind receives it; a compaction replacement becomes durable before the old
+    active generation is discarded. A failed required write fails the run. The
+    rejected alternative was reconstructing these facts after completion from
+    callbacks that had already flattened them.
+19. **Prove reconstruction at the provider boundary.** The substrate defines a
+    canonical message encoding and hashes both its reconstruction and the
+    post-healing ordered array Bind is about to submit. A mismatch is a protocol
+    integrity failure and prevents inference. The rejected alternative was
+    relying on unit tests alone while runtime projection code, prompt rendering,
+    or stored schemas could drift independently.
 
 ## Data model
 
@@ -458,16 +559,111 @@ The required authority inventory at the time of this PRD is:
 
 | Saved LLM conversation | Authority | Scope in this PRD |
 | --- | --- | --- |
-| Work-stream main feed and any future independently addressable substream | `SubstreamAgent` | In scope: replace direct `parts` pagination/projection with canonical turns, blocks, and range coverage. |
+| Work-stream main feed and any future independently addressable substream | `SubstreamAgent` | In scope: replace direct `parts` pagination/projection with canonical turns, blocks, range coverage, and a restricted lossless Bind-loop projection. |
 | HyperSight execution | Source `SubstreamAgent` | In scope through its source transcript. `BlockDashboardAgent` stores only derived dispatch/output state and does not create a second transcript. |
 | Automation-creation draft conversation | `WorkspaceDO` | Explicitly out of scope: a separate PR will migrate its saved transcript, range loading, streaming, and UI. |
 
 **Within the work-stream/harness architecture, wherever Rally saves an
 authoritative ordered LLM conversation for later continuation or replay,
-adopting this substrate and range contract is in scope and mandatory.** Saving
-such a conversation in an object-local JSON blob, bespoke table, or cursor-only
-API outside the substrate is not a conforming implementation. The automation
-wizard is the sole explicit exception in this PRD and moves in its separate PR.
+adopting this substrate's participant-range and lossless-loop contracts is in
+scope and mandatory.** Saving such a conversation in an object-local JSON blob,
+bespoke table, or cursor-only API outside the substrate is not a conforming
+implementation. The automation wizard is the sole explicit exception in this
+PRD and moves in its separate PR.
+
+### Restricted Bind loop projection
+
+The substrate stores a restricted model-protocol record alongside the
+participant transcript. It is not returned by participant history APIs and does
+not use `turn_sequence`. Its job is to make the state Bind actually consumes and
+produces durable across Worker loss, retry, code deployment, and compaction.
+
+At run initialization, Rally persists the exact post-healing ordered non-system
+message state that will seed Bind, or lossless ordered components that project
+to it. This includes every protocol-only prompt-context message and model-facing
+derivative in addition to participant-derived history. The system message is the
+deliberate exception to payload storage: Rally recreates it from durable prompt
+inputs, authorization state, activated plugin/skill revisions, and a versioned
+renderer. Loading a plugin or skill advances that projection and replaces the
+head system message just as Bind does today. A template name or a reference to
+whatever rendering code is current is insufficient. The recorded renderer
+version and inputs must reproduce the selected revision byte-for-byte at the
+provider boundary, and historical renderer versions remain available for as
+long as their loop generations are replayable. A plugin or skill activation
+must durably commit `system_projection_changed` before Bind may use the newly
+rendered head.
+
+Thereafter the record is an ordered protocol ledger. Conceptual transitions are:
+
+- `state_initialized`: the exact post-healing initial non-system generation plus
+  the system-projection revision used to create its head message.
+- `system_projection_changed`: the durable prompt-input, authorization, and
+  plugin/skill activation revisions plus renderer version needed to recreate the
+  new system head after an authorized runtime activation.
+- `assistant_accepted`: the complete accepted provider assistant message,
+  including exact content-part order, tool-call IDs, tool names, argument
+  strings, refusal fields, and any opaque provider continuation/reasoning fields
+  Bind must replay.
+- `tool_result_accepted`: the exact model-facing tool message, including role,
+  tool-call ID, content-part order, and exact serialized content. This is not the
+  raw provider response or the separately sanitized member card.
+- `protocol_user_appended`: an exact protocol-only or derived user message such
+  as a self-bounded continuation nudge, memory/trigger wrapper, or the
+  model-facing wrapper around a drained human interrupt, with its provenance and
+  any participant-source identity.
+- `state_replaced`: an exact compaction replacement plus its source revision and
+  checkpoint metadata. It starts a new active loop generation without deleting
+  the immutable earlier transitions or the participant transcript.
+
+Each transition has a stable `loop_id`, `loop_generation`, monotonic
+`loop_sequence`, `state_revision`, transition kind, exact protocol payload or
+lossless content-addressed reference, projector version, source turn/receipt
+identity where applicable, and a canonical payload hash. JSON object property
+order is not meaningful, but message order, content-part order, roles, names,
+IDs, exact strings—including tool argument/result strings—and provider-defined
+ordered continuation fields are meaningful and must survive round-trip.
+
+An out-of-line payload is lossless only when it is immutable, region-local,
+content-addressed, transactionally linked before Bind advances, and retained for
+at least as long as the loop state claims to be replayable. A missing or changed
+payload is a protocol-integrity failure; Rally may not substitute a summary,
+display payload, placeholder, or newly fetched provider result and still claim
+perfect reconstruction.
+
+Before every provider request, the substrate renders the selected system
+projection, prepends it to the exact active non-system generation, and applies a
+named loop-projector version. Rally canonicalizes that full projection and the
+post-`validateAndHealMessages` array Bind is about to submit, then requires:
+
+```text
+canonicalize(project(loop_id, state_revision))
+  = canonicalize(bind_messages_at_request_boundary)
+```
+
+The request-boundary record stores the loop revision, system-projection revision,
+renderer/projector versions, and both hashes. For newly canonical state, the
+healer changing the reconstructed array is itself a mismatch; legacy input may
+be healed once only as part of `state_initialized`, after which the healed output
+is the durable baseline. A mismatch fails before provider inference rather than
+silently allowing Bind and the durable transcript to fork.
+
+Failed or abandoned provider attempts, partial response bytes, and route-reset
+text do not enter the accepted Bind loop state because Bind did not accept them
+into `state.messages`. They remain attempt/stream recovery evidence. A successful
+assistant message becomes durable before `callModel` returns it to Bind, and an
+exact tool-result message becomes durable before `runToolCall` returns it to
+Bind. Parallel tools may settle in any order, but their accepted protocol
+messages project in the call order Bind uses.
+
+The Global raw-inference lakehouse may seed a one-time or background legacy
+backfill, but the live projector never queries it. A backfill promotes a legacy
+run only after proving one accepted successful response per Bind turn, stable
+turn/call ordering, complete required payloads, agreement with durable receipts,
+and equality with the stored aggregate assistant text and tool count. Capture
+gaps, retention gaps, ambiguous attempts, or absence of an EU archive leave the
+run in its honest legacy envelope.
+
+### Participant transcript projection
 
 Each owning authority stores one audience-visible transcript turn with these
 conceptual fields:
@@ -496,8 +692,10 @@ Each assistant turn has ordered blocks:
 `block_index` is display order inside the assistant turn. `call_index` is tool
 order inside the provider assistant message and remains the source for returning
 parallel results to Bind. Neither is derived from start or completion time.
-Large or sensitive result bodies stay in their current regional authority; the
-turn stores only the authorized display and replay references.
+Large or sensitive raw result bodies stay in their current regional authority;
+the participant turn stores only authorized display references. If Bind saw a
+model-facing derivative of that result, the restricted loop projection stores
+that exact derivative or a lossless pinned reference to it.
 
 The harness run remains an execution envelope even though it is not a transcript
 row. It has a stable `response_id` linked to the initiating participant turn,
@@ -655,24 +853,34 @@ reference may be null for an outcome with no final assistant response. Delivery
 and export surfaces that require only the final answer read that explicit turn;
 the work-stream feed reads all turns.
 
-The canonical model-protocol projection obeys this invariant:
+The restricted model-protocol projection obeys this invariant at every accepted
+state revision:
 
 ```text
-project(persist(original provider turns)) = original provider turns
+project(persist(bind accepted transitions)) = bind state.messages
 ```
 
-The only permitted differences are documented content redaction and a result
-body that its existing large-output authority can no longer supply. A tool-using
-turn projects as one assistant message with its text and ordered `tool_calls`,
-then one `tool` result per call in declared order, then the next assistant turn.
+There are no redaction or missing-payload exceptions inside this equality. Any
+security filtering or result reduction that Bind receives is already part of
+the exact model-facing message and is stored as such. A later authorized
+deletion may make an old loop intentionally unreplayable, but Rally must then
+mark that state unavailable and must not claim or attempt perfect reconstruction
+with substituted content.
+
+A tool-using turn projects as one complete assistant message with its ordered
+`tool_calls`, then one exact model-facing `tool` result per call in the order
+Bind consumes, then the next assistant turn. The separate participant projection
+may sanitize, summarize, or omit private fields; it cannot feed those lossy
+choices back into the restricted loop projection.
 
 ## Regional impact
 
 Global and EU use the same object-local substrate and protocol in their
-respective `SubstreamAgent` instances. No transcript, tool result, range
-request, snapshot, or coverage metadata crosses regions. Regional D1 remains
-routing and migration control rather than a transcript fallback, and EU history
-is never loaded from Global when its authority is unavailable.
+respective `SubstreamAgent` instances. No participant transcript, restricted
+loop state, tool result, range request, snapshot, or coverage metadata crosses
+regions. Regional D1 remains routing and migration control rather than a
+transcript fallback, and EU history is never loaded from Global when its
+authority is unavailable.
 
 ## Security and trust model
 
@@ -681,6 +889,14 @@ before returning bounds or content. The advertised sequence domain contains
 only turns visible to that audience, so its gaps and upper bound do not disclose
 private system prompts, hidden operational rows, another substream, or another
 participant's inaccessible content.
+
+The restricted loop projection is a separate authorization surface inside the
+same regional authority. Participant REST, socket, export, search, range,
+coverage, and telemetry paths cannot read its system-projection inputs,
+protocol-only messages, model-facing derivatives, exact tool results, provider
+continuation envelopes, or `loop_sequence` bounds. Ordinary logs may record opaque loop and
+system-projection revisions, projector versions, and hashes, but never restricted
+payloads.
 
 Tool arguments, results, and failures retain their existing display
 sanitization and result-reference rules. Lifecycle events are accepted only for
@@ -712,44 +928,54 @@ into a final run-level answer. Timing signals observe those existing lifecycle
 transitions; they do not authorize a call, change dispatch order, or keep a run
 alive.
 
-Subsequent inference reads the canonical turn projection, not a separate
-display-only ordering. Resume, retry, and compaction therefore see the same
-assistant/tool boundaries that the member can inspect. A route retry keeps the
-same turn identity and increments its existing stream epoch; it may reset only
-that turn's uncommitted text. A new provider turn always receives a new turn
-identity and sequence even when the harness run is unchanged.
+Subsequent inference reads the restricted lossless loop projection, not the
+desktop projection or participant feed. Its participant-visible facts share
+identities with the authorized turn projection. Resume, retry, and compaction
+therefore preserve every exact assistant/tool boundary Bind used while the
+member sees the authorized subset. A route retry keeps the same turn identity
+and increments its existing stream epoch; it may reset only that turn's
+uncommitted text. A new provider turn always receives a new turn identity and
+sequence even when the harness run is unchanged.
 
 ## Rollout
 
 1. Add the shared durable transcript substrate, its authority adapter contract,
-   and one conformance suite for stable turn/block/activity storage, snapshot
-   fencing, range scanning, actual coverage, tombstones, canonical projection,
-   and start/stop revision fencing.
-2. Normalize observable OpenAI reasoning-item events and OpenRouter
+   restricted loop ledger/generations, participant projection, canonical
+   message encoding, and conformance suite. Cover stable turn/block/activity
+   storage, exact loop reconstruction, snapshot fencing, range scanning, actual
+   coverage, tombstones, and start/stop revision fencing.
+2. Change the Bind host boundary so post-healing non-system initialization,
+   system-projection revisions, exact accepted assistant messages, protocol-only
+   and model-facing derived messages, exact tool results, and compaction
+   replacements are required durable commits before Bind advances. Compare
+   canonical projection hashes before every provider call.
+3. Normalize observable OpenAI reasoning-item events and OpenRouter
    `reasoning_details` lifecycle boundaries into generic thinking blocks. Keep
-   provider-only reasoning payloads out of the participant projection, and emit
-   no thinking block for providers or models without observable evidence.
-3. Adopt the substrate in `SubstreamAgent` without changing the existing feed.
-   Historical rows remain readable, and no guessed interleaving or historical
-   timing backfill is performed.
-4. Teach the desktop to understand both the legacy message protocol and the new
+   provider-only reasoning payloads in the restricted projection when replay
+   requires them, keep them out of the participant projection, and emit no
+   thinking block for providers or models without observable evidence.
+4. Adopt the substrate in `SubstreamAgent` without changing the existing feed.
+   Historical rows remain readable. Deterministically backfill only legacy
+   Global runs that pass the complete-evidence reconciliation; retain every
+   other run as a legacy envelope.
+5. Teach the desktop to understand both the legacy message protocol and the new
    turn/activity protocol. It stores coverage as ranges, reconciles streamed and
    committed versions by stable ID, ignores stale lifecycle revisions, and uses
    a local monotonic clock for active labels after applying authoritative
    baselines.
-5. Replace first-open `messageFeed`/`resumeFeed` behavior for capable clients
+6. Replace first-open `messageFeed`/`resumeFeed` behavior for capable clients
    with the two named initial turn ranges from one snapshot. Retain both islands
    in the desktop cache, open at unread when present, and make **Jump to latest**
    select the prefetched latest island without fetching.
-6. Advertise the new protocol in the work-stream socket subscription. The
+7. Advertise the new protocol in the work-stream socket subscription. The
    backend emits turn and activity-edge events only to a client that declares
    support; older desktop releases continue receiving their current projection
    during the compatibility window.
-7. Enable new-turn and activity persistence at an object-local cutover sequence.
-   A snapshot may contain legacy envelopes before the cutover and canonical
-   turns after it, but one stable participant-visible sequence orders the
-   combined result.
-8. Move canonical REST pages, socket snapshots, realtime events, model replay,
+8. Enable new-turn, loop-transition, and activity persistence at an object-local
+   cutover sequence. A snapshot may contain legacy envelopes before the cutover
+   and canonical turns after it, but one stable participant-visible sequence
+   orders the combined result.
+9. Move canonical REST pages, socket snapshots, realtime events, model replay,
    terminal delivery, and exports to the turn projection. Remove the legacy
    emission path only after the supported desktop floor understands the new
    protocol.
@@ -764,9 +990,10 @@ never rewrites their sequence positions.
 1. For `text A → tool 1 → text B → tool 2 → final C`, the work-stream feed
    displays that order during live execution, after reconnect, across disjoint
    page loads, and after a cold reload.
-2. The canonical model replay contains assistant `text A` plus tool 1, tool
-   result 1, assistant `text B` plus tool 2, tool result 2, and assistant
-   `final C` in that order.
+2. The restricted canonical Bind replay contains the exact assistant message
+   carrying `text A` plus tool 1, the exact model-facing tool result 1, the exact
+   assistant message carrying `text B` plus tool 2, exact tool result 2, and the
+   exact `final C` assistant message in that order.
 3. The first response token can render without waiting for provider-turn or
    run completion. Coalesced streaming, smooth reveal, follow/release behavior,
    and active-checkpoint recovery remain functional.
@@ -789,17 +1016,18 @@ never rewrites their sequence positions.
     every unobserved earlier interval marked as a gap.
 11. Tests exercise live streaming, activity timing, parallel
     success/failure/ambiguous tools, retry resets, hibernation/reconnect,
-    canonical snapshots, disjoint range merge, legacy/new cutover history, and
-    exact model-protocol projection on the real Durable Object pipeline where
-    runtime behavior is involved.
+    canonical snapshots, disjoint range merge, legacy/new cutover history,
+    compaction generations, Worker-loss reconstruction, and exact Bind-state
+    projection on the real Durable Object pipeline where runtime behavior is
+    involved.
 12. The transcript-substrate conformance suite passes against `SubstreamAgent`,
     including empty ranges, tombstones, response shortening, disjoint ranges,
     overlap, snapshot fencing, and realtime extension.
 13. No in-scope work-stream/harness LLM conversation remains behind a
     cursor-only pagination implementation outside the shared substrate. New
     in-scope Durable Object transcript authorities cannot be added without
-    implementing the same adapter/conformance contract. The automation wizard
-    remains unchanged for its separate PR.
+    implementing the same participant-range, restricted-loop, and conformance
+    contracts. The automation wizard remains unchanged for its separate PR.
 14. A first open with an unread anchor returns, in one boot/snapshot response,
     an unread slice containing the anchor plus up to five displayable turns on
     each side and a latest slice containing five displayable turns. Both slices
@@ -849,3 +1077,46 @@ never rewrites their sequence positions.
     encrypted reasoning payload, signature, or hidden provider-attempt detail.
     Recovery-only timing boundaries are marked as upper bounds rather than
     displayed with false precision.
+29. At initialization, the restricted projection recreates the complete
+    post-healing Bind message array by rendering the system head from its durable
+    versioned prompt/activation state and appending the exact participant-derived
+    messages, compaction prefix, and protocol-only prompt context. The
+    pre-healing `input.messages` array is not treated as equivalent.
+30. Immediately before every provider call, canonical encodings and hashes of
+    the projected active loop generation and Bind's post-healing ordered message
+    array are equal. Deliberately changing any role, order, ID, content-part,
+    tool argument string, tool-result string, or provider continuation field
+    makes the test and the runtime boundary fail.
+31. A successful assistant response—including text, ordered tool calls, and
+    required opaque continuation fields—is durable before `callModel` returns it
+    to Bind. A persistence failure prevents tool dispatch and further inference.
+32. Every exact model-facing tool success, failure, timeout, cancellation, or
+    ambiguity message is durable before `runToolCall` returns it to Bind.
+    Parallel settlement order does not change the call-order projection Bind
+    consumes.
+33. Plugin/skill activation changes advance a durable system-projection revision
+    whose versioned renderer recreates Bind's replaced system head. Protocol-only
+    continuation nudges and model-facing derivatives such as memory, trigger,
+    and interrupt wrappers are exact restricted transitions with provenance;
+    none is exposed as a participant turn unless it independently satisfies that
+    projection's visibility contract.
+34. Compaction durably commits the exact replacement generation before discarding
+    the prior active array. Reconstructing after Worker loss produces the same
+    next provider message array, while the pre-compaction restricted ledger and
+    participant transcript remain intact.
+35. An immutable out-of-line model-facing payload is changed, deleted, or made
+    unavailable in a fault-injection test. Replay fails with a protocol-integrity
+    error and never substitutes a summary, display payload, placeholder, or
+    refetched result.
+36. Failed provider attempts, abandoned partial output, and route-reset bytes do
+    not enter accepted Bind state. The next epoch may replace transient display
+    text without changing the last durable loop revision.
+37. A complete Global legacy fixture is deterministically backfilled only when
+    accepted inference turns, durable receipts, aggregate assistant text, and
+    tool count all reconcile. Removing or altering any required record leaves
+    the run in its legacy envelope. An EU fixture without an archive is never
+    inferred.
+38. Participant range reads and coverage metadata reveal neither restricted
+    loop payloads nor `loop_sequence` bounds. Subsequent inference nevertheless
+    reconstructs from the restricted projection without consulting the desktop
+    projection or Global inference lakehouse.
