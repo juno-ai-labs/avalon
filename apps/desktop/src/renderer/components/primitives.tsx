@@ -147,14 +147,36 @@ export function Avatar({ member, size = 'medium' }: { member: WorkspaceMember; s
   );
 }
 
-export function AvatarStack({ members, limit = 4 }: { members: WorkspaceMember[]; limit?: number }): React.JSX.Element {
+export function AvatarStack({
+  members,
+  limit = 4,
+  presentUserIds = [],
+  currentUserId = null,
+}: {
+  members: WorkspaceMember[];
+  limit?: number;
+  presentUserIds?: readonly string[];
+  currentUserId?: string | null;
+}): React.JSX.Element {
   const visible = members.slice(0, limit);
   const overflow = members.length - visible.length;
+  const present = new Set(presentUserIds);
   return (
-    <span aria-label={members.map((member) => member.name).join(', ')} className="avatar-stack">
-      {visible.map((member) => (
-        <Avatar key={member.id} member={member} size="small" />
-      ))}
+    <span
+      aria-label={members.map((member) => (
+        present.has(member.id) && member.id !== currentUserId ? `${member.name}, present` : member.name
+      )).join(', ')}
+      className="avatar-stack"
+    >
+      {visible.map((member) => {
+        const showingPresence = present.has(member.id) && member.id !== currentUserId;
+        return (
+          <span className={clsx('avatar-stack-item', showingPresence && 'is-present')} key={member.id}>
+            <Avatar member={member} size="small" />
+            {showingPresence && <span aria-hidden="true" className="avatar-presence-ping" />}
+          </span>
+        );
+      })}
       {overflow > 0 && <span className="avatar-overflow">+{overflow}</span>}
     </span>
   );

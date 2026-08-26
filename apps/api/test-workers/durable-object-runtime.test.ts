@@ -1964,6 +1964,123 @@ describe("Durable Objects in the Workers runtime", () => {
     return socket;
   }
 
+  it("tracks foreground presence across hibernation and rejects inaccessible work streams", async () => {
+    await seedOpenAuthority();
+    const otherUserId = asUserId("00000000-0000-7000-8000-00000000040a");
+    const otherSessionId = `${SESSION_ID}-presence`;
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+        VALUES (?, ?, 'active', 'member', '2026-08-26T20:00:00.000Z')`).bind(WORKSPACE_ID, otherUserId),
+      env.DB.prepare(`INSERT INTO sessions
+        (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+        .bind(otherSessionId, otherUserId, WORKSPACE_ID),
+    ]);
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const at = "2026-08-26T20:00:00.000Z";
+    const projected = await fetchAndDrain(parent, "https://workstream.test/internal/substream-effects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        substreamId: "0",
+        envelopes: [effectEnvelope({
+          kind: "directory_common",
+          title: "Foreground presence",
+          description: "Presence does not follow pooled sockets",
+          preview: "idle",
+          scope: "workspace",
+          state: "idle",
+          systemKind: null,
+          lastActivityAt: at,
+          completedAt: null,
+          archivedAt: null,
+          originType: "ad_hoc",
+          createdByUserId: null,
+          latestAttentionOrdinal: 0,
+          unreadTrackingStartOrdinal: 0,
+          createdAt: at,
+          updatedAt: at,
+        }, "00000000-0000-7000-8000-00000000040b")],
+      }),
+    });
+    expect(projected.status).toBe(200);
+
+    const first = await openWorkspaceSocket(
+      workspace,
+      "00000000-0000-7000-8000-00000000040c",
+    );
+    const second = await openWorkspaceSocket(
+      workspace,
+      "00000000-0000-7000-8000-00000000040d",
+      otherSessionId,
+      otherUserId,
+    );
+    try {
+      const firstUpdate = nextMessage(first);
+      first.send(JSON.stringify({
+        type: "set_presence",
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      expect(JSON.parse(String((await firstUpdate).data))).toMatchObject({
+        type: "workspace_presence",
+        workstreamId: WORKSTREAM_ID,
+        userIds: [],
+      });
+      await evictDurableObject(workspace);
+      const firstAfterWake = nextMessage(first);
+      const secondAfterWake = nextMessage(second);
+      second.send(JSON.stringify({
+        type: "set_presence",
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      expect(JSON.parse(String((await firstAfterWake).data))).toMatchObject({
+        type: "workspace_presence",
+        workstreamId: WORKSTREAM_ID,
+        userIds: [otherUserId],
+      });
+      expect(JSON.parse(String((await secondAfterWake).data))).toMatchObject({
+        type: "workspace_presence",
+        workstreamId: WORKSTREAM_ID,
+        userIds: [USER_ID],
+      });
+
+      const firstBackgrounded = nextMessage(first);
+      second.send(JSON.stringify({
+        type: "set_presence",
+        applicationState: "background",
+        foregroundWorkstreamId: null,
+      }));
+      expect(JSON.parse(String((await firstBackgrounded).data))).toMatchObject({
+        type: "workspace_presence",
+        workstreamId: WORKSTREAM_ID,
+        userIds: [],
+      });
+      expect(first.readyState).toBe(WebSocket.OPEN);
+      expect(second.readyState).toBe(WebSocket.OPEN);
+
+      const inaccessibleClose = nextClose(second);
+      second.send(JSON.stringify({
+        type: "set_presence",
+        applicationState: "foreground",
+        foregroundWorkstreamId: "00000000-0000-7000-8000-00000000040e",
+      }));
+      const closeEvent = await inaccessibleClose;
+      expect(closeEvent.code).toBe(WORKSPACE_SOCKET_INVALID_MESSAGE_CODE);
+      expect(closeEvent.reason).toBe("Invalid workspace presence");
+    } finally {
+      first.close(1000, "test complete");
+      second.close(1000, "test complete");
+    }
+  });
+
   it("re-evaluates a changed product flag privately for subscribed users", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
