@@ -366,13 +366,6 @@ export function useWorkstreamSocketHoverWarmup(workstreamId: string): {
   }), [cancel, start]);
 }
 
-export function useWorkstreamSocketOpenState(
-  workstreamId: string,
-): () => 'retained_pair' | 'control_warmup' | 'cold' {
-  const readOpenContext = useWorkstreamSocketOpenContext(workstreamId);
-  return useCallback(() => readOpenContext().state, [readOpenContext]);
-}
-
 export function useWorkstreamSocketOpenContext(
   workstreamId: string,
 ): () => WorkstreamSocketOpenContext {

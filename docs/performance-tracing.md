@@ -230,6 +230,7 @@ would never meet.
 | Seam | The attribute that crosses it |
 | --- | --- |
 | Renderer → Worker, over HTTP | `rally.request.id`, from the `x-request-id` the desktop mints per call and the Worker echoes. |
+| Sidebar click → each retried `GET /workstreams/:id` | `rally.operation.id`, from the click-scoped `x-rally-operation-id`. Each HTTP call keeps its own `rally.request.id`. |
 | `GET …/socket` → the WebSocket upgrade → the room | `rally.socket.ticket_id`. A browser can attach no header to a handshake — see [`realtime-sockets.md`](realtime-sockets.md) — so the ticket id, which the issuing route logs and the room consumes, is the only shared value. |
 | The room's upgrade → the `subscribe` that follows | `rally.socket.connection_id`. `subscribe` arrives on a later invocation, possibly on a woken isolate. |
 | Renderer → workspace command socket → WorkspaceDO | `rally.message.client_id`, which the renderer, the command, and the command result all carry. |
@@ -277,9 +278,12 @@ shipping a browser SDK and an exporter out of the Electron renderer would move
 telemetry off the main-owned regional path [`telemetry.md`](telemetry.md)
 requires everything to travel on.
 
-Instead `RallyApi` stamps `x-request-id` on every call and prints one
+Instead `RallyApi` stamps a distinct `x-request-id` on every call and prints one
 `[perf] http <method> <path> <status> <ms>` line, and each flow prints one
 `[perf] <flow> <ms>` line carrying its phases and the correlation ids above.
+The work-stream detail call additionally sends the pending sidebar attempt as
+`x-rally-operation-id`, so React Query retries remain separate requests under
+one product opening attempt.
 Both go through `logDebug`, which is `console.debug`: filtered out of DevTools
 and of a terminal until a reader opens the Verbose level. That is what lets it
 stay on in every build rather than behind a preference nobody had enabled when
@@ -431,7 +435,7 @@ This module owns latency diagnosis for the three named flows and nothing else.
 | --- | --- |
 | `apps/api/test/tracing.test.ts` (`pnpm --filter @rally/api test`) | That a step opens a runtime span and ends it, that the step which threw is still ended and the rejection propagates, the `perf_flow` row's step map and `slowest_step`, `setError`'s status attributes, that an absent identifier sets no attribute, that `noFlowSpan` opens nothing, and that a request's span carries the `x-request-id` the desktop sent. |
 | `apps/desktop/src/renderer/lib/perf-trace.test.ts` | The renderer tracer's phase order, its throwing phase, `end` idempotence — every socket path calls it defensively — and that `newRequestId` produces something `requestContext` will accept rather than replace. |
-| `apps/desktop/src/renderer/lib/api.test.ts` (`request correlation`) | That every call carries a distinct `x-request-id`, and that a caller's own id is used when it has one. |
+| `apps/desktop/src/renderer/lib/api.test.ts` (`request correlation`) | That every call carries a distinct `x-request-id`, explicit per-request socket IDs remain unchanged, and a work-stream detail retry carries its longer-lived opening attempt separately as `x-rally-operation-id`. |
 | `apps/api/test/security-and-config.test.ts` | That `x-request-id` survives the CORS preflight in both regions and is exposed on the response. |
 
 Three traps:
@@ -531,6 +535,29 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-08-25 — Detail retries separate request identity from opening identity
+
+**What changed:** Each `GET /workstreams/:id` call now keeps the fresh
+`x-request-id` that names that specific HTTP request and carries the sidebar
+click as `x-rally-operation-id`. The API open span records the latter as
+`rally.operation.id` beside `rally.request.id`.
+
+**Why:** React Query may retry a failing open twice. Reusing the opening ID as
+all three request IDs made distinct calls indistinguishable and fanned a join
+whose documentation promised one request. The tail is exactly where both the
+individual calls and their shared click must remain visible.
+
+**Considered and rejected:** Minting a new opening ID per retry would destroy
+the product attempt denominator. Keeping the repeated request ID and documenting
+the fan-out would preserve ambiguity in Workers traces. The existing operation
+header already expresses a lifecycle longer than one request and is CORS-safe in
+both regions.
+
+**Consequences:** Join on `rally.operation.id` to collect every detail retry for
+one click, then use `rally.request.id` to inspect one call. Authentication replay
+inside one `RallyApi` call deliberately retains its request ID because it is one
+caller-level request under a renewed credential.
 
 ### 2026-08-25 — Opening, lease, and request IDs keep separate scopes
 

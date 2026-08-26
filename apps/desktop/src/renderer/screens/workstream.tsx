@@ -25,7 +25,7 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
@@ -40,15 +40,10 @@ import { desktopBridge } from '../lib/platform';
 import {
   currentSurfaceEntrypoint,
   cancelWorkstreamFeedOpen,
-  markWorkstreamFeedCacheState,
-  markWorkstreamFeedDataReady,
-  markWorkstreamFeedSocketLease,
-  reportWorkstreamFeedAfterPaint,
   reportTelemetryProductIntent,
   telemetryCountBucket,
   telemetryVisibility,
-  workstreamFeedOpenCacheState,
-  workstreamFeedOpenRequestId,
+  workstreamFeedOpenAttemptId,
   workstreamNavigation,
 } from '../lib/telemetry';
 import {
@@ -63,6 +58,7 @@ import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useTextClipped } from '../lib/use-text-clipped';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
+import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useBlockDashboardSockets } from '../lib/use-block-dashboard-sockets';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
@@ -848,15 +844,13 @@ export function WorkstreamScreen(): React.JSX.Element {
   // onto whichever it starts first, which is hook declaration order. A queryFn
   // that writes the panel preference sitting beside one that does not would make
   // that ordering load-bearing, so neither has a side effect the other lacks.
-  markWorkstreamFeedSocketLease(id, readSocketOpenContext().socketLeaseId);
-  markWorkstreamFeedCacheState(
-    id,
+  const initialFeedCacheState = useMemo(() => (
     queryClient.getQueryData(['messages', id]) !== undefined
       ? 'feed_cached'
-      : queryClient.getQueryData(['workstream', id]) !== undefined ? 'detail_cached' : 'cold',
-  );
+      : queryClient.getQueryData(['workstream', id]) !== undefined ? 'detail_cached' : 'cold'
+  ), [id, queryClient]);
   const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal) => {
-    const detail = await api!.getWorkstream(id, signal, workstreamFeedOpenRequestId(id));
+    const detail = await api!.getWorkstream(id, signal, workstreamFeedOpenAttemptId(id));
     // The detail carries the panel preference for the case where it arrives
     // before the control socket's boot frame. Null means this frame did not
     // carry it — the SubstreamAgent snapshot embeds the same shape and leaves
@@ -951,31 +945,28 @@ export function WorkstreamScreen(): React.JSX.Element {
       cancelWorkstreamFeedOpen(id, performance.now(), readSocketOpenContext().socketLeaseId);
     }
   }, [id, messages.isError, readSocketOpenContext, workstream.isError]);
-  const initialFeedTelemetrySnapshotRef = useRef<{
+  const initialFeedTelemetrySnapshot = useMemo<{
     feedSource: 'feed_cache' | 'boot_payload' | 'legacy_page';
     messageCount: ReturnType<typeof telemetryCountBucket>;
-  } | null>(null);
-  if (workstream.data && messages.data) {
-    initialFeedTelemetrySnapshotRef.current = {
-      feedSource: workstreamFeedOpenCacheState(id) === 'feed_cached'
+  } | null>(() => {
+    if (!workstream.data || !messages.data) return null;
+    return {
+      feedSource: initialFeedCacheState === 'feed_cached'
         ? 'feed_cache'
         : workstream.data.resumeFeed !== undefined || workstream.data.messageFeed !== undefined
           ? 'boot_payload'
           : 'legacy_page',
       messageCount: telemetryCountBucket(messages.data.length),
     };
-  }
-  useLayoutEffect(() => {
-    if (!workstream.isSuccess || !messages.isSuccess || !initialFeedTelemetrySnapshotRef.current
-      || !markWorkstreamFeedDataReady(id)) return;
-    const snapshot = initialFeedTelemetrySnapshotRef.current;
-    return reportWorkstreamFeedAfterPaint(
-      id,
-      snapshot.feedSource,
-      snapshot.messageCount,
-      readSocketOpenContext().socketLeaseId,
-    );
-  }, [id, messages.isSuccess, readSocketOpenContext, workstream.isSuccess]);
+  }, [initialFeedCacheState, messages.data, workstream.data]);
+  useWorkstreamFeedOpenTelemetry({
+    cacheState: initialFeedCacheState,
+    feedSource: initialFeedTelemetrySnapshot?.feedSource,
+    isReady: workstream.isSuccess && messages.isSuccess,
+    messageCount: initialFeedTelemetrySnapshot?.messageCount,
+    readSocketOpenContext,
+    workstreamId: id,
+  });
   const deferredContext = useQuery({
     queryKey: ['workstream-context', id, workstream.data?.automationSubscriptionId ?? null],
     queryFn: ({ signal }) => api!.getWorkstreamContext(id, workstream.data?.automationSubscriptionId, signal),

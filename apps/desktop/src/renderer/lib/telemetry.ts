@@ -22,6 +22,8 @@ let activeSurfaceEntrypoint: TelemetrySurfaceEntrypoint = 'direct';
 export type WorkstreamFeedCacheState = 'feed_cached' | 'detail_cached' | 'cold';
 export type WorkstreamFeedSidebarSection = 'pinned' | 'recent';
 export type WorkstreamFeedSocketPoolState = 'retained_pair' | 'control_warmup' | 'cold';
+export type TelemetryCountBucket =
+  'zero' | 'one' | 'two_to_five' | 'six_to_twenty' | 'twenty_one_to_one_hundred' | 'over_one_hundred';
 export type WorkstreamSocketStartReason =
   | 'hover_warmup' | 'active_workstream' | 'background_workstream' | 'retained_workstream' | 'reconnect';
 
@@ -53,8 +55,7 @@ export function currentSurfaceEntrypoint(): TelemetrySurfaceEntrypoint {
   return activeSurfaceEntrypoint;
 }
 
-export function telemetryCountBucket(value: number):
-  'zero' | 'one' | 'two_to_five' | 'six_to_twenty' | 'twenty_one_to_one_hundred' | 'over_one_hundred' {
+export function telemetryCountBucket(value: number): TelemetryCountBucket {
   const count = Math.max(0, Math.trunc(Number.isFinite(value) ? value : 0));
   if (count === 0) return 'zero';
   if (count === 1) return 'one';
@@ -102,9 +103,10 @@ export function markWorkstreamNavigation(workstreamId: string, switched: boolean
 
 /**
  * Starts the one sidebar-click flow whose next painted feed is being measured.
- * A duplicate click on the same destination preserves the first click; choosing
- * another row replaces it so a late response cannot be attributed to the wrong
- * interaction.
+ * A duplicate click on the same destination preserves every first-click
+ * dimension as well as its clock. The serving lease may be backfilled because
+ * a hover warm-up can finish after that click; choosing another row replaces
+ * the attempt so a late response cannot be attributed to the wrong interaction.
  */
 export function markWorkstreamFeedOpenStarted(
   workstreamId: string,
@@ -168,11 +170,37 @@ export function markWorkstreamFeedSocketLease(workstreamId: string, socketLeaseI
   }
 }
 
-/** The detail request shares this id with the final event for backend joins. */
-export function workstreamFeedOpenRequestId(workstreamId: string): string | undefined {
+/** The click-scoped operation id carried beside each detail request's own id. */
+export function workstreamFeedOpenAttemptId(workstreamId: string): string | undefined {
   return pendingWorkstreamFeedOpen?.workstreamId === workstreamId
     ? pendingWorkstreamFeedOpen.operationId
     : undefined;
+}
+
+/** Ends a click whose destination was left without another sidebar click. */
+export function abandonPendingWorkstreamFeedOpen(abandonedAt = performance.now()): void {
+  const attempt = pendingWorkstreamFeedOpen;
+  if (!attempt) return;
+  pendingWorkstreamFeedOpen = null;
+  reportTelemetryProductIntent({
+    kind: 'workstream_open_outcome',
+    operationId: attempt.operationId,
+    workstreamId: attempt.workstreamId,
+    outcome: 'abandoned',
+    durationMs: Math.max(0, Math.round(abandonedAt - attempt.startedAt)),
+    ...(attempt.socketLeaseId ? { socketLeaseId: attempt.socketLeaseId } : {}),
+  });
+}
+
+/** Route observation is outside WorkstreamScreen so StrictMode cannot mistake
+ * its development-only effect cleanup for the reader actually leaving. */
+export function abandonWorkstreamFeedOpenOutsideRoute(
+  activeWorkstreamId: string | null,
+  abandonedAt = performance.now(),
+): void {
+  if (pendingWorkstreamFeedOpen && pendingWorkstreamFeedOpen.workstreamId !== activeWorkstreamId) {
+    abandonPendingWorkstreamFeedOpen(abandonedAt);
+  }
 }
 
 export function workstreamFeedOpenCacheState(

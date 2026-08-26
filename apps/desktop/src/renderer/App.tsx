@@ -9,6 +9,7 @@ import { Button, EmptyState, LoadingState } from './components/primitives';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue } from './lib/app-session';
 import {
+  abandonWorkstreamFeedOpenOutsideRoute,
   installRendererErrorTelemetry,
   consumeSurfaceEntrypoint,
   reportJavascriptError,
@@ -127,6 +128,9 @@ function TelemetryRouteObserver(): null {
   useEffect(() => {
     const screen = telemetryScreenForPath(location.pathname);
     const surface = telemetrySurfaceForPath(location.pathname);
+    abandonWorkstreamFeedOpenOutsideRoute(
+      surface?.resourceType === 'workstream' ? surface.resourceId ?? null : null,
+    );
     if (!surface && screen !== lastScreen.current) {
       lastScreen.current = screen;
       if (screen) reportTelemetryScreen(screen);

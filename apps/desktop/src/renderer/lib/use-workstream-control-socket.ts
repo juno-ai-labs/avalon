@@ -15,7 +15,7 @@ import { realtimeSocketTelemetry, reportWorkstreamSocketStarted } from './socket
 import {
   type WorkstreamSocketStartReason,
   uuidV7,
-  workstreamFeedOpenRequestId,
+  workstreamFeedOpenAttemptId,
 } from './telemetry';
 import { setCachedWorkstreams } from './workstreams-cache';
 
@@ -208,7 +208,7 @@ export function useWorkstreamControlSocket(
         startedOnce ? 'reconnect' : initialReasonRef.current,
         attempt,
         operationId,
-        workstreamFeedOpenRequestId(workstreamId),
+        workstreamFeedOpenAttemptId(workstreamId),
       );
       startedOnce = true;
       try {

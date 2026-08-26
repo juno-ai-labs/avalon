@@ -710,7 +710,11 @@ export const TELEMETRY_EVENTS = {
       socketPoolState: z.enum(["retained_pair", "control_warmup", "cold"]),
       feedSource: z.enum(["feed_cache", "boot_payload", "legacy_page"]),
       messageCount: countBucket,
-    }).strict(),
+    }).strict().superRefine((properties, context) => {
+      if (properties.dataReadyDurationMs > properties.durationMs) {
+        context.addIssue({ code: "custom", message: "data-ready duration cannot exceed painted duration" });
+      }
+    }),
     propertyClassifications: {
       workstreamId: "product",
       socketLeaseId: "operational",
@@ -752,15 +756,15 @@ export const TELEMETRY_EVENTS = {
   workstream_open_outcome: event({
     ...common,
     name: "workstream_open_outcome",
-    definition: "One sidebar work-stream opening attempt reached a visible feed, was superseded by another sidebar click, or failed to load.",
-    productQuestion: "What fraction of sidebar opening attempts become visible, fail, or are abandoned by rapid switching?",
+    definition: "One sidebar work-stream opening attempt reached a visible feed, was superseded by another sidebar click, was abandoned by other navigation, or failed to load.",
+    productQuestion: "What fraction of sidebar opening attempts become visible, fail, are superseded by another work stream, or are abandoned for another surface?",
     sources: ["desktop-renderer"],
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
     properties: z.object({
       workstreamId: resourceId,
-      outcome: z.enum(["visible", "superseded", "load_failed"]),
+      outcome: z.enum(["visible", "superseded", "abandoned", "load_failed"]),
       durationMs: z.number().int().nonnegative(),
       socketLeaseId: uuidV7Id.optional(),
       supersedingWorkstreamId: resourceId.optional(),

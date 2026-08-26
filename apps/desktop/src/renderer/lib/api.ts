@@ -1376,11 +1376,11 @@ export class RallyApi {
    * which window to render; `resumeFeed` is where this reader stopped and is
    * null when that is already the newest page.
    */
-  async getWorkstream(id: string, signal?: AbortSignal, requestId?: string): Promise<WorkstreamBoot> {
+  async getWorkstream(id: string, signal?: AbortSignal, openAttemptId?: string): Promise<WorkstreamBoot> {
     const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
       schema: WireWorkstreamBootSchema,
       signal,
-      ...(requestId ? { requestId } : {}),
+      ...(openAttemptId ? { headers: { [RALLY_HEADERS.OPERATION_ID]: openAttemptId } } : {}),
     });
     return {
       ...mapWorkstreamDetail(raw),
