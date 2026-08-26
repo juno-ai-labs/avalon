@@ -63,5 +63,47 @@ run_step "pnpm env:sync" pnpm env:sync
 run_step "pnpm db:migrate" pnpm db:migrate
 run_step "pnpm db:seed" pnpm db:seed
 
+# Personal instructions, sourced from the environment rather than the
+# repository: PERSONAL_INSTRUCTIONS is used verbatim if set, otherwise
+# PERSONAL_INSTRUCTIONS_URL is fetched. Best-effort — a missing or broken
+# fetch must not block the rest of session start. Printed to stdout, which
+# this hook's caller injects into the agent's context; see
+# docs/sandbox.md#personal-instructions.
+personal_instructions=""
+if [ -n "${PERSONAL_INSTRUCTIONS:-}" ]; then
+  personal_instructions="$PERSONAL_INSTRUCTIONS"
+elif [ -n "${PERSONAL_INSTRUCTIONS_URL:-}" ]; then
+  # LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
+  # docs/adding-security-defensive-and-other-limits.md.
+  #
+  # Bounds: seconds curl waits for the personal-instructions fetch before
+  #   giving up.
+  # Without it: a PERSONAL_INSTRUCTIONS_URL that hangs — a dead host, a stuck
+  #   redirect — blocks this script indefinitely, since the fetch runs
+  #   synchronously right before the "ready" line that tells the rest of the
+  #   session it can start working.
+  # Direction: upper bound; the open value is "no --max-time", i.e. curl's own
+  #   unbounded default, which is today's behavior for every other network
+  #   call this script makes.
+  # Trips: curl fails, "personal instructions fetch: FAILED" is logged, and
+  #   the script continues without personal instructions.
+  # Derive from: how long a session is willing to block at startup on this one
+  #   fetch, weighed against how slow a legitimate but distant gist host can
+  #   be — a number the team has not set yet.
+  personal_instructions_fetch_timeout=""
+  if personal_instructions=$(curl -fsSL \
+      ${personal_instructions_fetch_timeout:+--max-time "$personal_instructions_fetch_timeout"} \
+      "$PERSONAL_INSTRUCTIONS_URL" 2>>"$log_file"); then
+    :
+  else
+    log "personal instructions fetch: FAILED"
+    personal_instructions=""
+  fi
+fi
+
+if [ -n "$personal_instructions" ]; then
+  printf '=== Personal instructions (environment-configured, not repository content) ===\n%s\n=== end personal instructions ===\n' "$personal_instructions"
+fi
+
 log "ready — start the API with 'pnpm dev:api:local' (see docs/dev-environment.md)"
 exit 0

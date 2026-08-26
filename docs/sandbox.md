@@ -66,6 +66,33 @@ wrapped in quotes, cannot be represented there at all, so it is **skipped with a
 warning in the session log** rather than written in a mangled form that parses
 cleanly and is no longer the key. Those belong in `.env.local` directly.
 
+### Personal instructions
+
+`PERSONAL_INSTRUCTIONS` and `PERSONAL_INSTRUCTIONS_URL` let a session inject
+free-form text — personal preferences, house style, anything an individual wants
+an agent to follow — that lives outside the repository and is not seen by
+anyone else who works on it. `scripts/session-start.sh` prints whichever one
+resolves to stdout, wrapped in markers that say the content is
+environment-configured rather than repository content; this hook's caller
+injects that stdout into the agent's context, which is what actually delivers
+it.
+
+- If `PERSONAL_INSTRUCTIONS` is set, its value is used verbatim — no fetch.
+- Otherwise, if `PERSONAL_INSTRUCTIONS_URL` is set, the script fetches it with
+  `curl -fsSL`. The fetch is **best-effort**: a failure is logged
+  (`personal instructions fetch: FAILED`) and the session starts normally with
+  no personal instructions, rather than blocking on it.
+- Both variables are **per-environment**, not per-user. Anyone who runs a
+  session against the same environment configuration sees the same text —
+  there is no per-session identity to key a different value on. Do not point
+  a shared environment's `PERSONAL_INSTRUCTIONS_URL` at content meant for one
+  person only.
+- A URL fetch only works if its host is reachable under [network
+  access](#network-access) above. A gist raw URL resolves through
+  `gist.githubusercontent.com`, which is not in the table of hosts Rally
+  reaches on its own — add it to a restricted policy before pointing
+  `PERSONAL_INSTRUCTIONS_URL` at one.
+
 ### Setup script
 
 ```bash
