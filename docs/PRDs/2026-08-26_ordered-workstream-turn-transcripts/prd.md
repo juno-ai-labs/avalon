@@ -67,7 +67,10 @@ historical load.
 The substrate also owns a restricted, lossless model-protocol projection. At
 every accepted Bind loop boundary, Rally must either durably store the exact
 ordered message state Bind uses or durably store lossless ordered parts whose
-versioned projector recreates that state with perfect semantic accuracy. The
+versioned projector recreates that state with perfect semantic accuracy. There
+is one regional authority and one atomic persistence boundary over the shared
+canonical facts. `transcript_sequence` and `loop_sequence` are two necessary
+orderings over those facts, not two owners or two copies of a transcript. The
 participant feed is an authorized projection of the same committed facts, not
 the source from which private protocol-only messages or model-facing derivatives
 are guessed.
@@ -87,9 +90,26 @@ These terms are normative. A persisted record has one explicit kind; callers
 may not choose a different classification based on the provider role or whether
 the content would be useful in the participant feed.
 
-- **Participant transcript entry:** a top-level item in the canonical
+- **Regional transcript authority:** the one Durable Object instance and its
+  object-local SQLite database that own a work-stream/substream's transcript
+  facts and both ordering projections. Canonical fact creation and every
+  required participant/Bind projection reference commit in one SQLite
+  transaction; there is no second transcript owner or cross-region copy.
+- **Canonical semantic fact / canonical payload:** the sole owning record for
+  one semantic datum, identified by a stable opaque `fact_id` or `payload_id`.
+  Examples include one assistant text block, one exact model-facing tool-result
+  message, one participant-safe tool summary, one compaction-status lifecycle,
+  and one private compaction replacement. A datum shared unchanged by multiple
+  projections is stored once and referenced by ID; equality of bytes is not
+  permission to create independent projection-local copies.
+- **Projection row:** ordering, visibility, generation, or lifecycle metadata
+  that references canonical fact/payload IDs. A projection row does not become
+  the owner of referenced text, result, or provider payload merely because an
+  API flattens the join when returning it.
+- **Participant transcript entry:** a top-level ordering/lifecycle row in the
   participant-visible work-stream projection, returned only after reader
-  admission. It has a stable `transcript_sequence` and exactly one kind:
+  admission. It has a stable `transcript_sequence`, references its canonical
+  fact(s), and has exactly one kind:
   `conversation_turn` or `status_event`. It is not filtered or re-authorized row
   by row and is not the source of truth for reconstructing private Bind state.
 - **Participant transcript turn:** a `conversation_turn` entry representing a
@@ -118,6 +138,11 @@ the content would be useful in the participant feed.
   Bind will submit at a model-call boundary, or the complete ordered array after
   Bind accepts an assistant or tool-result transition. It includes the current
   system projection and every active non-system message.
+- **Bind loop projection row:** a restricted ordering/generation row with a
+  monotonic `loop_sequence` that references the exact canonical facts Bind
+  consumes or accepts, including private protocol facts, model-facing
+  derivatives, and compaction replacements. It does not copy a participant fact
+  when the semantic datum is identical.
 - **Protocol-only message:** an exact non-system message created by the harness
   for loop control or private protocol context, recorded with
   `origin_kind = protocol` and no participant/source-event identity. Examples
@@ -145,7 +170,18 @@ the content would be useful in the participant feed.
 The classification boundary is provenance: a derivative must point to the
 durable fact it wraps; a protocol-only message is itself the durable harness
 control fact. The system message always uses the separate system-projection
-contract. No record can be both protocol-only and derived.
+contract. No record can be both protocol-only and derived. A participant-safe
+tool summary and an exact model-facing tool result are different semantic facts;
+so are a safe compaction status and its private replacement, or render-safe
+content and provider continuation metadata. Identical assistant text is not
+different: it has one canonical payload ID referenced from both orderings.
+
+The normative ownership invariant is:
+
+> Every semantic datum has exactly one owning record. Participant and Bind-loop
+> rows are ordering, visibility, generation, and lifecycle projections that
+> reference those canonical facts. Identical payloads may not be independently
+> copied into both projections.
 
 ## Motivation
 
@@ -230,10 +266,13 @@ a turn, block, slice, or hydration loop.
    first opening of a work stream while its response is already streaming.
 3. Allow independent tools from one assistant turn to start, complete, or fail
    in parallel while their cards remain in the model-declared order.
-4. Make the durable substrate sufficient to recreate, with perfect semantic
-   accuracy, the complete ordered message state Bind used at every accepted
-   model-call boundary and the state produced by each accepted assistant/tool
-   transition. Store the exact state when lossless reconstruction from parts
+4. Give every semantic datum exactly one canonical owning record, then make the
+   durable substrate sufficient to recreate, with perfect semantic accuracy,
+   the complete ordered message state Bind used at every accepted model-call
+   boundary and the state produced by each accepted assistant/tool transition.
+   Participant and Bind-loop projections reference shared stable payload IDs;
+   store a distinct projection-specific fact only when its content is genuinely
+   different, and store the exact state when lossless reconstruction from parts
    cannot be proven.
 5. Let a client load arbitrary blocks of complete transcript entries and
    compute every gap inside a known snapshot without splitting a conversation
@@ -566,9 +605,10 @@ contains an opaque `compactionEventId`, `trigger = automatic`, optional
 accuracy. It does not contain the old messages, replacement summary, token
 counts, prompt content, `loop_sequence`, or provider payload.
 
-The same entry advances to `completed` only after the exact restricted
-`state_replaced` transition is durable. Its terminal revision records
-`stoppedAtUtc` and canonical `durationMs`. A future desktop can therefore render
+The same object-local SQLite transaction that commits the exact restricted
+`state_replaced` transition advances the safe entry to `completed`; neither
+projection can observe only its half of that completion. Its terminal revision
+records `stoppedAtUtc` and canonical `durationMs`. A future desktop can therefore render
 **Context automatically compacting** from the active revision and **Context
 automatically compacted** from the completed revision, optionally appending a
 formatted active **for 2m 34s** or terminal **in 2m 34s** duration. Timing is
@@ -790,14 +830,22 @@ see. It makes the order shown to a participant match the order the agent used.
     alternative was treating all pre-text latency as thinking, which would
     mislabel queueing, network delay, moderation, and provider work that the
     protocol does not identify.
-17. **Keep participant order and model-protocol order as separate projections of
-    one authority.** Participant `transcript_sequence` excludes private
-    protocol-only messages and model-facing wrappers; restricted `loop_sequence`
-    includes every non-system message Bind consumes or accepts. The current
-    system message is a versioned projection of durable prompt inputs and
-    activated plugins/skills.
-    The rejected alternatives were leaking private rows through feed coverage
-    and rebuilding model state from an intentionally filtered UI view.
+17. **Use two orderings over one canonical fact authority, never two transcript
+    owners.** Participant `transcript_sequence` orders participant-visible turns
+    and safe status events. Restricted `loop_sequence` orders every exact
+    non-system message Bind consumes or accepts, including private protocol
+    facts, model-facing derivatives, and compaction replacements. Both
+    projections reference stable canonical fact/payload IDs. Identical assistant
+    text is stored once; participant-safe tool summaries versus exact
+    model-facing results, safe compaction status versus private replacement, and
+    render-safe content versus provider continuation metadata are separate facts
+    only because their semantics genuinely differ. The current system message
+    remains a deterministic versioned projection of durable prompt inputs and
+    activated plugins/skills. Creation of a canonical fact and all projection
+    rows required for that accepted transition is one regional object-local
+    SQLite transaction. The rejected alternatives were dual-writing identical
+    payloads into two transcript stores, leaking private rows through feed
+    coverage, and rebuilding model state from an intentionally filtered UI view.
 18. **Persist accepted protocol transitions before Bind advances.** The exact
     accepted assistant message and declared tool calls become durable before any
     tool dispatch; each exact model-facing tool result becomes durable before
@@ -820,8 +868,8 @@ see. It makes the order shown to a participant match the order the agent used.
     that SQLite does not select, `OFFSET` pagination, scanning tombstones to find
     five displayable turns, and independently hydrating overlapping slices.
 21. **Project compaction lifecycle, never compacted context.** Reserve a typed
-    participant status entry when compaction begins and terminalize that same
-    entry only after the restricted replacement is durable. Store safe UTC
+    participant status entry when compaction begins; the transaction that
+    commits the restricted replacement terminalizes that same safe entry. Store safe UTC
     timing and lifecycle revisions so a future client can render active and
     completed labels. The replacement messages, summary, token counts, private
     bounds, and provider payload remain restricted. The rejected alternatives
@@ -844,6 +892,34 @@ a new global authority. It runs inside the Durable Object that already owns the
 conversation and uses that object's SQLite transaction, authorization, region,
 and lifecycle. No cross-object transcript database is introduced.
 
+There is exactly one regional source of truth for transcript semantics. Its
+physical model has three conceptual layers:
+
+| Layer | What it owns | What it must not own |
+| --- | --- | --- |
+| Canonical facts/payloads | Each assistant text/block payload, participant-safe summary/status lifecycle, exact model-facing derivative, protocol-only message, private replacement, and provider-continuation datum exactly once. | Sequence position in either projection or a second copy made only for reader convenience. |
+| Participant projection | `transcript_sequence`, participant visibility/kind, stable fact references, and participant lifecycle placement. | A duplicate of canonical text or of any restricted payload. |
+| Bind-loop projection | `loop_sequence`, loop generation/revision, transition kind, stable fact references, and projector metadata needed for exact replay. | A duplicate of participant text or a sanitized replacement for an exact private fact. |
+
+The two projections are indexes over different sequence domains, not
+independently writable transcript documents. A committed semantic fact is
+referenced by one or both projections according to its visibility and
+lifecycle. Where both need identical
+assistant text or another identical payload, both rows reference the same
+stable payload ID. Projection-specific canonical facts exist only for genuine
+semantic differences: participant-safe tool summary versus exact model-facing
+tool result, compaction status versus private replacement, and render-safe
+content versus provider continuation metadata.
+
+For every accepted transition, the authority creates any new canonical fact
+records and every required participant/Bind ordering or lifecycle row in one
+object-local SQLite transaction. A failure in either projection rolls back the
+fact and the other projection; no outbox, compensating write, or later repair is
+the normal consistency mechanism. Subsequent inference and participant reads
+therefore select different indexes over one committed fact graph. API responses
+may flatten referenced payloads for transport, but that denormalization is not
+durable ownership and may not be written back as another source of truth.
+
 The required authority inventory at the time of this PRD is:
 
 | Saved LLM conversation | Authority | Scope in this PRD |
@@ -862,10 +938,12 @@ PRD and moves in its separate PR.
 
 ### Restricted Bind loop projection
 
-The substrate stores a restricted model-protocol record alongside the
-participant transcript. It is not returned by participant history APIs and does
-not use `transcript_sequence`. Its job is to make the state Bind actually consumes and
-produces durable across Worker loss, retry, code deployment, and compaction.
+The substrate stores restricted model-protocol ordering/generation rows beside
+the participant ordering rows inside the same authority and transaction domain.
+Those rows reference canonical facts; they are not a second payload store. They
+are not returned by participant history APIs and do not use
+`transcript_sequence`. Their job is to make the state Bind actually consumes
+and produces durable across Worker loss, retry, code deployment, and compaction.
 
 At run initialization, Rally persists the exact post-healing ordered non-system
 message state that will seed Bind, or lossless ordered components that project
@@ -882,7 +960,10 @@ long as their loop generations are replayable. A plugin or skill activation
 must durably commit `system_projection_changed` before Bind may use the newly
 rendered head.
 
-Thereafter the record is an ordered protocol ledger. Conceptual transitions are:
+Thereafter the rows form an ordered protocol ledger. Each transition below is
+reconstructed from its canonical fact references; listing the complete message
+shape does not authorize an inline projection-local payload copy. Conceptual
+transitions are:
 
 - `state_initialized`: the exact post-healing initial non-system generation plus
   the system-projection revision used to create its head message.
@@ -905,12 +986,17 @@ Thereafter the record is an ordered protocol ledger. Conceptual transitions are:
   the immutable earlier transitions or the participant transcript.
 
 Each transition has a stable `loop_id`, `loop_generation`, monotonic
-`loop_sequence`, `state_revision`, transition kind, exact protocol payload or
-lossless content-addressed reference, projector version, source turn/receipt
-identity where applicable, and a canonical payload hash. JSON object property
-order is not meaningful, but message order, content-part order, roles, names,
-IDs, exact strings—including tool argument/result strings—and provider-defined
-ordered continuation fields are meaningful and must survive round-trip.
+`loop_sequence`, `state_revision`, transition kind, stable canonical fact/payload
+references, projector version, source turn/receipt identity where applicable,
+and canonical payload hashes. Exact protocol content lives in its one canonical
+owning record, not inline in a second loop-owned copy. A protocol-only message or
+model-facing derivative may itself require a new restricted canonical fact;
+shared assistant text references the already-owned text payload while distinct
+provider continuation metadata references its own restricted fact. JSON object
+property order is not meaningful, but message order, content-part order, roles,
+names, IDs, exact strings—including tool argument/result strings—and
+provider-defined ordered continuation fields are meaningful and must survive
+round-trip.
 
 An out-of-line payload is lossless only when it is immutable, region-local,
 content-addressed, transactionally linked before Bind advances, and retained for
@@ -952,8 +1038,10 @@ served through the new protocol.
 
 ### Participant transcript projection
 
-Each owning authority stores audience-visible transcript entries with these
-conceptual fields:
+The single regional authority stores participant ordering/lifecycle rows with
+the following conceptual fields. These are the flattened product/API shape; a
+field that belongs to a referenced canonical fact is not duplicated into the
+physical projection row:
 
 - `entry_id`: stable opaque identity.
 - `transcript_sequence`: monotonic sequence allocated once and never reused.
@@ -970,14 +1058,16 @@ conceptual fields:
   accuracy, and safe trigger metadata for status events.
 - `created_at`, `committed_at`, and the existing attribution/visibility data.
 
-Each assistant turn has ordered blocks:
+Each assistant turn projects ordered blocks by stable canonical payload IDs:
 
-- A text block has `block_index`, canonical Markdown text, and the render-safe
-  structured representation already used by the feed.
+- A text block has `block_index`, one shared canonical Markdown payload ID, and
+  a reference to any genuinely distinct render-safe structured representation
+  already used by the feed. The Bind envelope references the same Markdown
+  payload when its text is identical.
 - A tool block has `block_index`, provider call ID, stable Rally invocation or
-  receipt ID, model `call_index`, plugin/tool attribution, display summary,
-  lifecycle state, lifecycle revision, and the existing durable result/error
-  reference.
+  receipt ID, model `call_index`, plugin/tool attribution, a participant-safe
+  display-summary fact reference, lifecycle state, lifecycle revision, and the
+  existing durable result/error reference.
 - A thinking block has `block_index`, provider-turn/stream-epoch attribution,
   lifecycle revision, and one or more timing intervals. It contains no
   member-visible reasoning payload. It exists only when normalized provider
@@ -987,9 +1077,18 @@ Each assistant turn has ordered blocks:
 order inside the provider assistant message and remains the source for returning
 parallel results to Bind. Neither is derived from start or completion time.
 Large or sensitive raw result bodies stay in their current regional authority;
-the participant turn stores only authorized display references. If Bind saw a
-model-facing derivative of that result, the restricted loop projection stores
-that exact derivative or a lossless pinned reference to it.
+the participant projection references only authorized display facts. If Bind saw
+a model-facing derivative of that result, the restricted loop projection
+references that derivative's one canonical fact or its lossless pinned payload.
+
+Assistant acceptance is the clearest atomicity example: one SQLite transaction
+creates the canonical assistant/block facts, participant
+`transcript_sequence` references, restricted `loop_sequence` references,
+provider-only continuation facts when present, and durable tool execution plan.
+Tool dispatch cannot observe only one ordering. The same rule applies to exact
+tool-result acceptance and compaction replacement/status transitions: facts
+whose content differs have separate owning records, while all unchanged shared
+payloads remain single records referenced from the necessary projections.
 
 #### Required indexed access paths
 
@@ -1384,7 +1483,7 @@ projector or reducer under test.
 | Objective | What the suite must prove |
 | --- | --- |
 | `T1 Protocol fidelity` | The restricted substrate reconstructs the exact accepted Bind loop state, including the freshly rendered system head, message/content-part order, roles, IDs, exact strings, and provider continuation fields. |
-| `T2 Causal durability` | Every state transition required for later inference is durable before Bind, tool dispatch, terminal publication, or compaction can advance past it. |
+| `T2 Causal durability and single ownership` | Every semantic datum has one canonical owner; required participant and Bind-loop rows reference that fact and commit atomically before Bind, tool dispatch, terminal publication, or compaction can advance past it. |
 | `T3 Live ordering and concurrency` | Response tokens remain immediately streamable while text, thinking, and multiple tool calls start and settle independently without changing model-declared display order. |
 | `T4 Range and gap truth` | Snapshot-fenced transcript-entry ranges report what was actually inspected, and the desktop computes loaded islands and gaps correctly for empty, shortened, overlapping, disjoint, status-bearing, and realtime-extended history. |
 | `T5 Activity-time truth` | Response, plugin, invocation, and observable-thinking timers use authoritative UTC starts, first-join/reconnect elapsed baselines, lifecycle edges, and interval unions; local ticking never requires server clock frames and survives late join, pause, sleep, reconnect, and history load. |
@@ -1403,7 +1502,7 @@ projector or reducer under test.
 | Layer | Required target | Responsibility |
 | --- | --- | --- |
 | Pure harness protocol | `packages/agent-harness/src/bind-loop-projection.test.ts` | Fixed-message canonicalization, projector round trips, system-projection revision changes, provider continuation fields, protocol/derivative classification, and mismatch detection. |
-| Substrate and SQL | `apps/api/test/workstream-transcript-substrate.test.ts` using the real object schema through `createTestSqlStorage()` | Schema constraints, transactions, exact indexed range scans, `EXPLAIN QUERY PLAN` assertions, tombstones, immutable payload references, transition ordering, and idempotent clean-cut schema installation. |
+| Substrate and SQL | `apps/api/test/workstream-transcript-substrate.test.ts` using the real object schema through `createTestSqlStorage()` | Single-owner fact schema, projection references, atomic cross-projection transactions, exact indexed range scans, `EXPLAIN QUERY PLAN` assertions, tombstones, immutable payload references, transition ordering, and idempotent clean-cut schema installation. |
 | Real Cloudflare runtime | `apps/api/test-workers/workstream-transcript-runtime.test.ts` | Real `SubstreamAgent`, object-local SQLite, RPC, WebSocket, eviction/hibernation, concurrency, failure boundaries, and snapshot fencing. This suite may not replace the Durable Object or its storage with a double. |
 | Desktop range/state reducer | `apps/desktop/src/renderer/lib/workstream-turn-ranges.test.ts` | Range union/complement, stable turn/status-entry reconciliation, nested activity ancestry and sibling order, stream epochs, stale lifecycle rejection, timers, hidden compaction-entry retention, and realtime singleton coverage. |
 | Desktop component | `apps/desktop/src/renderer/screens/workstream-turn-feed.test.tsx` | Ordered DOM blocks, streaming updates, dual initial islands, jump/scroll behavior, generic thinking/timing labels, and accessibility names. |
@@ -1445,13 +1544,13 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H21 survives_hibernation_during_active_stream` | workerd | Stream text and parallel activity, hibernate/evict the object, reconnect, and assert exact checkpoint prefix, lifecycle state, loop revision, and subsequent frames appear once. |
 | `H22 deploys_canonical_protocol_as_the_only_feed` | workerd + desktop | Install the new object schema, backend protocol, and current desktop fixture; assert first open, range loading, streaming, replay, and terminal history use only canonical transcript entries/activity and register no legacy emitter, reader, or capability branch. |
 | `H23 starts_canonical_history_without_legacy_backfill` | SQL + workerd | Seed non-production pre-cutover aggregate rows, run the idempotent cutover twice, and create a new response. Assert the old rows are neither converted nor returned, the inference archive is never queried, and canonical sequence/history begins solely from post-cutover activity. |
-| `H24 keeps_participant_and_restricted_projections_linked` | SQL + workerd | Read participant ranges and resume inference from the same committed facts; assert shared opaque identities, authorized visible content, and exact private replay without deriving either projection from the other. |
-| `H25 compacts_twice_across_distinct_events_and_resumes_second_generation` | workerd | Accept activity, commit compaction event A, accept additional assistant/tool activity, then commit distinct compaction event B. Assert two `state_replaced` transitions with distinct event/source revisions, three ordered loop generations, retention of both exact replacements, unchanged participant conversation turns plus two separately ordered safe compaction status entries, and post-eviction replay from B with the exact next provider array. Replay either event ID and assert idempotency rather than a third replacement generation or status entry. |
+| `H24 keeps_participant_and_restricted_projections_linked_without_copying_payloads` | SQL + workerd | Commit an assistant turn used by both views, an exact model-facing tool result plus participant-safe summary, provider continuation metadata plus render-safe content, and compaction status plus private replacement. Inspect durable rows and read participant ranges/resume inference: assert identical assistant text exists under one canonical payload ID referenced by both orderings; genuinely different safe/private facts have different owners and visibility; no projection table contains an independent payload copy. Exact private replay must not derive from the participant view, and the participant view must not expose the restricted fact. |
+| `H25 compacts_twice_across_distinct_events_and_resumes_second_generation` | workerd | Accept activity, commit compaction event A, accept additional assistant/tool activity, then commit distinct compaction event B. Assert two `state_replaced` transitions with distinct event/source revisions, three ordered loop generations, retention of both exact replacements, unchanged participant conversation turns plus two separately ordered safe compaction status entries, and post-eviction replay from B with the exact next provider array. For each event, assert the restricted replacement and terminal safe-status revision commit atomically while retaining separate canonical facts. Replay either event ID and assert idempotency rather than a third replacement generation or status entry. |
 | `H26 joins_existing_stream_with_utc_start_and_elapsed_baseline` | workerd + desktop + E2E | Start a response before a second client opens the work stream. On first join, assert the active snapshot carries the original `startedAtUtc`, a server `snapshotAtUtc`, and the full prior `elapsedMsAtSnapshot`; the label paints the already-accrued duration immediately, continues from the local monotonic receipt point, and is replaced by canonical terminal duration. |
 | `H27 opens_workstream_mid_stream_with_atomic_checkpoint_and_catchup` | workerd + desktop + E2E | Before the client opens the work stream, stream accumulated text and produce planned, running, completed, and failed parallel tool states plus an active thinking block. Assert the first boot paints the exact accumulated ordered state and timing baselines, retains unread/latest islands, records `resumeAfterEventSequence`, and then applies subsequent text/tool/thinking frames once without waiting for another fetch. |
 | `H28 authorizes_boot_once_for_all_ranges_and_active_state` | API Node + workerd | Open with disjoint unread/latest slices, active stream checkpoints, lifecycle timing, authors, mentions, attachments, compaction status, and tool blocks. Instrument the typed reader-admission boundary and assert one admission decision for the complete boot, zero per-entry/block calls, and the same admitted capability identity on every internal scan/hydration. Repeat through the initial socket snapshot and assert it reuses the socket admission. |
 | `H29 uses_indexed_bounded_queries_for_initial_ranges` | SQL + workerd | Populate a large tombstone/status history with overlapping unread/latest islands and an active compaction after the latest conversation turn, inspect the exact production SQL with `EXPLAIN QUERY PLAN`, and instrument statement/hydration boundaries. Assert the member anchor is a point lookup; anchor normalization, predecessor, successor, latest, active-status, bounds, and coverage/range selectors use the declared indexes in forward/reverse order with their bounded limits; neither selector uses `OFFSET`, a full transcript scan, or a temporary B-tree; and the union of both islands/status is bulk hydrated once with a statement count independent of total history length. |
-| `H30 persists_compaction_lifecycle_for_future_rendering` | SQL + workerd + desktop reducer | Begin automatic compaction between two conversation turns. Assert one participant-safe `context_compaction` entry is durably ordered before mutation, its active snapshot/reconnect state includes the original UTC start plus elapsed baseline, the exact restricted replacement commits before that same entry reaches `completed`, canonical duration survives cold/range load, the current reducer retains but need not paint it, and a fixed future-view projection can produce **Context automatically compacting** or **… compacting for 2m 34s**, then **Context automatically compacted** or **… compacted in 2m 34s**, without reading restricted payloads. |
+| `H30 persists_compaction_lifecycle_for_future_rendering` | SQL + workerd + desktop reducer | Begin automatic compaction between two conversation turns. Assert one participant-safe `context_compaction` entry is durably ordered before mutation, its active snapshot/reconnect state includes the original UTC start plus elapsed baseline, and one SQLite transaction commits the exact restricted replacement fact/loop reference plus that same safe entry's `completed` revision. Assert canonical duration survives cold/range load, the current reducer retains but need not paint it, and a fixed future-view projection can produce **Context automatically compacting** or **… compacting for 2m 34s**, then **Context automatically compacted** or **… compacted in 2m 34s**, without reading restricted payloads. |
 | `H31 projects_nested_activity_with_parallel_tool_children` | SQL + workerd + desktop reducer | Run one response with two assistant turns. Under the first turn, stream thinking plus two ordered plugin blocks whose tool children start and settle in parallel/out of order; place compaction under the second turn. Assert live, reconnect, range, and cold projections produce response → assistant turn → plugin → tool ancestry with thinking/compaction at their causal turn, stable sibling order, independent child labels, parent wall-clock unions, no double counting, and uninterrupted response-text token streaming. Run the same fixture through a flat-row adapter and a nested in-memory fixture and assert identical product projection without requiring identical persistence. |
 | `H32 benchmarks_complete_workstream_open_distribution` | real Electron + local E2E performance lane | From an already-running authenticated desktop, exercise declared warm/cold cache and object, unread/latest, overlapping/disjoint, large-history, and mid-stream cohorts through the production click/navigation path. Stop each client-monotonic sample only when the target range is visibly committed, both islands and active fence are resident, and the composer is usable. Preserve raw samples and environment metadata; assert the combined distribution is p50 ≤ 1,000 ms and p90 ≤ 2,000 ms and report every cohort separately. |
 
@@ -1499,9 +1598,10 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E38 races_midstream_open_with_frame_and_terminal_commit` | workerd + desktop | Publish a token/tool lifecycle frame immediately before, during, and after first-open snapshot assembly, then commit the active turn. Assert snapshot fencing plus catch-up yields every byte/block/revision exactly once, canonical commit reconciles the reserved turn in place, no active overlay survives terminal state, and no middle range is falsely marked covered. |
 | `E39 keeps_authorization_work_constant_across_range_shapes` | API Node + workerd | Run empty, shortened, tombstone/status-heavy, overlapping, disjoint, and maximum-existing-bound range fixtures with different returned entry/block counts. Assert each external read makes exactly one reader-admission decision, no row hydration triggers authorization, and a participant/scope epoch change invalidates the admitted socket before another snapshot is returned. |
 | `E40 keeps_indexed_plan_for_missing_anchor_tombstones_and_boundaries` | SQL + workerd | Exercise a missing/retracted unread anchor, long tombstone runs, fewer than five turns on either side, empty history, and a snapshot fence below the physical tail. Assert anchor normalization and all directional/latest/range reads retain the declared indexed plans, coverage remains truthful across skipped tombstones, no linear fallback or temporary sort appears, overlap hydrates once, and deliberately removing each required index makes the plan/failure-proof test fail for that access path. |
-| `E41 closes_compaction_status_truthfully_without_leaking_payload` | SQL + workerd + desktop reducer | Fail start-entry persistence, then separately crash/fail/cancel after start but before replacement, after replacement but before stop, and during duplicate/out-of-order delivery. Assert a failed required start write prevents compaction mutation; otherwise there is one stable entry per compaction, monotonic active-to-completed/failed/cancelled/abandoned state, recovered upper-bound timing where exact stop is unavailable, no permanently active marker, no participant summary/messages/token counts/private bounds, no Bind projection of the safe marker, no compaction marker counted against the five requested conversation turns, and indexed range/reconnect recovery without duplication. |
+| `E41 closes_compaction_status_truthfully_without_leaking_payload` | SQL + workerd + desktop reducer | Fail start-entry persistence; separately crash/fail/cancel after start but before replacement; inject failure between the replacement write and terminal safe-status update inside their transaction; then exercise duplicate/out-of-order delivery. Assert a failed required start write prevents compaction mutation; the injected partial completion rolls back both replacement and terminal status; otherwise there is one stable entry per compaction, monotonic active-to-completed/failed/cancelled/abandoned state, recovered upper-bound timing where exact stop is unavailable, no permanently active marker, no participant summary/messages/token counts/private bounds, no Bind projection of the safe marker, no compaction marker counted against the five requested conversation turns, and indexed range/reconnect recovery without duplication. |
 | `E42 rejects_or_repairs_orphaned_and_regressive_nested_activity` | SQL + workerd + desktop reducer | Deliver child-before-parent, stale reparenting, duplicate child stops, one sibling stop while another remains active, a parent terminal edge before required children settle, and a reconnect snapshot missing an active child's ancestor. Assert arrival order cannot define/reparent siblings; stale/duplicate edges are ignored; the parent stays active and counts overlap once; an inconsistent snapshot is rejected/resynced or repaired from canonical ancestry; range merges never duplicate nodes; and no storage implementation is required to persist a recursive tree. |
 | `E43 does_not_finish_open_metric_at_partial_stale_or_failed_state` | desktop + E2E | Independently delay authorization, unread/latest ranges, active checkpoint/fence, renderer commit, and composer readiness; begin with stale cached content; then fail and cancel separate opens. Assert the monotonic clock starts once at member intent, never restarts, and cannot stop on API completion, skeleton/header/first-row/stale paint, or only one range. Success records exactly once after the full usable condition; failed/cancelled opens record their outcome and elapsed time but never enter successful percentiles. |
+| `E44 rolls_back_canonical_fact_and_required_projections_atomically` | SQL + workerd | For assistant acceptance, exact tool-result acceptance, and compaction completion, inject failure after canonical fact insertion and after each required participant/Bind projection write. Assert the object-local SQLite transaction leaves no orphan fact, independent duplicate payload, advanced sequence/revision, one-sided projection, dispatchable tool plan, completed safe status without a replacement, or replacement visible without its completed safe status. Retry each transition and assert exactly one owning fact plus the required stable projection references commit. |
 
 ### Required algebraic, race, and failure-proof checks
 
@@ -1708,7 +1808,7 @@ exist before deployment, stop and revise this release plan before shipping.
     loop payloads nor `loop_sequence` bounds. Subsequent inference nevertheless
     reconstructs from the restricted projection without consulting the desktop
     projection or Global inference lakehouse.
-39. Every required `H01`–`H32` and `E01`–`E43` test is mapped to an actual test
+39. Every required `H01`–`H32` and `E01`–`E44` test is mapped to an actual test
     name and file, passes at its required layer, and has an implementation-PR
     failure-proof record showing the named assertion fails when its protected
     production behavior is deliberately broken. The three generated algebraic
@@ -1742,9 +1842,10 @@ exist before deployment, stop and revise this release plan before shipping.
     removed.
 44. Automatic compaction reserves one stable participant-safe status entry
     before mutation. Active snapshots carry its original UTC start and elapsed
-    baseline; success becomes visible only after the restricted replacement is
-    durable and carries canonical terminal duration. Failure/cancellation/
-    recovery closes the same entry truthfully. Range and realtime delivery can
+    baseline; one SQLite transaction commits the distinct private replacement
+    fact/loop reference and terminal safe-status revision, so neither projection
+    can observe half of a successful completion. Failure/cancellation/recovery
+    closes the same entry truthfully. Range and realtime delivery can
     therefore support future **Context automatically compacting** and **Context
     automatically compacted**, optionally **… compacting for 2m 34s** or **…
     compacted in 2m 34s**, without a storage migration or disclosure of compacted
@@ -1768,3 +1869,14 @@ exist before deployment, stop and revise this release plan before shipping.
     telemetry becomes authoritative when samples exist. The metric never stops
     at an API response, skeleton, stale cache, first row, or only one range, and
     slow successes are not discarded or restarted.
+47. One regional authority owns every transcript semantic datum exactly once.
+    `transcript_sequence` orders participant-visible turns and safe status
+    events; `loop_sequence` orders the exact non-system messages Bind consumes
+    or accepts. Both projections reference shared stable fact/payload IDs and
+    commit with new facts in one object-local SQLite transaction. Identical
+    assistant text is not copied between them. Participant-safe tool summaries,
+    compaction statuses, and render-safe content have distinct owning records
+    from exact model-facing tool results, private compaction replacements, and
+    provider continuation metadata only because those semantics genuinely
+    differ. A failed projection write rolls back the whole transition rather
+    than leaving dual sources, an orphan fact, or a one-sided accepted state.
