@@ -1,9 +1,11 @@
-# Ordered work-stream turn transcripts
+# Ordered, range-addressable work-stream turns
 
 > Created 2026-08-26.
 >
-> Preserve model-turn order across assistant text and tool activity while making
-> work-stream transcript loading explicitly gap-aware. Companion:
+> Preserve model-turn order across assistant text and tool activity, and require
+> the same gap-aware durable transcript substrate wherever the work-stream
+> harness saves a replayable LLM conversation; the automation wizard remains a
+> separate change. Companion:
 > [state](state.md). Subsystem references:
 > [agent harness](../../agent-harness.md),
 > [work-stream Durable Objects](../../workstream-durable-object.md),
@@ -19,6 +21,14 @@ Its ordering unit is a model turn rather than a whole harness run. An assistant
 turn has a stable identity and contains ordered text and tool-call blocks; tool
 results update their matching blocks without moving them. A later assistant
 turn is a later transcript turn even when it belongs to the same run.
+
+That contract is a shared durable LLM-transcript substrate, not logic private to
+the desktop route. Within the work-stream/harness architecture covered by this
+PRD, every Durable Object that authoritatively saves an ordered LLM conversation
+for later continuation or replay must compose the substrate and expose its
+range/coverage contract. Today the transcript authority is `SubstreamAgent`. A
+future in-scope transcript-owning Durable Object joins the same contract rather
+than creating another opaque message array.
 
 The backend also describes exactly which half-open turn ranges each response
 covers. The desktop merges those ranges into a coverage set, so it can tell the
@@ -75,6 +85,12 @@ was retracted, or a response was shortened. Inferring coverage from the first
 and last returned rows or from the row count makes those cases
 indistinguishable and can create silent holes or repeated fetch loops.
 
+Fixing only the work-stream REST response would leave the underlying transcript
+substrate undefined and the next durable work-stream agent surface free to
+reproduce the same pagination failure. The range contract therefore belongs
+beside the canonical turn store used by `SubstreamAgent`, below REST, socket,
+model replay, and desktop projections.
+
 ## Goals
 
 1. Render assistant narration and tool activity in the order of the original
@@ -88,15 +104,25 @@ indistinguishable and can create silent holes or repeated fetch loops.
    unavailable large result bodies.
 5. Let a client load arbitrary blocks of complete turns and compute every gap
    inside a known snapshot without inferring coverage from returned content.
-6. Keep turn identities and sequence positions stable across retries,
+6. Put turn persistence, snapshot fencing, range scanning, actual-coverage
+   reporting, tombstones, and canonical model projection in one shared durable
+   transcript substrate rather than reimplementing them in each route.
+7. Require every in-scope Durable Object that saves an authoritative replayable
+   LLM transcript to use that substrate. The current required adopter is
+   `SubstreamAgent`; REST, socket, replay, and desktop paths may not implement
+   competing notions of coverage above it.
+8. Keep turn identities and sequence positions stable across retries,
    reconnects, tool lifecycle updates, pagination, and realtime delivery.
-7. Preserve regional authority and existing work-stream visibility rules.
+9. Preserve regional authority and each transcript surface's existing
+   visibility rules.
 
 ## Non-goals
 
-1. **Change the automation-wizard feed.** This PRD specifies the work-stream
-   side. The wizard may adopt the same turn contract in a separate proposal,
-   but its persistence and delivery path do not change here.
+1. **Change the automation-wizard feed or its saved transcript.** The wizard is
+   the one explicit exception to this PRD's transcript-substrate adoption. Its
+   persistence, range loading, streaming, interleaving, migration, and UI will
+   be handled in a separate PR; nothing here changes
+   `automation_subscriptions.draft_conversation_json` or its owning paths.
 2. **Change model prompts, route selection, plugin availability, tool
    authorization, or tool execution semantics.** Tool calls remain proposals
    subject to the current receipt, authority, and idempotency contracts.
@@ -119,6 +145,11 @@ indistinguishable and can create silent holes or repeated fetch loops.
 9. **Provide a point-in-time snapshot of mutable tool status.** A snapshot
    freezes turn membership and order; authorized lifecycle revisions may
    continue to update those turns.
+10. **Treat every stored sequence of text as an LLM transcript.** Note
+    speech-to-text segments, inference-lakehouse request/response captures,
+    compaction checkpoints, active-output checkpoints, and final derived block
+    results are not authoritative replayable conversations and do not adopt the
+    range substrate merely because they contain model-related text.
 
 ## Product behavior
 
@@ -218,13 +249,21 @@ None yet.
    new snapshot, while lifecycle revisions may update already known turns. The
    rejected alternative was freezing a copy of every tool status, which adds a
    second history authority without improving transcript order.
-9. **Use a participant-visible sequence domain.** Private model instructions,
+9. **Implement the contract once in the durable transcript substrate.** The
+   substrate owns stable turn/block identities, sequence allocation, snapshot
+   fences, range scans, actual coverage, tombstones, and model-protocol
+   projection. `SubstreamAgent` and any future in-scope transcript-owning
+   Durable Object supply their authority and visibility policy through adapters.
+   The rejected alternative was duplicating range arithmetic and transcript
+   reconstruction in each route or object, which would make equal gaps mean
+   different things on different agent surfaces.
+10. **Use an audience-specific sequence domain.** Private model instructions,
    operational events, and rows a participant could never read do not consume
    advertised turn positions. Coverage metadata is therefore not a side
    channel for hidden internal records. A tombstone occupies a position only
    when a previously participant-visible reserved turn produced no displayable
    content or was retracted.
-10. **Do not backfill guessed interleaving.** Existing combined run messages
+11. **Do not backfill guessed interleaving.** Existing combined run messages
     retain their stored ordering and are projected through a legacy envelope.
     Exact model-turn ordering begins at the cutover boundary. The rejected
     alternative was heuristically distributing old text around tool timestamps,
@@ -232,8 +271,28 @@ None yet.
 
 ## Data model
 
-The owning `SubstreamAgent` stores one participant-visible transcript turn with
-these conceptual fields:
+The shared durable transcript substrate is a storage/projection component, not
+a new global authority. It runs inside the Durable Object that already owns the
+conversation and uses that object's SQLite transaction, authorization, region,
+and lifecycle. No cross-object transcript database is introduced.
+
+The required authority inventory at the time of this PRD is:
+
+| Saved LLM conversation | Authority | Scope in this PRD |
+| --- | --- | --- |
+| Work-stream main feed and any future independently addressable substream | `SubstreamAgent` | In scope: replace direct `parts` pagination/projection with canonical turns, blocks, and range coverage. |
+| HyperSight execution | Source `SubstreamAgent` | In scope through its source transcript. `BlockDashboardAgent` stores only derived dispatch/output state and does not create a second transcript. |
+| Automation-creation draft conversation | `WorkspaceDO` | Explicitly out of scope: a separate PR will migrate its saved transcript, range loading, streaming, and UI. |
+
+**Within the work-stream/harness architecture, wherever Rally saves an
+authoritative ordered LLM conversation for later continuation or replay,
+adopting this substrate and range contract is in scope and mandatory.** Saving
+such a conversation in an object-local JSON blob, bespoke table, or cursor-only
+API outside the substrate is not a conforming implementation. The automation
+wizard is the sole explicit exception in this PRD and moves in its separate PR.
+
+Each owning authority stores one audience-visible transcript turn with these
+conceptual fields:
 
 - `turn_id`: stable opaque identity.
 - `turn_sequence`: monotonic sequence allocated once and never reused.
@@ -291,6 +350,13 @@ non-overlapping intervals and computes gaps as the complement inside
 `[earliestAvailableSequence, throughSequence + 1)`. For example, coverage of
 `[1, 21)` and `[41, 61)` inside `[1, 88)` has gaps `[21, 41)` and `[61, 88)`.
 
+The shared substrate defines this request/response and range arithmetic once.
+An owning Durable Object may expose it through a surface-specific authenticated
+RPC or socket message, but may not change the meaning of the snapshot fence,
+coverage, tombstone, or sequence. A conformance suite runs the same empty,
+shortened, disjoint, overlapping, and realtime-extension cases against every
+adapter.
+
 Reserved turns are durable sequence slots. A request can return a streaming
 turn plus its checkpoint. If the attempt ends without participant-visible
 content, the slot becomes a lightweight retracted tombstone. Sequences are
@@ -315,19 +381,19 @@ then one `tool` result per call in declared order, then the next assistant turn.
 
 ## Regional impact
 
-Global and EU use the same object-local schema and protocol in their respective
-`SubstreamAgent` instances. No transcript, tool result, range request, snapshot,
-or coverage metadata crosses regions. Regional D1 remains routing and migration
-control rather than a transcript fallback, and EU history is never loaded from
-Global when its authority is unavailable.
+Global and EU use the same object-local substrate and protocol in their
+respective `SubstreamAgent` instances. No transcript, tool result, range
+request, snapshot, or coverage metadata crosses regions. Regional D1 remains
+routing and migration control rather than a transcript fallback, and EU history
+is never loaded from Global when its authority is unavailable.
 
 ## Security and trust model
 
-Every snapshot and range read reuses the current work-stream participant and
-workspace authorization before returning bounds or content. The advertised
-sequence domain contains participant-visible turns only, so its gaps and upper
-bound do not disclose private system prompts, hidden operational rows, another
-substream, or another participant's inaccessible content.
+Every snapshot and range read reuses work-stream participation authorization
+before returning bounds or content. The advertised sequence domain contains
+only turns visible to that audience, so its gaps and upper bound do not disclose
+private system prompts, hidden operational rows, another substream, or another
+participant's inaccessible content.
 
 Tool arguments, results, and failures retain their existing display
 sanitization and result-reference rules. Lifecycle events are accepted only for
@@ -358,20 +424,23 @@ identity and sequence even when the harness run is unchanged.
 
 ## Rollout
 
-1. Add the turn/block storage and range contract without changing the existing
-   feed. Historical rows remain readable, and no guessed backfill is performed.
-2. Teach the desktop to understand both the legacy message protocol and the new
+1. Add the shared durable transcript substrate, its authority adapter contract,
+   and one conformance suite for stable turn/block storage, snapshot fencing,
+   range scanning, actual coverage, tombstones, and canonical projection.
+2. Adopt it in `SubstreamAgent` without changing the existing feed. Historical
+   rows remain readable, and no guessed backfill is performed.
+3. Teach the desktop to understand both the legacy message protocol and the new
    turn protocol. It stores coverage as ranges, reconciles streamed and
    committed versions by turn ID, and ignores unknown stale lifecycle
    revisions.
-3. Advertise the new protocol in the work-stream socket subscription. The
+4. Advertise the new protocol in the work-stream socket subscription. The
    backend emits turn events only to a client that declares support; older
    desktop releases continue receiving their current projection during the
    compatibility window.
-4. Enable new-turn persistence at an object-local cutover sequence. A snapshot
+5. Enable new-turn persistence at an object-local cutover sequence. A snapshot
    may contain legacy envelopes before the cutover and canonical turns after it,
    but one stable participant-visible sequence orders the combined result.
-5. Move canonical REST pages, socket snapshots, realtime events, model replay,
+6. Move canonical REST pages, socket snapshots, realtime events, model replay,
    terminal delivery, and exports to the turn projection. Remove the legacy
    emission path only after the supported desktop floor understands the new
    protocol.
@@ -413,3 +482,11 @@ never rewrites their sequence positions.
     retry resets, hibernation/reconnect, canonical snapshots, disjoint range
     merge, legacy/new cutover history, and exact model-protocol projection on
     the real Durable Object pipeline where runtime behavior is involved.
+12. The transcript-substrate conformance suite passes against `SubstreamAgent`,
+    including empty ranges, tombstones, response shortening, disjoint ranges,
+    overlap, snapshot fencing, and realtime extension.
+13. No in-scope work-stream/harness LLM conversation remains behind a
+    cursor-only pagination implementation outside the shared substrate. New
+    in-scope Durable Object transcript authorities cannot be added without
+    implementing the same adapter/conformance contract. The automation wizard
+    remains unchanged for its separate PR.
