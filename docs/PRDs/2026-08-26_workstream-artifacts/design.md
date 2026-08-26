@@ -77,8 +77,10 @@ with two standing commitments that keep the decision honest:
 ### The confirming experiment
 
 Before implementation hardens, run the two serious candidates head-to-head
-on the configured medium fallback model — the model the tool standard says
-must succeed, not a frontier model whose success proves little:
+on a small fallback-stage model from the work-stream route plan
+(`agent-model-workstream`) — the tool standard's design target is that a
+small open model succeeds from the schema alone, and a frontier model's
+success proves little:
 
 - **Tasks:** create from a document-type request; create from an implicit
   request; revise after a small ask; revise after compaction (list → read
@@ -118,10 +120,14 @@ design lacked and a fork a parallel store would create:
   no new read surface;
 - the right rail's resource list and the model's inventory share one
   visibility predicate, which may never diverge;
-- the compaction inventory keeps artifacts discoverable after context
-  loss with no artifact-specific prompt machinery;
-- the R2 content lifecycle, deletion outbox, and per-region residency are
-  inherited;
+- the compaction inventory's revision fencing and the list rail keep
+  artifacts discoverable after context loss — the one artifact-specific
+  addition is the summary-prompt instruction to retain artifact identity
+  and version (PRD Rollout), because the host-rendered appendix
+  deliberately carries per-kind counts, never ids;
+- the per-region content residency and the deletion outbox are inherited,
+  with the one named change to swap-time reaping in the ledger rules
+  below;
 - the per-work-stream link machinery gives cross-work-stream reference by
   construction;
 - digests and any future delivery path see a durable, openable object —
@@ -136,10 +142,10 @@ object (every existing reader keeps working, unversioned), and the ledger
 rows carry the past.
 
 The role distinction lands in two existing places, not a new type: the
-work-stream link's relationship label (attachment vs artifact — whether
-that is a new value or reuses the generated label is settled at
-implementation against the actual column constraints) and the resource's
-provider-style provenance. An input and an output are the same kind of
+work-stream link's relationship label — a new `'artifact'` value, which is
+free because the object-local link table's column is unconstrained text
+and contracts type it as a plain string, while `'generated'` stays
+Terminal's — and the resource's provider-style provenance. An input and an output are the same kind of
 object with different provenance — which is also what makes the future
 interesting cases cheap: a human-uploaded document later edited by the
 agent, or an external snapshot later re-fetched, cross the input/output
@@ -192,6 +198,17 @@ Rules the sketch implies, stated so implementation cannot miss them:
 - **The card append converges with the ledger.** The transcript card is
   written on settle and deduplicated by the same receipt identity, so
   crash-and-replay between ledger and card cannot double either.
+- **Prior versions survive the pointer swap.** Today the resource update
+  trigger enqueues the superseded original into the deletion outbox
+  whenever the content pointer moves, and the sweeper deletes any
+  enqueued object that no resource row still references — a ledger row's
+  reference would not protect it. Left unchanged, every revision would
+  destroy the previous version's object. For ledgered resources the
+  swap-time enqueue is suppressed, or the sweeper is taught to keep
+  objects the ledger references; this is the one place the resource
+  content lifecycle is modified rather than reused, and the Terminal
+  publish path's explicit outbox compensation is the precedent for
+  touching it deliberately.
 - **Retention is a decision, not a default.** Version rows and content
   objects grow without bound by design in V1 (documents are small; the
   team may later choose a policy). Any retention number is the team's,

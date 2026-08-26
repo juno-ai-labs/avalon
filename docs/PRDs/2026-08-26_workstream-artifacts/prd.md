@@ -52,8 +52,8 @@ tier it is writing about:
   already supports cross-work-stream reference.
 - **Roadmap** — human editing, comments and annotations, collections,
   richer artifact types, export ([the trajectory](#beyond-v1-the-staging-trajectory)).
-- **Open decisions** — the generation protocol's final confirmation and the
-  heuristic's tuning, each with a named experiment
+- **Open decisions** — the generation protocol's final confirmation, the
+  heuristic's exact mix, proactive creation, and the user-facing noun
   ([Open questions](#open-questions)).
 
 The generation protocol — how the model's output becomes an artifact — is
@@ -355,8 +355,8 @@ resources) and markup extraction set aside on reliability and authorization
 grounds without being locked out of the framework. The recommendation is
 confirmed, not assumed: before implementation hardens, the evaluation named
 in [Open questions](#open-questions) runs the candidate protocols against
-the configured medium fallback model on real document tasks, and the result
-is recorded in this PRD's decision log. Whichever protocol wins, the model's
+a small fallback-stage model from the work-stream route plan on real
+document tasks, and the result is recorded in this PRD's decision log. Whichever protocol wins, the model's
 conversational text stays conversational — the document travels through the
 protocol, and the chat/document split is soft-enforced by standing policy
 and hard-verified by prompt evaluations.
@@ -428,7 +428,7 @@ Inside the pane:
   Copy precedent — and records copy product-intent telemetry.
 
 States, exhaustively: opening the pane fetches the version's content through
-the authorized resource-content route, so there is a brief **loading** state
+the authorized resource-preview route, so there is a brief **loading** state
 (a quiet skeleton in the pane body — the header renders immediately from
 the card payload). **Populated** is the normal state. **Error** — the fetch
 fails — shows an inline retry affordance and never a blank pane. **Offline**
@@ -467,10 +467,13 @@ versions externally rather than trusting the model's account of its own
 edits (key design decision 5).
 
 Because an artifact is a resource, the model re-discovers it the way it
-re-discovers every attachment: the resource inventory that survives
-compaction carries it, the list and read tools page and read it, and a
-post-compaction revision request recovers by list → read → revise without
-any new machinery.
+re-discovers every attachment: the compaction-surviving inventory counts
+it, the list and read tools page and read it, and a post-compaction
+revision request recovers by list → read → revise. One artifact-specific
+addition is deliberate rather than inherited: the host-rendered inventory
+appendix carries per-kind counts, never identities, so the compaction
+summary prompt gains the instruction ([Rollout](#rollout)) to retain
+artifact ids, titles, and current version numbers exactly.
 
 ### What stays inline
 
@@ -614,11 +617,15 @@ None yet.
    codebase already proves it: Terminal publishes generated files as
    resources today, and meeting notes materialize an AI-authored document
    as a resource with a first-class authoring lifecycle beside it. An
-   artifact therefore inherits, with zero integration work, the read tools,
-   the right-rail listing, the visibility predicate shared between sidebar
-   and model, the compaction inventory, the R2 content lifecycle, and the
-   per-work-stream link machinery — the exact rails whose absence killed
-   the 2026-08-12 design. The rejected alternatives: a parallel artifact
+   artifact therefore inherits, nearly whole, the read tools, the
+   right-rail listing, the visibility predicate shared between sidebar and
+   model, the compaction inventory, the content residency and deletion
+   lifecycle, and the per-work-stream link machinery — the exact rails
+   whose absence killed the 2026-08-12 design. The three deliberate
+   exceptions are named where they land: swap-time content reaping learns
+   the ledger (Data model), the read rail's outputs gain the current
+   version number (Agent behavior), and the compaction summary prompt
+   retains artifact identity (Rollout). The rejected alternatives: a parallel artifact
    store (forks every one of those rails; the Terminal PRD already rejected
    a Terminal-specific artifact table for this reason), and this PRD's own
    earlier draft — artifact-as-transcript-message — which could not carry a
@@ -750,11 +757,23 @@ workspace authority, with Rally-generated provenance (a Rally provider
 identity in the pattern Terminal's published files already use) and the
 artifact's title, kind label, and MIME/type identity carried in the row's
 existing columns. Its content lives where resource content lives — an R2
-object per version behind the row's content pointer, under the existing
-per-region buckets and the existing deletion-outbox lifecycle. The row's
+object per version in the existing per-region buckets — and the row's
 current-content pointer always names the newest version's object, swapped
-atomically as versions land (the meeting-notes materialization precedent,
-plus history).
+atomically as versions land, so every existing reader serves the current
+version unversioned. (The precedent meeting notes set is the
+authority-table-plus-materialized-resource shape, not the swap: notes
+overwrite fixed keys in place, which is exactly what a versioned artifact
+must not do.)
+
+One inherited rail is modified rather than reused, and the change is named
+here so it cannot be missed: today the resource update trigger enqueues the
+*superseded* original into the deletion outbox whenever the content pointer
+moves, and the sweeper deletes any enqueued object no resource row still
+references. Left alone, that machinery would destroy every prior version's
+object on every revision. For ledgered resources the swap-time enqueue is
+suppressed — or the sweeper taught to keep objects the ledger references —
+so prior versions survive; resource-delete-time cleanup then enumerates
+version objects into the same outbox (see [`design.md`](design.md)).
 
 **The version ledger [V1 table, partly dormant columns].** A new
 append-only table beside the resource authority — one row per version:
@@ -783,10 +802,13 @@ it need never happen twice.
 through the existing resource-link machinery with an artifact role label,
 so the visibility predicate, the rail listing, the model's list tool, and
 the compaction inventory all serve it as they serve every resource.
-Whether that label is a new `relationship_type` value or reuses the
-existing generated-output value is settled at implementation against the
-actual constraints on those columns; the product requirement is only that
-artifact links be distinguishable from plain attachments. Cross-work-stream
+The label is a new `relationship_type` value, `'artifact'`. Nothing
+constrains it: the live link table is object-local with an unconstrained
+text column (the legacy D1 link table is already dropped) and contracts
+type the field as a plain string, so the new value needs no migration and
+no code change. The choice against reusing `'generated'` is
+product-grounded — conversational artifacts stay distinguishable from
+Terminal build outputs. Cross-work-stream
 reference — the same artifact attached to a second work stream — exists by
 construction in this machinery; V1 builds no surface that invokes it
 **[dormant]**.
@@ -810,8 +832,9 @@ On the wire, `Message.messageType` gains `"artifact"` and
 three surfaces — the shared contracts `MessageSchema` enum, the wire-to-UI
 message mapping, and the transcript block dispatch — plus the render-time
 payload validation required in [the card section](#the-artifact-card), plus
-the pane's version-addressed content fetch through the authorized
-resource-content route the lightbox already uses. Today an unknown
+the pane's version-addressed content fetch through the person-facing
+resource-preview route the lightbox already uses (`GET
+/resources/:id/preview`), widened with version addressing. Today an unknown
 `messageType` is not dropped per-message: on the live socket the whole
 frame is ignored, and a history page containing one fails the entire fetch
 with the stale-build error. That is the pre-release desktop's behavior
@@ -822,14 +845,14 @@ against the version ledger's authority with the compare-and-swap fence and
 returns `{artifactId, versionNumber, title}`; the card message is appended
 in the work stream on settle, deduplicated by the same receipt identity, so
 a crash or replay between ledger commit and card append converges instead
-of doubling. Reads need no new rails: the model lists and reads artifacts
-through the existing attachment operations, and V1 model reads are always
-of the current version.
+of doubling. Reads need no new tools: the model lists and reads artifacts
+through the existing attachment operations — carrying the version-number
+output extension owned in [Agent behavior](#agent-behavior) — and V1 model
+reads are always of the current version.
 
-**Negative space, stated deliberately.** No regional D1 migration is
-expected — the artifact rides existing resource records; if implementation
-finds a link-table constraint that forces one, that is a migration under
-the ordinary rules, not a new store. The dropped D1 `artifacts` table stays
+**Negative space, stated deliberately.** No regional D1 migration —
+resource links are object-local (the legacy D1 link table is dropped), and
+the artifact rides existing resource records. The dropped D1 `artifacts` table stays
 dead and is not revived under any name. The always-empty
 `WorkstreamContextSchema.artifacts` field stays empty and unrepurposed. The
 owed R2 sweep from the 2026-08-12 retirement is untouched by and unrelated
@@ -860,9 +883,9 @@ The trust surface barely moves, and where it does, it reuses guarded paths:
   attachment. No new renderer, no HTML, no iframe, no execution of any
   artifact content — V1 renders Markdown or nothing, and richer types
   arrive only with their own security PRD (non-goal 7).
-- The pane's content fetch uses the authorized resource-content route under
-  the existing visibility predicate; version addressing widens the route's
-  parameters, not its trust model. Knowing an `artifactId` or a version
+- The pane's content fetch uses the authorized person-facing
+  resource-preview route under the existing visibility predicate; version
+  addressing widens the route's parameters, not its trust model. Knowing an `artifactId` or a version
   number grants nothing outside the caller's existing work-stream access.
 - Copy uses the existing main-process clipboard bridge; no new IPC surface.
 - Artifact write operations are authorized exactly as their siblings: the
@@ -889,7 +912,13 @@ carries the artifact policy only when the tools are registered, so the
 model is never told about tools it cannot call. Reads ride the existing
 attachment operations — `workstream_list_resources` and
 `workstream_read_resource` serve artifacts because artifacts are resources
-— so the family adds no read tools and no second discovery rail.
+— so the family adds no read tools and no second discovery rail. Making
+that sufficient takes one owned contract extension, named here rather than
+widened silently: for versioned resources, list items and read outputs
+gain the current ledger version number, as a new field named apart from
+the read output's existing `version` (which is derivative content
+identity, not a ledger number). That is a deliberate change to the shared
+attachment contracts, carried by this PRD.
 
 | Canonical (wire) name | Capability | Mode | Idempotency | Purpose |
 | --- | --- | --- | --- | --- |
@@ -915,11 +944,11 @@ implementation):
   short human label), `content` (required, GFM Markdown). Output:
   `artifactId`, `versionNumber: 1`, `title`, `createdAt`.
 - `revise_artifact` input: `artifactId` (required), `expectedVersion`
-  (required — "pass exactly the `versionNumber` returned by
+  (required — "pass exactly the ledger version number returned by
   `workstream_create_artifact`, your last revision, or
-  `workstream_read_resource`"), `content` (required, the complete
-  replacement), `title` (optional retitle). Output: `artifactId`,
-  `versionNumber` (the new number).
+  `workstream_read_resource`", per the read-rail extension above),
+  `content` (required, the complete replacement), `title` (optional
+  retitle). Output: `artifactId`, `versionNumber` (the new number).
 
 Failure contract — stable codes with the model-visible sentence carrying
 the next action, structured detail only from the existing allowlist:
@@ -956,8 +985,10 @@ decision 13.
 Model-usability acceptance, per the tool-design standard: the new schemas
 are reachable by the schema-sanitization walk and named in it; contract
 tests cover required, optional, forbidden, success, and failure shapes;
-and prompt evaluations on the configured medium fallback model must show —
-from the schema and policy alone — a document request producing one create
+and prompt evaluations on a small fallback-stage model from the
+work-stream route plan — the tool standard's design target is a small open
+model succeeding from the schema alone — must show a document request
+producing one create
 with brief narration, a conversational question producing no artifact
 call, a revision request reusing the id and version correctly, a
 post-compaction revision recovered through list → read → revise, recovery
@@ -1082,7 +1113,8 @@ this PRD's decisions — artifact/resource unification (key design decision
 card (the card section), revision status presentation (the card and pane
 sections), and the V1 version UI (the pane's version list) — and those
 answers stand unless review overturns them. Four remain genuinely open;
-each names its options, its experiment, and what the answer changes.
+each names its options and what the answer changes, and the first three
+name their experiments.
 
 1. **The exact heuristic mix** — which combination of intent, length,
    structure, and disruption should trigger an artifact. Options: the V1
@@ -1091,7 +1123,8 @@ each names its options, its experiment, and what the answer changes.
    stricter explicit-only form. Experiment: run the policy against a fixed
    set of dogfooding-derived prompts spanning the false-positive and
    false-negative cases named in [the heuristic](#the-creation-heuristic),
-   on the configured medium fallback model, before flag-on; then retune
+   on a small fallback-stage model from the work-stream route plan, before
+   flag-on; then retune
    from the instrumentation's override and never-opened signals. Changes:
    prompt wording only — this question never blocks the build, which is
    the point of making it policy.
@@ -1108,8 +1141,9 @@ each names its options, its experiment, and what the answer changes.
    (recommended) versus the Terminal file workflow for V1. The framework
    and the reasoning are in [`design.md`](design.md); the confirming
    experiment is specified there: the candidate protocols run head-to-head
-   on the configured medium fallback model across create, revise,
-   post-compaction revise, and multi-document tasks, scored on success
+   on a small fallback-stage model from the work-stream route plan across
+   create, revise, post-compaction revise, and multi-document tasks,
+   scored on success
    rate, loops, latency, and narration discipline. The outcome lands in
    the decision log before implementation hardens. Changes: the Agent
    behavior section's mechanism and the write-path shape — and nothing
