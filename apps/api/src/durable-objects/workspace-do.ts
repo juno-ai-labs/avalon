@@ -169,20 +169,24 @@ import {
 } from "./workspace-directory-protocol";
 import type { WorkstreamRegionalEffectEnvelope } from "./workstream-regional-effect";
 import {
+  LegacyWorkspaceConnectorEventClaimResultSchema,
+  WorkspaceConnectorEventClaimRpcRequestSchema,
   WorkspaceConnectorEventClaimRequestSchema,
   WorkspaceConnectorEventClaimResultSchema,
   WorkspaceConnectorEventIngestRequestSchema,
   WorkspaceConnectorEventIngestResultSchema,
   WorkspaceConnectorEventRequestSchema,
   WorkspaceConnectorEventSchema,
-  WorkspaceConnectorEventSettleRequestSchema,
+  WorkspaceConnectorEventSettleRpcRequestSchema,
   type WorkspaceConnectorEvent,
   type WorkspaceConnectorEventClaimRequest,
-  type WorkspaceConnectorEventClaimResult,
+  type WorkspaceConnectorEventClaimRpcRequest,
+  type WorkspaceConnectorEventClaimRpcResult,
   type WorkspaceConnectorEventIngestRequest,
   type WorkspaceConnectorEventIngestResult,
   type WorkspaceConnectorEventRequest,
   type WorkspaceConnectorEventSettleRequest,
+  type WorkspaceConnectorEventSettleRpcRequest,
 } from "./workspace-connector-event-protocol";
 import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
 import {
@@ -2189,10 +2193,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async claimConnectorEvent(
-    input: WorkspaceConnectorEventClaimRequest,
-  ): Promise<WorkspaceConnectorEventClaimResult> {
+    input: WorkspaceConnectorEventClaimRpcRequest,
+  ): Promise<WorkspaceConnectorEventClaimRpcResult> {
     await this.initialized;
-    const request = WorkspaceConnectorEventClaimRequestSchema.parse(input);
+    const rpcRequest = WorkspaceConnectorEventClaimRpcRequestSchema.parse(input);
+    const legacyWorkflowContract = "workflowInstanceId" in rpcRequest;
+    const request: WorkspaceConnectorEventClaimRequest = legacyWorkflowContract
+      ? {
+          workspaceId: rpcRequest.workspaceId,
+          eventId: rpcRequest.eventId,
+          processingOwnerId: rpcRequest.workflowInstanceId,
+          attempt: rpcRequest.attempt,
+          orchestrator: "workflow",
+        }
+      : WorkspaceConnectorEventClaimRequestSchema.parse(rpcRequest);
     this.assertWorkspace(request.workspaceId);
     const result = WorkspaceConnectorEventClaimResultSchema.parse(
       this.state.storage.transactionSync(() => {
@@ -2267,6 +2281,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       processing_owner_id: request.processingOwnerId,
       processing_attempt: request.attempt,
       processing_orchestrator: request.orchestrator,
+      processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
       processing_lease_id: result.outcome === "claimed" ? result.processingLeaseId : null,
       processing_lease_expires_at: result.outcome === "claimed"
         ? result.processingLeaseExpiresAt
@@ -2275,12 +2290,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           : null,
       outcome: result.outcome,
     });
-    return result;
+    if (!legacyWorkflowContract) return result;
+    return LegacyWorkspaceConnectorEventClaimResultSchema.parse(
+      result.outcome === "claimed"
+        ? { outcome: "claimed", event: result.event }
+        : { outcome: result.outcome },
+    );
   }
 
-  async settleConnectorEvent(input: WorkspaceConnectorEventSettleRequest): Promise<void> {
+  async settleConnectorEvent(input: WorkspaceConnectorEventSettleRpcRequest): Promise<void> {
     await this.initialized;
-    const request = WorkspaceConnectorEventSettleRequestSchema.parse(input);
+    const rpcRequest = WorkspaceConnectorEventSettleRpcRequestSchema.parse(input);
+    const legacyWorkflowContract = "workflowInstanceId" in rpcRequest;
+    const request: WorkspaceConnectorEventSettleRequest = legacyWorkflowContract
+      ? {
+          workspaceId: rpcRequest.workspaceId,
+          eventId: rpcRequest.eventId,
+          processingOwnerId: rpcRequest.workflowInstanceId,
+          outcome: rpcRequest.outcome,
+          error: rpcRequest.error,
+        }
+      : rpcRequest;
     this.assertWorkspace(request.workspaceId);
     // A persisted pre-cutover Workflow claim has no separate lease in its step
     // result; its instance ID is exactly the value stored in the physical lease
@@ -2307,6 +2337,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         connector_event_id: request.eventId,
         processing_owner_id: request.processingOwnerId,
         processing_lease_id: processingLeaseId,
+        processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
         outcome: request.outcome,
         reason: "settlement_committed",
       });
@@ -2329,6 +2360,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         connector_event_id: request.eventId,
         processing_owner_id: request.processingOwnerId,
         processing_lease_id: processingLeaseId,
+        processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
         outcome: request.outcome,
         reason: "settlement_replayed",
       });
@@ -2339,6 +2371,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       connector_event_id: request.eventId,
       processing_owner_id: request.processingOwnerId,
       processing_lease_id: processingLeaseId,
+      processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
       requested_outcome: request.outcome,
       authoritative_outcome: settled?.processing_status ?? "missing",
       authoritative_processing_owner_id: settled?.workflow_instance_id ?? null,

@@ -9,7 +9,10 @@ const { runStructuredInference } = vi.hoisted(() => ({ runStructuredInference: v
 vi.mock("../src/services/structured-inference", () => ({ runStructuredInference }));
 
 import type { Env } from "../src/env";
-import type { WorkspaceConnectorEvent } from "../src/durable-objects/workspace-connector-event-protocol";
+import {
+  WorkspaceConnectorEventProcessQueueMessageSchema,
+  type WorkspaceConnectorEvent,
+} from "../src/durable-objects/workspace-connector-event-protocol";
 import { __testing, consumeActivityQueue } from "../src/queues/activity-consumer";
 import {
   workspaceConnectorEventProcessQueueMessage,
@@ -529,6 +532,7 @@ describe("connector event Queue boundary", () => {
 
     const processBody = vi.mocked(env.ACTIVITY_QUEUE.send).mock.calls[0]?.[0];
     expect(processBody).toBeDefined();
+    const processPointer = WorkspaceConnectorEventProcessQueueMessageSchema.parse(processBody);
     runStructuredInference
       .mockRejectedValueOnce(new Error("injected_connector_processing_failure"))
       .mockResolvedValueOnce({
@@ -559,6 +563,38 @@ describe("connector event Queue boundary", () => {
     }, env);
     expect(firstProcessAck).not.toHaveBeenCalled();
     expect(firstProcessRetry).toHaveBeenCalledWith({ delaySeconds: 5 });
+
+    const staleProcessAck = vi.fn();
+    const staleProcessRetry = vi.fn();
+    await consumeActivityQueue({
+      messages: [{
+        id: "stale-connector-process-message",
+        timestamp: new Date("2026-08-11T11:30:03.500Z"),
+        body: workspaceConnectorEventProcessQueueMessage({
+          region: processPointer.region,
+          workspaceId: processPointer.workspaceId,
+          eventId: processPointer.eventId,
+          processingOwnerId: processPointer.processingOwnerId,
+          processingAttempt: 4,
+        }),
+        attempts: 1,
+        ack: staleProcessAck,
+        retry: staleProcessRetry,
+      }],
+      queue: "activity",
+      metadata: { metrics: { backlogCount: 1, backlogBytes: 1 } },
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    }, env);
+    expect(staleProcessAck).toHaveBeenCalledOnce();
+    expect(staleProcessRetry).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "connector_event_process_terminal",
+      connector_event_id: activityId,
+      processing_attempt: 4,
+      outcome: "skipped",
+      reason: "failed_attempt_not_advanced",
+    }));
 
     const secondProcessAck = vi.fn();
     const secondProcessRetry = vi.fn();
