@@ -1,6 +1,7 @@
 import { createContext, useContext, useRef, type PropsWithChildren } from 'react';
 
 export interface StreamCursor {
+  readonly aggregateMessageId: string;
   readonly turnId: string;
   readonly epoch: number;
   readonly streamSeq: number;

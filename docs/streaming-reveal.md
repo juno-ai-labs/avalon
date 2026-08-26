@@ -172,6 +172,26 @@ per render — multiplies at 60 commits a second, not 8.
 
 ## Changelog
 
+### 2026-08-26 — Reveal cursors are model-turn scoped
+
+**What changed:** Streaming rows and reveal cursors are keyed by Bind turn ID,
+not the run's aggregate final-message ID. Starting a post-tool model turn makes
+the prior turn's complete received prefix visible and terminal, while the new
+turn reveals independently. Late frames for the prior turn are ignored.
+
+**Why:** One aggregate cursor necessarily concatenated narration from both
+sides of tool calls into one text row, moving the later text above tools. It
+also let a reset or delayed frame for one model turn mutate another.
+
+**Considered and rejected:** Sorting tool cards around one aggregate text row.
+There is no sort key that can place one indivisible text row both before and
+after the tools without inventing text boundaries the model already supplied.
+
+**Consequences:** Pacing, replay de-duplication, retry resets, hidden-window
+flushes, and completion remain unchanged, but operate per model turn. Any
+checkpoint must carry the turn ID and aggregate run-message ID so reconnect can
+close superseded turns without losing unrevealed bytes.
+
 ### 2026-08-23 — Text reveals at the display's cadence, not the batcher's
 
 **What changed:** Streamed text stopped being written to the transcript as it

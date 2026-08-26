@@ -300,6 +300,7 @@ workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
     });
     return c.json(WorkstreamBootSchema.parse({
       ...boot.workstream,
+      transcript: boot.transcript,
       messageFeed: boot.messageFeed,
       resumeFeed: boot.resumeFeed,
     }));

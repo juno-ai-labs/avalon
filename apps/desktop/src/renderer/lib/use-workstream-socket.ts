@@ -8,6 +8,9 @@ import {
   type WorkspaceSocketClientEvent,
   type PersonalSocketEvent,
   type ServerSocketEvent,
+  type WorkstreamTranscriptSnapshot,
+  type TranscriptRange,
+  type TranscriptRangeResult,
 } from '@rally/contracts';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -46,6 +49,8 @@ import {
   createToolEventMessage,
   dismissedSuggestionIdsQueryKey,
   isSameLogicalMessage,
+  mergeRealtimeTranscriptActivity,
+  mergeRealtimeTranscriptTurn,
   removeTranscriptMessage,
   upsertTranscriptMessage,
   visibleTranscriptMessages,
@@ -83,6 +88,11 @@ export interface WorkstreamSocketConnection {
   activeCompaction: AgentCompactionState | null;
   createMessage(input: CreateWorkstreamMessageInput): Promise<Message>;
   loadMessagePage(input: LoadWorkstreamMessagePageInput): Promise<MessagePage>;
+  loadTranscriptRange(input: {
+    snapshotId: string;
+    range: TranscriptRange;
+    resumeAfterEventSequence: number;
+  }): Promise<TranscriptRangeResult>;
   /** Ask the admitted room to replace local base state with one canonical frame. */
   requestSnapshot(): void;
 }
@@ -114,8 +124,13 @@ function compareMessages(a: Message, b: Message): number {
   const bAnchor = b.realtimeOrder?.anchorSequenceNumber ?? b.sequenceNumber;
   if (aAnchor !== bAnchor) return aAnchor - bAnchor;
 
-  const aPlacement = a.realtimeOrder?.placement === 'before_anchor' ? 0 : 1;
-  const bPlacement = b.realtimeOrder?.placement === 'before_anchor' ? 0 : 1;
+  const placement = (message: Message): number => message.realtimeOrder?.placement === 'before_anchor'
+    ? 0
+    : message.realtimeOrder?.placement === 'after_anchor'
+      ? 2
+      : 1;
+  const aPlacement = placement(a);
+  const bPlacement = placement(b);
   if (aPlacement !== bPlacement) return aPlacement - bPlacement;
 
   const aRealtimeSequence = a.realtimeOrder?.eventSequence;
@@ -160,7 +175,7 @@ type StreamingSocketEvent = Extract<
 >;
 
 function streamingMessageId(event: StreamingSocketEvent): string {
-  return event.messageId;
+  return event.turnId;
 }
 
 /**
@@ -168,8 +183,9 @@ function streamingMessageId(event: StreamingSocketEvent): string {
  * retry a turn or switch routes after already emitting text, so room sequence
  * de-duplication alone is insufficient: a newer epoch must replace only that
  * turn's prior attempt and repeated chunks must not be appended twice. Bind
- * assigns a new turn ID after tool execution; that is a continuation of the
- * same assistant message, not an implicit reset.
+ * assigns a new turn ID after tool execution; that is a new participant-visible
+ * model turn and therefore a new row. Keeping the run's aggregate message ID
+ * here was what moved later narration above tools that had already completed.
  *
  * With `paced` set, the frame's text lands in the cursor's `receivedText` and
  * the transcript keeps showing the revealed prefix — the animation-frame loop
@@ -187,6 +203,26 @@ export function applyStreamingSocketEvent(
   const paced = options.paced ?? false;
   const messageId = streamingMessageId(event);
   const cursor = cursors.get(messageId);
+  if (!cursor) {
+    let closedPriorTurn = false;
+    for (const [priorTurnId, prior] of cursors) {
+      if (priorTurnId === messageId || prior.aggregateMessageId !== event.messageId || prior.completed) continue;
+      cursors.set(priorTurnId, {
+        ...prior,
+        completed: true,
+        revealed: prior.receivedText.length,
+      });
+      closedPriorTurn = true;
+    }
+    if (closedPriorTurn) {
+      messages = (messages ?? []).map((message) => {
+        const prior = cursors.get(message.id);
+        return prior?.aggregateMessageId === event.messageId && prior.completed
+          ? { ...message, text: prior.receivedText, streaming: false }
+          : message;
+      });
+    }
+  }
   if (cursor) {
     if (event.sequence <= cursor.roomSequence) return messages ?? [];
     if (cursor.completed) return messages ?? [];
@@ -203,13 +239,13 @@ export function applyStreamingSocketEvent(
   }
 
   const existing = (messages ?? []).find((message) => message.id === messageId);
-  const startsNewTurn = !cursor || event.turnId !== cursor.turnId;
+  const startsNewTurn = !cursor;
   // The received whole, never the cache's revealed prefix: a turn boundary or a
   // retry is positioned in what the wire delivered, not in what pacing has let
   // the reader see so far. A message with no cursor yet holds canonical text,
   // which is complete by definition.
   const previousReceived = cursor?.receivedText ?? existing?.text ?? '';
-  const turnStartText = startsNewTurn ? previousReceived : cursor.turnStartText;
+  const turnStartText = startsNewTurn ? '' : cursor.turnStartText;
   const replacesAttempt = event.reset
     || (!startsNewTurn && event.epoch > cursor.epoch);
   const baseText = replacesAttempt ? turnStartText : previousReceived;
@@ -226,6 +262,7 @@ export function applyStreamingSocketEvent(
   const seenTurnIds = new Set(cursor?.seenTurnIds);
   seenTurnIds.add(event.turnId);
   cursors.set(messageId, {
+    aggregateMessageId: event.messageId,
     turnId: event.turnId,
     epoch: event.epoch,
     streamSeq: event.streamSeq,
@@ -255,6 +292,7 @@ export function applyStreamingSocketEvent(
     const anchorSequenceNumber = nextTranscriptSequence(messages);
     return insertMessage(messages, createTextMessage({
       id: messageId,
+      transcriptTurnId: event.turnId,
       workstreamId,
       sequenceNumber: anchorSequenceNumber,
       authorType: 'agent',
@@ -273,6 +311,7 @@ export function applyStreamingSocketEvent(
     const anchorSequenceNumber = nextTranscriptSequence(messages);
     return insertMessage(messages, createTextMessage({
       id: messageId,
+      transcriptTurnId: event.turnId,
       workstreamId,
       sequenceNumber: anchorSequenceNumber,
       authorType: 'agent',
@@ -320,35 +359,38 @@ export function applyActiveStreamCheckpoints(
 ): Message[] {
   let nextMessages = messages ?? [];
   for (const checkpoint of checkpoints) {
-    const cursor = cursors.get(checkpoint.messageId);
+    const messageId = checkpoint.turnId;
+    const checkpointText = checkpoint.text.slice(checkpoint.turnStartOffset);
+    const cursor = cursors.get(messageId);
     if (cursor && cursor.roomSequence > checkpoint.roomSequence) continue;
-    cursors.set(checkpoint.messageId, {
+    cursors.set(messageId, {
+      aggregateMessageId: checkpoint.messageId,
       turnId: checkpoint.turnId,
       epoch: checkpoint.epoch,
       streamSeq: checkpoint.streamSeq,
       seenTurnIds: new Set(checkpoint.seenTurnIds),
-      turnStartText: checkpoint.text.slice(0, checkpoint.turnStartOffset),
+      turnStartText: '',
       roomSequence: checkpoint.roomSequence,
       completed: false,
       // A checkpoint is an arrival, not a stream: someone opening a work
       // stream mid-turn gets the accumulated text at once, and pacing begins
       // with the first live delta after it.
-      receivedText: checkpoint.text,
-      revealed: checkpoint.text.length,
+      receivedText: checkpointText,
+      revealed: checkpointText.length,
       lastRevealAt: null,
     });
 
-    const existing = nextMessages.find((message) => message.id === checkpoint.messageId);
+    const existing = nextMessages.find((message) => message.id === messageId);
     if (existing) {
       if (
-        existing.text === checkpoint.text
+        existing.text === checkpointText
         && existing.streaming === true
         && existing.realtimeOrder?.eventSequence === checkpoint.roomSequence
       ) continue;
-      nextMessages = nextMessages.map((message) => message.id === checkpoint.messageId
+      nextMessages = nextMessages.map((message) => message.id === messageId
         ? {
             ...message,
-            text: checkpoint.text,
+            text: checkpointText,
             streaming: true,
             realtimeOrder: message.realtimeOrder
               ? { ...message.realtimeOrder, eventSequence: checkpoint.roomSequence }
@@ -360,11 +402,12 @@ export function applyActiveStreamCheckpoints(
 
     const anchorSequenceNumber = nextTranscriptSequence(nextMessages);
     nextMessages = insertMessage(nextMessages, createTextMessage({
-      id: checkpoint.messageId,
+      id: messageId,
+      transcriptTurnId: checkpoint.turnId,
       workstreamId,
       sequenceNumber: anchorSequenceNumber,
       authorType: 'agent',
-      text: checkpoint.text,
+      text: checkpointText,
       createdAt: checkpoint.createdAt,
       streaming: true,
       realtimeOrder: {
@@ -386,7 +429,10 @@ export function applyActiveStreamCheckpoints(
  */
 export function mergeCanonicalTranscript(previous: Message[] | undefined, canonical: Message[]): Message[] {
   const canonicalIds = new Set(canonical.map((message) => message.id));
-  const canonicalToolIds = new Set(canonical.flatMap((message) => message.toolEvent ? [message.toolEvent.id] : []));
+  const canonicalTurnIds = new Set(canonical.flatMap((message) =>
+    message.transcriptTurnId ? [message.transcriptTurnId] : []));
+  const canonicalToolIds = new Set(canonical.flatMap((message) =>
+    message.toolEvent ? [message.toolEvent.toolCallId ?? message.toolEvent.id] : []));
   const lowestCanonicalSequence = canonical.reduce(
     (lowest, message) => Math.min(lowest, message.sequenceNumber),
     Number.POSITIVE_INFINITY,
@@ -402,12 +448,14 @@ export function mergeCanonicalTranscript(previous: Message[] | undefined, canoni
     message.messageType === 'tool_event'
     && message.realtimeOrder !== undefined
     && !canonicalIds.has(message.id)
-      && (!message.toolEvent || !canonicalToolIds.has(message.toolEvent.id)),
+      && (!message.toolEvent
+        || !canonicalToolIds.has(message.toolEvent.toolCallId ?? message.toolEvent.id)),
   );
   const streamingAgentMessages = (previous ?? []).filter((message) =>
     message.authorType === 'agent'
     && message.streaming === true
-    && !canonicalIds.has(message.id),
+    && !canonicalIds.has(message.id)
+    && (!message.transcriptTurnId || !canonicalTurnIds.has(message.transcriptTurnId)),
   );
   const pendingHumanMessages = (previous ?? []).filter((message) =>
     message.authorType === 'human'
@@ -619,6 +667,20 @@ export function useWorkstreamSocket(
     (input: LoadWorkstreamMessagePageInput): Promise<MessagePage> => loadMessagePageRef.current(input),
     [],
   );
+  const loadTranscriptRangeRef = useRef<(input: {
+    snapshotId: string;
+    range: TranscriptRange;
+    resumeAfterEventSequence: number;
+  }) => Promise<TranscriptRangeResult>>(() => Promise.reject(new ApiError(
+    'The work stream is not ready to load transcript ranges.',
+    409,
+    'workstream_socket_unavailable',
+  )));
+  const loadTranscriptRange = useCallback(
+    (input: { snapshotId: string; range: TranscriptRange; resumeAfterEventSequence: number }) =>
+      loadTranscriptRangeRef.current(input),
+    [],
+  );
   const requestSnapshotRef = useRef<() => void>(() => undefined);
   const requestSnapshot = useCallback((): void => requestSnapshotRef.current(), []);
 
@@ -636,6 +698,11 @@ export function useWorkstreamSocket(
       ));
       loadMessagePageRef.current = () => Promise.reject(new ApiError(
         'The work stream is not ready to load messages.',
+        409,
+        'workstream_socket_unavailable',
+      ));
+      loadTranscriptRangeRef.current = () => Promise.reject(new ApiError(
+        'The work stream is not ready to load transcript ranges.',
         409,
         'workstream_socket_unavailable',
       ));
@@ -675,6 +742,11 @@ export function useWorkstreamSocket(
     const pendingMessagePages = new Map<string, {
       timeout: number;
       resolve: (page: MessagePage) => void;
+      reject: (error: Error) => void;
+    }>();
+    const pendingTranscriptRanges = new Map<string, {
+      timeout: number;
+      resolve: (range: TranscriptRangeResult) => void;
       reject: (error: Error) => void;
     }>();
     const streamCursors = resumeState.streamCursors;
@@ -824,6 +896,34 @@ export function useWorkstreamSocket(
         }
       });
     };
+    loadTranscriptRangeRef.current = (input): Promise<TranscriptRangeResult> => {
+      if (closedByEffect || accessRevoked || socket?.readyState !== WebSocket.OPEN) {
+        return Promise.reject(new ApiError(
+          'The work stream connection is not ready to load transcript ranges.',
+          409,
+          'workstream_socket_unavailable',
+        ));
+      }
+      const requestId = uuidV7();
+      return new Promise<TranscriptRangeResult>((resolve, reject) => {
+        const timeout = window.setTimeout(() => {
+          pendingTranscriptRanges.delete(requestId);
+          reject(new ApiError('The transcript range request timed out.', 503, 'transcript_range_timeout'));
+        }, MESSAGE_PAGE_TIMEOUT_MS);
+        pendingTranscriptRanges.set(requestId, { timeout, resolve, reject });
+        try {
+          socket!.send(JSON.stringify({
+            type: 'load_transcript_range',
+            requestId,
+            request: input,
+          }));
+        } catch (error) {
+          window.clearTimeout(timeout);
+          pendingTranscriptRanges.delete(requestId);
+          reject(error instanceof Error ? error : new Error('The transcript range request could not be sent.'));
+        }
+      });
+    };
 
     // Only the dashboard itself. `block-dashboard-preference` is a cache read
     // with no fetcher behind it — the control socket's boot frame and
@@ -905,6 +1005,21 @@ export function useWorkstreamSocket(
       // applied on top of stale state. Reconnect only after the direct REST
       // snapshot succeeds, retaining the old cursor across failed attempts.
       if (canonicalResyncTarget !== null) return;
+      if (event.type === 'transcript_range') {
+        queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+          ['ordered-transcript', workstreamId],
+          (current) => current && current.snapshotId === event.snapshotId
+            ? { ...current, ranges: [...current.ranges, event.result] }
+            : current,
+        );
+        const pending = pendingTranscriptRanges.get(event.requestId);
+        if (pending) {
+          pendingTranscriptRanges.delete(event.requestId);
+          window.clearTimeout(pending.timeout);
+          pending.resolve(event.result);
+        }
+        return;
+      }
       // Both answers the room can give a snapshot request release the slot, and
       // both are read before the ordering guard below. A snapshot it drops is
       // still an answer — one a newer frame has already superseded — and an
@@ -937,6 +1052,10 @@ export function useWorkstreamSocket(
         });
         queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
         queryClient.setQueryData(['workstream', workstreamId], mapWorkstreamDetail(event.workstream));
+        queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+          ['ordered-transcript', workstreamId],
+          event.transcript,
+        );
         // The resume window is for *arriving* at a work stream, and only then.
         //
         // Every snapshot carries it, including the ones answering a
@@ -983,6 +1102,25 @@ export function useWorkstreamSocket(
         if (answersSnapshotRequest) {
           void queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] });
         }
+      } else if (event.type === 'transcript_turn_upserted') {
+        queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+          ['ordered-transcript', workstreamId],
+          (current) => current
+            ? mergeRealtimeTranscriptTurn(current, event.turn, event.sequence)
+            : current,
+        );
+      } else if (event.type === 'transcript_activity_upserted') {
+        queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+          ['ordered-transcript', workstreamId],
+          (current) => current
+            ? mergeRealtimeTranscriptActivity(
+                current,
+                event.activity,
+                event.sequence,
+                event.snapshotAtUtc,
+              )
+            : current,
+        );
       } else if (event.type === 'presence_changed') {
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? { ...current, viewers: event.viewers.map(mapViewer) } : current,
@@ -1024,17 +1162,16 @@ export function useWorkstreamSocket(
             ? { ...workstream, scope: event.scope }
             : workstream));
       } else if (event.type === 'stream_completed') {
-        const cursor = streamCursors.get(event.message.id);
-        if (cursor) {
-          streamCursors.set(event.message.id, {
-            ...cursor,
-            roomSequence: event.sequence,
-            completed: true,
-          });
+        for (const [turnId, cursor] of streamCursors) {
+          streamCursors.set(turnId, { ...cursor, roomSequence: event.sequence, completed: true });
         }
         const message = mapMessage(event.message);
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-          insertMessage(current, message));
+        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
+          const settled = (current ?? []).map((candidate) => candidate.streaming
+            ? { ...candidate, streaming: false }
+            : candidate);
+          return streamCursors.size === 0 ? insertMessage(settled, message) : settled;
+        });
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? advanceWorkstreamAttention(current, message) : current);
         setCachedWorkstreams(queryClient, (current) =>
@@ -1073,11 +1210,15 @@ export function useWorkstreamSocket(
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
           const messageId = `tool-${event.invocation.id}`;
           const existing = (current ?? []).find((message) => message.id === messageId);
+          const declaredCallIndex = Number(
+            event.invocation.toolCallId.match(/:tool:(\d+)$/u)?.[1] ?? event.sequence,
+          );
           const anchorSequenceNumber = existing?.realtimeOrder?.anchorSequenceNumber
             ?? activeStreamAnchor(current)
             ?? nextTranscriptSequence(current);
           return insertMessage(current, createToolEventMessage({
             id: messageId,
+            transcriptTurnId: event.invocation.toolCallId.replace(/:tool:\d+$/u, ''),
             workstreamId,
             sequenceNumber: anchorSequenceNumber,
             authorType: 'agent',
@@ -1086,10 +1227,13 @@ export function useWorkstreamSocket(
               anchorSequenceNumber,
               // A completion update must not move the tool below tools that
               // started later in the same turn.
-              eventSequence: existing?.realtimeOrder?.eventSequence ?? event.sequence,
-              placement: 'before_anchor',
+              eventSequence: existing?.realtimeOrder?.eventSequence ?? declaredCallIndex,
+              placement: 'after_anchor',
             },
-            toolEvent: mapToolInvocation(event.invocation),
+            toolEvent: {
+              ...mapToolInvocation(event.invocation),
+              toolCallId: event.invocation.toolCallId,
+            },
           }));
         });
       } else if (event.type === 'elicitation_created' || event.type === 'elicitation_answered') {
@@ -1588,11 +1732,25 @@ export function useWorkstreamSocket(
         409,
         'workstream_socket_unavailable',
       ));
+      loadTranscriptRangeRef.current = () => Promise.reject(new ApiError(
+        'The work stream is no longer available.',
+        409,
+        'workstream_socket_unavailable',
+      ));
       rejectPendingMessagePages(new ApiError(
         'The work stream changed while loading messages.',
         409,
         'workstream_socket_unavailable',
       ));
+      for (const pending of pendingTranscriptRanges.values()) {
+        window.clearTimeout(pending.timeout);
+        pending.reject(new ApiError(
+          'The work stream changed while loading transcript ranges.',
+          409,
+          'workstream_socket_unavailable',
+        ));
+      }
+      pendingTranscriptRanges.clear();
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -1615,8 +1773,9 @@ export function useWorkstreamSocket(
       activeCompaction,
       createMessage,
       loadMessagePage,
+      loadTranscriptRange,
       requestSnapshot,
     }),
-    [activeCompaction, createMessage, loadMessagePage, requestSnapshot, sendReady, state, workspaceSocketState],
+    [activeCompaction, createMessage, loadMessagePage, loadTranscriptRange, requestSnapshot, sendReady, state, workspaceSocketState],
   );
 }

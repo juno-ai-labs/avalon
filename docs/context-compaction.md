@@ -89,7 +89,7 @@ with checkpoint creation without repeating the grouped aggregation.
 
 The base checkpoint is persisted without its system message or authorized
 appendix, keyed by projection, run, and compacted-through sequence in the owning
-`SubstreamAgent`'s `compaction_checkpoints`, together
+`SubstreamAgent`'s `transcript_compaction_checkpoints`, together
 with that scope, the raw summary, checkpoint-template version, model,
 before/window token counts, and the compaction's own usage and cost. Rewriting
 the exact same run/sequence event is idempotent; a later compaction appends a new
@@ -121,19 +121,21 @@ survives only to the extent captured by the lossy continuation summary.
 Compaction is a first-class agent phase rather than an inference guessed from a
 pause in tokens. Bind emits `compaction_started` before authorization
 preparation and summarization, then emits `compaction_finished` only after the
-checkpoint persistence port succeeds or fails. `SubstreamAgent` advances the
-room sequence and updates its `active_agent_compaction` singleton in the same
-SQLite transaction. A live desktop replaces the generic working timer with
-“Compacting conversation context…”. A reconnect snapshot or
-`resync_required` frame carries the same active state, so switching work streams
-or losing the replay window cannot hide or invent the phase.
+checkpoint persistence port succeeds or fails. `SubstreamAgent` immediately
+reserves one participant-safe status entry and starts its UTC activity interval.
+The atomic replacement transaction records the private checkpoint, advances the
+exact Bind generation, retains that safe entry, and closes the lifecycle.
+Current Electron still uses its dedicated reconnect indicator; a future feed
+can render the retained entry as “Context automatically compacting” or “Context
+automatically compacted”, including its authoritative duration.
 
-The singleton is ephemeral recovery state, not compaction history. Completion
+The legacy singleton is ephemeral recovery state, not compaction history. Completion
 deletes it only when run ID, harness attempt ID, and compaction index all match;
 a delayed finish from an abandoned attempt cannot clear a recovered attempt at
 the same index. Any terminal harness status also clears it defensively.
-Immutable compaction identity and replay remain the responsibility of
-`compaction_checkpoints`.
+Immutable private replay remains in `transcript_compaction_checkpoints`; safe
+participant history remains in `participant_transcript_turns` plus the activity
+interval. Two compactions produce two identities and two timings.
 
 ## Invariants
 
@@ -269,6 +271,25 @@ results.
   every routed model.
 
 ## Changelog
+
+### 2026-08-26 — Compaction replacement and safe status commit together
+
+**What changed:** Compaction now reserves a participant-safe status entry at
+start, records UTC activity timing, and atomically commits its private checkpoint
+with the exact Bind generation replacement. Successive compactions remain
+independent immutable events.
+
+**Why:** A reconnect needed both the exact continuation state and truthful
+“happening/happened” product state. Keeping only an aggregate checkpoint or an
+ephemeral singleton could not prove their ordering or retain historical timing.
+
+**Considered and rejected:** Projecting the private summary into participant
+history and inferring compaction from token silence. The safe status contains no
+prompt, summary, token count, or loop sequence.
+
+**Consequences:** Replacement cannot become visible without its checkpoint and
+safe lifecycle record. A future renderer may expose the retained status without
+another storage migration; the current visual treatment remains unchanged.
 
 ### 2026-08-21 — `compaction_jobs` retired from the object schema
 

@@ -89,6 +89,18 @@ const detail = {
   openElicitations: [],
   suggestions: [],
   latestHarnessRunId: null,
+  transcript: {
+    snapshotId: '00000000-0000-7000-8000-000000000777',
+    snapshotThrough: 0,
+    eventSequence: 0,
+    snapshotAtUtc: timestamp,
+    unreadAnchorSequence: null,
+    unreadReason: 'no_unread' as const,
+    ranges: [],
+    activities: [],
+    activeActivities: [],
+    activeTurns: [],
+  },
 };
 
 const message = {
