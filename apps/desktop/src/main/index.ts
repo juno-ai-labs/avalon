@@ -346,6 +346,7 @@ async function reportTelemetryProductIntent(
       return;
     }
     case 'workstream_feed_visible':
+    case 'workstream_send_ready':
     case 'workstream_open_started':
     case 'workstream_open_outcome':
     case 'workstream_socket_started': {

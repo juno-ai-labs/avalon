@@ -152,6 +152,13 @@ state at click, the transcript-cache, boot-payload, or rollout-fallback source,
 and only a count bucket for messages. Each detail request keeps a unique
 `x-request-id`, including React Query retries, and carries the click ID separately
 as `x-rally-operation-id`; the Worker's `workstream.detail.read` span records both.
+The independently timed `workstream_send_ready` event reuses the opening-attempt
+operation ID and fires after the committed composer has crossed a paint with its
+work-stream-specific send handler installed. It records the workspace command
+socket state at that point. `connecting` and `reconnecting` are ready states for
+this client milestone because the workspace socket queues idempotent message
+commands; the event does not claim that transport delivery or server
+acknowledgement has completed.
 
 Every mounted pooled socket owner has a UUIDv7 socket-lease ID shared by its
 control and feed connections for the owner's full retained lifetime.
@@ -645,10 +652,34 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-25 — Send readiness is measured independently from feed visibility
+
+**What changed:** Added `workstream_send_ready` under the sidebar opening
+operation ID. It measures click-to-painted-composer time once the active
+work-stream handler can submit to the workspace command queue and records that
+socket's connecting, connected, or reconnecting state.
+
+**Why:** A painted feed is the requested opening milestone but cannot prove a
+separately named ability to send. The composer usually commits beside the feed,
+and the command socket accepts sends while reconnecting, yet an analytics query
+should not have to infer that lifecycle boundary from two adjacent pieces of UI.
+
+**Considered and rejected:** Reinterpreting `workstream_feed_visible` as send
+readiness would turn a precise paint event into an undocumented proxy. Waiting
+for the workspace socket to connect would be equally false: client readiness is
+queue acceptance, while server acknowledgement belongs to the existing message
+send flow.
+
+**Consequences:** Feed paint and client send readiness can be compared under one
+attempt ID without timestamp joins. `workstream_send_ready` is success-only and
+does not replace the terminal opening outcome denominator; it contains no draft,
+message, URL, or server response.
+
 ### 2026-08-25 — Route abandonment and retries cannot corrupt opening latency
 
 **What changed:** A click attempt now terminates as `abandoned` when navigation
-leaves its work stream for another surface or its owning session ends. Painted
+leaves its work stream for another surface, its owning workspace is replaced by
+a service-error screen, or its owning session ends. Painted
 feed reporting reschedules after an effect cleanup without re-latching data
 readiness, which preserves the terminal event under React StrictMode and any
 production dependency change inside the two-frame window. Detail retries now
@@ -667,7 +698,8 @@ instrumentation needs to explain.
 would claim another work stream caused it; treating it as `load_failed` would
 claim a service failure. WorkstreamScreen unmount cleanup was also rejected
 because StrictMode deliberately simulates that cleanup without the reader
-leaving. Route and session observation represent the actual abandonment. A
+leaving. Route, workspace-error, and session observation represent the actual
+abandonment. A
 single repeated request ID was rejected because the tracing contract defines it
 per call; the operation header already carries the longer click lifetime.
 

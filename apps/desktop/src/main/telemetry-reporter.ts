@@ -14,6 +14,7 @@ import type {
   DesktopTelemetryProductIntent,
   DesktopTelemetrySemanticIntent,
   DesktopTelemetryWorkstreamFeedVisibleIntent,
+  DesktopTelemetryWorkstreamSendReadyIntent,
   DesktopTelemetryWorkstreamOpenLifecycleIntent,
   DesktopTelemetryWorkstreamSocketStartedIntent,
 } from '../common/desktop';
@@ -185,6 +186,7 @@ export class TelemetryReporter {
     intent: DesktopTelemetrySemanticIntent
       | Omit<DesktopTelemetryConnectorSetupIntent, 'operationId'>
       | Omit<DesktopTelemetryWorkstreamFeedVisibleIntent, 'operationId'>
+      | Omit<DesktopTelemetryWorkstreamSendReadyIntent, 'operationId'>
       | WorkstreamOpenLifecycleProperties
       | Omit<DesktopTelemetryWorkstreamSocketStartedIntent, 'operationId'>,
     windowContext?: TelemetryWindowContext,
