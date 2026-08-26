@@ -1,7 +1,7 @@
 import { access, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prepareNativeCrashGeneration } from './native-crash-generation';
 import { NativeCrashUploader } from './native-crash-uploader';
 
@@ -10,6 +10,11 @@ const runtime = {
   release: '1.96.0', buildId: 'build-1', platform: 'darwin' as const, architecture: 'arm64' as const,
   launchId: '018f0000-0000-7000-8000-000000000004', channel: 'stable' as const,
 };
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-08-12T20:05:00.000Z'));
+});
 
 async function fixture(): Promise<{ root: string; dump: string }> {
   const root = await mkdtemp(join(tmpdir(), 'rally-native-upload-'));
@@ -37,6 +42,7 @@ async function fixture(): Promise<{ root: string; dump: string }> {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  vi.useRealTimers();
 });
 
 describe('NativeCrashUploader', () => {
