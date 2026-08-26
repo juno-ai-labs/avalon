@@ -76,6 +76,12 @@ import {
   type ScheduledAlarm,
   type ScheduledAlarmOutcome,
 } from "./scheduled-alarms";
+import {
+  observableWorkspaceScheduledAlarmKind,
+  WorkspaceAlarmInstrumentation,
+  type ObservableWorkspaceScheduledAlarmKind,
+  type WorkspaceScheduledAlarmPhase,
+} from "./workspace-alarm-instrumentation";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
   recordWorkspaceScheduleFailure,
@@ -1162,6 +1168,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private readonly initialized: Promise<void>;
   /** This object's own `WORKSPACE_DOS` name; see {@link selfObjectName}. */
   private objectName: string | null = null;
+  /** Content-free phase timings for the alarm invocation currently running. */
+  private workspaceAlarmInstrumentation: WorkspaceAlarmInstrumentation | null = null;
 
   constructor(
     state: DurableObjectState,
@@ -1392,9 +1400,36 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * already overdue still resumes the moment the region reopens.
    */
   protected override async scheduledAlarmDeferral(now: number): Promise<number | null> {
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    if (authority.phase === "durable_object_open" || authority.phase === "legacy_open") return null;
-    return now + MAINTENANCE_RECHECK_MS;
+    const deferral = await this.instrumentWorkspaceAlarmPhase("authority_check", undefined, async () => {
+      const authority = await readWorkstreamAuthorityControl(this.env);
+      if (authority.phase === "durable_object_open" || authority.phase === "legacy_open") {
+        return null;
+      }
+      return now + MAINTENANCE_RECHECK_MS;
+    });
+    // A deferred invocation returns from the base before the ordinary final
+    // re-arm hook. Close its summary here; the base's direct `setAlarm` is a
+    // platform storage span and not scheduled application work.
+    if (deferral !== null) this.finishWorkspaceAlarmInstrumentation();
+    return deferral;
+  }
+
+  protected override armAlarmBeforeDueWork(now: number): Promise<unknown> {
+    // This is the first awaited phase after the base has verified migrations,
+    // so a fresh recorder here also discards any incomplete recorder left by a
+    // continuation the runtime ended before the previous alarm could finish.
+    this.workspaceAlarmInstrumentation = new WorkspaceAlarmInstrumentation(this.env);
+    return this.instrumentWorkspaceAlarmPhase("recovery_rearm", undefined, async () =>
+      super.armAlarmBeforeDueWork(now));
+  }
+
+  protected override async armAlarmAfterDueWork(): Promise<unknown> {
+    try {
+      return await this.instrumentWorkspaceAlarmPhase("final_rearm", undefined, async () =>
+        super.armAlarmAfterDueWork());
+    } finally {
+      this.finishWorkspaceAlarmInstrumentation();
+    }
   }
 
   /**
@@ -1420,7 +1455,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * moves with every event this workspace records.
    */
   protected override async runDueAlarmWork(now: number): Promise<void> {
-    this.reapExpiredActivityEvents(now);
+    await this.instrumentWorkspaceAlarmPhase("activity_reap", undefined, async () => {
+      this.reapExpiredActivityEvents(now);
+    });
     const workspaceId = this.workspaceId();
     // Re-derive the whole index before this alarm ends, exactly as the object
     // that used to own it did. A target that just fired has advanced its own
@@ -1431,31 +1468,63 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // this, the drain settles the one-shot entry it just ran and nothing arms
     // the occurrence that replaced it: a recurring automation fires once and
     // then never again until an unrelated mutation happens to reconcile.
-    if (workspaceId) await this.refreshSchedule(workspaceId);
+    if (workspaceId) {
+      await this.instrumentWorkspaceAlarmPhase("schedule_reconcile", undefined, async () => {
+        await this.refreshSchedule(workspaceId);
+      });
+    }
   }
 
   protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<ScheduledAlarmOutcome> {
-    const workspaceId = this.workspaceId();
-    if (!workspaceId) return;
-    if (alarm.kind === PRODUCT_ALARM_KIND) {
-      await this.runProductAlarm(workspaceId);
-      return;
-    }
-    if (alarm.kind === SCHEDULE_BOOTSTRAP_ALARM_KIND) {
-      // One-shot, written by the migration that created this index: it exists
-      // so an object that has never been asked to reconcile does it once,
-      // unprompted. Settling deletes it.
-      await this.refreshSchedule(workspaceId);
-      return;
-    }
-    if (!isWorkspaceScheduleAlarmKind(alarm.kind)) {
-      throw new Error(`workspace_object_unknown_alarm_kind:${alarm.kind}`);
-    }
-    return runWorkspaceScheduleTarget(
-      this.scheduleContext(workspaceId),
-      { kind: alarm.kind, id: alarm.key, dueAt: new Date(alarm.dueAt).toISOString() },
-      new Date(),
+    return this.instrumentWorkspaceAlarmPhase(
+      "stored_target",
+      observableWorkspaceScheduledAlarmKind(alarm.kind),
+      async () => {
+        const workspaceId = this.workspaceId();
+        if (!workspaceId) return;
+        if (alarm.kind === PRODUCT_ALARM_KIND) {
+          await this.runProductAlarm(workspaceId);
+          return;
+        }
+        if (alarm.kind === SCHEDULE_BOOTSTRAP_ALARM_KIND) {
+          // One-shot, written by the migration that created this index: it exists
+          // so an object that has never been asked to reconcile does it once,
+          // unprompted. Settling deletes it.
+          await this.refreshSchedule(workspaceId);
+          return;
+        }
+        if (!isWorkspaceScheduleAlarmKind(alarm.kind)) {
+          throw new Error(`workspace_object_unknown_alarm_kind:${alarm.kind}`);
+        }
+        return runWorkspaceScheduleTarget(
+          this.scheduleContext(workspaceId),
+          { kind: alarm.kind, id: alarm.key, dueAt: new Date(alarm.dueAt).toISOString() },
+          new Date(),
+        );
+      },
     );
+  }
+
+  /**
+   * Time one bounded, content-free phase of this WorkspaceDO alarm.
+   *
+   * Cloudflare adds the invocation and Durable Object ids itself. Keeping
+   * identity out of these fields means a phase row can explain a hot object
+   * without copying a workspace id, target key, due time, payload, or error
+   * message into Workers Logs or the Global trace export.
+   */
+  private instrumentWorkspaceAlarmPhase<T>(
+    phase: WorkspaceScheduledAlarmPhase,
+    alarmKind: ObservableWorkspaceScheduledAlarmKind | undefined,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    this.workspaceAlarmInstrumentation ??= new WorkspaceAlarmInstrumentation(this.env);
+    return this.workspaceAlarmInstrumentation.phase(phase, alarmKind, run);
+  }
+
+  private finishWorkspaceAlarmInstrumentation(): void {
+    this.workspaceAlarmInstrumentation?.finish();
+    this.workspaceAlarmInstrumentation = null;
   }
 
   protected override onScheduledAlarmFailure(
