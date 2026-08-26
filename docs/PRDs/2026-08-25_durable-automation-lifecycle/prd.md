@@ -234,13 +234,6 @@ behavior and failure containment, not projected scale.
     context, and safe default inform the local grammar. Automation routing stays
     regional and workspace-authoritative, and this PRD does not add a Flagship
     binding, percentage rollout, or remote flag dependency.
-12. **Running ordinary evaluator rules as custom Workers for Platforms or
-    Dynamic Workers code.** The listed product triggers compile into a closed
-    predicate and source vocabulary and need no user-programmable runtime. A
-    future explicitly programmable trigger product may reconsider sandboxed
-    code, but it is not a compatibility escape hatch for a connector field or
-    event family the manifest forgot to declare.
-
 ## Product behavior
 
 ### Starting and returning to a draft
@@ -745,76 +738,6 @@ resource safety, that ceiling and its refusal behavior require the repository's
 separate defensive-limit decision; it cannot appear as an unexplained schema
 number.
 
-#### Why ordinary evaluators are not dynamic code
-
-[Workers for Platforms](https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/)
-is designed for a platform that dynamically deploys untrusted code written by
-customers or AI into isolated user Workers. Its
-[dispatch architecture](https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/how-workers-for-platforms-works/)
-adds a namespace, dynamic dispatch Worker, one deployed user Worker per program,
-and optional outbound Worker; the outbound layer can
-[control or deny external `fetch()`](https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/configuration/outbound-workers/).
-That is valuable when arbitrary customer code is the product. It is not needed
-to compare a declared event field, person, or resource relationship.
-
-[Dynamic Workers](https://developers.cloudflare.com/dynamic-workers/) are a
-lower-level and closer alternative for on-demand sandboxed evaluation. A loader
-Worker supplies code at runtime and either creates a fresh isolate with
-[`load()` or opportunistically reuses one by immutable ID with `get()`](https://developers.cloudflare.com/dynamic-workers/getting-started/).
-The loader chooses the structured data and capability bindings the code receives
-and can set
-[`globalOutbound: null` to block `fetch()` and `connect()`](https://developers.cloudflare.com/dynamic-workers/usage/egress-control/).
-This removes the dispatch namespace and per-program deployment lifecycle, but
-it does not turn arbitrary code into a statically legal evaluator.
-
-| Dimension | Closed evaluator grammar | Workers for Platforms | Dynamic Workers |
-| --- | --- | --- | --- |
-| Legality | Structure, field, operator, source, identity, and relationship are parsed before activation | Syntax can be checked before deployment; behavior is known only at runtime | Syntax can be checked before loading; behavior is known only at runtime |
-| Determinism | Pure evaluation over one immutable context; no clock, randomness, network, or side effects | Must constrain runtime APIs, bindings, and outbound behavior | Loader can provide no bindings and block outbound access, but clock, randomness, computation, exceptions, and returned shape remain code behavior |
-| Data boundary | Exact manifest-declared fields only | Dispatcher chooses event data and bindings supplied to a deployed user Worker | Loader chooses serialized `env`, request data, service bindings, and global outbound behavior for each code identity |
-| Failure point | Invalid rules fail draft review or activation | Deployment, dispatch, CPU, subrequest, exception, and response-parse failures join processing | Code retrieval/bundling, isolate load, CPU, exception, and response-parse failures join processing |
-| Versioning | Definition revision and canonical evaluator hash | Script upload, deployed version, dispatch target, code hash, and rollback are additional authorities | Accepted code/config hash must name immutable loader input; warm-isolate reuse is opportunistic and never state authority |
-| Required expressiveness | Covers every conformance case above | Adds arbitrary computation that none of the required cases uses | Adds arbitrary computation that none of the required cases uses |
-
-The default evaluator therefore remains the closed grammar. This preserves the
-requirement that illegal rules cannot be created and keeps a connector omission
-visible where the automation is reviewed. Generating custom code for either
-runtime to compensate for a missing `messageText`, project relation, folder
-relation, or person mapping would hide an incomplete connector contract until
-production events arrive.
-
-A future product explicitly offering programmable triggers remains a separate
-PRD and trigger kind. For a stateless predicate, Dynamic Workers are the better
-initial primitive: `load()` creates a fresh Worker for each one-time evaluation,
-avoiding warm-isolate globals as hidden history, without creating a second
-deployment namespace. The loader can pass one closed event context with no
-capability bindings, and `globalOutbound: null` can deny network access. The
-accepted code/config hash still identifies the exact immutable loader input.
-Workers for Platforms becomes the better candidate only if Rally is
-intentionally hosting independently deployed, longer-lived customer applications
-rather than evaluating a function.
-
-Either choice must provide only the same closed versioned event context, bind no
-connector credentials or product-state stores, deny outbound network access by
-default, pin the compatibility date plus code/config hash in the accepted
-definition and delivery receipt, apply team-approved
-[per-invocation resource limits](https://developers.cloudflare.com/dynamic-workers/usage/limits/),
-parse a strict side-effect-free `{ matches: boolean }` response, treat exceptions
-or malformed responses as `no_match`, and feed matches into this same WorkspaceDO
-receipt/outbox engine. It must prevent user code from retaining or emitting
-sensitive evaluator input through logs or Tail Workers, and prove Global/EU
-residency rather than assuming isolate sandboxing answers jurisdiction. No
-custom-code path may append a work-stream message or admit an automation run
-directly.
-
-[Dynamic Worker Durable Object Facets](https://developers.cloudflare.com/dynamic-workers/usage/durable-object-facets/)
-are explicitly not an evaluator implementation. A facet gives dynamic code its
-own isolated SQLite state under a supervisor Durable Object. Mutable per-program
-state would make the same event and evaluator revision produce history-dependent
-answers and create another authority to migrate, recover, authorize, and delete.
-Facets may be useful for a future hosted-application product, but they do not
-replace AutomationAgent or SubstreamAgent and are not used for trigger matching.
-
 WorkspaceDO owns the evaluation and delivery transaction boundary:
 
 ```text
@@ -1076,19 +999,6 @@ None yet.
     inverted link authoritative for the append, which would let a stale
     projection disclose restricted activity after participant or watch state
     changed.
-
-17. **Ordinary triggers use the closed evaluator grammar, not generated custom
-    code.** Every required Slack, Linear, Granola, GitHub, and Notion intent is a
-    typed combination of exact event expansion, a canonical resource selector,
-    a canonical person predicate, or a bounded declared content predicate. This
-    keeps legality, data access, evaluation, versioning, and failure behavior in
-    one reviewed contract. *Rejected:* compiling ordinary triggers to Workers
-    for Platforms or Dynamic Workers code, which adds code lifecycle and runtime
-    failure without adding required expressiveness and can turn a missing
-    connector field into a production-only failure. A future programmable-trigger
-    product remains a separate explicit trigger kind; Dynamic Workers are the
-    preferred initial primitive for its stateless matcher, and matches still
-    enter the shared WorkspaceDO receipt/outbox boundary.
 
 ## Data model
 
@@ -1440,16 +1350,6 @@ state; the flag must not silently reopen a stale writer.
     DLQ message, log, or telemetry event. Repeat person and resource fixtures
     across provider renames; canonical IDs continue to match, while unresolved
     or ambiguous people and absent resource relationships fail closed.
-27. Prove the ordinary evaluator compiler, registration path, and event handler
-    have neither a Workers for Platforms dispatch dependency nor a Dynamic
-    Workers loader dependency and execute every required conformance case through
-    the closed grammar. A future programmable-trigger kind, if separately
-    implemented, cannot call run admission or work-stream append directly and
-    can produce only a parsed match result for the same WorkspaceDO delivery
-    transaction. Its accepted code/config hash is immutable, it has no bindings
-    or outbound network, uses a fresh `load()` isolate for each evaluation, and
-    cannot observe warm-isolate globals or persisted facet state.
-
 ## Open questions
 
 None. The implementation plan may choose concrete class, table, RPC, and event
