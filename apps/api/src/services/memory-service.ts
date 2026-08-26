@@ -140,6 +140,76 @@ function memoryRevisionConflict(): MemoryToolError {
   );
 }
 
+/**
+ * The scope kinds a refusal names, narrowest first.
+ *
+ * `MEMORY_SCOPE_KINDS` is declared in that order and the plugin policy asks for
+ * the narrowest scope that fits, so a retry list has to agree with both. The
+ * union itself resolves broadest first — workspace, then user, then the work
+ * stream — and handing that order back told the model to try workspace first,
+ * which is the widest audience and the one an ordinary member usually cannot
+ * write at all.
+ */
+function scopeList(scopes: readonly MemoryScope[]): string {
+  if (scopes.length === 0) return "none";
+  return [...scopes]
+    .sort((left, right) =>
+      MEMORY_SCOPE_KINDS.indexOf(left.kind) - MEMORY_SCOPE_KINDS.indexOf(right.kind))
+    .map((scope) => scope.kind)
+    .join(", ");
+}
+
+/**
+ * What a refusal may tell the model to retry with: the scopes it can actually
+ * write, never the ones it may only read. Naming a readable-but-unwritable
+ * scope spends the model's next turn on a second refusal.
+ */
+function retryInstruction(scopes: readonly MemoryScope[]): string {
+  const writable = scopes.filter((scope) => scope.writable);
+  return writable.length === 0
+    ? "This run can write no durable memory at all. Say the fact could not be stored rather than looking for another scope."
+    : `Retry with one of: ${scopeList(writable)} — narrowest first. If none of them fits, say the fact could not be stored durably instead of storing it elsewhere.`;
+}
+
+/**
+ * The two refusals a write tool raises when the kind the model chose is not in
+ * this run's union — each naming the kinds that are.
+ *
+ * `scopeKind` is declared as the whole static enum, so every run is offered
+ * kinds it may not resolve, and a bare `memory_scope_not_available:workstream`
+ * told the model only that its choice was wrong, never which to make instead.
+ * That became a routine answer rather than an edge case when runs carrying no
+ * automation subscription started reaching the tool loop in a work stream an
+ * automation created: they hold no work-stream scope, and the standing plugin
+ * policy points a conversational run at that kind first. Typed for the reason
+ * `memoryRevisionConflict` is — an untyped `Error` reaches the model with no
+ * code and no next action (`docs/agent-tools.md`).
+ */
+export function unavailableScopeError(
+  kind: MemoryScopeKind,
+  scopes: readonly MemoryScope[],
+): MemoryToolError {
+  return new MemoryToolError(
+    "memory_scope_not_available",
+    `This run cannot reach ${kind} memory. Its scopes are: ${scopeList(scopes)}.`,
+    { reason: retryInstruction(scopes) },
+  );
+}
+
+export function unwritableScopeError(
+  kind: MemoryScopeKind,
+  scopes: readonly MemoryScope[],
+): MemoryToolError {
+  const writable = scopes.filter((scope) => scope.writable);
+  return new MemoryToolError(
+    "memory_scope_not_writable",
+    writable.length === 0
+      ? `This run may read ${kind} memory, and has no writable memory scope at all.`
+      : `This run may read ${kind} memory but not write it. It may write: ${scopeList(writable)}.`,
+    { reason: retryInstruction(scopes) },
+  );
+}
+
 function d1Changes(result: D1Result<unknown>): number {
   return Number((result.meta as { changes?: unknown } | undefined)?.changes ?? 0);
 }
@@ -296,9 +366,16 @@ export async function resolveMemoryAccess(
     return scopes;
   }
 
-  if (workstream.origin_type !== "ad_hoc" || workstream.automation_subscription_id) {
-    throw new Error("memory_ad_hoc_workstream_mismatch");
-  }
+  // Everything below is the union for a run that is *not* an automation run,
+  // and the run's own `automationSubscriptionId` is what decides that — not how
+  // the work stream was created. This used to also demand
+  // `origin_type === "ad_hoc"`, which read as a consistency check and was in
+  // fact a refusal of every run a member's reply admits.
+  // `assertRunAuthorityStillValid` treats a run with no subscription as a
+  // non-automation run in any work stream, and that field is the run's
+  // authority claim rather than a description of its container; this is the
+  // memory union agreeing with it. See `docs/agent-harness.md` §Scoped durable
+  // memory for the class this covers and the two questions left open.
   if (input.executionPrincipal.type === "user") {
     scopes.push(await ensureScope(
       env,
@@ -308,13 +385,43 @@ export async function resolveMemoryAccess(
       true,
     ));
   }
-  scopes.push(await ensureScope(
-    env,
-    input.workspaceId,
-    "workstream",
-    input.workstreamId,
-    input.executionPrincipal.type === "user",
-  ));
+  // A work-stream scope, though, belongs only to a work stream that owns one.
+  // Migration 0036's `memory_scopes_validate_workstream_owner` refused to create
+  // one for a work stream an automation made, because every run of a
+  // subscription gets a fresh work stream and memory left in one of them can
+  // never be recalled — which is what the subscription's own scope exists for.
+  // 0090 dropped that trigger with the rest of D1's product enforcement when
+  // memory moved into WorkspaceDO, and nothing retired the rule it stated.
+  //
+  // Held here rather than back in the schema, and not for lack of visibility:
+  // `workspace_workstream_directory` does carry both fields. But that row is a
+  // generation-fenced projection behind a waterline, so a constraint reading it
+  // would gate scope creation on projection timing and fail closed on a work
+  // stream not yet projected — and memory rows there deliberately hold
+  // work-stream ids as opaque provenance rather than foreign keys
+  // (`docs/workstream-durable-object.md`). This function reads the identity
+  // object directly and owes no such timing. It reads it safely only because
+  // every automation producer provisions the work stream before dispatching a
+  // run into it; a producer that dispatched first would reach this with the
+  // identity root's `origin_type` default still standing.
+  //
+  // Only the subscription id is tested, where 0036 tested the origin label too.
+  // The label is a second name for the same bit — the three automation
+  // producers set both together and nothing updates either afterwards — and it
+  // is the weaker of the two: the identity root declares
+  // `origin_type TEXT NOT NULL DEFAULT 'ad_hoc'` with no CHECK, so keying on it
+  // would silently drop this scope for any value that is neither. The
+  // subscription id is the fact the rule is about, and the same field the
+  // automation branch above keys on.
+  if (!workstream.automation_subscription_id) {
+    scopes.push(await ensureScope(
+      env,
+      input.workspaceId,
+      "workstream",
+      input.workstreamId,
+      input.executionPrincipal.type === "user",
+    ));
+  }
   return scopes;
 }
 
@@ -629,15 +736,23 @@ function mutationToolResult(result: MutationResult, summary: string): HarnessToo
   return { output: result, summary, providerOperationId: result.memoryItemId };
 }
 
-async function writableScope(
+/**
+ * The one place a write tool turns a model-chosen scope kind into a scope.
+ *
+ * Exported because `table_create` enforces the same rule on the same union and
+ * had grown its own copy of the find-and-throw: two sites to keep in step every
+ * time the refusal changes, which is exactly what went wrong when both were
+ * still raising bare codes.
+ */
+export async function writableScope(
   env: Env,
   input: WorkstreamWorkflowInput,
   kind: MemoryScopeKind,
 ): Promise<MemoryScope> {
   const scopes = await resolveMemoryAccess(env, input);
   const scope = scopes.find((candidate) => candidate.kind === kind);
-  if (!scope) throw new Error(`memory_scope_not_available:${kind}`);
-  if (!scope.writable) throw new Error(`memory_scope_not_writable:${kind}`);
+  if (!scope) throw unavailableScopeError(kind, scopes);
+  if (!scope.writable) throw unwritableScopeError(kind, scopes);
   return scope;
 }
 
