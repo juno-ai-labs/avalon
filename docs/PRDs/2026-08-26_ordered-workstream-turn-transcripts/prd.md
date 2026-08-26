@@ -310,6 +310,13 @@ a turn, block, slice, or hydration loop.
     timing while parent totals remain wall-clock unions rather than sums. Live,
     reconnect, range, and historical projections must reconstruct the same
     hierarchy without requiring a nested physical persistence model.
+21. Meet an end-to-end successful work-stream-open performance objective of
+    p50 ≤ 1,000 ms and p90 ≤ 2,000 ms. Measure from the member's click, keyboard
+    activation, or equivalent open intent in an already-running authenticated
+    desktop through the correct initial viewport being visibly painted, both
+    required initial range islands being resident, the snapshot/socket fence
+    being armed, and the composer reaching its correct usable state. API-only,
+    first-row-only, or cached-shell timing does not satisfy this goal.
 
 ## Non-goals
 
@@ -371,6 +378,11 @@ a turn, block, slice, or hydration loop.
     are deferred. The future copy may use **Context automatically compacting**,
     **Context automatically compacted**, and optionally **… for 2m 34s** while
     active or **… in 2m 34s** after completion.
+16. **Include app launch, update download, sign-in, or workspace bootstrap in the
+    work-stream-open latency SLO.** The clock starts from an interactive,
+    authenticated desktop when the member chooses a work stream. These broader
+    startup paths may have their own goals; excluding them does not permit the
+    work-stream metric to stop at an API response or placeholder paint.
 
 ## Product behavior
 
@@ -403,6 +415,48 @@ the same snapshot-plus-fence rule. On cold reload after completion, the feed
 reads the same canonical turn and block structure used by live delivery. These
 paths therefore converge on one ordering rather than applying separate
 placement rules.
+
+### Work-stream-open performance objective
+
+For successful authorized opens from an already-running, authenticated desktop,
+the end-to-end distribution must satisfy:
+
+- p50 ≤ 1,000 ms.
+- p90 ≤ 2,000 ms.
+
+The client starts a monotonic timer at the originating click, keyboard
+activation, deep-link dispatch, or equivalent member intent before route/cache
+work begins. It stops only after one renderer commit has made the correct target
+viewport visible—unread-centered when unread exists, otherwise latest—both the
+unread and latest range results are resident and reconciled, any initial active
+response/status checkpoint and its socket fence are installed, and the composer
+has reached its correct sendable or authorized read-only state. It does not wait
+for future response tokens or lazy loading of the intentionally uncovered middle
+gap. A skeleton, header-only route, first returned row, API completion, or paint
+of stale cached content is not completion.
+
+The percentile population includes successful warm-cache, cold-client-cache,
+cold/hibernated Durable Object, unread, latest, disjoint-range, and mid-stream
+opens in both regions. Implementations report those cohorts separately as well
+as the combined distribution so a fast cache-hit majority cannot hide a slow
+cold or mid-stream path. Slow successful samples remain in the percentile; a
+client may not restart the clock after navigation, authorization, retry,
+snapshot, or render work has begun. Failed/cancelled opens emit their outcome
+and elapsed duration separately and are never recorded as successful fast opens.
+
+One privacy-safe client measurement records the monotonic duration, outcome,
+region, app/protocol version, cache/DO state when known, unread-versus-latest
+target, whether the two initial islands overlap, and whether an active response
+was present. It contains no transcript content, tool payload, prompt, reasoning,
+or restricted identifiers. The SLO is not a network timeout or defensive limit;
+crossing it records a slow open rather than aborting otherwise valid work.
+
+Before production samples exist, the implementation PR supplies a controlled
+real-window Electron benchmark using the production open path and representative
+cold/warm, unread/latest, disjoint, large-history, and mid-stream fixtures. It
+reports the environment and raw durations plus p50/p90 rather than asserting on
+an API microbenchmark. Once real samples exist, the client-measured production
+distribution is the product authority.
 
 ### Working, worked, and thinking timing blocks
 
@@ -774,6 +828,14 @@ see. It makes the order shown to a participant match the order the agent used.
     were deriving a historical marker from a later checkpoint, which loses live
     and failure state, and exposing the private summary as a participant system
     message.
+22. **Measure the complete visible open, not a convenient subsystem.** The SLO
+    begins at member navigation intent and ends only when the target transcript,
+    both prefetched islands, active-state fence, and usable composer have
+    converged in the renderer. Client monotonic timing is authoritative; cohorts
+    remain visible and slow successful opens stay in the percentile. The
+    rejected alternatives were timing only REST/DO work, stopping at first paint
+    or a skeleton, and allowing warm cache hits to hide cold or mid-stream
+    latency.
 
 ## Data model
 
@@ -1270,6 +1332,11 @@ not select another turn. Structured logs and telemetry may carry opaque turn,
 run, range, and invocation identifiers, but not response text, tool arguments,
 tool output, or provider error prose.
 
+The work-stream-open performance event may carry duration, outcome, region,
+app/protocol version, coarse cache/DO cohort when known, open target, range
+overlap, and active-response presence. It may not carry transcript content,
+titles, prompts, tool/reasoning payloads, or restricted projection identities.
+
 Provider reasoning is not participant content. Raw reasoning text, encrypted
 reasoning, signatures, and provider-only attempt metadata are never rendered,
 included in participant snapshots, or copied into ordinary logs or telemetry.
@@ -1329,6 +1396,7 @@ projector or reducer under test.
 | `T11 Indexed initial loading` | Unread-anchor, neighbor, latest, bounds, and arbitrary-range production queries choose declared SQLite indexes; the two initial islands share one snapshot and one deduplicated bulk-hydration pass without a full scan, temporary sort, offset walk, or transcript-length-dependent statement count. |
 | `T12 Future compaction status` | Every automatic compaction has one durably ordered participant-safe status entry with active/terminal revisions, UTC timing and reconnect baselines, truthful failure/recovery, and no compacted-context disclosure; the current reducer preserves it so future UI can render happening/happened labels without a storage migration. |
 | `T13 Product-nested activity` | Response, assistant-turn, plugin, tool, thinking, and compaction scopes project as one stable hierarchy across live edges, reconnect, ranges, and history; siblings remain parallel/ordered, parents use wall-clock unions, and equivalent flat or nested persistence shapes produce the same product tree. |
+| `T14 End-to-end open performance` | Client-monotonic click-to-usable-open measurement covers the correct visible target, both prefetched islands, active snapshot/socket fence, and composer state; controlled real-window evidence meets p50 ≤ 1,000 ms and p90 ≤ 2,000 ms and production telemetry preserves cohort visibility without content. |
 
 ### Required test layers and artifacts
 
@@ -1340,6 +1408,7 @@ projector or reducer under test.
 | Desktop range/state reducer | `apps/desktop/src/renderer/lib/workstream-turn-ranges.test.ts` | Range union/complement, stable turn/status-entry reconciliation, nested activity ancestry and sibling order, stream epochs, stale lifecycle rejection, timers, hidden compaction-entry retention, and realtime singleton coverage. |
 | Desktop component | `apps/desktop/src/renderer/screens/workstream-turn-feed.test.tsx` | Ordered DOM blocks, streaming updates, dual initial islands, jump/scroll behavior, generic thinking/timing labels, and accessibility names. |
 | Full local member pipeline | Extend `scripts/e2e-local.mjs` and `scripts/e2e-local-oracles.test.mjs` | Public API/socket behavior against opened Durable Object authority, including real provider interleaving when credentials are configured and a fixed scripted-provider fixture in CI. |
+| End-to-end performance acceptance | Extend the production-path local E2E driver with a work-stream-open benchmark mode and write its raw timing/report artifact outside the repository. | Real Electron click-to-visible-and-usable durations across declared warm/cold, unread/latest, disjoint, large-history, and mid-stream cohorts; report combined and cohort p50/p90. This is release evidence, not an API microbenchmark or a new per-test timeout. |
 | Visible desktop acceptance | Add this feature's flow to `docs/e2e.md` and capture the exercised desktop window as required by the repository's visible-change rule. | Human-visible order, scroll anchoring, live clocks, parallel cards, reconnect, cold reload, and historical labels. |
 
 Provider HTTP streams, clocks, and fault injectors may use typed capability
@@ -1384,6 +1453,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H29 uses_indexed_bounded_queries_for_initial_ranges` | SQL + workerd | Populate a large tombstone/status history with overlapping unread/latest islands and an active compaction after the latest conversation turn, inspect the exact production SQL with `EXPLAIN QUERY PLAN`, and instrument statement/hydration boundaries. Assert the member anchor is a point lookup; anchor normalization, predecessor, successor, latest, active-status, bounds, and coverage/range selectors use the declared indexes in forward/reverse order with their bounded limits; neither selector uses `OFFSET`, a full transcript scan, or a temporary B-tree; and the union of both islands/status is bulk hydrated once with a statement count independent of total history length. |
 | `H30 persists_compaction_lifecycle_for_future_rendering` | SQL + workerd + desktop reducer | Begin automatic compaction between two conversation turns. Assert one participant-safe `context_compaction` entry is durably ordered before mutation, its active snapshot/reconnect state includes the original UTC start plus elapsed baseline, the exact restricted replacement commits before that same entry reaches `completed`, canonical duration survives cold/range load, the current reducer retains but need not paint it, and a fixed future-view projection can produce **Context automatically compacting** or **… compacting for 2m 34s**, then **Context automatically compacted** or **… compacted in 2m 34s**, without reading restricted payloads. |
 | `H31 projects_nested_activity_with_parallel_tool_children` | SQL + workerd + desktop reducer | Run one response with two assistant turns. Under the first turn, stream thinking plus two ordered plugin blocks whose tool children start and settle in parallel/out of order; place compaction under the second turn. Assert live, reconnect, range, and cold projections produce response → assistant turn → plugin → tool ancestry with thinking/compaction at their causal turn, stable sibling order, independent child labels, parent wall-clock unions, no double counting, and uninterrupted response-text token streaming. Run the same fixture through a flat-row adapter and a nested in-memory fixture and assert identical product projection without requiring identical persistence. |
+| `H32 benchmarks_complete_workstream_open_distribution` | real Electron + local E2E performance lane | From an already-running authenticated desktop, exercise declared warm/cold cache and object, unread/latest, overlapping/disjoint, large-history, and mid-stream cohorts through the production click/navigation path. Stop each client-monotonic sample only when the target range is visibly committed, both islands and active fence are resident, and the composer is usable. Preserve raw samples and environment metadata; assert the combined distribution is p50 ≤ 1,000 ms and p90 ≤ 2,000 ms and report every cohort separately. |
 
 ### Required edge-case and failure tests
 
@@ -1431,6 +1501,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E40 keeps_indexed_plan_for_missing_anchor_tombstones_and_boundaries` | SQL + workerd | Exercise a missing/retracted unread anchor, long tombstone runs, fewer than five turns on either side, empty history, and a snapshot fence below the physical tail. Assert anchor normalization and all directional/latest/range reads retain the declared indexed plans, coverage remains truthful across skipped tombstones, no linear fallback or temporary sort appears, overlap hydrates once, and deliberately removing each required index makes the plan/failure-proof test fail for that access path. |
 | `E41 closes_compaction_status_truthfully_without_leaking_payload` | SQL + workerd + desktop reducer | Fail start-entry persistence, then separately crash/fail/cancel after start but before replacement, after replacement but before stop, and during duplicate/out-of-order delivery. Assert a failed required start write prevents compaction mutation; otherwise there is one stable entry per compaction, monotonic active-to-completed/failed/cancelled/abandoned state, recovered upper-bound timing where exact stop is unavailable, no permanently active marker, no participant summary/messages/token counts/private bounds, no Bind projection of the safe marker, no compaction marker counted against the five requested conversation turns, and indexed range/reconnect recovery without duplication. |
 | `E42 rejects_or_repairs_orphaned_and_regressive_nested_activity` | SQL + workerd + desktop reducer | Deliver child-before-parent, stale reparenting, duplicate child stops, one sibling stop while another remains active, a parent terminal edge before required children settle, and a reconnect snapshot missing an active child's ancestor. Assert arrival order cannot define/reparent siblings; stale/duplicate edges are ignored; the parent stays active and counts overlap once; an inconsistent snapshot is rejected/resynced or repaired from canonical ancestry; range merges never duplicate nodes; and no storage implementation is required to persist a recursive tree. |
+| `E43 does_not_finish_open_metric_at_partial_stale_or_failed_state` | desktop + E2E | Independently delay authorization, unread/latest ranges, active checkpoint/fence, renderer commit, and composer readiness; begin with stale cached content; then fail and cancel separate opens. Assert the monotonic clock starts once at member intent, never restarts, and cannot stop on API completion, skeleton/header/first-row/stale paint, or only one range. Success records exactly once after the full usable condition; failed/cancelled opens record their outcome and elapsed time but never enter successful percentiles. |
 
 ### Required algebraic, race, and failure-proof checks
 
@@ -1476,8 +1547,9 @@ coordinated cutover and no compatibility phases:
    compaction status entries; their dedicated visual component may ship later.
 2. Implement every required test ID alongside its behavior. The harness, SQL,
    real-workerd, desktop, E2E, failure-injection, and visible-window suites must
-   pass before release; compatibility work is not a prerequisite because it is
-   deliberately absent.
+   pass before release. Capture the declared real-window work-stream-open
+   performance artifact and confirm its p50/p90 goal before release;
+   compatibility work is not a prerequisite because it is deliberately absent.
 3. Run one idempotent release operation that installs the object-local schema,
    deploys the backend that accepts only the new transcript protocol, and
    publishes the matching desktop version. The app may require that version to
@@ -1636,7 +1708,7 @@ exist before deployment, stop and revise this release plan before shipping.
     loop payloads nor `loop_sequence` bounds. Subsequent inference nevertheless
     reconstructs from the restricted projection without consulting the desktop
     projection or Global inference lakehouse.
-39. Every required `H01`–`H31` and `E01`–`E42` test is mapped to an actual test
+39. Every required `H01`–`H32` and `E01`–`E43` test is mapped to an actual test
     name and file, passes at its required layer, and has an implementation-PR
     failure-proof record showing the named assertion fails when its protected
     production behavior is deliberately broken. The three generated algebraic
@@ -1687,3 +1759,12 @@ exist before deployment, stop and revise this release plan before shipping.
     independently streamable. A flat durable representation is acceptable when
     it projects these semantics exactly; recursive physical storage is not an
     acceptance requirement.
+46. Successful work-stream opens from an already-running authenticated desktop
+    meet p50 ≤ 1,000 ms and p90 ≤ 2,000 ms from member intent to the correct
+    target transcript being visibly painted, both initial islands and the
+    active-state/socket fence being resident, and the composer reaching its
+    correct usable state. The implementation PR supplies raw controlled
+    real-window samples and combined/cohort percentiles; production client
+    telemetry becomes authoritative when samples exist. The metric never stops
+    at an API response, skeleton, stale cache, first row, or only one range, and
+    slow successes are not discarded or restarted.
