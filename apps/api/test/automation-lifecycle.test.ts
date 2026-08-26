@@ -136,6 +136,10 @@ function scheduleRunnerFor(database: DatabaseSync) {
       workstreamScheduleTargets: async () => ({ items: [] }),
       plannedAutomationWorkstream: async () => null,
     },
+    notificationIntents: {
+      notificationIntentMaintenanceTarget: async () => ({ dueAt: null }),
+      reapSettledWorkstreamNotificationIntents: async () => ({ reapedIntentIds: [] }),
+    },
   };
   return {
     dueTargets: () => workspaceScheduleTargets(ctx),
