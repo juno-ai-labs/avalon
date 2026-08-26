@@ -213,7 +213,11 @@ durations. They do not contain a workspace id, alarm key, due time, payload,
 connector value, or error message. Cloudflare already puts the invocation id
 and Durable Object id on the enclosing row and trace, which is enough to find
 the hot instance without copying product identity or content into the custom
-diagnostic.
+diagnostic. A target error is marked with the fixed
+`workspace_scheduled_alarm_phase_failed` code inside the custom span and the
+original error is rethrown only after that span settles. This matters because
+Cloudflare automatically records errors thrown from span callbacks, including
+details the target supplied.
 
 A started phase with neither a matching completion nor failure means the
 continuation ended while that phase was active. On an already-migrated hot
@@ -441,14 +445,17 @@ In Workers Logs, select the `WorkspaceDO` namespace and filter
 `crossed_recovery_horizon = true`. Group by `slowest_phase` and then
 `slowest_alarm_kind`; the latter is present only when the slowest phase is a
 stored target. Open the enclosing invocation or trace to see the ordered phase
-rows and Cloudflare's automatic binding spans beneath the custom phase span.
+rows and Cloudflare's automatic binding spans beneath the custom phase span. If
+multiple phases tie at the maximum millisecond duration, the summary names the
+first one that completed; inspect the completion rows to see every tied phase.
 
 For an alarm reported as `clientDisconnected`, first filter the same invocation
 for `workspace_scheduled_alarm_phase_started`. No start row means the queued
 delivery never entered application work. A start without its corresponding
 completion or failure names the phase active when the continuation ended. Do
-not join on workspace ids or alarm keys: neither is emitted, and
-`$workers.durableObjectId` is the platform-owned correlation field.
+not join on workspace ids or alarm keys within these phase rows: neither is
+emitted, and `$workers.durableObjectId` is the platform-owned correlation
+field.
 
 ## Changelog
 
@@ -459,7 +466,8 @@ failure rows around both re-arms, the authority check, each stored target, the
 activity-retention pass, and the schedule reconcile. A final summary records
 total work time, the slowest phase, the bounded alarm kind when applicable, and
 whether the two-second recovery horizon was crossed. Each phase is also a child
-span of the platform's alarm invocation trace.
+span of the platform's alarm invocation trace; target errors cross that span
+only as a fixed error code and are rethrown after it settles.
 
 **Why:** After the recovery-arm fix, alarm `clientDisconnected` outcomes fell by
 about 95% but did not reach zero. Production invocation traces showed the
