@@ -1499,7 +1499,7 @@ projector or reducer under test.
 
 ### Required test layers and artifacts
 
-| Layer | Required target | Responsibility |
+| Layer | Target | Responsibility |
 | --- | --- | --- |
 | Pure harness protocol | `packages/agent-harness/src/bind-loop-projection.test.ts` | Fixed-message canonicalization, projector round trips, system-projection revision changes, provider continuation fields, protocol/derivative classification, and mismatch detection. |
 | Substrate and SQL | `apps/api/test/workstream-transcript-substrate.test.ts` using the real object schema through `createTestSqlStorage()` | Single-owner fact schema, projection references, atomic cross-projection transactions, exact indexed range scans, `EXPLAIN QUERY PLAN` assertions, tombstones, immutable payload references, transition ordering, and idempotent clean-cut schema installation. |
