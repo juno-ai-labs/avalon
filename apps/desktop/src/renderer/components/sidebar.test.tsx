@@ -15,8 +15,16 @@ const openSettings = vi.hoisted(() => vi.fn());
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
 const markWorkstreamNavigation = vi.hoisted(() => vi.fn());
 const markSurfaceEntrypoint = vi.hoisted(() => vi.fn());
+const markWorkstreamFeedOpenStarted = vi.hoisted(() => vi.fn());
 const startWorkstreamSocketWarmup = vi.hoisted(() => vi.fn());
 const cancelWorkstreamSocketWarmup = vi.hoisted(() => vi.fn());
+const workstreamSocketOpenContext = vi.hoisted(() => vi.fn((workstreamId: string): {
+  state: 'retained_pair' | 'control_warmup' | 'cold';
+  socketLeaseId?: string;
+} => {
+  void workstreamId;
+  return { state: 'cold' };
+}));
 const applicationSettings = vi.hoisted(() => ({
   current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
   listeners: new Set<(settings: unknown) => void>(),
@@ -44,12 +52,14 @@ vi.mock('../lib/platform', () => ({
 
 vi.mock('../lib/telemetry', () => ({
   markSurfaceEntrypoint,
+  markWorkstreamFeedOpenStarted,
   markWorkstreamNavigation,
   reportTelemetryProductIntent,
   telemetryVisibility: (scope: string) => scope === 'workspace' ? 'public' : 'private',
 }));
 
 vi.mock('../lib/workstream-socket-pool', () => ({
+  useWorkstreamSocketOpenContext: (workstreamId: string) => () => workstreamSocketOpenContext(workstreamId),
   useWorkstreamSocketHoverWarmup: (workstreamId: string) => ({
     onPointerCancel: () => cancelWorkstreamSocketWarmup(workstreamId),
     onPointerEnter: () => startWorkstreamSocketWarmup(workstreamId),
@@ -146,10 +156,13 @@ describe('Sidebar work-stream markers', () => {
   beforeEach(() => {
     window.localStorage.clear();
     copyText.mockReset().mockResolvedValue(undefined);
+    markSurfaceEntrypoint.mockReset();
     markWorkstreamNavigation.mockReset();
+    markWorkstreamFeedOpenStarted.mockReset();
     reportTelemetryProductIntent.mockReset();
     startWorkstreamSocketWarmup.mockReset();
     cancelWorkstreamSocketWarmup.mockReset();
+    workstreamSocketOpenContext.mockReset().mockReturnValue({ state: 'cold' });
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
@@ -207,6 +220,40 @@ describe('Sidebar work-stream markers', () => {
     cancelWorkstreamSocketWarmup.mockClear();
     fireEvent.pointerCancel(row);
     expect(cancelWorkstreamSocketWarmup).toHaveBeenCalledWith(hovered.id);
+
+    const socketLeaseId = '018f22f2-4c22-7abc-8def-012345678905';
+    workstreamSocketOpenContext.mockReturnValue({ state: 'control_warmup', socketLeaseId });
+    fireEvent.click(screen.getByRole('link', { name: /Warm this work stream/u }));
+    expect(markWorkstreamFeedOpenStarted).toHaveBeenCalledWith(
+      hovered.id,
+      'recent',
+      'control_warmup',
+      expect.any(Number),
+      socketLeaseId,
+    );
+  });
+
+  it('does not start navigation telemetry when the active work-stream row is clicked again', () => {
+    const active = workstream('active-workstream', 'Already open', 'completed');
+    render(
+      <MemoryRouter initialEntries={[`/workstreams/${active.id}`]}>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[active]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: /Already open/u }));
+
+    expect(markWorkstreamFeedOpenStarted).not.toHaveBeenCalled();
+    expect(markWorkstreamNavigation).not.toHaveBeenCalled();
+    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
   });
 
   // The pill answers to how near the pointer is rather than to hovering the

@@ -121,6 +121,21 @@ export type DesktopTelemetryConnectorSetupIntent = {
   operationId?: string;
 } & TelemetryEventProperties<'connector_setup_requested_v2'>;
 
+export type DesktopTelemetryWorkstreamFeedVisibleIntent = {
+  kind: 'workstream_feed_visible';
+  operationId: string;
+} & TelemetryEventProperties<'workstream_feed_visible'>;
+
+export type DesktopTelemetryWorkstreamSocketStartedIntent = {
+  kind: 'workstream_socket_started';
+  operationId: string;
+} & TelemetryEventProperties<'workstream_socket_started'>;
+
+export type DesktopTelemetryWorkstreamOpenLifecycleIntent = {
+  [Name in 'workstream_open_started' | 'workstream_open_outcome']:
+  { kind: Name; operationId: string } & TelemetryEventProperties<Name>;
+}['workstream_open_started' | 'workstream_open_outcome'];
+
 export type DesktopTelemetryProductIntent =
   | { kind: 'onboarding_region_selected'; selectedRegion: RallyRegion; entrypoint: 'first_run' | 'settings' | 'invitation' }
   | { kind: 'workspace_create_requested'; selectedRegion: RallyRegion; entrypoint: 'first_run' | 'settings'; operationId: string }
@@ -128,6 +143,9 @@ export type DesktopTelemetryProductIntent =
   | { kind: 'workstream_create_requested'; entrypoint: 'composer'; operationId: string }
   | { kind: 'run_requested'; entrypoint: 'composer'; operationId: string }
   | DesktopTelemetryConnectorSetupIntent
+  | DesktopTelemetryWorkstreamFeedVisibleIntent
+  | DesktopTelemetryWorkstreamSocketStartedIntent
+  | DesktopTelemetryWorkstreamOpenLifecycleIntent
   | { kind: 'command_shortcuts_revealed'; availableCount: number }
   | {
     kind: 'command_shortcut_used';

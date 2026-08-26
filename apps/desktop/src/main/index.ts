@@ -345,6 +345,14 @@ async function reportTelemetryProductIntent(
       );
       return;
     }
+    case 'workstream_feed_visible':
+    case 'workstream_open_started':
+    case 'workstream_open_outcome':
+    case 'workstream_socket_started': {
+      const { operationId, ...semanticIntent } = intent;
+      await telemetryReporter.semanticProductIntent(semanticIntent, windowContext, operationId);
+      return;
+    }
     case 'command_shortcuts_revealed':
       await telemetryReporter.commandShortcutsRevealed(intent.availableCount, windowContext);
       return;
