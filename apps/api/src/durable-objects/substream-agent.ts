@@ -66,7 +66,7 @@ import {
 import {
   launchBlockDashboardRefresh,
 } from "../services/block-dashboard-service";
-import { logError, logInfo, logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   identityAttributes,
@@ -3193,6 +3193,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       throw new Error("substream_parent_effect_flush_limit");
     }
     await this.armNextAlarm();
+    logInfo(this.env, "substream_outbox_fence_terminal", {
+      substream_id: this.externalSubstreamId(),
+      delivered_count: delivered,
+      outcome: "forwarded",
+      reason: "parent_outbox_fence_complete",
+    });
     return delivered;
   }
 
@@ -3342,12 +3348,38 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (effects.length > 0) {
         try {
           await this.forwardEffectsToWorkstreamDO(effects);
+          let removed = 0;
           for (const effect of effects) {
-            this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash);
+            if (this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash)) {
+              removed += 1;
+            }
           }
-        } catch {
+          logInfo(this.env, "substream_outbox_batch_terminal", {
+            workspace_id: effects[0]?.workspaceId ?? null,
+            workstream_id: effects[0]?.workstreamId ?? null,
+            substream_id: this.externalSubstreamId(),
+            message_ids: effects.map((effect) => effect.messageId),
+            effect_kinds: effects.map((effect) => effect.effect.kind),
+            effect_count: effects.length,
+            removed_count: removed,
+            outcome: "forwarded",
+            reason: "parent_outbox_accepted",
+          });
+        } catch (error) {
           const retryAt = Date.now() + 5_000;
           this.objectStore.deferRegionalEffects(effects, retryAt);
+          logWarn(this.env, "substream_outbox_batch_deferred", {
+            workspace_id: effects[0]?.workspaceId ?? null,
+            workstream_id: effects[0]?.workstreamId ?? null,
+            substream_id: this.externalSubstreamId(),
+            message_ids: effects.map((effect) => effect.messageId),
+            effect_kinds: effects.map((effect) => effect.effect.kind),
+            effect_count: effects.length,
+            retry_at: new Date(retryAt).toISOString(),
+            outcome: "deferred",
+            reason: diagnosticErrorCode(error, "parent_forward_failed"),
+            error_name: error instanceof Error ? error.name : typeof error,
+          });
           await this.ensureAlarmNoLaterThan(retryAt);
         }
       }
@@ -3380,11 +3412,37 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (effects.length === 0) return;
     try {
       await this.forwardEffectsToWorkstreamDO(effects);
+      let removed = 0;
       for (const effect of effects) {
-        this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash);
+        if (this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash)) {
+          removed += 1;
+        }
       }
-    } catch {
-      this.objectStore.deferRegionalEffects(effects, Date.now() + 5_000);
+      logInfo(this.env, "substream_outbox_flush_terminal", {
+        workspace_id: effects[0]?.workspaceId ?? null,
+        workstream_id: effects[0]?.workstreamId ?? null,
+        substream_id: this.externalSubstreamId(),
+        message_ids: effects.map((effect) => effect.messageId),
+        effect_kinds: effects.map((effect) => effect.effect.kind),
+        effect_count: effects.length,
+        removed_count: removed,
+        outcome: "forwarded",
+      });
+    } catch (error) {
+      const retryAt = Date.now() + 5_000;
+      this.objectStore.deferRegionalEffects(effects, retryAt);
+      logWarn(this.env, "substream_outbox_flush_deferred", {
+        workspace_id: effects[0]?.workspaceId ?? null,
+        workstream_id: effects[0]?.workstreamId ?? null,
+        substream_id: this.externalSubstreamId(),
+        message_ids: effects.map((effect) => effect.messageId),
+        effect_kinds: effects.map((effect) => effect.effect.kind),
+        effect_count: effects.length,
+        retry_at: new Date(retryAt).toISOString(),
+        outcome: "deferred",
+        reason: diagnosticErrorCode(error, "parent_forward_failed"),
+        error_name: error instanceof Error ? error.name : typeof error,
+      });
     }
   }
 
