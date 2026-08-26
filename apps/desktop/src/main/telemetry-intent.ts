@@ -93,6 +93,20 @@ export function parseTelemetryProductIntent(value: unknown): DesktopTelemetryPro
       };
       break;
     }
+    case 'workstream_send_ready': {
+      if (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId)
+        || !exact('kind', 'operationId', 'workstreamId', 'durationMs', 'workspaceSocketState')) break;
+      const properties = { ...candidate };
+      delete properties['kind'];
+      delete properties['operationId'];
+      const parsed = TELEMETRY_EVENTS.workstream_send_ready.properties.safeParse(properties);
+      if (parsed.success) return {
+        kind: 'workstream_send_ready',
+        operationId,
+        ...parsed.data,
+      };
+      break;
+    }
     case 'workstream_socket_started': {
       const hasOpenAttemptId = candidate['openAttemptId'] !== undefined;
       if (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId)

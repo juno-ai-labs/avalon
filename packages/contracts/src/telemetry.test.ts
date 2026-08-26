@@ -138,6 +138,11 @@ describe("telemetry registry", () => {
       feedSource: "boot_payload",
       messageCount: "six_to_twenty",
     }],
+    ["workstream_send_ready", "desktop-renderer", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      durationMs: 856,
+      workspaceSocketState: "reconnecting",
+    }],
     ["workstream_socket_started", "desktop-renderer", {
       workstreamId: "00000000-0000-4000-8000-000000000101",
       socketLeaseId: "018f22f2-4c22-7abc-8def-012345678901",

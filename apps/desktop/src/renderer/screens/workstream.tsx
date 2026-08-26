@@ -59,6 +59,7 @@ import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useTextClipped } from '../lib/use-text-clipped';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
 import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
+import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useBlockDashboardSockets } from '../lib/use-block-dashboard-sockets';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
@@ -1040,6 +1041,11 @@ export function WorkstreamScreen(): React.JSX.Element {
     id,
     workstream.isSuccess && messages.isSuccess,
   );
+  useWorkstreamSendReadyTelemetry({
+    isReady: socketConnection.sendReady,
+    workspaceSocketState: socketConnection.workspaceSocketState,
+    workstreamId: id,
+  });
   const socketState = socketConnection.state;
   const loadSocketMessagePage = socketConnection.loadMessagePage;
   const transcript = messages.data ?? [];
