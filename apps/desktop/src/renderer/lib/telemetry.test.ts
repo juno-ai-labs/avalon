@@ -22,7 +22,10 @@ import {
   uuidV7,
   workstreamFeedOpenCacheState,
   workstreamFeedOpenAttemptId,
+  workstreamFeedSourceQueryKey,
   workstreamNavigation,
+  workstreamRecoveryFeedQueryKey,
+  workstreamSocketSnapshotGenerationQueryKey,
 } from './telemetry';
 
 const desktopBridge = vi.hoisted(() => vi.fn());
@@ -35,6 +38,16 @@ afterEach(() => {
 });
 
 describe('renderer semantic telemetry helpers', () => {
+  it('keeps work-stream opening lineage and REST windows in distinct cache keys', () => {
+    const workstreamId = '00000000-0000-4000-8000-000000000200';
+    expect(workstreamFeedSourceQueryKey(workstreamId))
+      .toEqual(['workstream-feed-source', workstreamId]);
+    expect(workstreamRecoveryFeedQueryKey(workstreamId))
+      .toEqual(['workstream-recovery-feed', workstreamId]);
+    expect(workstreamSocketSnapshotGenerationQueryKey(workstreamId))
+      .toEqual(['workstream-socket-snapshot-generation', workstreamId]);
+  });
+
   it('maps only planned router destinations to stable screen enums', () => {
     expect(telemetryScreenForPath('/')).toBeNull();
     expect(telemetryScreenForPath('/workstreams/new')).toBe('workspace_home');
@@ -92,7 +105,7 @@ describe('renderer semantic telemetry helpers', () => {
     expect(report).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'workstream_open_started', operationId, workstreamId, socketLeaseId,
     }));
-    expect(completeWorkstreamFeedPaint(workstreamId, 'boot_payload', 'six_to_twenty', 360, socketLeaseId))
+    expect(completeWorkstreamFeedPaint(workstreamId, 'socket_snapshot', 'six_to_twenty', 360, socketLeaseId))
       .toEqual({
         operationId,
         intent: {
@@ -105,7 +118,7 @@ describe('renderer semantic telemetry helpers', () => {
           sidebarSection: 'pinned',
           cacheState: 'detail_cached',
           socketPoolState: 'control_warmup',
-          feedSource: 'boot_payload',
+          feedSource: 'socket_snapshot',
           messageCount: 'six_to_twenty',
         },
         outcomeIntent: {

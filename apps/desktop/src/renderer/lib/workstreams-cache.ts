@@ -35,6 +35,38 @@ export function setCachedWorkstreams(
   });
 }
 
+/**
+ * Remove every per-work-stream cache entry when either room revokes access.
+ *
+ * The feed and control sockets can close independently. Keeping this boundary
+ * shared prevents whichever one closes first from leaving transcript,
+ * HyperSight, context, or recovery state visible until the other catches up.
+ */
+export function evictCachedWorkstream(
+  queryClient: QueryClient,
+  workstreamId: string,
+): void {
+  const queryPrefixes = [
+    ['workstream', workstreamId],
+    ['messages', workstreamId],
+    ['messages-cursor', workstreamId],
+    ['messages-newer-cursor', workstreamId],
+    ['workstream-feed-source', workstreamId],
+    ['workstream-recovery-feed', workstreamId],
+    ['workstream-socket-snapshot-generation', workstreamId],
+    ['workstream-context', workstreamId],
+    ['block-dashboard', workstreamId],
+    ['block-dashboard-preference', workstreamId],
+    ['terminal-workstream', workstreamId],
+    ['dismissed-suggestion-ids', workstreamId],
+  ] as const;
+  for (const queryKey of queryPrefixes) {
+    queryClient.removeQueries({ queryKey });
+  }
+  setCachedWorkstreams(queryClient, (current) =>
+    current?.filter((workstream) => workstream.id !== workstreamId));
+}
+
 /** Refresh page-one rows without truncating pages or debug rows already loaded. */
 export function mergeCachedWorkstreamPage(
   queryClient: QueryClient,

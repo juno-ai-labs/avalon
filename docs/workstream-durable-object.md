@@ -1170,6 +1170,29 @@ durable transitions. Real-workerd coverage asserts both that an indexed claim
 reaches its terminal decision and that the generic port returns a typed-only
 refusal.
 
+### 2026-08-25 — One SubstreamAgent snapshot opens the reader
+
+**What changed:** Selecting a work stream now subscribes its SubstreamAgent
+immediately, and the first canonical snapshot supplies both the detail and the
+transcript window the renderer needs. `GET /workstreams/:id` invokes the same
+room boot only for explicit recovery. It no longer calls WorkstreamDO for the
+viewer HyperSight preference; the independent control socket owns that value.
+
+**Why:** The old open called `boot()` over REST, awaited an optional second
+object, then admitted a feed whose subscription assembled another room
+snapshot. The serial duplication was visible in production timings and spent
+the latency budget before the message surface was live.
+
+**Considered and rejected:** Racing the two room boots moves the serialization
+inside the object and doubles snapshot work. Reaching from SubstreamAgent into
+WorkstreamDO would violate the authority boundary for optional UI metadata.
+
+**Consequences:** The normal open performs one canonical SubstreamAgent read.
+The recovery route remains a full twin so a failed first socket attempt exposes
+a safe manual path as soon as it enters reconnecting, without an arbitrary
+timeout. WorkstreamDO control metadata may arrive before or after the feed
+without affecting message readiness.
+
 ### 2026-08-25 — Opening messages carry real person mentions
 
 **What changed:** The new-work-stream composer now retains the same selected
@@ -1262,7 +1285,6 @@ coverage for this rule because its logical affected-row count hides index
 writes; the notification regression therefore runs on real workerd and changes
 indexed columns. The test was proved by restoring the old exact-count branch and
 observing `busy` where the terminal result was `skipped`.
-
 ### 2026-08-25 — Being named at creation tells the person, when the caller says to
 
 **What changed:** `initialize` emits, per invited participant, the same activity
