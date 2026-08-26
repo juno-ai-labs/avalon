@@ -75,10 +75,17 @@ These terms are normative. A persisted record has one explicit kind; callers
 may not choose a different classification based on the provider role or whether
 the content would be useful in the participant feed.
 
-- **Participant transcript turn:** a top-level, authorization-filtered item in
-  the member-visible work-stream history. It has a stable `turn_sequence` and
-  may contain ordered text, thinking, and tool blocks. It is not the source of
-  truth for reconstructing private Bind state.
+- **Participant transcript turn:** a top-level item in the canonical
+  participant-visible work-stream projection, returned only after reader
+  admission. It has a stable `turn_sequence` and may contain ordered text,
+  thinking, and tool blocks. It is not filtered or re-authorized row by row and
+  is not the source of truth for reconstructing private Bind state.
+- **Reader admission:** the single authorization decision for one external
+  transcript read operation or admitted socket. It binds the reader to the
+  authenticated session/membership generation, workspace, work stream,
+  substream, participant/scope epochs, and regional authority. Every range
+  slice, active checkpoint, lifecycle record, and bulk hydration within that
+  operation reuses the same admission.
 - **Bind loop state:** the complete ordered, post-healing provider-message array
   Bind will submit at a model-call boundary, or the complete ordered array after
   Bind accepts an assistant or tool-result transition. It includes the current
@@ -179,6 +186,13 @@ and discards the array when the run ends. A compaction replaces the live array
 with a summary checkpoint. The correct history therefore exists transiently,
 but the current host boundary does not make it a durable product invariant.
 
+The current open/snapshot path can already verify the session at the object
+boundary and then enter product methods whose detail and message reads each
+authorize again. Adding unread and latest ranges above that shape could turn one
+open into several serial regional authorization round trips. This PRD must
+remove that multiplication: authorization is an operation-level admission, not
+a turn, block, slice, or hydration loop.
+
 ## Goals
 
 1. Render assistant narration and tool activity in the order of the original
@@ -235,6 +249,14 @@ but the current host boundary does not make it a durable product invariant.
     complete when behavior exists without its named test objective, required
     assertions, correct runtime layer, and proof that the new test fails when
     the protected production behavior is deliberately broken.
+17. Keep transcript-read authorization cost constant with respect to returned
+    turns, blocks, gaps, and initial slices. A REST boot/range operation performs
+    one reader admission; unread, latest, active-state, coverage, and hydration
+    reads reuse it. An admitted socket snapshot reuses its epoch-fenced admission
+    until revocation invalidates and closes that admission. No per-turn or
+    per-block authorization calls or regional authorization joins are allowed.
+    Session, membership, participation, or scope revocation invalidates the
+    admission rather than waiting for a row-level recheck.
 
 ## Non-goals
 
@@ -946,11 +968,31 @@ authority is unavailable.
 
 ## Security and trust model
 
-Every snapshot and range read reuses work-stream participation authorization
-before returning bounds or content. The advertised sequence domain contains
-only turns visible to that audience, so its gaps and upper bound do not disclose
-private system prompts, hidden operational rows, another substream, or another
-participant's inaccessible content.
+Every external boot or range read performs one reader admission before returning
+any bounds or content. The operation then passes that admitted capability to all
+unread/latest scans, active-state reads, lifecycle hydration, and response
+assembly; none re-runs authorization. A socket performs reader admission at
+upgrade/subscription and attaches its participant/scope epochs to the admitted
+connection. Initial and later snapshots reuse that admission while its session,
+membership, participant, and scope generations remain current. Revocation
+advances or invalidates the relevant generation and closes the socket before it
+can receive another snapshot; revocation propagation/sweeping replaces repeated
+read-time checks, not security.
+
+The participant `turn_sequence` domain is materialized at write time from
+participant-visible turns only. Restricted system/protocol rows and other
+substreams never occupy it, so an authorized range read is a direct indexed scan
+rather than a per-row authorization filter or join. The number of authorization
+decisions and regional authorization queries is therefore constant as page size,
+block count, and gap count grow. The unread and latest slices in one boot share
+the same decision. Bulk author/resource hydration may remain batched, but may not
+introduce per-turn authorization calls.
+
+Because the participant sequence domain excludes restricted rows, its gaps and
+upper bound do not disclose private system prompts, hidden operational rows, or
+another substream. If Rally later introduces genuinely viewer-specific transcript
+turns, that feature must define a write-time audience sequence/projection rather
+than post-filtering a shared range row by row; it is not introduced by this PRD.
 
 The restricted loop projection is a separate authorization surface inside the
 same regional authority. Participant REST, socket, export, search, range,
@@ -1022,6 +1064,7 @@ projector or reducer under test.
 | `T7 Authorization and locality` | Participant APIs reveal neither restricted payloads nor restricted bounds, and Global/EU authorities never use one another as transcript or inference-archive fallbacks. |
 | `T8 Compatibility and migration` | Capable and legacy clients receive their declared protocols, complete legacy evidence can be reconciled deterministically, and incomplete evidence remains an honest legacy envelope. |
 | `T9 Visible product behavior` | A real desktop window visibly preserves interleaving, gap loading, unread opening, instant jump-to-latest, smooth streaming, parallel activity, and historical timing labels. |
+| `T10 Constant-cost reader admission` | One external boot/range operation or socket admission authorizes once and reuses an epoch-fenced capability across all slices, active state, and hydration; authorization work never scales with returned turns, blocks, or gaps. |
 
 ### Required test layers and artifacts
 
@@ -1073,6 +1116,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H25 compacts_twice_across_distinct_events_and_resumes_second_generation` | workerd | Accept activity, commit compaction event A, accept additional assistant/tool activity, then commit distinct compaction event B. Assert two `state_replaced` transitions with distinct event/source revisions, three ordered loop generations, retention of both exact replacements, unchanged participant history, and post-eviction replay from B with the exact next provider array. Replay either event ID and assert idempotency rather than a third replacement generation. |
 | `H26 joins_existing_stream_with_utc_start_and_elapsed_baseline` | workerd + desktop + E2E | Start a response before a second client opens the work stream. On first join, assert the active snapshot carries the original `startedAtUtc`, a server `snapshotAtUtc`, and the full prior `elapsedMsAtSnapshot`; the label paints the already-accrued duration immediately, continues from the local monotonic receipt point, and is replaced by canonical terminal duration. |
 | `H27 opens_workstream_mid_stream_with_atomic_checkpoint_and_catchup` | workerd + desktop + E2E | Before the client opens the work stream, stream accumulated text and produce planned, running, completed, and failed parallel tool states plus an active thinking block. Assert the first boot paints the exact accumulated ordered state and timing baselines, retains unread/latest islands, records `resumeAfterEventSequence`, and then applies subsequent text/tool/thinking frames once without waiting for another fetch. |
+| `H28 authorizes_boot_once_for_all_ranges_and_active_state` | API Node + workerd | Open with disjoint unread/latest slices, active stream checkpoints, lifecycle timing, authors, mentions, attachments, and tool blocks. Instrument the typed reader-admission boundary and assert one admission decision for the complete boot, zero per-turn/block calls, and the same admitted capability identity on every internal scan/hydration. Repeat through the initial socket snapshot and assert it reuses the socket admission. |
 
 ### Required edge-case and failure tests
 
@@ -1116,6 +1160,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E36 does_not_conflate_duplicate_compaction_delivery_with_a_second_event` | SQL + workerd | Deliver compaction event A twice and a distinct event B once, including out-of-order retry delivery. Assert A creates exactly one replacement generation, B creates exactly one later generation, event/source identities remain distinguishable, and the active generation never rolls back from B to A. |
 | `E37 rejects_inconsistent_active_interval_timestamp_baseline` | workerd + desktop | Supply a snapshot whose `startedAtUtc`, `snapshotAtUtc`, and `elapsedMsAtSnapshot` cannot describe the same interval revision, then deliver an older consistent snapshot. Assert the inconsistent snapshot is rejected/resynced without resetting the label to zero, and the older revision cannot roll back a newer valid baseline. |
 | `E38 races_midstream_open_with_frame_and_terminal_commit` | workerd + desktop | Publish a token/tool lifecycle frame immediately before, during, and after first-open snapshot assembly, then commit the active turn. Assert snapshot fencing plus catch-up yields every byte/block/revision exactly once, canonical commit reconciles the reserved turn in place, no active overlay survives terminal state, and no middle range is falsely marked covered. |
+| `E39 keeps_authorization_work_constant_across_range_shapes` | API Node + workerd | Run empty, shortened, tombstone-heavy, overlapping, disjoint, and maximum-existing-bound range fixtures with different returned turn/block counts. Assert each external read makes exactly one reader-admission decision, no row hydration triggers authorization, and a participant/scope epoch change invalidates the admitted socket before another snapshot is returned. |
 
 ### Required algebraic, race, and failure-proof checks
 
@@ -1164,9 +1209,12 @@ accepted implementation of this requirement.
    requires them, keep them out of the participant projection, and emit no
    thinking block for providers or models without observable evidence.
 4. Adopt the substrate in `SubstreamAgent` without changing the existing feed.
-   Historical rows remain readable. Deterministically backfill only legacy
-   Global runs that pass the complete-evidence reconciliation; retain every
-   other run as a legacy envelope.
+   Replace repeated nested `authorize()` calls with one explicit reader
+   admission passed through detail, unread/latest range, active-state, and bulk
+   hydration reads; attach the epoch-fenced form to admitted sockets. Historical
+   rows remain readable. Deterministically backfill only legacy Global runs that
+   pass the complete-evidence reconciliation; retain every other run as a legacy
+   envelope.
 5. Teach the desktop to understand both the legacy message protocol and the new
    turn/activity protocol. It stores coverage as ranges, reconciles streamed and
    committed versions by stable ID, ignores stale lifecycle revisions, and uses
@@ -1335,7 +1383,7 @@ never rewrites their sequence positions.
     loop payloads nor `loop_sequence` bounds. Subsequent inference nevertheless
     reconstructs from the restricted projection without consulting the desktop
     projection or Global inference lakehouse.
-39. Every required `H01`–`H27` and `E01`–`E38` test is mapped to an actual test
+39. Every required `H01`–`H28` and `E01`–`E39` test is mapped to an actual test
     name and file, passes at its required layer, and has an implementation-PR
     failure-proof record showing the named assertion fails when its protected
     production behavior is deliberately broken. The three generated algebraic
@@ -1353,3 +1401,9 @@ never rewrites their sequence positions.
     socket catch-up and live frames exact-once at the boundary, while the unread
     and latest range islands retain truthful coverage and **Jump to latest**
     remains immediate.
+42. A complete REST boot or range request performs one reader-admission decision
+    regardless of the number of turns, blocks, gaps, or initial slices it
+    returns. Both first-open ranges and active state reuse it. A socket snapshot
+    reuses the connection's epoch-fenced admission, and revocation invalidates
+    that admission; neither path performs per-row authorization or regional
+    authorization joins during the transcript scan.
