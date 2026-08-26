@@ -28,6 +28,7 @@ import {
   type Workstream,
   type WorkspaceSocketSyncEvent,
   type WorkspaceSyncTopic,
+  type WorkstreamBatchFilter,
   ProductFeatureFlagKeySchema,
   type ProductFeatureFlagKey,
 } from "@rally/contracts";
@@ -95,6 +96,12 @@ import { workspaceDOName } from "./names";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   WorkspaceDirectoryApplyRequestSchema,
+  WorkspaceDirectoryBatchTargetsRequestSchema,
+  WorkspaceDirectoryBatchTargetsResultSchema,
+  WorkspaceBatchDispatchAdvanceRequestSchema,
+  WorkspaceBatchDispatchAdvanceResultSchema,
+  WorkspaceBatchDispatchBeginRequestSchema,
+  WorkspaceBatchDispatchBeginResultSchema,
   WorkspaceDirectoryExistsRequestSchema,
   WorkspaceDirectoryApplyResultSchema,
   WorkspaceDirectoryDueRequestSchema,
@@ -126,6 +133,9 @@ import {
   WorkspaceRegionalEffectApplyRequestSchema,
   WorkspaceRegionalEffectApplyResultSchema,
   type WorkspaceDirectoryApplyRequest,
+  type WorkspaceDirectoryBatchTargetsRequest,
+  type WorkspaceBatchDispatchAdvanceRequest,
+  type WorkspaceBatchDispatchBeginRequest,
   type WorkspaceDirectoryApplyResult,
   type WorkspaceDirectoryDueRequest,
   type WorkspaceDirectoryExistsRequest,
@@ -901,6 +911,28 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     // object's own backfill takes.
     `ALTER TABLE workspace_workstream_viewers
        ADD COLUMN unseen INTEGER NOT NULL DEFAULT 0 CHECK (unseen IN (0, 1))`,
+  ],
+}, {
+  version: 11,
+  description: "freeze and resume generic work-stream batch Queue dispatch",
+  statements: [
+    `CREATE TABLE workspace_batch_dispatches (
+      operation_id TEXT PRIMARY KEY,
+      request_hash TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      target_count INTEGER NOT NULL CHECK (target_count >= 0),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0)
+    ) STRICT`,
+    `CREATE TABLE workspace_batch_dispatch_targets (
+      operation_id TEXT NOT NULL REFERENCES workspace_batch_dispatches(operation_id) ON DELETE CASCADE,
+      workstream_id TEXT NOT NULL,
+      dispatched_at INTEGER CHECK (dispatched_at IS NULL OR dispatched_at >= 0),
+      PRIMARY KEY (operation_id, workstream_id)
+    ) STRICT`,
+    `CREATE INDEX workspace_batch_dispatch_targets_pending_idx
+      ON workspace_batch_dispatch_targets(operation_id, workstream_id)
+      WHERE dispatched_at IS NULL`,
   ],
 }];
 
@@ -2891,6 +2923,149 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceDirectoryListRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return WorkspaceDirectoryPageSchema.parse(this.listDirectory(request));
+  }
+
+  /**
+   * Resolve a generic member-visible filter once, inside the object that owns
+   * the cross-work-stream index. The caller turns each returned id into one
+   * Queue event; it never probes child objects to rediscover this list.
+   */
+  async batchUpdateTargets(input: WorkspaceDirectoryBatchTargetsRequest) {
+    await this.initialized;
+    const request = WorkspaceDirectoryBatchTargetsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return WorkspaceDirectoryBatchTargetsResultSchema.parse({
+      items: this.batchTargetIds(request.userId, request.filter),
+    });
+  }
+
+  private batchTargetIds(userId: string, filter: WorkstreamBatchFilter): string[] {
+    const atOrAfter = filter.lastActivityAt?.atOrAfter;
+    const before = filter.lastActivityAt?.before;
+    const pinned = filter.pinned;
+    return this.state.storage.sql.exec<{ workstream_id: string }>(
+      `SELECT directory.workstream_id
+         FROM workspace_workstream_directory directory
+         LEFT JOIN workspace_workstream_viewers viewer
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?
+          AND viewer.authority_generation = directory.authority_generation
+         LEFT JOIN workspace_workstream_pins pin
+           ON pin.workstream_id = directory.workstream_id AND pin.user_id = ?
+        WHERE directory.archived_at IS NULL
+          AND (? = 1 OR directory.system_kind IS NULL)
+          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+          AND (? IS NULL OR directory.last_activity_at >= ?)
+          AND (? IS NULL OR directory.last_activity_at < ?)
+          AND (? IS NULL
+            OR (? = 1 AND pin.user_id IS NOT NULL)
+            OR (? = 0 AND pin.user_id IS NULL))
+        ORDER BY directory.workstream_id`,
+      userId,
+      userId,
+      filter.includeSystem ? 1 : 0,
+      atOrAfter ?? null,
+      atOrAfter ? Date.parse(atOrAfter) : 0,
+      before ?? null,
+      before ? Date.parse(before) : 0,
+      pinned === undefined ? null : Number(pinned),
+      Number(pinned ?? false),
+      Number(pinned ?? false),
+    ).toArray().map((row) => row.workstream_id);
+  }
+
+  /** Freeze one target set and return only the Queue events not yet published. */
+  async beginWorkstreamBatchDispatch(input: WorkspaceBatchDispatchBeginRequest) {
+    await this.initialized;
+    const request = WorkspaceBatchDispatchBeginRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.state.storage.transactionSync(() => {
+      const existing = this.state.storage.sql.exec<{
+        request_hash: string;
+        user_id: string;
+        target_count: number;
+      }>(
+        `SELECT request_hash, user_id, target_count
+           FROM workspace_batch_dispatches WHERE operation_id = ?`,
+        request.operationId,
+      ).toArray()[0];
+      if (existing
+        && (existing.request_hash !== request.requestHash || existing.user_id !== request.userId)) {
+        throw new Error("workstream_batch_dispatch_conflict");
+      }
+
+      let targetCount = existing?.target_count;
+      if (!existing) {
+        const now = Date.now();
+        const targetIds = this.batchTargetIds(request.userId, request.filter);
+        this.state.storage.sql.exec(
+          `INSERT INTO workspace_batch_dispatches
+             (operation_id, request_hash, user_id, target_count, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          request.operationId,
+          request.requestHash,
+          request.userId,
+          targetIds.length,
+          now,
+          now,
+        );
+        this.state.storage.sql.exec(
+          `INSERT INTO workspace_batch_dispatch_targets
+             (operation_id, workstream_id, dispatched_at)
+           SELECT ?, value, NULL FROM json_each(?)`,
+          request.operationId,
+          JSON.stringify(targetIds),
+        );
+        targetCount = targetIds.length;
+      }
+
+      const pending = this.state.storage.sql.exec<{ workstream_id: string }>(
+        `SELECT workstream_id FROM workspace_batch_dispatch_targets
+          WHERE operation_id = ? AND dispatched_at IS NULL
+          ORDER BY workstream_id`,
+        request.operationId,
+      ).toArray();
+      return WorkspaceBatchDispatchBeginResultSchema.parse({
+        items: pending.map((row) => row.workstream_id),
+        targetCount: targetCount ?? 0,
+      });
+    });
+  }
+
+  /** Persist one successful Queue sendBatch chunk; redelivery is a no-op. */
+  async advanceWorkstreamBatchDispatch(input: WorkspaceBatchDispatchAdvanceRequest) {
+    await this.initialized;
+    const request = WorkspaceBatchDispatchAdvanceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.state.storage.transactionSync(() => {
+      const dispatch = this.state.storage.sql.exec<{ request_hash: string }>(
+        `SELECT request_hash FROM workspace_batch_dispatches WHERE operation_id = ?`,
+        request.operationId,
+      ).toArray()[0];
+      if (!dispatch || dispatch.request_hash !== request.requestHash) {
+        throw new Error("workstream_batch_dispatch_conflict");
+      }
+      const placeholders = request.workstreamIds.map(() => "?").join(", ");
+      const now = Date.now();
+      this.state.storage.sql.exec(
+        `UPDATE workspace_batch_dispatch_targets SET dispatched_at = COALESCE(dispatched_at, ?)
+          WHERE operation_id = ? AND workstream_id IN (${placeholders})`,
+        now,
+        request.operationId,
+        ...request.workstreamIds,
+      );
+      this.state.storage.sql.exec(
+        `UPDATE workspace_batch_dispatches SET updated_at = ? WHERE operation_id = ?`,
+        now,
+        request.operationId,
+      );
+      const remaining = this.state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM workspace_batch_dispatch_targets
+          WHERE operation_id = ? AND dispatched_at IS NULL`,
+        request.operationId,
+      ).one();
+      return WorkspaceBatchDispatchAdvanceResultSchema.parse({ remainingCount: remaining.count });
+    });
   }
 
   async canReadWorkstream(input: WorkspaceDirectoryVisibilityRequest): Promise<boolean> {

@@ -1504,6 +1504,61 @@ export const UpdateWorkstreamRequestSchema = z.object({
   scope: ScopeSchema.optional()
 });
 
+/**
+ * A reusable cross-work-stream selection, expressed in product fields rather
+ * than in the name of the surface that happened to build it.
+ *
+ * Both timestamps follow the ordinary half-open range convention. `pinned`
+ * is viewer-specific; omitting it includes both pinned and unpinned rows.
+ */
+export const WorkstreamBatchFilterSchema = z.object({
+  lastActivityAt: z.object({
+    atOrAfter: TimestampSchema.optional(),
+    before: TimestampSchema.optional(),
+  }).strict().optional(),
+  pinned: z.boolean().optional(),
+  includeSystem: z.boolean().default(false),
+}).strict().superRefine((filter, context) => {
+  const atOrAfter = filter.lastActivityAt?.atOrAfter;
+  const before = filter.lastActivityAt?.before;
+  if (
+    atOrAfter !== undefined
+    && before !== undefined
+    && Date.parse(atOrAfter) >= Date.parse(before)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["lastActivityAt", "before"],
+      message: "must be later than atOrAfter",
+    });
+  }
+});
+
+/** The mutations the generic batch surface can currently enqueue. */
+export const WorkstreamBatchUpdateSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("mark_read") }).strict(),
+  z.object({ kind: z.literal("archive") }).strict(),
+]);
+
+export const PreviewWorkstreamBatchRequestSchema = z.object({
+  filter: WorkstreamBatchFilterSchema,
+}).strict();
+
+export const WorkstreamBatchPreviewSchema = z.object({
+  matchedCount: z.number().int().nonnegative(),
+}).strict();
+
+export const ApplyWorkstreamBatchRequestSchema = z.object({
+  operationId: IdSchema,
+  filter: WorkstreamBatchFilterSchema,
+  update: WorkstreamBatchUpdateSchema,
+}).strict();
+
+export const WorkstreamBatchAcceptedSchema = z.object({
+  operationId: IdSchema,
+  enqueuedCount: z.number().int().nonnegative(),
+}).strict();
+
 export const AcknowledgeWorkstreamReadRequestSchema = z.object({
   readThroughSequenceNumber: z.number().int().nonnegative(),
   observedManualUnreadGeneration: z.number().int().nonnegative(),
@@ -2981,6 +3036,10 @@ export type DigestSchedule = z.infer<typeof DigestScheduleSchema>;
 export type DigestDeliveryTarget = z.infer<typeof DigestDeliveryTargetSchema>;
 export type DigestDeliveryTargetType = z.infer<typeof DigestDeliveryTargetTypeSchema>;
 export type UpdateDigestScheduleRequest = z.infer<typeof UpdateDigestScheduleRequestSchema>;
+export type WorkstreamBatchFilter = z.infer<typeof WorkstreamBatchFilterSchema>;
+export type WorkstreamBatchUpdate = z.infer<typeof WorkstreamBatchUpdateSchema>;
+export type PreviewWorkstreamBatchRequest = z.infer<typeof PreviewWorkstreamBatchRequestSchema>;
+export type ApplyWorkstreamBatchRequest = z.infer<typeof ApplyWorkstreamBatchRequestSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type ConnectorOAuthProvider = z.infer<typeof ConnectorOAuthProviderSchema>;
 export type ConnectorOAuthAttemptStatus = z.infer<typeof ConnectorOAuthAttemptStatusSchema>;

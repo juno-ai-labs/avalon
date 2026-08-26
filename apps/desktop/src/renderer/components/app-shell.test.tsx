@@ -10,6 +10,7 @@ import {
   openWorkstreamId,
   RUNNING_HARNESS_STATUSES,
   showsAutomation,
+  workstreamMatchesBatchFilter,
 } from './app-shell';
 
 const workstreamId = '00000000-0000-7000-8000-000000000001';
@@ -49,6 +50,24 @@ describe('openWorkstreamId', () => {
     expect(openWorkstreamId('/workstreams/new')).toBeNull();
     expect(openWorkstreamId('/automations/abc')).toBeNull();
     expect(openWorkstreamId(`/workstreams/${workstreamId}/settings`)).toBeNull();
+  });
+});
+
+describe('workstreamMatchesBatchFilter', () => {
+  it('matches the selected unpinned non-system row against the same half-open range', () => {
+    expect(workstreamMatchesBatchFilter(summary('completed'), {
+      lastActivityAt: {
+        atOrAfter: '2026-08-11T00:00:00.000Z',
+        before: '2026-08-12T00:00:00.000Z',
+      },
+      pinned: false,
+      includeSystem: false,
+    })).toBe(true);
+    expect(workstreamMatchesBatchFilter(summary('completed'), {
+      lastActivityAt: { before: '2026-08-11T10:00:00.000Z' },
+      pinned: false,
+      includeSystem: false,
+    })).toBe(false);
   });
 });
 
