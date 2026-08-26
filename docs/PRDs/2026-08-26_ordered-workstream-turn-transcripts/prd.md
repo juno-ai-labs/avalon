@@ -100,6 +100,14 @@ the content would be useful in the participant feed.
   It carries only generic lifecycle, revision, UTC timing, and optional display
   duration metadata; it never carries the compacted messages, summary, token
   counts, provider reasoning, or restricted loop bounds.
+- **Activity scope and product nesting:** one independently timed unit of work
+  with stable identity, lifecycle revisions, and zero or more child scopes. The
+  minimum product hierarchy is response → assistant turn → plugin block → tool
+  invocation; thinking is a child of its assistant turn, and compaction attaches
+  to the response or assistant turn that causally owns it. Sibling scopes may be
+  active in parallel. This is a presentation/behavior contract, not a mandate
+  for recursive storage: a flat schema is conforming when stable ownership keys
+  let the projector reconstruct the same tree without ambiguity.
 - **Reader admission:** the single authorization decision for one external
   transcript read operation or admitted socket. It binds the reader to the
   authenticated session/membership generation, workspace, work stream,
@@ -295,6 +303,13 @@ a turn, block, slice, or hydration loop.
     baselines, terminal durations, failures, retries, and two distinct
     compactions must be reconstructable without exposing the compacted context
     or changing Bind's private projection.
+20. Make activity timing product-nestable. The response-level activity can own
+    assistant-turn activity; an assistant turn can own thinking, plugin, and
+    compaction activity; a plugin block can own independently starting and
+    settling tool-call activities. Every edge retains its own lifecycle and
+    timing while parent totals remain wall-clock unions rather than sums. Live,
+    reconnect, range, and historical projections must reconstruct the same
+    hierarchy without requiring a nested physical persistence model.
 
 ## Non-goals
 
@@ -417,6 +432,37 @@ last child settlement, not the sum of child durations. Different plugin blocks
 may be active at the same time, while the response-level timer advances only
 once. Individual invocation timestamps remain available to render or diagnose
 each tool card, but do not control its display order.
+
+These scopes form a product hierarchy. The response activity is the root. Each
+assistant turn has an `assistant_turn_work` child scope that starts when work on
+that reserved turn actually begins. A final/no-tool assistant turn stops after
+its canonical commit. A tool-declaring assistant turn remains the product parent
+of its declared plugin/tool activity until every declared invocation is
+terminal; the next assistant turn is a later sibling under the same response.
+Canonical turn content may therefore be committed while its activity scope is
+still active; lifecycle terminality never reopens or mutates that content.
+Thinking is ordered within and timed under the assistant turn. Plugin blocks are
+ordered children of that turn, and each tool invocation is an independently
+timed child of its plugin block. Parallel calls are sibling children: they may
+start and settle in any order without changing their declared display order.
+
+Nesting does not mean parent duration is the sum of child durations. Every scope
+keeps its own start/stop intervals. A parent remains active while any required
+child is active, cannot terminalize before those children, and displays the
+wall-clock union of its own work and descendant work. Overlapping children count
+once at the parent. A child completion cannot stop a parent while a sibling is
+still active, and a child cannot be reparented by a late or duplicate edge.
+Compaction attaches to the causally active assistant turn when one exists and
+otherwise to the response; it remains a separate safe status entry in transcript
+order.
+
+The product tree may be materialized from flat lifecycle rows and stable scope
+keys. No recursive SQL table, nested JSON write model, or parent-driven execution
+serialization is required. The invariant is that live edges, active snapshots,
+cold history, and range loads project the same stable ancestry and sibling order.
+A snapshot containing an active descendant includes enough ancestor metadata to
+render it without an orphan. Loading a child later merges it under the same
+parent rather than duplicating either scope.
 
 The backend emits one monotonic-revision `activity_started` edge for each opened
 interval and one `activity_stopped` edge for every normal or abnormal terminal
@@ -662,22 +708,28 @@ see. It makes the order shown to a participant match the order the agent used.
     implementation and test cost for transitional behavior when Rally has no
     production users or transcript continuity to preserve.
 13. **Signal activity edges; do not stream a clock.** Durable start/stop edges
-    and snapshot baselines make the backend authoritative about work while the
-    desktop's monotonic clock makes the active label smooth and cheap. The
-    rejected alternative was emitting a new string or token every second, which
-    couples presentation cadence to transport health and competes with response
-    text streaming.
+    at every product scope and snapshot baselines make the backend authoritative
+    about work while the desktop's monotonic clock makes active parent and child
+    labels smooth and cheap. An edge carries or can be joined through stable
+    ownership identities so nesting is reconstructable without requiring nested
+    persistence. The rejected alternative was emitting a new string or token
+    every second, which couples presentation cadence to transport health and
+    competes with response text streaming.
 14. **Measure wall-clock interval unions, not child sums.** Response timing is
-    the union of its working intervals. A plugin block spans its earliest child
-    start through its last child settlement. This preserves the time a member
-    actually waited when tools overlap; adding parallel child durations would
-    overstate elapsed time.
-15. **Keep response, plugin, and invocation timing at distinct scopes.** The
-    response execution envelope owns the full-response total, each ordered
-    plugin block owns its group duration, and each tool invocation retains its
-    own lifecycle timing. The rejected alternative was deriving every label
-    from one run total or one tool row, neither of which can represent parallel
-    work truthfully.
+    the union of its own and descendant working intervals. Assistant-turn and
+    plugin parents follow the same recursive product rule; a plugin block spans
+    its earliest child start through its last child settlement. This preserves
+    the time a member actually waited when tools overlap; adding parallel child
+    durations would overstate elapsed time.
+15. **Keep response, assistant-turn, plugin, and invocation timing distinct but
+    product-nestable.** The response execution envelope owns the full-response
+    total, each assistant turn can own ordered thinking/plugin/compaction
+    children, each plugin block owns its group duration, and each tool invocation
+    retains its own lifecycle timing. The projector must reproduce stable
+    ancestry, but storage may remain flat. The rejected alternatives were
+    deriving every label from one run total or one tool row, neither of which can
+    represent nested parallel work truthfully, and requiring recursive storage
+    merely because the product renders a hierarchy.
 16. **Create thinking blocks only from provider evidence.** Provider reasoning
     events establish a generic timed block and its order. Rally does not infer
     reasoning from silence or display provider reasoning payloads. The rejected
@@ -953,10 +1005,18 @@ Activity timing is stored in the same regional authority as conceptual records
 with these fields:
 
 - `activity_id`, optional `response_id`, and `kind`: `response_work`,
-  `plugin_work`, `tool_work`, `thinking`, or `context_compaction`.
+  `assistant_turn_work`, `plugin_work`, `tool_work`, `thinking`, or
+  `context_compaction`.
 - Optional scope keys as appropriate: `assistant_turn_id`, `block_index`,
   `plugin_id`, `tool_invocation_id`, and `status_event_id`. Internal
   provider-attempt or compaction-payload data is not a member-visible key.
+- A stable parent relation in the participant projection, either stored directly
+  or derived without ambiguity from those scope keys. Current product ancestry
+  is response → assistant turn → plugin → tool, with thinking and compaction
+  attached to their causal response/turn scope. A physical recursive tree is not
+  required.
+- Stable sibling order from transcript/block/call indexes, never lifecycle
+  arrival time.
 - One or more intervals with stable identity, monotonic `revision`, an
   authoritative RFC 3339 UTC `started_at`, nullable RFC 3339 UTC `stopped_at`,
   and terminal `duration_ms`.
@@ -1010,6 +1070,13 @@ Realtime lifecycle edges are conceptually:
 }
 ```
 
+Each edge exposes its stable scope identity and enough ownership/order keys to
+place it under the same product parent on every client. A protocol may include
+an explicit `parentActivityId` or deterministically derive the parent from
+`responseId`, `assistantTurnId`, plugin-block identity, and invocation identity;
+the product result must be identical. Edge arrival order never defines ancestry
+or sibling order.
+
 A boot, first join, reconnect, or range response returns `snapshotAtUtc`, the
 canonical completed total, and each active interval's `startedAtUtc` plus
 `elapsedMsAtSnapshot` at that snapshot boundary. The desktop atomically rebases
@@ -1017,6 +1084,9 @@ its monotonic presentation clock on those values. Thus opening a work stream
 seven minutes into an existing run starts near seven minutes rather than zero;
 the UTC start is transmitted even though the server-computed elapsed value—not
 the client's wall-clock subtraction—is the display authority.
+The snapshot includes the complete ancestry and sibling-order metadata for every
+active scope, including parents that have no new edge in the replay window, so a
+mid-stream open cannot receive an orphan tool or plugin timer.
 Activity edges and response-text deltas are independent ordered event types:
 neither waits for, batches, or acknowledges the other, and parallel plugin/tool
 lifecycle edges may arrive in any completion order.
@@ -1258,6 +1328,7 @@ projector or reducer under test.
 | `T10 Constant-cost reader admission` | One external boot/range operation or socket admission authorizes once and reuses an epoch-fenced capability across all slices, active state, and hydration; authorization work never scales with returned entries, blocks, or gaps. |
 | `T11 Indexed initial loading` | Unread-anchor, neighbor, latest, bounds, and arbitrary-range production queries choose declared SQLite indexes; the two initial islands share one snapshot and one deduplicated bulk-hydration pass without a full scan, temporary sort, offset walk, or transcript-length-dependent statement count. |
 | `T12 Future compaction status` | Every automatic compaction has one durably ordered participant-safe status entry with active/terminal revisions, UTC timing and reconnect baselines, truthful failure/recovery, and no compacted-context disclosure; the current reducer preserves it so future UI can render happening/happened labels without a storage migration. |
+| `T13 Product-nested activity` | Response, assistant-turn, plugin, tool, thinking, and compaction scopes project as one stable hierarchy across live edges, reconnect, ranges, and history; siblings remain parallel/ordered, parents use wall-clock unions, and equivalent flat or nested persistence shapes produce the same product tree. |
 
 ### Required test layers and artifacts
 
@@ -1266,7 +1337,7 @@ projector or reducer under test.
 | Pure harness protocol | `packages/agent-harness/src/bind-loop-projection.test.ts` | Fixed-message canonicalization, projector round trips, system-projection revision changes, provider continuation fields, protocol/derivative classification, and mismatch detection. |
 | Substrate and SQL | `apps/api/test/workstream-transcript-substrate.test.ts` using the real object schema through `createTestSqlStorage()` | Schema constraints, transactions, exact indexed range scans, `EXPLAIN QUERY PLAN` assertions, tombstones, immutable payload references, transition ordering, and idempotent clean-cut schema installation. |
 | Real Cloudflare runtime | `apps/api/test-workers/workstream-transcript-runtime.test.ts` | Real `SubstreamAgent`, object-local SQLite, RPC, WebSocket, eviction/hibernation, concurrency, failure boundaries, and snapshot fencing. This suite may not replace the Durable Object or its storage with a double. |
-| Desktop range/state reducer | `apps/desktop/src/renderer/lib/workstream-turn-ranges.test.ts` | Range union/complement, stable turn/status-entry reconciliation, stream epochs, stale lifecycle rejection, timers, hidden compaction-entry retention, and realtime singleton coverage. |
+| Desktop range/state reducer | `apps/desktop/src/renderer/lib/workstream-turn-ranges.test.ts` | Range union/complement, stable turn/status-entry reconciliation, nested activity ancestry and sibling order, stream epochs, stale lifecycle rejection, timers, hidden compaction-entry retention, and realtime singleton coverage. |
 | Desktop component | `apps/desktop/src/renderer/screens/workstream-turn-feed.test.tsx` | Ordered DOM blocks, streaming updates, dual initial islands, jump/scroll behavior, generic thinking/timing labels, and accessibility names. |
 | Full local member pipeline | Extend `scripts/e2e-local.mjs` and `scripts/e2e-local-oracles.test.mjs` | Public API/socket behavior against opened Durable Object authority, including real provider interleaving when credentials are configured and a fixed scripted-provider fixture in CI. |
 | Visible desktop acceptance | Add this feature's flow to `docs/e2e.md` and capture the exercised desktop window as required by the repository's visible-change rule. | Human-visible order, scroll anchoring, live clocks, parallel cards, reconnect, cold reload, and historical labels. |
@@ -1312,6 +1383,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H28 authorizes_boot_once_for_all_ranges_and_active_state` | API Node + workerd | Open with disjoint unread/latest slices, active stream checkpoints, lifecycle timing, authors, mentions, attachments, compaction status, and tool blocks. Instrument the typed reader-admission boundary and assert one admission decision for the complete boot, zero per-entry/block calls, and the same admitted capability identity on every internal scan/hydration. Repeat through the initial socket snapshot and assert it reuses the socket admission. |
 | `H29 uses_indexed_bounded_queries_for_initial_ranges` | SQL + workerd | Populate a large tombstone/status history with overlapping unread/latest islands and an active compaction after the latest conversation turn, inspect the exact production SQL with `EXPLAIN QUERY PLAN`, and instrument statement/hydration boundaries. Assert the member anchor is a point lookup; anchor normalization, predecessor, successor, latest, active-status, bounds, and coverage/range selectors use the declared indexes in forward/reverse order with their bounded limits; neither selector uses `OFFSET`, a full transcript scan, or a temporary B-tree; and the union of both islands/status is bulk hydrated once with a statement count independent of total history length. |
 | `H30 persists_compaction_lifecycle_for_future_rendering` | SQL + workerd + desktop reducer | Begin automatic compaction between two conversation turns. Assert one participant-safe `context_compaction` entry is durably ordered before mutation, its active snapshot/reconnect state includes the original UTC start plus elapsed baseline, the exact restricted replacement commits before that same entry reaches `completed`, canonical duration survives cold/range load, the current reducer retains but need not paint it, and a fixed future-view projection can produce **Context automatically compacting** or **… compacting for 2m 34s**, then **Context automatically compacted** or **… compacted in 2m 34s**, without reading restricted payloads. |
+| `H31 projects_nested_activity_with_parallel_tool_children` | SQL + workerd + desktop reducer | Run one response with two assistant turns. Under the first turn, stream thinking plus two ordered plugin blocks whose tool children start and settle in parallel/out of order; place compaction under the second turn. Assert live, reconnect, range, and cold projections produce response → assistant turn → plugin → tool ancestry with thinking/compaction at their causal turn, stable sibling order, independent child labels, parent wall-clock unions, no double counting, and uninterrupted response-text token streaming. Run the same fixture through a flat-row adapter and a nested in-memory fixture and assert identical product projection without requiring identical persistence. |
 
 ### Required edge-case and failure tests
 
@@ -1358,6 +1430,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E39 keeps_authorization_work_constant_across_range_shapes` | API Node + workerd | Run empty, shortened, tombstone/status-heavy, overlapping, disjoint, and maximum-existing-bound range fixtures with different returned entry/block counts. Assert each external read makes exactly one reader-admission decision, no row hydration triggers authorization, and a participant/scope epoch change invalidates the admitted socket before another snapshot is returned. |
 | `E40 keeps_indexed_plan_for_missing_anchor_tombstones_and_boundaries` | SQL + workerd | Exercise a missing/retracted unread anchor, long tombstone runs, fewer than five turns on either side, empty history, and a snapshot fence below the physical tail. Assert anchor normalization and all directional/latest/range reads retain the declared indexed plans, coverage remains truthful across skipped tombstones, no linear fallback or temporary sort appears, overlap hydrates once, and deliberately removing each required index makes the plan/failure-proof test fail for that access path. |
 | `E41 closes_compaction_status_truthfully_without_leaking_payload` | SQL + workerd + desktop reducer | Fail start-entry persistence, then separately crash/fail/cancel after start but before replacement, after replacement but before stop, and during duplicate/out-of-order delivery. Assert a failed required start write prevents compaction mutation; otherwise there is one stable entry per compaction, monotonic active-to-completed/failed/cancelled/abandoned state, recovered upper-bound timing where exact stop is unavailable, no permanently active marker, no participant summary/messages/token counts/private bounds, no Bind projection of the safe marker, no compaction marker counted against the five requested conversation turns, and indexed range/reconnect recovery without duplication. |
+| `E42 rejects_or_repairs_orphaned_and_regressive_nested_activity` | SQL + workerd + desktop reducer | Deliver child-before-parent, stale reparenting, duplicate child stops, one sibling stop while another remains active, a parent terminal edge before required children settle, and a reconnect snapshot missing an active child's ancestor. Assert arrival order cannot define/reparent siblings; stale/duplicate edges are ignored; the parent stays active and counts overlap once; an inconsistent snapshot is rejected/resynced or repaired from canonical ancestry; range merges never duplicate nodes; and no storage implementation is required to persist a recursive tree. |
 
 ### Required algebraic, race, and failure-proof checks
 
@@ -1396,11 +1469,11 @@ coordinated cutover and no compatibility phases:
 1. Implement the shared durable transcript substrate, `SubstreamAgent` adapter,
    restricted Bind ledger/generations, participant projection, exact provider
    boundary checks, reasoning/activity normalization, constant-cost reader
-   admission, participant-safe compaction status persistence, the required
-   sequence/displayable/status/child/read-state indexes, canonical REST/socket
-   protocol, and desktop range/feed reducer. The old feed is replaced, not
-   retained beside the new one. The reducer retains compaction status entries;
-   their dedicated visual component may ship later.
+   admission, product-nested activity projection, participant-safe compaction
+   status persistence, the required sequence/displayable/status/child/read-state
+   indexes, canonical REST/socket protocol, and desktop range/feed reducer. The
+   old feed is replaced, not retained beside the new one. The reducer retains
+   compaction status entries; their dedicated visual component may ship later.
 2. Implement every required test ID alongside its behavior. The harness, SQL,
    real-workerd, desktop, E2E, failure-injection, and visible-window suites must
    pass before release; compatibility work is not a prerequisite because it is
@@ -1491,6 +1564,8 @@ exist before deployment, stop and revise this release plan before shipping.
     …**. Parallel calls within one plugin measure earliest start through last
     settlement; overlapping plugins advance simultaneously; the response total
     equals elapsed response wall time rather than the sum of plugin durations.
+    The product can place those plugin scopes beneath their assistant-turn scope
+    and each invocation beneath its plugin without serializing siblings.
 22. Tool completion, failure, cancellation, and ambiguous receipt outcomes all
     close the matching invocation/plugin interval exactly once. A late or
     duplicate start/stop edge cannot reopen or regress a newer terminal state.
@@ -1561,7 +1636,7 @@ exist before deployment, stop and revise this release plan before shipping.
     loop payloads nor `loop_sequence` bounds. Subsequent inference nevertheless
     reconstructs from the restricted projection without consulting the desktop
     projection or Global inference lakehouse.
-39. Every required `H01`–`H30` and `E01`–`E41` test is mapped to an actual test
+39. Every required `H01`–`H31` and `E01`–`E42` test is mapped to an actual test
     name and file, passes at its required layer, and has an implementation-PR
     failure-proof record showing the named assertion fails when its protected
     production behavior is deliberately broken. The three generated algebraic
@@ -1603,3 +1678,12 @@ exist before deployment, stop and revise this release plan before shipping.
     compacted in 2m 34s**, without a storage migration or disclosure of compacted
     context. The current desktop preserves the typed entry but its final visual
     rendering remains out of scope.
+45. Activity is product-nestable at least as response → assistant turn → plugin
+    block → tool invocation, with thinking and compaction attached to the causal
+    response/turn. Each scope has independent lifecycle edges and timing;
+    parallel siblings retain declared order and parents use wall-clock unions,
+    never child sums. Mid-stream snapshots include active ancestry, range/cold
+    projections reconstruct the same tree, and response tokens remain
+    independently streamable. A flat durable representation is acceptable when
+    it projects these semantics exactly; recursive physical storage is not an
+    acceptance requirement.
