@@ -1187,10 +1187,11 @@ deleting a completed operation would let a late HTTP retry select new targets.
 Cloudflare Workflow. After ingress commits, the regional consumer sends an
 ID-only pointer back to the existing `ACTIVITY_QUEUE`; a later delivery claims,
 loads, and settles the event through typed WorkspaceDO RPCs. The claim carries a
-stable processing owner and an advancing Queue-derived attempt so an equal
-active duplicate is `busy` while a later delivery can recover an interrupted
-claim. The physical `workflow_instance_id` column and Workflow binding remain
-temporarily compatible with already-created instances.
+stable processing owner for correlation; WorkspaceDO issues a fresh 15-minute
+lease per acquisition, returns its exact expiry to active duplicates, and fences
+settlement by the lease token. Queue delivery count stays transport telemetry,
+not a product attempt generation. The physical `workflow_instance_id` column and
+Workflow binding remain temporarily compatible with already-created instances.
 
 **Why:** WorkspaceDO already owns the canonical event and terminal state, while
 Queue already owns durable retry and dead-letter retention. A one-callback
@@ -1205,10 +1206,10 @@ redelivery is not a contract this design needs to assume.
 
 **Consequences, and what a future change has to respect:** Connector processing
 must remain an ID-only Queue wake followed by typed object RPC, with individual
-ack/retry and authoritative settlement. Do not infer success from Queue drain
-or reintroduce raw SQL from the consumer. Remove the drain-only Workflow and
-rename its physical owner column only after pre-cutover instances are proven
-gone.
+ack/retry and authoritative, lease-fenced settlement. Do not infer success from
+Queue drain, treat Queue delivery count as a product generation, or reintroduce
+raw SQL from the consumer. Remove the drain-only Workflow and rename its physical
+owner column only after pre-cutover instances are proven gone.
 
 ### 2026-08-26 — Notification lifecycle becomes a closed WorkspaceDO protocol
 
