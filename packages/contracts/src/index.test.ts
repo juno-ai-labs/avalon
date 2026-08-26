@@ -183,11 +183,24 @@ describe("boundary contracts", () => {
       openingMessage: "",
       attachmentIds: [],
     }).success).toBe(false);
-    expect(CreateWorkstreamRequestSchema.parse({
+    const attachmentOnly = CreateWorkstreamRequestSchema.parse({
       ...base,
       openingMessage: "",
       attachmentIds: [id],
-    }).objective).toBeUndefined();
+    });
+    expect(attachmentOnly.objective).toBeUndefined();
+    expect(attachmentOnly.mentions).toEqual([]);
+    expect(CreateWorkstreamRequestSchema.parse({
+      ...base,
+      openingMessage: "Ask @Adam",
+      mentions: [{
+        type: "person",
+        userId: id,
+        connectorType: null,
+        startOffset: 4,
+        endOffset: 9,
+      }],
+    }).mentions).toHaveLength(1);
   });
 
   it("accepts a model override only from the closed list of selectable models", () => {

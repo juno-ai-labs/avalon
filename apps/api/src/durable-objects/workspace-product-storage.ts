@@ -1400,9 +1400,10 @@ export class WorkspaceProductStorage {
     ).toArray();
     if (doomed.length === 0) return 0;
     const placeholders = doomed.map(() => "?").join(",");
-    return Number(this.storage.sql.exec(
-      `DELETE FROM opportunity_batch_windows WHERE window_id IN (${placeholders})`,
+    return this.storage.sql.exec<{ window_id: string }>(
+      `DELETE FROM opportunity_batch_windows WHERE window_id IN (${placeholders})
+        RETURNING window_id`,
       ...doomed.map((row) => row.window_id),
-    ).rowsWritten);
+    ).toArray().length;
   }
 }

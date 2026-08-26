@@ -249,15 +249,21 @@ export async function processWorkstreamNotificationIntent(
             lease_expires_at = ?, last_error_code = NULL, updated_at = ?
       WHERE intent_id = ? AND payload_json IS NOT NULL
         AND (state IN ('pending', 'failed')
-          OR (state = 'processing' AND COALESCE(lease_expires_at, '') <= ?))`,
+          OR (state = 'processing' AND COALESCE(lease_expires_at, '') <= ?))
+      RETURNING intent_id, lease_id`,
   ).bind(
     leaseId,
     new Date(Date.now() + 5 * 60_000).toISOString(),
     at,
     intentId,
     at,
-  ).run();
-  if ((claim.meta.changes ?? 0) !== 1) {
+  ).first<{ intent_id: string; lease_id: string }>();
+  // The WorkspaceDO SQL adapter exposes workerd's physical `rowsWritten` as
+  // D1-shaped `meta.changes`. Updating this row also updates its delivery and
+  // terminal indexes, so one logical claim can report several physical writes.
+  // The returned lease is the claim's domain witness and is invariant under
+  // index changes; see docs/durable-object-sqlite.md.
+  if (!claim || claim.intent_id !== intentId || claim.lease_id !== leaseId) {
     const settled = await env.DB.prepare(
       `SELECT state, notification_kind, recipient_user_id, workstream_id
          FROM workstream_notification_intents WHERE intent_id = ?`,
@@ -614,9 +620,10 @@ export async function reapSettledWorkspaceNotificationIntents(
         SELECT intent_id FROM workstream_notification_intents
          WHERE workspace_id = ? AND state IN ('delivered', 'skipped') AND updated_at < ?
          ORDER BY updated_at, intent_id LIMIT ?
-      )`,
-  ).bind(workspaceId, cutoff, boundedLimit).run();
-  return Number(result.meta.changes ?? 0);
+      )
+      RETURNING intent_id`,
+  ).bind(workspaceId, cutoff, boundedLimit).all<{ intent_id: string }>();
+  return result.results.length;
 }
 
 export async function loadWorkstreamRegionalEffect(

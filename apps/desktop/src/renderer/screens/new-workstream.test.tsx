@@ -304,7 +304,7 @@ describe('New work-stream home', () => {
     expect(screen.queryByRole('dialog', { name: 'Add people' })).not.toBeInTheDocument();
   });
 
-  it('walks the mention list with the arrow keys and adds the person Enter picks', async () => {
+  it('walks the mention list and submits the identity behind the person Enter picks', async () => {
     renderScreen();
     const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
 
@@ -329,9 +329,20 @@ describe('New work-stream home', () => {
 
     await waitFor(() => expect(composer).toHaveValue('ask @Samantha Lee '));
     expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
-    // Nothing exists yet to mention her into, so the pick has to add her.
+    // A mention is also an audience decision, so the person is seated before
+    // the work stream exists and the identity travels with the visible text.
     expect(screen.getByRole('button', { name: 'Manage participants: Morgan Ellis, Samantha Lee' })).toBeVisible();
-    expect(api.createWorkstream).not.toHaveBeenCalled();
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
+      openingMessage: 'ask @Samantha Lee',
+      participantIds: ['user-2'],
+      mentions: [{
+        type: 'person',
+        label: 'Samantha Lee',
+        userId: 'user-2',
+        connectorType: null,
+      }],
+    })));
   });
 
   it('keeps a non-active membership out of both the mention list and the dialog', async () => {

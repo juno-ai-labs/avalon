@@ -1456,6 +1456,7 @@ export const CreateWorkstreamRequestSchema = z.object({
    */
   participantUserIds: z.array(IdSchema).default([]),
   openingMessage: z.string().max(MESSAGE_MAX_CHARACTERS),
+  mentions: z.array(MentionSchema).default([]),
   clientMessageId: z.string().min(1).max(120),
   attachmentIds: z.array(IdSchema).max(10).default([]),
   /**
