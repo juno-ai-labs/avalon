@@ -13,11 +13,9 @@ import { processConnectorEvent } from "../queues/activity-consumer";
 import { enqueueWorkspaceConnectorEvent } from "../services/workspace-connector-event-ingress";
 
 /**
- * Durable product processing for one WorkspaceDO-owned connector event.
- *
- * Queue delivery ends after the event is accepted and this deterministic
- * instance exists. Routing, automation matching, digest projection, and
- * suggested-work admission then run here with Workflow retries and history.
+ * Drain-only compatibility for WorkspaceDO-owned connector events whose
+ * Workflow instance was created before Queue-native processing shipped.
+ * New connector ingress never creates this Workflow.
  */
 export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEventWorkflowInput> {
   override async run(
@@ -36,14 +34,16 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
       WorkspaceConnectorEventClaimResultSchema.parse(await workspace.claimConnectorEvent({
         workspaceId: input.workspaceId,
         eventId: input.eventId,
-        workflowInstanceId: input.workflowInstanceId,
+        processingOwnerId: input.workflowInstanceId,
         attempt: input.attempt,
+        orchestrator: "workflow",
       })));
     logStructuredEvent(this.env, "info", "connector_event_workflow_claimed", {
       workspace_id: input.workspaceId,
       connector_event_id: input.eventId,
       workflow_instance_id: input.workflowInstanceId,
       workflow_attempt: input.attempt,
+      processing_lease_id: claim.outcome === "claimed" ? claim.processingLeaseId : null,
       outcome: claim.outcome,
     });
     if (claim.outcome === "processed") {
@@ -64,7 +64,7 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
         workflow_instance_id: input.workflowInstanceId,
         workflow_attempt: input.attempt,
         outcome: "busy",
-        reason: "authoritative_event_claimed_elsewhere",
+        reason: claim.reason,
       });
       throw new Error("connector_event_claim_busy");
     }
@@ -86,7 +86,8 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
         await workspace.settleConnectorEvent({
           workspaceId: input.workspaceId,
           eventId: input.eventId,
-          workflowInstanceId: input.workflowInstanceId,
+          processingOwnerId: input.workflowInstanceId,
+          processingLeaseId: claim.processingLeaseId,
           outcome: "failed",
           error: reason,
         });
@@ -135,7 +136,8 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
       await workspace.settleConnectorEvent({
         workspaceId: input.workspaceId,
         eventId: input.eventId,
-        workflowInstanceId: input.workflowInstanceId,
+        processingOwnerId: input.workflowInstanceId,
+        processingLeaseId: claim.processingLeaseId,
         outcome: "processed",
         error: null,
       });
