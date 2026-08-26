@@ -108,7 +108,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "0fe560f1ccfcdef73c7177e965b7f4ba1c84f29b6f33a1c11d9fadfecba9c3bf",
+        hash: "0d0a1f189edb0d426b884ac70c4aa75576cc11311708fbaf09e8c4b19b1cc121",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -116,7 +116,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "b078985e4365082fa44bae6b47e2e14e80b9eb296776716c56eb3917d6c810e5",
+        hash: "864a3cd17d13251e27c5c0f16e9f7e5dce6045d45069080b215016b1c0f5c074",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -523,8 +523,8 @@ describe("prompt renderers", () => {
       objective: "Keep the launch team aligned.",
     });
 
+    expect(prompt).toContain("Person mentions use canonical Markdown");
     expect(prompt).toContain("[@Display Name](person:<person-id>)");
-    expect(prompt).toContain("target ID, not the visible label");
   });
 
   it("requires a source for every fact in an outward-facing write, whatever the connector", () => {
@@ -534,10 +534,8 @@ describe("prompt renderers", () => {
     });
 
     expect(prompt).toContain("must come from a tool result in this run");
-    // The rule has to settle its own tie-break against inferring defaults,
-    // which sits two bullets above it, or a model resolves it silently.
-    expect(prompt).toContain("never supplies a fact you do not have");
-    expect(prompt).toContain("A value you cannot source is a missing identifier");
+    expect(prompt).toContain("A value you cannot source requires a look up with a tool");
+    expect(prompt).toContain("**Never** write a plausible placeholder in its place");
   });
 
   it("keeps workspace authority separate from external actor attribution and personal connectors", () => {
