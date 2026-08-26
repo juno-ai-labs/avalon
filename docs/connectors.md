@@ -520,8 +520,10 @@ Manifests and facets are cross-validated at registry construction: a connector t
 7. A later Queue delivery claims and loads the event from WorkspaceDO over typed
    RPC, then evaluates explicit resource watches and deterministic automation
    triggers. Semantic trigger matching runs only after deterministic prefilters.
-   Equal or older active Queue claims return `busy`; a later delivery attempt
-   can recover processing interrupted after the claim.
+   WorkspaceDO issues a fresh, 15-minute processing lease for each acquisition.
+   A duplicate returns `busy` with the lease's exact expiry; a delivery after
+   expiry can recover interrupted processing, and settlement is fenced by the
+   returned lease token so the expired handler cannot overwrite its successor.
 8. Create automation work idempotently; contextual routing may offer unclaimed activity to an audience-authorized existing work stream, and activity it declines is enqueued into WorkspaceDO's opportunity batch tables. Admission and ranking are separate fenced Workflows whose durable product results—including provenance and per-user resolutions—commit in the same WorkspaceDO. The Queue consumer then settles the authoritative event as processed or failed. A transient failure calls per-message `retry()` and an exhausted message enters the existing regional activities DLQ.
 9. WorkspaceDO retains/reaps the canonical event according to product retention. Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
 10. Persist accepted/dismissed feedback that decides what step 8 offers next.
@@ -750,10 +752,12 @@ about which providers can deliver is written into the API or the client.
   every activity indiscriminately.
 - **Connector-event processing uses the shared Queue's six deliveries.** The
   process pointer keeps one processing-owner UUID while Cloudflare's delivery
-  count advances the WorkspaceDO claim attempt from 0 through 5. A caught
-  processing failure settles the event `failed` before requesting an individual
-  retry; an exhausted delivery remains failed and enters the regional activities
-  DLQ. Equal active attempts are fenced so a duplicate cannot process concurrently.
+  count remains transport telemetry; it does not advance or saturate the
+  compatibility-era 0–5 processing attempt. Each WorkspaceDO acquisition gets a
+  fresh 15-minute lease, active duplicates retry at its exact expiry, and
+  settlement is lease-fenced. A caught processing failure settles the event
+  `failed` before requesting an individual retry; an exhausted delivery remains
+  failed and enters the regional activities DLQ.
 - **Everything unknown is withheld from a digest** — a connector this region does
   not register, an event type a manifest has dropped, an activity older than the
   declaration. None of those are somebody confirming a person wants this in their
@@ -817,9 +821,11 @@ fixture table instead, where it is reviewable.
 an ID-only process pointer back to the existing regional `ACTIVITY_QUEUE`.
 Queue deliveries claim/load and settle through typed WorkspaceDO RPCs; native
 per-message retry and the existing regional DLQ replace creation of one
-Cloudflare Workflow per event. A stable internal owner UUID plus an advancing
-Queue delivery attempt fence equal active duplicates. The Workflow class and
-binding remain deployed only so instances created before cutover can finish.
+Cloudflare Workflow per event. The pointer's stable internal owner is correlation
+identity; WorkspaceDO issues a fresh expiring lease for each acquisition and
+fences settlement on that lease. Queue delivery attempts remain independent
+transport telemetry. The Workflow class and binding remain deployed only so
+instances created before cutover can finish.
 
 **Why:** The Queue, Workflow, and WorkspaceDO were maintaining overlapping
 retry and terminal ledgers for one processing callback. That duplication added
@@ -839,10 +845,12 @@ retry and in the DLQ while still requiring the authoritative WorkspaceDO load.
 
 **What a future change has to respect:** New connector events must never create
 `CONNECTOR_EVENT_WORKFLOW`. Keep the single regional Queue, canonical
-WorkspaceDO state, individual ack/retry, stable owner, advancing-attempt fence,
-and content-free terminal logs. Remove the legacy Workflow binding and rename
-the physical `workflow_instance_id` column only after live pre-cutover instances
-are proven drained.
+WorkspaceDO state, individual ack/retry, stable owner, authority-issued expiring
+lease, lease-fenced settlement, and content-free terminal logs. Do not use Queue
+delivery count as the product attempt fence: a pointer can begin at the legacy
+attempt ceiling. Remove the legacy Workflow binding and rename the physical
+`workflow_instance_id` column only after live pre-cutover instances are proven
+drained.
 
 ### 2026-08-25 — Every connector operation is observable at two layers
 
