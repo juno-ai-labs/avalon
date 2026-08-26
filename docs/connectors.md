@@ -526,6 +526,24 @@ Manifests and facets are cross-validated at registry construction: a connector t
 9. WorkspaceDO retains/reaps the canonical event according to product retention. Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
 10. Persist accepted/dismissed feedback that decides what step 8 offers next.
 
+**Why the event is present in ingress but absent from processing:** the first
+Queue message must be self-contained because no canonical WorkspaceDO event
+exists yet. Once step 5 commits, WorkspaceDO is the only event authority. A
+second event copy would either have to be ignored or hash-checked against that
+authority, so it cannot remove the claim/load RPC; it could also become stale,
+increases every retry, and leaves normalized provider content in the DLQ when
+processing exhausts. The ID-only pointer makes processing retries and exhausted
+messages content-free. The cost is one additional same-Queue send after commit.
+That handoff is closed by acknowledging ingress only after Cloudflare accepts
+the pointer: if the send or invocation fails first, the self-contained ingress
+message replays and WorkspaceDO deduplicates it.
+
+A single-message alternative—ingest, process, and retry the original full
+message—would also be correct if every retry re-ingested idempotently and still
+loaded WorkspaceDO authority. It was rejected because it retains the normalized
+event for the entire processing retry/DLQ lifetime in exchange for saving only
+the second Queue send, not an object round trip.
+
 Every durable boundary above emits a structured outcome rather than leaving a
 Queue acknowledgement to stand in for downstream success. Follow one event by
 `workspace_id`, `connection_id`, `connector_event_id`, `ingress_id`, and
@@ -815,7 +833,9 @@ resources; strict message kinds and terminal logs provide flow identity.
 Retaining new per-event Workflows was rejected because their only meaningful
 step is the Queue-shaped callback. Using Cloudflare's Queue message ID as the
 owner was rejected because its stability across redelivery is not part of this
-contract.
+contract. Retrying the original content-bearing ingress message for processing
+was rejected because it would retain normalized provider content through every
+retry and in the DLQ while still requiring the authoritative WorkspaceDO load.
 
 **What a future change has to respect:** New connector events must never create
 `CONNECTOR_EVENT_WORKFLOW`. Keep the single regional Queue, canonical

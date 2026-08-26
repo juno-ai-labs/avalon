@@ -29,8 +29,13 @@ export const WorkspaceConnectorEventIngestRequestSchema = z.object({
 });
 
 /**
- * Queue handoff used after WorkspaceDO cutover. The normalized event travels
- * with the message; regional D1 is not an event-body staging database.
+ * Connector processing deliberately uses two message shapes on the same Queue.
+ * This ingress shape carries the bounded normalized event exactly until
+ * WorkspaceDO commits it; regional D1 is not an event-body staging database.
+ * After that commit, retries use the content-free process shape below and load
+ * the canonical event through the claim RPC. Do not add another event copy to
+ * that shape: it would be stale or non-authoritative, would save no object RPC,
+ * and would retain provider content through processing retries and in the DLQ.
  */
 export const WorkspaceConnectorEventQueueMessageSchema = z.object({
   kind: z.literal("workspace_connector_event"),
@@ -39,7 +44,7 @@ export const WorkspaceConnectorEventQueueMessageSchema = z.object({
   request: WorkspaceConnectorEventIngestRequestSchema,
 }).strict();
 
-/** Opaque Queue wake-up for canonical processing after ingress commits. */
+/** Content-free processing wake-up; see the two-stage authority contract above. */
 export const WorkspaceConnectorEventProcessQueueMessageSchema = z.object({
   kind: z.literal("connector_event_process"),
   schemaVersion: z.literal(1),
