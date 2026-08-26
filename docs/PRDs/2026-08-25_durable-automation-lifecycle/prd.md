@@ -859,7 +859,12 @@ authorized tool execution remain unchanged.
 
 ## Decision log
 
-None yet.
+- **2026-08-26 — Use typed evaluators for ordinary external-event triggers.**
+  Accepted automation definitions compile into the closed, versioned,
+  manifest-validated evaluator grammar in this PRD. Source selection remains an
+  exact connection/event/resource index in WorkspaceDO, and unsupported fields
+  or relationships are refused at review or activation rather than delegated to
+  a programmable runtime.
 
 ## Key design decisions
 
