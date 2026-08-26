@@ -271,7 +271,7 @@ Docs and Sheets operations use their native provider APIs. Docs reads return bou
 
 The production-approved Google scope set uses `drive.readonly` for Drive discovery and native Docs/Sheets reads, and `drive.file` for native writes. Newly created Docs and Sheets can be edited. An existing file is writable only after it has been explicitly opened or shared with Rally under Google's per-file authorization model; an arbitrary existing file discovered through Drive search remains read-only. Rally does not yet include a Google Picker flow for granting that per-file write access. Drive search and metadata results expose `isAppAuthorized`, `canEdit`, and the derived `writableByRally`; Docs/Sheets update tools preflight the same metadata and fail with `details.reason = drive_file_not_writable` without attempting a mutation when either condition is false or the file is invisible to a `drive.file`-only token. This preflight is a fail-closed model-guidance and user-experience guard, not the security boundary: Google enforces the current authorization again when it receives the mutation.
 
-Google activity ingestion is polling-only. Gmail, Calendar, and Drive are independent named activity streams under one connection. Each commits its own provider-native high-watermark—Gmail history IDs, Calendar sync/completion tokens, or Drive change page tokens—only after its canonical activities are persisted. A transient failure in one stream preserves that stream's checkpoint without forcing successful sibling streams to replay; the scheduler uses the earliest backlog or retry deadline. Gmail and Calendar are digestible streams and Drive is not: a change feed reports a save, so a document written over an afternoon is one piece of news and dozens of events. `email.received`, `calendar.event_changed`, and `calendar.event_completed` are the digestible activity types; `email.updated` is a label or read-state change on mail already seen. Drive change polling classifies Google Workspace MIME types into `docs.document_changed` and `sheets.spreadsheet_changed`; other files produce `drive.file_changed`. Consequently `drive.read` is included in the Drive + Docs + Sheets preset and is the event source for Docs and Sheets changes. Rally does not currently register Gmail Pub/Sub watches, Calendar notification channels, Drive push notifications, or any other Google webhook. Rally resource watches route the normalized polled activity and must not be confused with provider push delivery.
+Google activity ingestion is polling-only. Gmail, Calendar, and Drive are independent named activity streams under one connection. Each commits its own provider-native high-watermark—Gmail history IDs, Calendar sync/completion tokens, or Drive change page tokens—only after its canonical activities are persisted. A transient failure in one stream preserves that stream's checkpoint without forcing successful sibling streams to replay; the scheduler uses the earliest backlog or retry deadline. Gmail and Calendar are digestible streams and Drive is not: a change feed reports a save, so a document written over an afternoon is one piece of news and dozens of events. `email.received`, `calendar.event_changed`, and `calendar.event_completed` are the digestible activity types; `email.updated` is a label or read-state change on mail already seen. Drive change polling classifies Google Workspace MIME types into `docs.document_changed` and `sheets.spreadsheet_changed`; other files produce `drive.file_changed`. Consequently `drive.read` is included in the Drive + Docs + Sheets preset and is the event source for Docs and Sheets changes. Operators can follow each normalized poll result into WorkspaceDO at `connector_event_authority_ingested`, before its Workflow processing begins. Rally does not currently register Gmail Pub/Sub watches, Calendar notification channels, Drive push notifications, or any other Google webhook. Rally resource watches route the normalized polled activity and must not be confused with provider push delivery.
 
 A revoked refresh grant marks the connection `needs_reconnect`. Production smoke tests should create a Gmail draft rather than send unsolicited mail. A personal Gmail send tool is available only to its owner; if an administrator creates a workspace-scoped Gmail connection through the backend, its granted send capability rolls down to every work stream like every other workspace capability.
 
@@ -512,11 +512,29 @@ Manifests and facets are cross-validated at registry construction: a connector t
    in R2 behind `payloadRef`; the Queue message is independently parseable and
    does not need a D1 activity-body lookup.
 5. The Queue consumer resolves the workspace's jurisdiction and placement affinity and calls `WorkspaceDO.ingestConnectorEvent`. Provider identity and dedupe uniqueness are enforced inside that object's transaction, and an ingress receipt makes Queue/provider replay idempotent.
-6. After the object commits, the consumer creates deterministic `connector-event:<canonical-event-id>:<attempt>` in `CONNECTOR_EVENT_WORKFLOW` and acknowledges the Queue message. A duplicate Workflow-ID conflict means the earlier send won and is success.
+6. After the object commits, the consumer creates a deterministic `wf_<sha256>`
+   instance in `CONNECTOR_EVENT_WORKFLOW` and acknowledges the Queue message.
+   The digest input is the typed tuple `(connector-event, canonical event ID,
+   attempt)`, while the external value is fixed at 67 characters from
+   Cloudflare's accepted alphabet. A duplicate Workflow-ID conflict means the
+   earlier send won and is success.
 7. The Workflow claims the event from WorkspaceDO and evaluates explicit resource watches and deterministic automation triggers. Semantic trigger matching runs only after deterministic prefilters.
 8. Create automation work idempotently; contextual routing may offer unclaimed activity to an audience-authorized existing work stream, and activity it declines is enqueued into WorkspaceDO's opportunity batch tables. Admission and ranking are separate fenced Workflows whose durable product results—including provenance and per-user resolutions—commit in the same WorkspaceDO. The connector Workflow then settles the authoritative event as processed or failed. An exhausted processing attempt enqueues the next numbered attempt; duplicate redrive messages converge on the same Workflow ID and the object admits a new claimant only from `failed`.
 9. WorkspaceDO retains/reaps the canonical event according to product retention. Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
 10. Persist accepted/dismissed feedback that decides what step 8 offers next.
+
+Every durable boundary above emits a structured outcome rather than leaving a
+Queue acknowledgement to stand in for downstream success. Follow one event by
+`workspace_id`, `connection_id`, `connector_event_id`, `ingress_id`, and
+`workflow_instance_id`: `connector_event_enqueued`,
+`connector_event_authority_ingested`, `connector_event_queue_terminal`, the
+`connector_event_workflow_*` events, and
+`connector_event_authority_terminal` distinguish enqueue, authoritative
+acceptance, Workflow creation or dedupe, claim, redrive/exhaustion, and final
+settlement. `connector_poll_terminal` records the connector, successful
+activity count, per-stream error codes, cursor commit, and next scheduled poll.
+Provider content and credentials remain excluded; opaque provider and Rally IDs
+are correlation fields and should be logged.
 
 The canonical event remains the automation trigger's evidence after admission.
 Prompt construction and between-turn authorization revalidation load it from
@@ -756,6 +774,7 @@ about which providers can deliver is written into the API or the client.
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Workflow claim fencing, and terminal settlement. |
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
+| `packages/connectors/src/observability.test.ts` | The shared adapter and provider-request log layers, level selection, identifier retention, content exclusion, and fail-open observer contract. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/connector-credential-freshness.test.ts`
@@ -767,6 +786,69 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-25 — Every connector operation is observable at two layers
+
+**What changed:** The connector registry now wraps every adapter surface with
+shared structured lifecycle logging and wraps every configured provider fetch
+with a second transport-level log. Adapter starts are `debug`, successful
+terminal outcomes are `info`, expected refusals and degraded health are `warn`,
+and unexpected failures or provider 5xx/transport failures are `error`.
+Authorization, refresh, revoke, webhook verification and normalization,
+polling, dynamic-tool discovery, agent protocol execution, hydration, origin
+resolution, tool validation and execution, repair, and health checks all pass
+through the shared wrapper. The provider layer records origin, method, status,
+and duration independently. ID-shaped tool arguments and normalized provider
+resource IDs are retained as correlation fields; Slack timestamp identifiers
+use an explicit field-name allowlist, and non-ID arguments are not retained.
+Observer failures are swallowed so diagnostics cannot alter connector delivery.
+
+**Why:** Delivery-pipeline logs can prove that an event reached a Workflow or
+durable outbox, but they cannot distinguish an adapter decision from an HTTP
+refusal or show whether a connector branch was entered at all. Instrumenting
+both boundaries makes the redundancy intentional: when one layer stops before
+the other, that absence is itself useful evidence.
+
+**Considered and rejected:** Logging only individual adapters was rejected
+because the next connector would begin uninstrumented and hosted MCP/shared HTTP
+paths would remain blind. Logging full URLs, provider messages, inputs, outputs,
+or health text was rejected because those values can carry connector content or
+credentials. Pure Rally and provider identifiers remain present because they
+are the stable correlation keys needed to follow one operation.
+
+**What a future change has to respect:** A connector added to
+`createConnectorRegistry` must receive both wrappers. New adapter surfaces must
+join the shared lifecycle wrapper rather than relying on call-site logging.
+Keep starts at `debug` and terminal results at a production-visible level, keep
+expected versus unexpected failure levels distinct, and never let observer
+behavior or logging content affect the provider call.
+
+### 2026-08-25 — Connector delivery has an observable terminal outcome
+
+**What changed:** Connector-event Workflow instance IDs now use a branded,
+Cloudflare-validated `wf_<sha256>` value derived from the typed connector-event
+identity tuple. Provider and Rally identifiers influence only the digest, so
+they cannot alter the external ID's alphabet or length. Polling, regional
+enqueue, Queue admission, WorkspaceDO ingestion/claim/settlement, and Workflow
+completion now emit correlated structured outcomes, including replay, busy,
+redrive, exhaustion, and partial-stream poll results.
+
+**Why:** An invalid instance ID could make every Google poll appear to drain
+from the shared Queue while no processing Workflow was ever created. Queue
+depth proved only that the consumer acknowledged or exhausted a message; it did
+not prove where a connector event finished or whether a partial Google stream
+advanced its cursor.
+
+**Considered and rejected:** Treating Queue drain as delivery evidence, logging
+only thrown exceptions, and removing deterministic Workflow IDs were rejected.
+They respectively hide downstream state, leave expected skip/replay branches
+invisible, or weaken idempotency at the Workflow boundary.
+
+**What a future change has to respect:** Each connector boundary must log one
+content-free terminal or deferred outcome with stable correlation IDs. A new
+branch must not acknowledge, replay, skip, or settle an event without making
+that decision queryable, and Workflow instance IDs must remain deterministic
+and valid under Cloudflare's ID grammar.
 
 ### 2026-08-25 — Connection management makes scope and consequences explicit
 

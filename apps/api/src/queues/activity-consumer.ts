@@ -59,7 +59,8 @@ import {
   attachWorkstreamOriginResource,
   describeWorkstreamOrigin,
 } from "../services/workstream-origin-resource";
-import { logDebug, logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logDebug, logInfo, logWarn } from "../observability/logger";
+import { cloudflareWorkflowInstanceId } from "../lib/cloudflare-workflow-instance-id";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { activityContentAudience, restrictedActivityUserIds } from "../lib/activity-visibility";
 import { readWorkstreamRuntimeAudience } from "../services/workstream-object-client";
@@ -233,25 +234,54 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
   const regionalEffect = WorkstreamRegionalEffectQueueMessageSchema.safeParse(message.body);
   if (regionalEffect.success) {
     if (regionalEffect.data.region !== env.AVALON_REGION) {
+      logInfo(env, "workstream_regional_effect_terminal", {
+        workspace_id: regionalEffect.data.workspaceId,
+        workstream_id: regionalEffect.data.workstreamId,
+        message_id: regionalEffect.data.messageId,
+        outcome: "skipped",
+        reason: "region_mismatch",
+        queue_attempts: message.attempts,
+      });
       message.ack();
       return;
     }
+    let effectKind: string | null = null;
     try {
       const envelope = await loadWorkstreamRegionalEffect(env, regionalEffect.data);
       if (!envelope) {
         // An already acknowledged DO outbox row no longer needs work, and the
         // replay receipt lives in WorkspaceDO beside the state it fenced —
         // there is nothing regional left to mark.
+        logInfo(env, "workstream_regional_effect_terminal", {
+          workspace_id: regionalEffect.data.workspaceId,
+          workstream_id: regionalEffect.data.workstreamId,
+          message_id: regionalEffect.data.messageId,
+          outcome: "already_acknowledged",
+          reason: "outbox_effect_missing",
+          queue_attempts: message.attempts,
+        });
         message.ack();
         return;
       }
+      effectKind = envelope.effect.kind;
       if (isWorkspaceDirectoryEffect(envelope.effect)) {
         await applyQueuedWorkspaceDirectoryEffect(env, envelope);
         await acknowledgeWorkstreamOutboxEffect(env, envelope);
+        logInfo(env, "workstream_regional_effect_terminal", {
+          workspace_id: envelope.workspaceId,
+          workstream_id: envelope.workstreamId,
+          message_id: envelope.messageId,
+          effect_kind: envelope.effect.kind,
+          outcome: "applied",
+          reason: "directory_effect_acknowledged",
+          outbox_acknowledged: true,
+          queue_attempts: message.attempts,
+        });
         message.ack();
         return;
       }
       const applied = await applyWorkstreamRegionalEffect(env, envelope);
+      let notificationOutcome: "delivered" | "skipped" | null = null;
       if (applied.notificationIntentId) {
         const outcome = await processWorkstreamNotificationIntent(
           env,
@@ -259,17 +289,42 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
           applied.notificationIntentId,
         );
         if (outcome === "busy") {
+          logInfo(env, "workstream_regional_effect_deferred", {
+            workspace_id: envelope.workspaceId,
+            workstream_id: envelope.workstreamId,
+            message_id: envelope.messageId,
+            effect_kind: envelope.effect.kind,
+            notification_intent_id: applied.notificationIntentId,
+            reason: "notification_busy",
+            queue_attempts: message.attempts,
+            retry_delay_seconds: 30,
+          });
           message.retry({ delaySeconds: 30 });
           return;
         }
+        notificationOutcome = outcome;
       }
       await acknowledgeWorkstreamOutboxEffect(env, envelope);
+      logInfo(env, "workstream_regional_effect_terminal", {
+        workspace_id: envelope.workspaceId,
+        workstream_id: envelope.workstreamId,
+        message_id: envelope.messageId,
+        effect_kind: envelope.effect.kind,
+        outcome: notificationOutcome ?? "applied",
+        reason: notificationOutcome ? "notification_terminal" : "effect_applied",
+        notification_intent_id: applied.notificationIntentId,
+        replayed: applied.replayed,
+        outbox_acknowledged: true,
+        queue_attempts: message.attempts,
+      });
       message.ack();
     } catch (error) {
       logWarn(env, "workstream_regional_effect_processing_failed", {
         workspace_id: regionalEffect.data.workspaceId,
         workstream_id: regionalEffect.data.workstreamId,
         message_id: regionalEffect.data.messageId,
+        effect_kind: effectKind,
+        queue_attempts: message.attempts,
         reason: error instanceof Error ? error.message : "unknown",
       });
       const attempts = Math.max(1, message.attempts);
@@ -281,6 +336,13 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
   const slackIngress = SlackIngressQueueMessageSchema.safeParse(message.body);
   if (slackIngress.success) {
     if (slackIngress.data.region !== env.AVALON_REGION) {
+      logInfo(env, "slack_ingress_queue_terminal", {
+        workspace_id: slackIngress.data.workspaceId,
+        job_id: slackIngress.data.jobId,
+        outcome: "skipped",
+        reason: "region_mismatch",
+        queue_attempts: message.attempts,
+      });
       message.ack();
       return;
     }
@@ -289,10 +351,19 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
         slackIngress.data.workspaceId,
         slackIngress.data.jobId,
       );
+      logInfo(env, "slack_ingress_queue_terminal", {
+        workspace_id: slackIngress.data.workspaceId,
+        job_id: slackIngress.data.jobId,
+        outcome: "processed",
+        reason: "ingress_job_completed",
+        queue_attempts: message.attempts,
+      });
       message.ack();
     } catch (error) {
       logWarn(env, "slack_ingress_queue_processing_failed", {
+        workspace_id: slackIngress.data.workspaceId,
         job_id: slackIngress.data.jobId,
+        queue_attempts: message.attempts,
         reason: error instanceof Error ? error.message : "unknown",
       });
       const attempts = Math.max(1, message.attempts);
@@ -307,17 +378,43 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
   if (connectorIngress.success) {
     const input = connectorIngress.data;
     if (input.region !== env.AVALON_REGION) {
+      logInfo(env, "connector_event_queue_terminal", {
+        workspace_id: input.request.workspaceId,
+        connector_type: input.request.event.connectorType,
+        ingress_event_id: input.request.ingressEventId,
+        outcome: "skipped",
+        reason: "region_mismatch",
+        queue_attempts: message.attempts,
+      });
       message.ack();
       return;
     }
     try {
-      await admitConnectorEvent(env, input.request, input.attempt);
+      const admission = await admitConnectorEvent(env, input.request, input.attempt);
+      logInfo(env, "connector_event_queue_terminal", {
+        workspace_id: input.request.workspaceId,
+        connector_type: input.request.event.connectorType,
+        ingress_event_id: input.request.ingressEventId,
+        connector_event_id: admission.accepted.eventId,
+        duplicate: admission.accepted.duplicate,
+        prior_processing_status: admission.accepted.processingStatus,
+        workflow_attempt: admission.workflowAttempt,
+        workflow_instance_id: admission.workflowInstanceId,
+        workflow_outcome: admission.workflowOutcome,
+        outcome: "admitted",
+        reason: "workspace_event_committed",
+        queue_attempts: message.attempts,
+      });
       message.ack();
     } catch (error) {
       logWarn(env, "connector_event_queue_admission_failed", {
         workspace_id: input.request.workspaceId,
+        connector_type: input.request.event.connectorType,
         ingress_event_id: input.request.ingressEventId,
-        reason: error instanceof Error ? error.message : "unknown",
+        requested_attempt: input.attempt,
+        queue_attempts: message.attempts,
+        reason: diagnosticErrorCode(error, "connector_event_admission_failed"),
+        error_name: error instanceof Error ? error.name : typeof error,
       });
       const attempts = Math.max(1, message.attempts);
       message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
@@ -330,6 +427,14 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
   // that was already in flight then can still arrive, and it is acked rather
   // than left to redeliver forever. Reading the frozen D1 source row behind it
   // would reintroduce a second connector-event authority.
+  const legacyActivity = ActivityQueueMessageSchema.safeParse(message.body);
+  logInfo(env, "connector_event_queue_terminal", {
+    workspace_id: legacyActivity.success ? legacyActivity.data.workspaceId : null,
+    connector_event_id: legacyActivity.success ? legacyActivity.data.activityId : null,
+    outcome: "skipped",
+    reason: "legacy_message_after_cutover",
+    queue_attempts: message.attempts,
+  });
   message.ack();
 }
 
@@ -346,7 +451,14 @@ async function admitConnectorEvent(
       ? Math.max(requestedAttempt, accepted.processingAttempt + 1)
       : Math.max(0, requestedAttempt);
   const recordedAttempt = Math.min(workflowAttempt, 5);
-  const workflowInstanceId = `connector-event:${accepted.eventId}:${recordedAttempt}`;
+  // Provider/internal IDs are hash input only. The external Workflow ID is
+  // fixed-alphabet and fixed-length by construction; see the helper's contract.
+  const workflowInstanceId = await cloudflareWorkflowInstanceId(
+    "connector-event",
+    accepted.eventId,
+    recordedAttempt,
+  );
+  let workflowOutcome: "created" | "duplicate" | "already_processed" | "attempts_exhausted";
   if (accepted.processingStatus !== "processed" && workflowAttempt <= 5) {
     try {
       await env.CONNECTOR_EVENT_WORKFLOW.create({
@@ -359,13 +471,19 @@ async function admitConnectorEvent(
           attempt: workflowAttempt,
         },
       });
+      workflowOutcome = "created";
     } catch (error) {
       if (!(error instanceof Error) || !/(already exists|duplicate|conflict)/iu.test(error.message)) {
         throw error;
       }
+      workflowOutcome = "duplicate";
     }
+  } else {
+    workflowOutcome = accepted.processingStatus === "processed"
+      ? "already_processed"
+      : "attempts_exhausted";
   }
-  return { accepted, workflowAttempt, recordedAttempt, workflowInstanceId };
+  return { accepted, workflowAttempt, recordedAttempt, workflowInstanceId, workflowOutcome };
 }
 
 /** The connector-event Workflow's idempotent product processing step. */
@@ -385,6 +503,17 @@ export async function processConnectorEvent(
     await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
   }
   await projectActivityEvent(env, activity);
+  logInfo(env, "connector_event_processing_completed", {
+    workspace_id: activity.workspace_id,
+    connection_id: activity.connection_id,
+    connector_type: activity.connector_type,
+    provider: activity.provider,
+    connector_event_id: activity.id,
+    direct_workstream_count: directWorkstreamIds.size,
+    routed_contextually: routedContextually,
+    opportunity_enqueued: directWorkstreamIds.size === 0 && !routedContextually,
+    outcome: "processed",
+  });
 }
 
 function activityRowFromWorkspaceEvent(event: WorkspaceConnectorEvent): ActivityRow {
