@@ -1,7 +1,7 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { IconLock } from '@tabler/icons-react';
+import { IconDots, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import {
   Archive,
@@ -32,7 +32,14 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
-import { formatDateTime, formatRelative, groupActivityItems, workstreamMarkerStatus } from '../lib/format';
+import type { WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
+import {
+  formatDateTime,
+  formatRelative,
+  groupActivityItems,
+  recencyGroupBatchFilter,
+  workstreamMarkerStatus,
+} from '../lib/format';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
@@ -65,6 +72,11 @@ interface SidebarProps {
   onArchiveDraftAutomation: (automation: AutomationSummary) => Promise<void>;
   onArchiveNote: (note: NoteSummary) => Promise<void>;
   onArchiveWorkstream: (workstream: WorkstreamSummary) => Promise<void>;
+  onApplyWorkstreamBatch: (
+    operationId: string,
+    filter: WorkstreamBatchFilter,
+    update: WorkstreamBatchUpdate,
+  ) => Promise<number>;
   onChangeNoteScope: (note: NoteSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onChangeWorkstreamScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onDeleteAutomation: (automation: AutomationSummary) => Promise<void>;
@@ -82,12 +94,20 @@ interface SidebarProps {
   onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
   onRunAutomation: (automation: AutomationSummary) => Promise<void>;
   onOpenMeetingNotes: (noteId?: string) => Promise<void>;
+  onPreviewWorkstreamBatch: (filter: WorkstreamBatchFilter) => Promise<number>;
   onSignOut: () => void;
 }
 
 type RecentSidebarItem =
   | { type: 'note'; note: NoteSummary; id: string; lastActivityAt: string }
   | { type: 'workstream'; workstream: WorkstreamSummary; id: string; lastActivityAt: string };
+
+interface WorkstreamBatchTarget {
+  label: string;
+  filter: WorkstreamBatchFilter;
+  update: WorkstreamBatchUpdate;
+  matchedCount: number;
+}
 
 /** How close the pointer comes to the navigation's edge before its pill shows. */
 const EDGE_REVEAL_DISTANCE = 20;
@@ -793,6 +813,7 @@ export function Sidebar({
   onArchiveDraftAutomation,
   onArchiveNote,
   onArchiveWorkstream,
+  onApplyWorkstreamBatch,
   onChangeNoteScope,
   onChangeWorkstreamScope,
   onDeleteAutomation,
@@ -802,6 +823,7 @@ export function Sidebar({
   onRenameWorkstream,
   onRunAutomation,
   onOpenMeetingNotes,
+  onPreviewWorkstreamBatch,
   onSignOut,
   hasMoreWorkstreams = false,
   loadingMoreWorkstreams = false,
@@ -866,6 +888,11 @@ export function Sidebar({
   const [archivingNote, setArchivingNote] = useState(false);
   const [archiveWorkstreamTarget, setArchiveWorkstreamTarget] = useState<WorkstreamSummary | null>(null);
   const [archivingWorkstream, setArchivingWorkstream] = useState(false);
+  const [batchTarget, setBatchTarget] = useState<WorkstreamBatchTarget | null>(null);
+  const [batchPreviewing, setBatchPreviewing] = useState(false);
+  const [batchApplying, setBatchApplying] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const batchPreviewGeneration = useRef(0);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -897,20 +924,26 @@ export function Sidebar({
     () => workstreams.filter((workstream) => workstream.pinPosition === null),
     [workstreams],
   );
-  const groups = useMemo(() => groupActivityItems<RecentSidebarItem>([
-    ...unpinnedWorkstreams.map((workstream) => ({
-      type: 'workstream' as const,
-      id: `workstream:${workstream.id}`,
-      lastActivityAt: workstream.lastActivityAt,
-      workstream,
-    })),
-    ...notes.map((note) => ({
-      type: 'note' as const,
-      id: `note:${note.id}`,
-      lastActivityAt: note.lastActivityAt,
-      note,
-    })),
-  ]), [notes, unpinnedWorkstreams]);
+  const groups = useMemo(() => {
+    const groupedAt = new Date();
+    return groupActivityItems<RecentSidebarItem>([
+      ...unpinnedWorkstreams.map((workstream) => ({
+        type: 'workstream' as const,
+        id: `workstream:${workstream.id}`,
+        lastActivityAt: workstream.lastActivityAt,
+        workstream,
+      })),
+      ...notes.map((note) => ({
+        type: 'note' as const,
+        id: `note:${note.id}`,
+        lastActivityAt: note.lastActivityAt,
+        note,
+      })),
+    ], groupedAt).map((group) => ({
+      ...group,
+      filter: recencyGroupBatchFilter(group.label, groupedAt),
+    }));
+  }, [notes, unpinnedWorkstreams]);
 
   // The visible destination order is one run: the reader's manually arranged
   // pins first, then recent work streams and notes in exactly the order the
@@ -1098,6 +1131,50 @@ export function Sidebar({
       });
     } finally {
       setArchivingWorkstream(false);
+    }
+  };
+
+  const openWorkstreamBatch = (
+    label: string,
+    filter: WorkstreamBatchFilter,
+    update: WorkstreamBatchUpdate,
+    visibleCount: number,
+  ): void => {
+    const generation = batchPreviewGeneration.current + 1;
+    batchPreviewGeneration.current = generation;
+    setBatchTarget({ label, filter, update, matchedCount: visibleCount });
+    setBatchPreviewing(true);
+    setBatchError(null);
+    void onPreviewWorkstreamBatch(filter).then((matchedCount) => {
+      if (batchPreviewGeneration.current !== generation) return;
+      setBatchTarget((current) => current ? { ...current, matchedCount } : null);
+    }).catch((error: unknown) => {
+      if (batchPreviewGeneration.current !== generation) return;
+      setBatchError(error instanceof Error ? error.message : 'The work streams could not be counted.');
+    }).finally(() => {
+      if (batchPreviewGeneration.current === generation) setBatchPreviewing(false);
+    });
+  };
+
+  const closeWorkstreamBatch = (): void => {
+    if (batchApplying) return;
+    batchPreviewGeneration.current += 1;
+    setBatchTarget(null);
+    setBatchError(null);
+    setBatchPreviewing(false);
+  };
+
+  const submitWorkstreamBatch = async (): Promise<void> => {
+    if (!batchTarget || batchPreviewing || batchTarget.matchedCount === 0) return;
+    setBatchApplying(true);
+    setBatchError(null);
+    try {
+      await onApplyWorkstreamBatch(crypto.randomUUID(), batchTarget.filter, batchTarget.update);
+      setBatchTarget(null);
+    } catch (error) {
+      setBatchError(error instanceof Error ? error.message : 'The work streams could not be updated.');
+    } finally {
+      setBatchApplying(false);
     }
   };
 
@@ -1533,7 +1610,51 @@ export function Sidebar({
             ) : (
               groups.map((group) => (
                 <div className="sidebar-group" key={group.label}>
-                  <h3>{group.label}</h3>
+                  <div className="sidebar-group-heading">
+                    <h3>{group.label}</h3>
+                    <DropdownMenu.Root>
+                      <DropdownMenu.Trigger asChild>
+                        <button
+                          aria-label={`${group.label} actions`}
+                          className="sidebar-group-menu-trigger window-no-drag"
+                          type="button"
+                        >
+                          <IconDots aria-hidden="true" size={16} stroke={1.8} />
+                        </button>
+                      </DropdownMenu.Trigger>
+                      <DropdownMenu.Portal>
+                        <DropdownMenu.Content
+                          align="end"
+                          className="menu-content"
+                          side="bottom"
+                          sideOffset={4}
+                        >
+                          <DropdownMenu.Item
+                            className="menu-item"
+                            onSelect={() => openWorkstreamBatch(
+                              group.label,
+                              group.filter,
+                              { kind: 'mark_read' },
+                              group.streams.filter((item) => item.type === 'workstream').length,
+                            )}
+                          >
+                            Mark all as read
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Item
+                            className="menu-item menu-item-danger"
+                            onSelect={() => openWorkstreamBatch(
+                              group.label,
+                              group.filter,
+                              { kind: 'archive' },
+                              group.streams.filter((item) => item.type === 'workstream').length,
+                            )}
+                          >
+                            Archive all
+                          </DropdownMenu.Item>
+                        </DropdownMenu.Content>
+                      </DropdownMenu.Portal>
+                    </DropdownMenu.Root>
+                  </div>
                   <div className="sidebar-list">
                     {group.streams.map((item) => item.type === 'note' ? (
                       <NoteRow
@@ -1716,6 +1837,34 @@ export function Sidebar({
           resource, and stops reaching the agent. Its transcript is kept, but Rally has no way to
           bring the note back yet.
         </p>
+      </Modal>
+      <Modal
+        footer={(
+          <>
+            <Button disabled={batchApplying} onClick={closeWorkstreamBatch}>Cancel</Button>
+            <Button
+              className={batchTarget?.update.kind === 'archive' ? 'button-danger' : 'button-primary'}
+              disabled={batchApplying || batchPreviewing || Boolean(batchError) || batchTarget?.matchedCount === 0}
+              onClick={() => void submitWorkstreamBatch()}
+            >
+              Continue
+            </Button>
+          </>
+        )}
+        onOpenChange={(open) => {
+          if (!open) closeWorkstreamBatch();
+        }}
+        open={Boolean(batchTarget)}
+        title={batchTarget?.update.kind === 'archive' ? 'Archive all' : 'Mark all as read'}
+      >
+        <p className="modal-copy">
+          This is a mass change. {batchTarget?.matchedCount ?? 0}{' '}
+          {(batchTarget?.matchedCount ?? 0) === 1 ? 'work stream' : 'work streams'} in{' '}
+          <strong>{batchTarget?.label}</strong> will be{' '}
+          {batchTarget?.update.kind === 'archive' ? 'archived' : 'marked as read'}. Are you sure?
+        </p>
+        {batchPreviewing && <p aria-live="polite" className="modal-copy">Checking the current total…</p>}
+        {batchError && <InlineError>{batchError}</InlineError>}
       </Modal>
       <Modal
         footer={(

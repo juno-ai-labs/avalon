@@ -2,6 +2,7 @@ import {
   IdSchema,
   WorkspaceWorkstreamCursorSchema,
   WorkspaceWorkstreamStateVersionSchema,
+  WorkstreamBatchFilterSchema,
   WorkstreamSchema,
 } from "@rally/contracts";
 import { z } from "zod";
@@ -56,6 +57,19 @@ export const WorkspaceDirectoryReadableIdsRequestSchema = z.object({
 
 export const WorkspaceDirectoryReadableIdsResultSchema = z.object({
   items: z.array(IdSchema).max(100),
+}).strict();
+
+export const WorkspaceDirectoryBatchTargetsRequestSchema = z.object({
+  workspaceId: IdSchema,
+  userId: IdSchema,
+  filter: WorkstreamBatchFilterSchema,
+}).strict();
+
+export const WorkspaceDirectoryBatchTargetsResultSchema = z.object({
+  // Intentionally uncapped: the public filter may legitimately select the
+  // whole sidebar. The regional Worker chunks these ids into Queue sendBatch
+  // calls at the platform's transport boundary instead of truncating them.
+  items: z.array(IdSchema),
 }).strict();
 
 export const WorkspaceDirectoryVisibleIdsRequestSchema = z.object({
@@ -305,6 +319,7 @@ export type WorkspaceDirectoryListRequest = z.infer<typeof WorkspaceDirectoryLis
 export type WorkspaceDirectoryPage = z.infer<typeof WorkspaceDirectoryPageSchema>;
 export type WorkspaceDirectoryVisibilityRequest = z.infer<typeof WorkspaceDirectoryVisibilityRequestSchema>;
 export type WorkspaceDirectoryReadableIdsRequest = z.infer<typeof WorkspaceDirectoryReadableIdsRequestSchema>;
+export type WorkspaceDirectoryBatchTargetsRequest = z.infer<typeof WorkspaceDirectoryBatchTargetsRequestSchema>;
 export type WorkspaceDirectoryReadableIdsResult = z.infer<typeof WorkspaceDirectoryReadableIdsResultSchema>;
 export type WorkspaceDirectoryVisibleIdsRequest = z.infer<typeof WorkspaceDirectoryVisibleIdsRequestSchema>;
 export type WorkspaceDirectoryVisibleIdsPage = z.infer<typeof WorkspaceDirectoryVisibleIdsPageSchema>;

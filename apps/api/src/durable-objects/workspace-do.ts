@@ -95,6 +95,8 @@ import { workspaceDOName } from "./names";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   WorkspaceDirectoryApplyRequestSchema,
+  WorkspaceDirectoryBatchTargetsRequestSchema,
+  WorkspaceDirectoryBatchTargetsResultSchema,
   WorkspaceDirectoryExistsRequestSchema,
   WorkspaceDirectoryApplyResultSchema,
   WorkspaceDirectoryDueRequestSchema,
@@ -126,6 +128,7 @@ import {
   WorkspaceRegionalEffectApplyRequestSchema,
   WorkspaceRegionalEffectApplyResultSchema,
   type WorkspaceDirectoryApplyRequest,
+  type WorkspaceDirectoryBatchTargetsRequest,
   type WorkspaceDirectoryApplyResult,
   type WorkspaceDirectoryDueRequest,
   type WorkspaceDirectoryExistsRequest,
@@ -2891,6 +2894,52 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceDirectoryListRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return WorkspaceDirectoryPageSchema.parse(this.listDirectory(request));
+  }
+
+  /**
+   * Resolve a generic member-visible filter once, inside the object that owns
+   * the cross-work-stream index. The caller turns each returned id into one
+   * Queue event; it never probes child objects to rediscover this list.
+   */
+  async batchUpdateTargets(input: WorkspaceDirectoryBatchTargetsRequest) {
+    await this.initialized;
+    const request = WorkspaceDirectoryBatchTargetsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const atOrAfter = request.filter.lastActivityAt?.atOrAfter;
+    const before = request.filter.lastActivityAt?.before;
+    const pinned = request.filter.pinned;
+    const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
+      `SELECT directory.workstream_id
+         FROM workspace_workstream_directory directory
+         LEFT JOIN workspace_workstream_viewers viewer
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?
+          AND viewer.authority_generation = directory.authority_generation
+         LEFT JOIN workspace_workstream_pins pin
+           ON pin.workstream_id = directory.workstream_id AND pin.user_id = ?
+        WHERE directory.archived_at IS NULL
+          AND (? = 1 OR directory.system_kind IS NULL)
+          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+          AND (? IS NULL OR directory.last_activity_at >= ?)
+          AND (? IS NULL OR directory.last_activity_at < ?)
+          AND (? IS NULL
+            OR (? = 1 AND pin.user_id IS NOT NULL)
+            OR (? = 0 AND pin.user_id IS NULL))
+        ORDER BY directory.workstream_id`,
+      request.userId,
+      request.userId,
+      request.filter.includeSystem ? 1 : 0,
+      atOrAfter ?? null,
+      atOrAfter ? Date.parse(atOrAfter) : 0,
+      before ?? null,
+      before ? Date.parse(before) : 0,
+      pinned === undefined ? null : Number(pinned),
+      Number(pinned ?? false),
+      Number(pinned ?? false),
+    ).toArray();
+    return WorkspaceDirectoryBatchTargetsResultSchema.parse({
+      items: rows.map((row) => row.workstream_id),
+    });
   }
 
   async canReadWorkstream(input: WorkspaceDirectoryVisibilityRequest): Promise<boolean> {

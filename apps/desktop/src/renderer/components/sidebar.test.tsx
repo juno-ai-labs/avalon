@@ -79,11 +79,13 @@ const defaultActions = {
   onArchiveDraftAutomation: async (): Promise<void> => undefined,
   onArchiveNote: async (): Promise<void> => undefined,
   onArchiveWorkstream: async (): Promise<void> => undefined,
+  onApplyWorkstreamBatch: async (): Promise<number> => 0,
   onChangeNoteScope: async (): Promise<void> => undefined,
   onChangeWorkstreamScope: async (): Promise<void> => undefined,
   onDeleteAutomation: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
   onOpenMeetingNotes: async (): Promise<void> => undefined,
+  onPreviewWorkstreamBatch: async (): Promise<number> => 0,
   onPinWorkstream: async (): Promise<boolean> => true,
   onReorderPinnedWorkstreams: async (): Promise<void> => undefined,
   onRenameWorkstream: async (): Promise<void> => undefined,
@@ -661,6 +663,57 @@ describe('Sidebar work-stream markers', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it.each([
+    ['Mark all as read', 'mark_read', 'marked as read'],
+    ['Archive all', 'archive', 'archived'],
+  ] as const)('confirms the %s grouping action with the server-side total', async (
+    menuLabel,
+    updateKind,
+    resultCopy,
+  ) => {
+    const onPreviewWorkstreamBatch = vi.fn(async () => 20);
+    const onApplyWorkstreamBatch = vi.fn(async () => 20);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onApplyWorkstreamBatch={onApplyWorkstreamBatch}
+            onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('recent', 'Recent planning', 'completed', 'ad_hoc', new Date().toISOString())]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Last hour actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: menuLabel }));
+
+    const dialog = await screen.findByRole('dialog', { name: menuLabel });
+    await waitFor(() => expect(dialog).toHaveTextContent(
+      new RegExp(`20 work streams.*will be ${resultCopy}`, 'u'),
+    ));
+    expect(onPreviewWorkstreamBatch).toHaveBeenCalledWith(expect.objectContaining({
+      pinned: false,
+      includeSystem: false,
+      lastActivityAt: expect.objectContaining({ atOrAfter: expect.any(String) }),
+    }));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(onApplyWorkstreamBatch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ pinned: false, includeSystem: false }),
+      { kind: updateKind },
+    ));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: menuLabel })).not.toBeInTheDocument());
   });
 
   it('shows the requested automation actions on right click and runs the automation', async () => {

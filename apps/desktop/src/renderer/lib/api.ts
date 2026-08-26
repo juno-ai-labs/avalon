@@ -6,6 +6,8 @@ import {
   AutomationDraftStateSchema as WireAutomationDraftStateSchema,
   AutomationDraftStreamEventSchema as WireAutomationDraftStreamEventSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
+  WorkstreamBatchAcceptedSchema as WireWorkstreamBatchAcceptedSchema,
+  WorkstreamBatchPreviewSchema as WireWorkstreamBatchPreviewSchema,
   ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
   ConnectionSchema as WireConnectionSchema,
   GitHubRepositoryAccessSettingsSchema as WireGitHubRepositoryAccessSettingsSchema,
@@ -47,6 +49,8 @@ import {
   type Resource as WireResource,
   type User as WireUser,
   type Workstream as WireWorkstream,
+  type WorkstreamBatchFilter,
+  type WorkstreamBatchUpdate,
   type WorkstreamDetail as WireWorkstreamDetail,
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
 } from '@rally/contracts';
@@ -1273,6 +1277,28 @@ export class RallyApi {
       schema: WireWorkstreamSchema,
     });
     return mapWorkstreamSummary(workstream);
+  }
+
+  async previewWorkstreamBatch(filter: WorkstreamBatchFilter): Promise<number> {
+    const result = await this.request('/workstreams/batch/preview', {
+      method: 'POST',
+      body: { filter },
+      schema: WireWorkstreamBatchPreviewSchema,
+    });
+    return result.matchedCount;
+  }
+
+  async applyWorkstreamBatch(
+    operationId: string,
+    filter: WorkstreamBatchFilter,
+    update: WorkstreamBatchUpdate,
+  ): Promise<number> {
+    const result = await this.request('/workstreams/batch', {
+      method: 'POST',
+      body: { operationId, filter, update },
+      schema: WireWorkstreamBatchAcceptedSchema,
+    });
+    return result.enqueuedCount;
   }
 
   async acknowledgeWorkstreamRead(

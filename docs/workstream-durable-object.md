@@ -660,6 +660,8 @@ upgrades because that platform flow must return a 101 `Response`; lint rejects
 | WorkstreamDO | BlockDashboardAgent | typed RPC | parent dispatch outbox; block dispatch ledger |
 | BlockDashboardAgent | SubstreamAgent("0") | typed RPC | block run ledger plus source-local runtime/tool receipts |
 | BlockDashboardAgent | WorkstreamDO | typed RPC | terminal outcome retained until the parent result receipt accepts it |
+| regional Worker | regional Queue | Cloudflare Queue | a generic member-visible work-stream filter is resolved once in WorkspaceDO, then one bounded update event is published per selected work stream |
+| regional Queue Worker | SubstreamAgent("0") | typed RPC | an idempotent, receipt-backed mark-read or archive transaction against that work stream's authoritative SQLite state; membership is rechecked at delivery |
 | WorkstreamDO | regional Worker | Cloudflare Queue | every directory/user/feedback/activity/mention change is retained in the parent outbox; the message is an opaque UUIDv7 wake-up |
 | regional Queue Worker | WorkspaceDO | typed RPC | unordered directory/user/feedback envelope; generation + per-key waterline, hash receipt, and authoritative directory/index transaction |
 | regional Queue Worker | WorkspaceDO | typed RPC | first-party activity event, all target edges, and the replay receipt commit atomically; the object-local sequence is the digest/feed cursor |
@@ -1139,6 +1141,39 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-26 — Group actions use one generic filter and queued per-stream updates
+
+**What changed:** The work-stream API now accepts a reusable visibility, pin,
+and half-open activity-time filter for both preview and application, plus a
+discriminated update. WorkspaceDO resolves that filter in one index query. The
+regional Worker publishes one event per selected work stream through the
+existing regional Queue, and each consumer delivery asks that work stream's
+main SubstreamAgent to apply the update in its authoritative SQLite transaction.
+Per-object receipts make delivery idempotent; archive also stops an active run,
+and both updates reuse the existing regional-effect outbox for sidebar and
+socket convergence.
+
+**Why:** Recency headers need mass actions over rows the client may not have
+loaded, but neither a browser loop nor an API loop may read and mutate one work
+stream at a time. The workspace directory already owns the complete,
+member-visible cross-work-stream index, while each child still owns its product
+state. One directory query followed by queued independent events preserves
+both authorities and lets Queue provide buffering and delivery isolation.
+
+**Considered and rejected:** Dedicated `this-week` or `mark-group-read`
+endpoints would encode one sidebar layout into the backend. A synchronous
+Worker loop issuing one child RPC per target would hold the request open and
+turn partial fan-out into an HTTP retry problem. A direct workspace-wide SQL
+mutation is impossible because the rows belong to separate Durable Objects.
+
+**Consequences, and what a future change has to respect:** New groupings build
+the generic filter; they do not add routes. New supported mutations extend the
+shared update union and the one child transaction. Preview and apply resolve
+their own current target set, so the confirmation count is advisory and the
+accepted response reports the exact number actually enqueued. Queue delivery
+may outlive the requesting session, so it rechecks active membership and never
+trusts delivery uniqueness or order.
 
 ### 2026-08-26 — Notification lifecycle becomes a closed WorkspaceDO protocol
 

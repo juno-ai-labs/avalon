@@ -5,6 +5,7 @@ import {
   AcknowledgeWorkstreamReadRequestSchema,
   ActivitySuggestionSchema,
   AddParticipantRequestSchema,
+  ApplyWorkstreamBatchRequestSchema,
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
   CreateWorkstreamRequestSchema,
@@ -14,12 +15,15 @@ import {
   BlockDashboardSchema,
   MessageSchema,
   ParticipantSchema,
+  PreviewWorkstreamBatchRequestSchema,
   ReorderWorkstreamPinsRequestSchema,
   ResourceSchema,
   UpdateBlockDashboardPreferenceRequestSchema,
   UpdateBlockDashboardRequestSchema,
   UpdateWorkstreamRequestSchema,
   WorkstreamBootSchema,
+  WorkstreamBatchAcceptedSchema,
+  WorkstreamBatchPreviewSchema,
   WorkstreamSchema,
   WorkspaceWorkstreamCursorSchema,
 } from "@rally/contracts";
@@ -33,6 +37,7 @@ import { WorkstreamService } from "../services/workstream-service";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import { WorkstreamDirectoryService } from "../services/workstream-directory-service";
 import { WorkstreamObjectCreationService } from "../services/workstream-object-creation-service";
+import { WorkstreamBatchUpdateService } from "../services/workstream-batch-update";
 import { requireOpenWorkstreamAuthority } from "../services/workstream-authority";
 import { BlockDashboardService } from "../services/block-dashboard-service";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperationId } from '../telemetry/api-emitter';
@@ -220,6 +225,18 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
 });
 // Registered ahead of every `/:id` route so the literal segment is never read
 // as an id, whatever order Hono would otherwise resolve them in.
+workstreamRoutes.post("/batch/preview", zValidator("json", PreviewWorkstreamBatchRequestSchema), async (c) => {
+  await requireOpenWorkstreamAuthority(c.env);
+  const result = await new WorkstreamBatchUpdateService(c.env, getAuth(c))
+    .preview(c.req.valid("json").filter);
+  return c.json(WorkstreamBatchPreviewSchema.parse(result));
+});
+workstreamRoutes.post("/batch", zValidator("json", ApplyWorkstreamBatchRequestSchema), async (c) => {
+  await requireOpenWorkstreamAuthority(c.env);
+  const result = await new WorkstreamBatchUpdateService(c.env, getAuth(c))
+    .enqueue(c.req.valid("json"));
+  return c.json(WorkstreamBatchAcceptedSchema.parse(result), 202);
+});
 workstreamRoutes.put("/pins", zValidator("json", ReorderWorkstreamPinsRequestSchema), async (c) => {
   await requireOpenWorkstreamAuthority(c.env);
   const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).reorderPins(c.req.valid("json").workstreamIds);
