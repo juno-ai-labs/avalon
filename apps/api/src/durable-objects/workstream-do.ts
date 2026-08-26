@@ -25,7 +25,7 @@ import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace
 import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
-import { logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   applyDurableObjectSqliteMigrations,
@@ -970,7 +970,16 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
             );
           }
         });
-      } catch {
+        const metadata = this.metadataRow();
+        logInfo(this.env, "workstream_outbox_batch_enqueued", {
+          workspace_id: metadata?.workspace_id ?? null,
+          workstream_id: metadata?.workstream_id ?? null,
+          message_ids: due.map((effect) => effect.messageId),
+          effect_kinds: due.map((effect) => effect.effect.kind),
+          effect_count: due.length,
+          outcome: "queued",
+        });
+      } catch (error) {
         const retryAt = Date.now() + RETRY_BASE_MS;
         this.state.storage.transactionSync(() => {
           for (const effect of due) {
@@ -982,6 +991,17 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
               effect.payloadHash,
             );
           }
+        });
+        const metadata = this.metadataRow();
+        logWarn(this.env, "workstream_outbox_enqueue_failed", {
+          workspace_id: metadata?.workspace_id ?? null,
+          workstream_id: metadata?.workstream_id ?? null,
+          message_ids: due.map((effect) => effect.messageId),
+          effect_kinds: due.map((effect) => effect.effect.kind),
+          effect_count: due.length,
+          retry_at: new Date(retryAt).toISOString(),
+          reason: diagnosticErrorCode(error, "queue_send_failed"),
+          error_name: error instanceof Error ? error.name : typeof error,
         });
       }
     }

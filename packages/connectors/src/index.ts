@@ -20,10 +20,12 @@ import {
   type ConnectorAdapter,
   type ConnectorConnectionContext,
   type ConnectorPollingActivitySource,
+  type ConnectorObserver,
   type ConnectorToolContext,
   type ResolvedConnectorAdapter,
 } from "./types";
 import { isProviderCredentialRejection, withProviderReauthorization } from "./provider-utils";
+import { instrumentConnectorAdapter, instrumentConnectorFetch } from "./observability";
 export {
   isProviderCredentialRejection,
   isRevokedGrantError,
@@ -85,10 +87,20 @@ export {
   type ConnectorNativeAgentAdapter,
   type ConnectorNativeAgentExecutionContext,
   type ConnectorMessagingAgentAdapter,
+  type ConnectorLogLevel,
+  type ConnectorObserver,
   type ConnectorVerifiedActivityWebhook,
   type ConnectorWebhookActivitySource,
   type ConnectorWebhookVerificationInput,
 } from "./types";
+export {
+  connectorObservationErrorCode,
+  connectorObservationFailureLevel,
+  instrumentConnectorAdapter,
+  instrumentConnectorFetch,
+  observeConnectorConnection,
+  observeConnector,
+} from "./observability";
 export {
   createSlackConnector,
   joinAllSlackPublicChannels,
@@ -4344,7 +4356,7 @@ export function createGenericWebhookConnector(): ConnectorAdapter {
 export class ConnectorRegistry {
   private readonly adapters = new Map<string, ResolvedConnectorAdapter>();
 
-  constructor(adapters: ConnectorAdapter[]) {
+  constructor(adapters: ConnectorAdapter[], observer?: ConnectorObserver) {
     for (const adapter of adapters) {
       const manifest = ConnectorManifestSchema.parse(adapter.manifest);
       if (manifest.supportsPolling && manifest.activityTypes.length > 0 && !adapter.pollingActivity && !adapter.poll) {
@@ -4484,7 +4496,10 @@ export class ConnectorRegistry {
           );
         }
       }
-      this.adapters.set(manifest.type, { ...adapter, manifest });
+      this.adapters.set(
+        manifest.type,
+        instrumentConnectorAdapter({ ...adapter, manifest }, observer) as ResolvedConnectorAdapter,
+      );
     }
   }
 
@@ -4507,6 +4522,7 @@ export function connectorSupportsSurface(
 }
 
 export function createConnectorRegistry(input: {
+  observer?: ConnectorObserver;
   granola?: GranolaConnectorConfig;
   google?: GoogleConnectorConfig;
   github?: GitHubConnectorConfig;
@@ -4516,14 +4532,63 @@ export function createConnectorRegistry(input: {
   x?: XConnectorConfig;
 } = {}): ConnectorRegistry {
   const adapters: ConnectorAdapter[] = [createGenericWebhookConnector()];
-  if (input.granola) adapters.push(createGranolaConnector(input.granola));
-  if (input.google) adapters.push(createGoogleConnector(input.google));
-  if (input.github) adapters.push(createGitHubConnector(input.github));
-  if (input.linear) adapters.push(createLinearConnector(input.linear));
-  if (input.notion) adapters.push(createNotionConnector(input.notion));
-  if (input.slack) adapters.push(createSlackConnector(input.slack));
-  if (input.x) adapters.push(createXConnector(input.x));
-  return new ConnectorRegistry(adapters);
+  if (input.granola) adapters.push(createGranolaConnector({
+    ...input.granola,
+    fetch: instrumentConnectorFetch(
+      "granola",
+      input.granola.fetch ?? globalThis.fetch,
+      input.observer,
+    ),
+  }));
+  if (input.google) adapters.push(createGoogleConnector({
+    ...input.google,
+    fetch: instrumentConnectorFetch(
+      "google",
+      input.google.fetch ?? globalThis.fetch,
+      input.observer,
+    ),
+  }));
+  if (input.github) adapters.push(createGitHubConnector({
+    ...input.github,
+    fetch: instrumentConnectorFetch(
+      "github",
+      input.github.fetch ?? globalThis.fetch,
+      input.observer,
+    ),
+  }));
+  if (input.linear) adapters.push(createLinearConnector({
+    ...input.linear,
+    fetch: instrumentConnectorFetch(
+      "linear",
+      input.linear.fetch ?? globalThis.fetch,
+      input.observer,
+    ),
+  }));
+  if (input.notion) adapters.push(createNotionConnector({
+    ...input.notion,
+    fetch: instrumentConnectorFetch(
+      "notion",
+      input.notion.fetch ?? globalThis.fetch,
+      input.observer,
+    ),
+  }));
+  if (input.slack) adapters.push(createSlackConnector({
+    ...input.slack,
+    fetch: instrumentConnectorFetch(
+      "slack",
+      input.slack.fetch ?? globalThis.fetch,
+      input.observer,
+    ),
+  }));
+  if (input.x) adapters.push(createXConnector({
+    ...input.x,
+    fetch: instrumentConnectorFetch(
+      "x",
+      input.x.fetch ?? globalThis.fetch,
+      input.observer,
+    ),
+  }));
+  return new ConnectorRegistry(adapters, input.observer);
 }
 
 export class CredentialCipher {
