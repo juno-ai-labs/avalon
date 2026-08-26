@@ -73,6 +73,8 @@ export interface CreateWorkstreamMessageInput {
 
 export interface WorkstreamSocketConnection {
   state: SocketState;
+  /** The workstream handler can admit sends to the workspace queue. The painted
+   * telemetry milestone is reported separately after the consuming UI commits. */
   sendReady: boolean;
   workspaceSocketState: 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
   activeCompaction: AgentCompactionState | null;

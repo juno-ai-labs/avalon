@@ -678,7 +678,8 @@ message, URL, or server response.
 ### 2026-08-25 — Route abandonment and retries cannot corrupt opening latency
 
 **What changed:** A click attempt now terminates as `abandoned` when navigation
-leaves its work stream for another surface or its owning session ends. Painted
+leaves its work stream for another surface, its owning workspace is replaced by
+a service-error screen, or its owning session ends. Painted
 feed reporting reschedules after an effect cleanup without re-latching data
 readiness, which preserves the terminal event under React StrictMode and any
 production dependency change inside the two-frame window. Detail retries now
@@ -697,7 +698,8 @@ instrumentation needs to explain.
 would claim another work stream caused it; treating it as `load_failed` would
 claim a service failure. WorkstreamScreen unmount cleanup was also rejected
 because StrictMode deliberately simulates that cleanup without the reader
-leaving. Route and session observation represent the actual abandonment. A
+leaving. Route, workspace-error, and session observation represent the actual
+abandonment. A
 single repeated request ID was rejected because the tracing contract defines it
 per call; the operation header already carries the longer click lifetime.
 
