@@ -1,6 +1,7 @@
 import { ProductFeatureFlagKeySchema } from '@rally/contracts';
 import { Hono } from 'hono';
 import { accessFailureMessage, readAccessConfiguration, verifyAccessRequest, type AccessPrincipal } from './access';
+import { listDeadLetterQueues, peekDeadLetterQueue } from './cloudflare-queue-admin';
 import { searchUsers, searchWorkspaces } from './directory';
 import { devAuthEnabled, type Env } from './env';
 import { listManagedFlags, updateManagedFlag } from './flagship';
@@ -29,6 +30,15 @@ app.get('/api/session', (c) => c.json({
 }));
 
 app.get('/api/flags', async (c) => c.json({ flags: await listManagedFlags(c.env) }));
+
+app.get('/api/queues/dead-letters', async (c) => c.json({ queues: await listDeadLetterQueues(c.env) }));
+
+app.post('/api/queues/dead-letters/:id/peek', async (c) => {
+  const origin = c.req.header('origin');
+  if (!origin || origin !== new URL(c.req.url).origin) return c.json({ error: 'same_origin_required' }, 403);
+  const messages = await peekDeadLetterQueue(c.env, decodeURIComponent(c.req.param('id')));
+  return c.json({ messages });
+});
 
 app.get('/api/directory/users', async (c) => {
   const query = c.req.query('q')?.trim() ?? '';
