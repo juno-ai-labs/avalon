@@ -629,11 +629,13 @@ fan one raw provider delivery into multiple workspace targets only when the
 provider account is independently installed in each workspace; every normalized
 event then belongs to exactly one object. The regional Queue carries the bounded
 normalized event and hash; its consumer commits the complete event and replay
-receipt through typed RPC before creating a deterministic connector-event
-Workflow. Large/raw bytes remain in R2. Regional D1 carries only opaque ingress
-routes and provider-global receipts needed before one workspace is known; no
-live event body is written there. Connection-scoped webhook replay receipts live
-in WorkspaceDO. Legacy D1 activity bodies are imported and scrubbed during the maintenance
+receipt through typed RPC before sending an ID-only process pointer back to that
+same Queue. A later delivery claims, loads, and settles the canonical event
+through typed WorkspaceDO RPCs; no new per-event Workflow is created. Large/raw
+bytes remain in R2. Regional D1 carries only opaque ingress routes and
+provider-global receipts needed before one workspace is known; no live event
+body is written there. Connection-scoped webhook replay receipts live in
+WorkspaceDO. Legacy D1 activity bodies are imported and scrubbed during the maintenance
 cutover. When an event is attached/admitted to a
 particular work stream, the child stores its delivery receipt and relevant
 resource link; WorkstreamDO sends that link through Queue to WorkspaceDO's
@@ -912,7 +914,7 @@ already have committed across the object boundary.
 | `workspace_identity` | Singleton row (`id = 1`) binding the object to workspace, region, and immutable placement affinity. |
 | `workspace_socket_ticket_receipts` | One consumed workspace-scoped ticket including user, expiry, and consumption time; its expiry index supports bounded cleanup. |
 | `workspace_sync_events` | Monotonic `waterline`, UUIDv7 `event_id`, JSON topic set, and occurrence time for the bounded 1,024-event reconciliation window. Rows are invalidations only, never workspace data copies. |
-| `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and Workflow claim/terminal state. It is never shared with another workspace. |
+| `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and processing claim/terminal state. It is never shared with another workspace. |
 | `workspace_connector_event_ingress_receipts` | One ingress UUID/content-hash to canonical-event mapping. It makes provider replay and at-least-once Queue delivery idempotent even when a second delivery used a different UUIDv7; ingest opportunistically reaps the oldest receipts after 30 days while the provider/dedupe keys continue to resolve the canonical event. |
 | `connector_connections`, `external_user_identities` | Workspace connector credentials, cursor/configuration/health, model plugin identity, refresh lease, and verified provider-user mappings. Global/provider ingress routes retain only the opaque fields needed to find this object. |
 | `slack_agent_*`, `slack_delivery_preferences`, `slack_user_links`, `slack_ingress_jobs`, `slack_link_challenges`, `slack_unfurled_links` | Workspace-local Slack policy, allowlist, identity, execution session, queued handoff, delivery preference, and shared-link state. Global Slack installation routing remains outside the object because the workspace is not known at initial ingress. |
