@@ -136,10 +136,12 @@ five-minute clock restarts each time the work stream leaves the foreground;
 background-running conversation streams remain connected beyond it. Holding a
 pointer over any sidebar work-stream row for one second warms only its
 WorkstreamDO control socket before navigation. The SubstreamAgent feed remains
-closed until the work stream is actually opened and its initial reads succeed,
-because subscribing that feed publishes the user as a current viewer. Leaving,
-cancelling the pointer, unmounting the row, or opening it before the second
-passes cancels the warm-up. Once the control socket opens, it can remain for up
+closed until the work stream is actually selected, because subscribing that
+feed publishes the user as a current viewer. Selection immediately admits the
+feed and starts its snapshot while the independently owned control socket
+connects alongside it; neither waits for detail REST or the other's metadata.
+Leaving, cancelling the pointer, unmounting the row, or opening it before the
+second passes cancels the warm-up. Once the control socket opens, it can remain for up
 to five minutes, and a newly qualified hover replaces any other unopened warm
 socket; speculative warming is therefore bounded to one connection. If the
 work stream opens, the retained owner adds its feed without reopening the warm
@@ -530,6 +532,29 @@ what that leaves exposed.
 
 ## Changelog
 
+### 2026-08-25 — Selection immediately admits the feed
+
+**What changed:** The selected work stream admits its pooled SubstreamAgent
+feed immediately, before any detail or transcript query succeeds. Its first
+snapshot fills both renderer caches and makes the feed/composer surface usable.
+The WorkstreamDO control socket starts independently; the feed does not await
+its viewer preference. Hover remains control-only.
+
+**Why:** The former gate waited for a REST boot from SubstreamAgent before
+opening a socket to the same SubstreamAgent for another boot. That serialized
+duplicate authority work on every cold navigation and put the two-second P90
+goal behind two complete network paths.
+
+**Considered and rejected:** Parallel REST and socket boots retain duplicate
+snapshot assembly and an ambiguous canonical winner. Hover feed warm-up would
+publish presence without an open. Making HyperSight preference part of the feed
+snapshot would add a cross-object call to the critical path.
+
+**Consequences:** Presence begins at selection, which is the user action it now
+represents. An unavailable-state Retry can still read the REST recovery twin;
+ordinary navigation does not. Retained sockets and access-revocation behavior
+are unchanged.
+
 ### 2026-08-25 — Opening telemetry names command-queue readiness
 
 **What changed:** `workstream_send_ready` records when a sidebar-opened composer
@@ -599,13 +624,12 @@ boundary: hover still never starts the SubstreamAgent feed.
 connections. Each start can join its regional ticket request, while the
 existing `realtime_socket_state` event remains the source for connected,
 retrying, and stopped outcomes. Both are Product analytics and honor opt-out.
-
 ### 2026-08-25 — A deliberate sidebar hover warms the work-stream control socket
 
 **What changed:** Holding the pointer over a sidebar work-stream row for one
 second opens its pooled WorkstreamDO metadata socket. A shorter hover opens
-nothing. The SubstreamAgent feed is added only after the work stream is opened
-and its initial reads succeed; the already-warm control socket is reused.
+nothing. The SubstreamAgent feed is added when the work stream is selected; the
+already-warm control socket is reused.
 
 **Why:** The five-minute pool removed the repeat cost when switching back to a
 work stream, but the first switch to a listed work stream still waited for its

@@ -266,24 +266,13 @@ workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
     },
   }, async (span) => {
     const client = await authoritativeWorkstreamClient(c, id, { span, flow: "workstream_open" });
-    // Everything an open needs, in one response. The room answers the detail and
-    // both transcript windows in a single call; the panel preference is
-    // WorkstreamDO's row, so it is fetched beside that rather than the room
-    // reaching sideways for it. Issued together, so folding four former
-    // requests in here costs one parallel binding call and no round trip.
-    const [boot, blockDashboardPreference] = await span.step(
+    // This route is the socket-first reader's explicit recovery twin. The room
+    // answers detail and both transcript windows in one call. HyperSight's
+    // optional preference belongs to the independently-started WorkstreamDO
+    // control socket and must never extend recovery latency either.
+    const boot = await span.step(
       "workstream.detail.load",
-      () => Promise.all([
-        client.boot(),
-        // Never allowed to fail the open. This is a second object answering an
-        // optional field that the control socket's boot frame also carries, so
-        // a preference WorkstreamDO cannot produce is a panel that stays shut
-        // for a moment — not a work stream that will not open. Before the two
-        // calls shared a request that was true by construction; folding them
-        // together is what made it something to state.
-        new BlockDashboardService(c.env, getAuth(c)).preferenceForDetail(id)
-          .catch(() => undefined),
-      ]),
+      () => client.boot(),
     );
     span.setAttributes({
       "rally.workstream.participant_count": boot.workstream.participants.length,
@@ -296,7 +285,6 @@ workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
       ...boot.workstream,
       messageFeed: boot.messageFeed,
       resumeFeed: boot.resumeFeed,
-      blockDashboardPreference,
     }));
   });
 });

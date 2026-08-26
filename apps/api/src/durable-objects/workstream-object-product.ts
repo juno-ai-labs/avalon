@@ -855,9 +855,8 @@ export class WorkstreamObjectProductService {
    *
    * **Never allowed to fail the open.** This is bookkeeping about a dot running
    * inside what every caller treats as a read, so a marker that stays lit until
-   * the next open is the better failure — the same rule
-   * `GET /workstreams/:id` already applies to the block-dashboard preference it
-   * fetches alongside the detail.
+   * the next open is the better failure. It must not turn an otherwise valid
+   * socket snapshot or REST recovery boot into an unavailable work stream.
    *
    * Not a guard against the authority fence, which was the first suspicion:
    * `commitWithRegionalEffects` refuses a non-authoritative object, but the

@@ -88,27 +88,6 @@ export class BlockDashboardService {
     return loadBlockDashboard(this.env, this.auth.workspaceId, workstreamId);
   }
 
-  /**
-   * The viewer's panel preference, for embedding in a work-stream detail that
-   * is being authorized anyway.
-   *
-   * Deliberately without its own visibility check: the only caller runs this
-   * beside `client.get()`, which authorizes in the room and rejects the whole
-   * request if this viewer may not read the work stream. Repeating the check
-   * would add a WorkspaceDO round trip to a path that exists to remove one. The
-   * exposure that buys is that WorkstreamDO is asked for a boolean before the
-   * sibling call rejects; the value never reaches the caller.
-   */
-  async preferenceForDetail(workstreamId: string): Promise<BlockDashboardPreference> {
-    const payload = await blockDashboardControl(this.env, this.auth.workspaceId, workstreamId, {
-      operation: "get_preference",
-      workspaceId: this.auth.workspaceId,
-      workstreamId,
-      userId: this.auth.userId,
-    });
-    return BlockDashboardPreferenceResponseSchema.parse(payload).preference;
-  }
-
   async updatePreference(
     workstreamId: string,
     input: UpdateBlockDashboardPreferenceRequest,

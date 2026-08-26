@@ -185,13 +185,12 @@ function workstreamDetail(overrides: Partial<WorkstreamDetail> = {}): Workstream
   };
 }
 
-/** `getWorkstream` answers the whole of an open now, not just the detail. */
+/** `getWorkstream` is the complete REST recovery twin of a socket snapshot. */
 function workstreamBoot(overrides: Partial<WorkstreamDetail> = {}): WorkstreamBoot {
   return {
     ...workstreamDetail(overrides),
     messageFeed: { items: [], nextCursor: null, newerCursor: null },
     resumeFeed: null,
-    blockDashboardPreference: { visible: false, updatedAt: null },
   };
 }
 

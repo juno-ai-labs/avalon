@@ -254,7 +254,7 @@ export function markWorkstreamFeedDataReady(workstreamId: string, readyAt = perf
 
 export function completeWorkstreamFeedPaint(
   workstreamId: string,
-  feedSource: 'feed_cache' | 'boot_payload' | 'legacy_page',
+  feedSource: 'feed_cache' | 'socket_snapshot' | 'boot_payload' | 'legacy_page',
   messageCount: ReturnType<typeof telemetryCountBucket>,
   paintedAt = performance.now(),
   socketLeaseId?: string,
@@ -360,7 +360,7 @@ export function reportWorkstreamSendReadyAfterPaint(
  */
 export function reportWorkstreamFeedAfterPaint(
   workstreamId: string,
-  feedSource: 'feed_cache' | 'boot_payload' | 'legacy_page',
+  feedSource: 'feed_cache' | 'socket_snapshot' | 'boot_payload' | 'legacy_page',
   messageCount: ReturnType<typeof telemetryCountBucket>,
   socketLeaseId?: string,
 ): () => void {
