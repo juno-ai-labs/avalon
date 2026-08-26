@@ -245,6 +245,30 @@ import {
   insertWorkstreamEffectReceipt,
 } from "./workspace-regional-effect-storage";
 import {
+  WorkspaceNotificationIntentClaimResultSchema,
+  WorkspaceNotificationIntentMaintenanceRequestSchema,
+  WorkspaceNotificationIntentMaintenanceTargetSchema,
+  WorkspaceNotificationIntentReapRequestSchema,
+  WorkspaceNotificationIntentReapResultSchema,
+  WorkspaceNotificationIntentRequestSchema,
+  WorkspaceNotificationIntentTransitionRequestSchema,
+  WorkspaceNotificationIntentTransitionResultSchema,
+  type WorkspaceNotificationIntentClaimResult,
+  type WorkspaceNotificationIntentMaintenanceRequest,
+  type WorkspaceNotificationIntentMaintenanceTarget,
+  type WorkspaceNotificationIntentReapRequest,
+  type WorkspaceNotificationIntentReapResult,
+  type WorkspaceNotificationIntentRequest,
+  type WorkspaceNotificationIntentTransitionRequest,
+  type WorkspaceNotificationIntentTransitionResult,
+} from "./workspace-notification-intent-protocol";
+import {
+  claimWorkspaceNotificationIntent as claimStoredWorkspaceNotificationIntent,
+  reapSettledWorkspaceNotificationIntents as reapStoredWorkspaceNotificationIntents,
+  transitionWorkspaceNotificationIntent as transitionStoredWorkspaceNotificationIntent,
+  workspaceNotificationIntentMaintenanceTarget as storedWorkspaceNotificationIntentMaintenanceTarget,
+} from "./workspace-notification-intent-storage";
+import {
   responseToRpcResult,
   type DurableObjectRpcResult,
 } from "./rpc-result";
@@ -268,6 +292,14 @@ const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
   "slack_link_challenges",
   "slack_unfurled_links",
 ]);
+
+const WORKSPACE_TYPED_RPC_ONLY_TABLES = ["workstream_notification_intents"] as const;
+
+function typedRpcOnlyWorkspaceTable(sql: string): string | null {
+  return WORKSPACE_TYPED_RPC_ONLY_TABLES.find((table) => (
+    new RegExp(`\\b${table}\\b`, "iu").test(sql)
+  )) ?? null;
+}
 
 /**
  * Which sidebar list a write invalidates, by the table it writes.
@@ -1633,6 +1665,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceEnv: this.localWorkspaceEnv(workspaceId),
       workspaceId,
       directory: this,
+      notificationIntents: this,
     };
   }
 
@@ -1665,6 +1698,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private runWorkspaceSql(request: WorkspaceRuntimeSqlRequest): WorkspaceRuntimeSqlResult[] {
     const lists = new Set<SidebarList>();
     for (const statement of request.statements) {
+      const typedOnlyTable = typedRpcOnlyWorkspaceTable(statement.sql);
+      if (typedOnlyTable) {
+        throw new Error(`workspace_runtime_table_requires_typed_rpc:${typedOnlyTable}`);
+      }
       const target = workspaceMutationTarget(statement.sql);
       const list = target === null ? undefined : SIDEBAR_LIST_SOURCE_TABLES.get(target);
       if (list) lists.add(list);
@@ -2753,6 +2790,100 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       await this.refreshProductAlarm();
     }
     return WorkspaceRegionalEffectApplyResultSchema.parse(result);
+  }
+
+  /** Claim one notification intent without exposing SQL or physical write counters. */
+  async claimWorkstreamNotificationIntent(
+    input: WorkspaceNotificationIntentRequest,
+  ): Promise<WorkspaceNotificationIntentClaimResult> {
+    await this.initialized;
+    const request = WorkspaceNotificationIntentRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = WorkspaceNotificationIntentClaimResultSchema.parse(
+      claimStoredWorkspaceNotificationIntent(
+        this.state.storage,
+        request,
+        uuidV7(),
+        Date.now(),
+      ),
+    );
+    logInfo(this.env, "workstream_notification_intent_claim", {
+      workspace_id: request.workspaceId,
+      notification_intent_id: request.intentId,
+      workstream_id: result.outcome === "missing" ? null : result.intent.workstreamId,
+      recipient_user_id: result.outcome === "missing" ? null : result.intent.recipientUserId,
+      kind: result.outcome === "missing" ? null : result.intent.notificationKind,
+      state: result.outcome === "missing" ? null : result.intent.state,
+      lease_id: result.outcome === "claimed" ? result.leaseId : null,
+      outcome: result.outcome,
+    });
+    // A terminal replay can mean the earlier settle committed and its
+    // post-commit schedule refresh failed. Reconcile here so that failure
+    // cannot strand the terminal receipt past its retention window.
+    if (result.outcome === "terminal") await this.refreshSchedule(request.workspaceId);
+    return result;
+  }
+
+  /** Apply one lease-fenced notification lifecycle transition. */
+  async transitionWorkstreamNotificationIntent(
+    input: WorkspaceNotificationIntentTransitionRequest,
+  ): Promise<WorkspaceNotificationIntentTransitionResult> {
+    await this.initialized;
+    const request = WorkspaceNotificationIntentTransitionRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = WorkspaceNotificationIntentTransitionResultSchema.parse(
+      transitionStoredWorkspaceNotificationIntent(this.state.storage, request, Date.now()),
+    );
+    logInfo(this.env, "workstream_notification_intent_transition", {
+      workspace_id: request.workspaceId,
+      notification_intent_id: request.intentId,
+      lease_id: request.leaseId,
+      transition: request.transition,
+      requested_state: request.transition === "settle" ? request.state : null,
+      error_code: request.transition === "settle" ? null : request.errorCode,
+      current_state: result.outcome === "lease_lost" ? result.state : null,
+      outcome: result.outcome,
+    });
+    if (
+      request.transition === "settle"
+      && (result.outcome === "applied"
+        || (result.outcome === "lease_lost"
+          && (result.state === "delivered" || result.state === "skipped")))
+    ) {
+      await this.refreshSchedule(request.workspaceId);
+    }
+    return result;
+  }
+
+  /** Derive the retention alarm target from terminal notification receipts. */
+  async notificationIntentMaintenanceTarget(
+    input: WorkspaceNotificationIntentMaintenanceRequest,
+  ): Promise<WorkspaceNotificationIntentMaintenanceTarget> {
+    await this.initialized;
+    const request = WorkspaceNotificationIntentMaintenanceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return WorkspaceNotificationIntentMaintenanceTargetSchema.parse(
+      storedWorkspaceNotificationIntentMaintenanceTarget(this.state.storage, request.workspaceId),
+    );
+  }
+
+  /** Reap terminal notification receipts and return exact deleted identities. */
+  async reapSettledWorkstreamNotificationIntents(
+    input: WorkspaceNotificationIntentReapRequest,
+  ): Promise<WorkspaceNotificationIntentReapResult> {
+    await this.initialized;
+    const request = WorkspaceNotificationIntentReapRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = WorkspaceNotificationIntentReapResultSchema.parse(
+      reapStoredWorkspaceNotificationIntents(this.state.storage, request, Date.now()),
+    );
+    logInfo(this.env, "workstream_notification_intent_reap", {
+      workspace_id: request.workspaceId,
+      reaped_intent_ids: result.reapedIntentIds,
+      reaped_count: result.reapedIntentIds.length,
+      outcome: result.reapedIntentIds.length > 0 ? "deleted" : "empty",
+    });
+    return result;
   }
 
   async listWorkstreams(input: WorkspaceDirectoryListRequest): Promise<WorkspaceDirectoryPage> {

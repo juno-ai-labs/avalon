@@ -13,13 +13,18 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace
 import { WorkspaceRegionalEffectApplyRequestSchema } from "../src/durable-objects/workspace-directory-protocol";
 import { applyWorkstreamRegionalEnvelope } from "../src/durable-objects/workspace-regional-effect-storage";
 import {
+  claimWorkspaceNotificationIntent,
+  reapSettledWorkspaceNotificationIntents,
+  transitionWorkspaceNotificationIntent,
+  workspaceNotificationIntentMaintenanceTarget,
+} from "../src/durable-objects/workspace-notification-intent-storage";
+import {
   consumeActivityQueue,
 } from "../src/queues/activity-consumer";
 import {
   applyWorkstreamRegionalEffect,
   loadWorkstreamRegionalEffect,
   processWorkstreamNotificationIntent,
-  reapSettledWorkspaceNotificationIntents,
 } from "../src/services/workstream-regional-effect-service";
 import {
   createCloudflareTestBinding,
@@ -110,7 +115,14 @@ function workspaceSyncNamespace(listable = true) {
     transactionSync: (body: () => unknown) => body(),
     sql: createTestSqlStorage(database),
   });
-  const refreshSchedule = vi.fn(async () => ({ alarmAt: null }));
+  const refreshSchedule = vi.fn(async (workspaceId?: string) => {
+    void workspaceId;
+    return { alarmAt: null };
+  });
+  const reapNotificationIntents = vi.fn(async (input: {
+    workspaceId: string;
+    limit: number;
+  }) => reapSettledWorkspaceNotificationIntents(storage, input, Date.now()));
   const namespace = createCloudflareTestBinding<DurableObjectNamespace>({
     idFromName: () => createTestDurableObjectId("workspace-sync"),
     get: () => ({
@@ -125,6 +137,27 @@ function workspaceSyncNamespace(listable = true) {
           WorkspaceRegionalEffectApplyRequestSchema.parse(input),
           Date.now(),
         )),
+      claimWorkstreamNotificationIntent: vi.fn(async (input: {
+        workspaceId: string;
+        intentId: string;
+      }) => {
+        const result = claimWorkspaceNotificationIntent(
+          storage,
+          input,
+          crypto.randomUUID(),
+          Date.now(),
+        );
+        if (result.outcome === "terminal") await refreshSchedule(input.workspaceId);
+        return result;
+      }),
+      transitionWorkstreamNotificationIntent: vi.fn(async (input) => {
+        const result = transitionWorkspaceNotificationIntent(storage, input, Date.now());
+        if (input.transition === "settle") await refreshSchedule(input.workspaceId);
+        return result;
+      }),
+      notificationIntentMaintenanceTarget: vi.fn(async (input: { workspaceId: string }) =>
+        workspaceNotificationIntentMaintenanceTarget(storage, input.workspaceId)),
+      reapSettledWorkstreamNotificationIntents: reapNotificationIntents,
       executeRuntimeSql: vi.fn(async (input: {
         statements: Array<{ sql: string; params: Array<string | number | null> }>;
       }) => ({
@@ -152,7 +185,7 @@ function workspaceSyncNamespace(listable = true) {
       })),
     }),
   });
-  return { database, namespace, refreshSchedule };
+  return { database, namespace, refreshSchedule, reapNotificationIntents };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -845,11 +878,6 @@ describe("the WorkstreamDO regional effect inbox", () => {
   it("reaps terminal mention shells only from their owning WorkspaceDO", async () => {
     const database = seedAuthority();
     const workspace = workspaceSyncNamespace();
-    const env = createTestEnv({
-      DB: sqliteD1(database),
-      AVALON_REGION: "global",
-      WORKSPACE_DOS: workspace.namespace,
-    });
     const intentId = `mention:${MESSAGE_ID}:${USER_ID}:expired`;
     workspace.database.prepare(
       `INSERT INTO workstream_notification_intents
@@ -862,8 +890,10 @@ describe("the WorkstreamDO regional effect inbox", () => {
     ).run(intentId, WORKSPACE_ID, WORKSTREAM_ID, USER_ID, MESSAGE_ID);
 
     try {
-      await expect(reapSettledWorkspaceNotificationIntents(env, WORKSPACE_ID, 10))
-        .resolves.toBe(1);
+      await expect(workspace.reapNotificationIntents({
+        workspaceId: WORKSPACE_ID,
+        limit: 10,
+      })).resolves.toEqual({ reapedIntentIds: [intentId] });
       expect(workspace.database.prepare(
         "SELECT COUNT(*) AS count FROM workstream_notification_intents",
       ).get()).toEqual({ count: 0 });
