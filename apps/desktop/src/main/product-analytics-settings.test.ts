@@ -48,6 +48,22 @@ describe('Product analytics settings controller', () => {
     });
   });
 
+  it('closes local admission as well as delivery when the account changes', async () => {
+    const base = harness({
+      productAnalyticsEnabled: true,
+      productAnalyticsPreferenceVersion: 3,
+    });
+    await base.controller.initialize(true);
+    expect(base.controller.admissionEnabled()).toBe(true);
+
+    await base.controller.requireRemoteVerification();
+
+    expect(base.controller.admissionEnabled()).toBe(false);
+    expect(base.controller.state()).toEqual({
+      desiredEnabled: true, effectiveEnabled: false, pending: false,
+    });
+  });
+
   it('durably disables and invalidates diagnostics before waiting for the account API', async () => {
     let resolveSync: ((value: { enabled: boolean; version: number }) => void) | undefined;
     const base = harness({ productAnalyticsPreferenceVersion: 4 });
