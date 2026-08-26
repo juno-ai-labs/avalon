@@ -179,6 +179,50 @@ describe("the shared Durable Object alarm list", () => {
     });
   });
 
+  it("routes workspace alarm work through content-free phase instrumentation", async () => {
+    await seedOpenAuthority();
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      const phases: Array<{ phase: string; alarmKind: string | undefined }> = [];
+      let finished = 0;
+      const instrumentPhase = async <T>(
+        phase: string,
+        alarmKind: string | undefined,
+        run: () => Promise<T>,
+      ): Promise<T> => {
+        phases.push({ phase, alarmKind });
+        return run();
+      };
+      (instance as unknown as {
+        instrumentWorkspaceAlarmPhase: typeof instrumentPhase;
+        finishWorkspaceAlarmInstrumentation: () => void;
+      }).instrumentWorkspaceAlarmPhase = instrumentPhase;
+      (instance as unknown as { finishWorkspaceAlarmInstrumentation: () => void })
+        .finishWorkspaceAlarmInstrumentation = () => {
+          finished += 1;
+        };
+
+      new ScheduledAlarmStore(state.storage.sql).schedule({
+        kind: "schedule_bootstrap",
+        key: "workspace",
+        dueAt: Date.now() - 1,
+      });
+
+      await instance.alarm();
+
+      expect(phases).toEqual([
+        { phase: "recovery_rearm", alarmKind: undefined },
+        { phase: "authority_check", alarmKind: undefined },
+        { phase: "stored_target", alarmKind: "schedule_bootstrap" },
+        { phase: "activity_reap", alarmKind: undefined },
+        { phase: "schedule_reconcile", alarmKind: undefined },
+        { phase: "final_rearm", alarmKind: undefined },
+      ]);
+      expect(finished).toBe(1);
+    });
+  });
+
   it("keeps an earlier future deadline while parking already-due work for recovery", async () => {
     const stub = await initializedWorkspace();
 
