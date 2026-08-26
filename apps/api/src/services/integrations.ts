@@ -7187,11 +7187,12 @@ export async function commitConnectorCursor(
       WHERE id = ?3
         AND workspace_id = ?4
         AND status <> 'disabled'
-        AND cursor_json = ?5`,
+        AND cursor_json = ?5
+      RETURNING id`,
   )
     .bind(result.cursorJson, now, input.connectionId, input.workspaceId, result.baseCursorJson, errorJson)
-    .run();
-  if ((updated.meta.changes ?? 0) === 1) return "committed";
+    .first<{ id: string }>();
+  if (updated?.id === input.connectionId) return "committed";
 
   const current = await database.prepare(
     `SELECT cursor_json

@@ -35,6 +35,7 @@ import {
   type ElicitationAnswer,
 } from '../lib/elicitation';
 import { newAutomationDraftKey } from '../lib/draft-keys';
+import { completeMentionAtCaret } from '../lib/mention-draft';
 import { desktopBridge } from '../lib/platform';
 import {
   currentSurfaceEntrypoint,
@@ -802,7 +803,11 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   };
 
   const beginConnectionMention = (): void => {
-    const started = draftWithMentionStarted(input, textareaRef.current?.selectionStart);
+    const started = draftWithMentionStarted(
+      input,
+      textareaRef.current?.selectionStart,
+      textareaRef.current?.selectionEnd,
+    );
     setInput(started.value);
     setMentionQuery('');
     requestAnimationFrame(() => {
@@ -818,24 +823,23 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const insertConnectionMention = (connection: WorkstreamConnection): void => {
     const textarea = textareaRef.current;
     const caret = textarea?.selectionStart ?? input.length;
-    const before = input.slice(0, caret);
-    const atIndex = before.lastIndexOf('@');
+    const completed = completeMentionAtCaret(
+      input,
+      caret,
+      connection.displayName,
+      textarea?.selectionEnd ?? caret,
+    );
     // The caret has left the mention this list belongs to; `slice(0, -1)` would
     // eat the character before it rather than replacing a half-typed name.
-    if (atIndex < 0) {
+    if (!completed) {
       setMentionQuery(null);
       return;
     }
-    // Whatever followed the caret is kept and the caret lands after the name,
-    // so picking mid-sentence does not truncate the rest of it.
-    const after = input.slice(caret);
-    const separator = /^\s/u.test(after) ? '' : ' ';
-    setInput(`${before.slice(0, atIndex)}@${connection.displayName}${separator}${after}`);
+    setInput(completed.text);
     setMentionQuery(null);
     requestAnimationFrame(() => {
       textarea?.focus();
-      const nextCaret = atIndex + connection.displayName.length + 1 + separator.length;
-      textarea?.setSelectionRange(nextCaret, nextCaret);
+      textarea?.setSelectionRange(completed.caret, completed.caret);
     });
   };
 
