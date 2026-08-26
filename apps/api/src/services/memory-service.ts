@@ -203,7 +203,9 @@ export function unwritableScopeError(
   const writable = scopes.filter((scope) => scope.writable);
   return new MemoryToolError(
     "memory_scope_not_writable",
-    `This run may read ${kind} memory but not write it. It may write: ${scopeList(writable)}.`,
+    writable.length === 0
+      ? `This run may read ${kind} memory, and has no writable memory scope at all.`
+      : `This run may read ${kind} memory but not write it. It may write: ${scopeList(writable)}.`,
     { reason: retryInstruction(scopes) },
   );
 }
@@ -734,7 +736,15 @@ function mutationToolResult(result: MutationResult, summary: string): HarnessToo
   return { output: result, summary, providerOperationId: result.memoryItemId };
 }
 
-async function writableScope(
+/**
+ * The one place a write tool turns a model-chosen scope kind into a scope.
+ *
+ * Exported because `table_create` enforces the same rule on the same union and
+ * had grown its own copy of the find-and-throw: two sites to keep in step every
+ * time the refusal changes, which is exactly what went wrong when both were
+ * still raising bare codes.
+ */
+export async function writableScope(
   env: Env,
   input: WorkstreamWorkflowInput,
   kind: MemoryScopeKind,
