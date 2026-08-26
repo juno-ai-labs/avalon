@@ -36,12 +36,20 @@ the transcript. The decision about *when* to produce an artifact is standing
 policy in the server-shipped system prompt, so tuning it is an API deploy,
 never a desktop release.
 
+One V1 divergence is accepted knowingly: until the ordered-turn transcript
+substrate lands, a run's narration is one message positioned after its tool
+activity, so the feed shows the card first and the framing prose after it
+rather than preamble → card → postamble (key design decision 11). The
+surface this PRD specifies does not change when the substrate ships; the
+ordering converges.
+
 The trajectory this starts: Rally as the collaborative staging environment for
 AI-generated work — shared context in, drafts generated, refined together in
 the work stream, and only then exported to wherever the finished thing
 formally lives. Google Docs and Notion remain the destination for formal
 editing, sharing, and storage; Rally competes on the drafting loop before
-that, not on the editor.
+that, not on the editor. The staged phases beyond V1 are laid out at the end
+of [Product behavior](#beyond-v1-the-staging-trajectory).
 
 ## Motivation
 
@@ -125,32 +133,36 @@ punishes hardest.
 
 ## Non-goals
 
-1. **A human editing surface in the panel.** Deferred — the next slice after
-   V1. In V1 a person changes an artifact by asking Rally; the panel is
-   read-only. Shipping viewing first keeps the V1 cut honest and lets the
-   revision protocol harden before a second writer exists.
+1. **A human editing surface in the panel.** Deferred — phase V2 of
+   [the trajectory](#beyond-v1-the-staging-trajectory). In V1 a person
+   changes an artifact by asking Rally; the panel is read-only. Shipping
+   viewing first keeps the V1 cut honest and lets the revision protocol
+   harden before a second writer exists.
 2. **A full collaborative rich-text editor: multi-cursor, presence, offline
    merge.** Rejected for the foreseeable product. Google Docs and Notion
    remain the destination for formal editing; Rally's job is the staged
    drafting loop before export, and building a second Docs is the fastest way
    to lose that framing.
-3. **Comments and annotations on artifacts.** Deferred. They are the V3 of
-   the staging-environment trajectory, and they raise a real contract
-   question — whether annotating an artifact creates participation the way
-   answering an elicitation does — that deserves its own PRD.
-4. **Export integrations.** Deferred. Sending an artifact to Notion, Google
-   Docs, or a GitHub repository is the natural completion of the staging
-   loop, and when it comes it follows the existing contract for external
-   writes — idempotent, visible, audited, no new approval gate. V1 offers
-   copy, which already gets the content anywhere.
+3. **Comments and annotations on artifacts.** Deferred — phase V3 of
+   [the trajectory](#beyond-v1-the-staging-trajectory). They raise a real
+   contract question — whether annotating an artifact creates participation
+   the way answering an elicitation does — that deserves its own PRD.
+4. **Export integrations.** Deferred — phase V4 of
+   [the trajectory](#beyond-v1-the-staging-trajectory). Sending an artifact
+   to Notion, Google Docs, or a GitHub repository is the natural completion
+   of the staging loop, and when it comes it follows the existing contract
+   for external writes — idempotent, visible, audited, no new approval gate.
+   V1 offers copy, which already gets the content anywhere.
 5. **A workspace artifacts library, cross-work-stream artifact search, or
    sharing an artifact outside its work stream.** Rejected. Rally is organized
    around work streams rather than channels, search, or a global inbox, and a
    documents library is a global inbox by another name. An artifact is reached
    through its work stream.
-6. **A first-class artifact store outside the transcript.** Deferred until a
-   consumer needs it. Export, watches, and cross-surface reads will eventually
-   want a `resources`-backed materialization (the meeting-notes hybrid is the
+6. **A first-class artifact store outside the transcript.** Deferred — it
+   arrives with export in phase V4 of
+   [the trajectory](#beyond-v1-the-staging-trajectory), its first real
+   consumer. Export, watches, and cross-surface reads will want a
+   `resources`-backed materialization (the meeting-notes hybrid is the
    precedent); V1 has no such consumer, and a store without a reader is
    exactly the shape retired on 2026-08-12. Nothing in V1 may recreate the
    dropped D1 `artifacts` table.
@@ -179,13 +191,34 @@ punishes hardest.
     Standing policy plus the model's own judgment is the V1 mechanism; the
     addressing classifier is the template if a dedicated classifier is ever
     warranted, and `AGENT_MODEL_ROLES` is where it would slot.
-12. **New defensive numbers.** None are added. Artifact content rides the
-    existing message-content bounds; artifact counts are bounded by run and
-    transcript machinery that already exists. Any guard an implementer
-    nonetheless discovers a need for ships open under the `LIMIT UNSET` rule,
-    with the number handed back to the team.
+12. **New defensive numbers.** Rejected — none are added. Artifact content
+    rides the existing message-content bounds; artifact counts are bounded by
+    run and transcript machinery that already exists. Any guard an
+    implementer nonetheless discovers a need for ships open under the
+    `LIMIT UNSET` rule, with the number handed back to the team.
 
 ## Product behavior
+
+### Primary user stories
+
+The behavior below serves four people, and the acceptance section walks each
+of their paths:
+
+1. **The requester.** A participant asks Rally for a document — a PRD, a
+   press release, a plan — and gets it as an artifact they can open, read,
+   and copy, without the document taking over the conversation they asked
+   from.
+2. **The collaborator.** A second participant, watching the same work stream,
+   sees the card land and now has an anchor for conversational feedback —
+   "tighten the goals", "add a risks table" — instead of a wall of
+   finished-looking text they do not know how to respond to.
+3. **The reviser.** Any participant asks for changes in the composer and
+   watches a new revision card land, with the earlier revisions intact behind
+   their own cards.
+4. **The returning reader.** Someone opening the work stream later scans a
+   transcript of conversation punctuated by compact cards, lands where the
+   unread machinery puts them, and opens the document only when they choose
+   to.
 
 ### Creating an artifact
 
@@ -208,10 +241,27 @@ Until [the ordered-turn transcript
 substrate](../2026-08-26_ordered-workstream-turn-transcripts/prd.md) lands,
 a run's narration is one final message positioned after its tool activity, so
 the card precedes the prose and the preamble and postamble arrive as one
-short message. The standing policy therefore tells the model to call the tool
-early and keep all narration brief and content-free; once the substrate
-ships, narration and cards interleave in true model order with no change to
-this PRD's surface.
+short message. That is a deliberate, named divergence from the ideal
+preamble → card → postamble shape, accepted in key design decision 11 rather
+than taking the substrate cutover as a dependency. The standing policy
+therefore tells the model to call the tool early and keep all narration brief
+and content-free; once the substrate ships, narration and cards interleave in
+true model order, and the surface this PRD specifies is unchanged.
+
+### How creation is signaled
+
+The signal is the tool call itself — never a formatting convention. The model
+does not tag spans, emit fences, or mark up its response text; it calls
+`workstream_create_artifact`, the entire document travels as that call's
+`content` argument, and the card is materialized by the host when the call
+settles. The standing policy names the tool and instructs the split — the
+document in the call, the conversation in the chat text — following the
+established pattern where policy may name a tool it is guaranteed to have in
+scope. The chat text around the call is soft-enforced by that policy and
+hard-verified by the prompt evaluations in
+[Agent behavior](#agent-behavior); if dogfooding shows the model also
+dumping the document inline, the escalation is a `submit_block`-style
+end-of-turn nudge, not a parser.
 
 The model may create more than one artifact in a run when the request
 genuinely asks for it ("draft the PRD and the announcement email"), and each
@@ -238,9 +288,14 @@ pagination and reconnect snapshots, keeps its place in the shared transcript
 for every participant, and renders identically in the automation chat
 surface's shared transcript styling.
 
-If a client's cached copy of a card fails payload validation (a future schema
-it does not know), the message falls back to rendering its text content as an
-ordinary agent message — degraded but readable, never dropped.
+The desktop's artifact branch validates the card payload at render time, not
+at ingestion: a message whose `structuredContent.artifact` fails validation
+(a future payload shape this build does not know) is kept, and falls back to
+rendering its text content as an ordinary agent message — degraded but
+readable, never dropped. This is a requirement on the new branch, not
+today's behavior; today an unknown message shape is rejected wholesale (see
+[Data model](#data-model)), which is exactly what the artifact branch must
+not do to its own future payloads.
 
 ### The document panel
 
@@ -276,10 +331,12 @@ offers no panel.
 
 The panel shows the clicked card's revision, honestly labeled. When a newer
 revision of the same artifact is present among the client's loaded messages,
-the header shows **Newer revision below — open latest**, which jumps the
-panel to it. This detection is client-local over loaded rows and is
-best-effort by design; the transcript, not a second index, is the authority
-on what exists.
+the header shows **Newer revision below — open it**, which jumps the panel to
+that revision; the jumped-to panel runs the same detection again, so chained
+newer revisions stay reachable. The copy deliberately does not claim
+"latest": the detection is client-local over loaded rows and best-effort by
+design — across a pagination gap a still-newer revision can exist unloaded —
+and the transcript, not a second index, is the authority on what exists.
 
 ### Revising an artifact
 
@@ -305,7 +362,12 @@ After compaction, the compacted context may no longer contain the document.
 The list and read tools exist for exactly this: the model lists the work
 stream's artifacts, reads the one in question through the same bounded
 read-window contract the attachment reader uses, and revises from what it
-read.
+read. That recovery only works if the model knows artifacts exist after the
+summary replaced its context, so the compaction summary prompt gains an
+instruction to retain artifact identity exactly — ids, titles, and current
+revision numbers — the same way it already retains exact resource ids. That
+is a change to a load-bearing prompt: it lands with this PRD's
+implementation, with its golden hash updated deliberately.
 
 ### What stays inline
 
@@ -329,7 +391,8 @@ The policy's intent, which the prompt renders in its own words:
   something I can send to the board").
 - Create one when the planned answer is a substantial structured composition:
   longer than roughly three paragraphs *and* organized with headings,
-  multiple sections, or a table intended to stand alone.
+  multiple sections, or a table intended to stand alone. The conjunction is
+  deliberate — either signal alone over-triggers (key design decision 12).
 - Do not create one for conversational answers of any length, for content
   whose home is another tool (HyperSight blocks, meeting notes, memory,
   Terminal files), or against an explicit participant instruction.
@@ -341,6 +404,27 @@ document-type list, the length instinct, the tone of the framing text — is a
 server deploy. No client release, no flag change, no schema change. The
 per-workspace lever, if one is ever wanted, is a Flagship rule; V1 does not
 build it.
+
+### Beyond V1: the staging trajectory
+
+The phases after this PRD, in order, each promoted by named evidence rather
+than by schedule. Every phase is a non-goal of V1 above and gets its own PRD
+when its time comes; this list exists so the deferrals read as one sequence.
+
+- **V1 (this PRD).** Agent-drafted artifacts, the card, the read-only panel,
+  and revision through conversation.
+- **V2 — human editing in the panel.** A lightweight whole-document edit that
+  saves as a new revision on the same transcript-native mechanism, making the
+  person a second writer beside the agent. Promoted when V1 dogfooding shows
+  people copying content out to make small edits and pasting it back.
+- **V3 — comments and annotations.** Anchored discussion on the document
+  itself. Carries the contract question of whether annotating creates
+  participation, which is that PRD's to argue.
+- **V4 — export, and the durable artifact store that serves it.** Sending an
+  artifact to Notion, Google Docs, or a repository as an ordinary external
+  write, backed by the `resources`-materialized store (the meeting-notes
+  hybrid) that gives artifacts a durable address outside the transcript.
+  The store lands here, with its first consumer, and not before.
 
 ## Impact on the product contract
 
@@ -368,8 +452,9 @@ None yet.
    design lacked. The rejected alternative was a first-class store
    (WorkstreamDO tables materializing a `resources` row, the meeting-notes
    hybrid): strictly more machinery — settle RPCs, receipts, inventory
-   participation, retention — serving consumers V1 does not have. It remains
-   the likely V2 shape once export needs a durable address (non-goal 6).
+   participation, retention — serving consumers V1 does not have. It returns
+   with export, in phase V4 of the trajectory, once export needs a durable
+   address (non-goal 6).
 2. **Emission is a typed tool call, never tagged spans in streamed text.**
    The contract requires typed, authorized tools, and a tool call gives the
    write a receipt, replay semantics, and a settle boundary the card can
@@ -380,11 +465,15 @@ None yet.
 3. **The tool family extends `rally:workstream`, reusing the natural wire
    names.** Four tools: create, revise, list, read (catalog in
    [Agent behavior](#agent-behavior)). The wire name
-   `workstream_create_artifact` is knowingly the retired tool's name: Rally
-   has no production users and therefore no historical transcript rows whose
-   rendering could be confused, the name is the one a model reaches for
-   unprompted, and the `AVALON_TOOL_PROSE` entry is updated to the new
-   semantics in the same change. The rejected alternative was a fresh
+   `workstream_create_artifact` is knowingly the retired tool's name. Rows
+   the retired tool wrote do still exist in dogfood and development
+   workspaces — the `AVALON_TOOL_PROSE` entry was retained precisely to keep
+   wording them, and entries there outlive their tools by rule — so
+   replacing that entry with the new semantics deliberately re-words those
+   rows. That cost is accepted: Rally has no production users, the name is
+   the one a model reaches for unprompted, and this decision knowingly
+   supersedes the entry-outlives-its-tool rationale recorded in the agent
+   harness document for this one entry. The rejected alternative was a fresh
    `rally:artifacts` plugin — a full plugin contract for four tools that
    belong with the work stream's other content operations, purely to dodge a
    name.
@@ -402,7 +491,7 @@ None yet.
    client's loaded rows are an honest, best-effort window onto it. The
    rejected alternative — a server-maintained latest-revision pointer — is a
    second authority to keep consistent for a convenience affordance, and it
-   returns naturally with the V2 store.
+   returns naturally with the V4 store.
 6. **The panel is the existing rail slot, as a third `RailPanel` variant.**
    It inherits the shared frame, resize bounds, arbitration, theming, and
    accessibility behavior for free, and the contract's named right rail stays
@@ -418,31 +507,63 @@ None yet.
    a decision the responding model can make in context. The addressing
    classifier remains the template if evidence later demands one (non-goal
    11).
-8. **`artifacts-enabled` is consulted server-side at run admission and
-   bucketed by workspace.** The flag decides whether the artifact tools and
-   policy enter a run's frozen scope. This makes it the second deliberate
-   exception, after `digests-enabled`, to the rule that managed product
-   Booleans are presentation-only — gating registration on the server is
-   what makes rollback total and skew-safe. Bucketing is by `workspaceId`
-   because artifacts are a multiplayer surface: a per-user rule would show
-   some participants cards their flag says do not exist. The rejected
-   alternative, a client-only presentation flag, leaves flag-off clients
-   receiving message types they hide but still store.
-9. **The model-facing projection carries an artifact's content once.** The
-   artifact message is the canonical owning record of the content; the tool
-   call that wrote it already appears in the model's own history with the
-   content as its argument. Projection and replay must not hand the model
-   both copies — the artifact message projects to the model as identity
-   (id, title, revision) with the content reachable by the read tool, per
-   the one-owning-record invariant of the ordered-turn transcripts PRD. The
-   rejected alternative, full content in both places, doubles context spend
-   on every document.
+8. **`artifacts-enabled` is consulted server-side at run admission, bucketed
+   by workspace — and the desktop deliberately never consults it.** The flag
+   decides whether the artifact tools and policy enter a run's frozen scope.
+   This makes it the second deliberate exception, after `digests-enabled`,
+   to the rule that managed product Booleans are presentation-only — gating
+   registration on the server is what makes rollback total and skew-safe.
+   Once the desktop's artifact branch ships, it renders artifact messages
+   and opens the panel unconditionally: an artifact that reached the
+   transcript is shared history, and hiding it behind a per-user flag push
+   would let two participants briefly disagree about what the work stream
+   contains, violating goal 6. The client receives `artifactsEnabled` like
+   every managed flag and has no reader for it; that is intentional — do not
+   add one. Bucketing is by `workspaceId` because artifacts are a
+   multiplayer surface: a per-user rule would show some participants cards
+   their flag says do not exist. The rejected alternative, a client-only
+   presentation flag, leaves flag-off clients receiving message types they
+   hide but still store.
+9. **The artifact message is participant-facing (`visibility = 'people'`);
+   the model's in-context copy is its own tool call.** The model must never
+   hold two copies of the document, and no message-type-conditional model
+   projection exists to build an identity-only rendering on — so none is
+   built. The artifact `parts` row carries `visibility = 'people'` and never
+   enters the model projection; the model's copy of the content is the
+   create/revise tool call already in its replayed history, which the replay
+   machinery reconstructs as an inseparable call/result pair. Behind the
+   compaction waterline that copy is gone with the rest of the suffix, and
+   the list/read tools recover it. The rejected alternative — a
+   `'both'`-visibility row rendered to the model as identity only — requires
+   projection machinery nothing in the codebase has today, for the same
+   single-copy outcome.
 10. **Excluded run origins stay excluded until their delivery paths learn
     artifacts.** Automation, inbound-email, and delegated child runs (non-goal
     8) answer to consumers — digest email, `resultDelivery`, parent tool
     results — that would today deliver a stub instead of a document. The
     2026-08-12 retirement is the standing evidence for treating "who reads
     this?" as a blocking question, not a follow-up.
+11. **V1 targets the current feed protocol and accepts the interim ordering,
+    rather than depending on the ordered-turn transcript substrate.** The
+    substrate PRD is a breaking cutover of the very protocol the card rides
+    on, and taking it as a dependency would trade a Friday-sized slice for a
+    rearchitecture's schedule. So V1 ships on today's feed — card first,
+    combined narration after — and accepts that the artifact branch is
+    rebuilt in that cutover. The implementing change must, in the same
+    stroke, record the artifact message as an in-scope participant entry
+    kind in the ordered-turn PRD's decision log, so the cutover cannot
+    strand it. The rejected alternative — waiting for the substrate to get
+    preamble → card → postamble on day one — buys ordering V1 does not need
+    at the price of a V1 that ships nothing until the cutover does.
+12. **The length and structure heuristic signals are conjunctive, not
+    independent.** The commissioned heuristic listed "longer than roughly
+    three paragraphs" and "planned headings, a table, or multiple sections"
+    as separate signals; this PRD deliberately requires both. Either alone
+    over-triggers: a four-paragraph conversational explanation is not a
+    document, and a two-paragraph note with one table is not one either.
+    Explicit document-type requests remain an independent trigger, and the
+    participant's explicit instruction beats everything. If dogfooding shows
+    the conjunction under-triggering, loosening it is one policy deploy.
 
 ## Data model
 
@@ -452,24 +573,53 @@ artifact is stored where messages are stored, in the owning `SubstreamAgent`'s
 
 - `message_type = 'artifact'` — a new value of the deliberately un-CHECKed
   product vocabulary column; no `parts` rebuild.
-- `kind = 'text'`, `role = 'assistant'`, `author_type = 'agent'` — an
-  agent-authored content row on the existing append path.
+- `kind = 'text'`, `role = 'assistant'`, `author_type = 'agent'`,
+  `visibility = 'people'` — an agent-authored, participant-facing content
+  row on the existing append path. The row never enters the model
+  projection; the model's copy of the content is its own tool call (key
+  design decision 9).
 - `content` — the artifact's Markdown, under the existing message-content
-  bounds; no new size limit is introduced.
+  bounds; no new size limit is introduced. The executor enforces those
+  existing bounds *before* the insert, so oversized content surfaces as the
+  typed `artifact_content_too_large` failure in
+  [Agent behavior](#agent-behavior), never as a raw SQLite CHECK violation
+  the model cannot act on.
 - `structured_content_json` — the typed card payload: `artifactId` (UUIDv7,
   allocated server-side under the tool receipt so replay returns the same
   id), `title`, `kindLabel`, `revision`, `format` (fixed `"markdown"` in V1).
 
-The current revision number of an artifact is derived — the highest
-`revision` among the work stream's artifact rows carrying that `artifactId` —
-not counted in a second place. The one-mutating-run-per-substream constraint
-serializes writers, so the derivation cannot race.
+V1 artifact rows exist only in substream `"0"` — a consequence of non-goal 8,
+since only ordinary participant-triggered main-feed runs register the tools —
+and the list, read, and revise tools and the revision derivation are scoped
+there. That scoping is what makes the derivation and the fence sound: the
+current revision number of an artifact is derived — the highest `revision`
+among the substream's artifact rows carrying that `artifactId` — not counted
+in a second place, and the one-mutating-run-per-substream constraint
+serializes every writer that can reach those rows. The standing invariant is
+at most one artifact row per `(artifactId, revision)`, enforced by the
+compare-and-swap write under that single-writer admission; whether the
+derivation earns a partial index on `message_type = 'artifact'` is
+implementation's call under the Durable Object SQLite rules.
 
-On the wire, `Message.messageType` gains `"artifact"` and
-`structuredContent.artifact` carries the payload above; the desktop adds the
-matching branch to its message mapping, its cached-message schema (an
-unvalidated type is dropped from cache today), and the transcript block
-dispatch.
+The artifact `parts` row and the settlement of the tool receipt that produced
+it commit in one object-local SQLite transaction — both live in the owning
+`SubstreamAgent`'s database — and the revision derivation reads only
+committed rows. A replayed create therefore always returns an `artifactId`
+whose row exists, and a crash between the two writes cannot leave either
+half alone; the crash-between case belongs in the workerd test suite.
+
+On the wire, `Message.messageType` gains `"artifact"`,
+`structuredContent.artifact` carries the payload above, and `textContent`
+carries the complete Markdown — every feed delivery, reconnect snapshot, and
+pagination reply that includes the card pays the document's size, which is
+what lets the panel open with no loading state. The desktop work is three
+surfaces: the shared contracts `MessageSchema` enum, the wire-to-UI message
+mapping, and the transcript block dispatch — plus the render-time payload
+validation required in [the card section](#the-artifact-card). Today an
+unknown `messageType` is not dropped per-message: on the live socket the
+whole frame is ignored, and a history page containing one fails the entire
+fetch with the stale-build error. That is the pre-release desktop's behavior
+toward artifact messages, and the rollout section owns the consequence.
 
 Negative space, stated deliberately: no regional D1 row — the dropped
 `artifacts` table stays dead; no WorkspaceDO or WorkstreamDO table; no
@@ -522,7 +672,21 @@ tools are registered, so the model is never told about tools it cannot call.
 | `create_artifact` (`workstream_create_artifact`) | `artifact.write` | write | replayed from the tool receipt; the server allocates `artifactId` once under the receipt, so a replay returns the persisted identity | Publish a new artifact at revision 1. |
 | `revise_artifact` (`workstream_revise_artifact`) | `artifact.write` | write | replayed from the tool receipt; the revision commits at most once per receipt | Publish the next revision of an existing artifact. |
 | `list_artifacts` (`workstream_list_artifacts`) | `artifact.read` | read | safe | Enumerate the work stream's artifacts: id, title, kind label, current revision, updated-at. |
-| `read_artifact` (`workstream_read_artifact`) | `artifact.read` | read | safe | Read an artifact's content — current or a named revision — through the same bounded window and cursor contract as `workstream_read_resource`. |
+| `read_artifact` (`workstream_read_artifact`) | `artifact.read` | read | safe | Read the current content of an artifact through the same bounded window and cursor contract as `workstream_read_resource`. |
+
+Execution mechanics, uniformly: all four tools are internal-authority calls
+against the run's own `SubstreamAgent` — no provider I/O — and carry the same
+timeout class as the sibling `rally:workstream` content tools; the exact
+milliseconds are implementation's, transcribed from those siblings. None of
+the four requires `serial` execution: writes already run sequentially under
+the harness contract, and no read in the family can depend on a same-batch
+write, because a revise needs an `artifactId` only a settled call returns.
+Cancellation and timeout of an in-flight create or revise resolve cleanly
+because the write is object-local and transactional (see
+[Data model](#data-model)): the parts row and the receipt either both
+committed — the artifact exists, and a replay returns its persisted identity —
+or neither did, and the call reports the standard failure. There is no
+ambiguous-write state to represent.
 
 Wire shapes, concisely (all inputs `additionalProperties: false`, enforced by
 a strict parse; exact schemas land in contracts with the implementation):
@@ -537,9 +701,12 @@ a strict parse; exact schemas land in contracts with the implementation):
   (optional retitle). Output: `artifactId`, `revision` (the new number).
 - `list_artifacts` input: optional `cursor`. Output: entries plus a
   continuation cursor when more exist.
-- `read_artifact` input: `artifactId` (required), `revision` (optional,
-  defaults to current), optional range cursor. Output: the content window,
-  `revision`, `title`, and range cursors, in the attachment reader's shape.
+- `read_artifact` input: `artifactId` (required), optional range cursor.
+  Output: the current content window, `revision`, `title`, and range
+  cursors, in the attachment reader's shape. Reading a *named* historical
+  revision has no V1 consumer — every path the PRD defines reads current —
+  so the parameter is deliberately absent and returns with its first
+  consumer (export, or the V4 store).
 
 Failure contract — stable codes with the model-visible sentence carrying the
 next action, structured detail only from the existing allowlist:
@@ -548,6 +715,7 @@ next action, structured detail only from the existing allowlist:
 | --- | --- |
 | `artifact_not_found` | "No artifact with that id exists in this work stream. Call `workstream_list_artifacts` to see what exists." |
 | `artifact_revision_conflict` | "The artifact changed after it was read. Call `workstream_read_artifact` for the current revision and content, rebuild the revision, and retry with the returned revision." |
+| `artifact_content_too_large` | "The document is too large for one artifact. Shorten it, or split it into more than one artifact." |
 | validation failures | The shared strict-parse vocabulary: unknown keys named, missing fields named, no submitted values echoed. |
 
 Sequencing and discovery: a create is self-sufficient; a revise needs an
@@ -567,11 +735,14 @@ decision 3.
 
 Model-usability acceptance, per the tool-design standard: the new schemas are
 reachable by the schema-sanitization walk and named in it; contract tests
-cover required, optional, forbidden, success, and failure shapes; and prompt
+cover required, optional, forbidden, success, and failure shapes — including
+content exactly at and one byte over the existing bound, which must yield
+`artifact_content_too_large` and never a raw constraint error; and prompt
 evaluations on the configured medium fallback model must show — from the
 schema and policy alone — a document request producing one create with brief
 narration, a conversational question producing no artifact call, a revision
-request reusing the id and revision correctly, recovery from
+request reusing the id and revision correctly, a post-compaction revision
+recovered through list → read → revise, recovery from
 `artifact_revision_conflict` and from a wrong first call without looping, and
 obedience to both explicit participant overrides.
 
@@ -588,13 +759,21 @@ obedience to both explicit participant overrides.
 2. Ordering: (a) API deploy — tools, prompt policy, and wire type ship
    dormant behind the flag, off everywhere; (b) desktop release with the
    card, panel, and schema branches; (c) flag on for staff workspaces;
-   (d) widen cohorts as dogfooding holds. The order makes version skew
-   harmless: no server emits an artifact message before clients that render
-   them are released.
+   (d) widen cohorts as dogfooding holds. The order means no server emits an
+   artifact message before a desktop that renders them is *released* — but a
+   released build is not an installed one. A participant still running the
+   prior build in a flag-on workspace hits today's unknown-shape behavior:
+   socket frames carrying an artifact are ignored and a history page
+   containing one fails with the stale-build restart error (see
+   [Data model](#data-model)). For staff dogfooding cohorts that gap is
+   accepted and hereby named; before cohorts widen beyond staff, the
+   question of requiring a minimum desktop version for flag-on workspaces is
+   settled, not inherited.
 3. Rollback is the flag: off stops registration for new runs immediately.
    Existing artifact cards remain in transcripts and continue to render —
-   they are ordinary durable messages, and nothing is deleted or migrated by
-   turning the feature off.
+   they are ordinary durable messages, nothing is deleted or migrated by
+   turning the feature off, and the desktop never consults the flag (key
+   design decision 8), so nothing already visible disappears.
 4. The prompt-policy addition lands inside the existing work-stream prompt
    version discipline; whether it warrants a `WORKSTREAM_PROMPT_VERSION` bump
    is settled at implementation against the in-flight-run cost that decision
@@ -604,13 +783,15 @@ obedience to both explicit participant overrides.
 
 1. In a flag-on workspace, "draft a PRD for <topic>" in a work stream yields:
    a tool-activity row, an artifact card titled accordingly, and a short
-   conversational message — with the full document nowhere in the transcript.
+   conversational message — with the document never rendered inline in the
+   feed. (The content rides the card's message on the wire by design; what
+   is accepted against is the rendering.)
 2. Clicking the card opens the right-rail panel showing the formatted
    document; headings, tables, and code blocks render through the shared
    renderer; text is selectable; **Copy** yields the stored Markdown.
 3. "Tighten the goals section" then yields a **Revised** card with revision
    2; opening it shows the updated document; the original card still opens
-   revision 1; the older panel offers **open latest**.
+   revision 1; the older panel offers **Newer revision below — open it**.
 4. A short factual question in the same work stream produces an inline answer
    and no artifact. "Just answer in chat" defeats the heuristic for a
    document-shaped ask; "make that an artifact" creates one from a short
@@ -619,13 +800,18 @@ obedience to both explicit participant overrides.
    the same content, and sees revision cards appear as they are published.
 6. In a flag-off workspace no artifact tool is registered, no policy text is
    rendered into the prompt, and no artifact message is ever emitted.
-7. Post-compaction, a revision request succeeds via list → read → revise, and
-   a deliberately stale `expectedRevision` yields the conflict sentence and a
-   successful model recovery.
-8. The panel behaves within the rail contract: hand-off from the inspector
+7. Post-compaction, a revision request succeeds via list → read → revise —
+   with the compaction summary shown to retain artifact ids, titles, and
+   revisions — and a deliberately stale `expectedRevision` yields the
+   conflict sentence and a successful model recovery.
+8. Content at the existing bound commits; content over it yields
+   `artifact_content_too_large`, never a raw constraint error; and a workerd
+   test proves an interrupted create or revise leaves either both the
+   artifact row and its settled receipt or neither.
+9. The panel behaves within the rail contract: hand-off from the inspector
    and HyperSight panels, resize within the shared bounds, scrim at narrow
    widths, Escape restores focus.
-9. Every new surface is captured from the running desktop client under Xvfb
+10. Every new surface is captured from the running desktop client under Xvfb
    and the images read, per the visible-change rule; `pnpm lint` (zero
    warnings), `pnpm typecheck`, and `pnpm test` pass; prompt golden hashes
    are updated deliberately; and each new test is shown to fail when the
