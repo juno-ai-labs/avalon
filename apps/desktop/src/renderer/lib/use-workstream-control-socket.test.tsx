@@ -324,6 +324,9 @@ describe('useWorkstreamControlSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary()]);
+    queryClient.setQueryData(['messages', workstreamId], [{ sensitive: true }]);
+    queryClient.setQueryData(['block-dashboard', workstreamId], { blocks: [{ sensitive: true }] });
+    queryClient.setQueryData(['block-dashboard-preference', workstreamId], { visible: true });
     const getWorkstreamControlSocketTicket = vi.fn(async () => ({
       url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
       ticket: 'control-ticket',
@@ -346,6 +349,9 @@ describe('useWorkstreamControlSocket', () => {
       cause: 'access_revoked',
       attempts: 'zero',
     }]);
+    expect(queryClient.getQueryData(['messages', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData(['block-dashboard', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData(['block-dashboard-preference', workstreamId])).toBeUndefined();
   });
 
   it('applies HyperSight configuration and personal visibility from WorkstreamDO', async () => {

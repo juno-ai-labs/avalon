@@ -1626,9 +1626,10 @@ export const MessageFeedPageSchema = z.object({
  *
  * Normal opens subscribe directly and paint the first snapshot. This response
  * remains for an explicit unavailable-state retry and is assembled by the same
- * room code so recovery cannot drift. Viewer-specific WorkstreamDO metadata is
- * deliberately absent: its control socket starts independently and an optional
- * panel preference must not lengthen either feed admission or REST recovery.
+ * room code so recovery cannot drift. The viewer-specific WorkstreamDO
+ * `blockDashboardPreference` metadata is deliberately absent: its control
+ * socket starts independently and an optional panel preference must not
+ * lengthen either feed admission or REST recovery.
  * That preference continues to arrive on the WorkstreamDO control socket.
  */
 export const WorkstreamBootSchema = WorkstreamDetailSchema.extend({

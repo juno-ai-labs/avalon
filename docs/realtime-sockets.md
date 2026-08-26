@@ -532,6 +532,38 @@ what that leaves exposed.
 
 ## Changelog
 
+### 2026-08-26 — Canonical snapshots fence recovery and revocation clears the reader
+
+**What changed:** Every accepted SubstreamAgent snapshot advances a renderer
+generation. REST recovery captures that generation and, after each await,
+keeps the socket-written detail, transcript, cursors, and lineage if the
+generation advanced. Recovery windows are consumed once and cleared by every
+new snapshot. A reopened screen whose retained socket outlived its base caches,
+and mutation paths that need repair, request one canonical frame from that
+socket. Either room's access-revoked close evicts all per-work-stream reader,
+context, HyperSight, and recovery cache families through one shared boundary.
+
+**Why:** Retry deliberately overlaps the reconnecting feed socket. Without a
+fence, a late HTTP answer could replace a newer canonical snapshot that had
+already repaired the screen; retaining its window could replace that snapshot
+again during a later repair. Query caches can also expire while a background
+socket remains connected, and invalidation cannot refetch a deliberately
+disabled REST reader. The two sockets can observe revocation at different
+times, so partial cleanup could leave content from the other room in memory
+after either room said the reader was no longer authorized.
+
+**Considered and rejected:** Cancelling HTTP requests alone still trusts every
+transport and test double to honor abort after it has returned data. Letting
+each socket maintain its own eviction list preserves two security boundaries
+that drift whenever a new work-stream cache family is added.
+
+**Consequences:** A socket snapshot remains authoritative even when it races a
+manual REST retry. REST remains the explicit unavailable-state reader; ordinary
+repair and a cache-empty retained connection use `request_snapshot`. New
+per-work-stream cache families that can contain reader state must be added to
+`evictCachedWorkstream`, and either 1008 close path must continue to call that
+shared boundary.
+
 ### 2026-08-25 — Selection immediately admits the feed
 
 **What changed:** The selected work stream admits its pooled SubstreamAgent
