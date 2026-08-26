@@ -4,11 +4,15 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parseWranglerConfig } from '../../../scripts/wrangler-config.mjs';
+import { verifyRuntimeQueuePermissions } from './runtime-token-permissions.mjs';
 
 const appDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
 const deploymentToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
-const flagshipToken = process.env.ACE_FLAGSHIP_API_TOKEN?.trim();
+// The GitHub secret keeps its original name so an Ace release does not require
+// a second credential migration. Its token now serves Ace's two Cloudflare API
+// surfaces and is restricted to Flagship Write plus Queues Edit.
+const aceRuntimeToken = process.env.ACE_FLAGSHIP_API_TOKEN?.trim();
 const flagshipAppId = 'bec01d3a-d6b6-4d8c-b89a-37440ed63b8c';
 const aceDomain = 'ace.internal.rallywith.ai';
 const migrationDomain = 'migrations.internal.rallywith.ai';
@@ -16,7 +20,7 @@ const generatedConfig = join(appDirectory, 'wrangler.generated.json');
 
 if (!accountId) throw new Error('CLOUDFLARE_ACCOUNT_ID is required');
 if (!deploymentToken) throw new Error('CLOUDFLARE_API_TOKEN is required');
-if (!flagshipToken) throw new Error('ACE_FLAGSHIP_API_TOKEN is required');
+if (!aceRuntimeToken) throw new Error('ACE_FLAGSHIP_API_TOKEN is required');
 
 async function cloudflare(path, init = {}, authorization = deploymentToken) {
   const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}${path}`, {
@@ -73,7 +77,7 @@ async function ensureAccessApplication() {
 }
 
 async function ensureFlag(key, description, defaultVariation = 'off') {
-  const flags = await cloudflare(`/flagship/apps/${flagshipAppId}/flags`, {}, flagshipToken);
+  const flags = await cloudflare(`/flagship/apps/${flagshipAppId}/flags`, {}, aceRuntimeToken);
   const existing = Array.isArray(flags) ? flags.find((flag) => flag.key === key) : undefined;
   if (existing) return;
   await cloudflare(`/flagship/apps/${flagshipAppId}/flags`, {
@@ -86,7 +90,7 @@ async function ensureFlag(key, description, defaultVariation = 'off') {
       variations: { off: false, on: true },
       rules: [],
     }),
-  }, flagshipToken);
+  }, aceRuntimeToken);
 }
 
 function run(command, args, options = {}) {
@@ -104,6 +108,7 @@ await Promise.all([
   // must not be the thing that silently stops delivery. See docs/digests.md#the-run.
   ensureFlag('digests-enabled', 'True sends scheduled digests as configured; false stops delivery for whoever the rule reaches and hides the Digest settings section in Electron for them, without touching their saved schedule, destinations, or cursor.', 'on'),
 ]);
+await verifyRuntimeQueuePermissions({ accountId, token: aceRuntimeToken });
 
 const source = await readFile(join(appDirectory, 'wrangler.jsonc'), 'utf8');
 const config = parseWranglerConfig(source);
@@ -113,7 +118,7 @@ try {
   run('pnpm', ['build:client']);
   run('pnpm', ['exec', 'wrangler', 'deploy', '--config', generatedConfig]);
   run('pnpm', ['exec', 'wrangler', 'secret', 'put', 'CLOUDFLARE_FLAGSHIP_API_TOKEN', '--config', generatedConfig], {
-    input: `${flagshipToken}\n`,
+    input: `${aceRuntimeToken}\n`,
     stdio: ['pipe', 'inherit', 'inherit'],
   });
 } finally {

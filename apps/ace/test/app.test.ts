@@ -80,4 +80,77 @@ describe('Ace Hono application', () => {
     expect(response.status).toBe(403);
     expect(cloudflare).not.toHaveBeenCalled();
   });
+
+  it('rejects a cross-origin Queue peek before it reaches Cloudflare', async () => {
+    const cloudflare = vi.spyOn(globalThis, 'fetch');
+    const response = await worker.fetch!(new Request(
+      'https://ace.internal.rallywith.ai/api/queues/dead-letters/queue-id/peek',
+      { method: 'POST', headers: { Origin: 'https://attacker.example' } },
+    ), env(), { waitUntil: vi.fn() } as unknown as ExecutionContext);
+
+    expect(response.status).toBe(403);
+    expect(cloudflare).not.toHaveBeenCalled();
+  });
+
+  it('returns dynamically discovered dead-letter Queue summaries', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(Response.json({
+        success: true,
+        result: [
+          { queue_id: 'source-id', queue_name: 'source', consumers: [{ dead_letter_queue: 'dead' }] },
+          { queue_id: 'dead-id', queue_name: 'dead', consumers: [] },
+        ],
+        result_info: { page: 1, total_pages: 1 },
+      }))
+      .mockResolvedValueOnce(Response.json({
+        success: true,
+        result: { backlog_bytes: 20, backlog_count: 2 },
+      }));
+
+    const response = await worker.fetch!(new Request(
+      'https://ace.internal.rallywith.ai/api/queues/dead-letters',
+    ), env({ CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_FLAGSHIP_API_TOKEN: 'secret' }), {
+      waitUntil: vi.fn(),
+    } as unknown as ExecutionContext);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ queues: [{
+      id: 'dead-id',
+      name: 'dead',
+      sourceQueues: ['source'],
+      metrics: { backlogBytes: 20, backlogCount: 2, oldestMessageTimestampMs: null },
+    }] });
+  });
+
+  it('returns a same-origin non-consuming Queue peek', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(Response.json({
+        success: true,
+        result: [
+          { queue_id: 'source-id', queue_name: 'source', consumers: [{ dead_letter_queue: 'dead' }] },
+          { queue_id: 'dead-id', queue_name: 'dead', consumers: [] },
+        ],
+        result_info: { page: 1, total_pages: 1 },
+      }))
+      .mockResolvedValueOnce(Response.json({
+        success: true,
+        result: { messages: [{ id: 'message-id', body: 'body', attempts: 2 }] },
+      }));
+
+    const response = await worker.fetch!(new Request(
+      'https://ace.internal.rallywith.ai/api/queues/dead-letters/dead-id/peek',
+      { method: 'POST', headers: { Origin: 'https://ace.internal.rallywith.ai' } },
+    ), env({ CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_FLAGSHIP_API_TOKEN: 'secret' }), {
+      waitUntil: vi.fn(),
+    } as unknown as ExecutionContext);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ messages: [{
+      id: 'message-id',
+      attempts: 2,
+      body: 'body',
+      metadata: null,
+      timestampMs: null,
+    }] });
+  });
 });
