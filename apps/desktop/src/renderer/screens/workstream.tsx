@@ -43,7 +43,10 @@ import {
   reportTelemetryProductIntent,
   telemetryCountBucket,
   telemetryVisibility,
+  type WorkstreamFeedSource,
   workstreamFeedOpenAttemptId,
+  workstreamFeedSourceQueryKey,
+  workstreamRecoveryFeedQueryKey,
   workstreamNavigation,
 } from '../lib/telemetry';
 import {
@@ -72,7 +75,7 @@ import {
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -93,6 +96,15 @@ export function workspaceMemberFromSession(session: DesktopSession | null): Work
     ...(session.user.avatarUrl ? { avatarUrl: session.user.avatarUrl } : {}),
     role: session.workspace.role,
   };
+}
+
+type WorkstreamRecoveryFeed = Pick<WorkstreamBoot, 'messageFeed' | 'resumeFeed'>;
+
+function detailFromRecoveryBoot(boot: WorkstreamBoot): WorkstreamDetail {
+  const { messageFeed, resumeFeed, ...detail } = boot;
+  void messageFeed;
+  void resumeFeed;
+  return detail;
 }
 
 export function workstreamRunTiming(
@@ -840,17 +852,22 @@ export function WorkstreamScreen(): React.JSX.Element {
   // These fetchers are recovery paths, not the normal open. Selecting a work
   // stream admits its feed socket immediately; the first snapshot populates
   // both query keys. Keeping the REST readers attached to disabled observers
-  // gives the unavailable-state Retry button an explicit canonical fallback
+  // gives the reconnecting/unavailable Retry button an explicit canonical fallback
   // without racing a second boot against the room on every navigation.
   const initialFeedCacheState = useMemo(() => (
     queryClient.getQueryData(['messages', id]) !== undefined
       ? 'feed_cached'
       : queryClient.getQueryData(['workstream', id]) !== undefined ? 'detail_cached' : 'cold'
   ), [id, queryClient]);
-  const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal) => {
-    return api!.getWorkstream(id, signal, workstreamFeedOpenAttemptId(id));
-  }, [api, id]);
-  const workstream = useQuery({
+  const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal): Promise<WorkstreamDetail> => {
+    const boot = await api!.getWorkstream(id, signal, workstreamFeedOpenAttemptId(id));
+    queryClient.setQueryData<WorkstreamRecoveryFeed>(workstreamRecoveryFeedQueryKey(id), {
+      messageFeed: boot.messageFeed,
+      resumeFeed: boot.resumeFeed,
+    });
+    return detailFromRecoveryBoot(boot);
+  }, [api, id, queryClient]);
+  const workstream = useQuery<WorkstreamDetail>({
     queryKey: ['workstream', id],
     queryFn: ({ signal }) => fetchWorkstreamDetail(signal),
     enabled: false,
@@ -900,7 +917,11 @@ export function WorkstreamScreen(): React.JSX.Element {
       // The fetch is the rollout fallback, not the normal path: a Worker that
       // predates the boot payload sends neither window, and an empty transcript
       // would be the wrong reading of that.
-      const page = detail.resumeFeed ?? detail.messageFeed ?? await api!.getMessagePage(id, {
+      const recoveryFeed = queryClient.getQueryData<WorkstreamRecoveryFeed>(
+        workstreamRecoveryFeedQueryKey(id),
+      );
+      const bootPage = recoveryFeed?.resumeFeed ?? recoveryFeed?.messageFeed;
+      const page = bootPage ?? await api!.getMessagePage(id, {
         ...(detail.firstUnreadSequenceNumber !== null
           ? { around: detail.firstUnreadSequenceNumber }
           : {}),
@@ -909,6 +930,10 @@ export function WorkstreamScreen(): React.JSX.Element {
         // cache the reader has left.
         signal,
       });
+      queryClient.setQueryData<WorkstreamFeedSource>(
+        workstreamFeedSourceQueryKey(id),
+        bootPage ? 'boot_payload' : 'legacy_page',
+      );
       const previous = queryClient.getQueryData<Message[]>(['messages', id]);
       const pageOldestSequence = page.items.reduce(
         (oldest, message) => Math.min(oldest, message.sequenceNumber),
@@ -935,24 +960,31 @@ export function WorkstreamScreen(): React.JSX.Element {
       cancelWorkstreamFeedOpen(id, performance.now(), readSocketOpenContext().socketLeaseId);
     }
   }, [id, messages.isError, readSocketOpenContext, workstream.isError]);
+  const feedSource = useQuery<WorkstreamFeedSource | null>({
+    queryKey: workstreamFeedSourceQueryKey(id),
+    queryFn: async () => null,
+    enabled: false,
+    initialData: null,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
   const initialFeedTelemetrySnapshot = useMemo<{
-    feedSource: 'feed_cache' | 'socket_snapshot' | 'boot_payload' | 'legacy_page';
+    feedSource: WorkstreamFeedSource;
     messageCount: ReturnType<typeof telemetryCountBucket>;
   } | null>(() => {
     if (!workstream.data || !messages.data) return null;
+    const resolvedFeedSource = initialFeedCacheState === 'feed_cached'
+      ? 'feed_cache'
+      : feedSource.data;
+    if (!resolvedFeedSource) return null;
     return {
-      feedSource: initialFeedCacheState === 'feed_cached'
-        ? 'feed_cache'
-        : workstream.data.resumeFeed !== undefined || workstream.data.messageFeed !== undefined
-          ? 'boot_payload'
-          : 'socket_snapshot',
+      feedSource: resolvedFeedSource,
       messageCount: telemetryCountBucket(messages.data.length),
     };
-  }, [initialFeedCacheState, messages.data, workstream.data]);
+  }, [feedSource.data, initialFeedCacheState, messages.data, workstream.data]);
   useWorkstreamFeedOpenTelemetry({
     cacheState: initialFeedCacheState,
     feedSource: initialFeedTelemetrySnapshot?.feedSource,
-    isReady: workstream.isSuccess && messages.isSuccess,
+    isReady: Boolean(workstream.data && messages.data),
     messageCount: initialFeedTelemetrySnapshot?.messageCount,
     readSocketOpenContext,
     workstreamId: id,
@@ -960,7 +992,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const deferredContext = useQuery({
     queryKey: ['workstream-context', id, workstream.data?.automationSubscriptionId ?? null],
     queryFn: ({ signal }) => api!.getWorkstreamContext(id, workstream.data?.automationSubscriptionId, signal),
-    enabled: Boolean(api && id && workstream.isSuccess && messages.isSuccess),
+    enabled: Boolean(api && id && workstream.data && messages.data),
     staleTime: 5_000,
   });
   // No request and no open gate of its own. The independently-started control
@@ -1609,10 +1641,18 @@ export function WorkstreamScreen(): React.JSX.Element {
   }, [scheduleReadAcknowledgement]);
 
   if (!workstream.data || !messages.data) {
-    if (socketConnection.state === 'unavailable' || workstream.error || messages.error) {
+    if (
+      socketConnection.state === 'reconnecting'
+      || socketConnection.state === 'unavailable'
+      || workstream.error
+      || messages.error
+    ) {
       return (
         <WorkstreamErrorState
-          description={workstream.error?.message ?? messages.error?.message ?? 'This work stream is unavailable.'}
+          description={workstream.error?.message ?? messages.error?.message
+            ?? (socketConnection.state === 'reconnecting'
+              ? 'The live connection could not be opened. Try the recovery reader while Rally reconnects.'
+              : 'This work stream is unavailable.')}
           onRetry={() => void Promise.all([workstream.refetch(), messages.refetch()])}
           workstreamId={id}
         />

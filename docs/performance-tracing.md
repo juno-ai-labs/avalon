@@ -263,8 +263,11 @@ message, and that count is the only place its cost appears. Normal navigation
 issues neither detail nor transcript REST reads. `GET /:id` and
 `GET /:id/messages` carry the same flow only for explicit recovery after
 `sequence_ahead`, a failed or overflowed `history_unavailable` snapshot, or a
-person choosing Retry after the socket becomes unavailable; ordinary lost
-replay history is repaired by the subscription snapshot itself.
+person choosing Retry after the first connection failure or an unavailable
+state; ordinary lost replay history is repaired by the subscription snapshot
+itself. A first ticket or handshake failure exposes that Retry action as soon
+as the socket enters
+`reconnecting`; no guessed fallback timeout is part of the measurement.
 
 **`workstream_message_send`** — the desktop sends over the workspace command
 socket, so `workstream.message.send` on WorkspaceDO is the trace to read:
@@ -562,9 +565,10 @@ open shapes. Extending the flow until optional control metadata arrives would
 measure HyperSight readiness rather than the stated message-feed-and-send goal.
 
 **Consequences:** For cold-open percentiles, filter renderer outcomes to
-`socket_snapshot` and join ticket, upgrade, accept, and subscribe traces. HTTP
-rows are now a recovery cohort and must not be mixed into the normal-open
-distribution.
+`socket_snapshot` and join ticket, upgrade, accept, and subscribe traces. A
+failed first socket attempt exposes the manual HTTP recovery while reconnecting,
+without adding a fallback timeout. HTTP rows are a recovery cohort and must not
+be mixed into the normal-open distribution.
 
 ### 2026-08-25 — Client send readiness has its own opening milestone
 

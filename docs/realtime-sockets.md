@@ -551,9 +551,10 @@ publish presence without an open. Making HyperSight preference part of the feed
 snapshot would add a cross-object call to the critical path.
 
 **Consequences:** Presence begins at selection, which is the user action it now
-represents. An unavailable-state Retry can still read the REST recovery twin;
-ordinary navigation does not. Retained sockets and access-revocation behavior
-are unchanged.
+represents. After the first ticket or handshake failure, the reconnecting state
+exposes Retry for the REST recovery twin while the socket continues reconnecting;
+offline and access-revoked states expose the same manual path. Ordinary navigation
+does not read REST. Retained sockets and access-revocation behavior are unchanged.
 
 ### 2026-08-25 — Opening telemetry names command-queue readiness
 

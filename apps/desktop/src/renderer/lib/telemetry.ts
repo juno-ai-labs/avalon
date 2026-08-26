@@ -20,12 +20,27 @@ let pendingSurfaceEntrypoint: TelemetrySurfaceEntrypoint = 'direct';
 let activeSurfaceEntrypoint: TelemetrySurfaceEntrypoint = 'direct';
 
 export type WorkstreamFeedCacheState = 'feed_cached' | 'detail_cached' | 'cold';
+export type WorkstreamFeedSource = 'feed_cache' | 'socket_snapshot' | 'boot_payload' | 'legacy_page';
 export type WorkstreamFeedSidebarSection = 'pinned' | 'recent';
 export type WorkstreamFeedSocketPoolState = 'retained_pair' | 'control_warmup' | 'cold';
 export type TelemetryCountBucket =
   'zero' | 'one' | 'two_to_five' | 'six_to_twenty' | 'twenty_one_to_one_hundred' | 'over_one_hundred';
 export type WorkstreamSocketStartReason =
   | 'hover_warmup' | 'active_workstream' | 'background_workstream' | 'retained_workstream' | 'reconnect';
+
+/** Renderer-only lineage for the data that completed one sidebar open. */
+export function workstreamFeedSourceQueryKey(
+  workstreamId: string,
+): readonly ['workstream-feed-source', string] {
+  return ['workstream-feed-source', workstreamId];
+}
+
+/** REST-only transcript windows kept out of the uniform detail cache. */
+export function workstreamRecoveryFeedQueryKey(
+  workstreamId: string,
+): readonly ['workstream-recovery-feed', string] {
+  return ['workstream-recovery-feed', workstreamId];
+}
 
 interface PendingWorkstreamFeedOpen {
   workstreamId: string;
@@ -254,7 +269,7 @@ export function markWorkstreamFeedDataReady(workstreamId: string, readyAt = perf
 
 export function completeWorkstreamFeedPaint(
   workstreamId: string,
-  feedSource: 'feed_cache' | 'socket_snapshot' | 'boot_payload' | 'legacy_page',
+  feedSource: WorkstreamFeedSource,
   messageCount: ReturnType<typeof telemetryCountBucket>,
   paintedAt = performance.now(),
   socketLeaseId?: string,
@@ -360,7 +375,7 @@ export function reportWorkstreamSendReadyAfterPaint(
  */
 export function reportWorkstreamFeedAfterPaint(
   workstreamId: string,
-  feedSource: 'feed_cache' | 'socket_snapshot' | 'boot_payload' | 'legacy_page',
+  feedSource: WorkstreamFeedSource,
   messageCount: ReturnType<typeof telemetryCountBucket>,
   socketLeaseId?: string,
 ): () => void {
