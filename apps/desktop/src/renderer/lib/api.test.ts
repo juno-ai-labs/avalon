@@ -1365,7 +1365,7 @@ describe('request correlation', () => {
     expect(new Headers(sent[0]?.headers).get('x-request-id')).toBe('trace-from-the-screen');
   });
 
-  it('correlates work-stream detail and control-ticket requests with their opening flow', async () => {
+  it('correlates work-stream detail attempts separately from each request and socket start', async () => {
     const sent: Array<RequestInit | undefined> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       sent.push(init);
@@ -1378,9 +1378,13 @@ describe('request correlation', () => {
     await api.getWorkstream(workstreamId, undefined, 'feed-visible-operation');
     await api.getWorkstreamControlSocketTicket(workstreamId, 'control-start-operation');
 
-    expect(sent.map((init) => new Headers(init?.headers).get('x-request-id'))).toEqual([
+    const requestIds = sent.map((init) => new Headers(init?.headers).get('x-request-id'));
+    expect(requestIds[0]).toMatch(/^[A-Za-z0-9._:-]{1,100}$/u);
+    expect(requestIds[0]).not.toBe('feed-visible-operation');
+    expect(requestIds[1]).toBe('control-start-operation');
+    expect(sent.map((init) => new Headers(init?.headers).get('x-rally-operation-id'))).toEqual([
       'feed-visible-operation',
-      'control-start-operation',
+      null,
     ]);
   });
 });

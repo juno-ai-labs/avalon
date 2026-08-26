@@ -27,7 +27,7 @@ import {
   setDeviceWorkspaceName,
 } from './device-preferences';
 import { desktopBridge, type DesktopWorkspaceOnboardingState } from './platform';
-import { markSurfaceEntrypoint } from './telemetry';
+import { abandonPendingWorkstreamFeedOpen, markSurfaceEntrypoint } from './telemetry';
 import type { Region } from './types';
 
 const connectorProviderNames = {
@@ -321,7 +321,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     draftScopeRef.current = session;
     // A first session is an arrival, not a departure: launching Rally must not
     // discard the draft the last run left behind.
-    if (previousSession && !sessionsShareDraftScope(previousSession, session)) void clearAllDrafts();
+    if (previousSession && !sessionsShareDraftScope(previousSession, session)) {
+      abandonPendingWorkstreamFeedOpen();
+      void clearAllDrafts();
+    }
   }, [session]);
 
   const signOut = useCallback(async () => {

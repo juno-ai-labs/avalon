@@ -34,7 +34,7 @@ import {
   reportTelemetryProductIntent,
   type WorkstreamSocketStartReason,
   uuidV7,
-  workstreamFeedOpenRequestId,
+  workstreamFeedOpenAttemptId,
 } from './telemetry';
 import {
   appendDismissedSuggestionId,
@@ -1323,7 +1323,7 @@ export function useWorkstreamSocket(
         attempts.current === 0 ? initialReasonRef.current : 'reconnect',
         attempts.current,
         trace.traceId,
-        workstreamFeedOpenRequestId(workstreamId),
+        workstreamFeedOpenAttemptId(workstreamId),
       );
       trace.annotate({
         attempt: attempts.current,

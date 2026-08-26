@@ -251,6 +251,47 @@ describe("telemetry registry", () => {
     }).success).toBe(true);
   });
 
+  it("rejects non-v7 opening lineage identifiers and impossible feed durations", () => {
+    const v4 = "00000000-0000-4000-8000-000000000111";
+    expect(TELEMETRY_EVENTS.workstream_open_started.properties.safeParse({
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      sidebarSection: "recent",
+      socketPoolState: "cold",
+      socketLeaseId: v4,
+    }).success).toBe(false);
+    expect(TELEMETRY_EVENTS.workstream_socket_started.properties.safeParse({
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      socketLeaseId: "018f22f2-4c22-7abc-8def-012345678901",
+      openAttemptId: v4,
+      socket: "substream_feed",
+      reason: "active_workstream",
+      attempts: "zero",
+    }).success).toBe(false);
+    expect(TELEMETRY_EVENTS.workstream_feed_visible.properties.safeParse({
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      durationMs: 99,
+      dataReadyDurationMs: 100,
+      sidebarSection: "recent",
+      cacheState: "cold",
+      socketPoolState: "cold",
+      feedSource: "boot_payload",
+      messageCount: "one",
+    }).success).toBe(false);
+  });
+
+  it("accepts route abandonment without a superseding work stream", () => {
+    const abandoned = {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      outcome: "abandoned",
+      durationMs: 42,
+    };
+    expect(TELEMETRY_EVENTS.workstream_open_outcome.properties.safeParse(abandoned).success).toBe(true);
+    expect(TELEMETRY_EVENTS.workstream_open_outcome.properties.safeParse({
+      ...abandoned,
+      supersedingWorkstreamId: "00000000-0000-4000-8000-000000000102",
+    }).success).toBe(false);
+  });
+
   it("rejects shortcut and menu dimensions outside their bounded taxonomies", () => {
     expect(TelemetryEnvelopeSchema.safeParse(envelope("command_shortcut_used", {
       shortcutNumber: 0,
