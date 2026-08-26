@@ -66,6 +66,10 @@ export class TerminalWorkstreamService {
 
   async get(workstreamId: string) {
     await this.requireVisible(workstreamId);
+    return this.readState(workstreamId);
+  }
+
+  private async readState(workstreamId: string) {
     const terminal = createTerminalPortFactory(this.env)(this.auth.workspaceId, workstreamId);
     const [sandbox, repository] = await Promise.all([
       terminal.sandbox(),
@@ -115,7 +119,7 @@ export class TerminalWorkstreamService {
       throw new ApiError(409, "terminal_workspace_still_retained", "This Terminal workspace is still retained. Continue using it instead of starting a fresh workspace.");
     }
     await this.destroyCurrentSandbox(workstreamId);
-    const next = await this.get(workstreamId);
+    const next = await this.readState(workstreamId);
     await emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
@@ -176,7 +180,6 @@ export class TerminalWorkstreamService {
   }
 
   private async requireParticipant(workstreamId: string): Promise<void> {
-    await this.requireVisible(workstreamId);
     const participant = (await createIdentityObjectPort(
       this.env,
       this.auth.workspaceId,

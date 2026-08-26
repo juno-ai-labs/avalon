@@ -325,11 +325,11 @@ Pass evidence: explicit source and target audience traces for workspace and rest
 
 ## Flow 10 — inbound automation email
 
-1. Create one Global and one EU automation and confirm each exposes a permanent four-segment address from the same account-wide namespace as work streams.
-2. Send one message to each address. Confirm each owning region stores the untrusted email resource, creates exactly one new **private** work stream and automation run, records the automation owner as creator and participant, and passes only that labelled opening message to the harness. Confirm another workspace member cannot list or read either the run or its email resource.
+1. Create personal and workspace automations in both Global and EU and confirm each exposes a permanent four-segment address from the same account-wide namespace as work streams.
+2. Send one message to each address. Confirm each owning region stores the untrusted email resource, creates exactly one work stream and automation run, records the automation owner as creator and participant, and passes only that labelled opening message to the harness. Confirm personal automations create private work streams another workspace member cannot list or read, while workspace automations create workspace-scoped work streams and resources that member can read.
 3. Replay the same Resend email ID while processing and after completion. Confirm an active lease returns a retryable response, an expired lease can be reclaimed, and the completed replay returns the original work-stream and run IDs without launching again.
 4. Pause an automation and confirm its route is disabled and mail cannot start a run. Resume it and confirm the exact same address is active again.
-5. Confirm a work-stream reservation cannot claim an automation local part (or vice versa), even across regions, and that removing an owner leaves a permanent tombstone.
+5. Confirm a work-stream reservation cannot claim an automation email address (or vice versa), even across regions, and that removing an owner leaves a permanent tombstone. Confirm the same local part on a different accepted domain remains a distinct claim.
 
 ## PRD flow 5 — future scheduled run
 

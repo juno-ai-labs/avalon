@@ -746,15 +746,13 @@ export class AutomationService {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
       ).bind(newId(), this.auth.workspaceId, subscriptionId, schedule.type, schedule.rrule, schedule.intervalSeconds, schedule.timezone, schedule.nextRunAt, at, at)),
     ]);
-    let emailRouteNeedsReconciliation = false;
     try {
       await emailRouting.activateAutomationRoute(routeInput);
     } catch (error) {
       if (!isRecoverableEmailRouteTransition(error)) throw error;
-      emailRouteNeedsReconciliation = true;
     }
     if (schedules.length > 0) await this.refreshScheduler();
-    const detail = await this.get(subscriptionId, { reconcileEmail: !emailRouteNeedsReconciliation });
+    const detail = await this.get(subscriptionId);
     await emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
@@ -779,14 +777,12 @@ export class AutomationService {
     return detail;
   }
 
-  async get(id: string, options: { reconcileEmail?: boolean } = {}) {
+  async get(id: string) {
     const row = await this.loadSubscription(id);
-    // Same as the list: a draft holds no address until it is promoted, so
-    // reading one must not go and reserve it.
-    const emailAddress = options.reconcileEmail === false || row.status === "draft"
-      ? row.email_address == null ? null : String(row.email_address)
-      : (await new WorkstreamEmailRoutingService(this.env)
-          .ensureAutomationAddress(this.automationRouteInput(id))).emailAddress;
+    // Detail is a regional read. Route reservation and repair belong to the
+    // lifecycle transitions that own them, so opening an already-active
+    // automation never depends on Global availability.
+    const emailAddress = row.email_address == null ? null : String(row.email_address);
     const updateAvailable = Number(row.latest_version_number) > Number(row.version_number);
     const plannedWorkstream = row.next_run_at == null
       ? null
@@ -795,7 +791,7 @@ export class AutomationService {
           String(row.next_run_at),
         );
     const [runs, latestVersion, deliveryTargets, calendarSchedules] = await Promise.all([
-      this.runs(id, 20),
+      this.loadRuns(id, 20),
       updateAvailable
         ? this.env.DB.prepare(
             `SELECT id, version_number, overview, instructions, trigger_definitions_json,
@@ -1262,6 +1258,10 @@ export class AutomationService {
 
   async runs(id: string, limit = 50) {
     await this.loadSubscription(id);
+    return this.loadRuns(id, limit);
+  }
+
+  private async loadRuns(id: string, limit: number) {
     const result = await this.env.DB.prepare(
       `SELECT * FROM automation_runs WHERE workspace_id = ? AND automation_subscription_id = ?
        ORDER BY created_at DESC LIMIT ?`,
@@ -1483,15 +1483,13 @@ export class AutomationService {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
       ).bind(newId(), this.auth.workspaceId, subscriptionId, schedule.type, schedule.rrule, schedule.intervalSeconds, schedule.timezone, schedule.nextRunAt, at, at)),
     ]);
-    let emailRouteNeedsReconciliation = false;
     try {
       await emailRouting.activateAutomationRoute(routeInput);
     } catch (error) {
       if (!isRecoverableEmailRouteTransition(error)) throw error;
-      emailRouteNeedsReconciliation = true;
     }
     if (schedules.length) await this.refreshScheduler();
-    const detail = await this.get(subscriptionId, { reconcileEmail: !emailRouteNeedsReconciliation });
+    const detail = await this.get(subscriptionId);
     await emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
@@ -1660,15 +1658,15 @@ export class AutomationService {
       // run and resource links below belong to the newly bootstrapped object.
       const inserted = await runStatement.run();
       controlRunInserted = (inserted.meta.changes ?? 0) > 0;
-      // Every automation run is a private work stream. The member who starts
-      // it is both its durable creator and its initial participant, so every
-      // later read uses the ordinary work-stream visibility rule.
+      // Every run copies the automation's scope. The member who starts it is
+      // still its durable creator and initial participant; workspace-scoped
+      // runs are additionally visible through ordinary workspace membership.
       await provisionWorkstreamObject(this.env, {
         workspaceId: asWorkspaceId(this.auth.workspaceId),
         workstreamId: asWorkstreamId(workstreamId),
         title: String(subscription.name),
         objective: String(subscription.description),
-        scope: "personal",
+        scope: String(subscription.scope) as Scope,
         originType: "automation",
         createdByUserId: this.auth.userId,
         participantUserIds: [this.auth.userId],

@@ -181,10 +181,12 @@ hash-checked RPCs rather than cross-object SQL joins.
   scope inherits that row's, so the default has to be the narrow one for the
   omission to be safe. A thread in a public Slack channel states `workspace`
   outright because its room is the channel rather than a participant list.
-  **Every automation-generated work stream is `personal`**, regardless of the
-  automation's sharing scope: a manual or inbound-email run seats the member who
-  started it, while scheduled and activity-triggered runs seat the automation
-  owner (falling back to the template owner). A suggestion carries its own
+  **Every automation-generated work stream copies its automation's scope**: a
+  personal automation produces a participant-readable personal run, while a
+  workspace automation produces a workspace-readable run. A manual or
+  inbound-email run seats the member who started it, while scheduled and
+  activity-triggered runs seat the automation owner (falling back to the template
+  owner). A suggestion carries its own
   `audience_scope` across the same
   way: a `workspace` one was shown to every member before anyone started it, and
   the work stream it becomes stays readable by the people it was offered to. A `system_kind` row — a digest occurrence — is the other
@@ -349,9 +351,10 @@ no projection fallback when that object is unavailable.
   `status = 'active' AND lifecycle_state = 'visible'`, so a hidden automation cannot
   run. `model_override` is the same pin as the work-stream column above, held here
   because the runs it applies to do not exist yet; every path that creates a run
-  copies it onto the work stream it creates rather than joining back, so a run reads
-  its model from its own row and a run that already happened keeps describing the
-  model it was pinned to. Three separate places build that row —
+  copies it and the subscription's scope onto the work stream it creates rather
+  than joining back, so a run reads its model and audience from its own row and a
+  run that already happened keeps describing the model and scope it was created
+  with. Three separate places build that row —
   `AutomationService.createRun`, the workspace schedule runner's `startAutomation`, and
   the activity consumer's `startActivityAutomation` — so a column added to one and
   not the others is honoured by manual runs while scheduled and activity-triggered
@@ -748,6 +751,29 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-25 — Automation runs copy the subscription audience
+
+**What changed:** All three automation run producers now provision the generated
+work stream with the subscription's scope. Personal automations remain
+participant-readable; workspace automations create workspace-readable work
+streams. Automation detail also reads run history through its already-authorized
+subscription instead of authorizing the same subscription twice.
+
+**Why:** `automation_subscriptions.scope` is the product's declared user/workspace
+boundary. Discarding it at execution made workspace automations shareable while
+their output remained private. The second subscription load added no authority
+because detail had just completed the identical predicate.
+
+**Considered and rejected:** Keeping all outputs personal and teaching every
+consumer a special automation-derived permission. That would make the work
+stream's durable `scope` disagree with its actual readers and duplicate the
+visibility model across detail, directory, sockets, and resources.
+
+**What a future change has to respect:** Each run stores its audience on its own
+work stream at creation. Public run-history routes must authorize the
+subscription; internal reads reached from an already-authorized detail request
+must not repeat that query.
 
 ### 2026-08-25 — Email route identity includes the domain
 
