@@ -200,7 +200,13 @@ describe("boundary contracts", () => {
         startOffset: 4,
         endOffset: 9,
       }],
-    }).mentions).toHaveLength(1);
+    }).mentions).toEqual([{
+      type: "person",
+      userId: id,
+      connectorType: null,
+      startOffset: 4,
+      endOffset: 9,
+    }]);
   });
 
   it("accepts a model override only from the closed list of selectable models", () => {
