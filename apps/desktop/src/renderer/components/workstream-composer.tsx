@@ -191,7 +191,11 @@ export function WorkstreamComposer({
    */
   const beginMention = (from?: string): void => {
     draftRevisionRef.current += 1;
-    const started = draftWithMentionStarted(from ?? text, from === undefined ? textareaRef.current?.selectionStart : from.length);
+    const started = draftWithMentionStarted(
+      from ?? text,
+      from === undefined ? textareaRef.current?.selectionStart : from.length,
+      from === undefined ? textareaRef.current?.selectionEnd : from.length,
+    );
     setText(started.value);
     setMentionQuery('');
     setSlashDismissed(true);
@@ -223,7 +227,7 @@ export function WorkstreamComposer({
     draftRevisionRef.current += 1;
     const textarea = textareaRef.current;
     const caret = textarea?.selectionStart ?? text.length;
-    const completed = completeMentionAtCaret(text, caret, candidate.label);
+    const completed = completeMentionAtCaret(text, caret, candidate.label, textarea?.selectionEnd ?? caret);
     // Nothing to replace: the caret is no longer standing after an `@`, so
     // there is no mention here to complete. `slice(0, -1)` would silently eat
     // the character before the caret instead.

@@ -32,6 +32,15 @@ describe('mention drafts', () => {
     });
   });
 
+  it('replaces the selected suffix when completing a query', () => {
+    expect(completeMentionAtCaret('Ask @sa today', 7, 'Sam Lee', 13)).toEqual({
+      text: 'Ask @Sam Lee ',
+      caret: 13,
+      startOffset: 4,
+      endOffset: 12,
+    });
+  });
+
   it('moves untouched spans and drops only the identity edited through', () => {
     const first = person('Alex', 'alex', 4);
     const second = person('Alex', 'katherine', 14);

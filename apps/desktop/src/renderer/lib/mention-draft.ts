@@ -21,11 +21,12 @@ export function completeMentionAtCaret(
   text: string,
   caret: number,
   label: string,
+  selectionEnd: number = caret,
 ): { text: string; caret: number; startOffset: number; endOffset: number } | null {
   const before = text.slice(0, caret);
   const atIndex = before.lastIndexOf('@');
   if (atIndex < 0) return null;
-  const after = text.slice(caret);
+  const after = text.slice(Math.max(caret, selectionEnd));
   const separator = /^\s/u.test(after) ? '' : ' ';
   return {
     text: `${before.slice(0, atIndex)}@${label}${separator}${after}`,

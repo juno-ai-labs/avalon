@@ -133,6 +133,7 @@ async function openWorkstream(
       startOffset: number;
       endOffset: number;
     }[];
+    scope?: "personal" | "workspace";
     /** What `POST /workstreams` sends; a connector ingress sends nothing. */
     notifyParticipants?: boolean;
   } = {},
@@ -149,6 +150,7 @@ async function openWorkstream(
       objective: "Draft the quarterly plan",
       descriptionSource: "authored",
       titleStatus: "settled",
+      scope: options.scope ?? "personal",
       emailAddress: null,
       creatorUserId: CREATOR_ID,
       openingMessage: options.openingMessage ?? "starting the plan",
@@ -594,6 +596,45 @@ describe("naming somebody when the work stream is created", () => {
 });
 
 describe("confirming a nonparticipant mention on an existing work stream", () => {
+  it("persists a workspace-visible mention without seating or confirming the recipient", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub, { scope: "workspace" });
+    const sent = await product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: {
+        text: "Ask @Invitee to review",
+        clientMessageId: "workspace-visible-mention-message",
+        mentions: [{
+          type: "person",
+          userId: INVITEE_ID,
+          connectorType: null,
+          startOffset: 4,
+          endOffset: 12,
+        }],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    });
+    expect(sent.status).toBe(200);
+
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM participants WHERE user_id = ?`,
+        INVITEE_ID,
+      ).one().count).toBe(0);
+      expect(state.storage.sql.exec<{ target_user_id: string }>(
+        `SELECT target_user_id FROM part_mentions WHERE part_id = ?`,
+        (sent.body.message as { id: string }).id,
+      ).one().target_user_id).toBe(INVITEE_ID);
+    });
+    const envelopes = await deliveredEffects(stub);
+    expect(envelopes.filter((envelope) => (
+      envelope.effect.kind === "mention_notification"
+      && envelope.effect.recipientUserId === INVITEE_ID
+    ))).toHaveLength(1);
+  });
+
   it("seats the accepted target and emits only the specific mention notification", async () => {
     const stub = agentStub();
     await openWorkstream(stub);

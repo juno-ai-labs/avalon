@@ -22,7 +22,7 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, MessageMention, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
@@ -39,6 +39,8 @@ interface CreateWorkstreamInput {
   openingMessage: string;
   mentions: MentionIdentity[];
   participantIds: string[];
+  /** User-edit generation at submit; programmatic clearing does not advance it. */
+  draftRevision: number;
   /**
    * The submit instant the launch surface has been counting from. Seeded onto
    * the created run so the work timer does not jump at the navigation; the
@@ -70,6 +72,22 @@ interface LaunchingWorkstream {
   origin: 'composer' | 'suggested-work';
   /** Drives the work timer, which the created stream keeps counting from. */
   startedAt: number;
+}
+
+/** Presentation metadata for the accepted optimistic turn seeded after create. */
+function optimisticMessageMentions(mentions: readonly MentionIdentity[]): MessageMention[] {
+  return mentions.flatMap((mention) => (
+    mention.startOffset === undefined || mention.endOffset === undefined
+      ? []
+      : [{
+          type: mention.type,
+          ...(mention.userId ? { personId: mention.userId } : {}),
+          ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
+          displayName: mention.label,
+          startOffset: mention.startOffset,
+          endOffset: mention.endOffset,
+        }]
+  ));
 }
 
 /**
@@ -270,6 +288,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
+  const draftRevisionRef = useRef(0);
   const opportunityKeys = useRef(new Map<string, string>());
   // The instant the suggested-work surface started counting from, carried to
   // `onSuccess` so the seeded run continues it rather than restarting.
@@ -368,8 +387,13 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       // stood for a work stream that does not exist, so it cannot stay on
       // screen next to an error about why.
       setLaunching(null);
-      setMessage((current) => current.length > 0 ? current : input.openingMessage);
-      setSelectedMentions((current) => current.length > 0 ? current : input.mentions);
+      // Restore one coherent submitted snapshot only when no user edit landed
+      // after submit. Text and identity spans must never come from different
+      // draft generations.
+      if (draftRevisionRef.current === input.draftRevision) {
+        setMessage(input.openingMessage);
+        setSelectedMentions(input.mentions);
+      }
     },
     onSettled: () => {
       submittingRef.current = false;
@@ -394,6 +418,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
         author: workspace.currentUser,
         messageType: 'text',
         text: input.openingMessage,
+        mentions: optimisticMessageMentions(input.mentions),
         attachments: input.attachments,
         createdAt: created.createdAt,
       };
@@ -524,6 +549,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       openingMessage,
       mentions,
       participantIds,
+      draftRevision: draftRevisionRef.current,
       startedAt: createdAt,
     });
   };
@@ -555,6 +581,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   );
 
   const updateMessage = (value: string): void => {
+    draftRevisionRef.current += 1;
     setMessage(value);
     setSelectedMentions((current) => rebaseMentionIdentities(message, value, current));
     syncMentionQuery(value);
@@ -580,7 +607,12 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   };
 
   const beginMention = (): void => {
-    const started = draftWithMentionStarted(message, textareaRef.current?.selectionStart);
+    const started = draftWithMentionStarted(
+      message,
+      textareaRef.current?.selectionStart,
+      textareaRef.current?.selectionEnd,
+    );
+    draftRevisionRef.current += 1;
     setMessage(started.value);
     setMentionQuery('');
     requestAnimationFrame(() => {
@@ -597,13 +629,14 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const insertMention = (member: WorkspaceMember): void => {
     const textarea = textareaRef.current;
     const caret = textarea?.selectionStart ?? message.length;
-    const completed = completeMentionAtCaret(message, caret, member.name);
+    const completed = completeMentionAtCaret(message, caret, member.name, textarea?.selectionEnd ?? caret);
     // The caret has left the mention this list belongs to; there is nothing
     // here to complete, and `slice(0, -1)` would eat the character before it.
     if (!completed) {
       setMentionQuery(null);
       return;
     }
+    draftRevisionRef.current += 1;
     setMessage(completed.text);
     setSelectedMentions((current) => upsertMentionIdentity(
       rebaseMentionIdentities(message, completed.text, current),
