@@ -74,11 +74,18 @@ do not appear in the global work-stream sidebar or directory. The automation
 home reads a paged run-summary list from AutomationAgent and opens the child
 work stream only when a person chooses a run.
 
-WorkspaceDO remains the workspace control plane. It keeps queryable,
-monotonic projections for the sidebar and activity-trigger fan-out, as well as
-shared template catalogs, connector resources, membership, and other
-workspace-wide authorities. A projection can locate an AutomationAgent; it
-cannot authorize a sensitive read or mutation on the object's behalf.
+WorkspaceDO remains the workspace control plane and the canonical processor for
+external connector events. It keeps queryable, monotonic projections for the
+sidebar and activity-trigger evaluation, as well as shared template catalogs,
+connector resources, membership, and other workspace-wide authorities. Each
+AutomationAgent publishes a versioned, type-safe evaluator set that tells its
+WorkspaceDO which canonical Gmail, Linear, Granola, or other external events are
+candidates for that automation. WorkspaceDO evaluates those rules beside the
+event authority and delivers only durable, idempotent matches to the
+AutomationAgent. Calendar and interval timers never enter that evaluator set;
+the AutomationAgent schedules them directly through its inherited multi-alarm
+index. A projection can locate or wake an AutomationAgent; it cannot authorize a
+sensitive read or mutation on the object's behalf.
 
 SubstreamAgent, BlockDashboardAgent, and AutomationAgent share one extracted
 durable Bind runtime kernel: schema fragments, migrations, run admission and
@@ -167,6 +174,10 @@ behavior and failure containment, not projected scale.
 12. Move existing drafts and active automations without changing their IDs,
     schedules, permanent email addresses, version pins, run history, or effective
     user settings, and without admitting a trigger twice.
+13. Replace untyped deterministic activity-filter records with a closed,
+    versioned evaluator grammar whose structure is parsed at every wire and
+    storage boundary and whose fields and operators are validated against the
+    exact connector event manifest before registration.
 
 ## Non-goals
 
@@ -205,6 +216,11 @@ behavior and failure containment, not projected scale.
 10. **Choosing new numeric timeouts, transcript ceilings, retry counts, or
     concurrency caps.** Existing limits remain unless implementation evidence
     requires a change; any new defensive number is a separate team decision.
+11. **Using Cloudflare Flagship as the runtime or control plane.** Its ordered
+    first-match rules, typed operators, missing-attribute behavior, stable
+    context, and safe default inform the local grammar. Automation routing stays
+    regional and workspace-authoritative, and this PRD does not add a Flagship
+    binding, percentage rollout, or remote flag dependency.
 
 ## Product behavior
 
@@ -279,7 +295,8 @@ and moves to `activating`. While activating:
 - no compiler turn may rewrite the definition;
 - no manual, scheduled, activity, or inbound-email trigger may start a run;
 - calendar and interval schedules are made durable in the object;
-- the WorkspaceDO sidebar and activity-routing projections are installed;
+- the WorkspaceDO sidebar projection and complete external-event evaluator
+  snapshot are installed and acknowledged;
 - the automation's permanent inbound email address is claimed in the Global
   registry; and
 - every required registration records an idempotent receipt that can be
@@ -318,12 +335,16 @@ object rejects every run trigger even if a stale projection routes one to it.
   deleting a schedule reconciles the index and re-arms before returning.
 - **Manual:** the overview calls the object directly. A client idempotency key
   identifies the requested run.
-- **Activity:** WorkspaceDO matches the workspace event against a queryable
-  registration projection and fans the event and receipt ID to candidate
-  objects. Each object rechecks its active definition and frozen connector
-  authority before admission. Activation does not report `active` until its
-  registration has an acknowledged routing boundary, so an event cannot fall
-  into a visible-but-unroutable gap.
+- **External activity:** WorkspaceDO parses and persists the normalized event,
+  selects evaluator projections by exact connection and event type, evaluates
+  each ordered rule set once, and durably delivers an ID-only match receipt to
+  each candidate AutomationAgent. Each object rechecks lifecycle, evaluator
+  generation, event receipt, and frozen connector authority before admission.
+  Activation does not report `active` until the evaluator snapshot has an
+  acknowledged routing boundary, so an event cannot fall into a
+  visible-but-unroutable gap. Semantic triggers use the same deterministic
+  predicate as a prefilter and run their structured semantic gate only after
+  that predicate matches.
 - **Inbound email:** the Global ledger resolves the permanent address to region,
   workspace, and automation ID. The regional AutomationAgent rechecks active
   state, sender eligibility, receipt idempotency, and the existing restricted
@@ -375,11 +396,230 @@ execution projection.
 
 Pausing preserves schedules, address claims, and definition. It disarms run
 admission, not identity. Its schedule entries are removed from the multi-alarm
-index while the canonical schedule records remain paused. Resuming revalidates
-required registrations, reconciles the entries, and re-arms before the object
-becomes active again. Deletion writes a durable tombstone, removes every
-automation-owned alarm entry and live workspace projection, and keeps permanent
-Global email claims tombstoned as they are today.
+index while the canonical schedule records remain paused, and it publishes an
+empty evaluator snapshot after its local lifecycle fence rejects stale event
+deliveries. Resuming revalidates required registrations, installs and receives
+acknowledgement for the current evaluator snapshot, reconciles timer entries,
+and re-arms before the object becomes active again. Deletion writes a durable
+tombstone, removes every automation-owned alarm entry and live workspace
+projection, and keeps permanent Global email claims tombstoned as they are
+today.
+
+### External event evaluator contract
+
+The accepted automation definition compiles to a complete evaluator-set
+snapshot. One evaluator names exactly one resolved connector connection and one
+manifest-declared event type. A trigger that accepts several event types
+therefore compiles to several evaluators. This makes candidate lookup an exact
+index operation and gives every predicate one unambiguous field vocabulary;
+WorkspaceDO never has to interpret a field whose type changes with the event.
+An optional `resourceId` further narrows that exact source for a resource-watch
+trigger; acceptance proves that the resource belongs to the named connection
+and expands a watch covering several declared events into separate evaluators.
+Webhook and poll sources share the same post-normalization contract. A draft
+semantic trigger that proposes “any connector” is not registered as a wildcard:
+acceptance expands the currently authorized, declared source/event pairs into an
+explicit snapshot, and a connector added later does not silently broaden it.
+
+The wire shape is a versioned discriminated union, conceptually:
+
+```ts
+type AutomationExternalEvaluatorSetV1 = {
+  schemaVersion: 1;
+  automationId: AutomationId;
+  definitionRevision: AutomationDefinitionRevision;
+  authorityGeneration: AutomationAuthorityGeneration;
+  projectionVersion: AutomationEvaluatorProjectionVersion;
+  evaluators: ExternalEventEvaluatorV1[]; // empty removes every live evaluator
+};
+
+type ExternalEventEvaluatorV1 = {
+  evaluatorId: ExternalEventEvaluatorId;
+  source: {
+    connectorType: ConnectorType;
+    connectionId: ConnectionId;
+    eventType: ConnectorEventType;
+    resourceId?: ResourceId;
+  };
+  rules: NonEmptyArray<{
+    ruleId: ExternalEventEvaluatorRuleId;
+    when: ExternalEventPredicateV1;
+    result: "match" | "no_match";
+  }>;
+  defaultResult: "no_match";
+  gate:
+    | { kind: "deterministic" }
+    | { kind: "semantic"; condition: NonEmptyString };
+};
+
+type ExternalEventPredicateV1 =
+  | { kind: "always" }
+  | { kind: "all"; clauses: NonEmptyArray<ExternalEventPredicateV1> }
+  | { kind: "any"; clauses: NonEmptyArray<ExternalEventPredicateV1> }
+  | {
+      kind: "string";
+      attribute: string;
+      operator: "equals" | "not_equals" | "contains" |
+        "starts_with" | "ends_with";
+      value: NonEmptyString;
+    }
+  | {
+      kind: "string";
+      attribute: string;
+      operator: "in" | "not_in";
+      value: NonEmptyArray<NonEmptyString>;
+    }
+  | {
+      kind: "number";
+      attribute: string;
+      operator: "equals" | "not_equals" | "greater_than" | "less_than" |
+        "greater_than_or_equals" | "less_than_or_equals";
+      value: FiniteNumber;
+    }
+  | {
+      kind: "number";
+      attribute: string;
+      operator: "in" | "not_in";
+      value: NonEmptyArray<FiniteNumber>;
+    }
+  | {
+      kind: "boolean";
+      attribute: string;
+      operator: "equals" | "not_equals";
+      value: boolean;
+    }
+  | {
+      kind: "string_array";
+      attribute: string;
+      operator: "has";
+      value: NonEmptyString;
+    }
+  | {
+      kind: "string_array";
+      attribute: string;
+      operator: "has_any" | "has_all" | "has_none";
+      value: NonEmptyArray<NonEmptyString>;
+    };
+```
+
+The TypeScript aliases illustrate the contract; checked-in strict Zod schemas
+are the runtime authority. Every object rejects unknown keys. Empty strings,
+empty groups, empty operator lists, duplicate evaluator IDs, duplicate rule IDs,
+duplicate source tuples, non-finite numbers, and invalid revision or generation
+identities are structurally invalid. The stateful receiver additionally rejects
+a lower projection version and treats the same version with a different hash as
+an integrity failure. Array order is rule priority: WorkspaceDO evaluates rules
+from first to last and stops at the first result. If no rule matches, the only
+legal default is `no_match`. An `always` predicate makes a catch-all explicit.
+There is no general `not` node; negative leaf operators preserve the field's
+type and avoid inventing ambiguous negation semantics for a missing value.
+
+All string comparison is case-sensitive and performs no trimming, locale
+folding, parsing, or scalar-to-array coercion. A missing attribute makes every
+leaf predicate false, including `not_equals`, `not_in`, and `has_none`; missing
+data never turns an exclusion into a match. `all` matches only when every child
+matches, and `any` matches when at least one child matches. The evaluator is run
+once against one immutable event context and one immutable evaluator revision;
+it cannot observe a value changing between rules.
+
+Structure alone cannot prove that an attribute belongs to a dynamically
+registered connector event. Registration therefore has a second contextual
+parser. For each evaluator it resolves the exact connector manifest and rejects
+the snapshot unless:
+
+- the connector, connection, and event type exist, agree with one another, and
+  are in the automation's frozen accepted bindings;
+- an optional resource exists in WorkspaceDO, belongs to that connection, and
+  is a legal resource target for the event;
+- every attribute is declared in that event type's
+  `ConnectorActivityTriggerDescriptor.filterFields`;
+- predicate `kind` equals the field's declared `valueType` and the selected
+  operator is legal for that kind; and
+- the same automation generation has not already supplied the same projection
+  version with a different canonical payload hash.
+
+The successful result is a branded `ValidatedExternalEvaluatorSet`, and
+internal compilation, persistence, projection, and evaluation APIs accept that
+type rather than the raw wire type. Serialization erases the brand, so the
+receiver parses again. Validation occurs when the architect submits a draft,
+when acceptance resolves the proposed source binding to a connection, when
+AutomationAgent reads or writes its SQLite record, on every
+AutomationAgent-to-WorkspaceDO projection RPC, when WorkspaceDO reads or writes
+its evaluator index, and before an evaluator is executed. A malformed stored
+row is an integrity failure and fail-closed registration, never an empty filter
+or a permissive fallback.
+
+Normalized connector events retain their existing broader canonical evidence,
+but evaluation sees a separate closed context containing only fields declared
+for that exact connector event type. The connector normalizer creates that
+context, and WorkspaceDO parses it against the same manifest descriptor at
+ingress and again when loading it for processing. Evaluators cannot use dotted
+paths or spread arbitrary `metadata`, `subject`, `actor`, provider payload, or
+transcript content into their context. If a product needs “Linear ticket state
+changed,” for example, the Linear descriptor first declares typed fields such
+as `changedFields: string_array`, `previousStateId: string`, and
+`stateId: string`; only then can an accepted evaluator refer to them. A new
+Gmail or Granola field follows the same manifest-first path.
+
+Representative compiled rules are intentionally small:
+
+| Intent | Exact source event | Ordered filter |
+| --- | --- | --- |
+| Run for every new Gmail message | `email.received` | `always -> match` |
+| Run when a Linear ticket moves to the configured completed state | `linear.issue.update` | `all(changedFields has "stateId", stateId equals "<accepted-state-id>") -> match` |
+| Run for every new Granola transcript | `note.generated` | `always -> match` |
+
+The Linear example is not legal until its manifest and normalizer declare and
+populate those state fields. The accepted state ID is a frozen configuration
+value, not a display name resolved differently on each event.
+
+The deterministic grammar borrows Cloudflare Flagship's
+[ordered first-match rules and nested conditions](https://developers.cloudflare.com/flagship/targeting/),
+[type-specific operators and missing-attribute behavior](https://developers.cloudflare.com/flagship/targeting/operators/),
+and guidance to use a
+[stable evaluation context and safe fallback](https://developers.cloudflare.com/flagship/best-practices/).
+It intentionally does not copy Flagship's percentage rollout: random event loss
+has no useful meaning for an automation trigger. Semantic meaning is also not
+smuggled into a generic operator. A semantic evaluator first produces `match`
+from the typed rules, then evaluates its non-empty natural-language condition
+through the existing structured inference contract; only a true structured
+result becomes a delivery.
+
+Flagship's own numerical rule and nesting limits are platform constraints, not
+Rally product requirements, so this PRD does not copy their values. If the
+implementation adds a predicate-depth, rule-count, or payload-size ceiling for
+resource safety, that ceiling and its refusal behavior require the repository's
+separate defensive-limit decision; it cannot appear as an unexplained schema
+number.
+
+WorkspaceDO owns the evaluation and delivery transaction boundary:
+
+```text
+verified provider event or poll
+  -> WorkspaceDO canonical event + parsed evaluation context
+  -> exact (connectionId, eventType) evaluator candidates
+  -> ordered deterministic evaluation; optional semantic gate
+  -> WorkspaceDO durable delivery receipt + outbox
+  -> regional Queue ID-only wake-up
+  -> typed AutomationAgent.deliverExternalEvent
+  -> AutomationAgent lifecycle/generation/receipt recheck + run admission
+```
+
+The wake-up contains opaque workspace event, evaluator, revision, and delivery
+receipt identities plus a canonical hash, not the event body. The generated run
+loads its authoritative trigger evidence from WorkspaceDO through a typed port
+after admission. The delivery receipt is unique for the workspace event,
+automation, authority generation, projection version, and evaluator ID, so
+Queue redelivery cannot create a second occurrence. An evaluator update does
+not silently replay old events under new rules; an explicit replay operation
+would be a separate product and authorization decision.
+
+Timer triggers use none of this path. Calendar and interval definitions are
+parsed into the accepted AutomationAgent definition, including an explicit or
+authoritatively resolved IANA timezone, and produce object-local scheduled alarm
+entries. “Every weekday at 9am Pacific” is therefore calculated and admitted by
+the AutomationAgent that owns the automation. WorkspaceDO neither receives a
+timer evaluator nor wakes the object for that occurrence.
 
 ### Workspace surfaces and projections
 
@@ -388,7 +628,8 @@ questions without waking every automation:
 
 - the automation sidebar entry visible to each viewer;
 - monotonic lifecycle, title, scope, badge, and next-run summary fields;
-- activity-trigger registrations needed for event fan-out; and
+- complete, generation-fenced external-event evaluator snapshots and the exact
+  connection/event index needed for local candidate selection; and
 - an authority version and AutomationAgent ID for routing.
 
 The AutomationAgent publishes those projections through a durable outbox, and
@@ -549,6 +790,27 @@ None yet.
     into AutomationAgent merely because the global sidebar no longer lists
     them; navigation hierarchy does not change canonical content ownership.
 
+14. **WorkspaceDO evaluates external events; AutomationAgent owns timers.** A
+    connector event is already canonical, region-local workspace state, so its
+    evaluator context and all candidate indexes stay beside that event. The
+    AutomationAgent publishes its complete desired evaluator set and receives
+    only durable matches. Calendar and interval occurrences derive from the
+    accepted automation definition and remain object-local multi-alarm work.
+    *Rejected:* waking every AutomationAgent for every workspace event, which
+    turns unrelated objects into the query plan; and routing timers through
+    WorkspaceDO, which splits schedule authority from run admission.
+
+15. **Evaluator rules are a closed algebra with a manifest-validated context.**
+    Ordered first-match rules and an immutable `no_match` default make exclusions
+    and fallbacks explicit. Discriminated leaf types make illegal
+    operator/value combinations structurally unrepresentable, while the
+    registry-aware parser proves that a field belongs to the exact event source.
+    *Rejected:* the current `Record<string, unknown>` plus JSON deep equality,
+    arbitrary metadata paths, implicit coercion, and a generic operator/value
+    pair. Each lets malformed or misspelled rules survive compilation and makes
+    a connector schema change fail during event processing instead of at a
+    boundary.
+
 ## Data model
 
 The exact table names belong to the implementation plan and migrations. The
@@ -556,8 +818,8 @@ authority split is fixed by this PRD:
 
 | Authority | Canonical records |
 | --- | --- |
-| AutomationAgent SQLite | Immutable automation identity and workspace/region fence; lifecycle and revision; draft canonical facts plus author-visible `transcript_sequence` and restricted `loop_sequence` projections from the shared ordered transcript substrate; attachments, active checkpoints, activities, and event fences; compiled and accepted definition revisions; elicitation; local Bind runtime ledger; trigger configuration and canonical due work; the shared `_internal_durable_alarms` index; run occurrence admission/idempotency/history plus content-free child execution projections and their receipts; automation memory/table definitions; resource and connector references; delivery targets and receipts; projection/registration outbox and receipts; tombstone. |
-| WorkspaceDO SQLite | Automation directory projections; viewer visibility summaries; activity-trigger inverted index and ingress receipts; shared template/version catalog; connector connections and workspace resources; membership-derived routing inputs. |
+| AutomationAgent SQLite | Immutable automation identity and workspace/region fence; lifecycle and revision; draft canonical facts plus author-visible `transcript_sequence` and restricted `loop_sequence` projections from the shared ordered transcript substrate; attachments, active checkpoints, activities, and event fences; compiled and accepted definition revisions; elicitation; local Bind runtime ledger; canonical timer configuration and due work; the shared `_internal_durable_alarms` index; the compiled external-event evaluator snapshot and projection receipts; run occurrence admission/idempotency/history plus content-free child execution projections and their receipts; automation memory/table definitions; resource and connector references; delivery targets and receipts; projection/registration outbox and receipts; tombstone. |
+| WorkspaceDO SQLite | Automation directory projections; viewer visibility summaries; validated external-event evaluator snapshots and exact connection/event candidate index; canonical normalized events and closed evaluation contexts; evaluator delivery receipts/outbox; shared template/version catalog; connector connections and workspace resources; membership-derived routing inputs. |
 | Generated SubstreamAgent SQLite | Ordered-turn canonical facts, participant transcript and restricted Bind-loop projections; participants and reader audience; run scope; Bind execution, tools, activity/checkpoints and output; work-stream resources and memory provenance; content-free automation-run projection outbox. |
 | Global control-plane D1 | Permanent inbound-email address route and tombstone, plus the existing region/workspace routing facts needed before a regional object can be selected. |
 
@@ -628,10 +890,19 @@ never-reuse/tombstone rules.
   authorization-before-effect, idempotency, ambiguous-write, replay, and audit
   contracts. Recovery may repeat a safe read; it does not blindly repeat an
   unresolved write.
-- Workspace projections contain only list/routing fields. They contain no draft
-  conversation, prompt, attachment content, connector credential, tool result,
-  or generated transcript. Current object authority is checked before a
-  projection leads to sensitive disclosure or mutation.
+- Workspace projections contain only list/routing fields plus the frozen
+  accepted evaluator configuration required to decide external events. They
+  contain no draft conversation, compiler or generated-run prompt, attachment
+  content, connector credential, tool result, or generated transcript. A
+  semantic evaluator's accepted condition is stored because WorkspaceDO owns
+  that gate; it remains regional product configuration and is excluded from
+  logs and telemetry. Current object authority is checked before a projection
+  leads to sensitive disclosure or mutation.
+- Evaluators can inspect only the closed, manifest-declared context for their
+  exact connector event type. Raw provider bodies, arbitrary metadata, subject
+  and actor records, transcript text, and credentials cannot become evaluator
+  attributes. Unknown fields, operators, schema versions, and same-version hash
+  conflicts fail closed at the receiving boundary.
 - Generated work-stream audience is independent of automation scope. A
   workspace automation may be discoverable to workspace members while each
   generated run remains private to its admitted participants. Readers recheck
@@ -682,34 +953,47 @@ or model overrides.
    stable terminal turn references, activity/snapshot fences, and conformance
    fixtures are the baseline for this work. Do not build AutomationAgent
    against the aggregate run-level transcript protocol that cutover removes.
-2. Extract the remaining durable Bind execution kernel behind existing hosts,
+2. Replace `deterministicFilters` and `deterministicPrefilter` records with the
+   strict predicate schemas and branded registry-aware compiler. Make connector
+   normalizers emit a closed evaluation context for each declared event type;
+   add descriptor fields such as Linear state-change attributes before any rule
+   may reference them. Prove this conversion on the current Gmail, Linear, and
+   Granola trigger fixtures without retaining an arbitrary-metadata fallback.
+3. Extract the remaining durable Bind execution kernel behind existing hosts,
    proving no product behavior change in SubstreamAgent and
    BlockDashboardAgent. Add AutomationAgent as a `ScheduledDurableObject`
    subclass using the existing alarm schema and base-class lifecycle, and add
    its personal-author adapter to the ordered transcript substrate; no separate
    alarm or transcript framework ships.
-3. Enable object-owned authoring for new internal drafts. Keep acceptance on the
+4. Enable object-owned authoring for new internal drafts. Keep acceptance on the
    object path only; do not introduce a draft-only object that transfers back to
    WorkspaceDO.
-4. Migrate existing drafts. Their IDs and saved conversations are normalized
+5. Migrate existing drafts. Their IDs and saved conversations are normalized
    once into ordered canonical facts and exact post-healing Bind state in the
    named objects; migration verifies the canonical projection hashes rather
    than retaining `draft_conversation_json` as a fallback. In-flight
    request-scoped runs settle on the old path before the authority fence flips.
-5. Migrate paused and manual-only active automations, then scheduled, activity,
-   and inbound-email automations. Each migration fences old trigger admission,
-   imports and hash-verifies canonical state, arms the object, updates the
-   routing projection, and only then flips the per-automation authority marker.
-6. Replace direct SubstreamAgent writes to workspace-owned `automation_runs`
+6. Add the full-snapshot AutomationAgent-to-WorkspaceDO evaluator projection,
+   exact candidate index, receipt-backed WorkspaceDO evaluation outbox, and
+   ID-only delivery wake-up. The same-version payload hash fence and
+   generation-aware AutomationAgent admission must be live before any external
+   activity automation migrates.
+7. Migrate paused and manual-only active automations, then timer, external
+   activity, and inbound-email automations. Each migration fences old trigger
+   admission, imports and hash-verifies canonical state, arms object-local
+   timers or acknowledges the external evaluator snapshot as applicable,
+   updates the directory projection, and only then flips the per-automation
+   authority marker.
+8. Replace direct SubstreamAgent writes to workspace-owned `automation_runs`
    with the versioned child-to-AutomationAgent projection. Suppress generated
    children from global work-stream listability and make the automation home
    consume its paged object-local run list before enabling the new authority for
    active automations.
-7. Reconcile schedule occurrences, activity ingress receipts, inbound-email
+9. Reconcile schedule occurrences, evaluator delivery receipts, inbound-email
    receipts, and run idempotency keys across the cut so every trigger is either
    absent or present once. A migrated object never falls back to writable legacy
    rows.
-8. After both regions have no legacy automation authorities and rollback
+10. After both regions have no legacy automation authorities and rollback
    evidence has expired, remove the WorkspaceDO canonical automation/schedule
    rows, old compiler endpoint, and compatibility paths. Keep only the new
    projections and shared workspace authorities.
@@ -790,6 +1074,27 @@ state; the flag must not silently reopen a stale writer.
     reads or writes the removed run-level aggregate transcript protocol, and
     draft migration does not retain `draft_conversation_json` as a writable
     fallback.
+17. Parse table-driven legal and illegal evaluator fixtures at every boundary.
+    Reject unknown schema versions and keys, empty groups and values, duplicate
+    IDs and source tuples, non-finite numbers, mismatched field kinds,
+    unsupported operators, undeclared attributes, wrong connection/event pairs,
+    stale projection versions, and same-version hash conflicts. Demonstrate
+    that production evaluator APIs cannot receive an unbranded raw object.
+18. Evaluate nested first-match rules for string, number, boolean, and string
+    array attributes. Verify case-sensitive comparisons, no coercion, and that a
+    missing attribute makes positive and negative leaves false. No matching rule
+    must return `no_match`; a semantic trigger must not call inference until its
+    deterministic rules return `match`.
+19. Ingest representative `email.received`, `linear.issue.update`, and
+    `note.generated` events. WorkspaceDO evaluates only manifest-declared
+    context, stores one delivery receipt per evaluator revision, and sends an
+    ID-only wake-up. Queue duplication, reordering, object eviction, and stale
+    evaluator delivery create at most one automation occurrence; a definition
+    update does not replay the old event implicitly.
+20. Prove a weekday 9:00 AM America/Los_Angeles timer across daylight-saving
+    transitions is calculated, armed, recovered, and admitted entirely by
+    AutomationAgent. No timer evaluator or timer occurrence is written to or
+    delivered by WorkspaceDO.
 
 ## Open questions
 
