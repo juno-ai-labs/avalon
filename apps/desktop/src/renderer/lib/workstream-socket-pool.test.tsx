@@ -298,7 +298,7 @@ describe('WorkstreamSocketPool', () => {
     expect(rendered).toHaveBeenCalledTimes(rendersBeforeConnectionChange);
   });
 
-  it('does not warm the active work stream', async () => {
+  it('does not add a hover warm-up beyond the active socket pair', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApi();
@@ -314,8 +314,8 @@ describe('WorkstreamSocketPool', () => {
     act(() => vi.advanceTimersByTime(1_001));
     await flushPromises();
 
-    expect(api.getSocketTicket).not.toHaveBeenCalled();
-    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
+    expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
+    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
   });
 
   it('cancels a pending warm-up when the row unmounts', async () => {
@@ -342,7 +342,7 @@ describe('WorkstreamSocketPool', () => {
     expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
   });
 
-  it('cancels a pending warm-up when navigation makes the row active', async () => {
+  it('replaces a pending warm-up with the active socket pair', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApi();
@@ -364,8 +364,8 @@ describe('WorkstreamSocketPool', () => {
     act(() => vi.advanceTimersByTime(501));
     await flushPromises();
 
-    expect(api.getSocketTicket).not.toHaveBeenCalled();
-    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
+    expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
+    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the route subtree mounted while the active work stream changes', () => {
@@ -393,7 +393,7 @@ describe('WorkstreamSocketPool', () => {
     expect(mounted).toHaveBeenCalledTimes(1);
   });
 
-  it('does not admit a route whose initial reads failed, including after navigation', async () => {
+  it('opens each active route feed without waiting for descendant admission', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApi();
@@ -415,9 +415,14 @@ describe('WorkstreamSocketPool', () => {
     await flushPromises();
     act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
 
-    expect(api.getSocketTicket).not.toHaveBeenCalled();
-    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
-    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(api.getSocketTicket).toHaveBeenCalledTimes(2);
+    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(2);
+    expect(FakeWebSocket.instances.map((socket) => String(socket.url))).toEqual([
+      `wss://api.rally.test/workstreams/${firstWorkstreamId}/control`,
+      `wss://api.rally.test/workstreams/${firstWorkstreamId}/feed`,
+      `wss://api.rally.test/workstreams/${secondWorkstreamId}/control`,
+      `wss://api.rally.test/workstreams/${secondWorkstreamId}/feed`,
+    ]);
   });
 
   it('reuses the exact feed and control socket pair until retention expires', async () => {
