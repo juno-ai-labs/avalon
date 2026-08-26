@@ -103,6 +103,10 @@ function scheduleRunnerFor(fixture: Fixture) {
       workstreamScheduleTargets: async () => ({ items: [] }),
       plannedAutomationWorkstream: async () => null,
     },
+    notificationIntents: {
+      notificationIntentMaintenanceTarget: async () => ({ dueAt: null }),
+      reapSettledWorkstreamNotificationIntents: async () => ({ reapedIntentIds: [] }),
+    },
   };
   return {
     runDue: async (now = new Date()) => {
