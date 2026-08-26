@@ -18,7 +18,7 @@ export function useWorkstreamFeedOpenTelemetry({
   workstreamId,
 }: {
   cacheState: WorkstreamFeedCacheState;
-  feedSource: 'feed_cache' | 'boot_payload' | 'legacy_page' | undefined;
+  feedSource: 'feed_cache' | 'socket_snapshot' | 'boot_payload' | 'legacy_page' | undefined;
   isReady: boolean;
   messageCount: TelemetryCountBucket | undefined;
   readSocketOpenContext: () => { socketLeaseId?: string };

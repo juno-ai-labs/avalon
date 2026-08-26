@@ -1622,19 +1622,13 @@ export const MessageFeedPageSchema = z.object({
 }).strict();
 
 /**
- * Everything the desktop needs to paint a work stream, in one response.
+ * The REST recovery twin of the SubstreamAgent `snapshot` frame.
  *
- * The REST twin of the SubstreamAgent `snapshot` frame, and assembled by the
- * same code so the two cannot drift. Opening used to be five sequential
- * requests — detail, transcript, context, panel preference, Terminal — of which
- * four read state the room already had in hand while answering the first. They
- * are folded in here rather than kept separate because none of them was a
- * decision the client made; they were fields it went and collected.
- *
- * `blockDashboardPreference` is the exception that proves the shape: its row
- * belongs to WorkstreamDO, so the route fetches it beside the room call rather
- * than the room reaching sideways for it. That keeps snapshot assembly free of
- * cross-object calls, which is the cost this whole change removes.
+ * Normal opens subscribe directly and paint the first snapshot. This response
+ * remains for an explicit unavailable-state retry and is assembled by the same
+ * room code so recovery cannot drift. Viewer-specific WorkstreamDO metadata is
+ * deliberately absent: its control socket starts independently and an optional
+ * panel preference must not lengthen either feed admission or REST recovery.
  */
 export const WorkstreamBootSchema = WorkstreamDetailSchema.extend({
   /**
@@ -1651,8 +1645,6 @@ export const WorkstreamBootSchema = WorkstreamDetailSchema.extend({
   messageFeed: MessageFeedPageSchema.optional(),
   /** The window around where this viewer stopped, or null if that is this page. */
   resumeFeed: MessageFeedPageSchema.nullable().default(null),
-  /** Absent from an older Worker; the control socket's boot frame also carries it. */
-  blockDashboardPreference: BlockDashboardPreferenceSchema.optional(),
 });
 
 

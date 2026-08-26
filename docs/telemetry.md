@@ -148,8 +148,12 @@ inheriting time spent elsewhere. The
 visible outcome accompanies `workstream_feed_visible`, which records exact
 click-to-data-ready and click-to-first-painted-feed milliseconds, the
 pinned/recent section, the detail/transcript cache state, the pooled-socket
-state at click, the transcript-cache, boot-payload, or rollout-fallback source,
-and only a count bucket for messages. Each detail request keeps a unique
+state at click, the feed source (`feed_cache`, `socket_snapshot`, `boot_payload`,
+or `legacy_page`), and only a count bucket for messages. The normal cold path is
+explicitly
+`socket_snapshot`; `boot_payload` and `legacy_page` identify manual REST
+recovery, while `feed_cache` identifies an already-present transcript. Each
+detail request keeps a unique
 `x-request-id`, including React Query retries, and carries the click ID separately
 as `x-rally-operation-id`; the Worker's `workstream.detail.read` span records both.
 The independently timed `workstream_send_ready` event reuses the opening-attempt
@@ -652,6 +656,27 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-25 — Cold-open telemetry names the socket snapshot
+
+**What changed:** `workstream_feed_visible.feedSource` now accepts
+`socket_snapshot`, and a cold reader populated by its first SubstreamAgent frame
+reports that source. `feed_cache` remains the already-present path, while
+`boot_payload` and `legacy_page` describe explicit REST recovery.
+
+**Why:** The normal reader no longer issues the detail request. Labeling a
+socket-populated feed as an HTTP boot or rollout fallback would make the new
+critical path indistinguishable from the recovery path when diagnosing its
+P90.
+
+**Considered and rejected:** Reusing `boot_payload` because both shapes contain
+canonical boot state. That name would preserve schema compatibility by hiding
+the transport distinction the performance question needs.
+
+**Consequences:** Existing analytics consumers must include the new enum value.
+Cold-open queries should select `socket_snapshot` and join through the opening
+operation and socket lease; REST cohorts remain separately queryable. The event
+still contains no message content, URL, or authorization value.
+
 ### 2026-08-25 — Send readiness is measured independently from feed visibility
 
 **What changed:** Added `workstream_send_ready` under the sidebar opening
@@ -775,7 +800,9 @@ opening-outcome contract above supplies the attempt denominator. Socket-start vo
 attempts, not unique sockets, and reconnect storms are intentionally visible.
 `feed_cache` is authoritative whenever the transcript query already held data;
 such an open correctly has no matching detail request even though its
-interaction operation ID remains present.
+interaction operation ID remains present. A `socket_snapshot` open likewise has
+no detail request: join its opening ID and socket lease to the socket-start and
+connection events instead.
 
 ### 2026-08-25 — The envelope schema identifier is ai.rallywith.telemetry.event
 

@@ -1413,7 +1413,6 @@ export class RallyApi {
           newerCursor: raw.resumeFeed.newerCursor,
         }
         : null,
-      blockDashboardPreference: raw.blockDashboardPreference,
     };
   }
 

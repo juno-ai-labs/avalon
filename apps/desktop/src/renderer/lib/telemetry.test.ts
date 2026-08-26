@@ -92,7 +92,7 @@ describe('renderer semantic telemetry helpers', () => {
     expect(report).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'workstream_open_started', operationId, workstreamId, socketLeaseId,
     }));
-    expect(completeWorkstreamFeedPaint(workstreamId, 'boot_payload', 'six_to_twenty', 360, socketLeaseId))
+    expect(completeWorkstreamFeedPaint(workstreamId, 'socket_snapshot', 'six_to_twenty', 360, socketLeaseId))
       .toEqual({
         operationId,
         intent: {
@@ -105,7 +105,7 @@ describe('renderer semantic telemetry helpers', () => {
           sidebarSection: 'pinned',
           cacheState: 'detail_cached',
           socketPoolState: 'control_warmup',
-          feedSource: 'boot_payload',
+          feedSource: 'socket_snapshot',
           messageCount: 'six_to_twenty',
         },
         outcomeIntent: {

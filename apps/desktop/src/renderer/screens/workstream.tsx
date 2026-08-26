@@ -286,7 +286,6 @@ export function WorkstreamHeader({
   socketState,
   blockDashboardOpen,
   blockDashboardAvailable = false,
-  blockDashboardPreferencePending,
   onAddParticipant,
   onOpenRail,
   onRename,
@@ -296,7 +295,6 @@ export function WorkstreamHeader({
   socketState: SocketState;
   blockDashboardOpen: boolean;
   blockDashboardAvailable?: boolean;
-  blockDashboardPreferencePending: boolean;
   onAddParticipant: () => void;
   onOpenRail: (variant: RailVariant) => void;
   onRename: (title: string) => Promise<void>;
@@ -554,7 +552,6 @@ export function WorkstreamHeader({
           <IconButton
             className={clsx('panel-toggle', 'block-dashboard-toggle', blockDashboardOpen && 'is-active')}
             aria-pressed={blockDashboardOpen}
-            disabled={blockDashboardPreferencePending}
             label={blockDashboardOpen ? 'Hide HyperSight' : 'Show HyperSight'}
             onClick={onToggleBlockDashboard}
           >
@@ -840,31 +837,23 @@ export function WorkstreamScreen(): React.JSX.Element {
     return () => window.clearTimeout(timeout);
   }, [resourceDialogOpen, resourceSearch]);
 
-  // The one fetcher for `['workstream', id]`. Both this query and the transcript
-  // query below fetch that key, and only one of the two runs — TanStack dedups
-  // onto whichever it starts first, which is hook declaration order. A queryFn
-  // that writes the panel preference sitting beside one that does not would make
-  // that ordering load-bearing, so neither has a side effect the other lacks.
+  // These fetchers are recovery paths, not the normal open. Selecting a work
+  // stream admits its feed socket immediately; the first snapshot populates
+  // both query keys. Keeping the REST readers attached to disabled observers
+  // gives the unavailable-state Retry button an explicit canonical fallback
+  // without racing a second boot against the room on every navigation.
   const initialFeedCacheState = useMemo(() => (
     queryClient.getQueryData(['messages', id]) !== undefined
       ? 'feed_cached'
       : queryClient.getQueryData(['workstream', id]) !== undefined ? 'detail_cached' : 'cold'
   ), [id, queryClient]);
   const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal) => {
-    const detail = await api!.getWorkstream(id, signal, workstreamFeedOpenAttemptId(id));
-    // The detail carries the panel preference for the case where it arrives
-    // before the control socket's boot frame. Null means this frame did not
-    // carry it — the SubstreamAgent snapshot embeds the same shape and leaves
-    // it null — so it must not be written as `false`.
-    if (detail.blockDashboardPreference) {
-      queryClient.setQueryData(['block-dashboard-preference', id], detail.blockDashboardPreference);
-    }
-    return detail;
-  }, [api, id, queryClient]);
+    return api!.getWorkstream(id, signal, workstreamFeedOpenAttemptId(id));
+  }, [api, id]);
   const workstream = useQuery({
     queryKey: ['workstream', id],
     queryFn: ({ signal }) => fetchWorkstreamDetail(signal),
-    enabled: Boolean(api && id),
+    enabled: false,
     staleTime: 5_000,
   });
   const telemetryOpenedWorkstreamRef = useRef<string | null>(null);
@@ -938,7 +927,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       );
       return reconcileCanonicalTranscript(previous, canonicalMessages, detail.harnessStatus);
     },
-    enabled: Boolean(api && id),
+    enabled: false,
     staleTime: 2_000,
   });
   useEffect(() => {
@@ -947,7 +936,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     }
   }, [id, messages.isError, readSocketOpenContext, workstream.isError]);
   const initialFeedTelemetrySnapshot = useMemo<{
-    feedSource: 'feed_cache' | 'boot_payload' | 'legacy_page';
+    feedSource: 'feed_cache' | 'socket_snapshot' | 'boot_payload' | 'legacy_page';
     messageCount: ReturnType<typeof telemetryCountBucket>;
   } | null>(() => {
     if (!workstream.data || !messages.data) return null;
@@ -956,7 +945,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         ? 'feed_cache'
         : workstream.data.resumeFeed !== undefined || workstream.data.messageFeed !== undefined
           ? 'boot_payload'
-          : 'legacy_page',
+          : 'socket_snapshot',
       messageCount: telemetryCountBucket(messages.data.length),
     };
   }, [initialFeedCacheState, messages.data, workstream.data]);
@@ -974,9 +963,9 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && id && workstream.isSuccess && messages.isSuccess),
     staleTime: 5_000,
   });
-  // No request of its own any more. Two frames carry it — the control socket's
-  // boot metadata and `GET /workstreams/:id` — and both write this key, so the
-  // query is a cache read with no fetcher behind it.
+  // No request and no open gate of its own. The independently-started control
+  // socket writes the preference when it arrives; until then the dashboard is
+  // simply closed and the feed remains fully usable.
   const blockDashboardPreference = useQuery<BlockDashboardPreference | null>({
     queryKey: ['block-dashboard-preference', id],
     queryFn: async () => null,
@@ -1039,7 +1028,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const socketConnection = useRetainedWorkstreamSocket(
     api,
     id,
-    workstream.isSuccess && messages.isSuccess,
+    Boolean(api && id),
   );
   useWorkstreamSendReadyTelemetry({
     isReady: socketConnection.sendReady,
@@ -1619,17 +1608,17 @@ export function WorkstreamScreen(): React.JSX.Element {
     };
   }, [scheduleReadAcknowledgement]);
 
-  if (workstream.isLoading || messages.isLoading) {
+  if (!workstream.data || !messages.data) {
+    if (socketConnection.state === 'unavailable' || workstream.error || messages.error) {
+      return (
+        <WorkstreamErrorState
+          description={workstream.error?.message ?? messages.error?.message ?? 'This work stream is unavailable.'}
+          onRetry={() => void Promise.all([workstream.refetch(), messages.refetch()])}
+          workstreamId={id}
+        />
+      );
+    }
     return <OpeningState label="Opening work stream…" />;
-  }
-  if (workstream.error || messages.error || !workstream.data) {
-    return (
-      <WorkstreamErrorState
-        description={workstream.error?.message ?? messages.error?.message ?? 'This work stream is unavailable.'}
-        onRetry={() => void Promise.all([workstream.refetch(), messages.refetch()])}
-        workstreamId={id}
-      />
-    );
   }
 
   const detail = workstream.data;
@@ -1655,16 +1644,12 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   return (
     <div className="workstream-screen">
-      {/* The HyperSight control is disabled only while the stored preference is
-          still unknown. Disabling it for the write as well would blur it
-          mid-click — Chromium blurs a focused element as it is disabled — so
-          the sidebar would capture the body rather than the toggle and have
-          nothing to hand focus back to when it closes. The write is optimistic;
-          there is nothing to wait for. */}
+      {/* The HyperSight preference is independent metadata, never an open or
+          interaction gate. The control is optimistic even before the control
+          socket's first metadata frame arrives. */}
       <WorkstreamHeader
         blockDashboardAvailable={featureFlags.data?.hypersightEnabled === true}
         blockDashboardOpen={blockDashboardOpen}
-        blockDashboardPreferencePending={blockDashboardPreference.isPending}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onOpenRail={openRailVariant}
         onRename={(title) => renameWorkstream.mutateAsync(title).then(() => undefined)}
