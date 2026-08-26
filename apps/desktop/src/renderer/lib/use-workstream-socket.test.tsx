@@ -33,7 +33,12 @@ vi.mock('./workspace-socket', () => ({
 vi.mock('./use-workstream-control-socket', () => ({ useWorkstreamControlSocket: vi.fn() }));
 
 import type * as TelemetryModule from './telemetry';
-import { cancelWorkstreamFeedOpen, markWorkstreamFeedOpenStarted } from './telemetry';
+import {
+  cancelWorkstreamFeedOpen,
+  markWorkstreamFeedOpenStarted,
+  workstreamFeedSourceQueryKey,
+  workstreamRecoveryFeedQueryKey,
+} from './telemetry';
 
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
 vi.mock('./telemetry', async (importOriginal) => ({
@@ -1854,6 +1859,8 @@ describe('useWorkstreamSocket', () => {
       harnessStatus: 'completed',
     } as WorkstreamDetail);
     queryClient.setQueryData(['messages', workstreamId], [{ id: 'message-1' }] as Message[]);
+    queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'legacy_page');
+    queryClient.setQueryData(workstreamRecoveryFeedQueryKey(workstreamId), { resumeFeed: null });
     setCachedWorkstreams(queryClient, [
       { id: workstreamId, title: 'Compensation review' },
       { id: '00000000-7000-7000-8000-000000000406', title: 'August planning' },
@@ -1885,6 +1892,8 @@ describe('useWorkstreamSocket', () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(queryClient.getQueryData(['workstream', workstreamId])).toBeUndefined();
     expect(queryClient.getQueryData(['messages', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBeUndefined();
+    expect(queryClient.getQueryData(workstreamRecoveryFeedQueryKey(workstreamId))).toBeUndefined();
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
       { id: '00000000-7000-7000-8000-000000000406', title: 'August planning' },
     ]);
@@ -2288,6 +2297,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((m) => m.sequenceNumber))
       .toEqual([12]);
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('socket_snapshot');
 
     // Reconciling: the same frame shape, but the reader has been watching this
     // run. Read acknowledgement stops while the window is unfocused, so their

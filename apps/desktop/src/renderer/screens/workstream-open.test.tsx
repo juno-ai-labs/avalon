@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const api = vi.hoisted(() => ({
   clientFeatureFlags: vi.fn(),
   getMessagePage: vi.fn(),
+  getWorkstreamContext: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getWorkstream: vi.fn(),
 }));
@@ -55,10 +56,11 @@ vi.mock('../lib/use-block-dashboard-sockets', () => ({
 }));
 
 import { WorkstreamScreen } from './workstream';
+import { workstreamFeedSourceQueryKey } from '../lib/telemetry';
 
 const workstreamId = '00000000-0000-7000-8000-000000000650';
 
-function renderScreen(): void {
+function renderScreen(): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -73,11 +75,13 @@ function renderScreen(): void {
       </QueryClientProvider>
     </Tooltip.Provider>,
   );
+  return queryClient;
 }
 
 describe('socket-first work-stream open', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    api.getWorkstreamContext.mockResolvedValue({ backgroundTasks: [], automationRuns: [] });
     api.getWorkspaceMembers.mockResolvedValue([]);
     retainedSocket.mockReturnValue({
       activeCompaction: null,
@@ -98,13 +102,13 @@ describe('socket-first work-stream open', () => {
     expect(api.getMessagePage).not.toHaveBeenCalled();
   });
 
-  it('runs the REST boot only when an unavailable feed is retried explicitly', async () => {
+  it('offers REST recovery after the first socket attempt fails', async () => {
     retainedSocket.mockReturnValue({
       activeCompaction: null,
       createMessage: vi.fn(),
       loadMessagePage: vi.fn(),
       sendReady: false,
-      state: 'unavailable',
+      state: 'reconnecting',
       workspaceSocketState: 'connecting',
     });
     api.getWorkstream.mockRejectedValue(new Error('recovery unavailable'));
@@ -117,5 +121,52 @@ describe('socket-first work-stream open', () => {
 
     await waitFor(() => expect(api.getWorkstream).toHaveBeenCalledTimes(1));
     expect(api.getMessagePage).not.toHaveBeenCalled();
+  });
+
+  it('keeps legacy page recovery distinct from socket snapshots', async () => {
+    retainedSocket.mockReturnValue({
+      activeCompaction: null,
+      createMessage: vi.fn(),
+      loadMessagePage: vi.fn(),
+      sendReady: false,
+      state: 'reconnecting',
+      workspaceSocketState: 'connecting',
+    });
+    api.getWorkstream.mockResolvedValue({
+      id: workstreamId,
+      title: 'Recovered work stream',
+      titleStatus: 'settled',
+      origin: 'ad_hoc',
+      harnessStatus: 'idle',
+      scope: 'personal',
+      lastActivityAt: '2026-08-26T14:00:00.000Z',
+      latestAttentionSequenceNumber: 0,
+      readThroughSequenceNumber: 0,
+      manualUnreadFromSequenceNumber: null,
+      manualUnreadGeneration: 0,
+      hasUnread: false,
+      firstUnreadSequenceNumber: null,
+      nextPendingWakeup: null,
+      pinPosition: null,
+      createdAt: '2026-08-26T14:00:00.000Z',
+      participants: [],
+      viewers: [],
+      resources: [],
+      connections: [],
+      backgroundTasks: [],
+      automationRuns: [],
+      messageFeed: undefined,
+      resumeFeed: null,
+    });
+    api.getMessagePage.mockResolvedValue({ items: [], nextCursor: null, newerCursor: null });
+    const queryClient = renderScreen();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+
+    await waitFor(() => expect(api.getMessagePage).toHaveBeenCalledTimes(1));
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('legacy_page');
+    expect(queryClient.getQueryData(['workstream', workstreamId])).not.toHaveProperty('messageFeed');
+    expect(queryClient.getQueryData(['workstream', workstreamId])).not.toHaveProperty('resumeFeed');
+    await waitFor(() => expect(api.getWorkstreamContext).toHaveBeenCalledTimes(1));
   });
 });

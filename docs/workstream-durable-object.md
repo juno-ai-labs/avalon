@@ -1188,8 +1188,9 @@ inside the object and doubles snapshot work. Reaching from SubstreamAgent into
 WorkstreamDO would violate the authority boundary for optional UI metadata.
 
 **Consequences:** The normal open performs one canonical SubstreamAgent read.
-The recovery route remains a full twin so a failed socket has a safe manual
-path, while WorkstreamDO control metadata may arrive before or after the feed
+The recovery route remains a full twin so a failed first socket attempt exposes
+a safe manual path as soon as it enters reconnecting, without an arbitrary
+timeout. WorkstreamDO control metadata may arrive before or after the feed
 without affecting message readiness.
 
 ### 2026-08-25 — Opening messages carry real person mentions

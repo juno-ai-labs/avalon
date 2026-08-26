@@ -35,6 +35,8 @@ import {
   type WorkstreamSocketStartReason,
   uuidV7,
   workstreamFeedOpenAttemptId,
+  workstreamFeedSourceQueryKey,
+  workstreamRecoveryFeedQueryKey,
 } from './telemetry';
 import {
   appendDismissedSuggestionId,
@@ -815,9 +817,9 @@ export function useWorkstreamSocket(
 
     // Only the dashboard itself. `block-dashboard-preference` is a cache read
     // with no fetcher behind it — the control socket's boot frame and
-    // `GET /workstreams/:id` both write it — so invalidating it can never
-    // refetch, and leaving the call here would read as a repair path that no
-    // longer exists.
+    // `block_dashboard_preference_updated` events write it — so invalidating it
+    // can never refetch, and leaving the call here would read as a repair path
+    // that no longer exists.
     const syncBlockDashboardQueries = (): Promise<unknown> =>
       queryClient.invalidateQueries({ queryKey: ['block-dashboard', workstreamId], exact: true });
 
@@ -914,6 +916,7 @@ export function useWorkstreamSocket(
 
       if (event.type === 'snapshot') {
         setActiveCompaction(event.activeCompaction);
+        queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
         queryClient.setQueryData(['workstream', workstreamId], mapWorkstreamDetail(event.workstream));
         // The resume window is for *arriving* at a work stream, and only then.
         //
@@ -1228,6 +1231,8 @@ export function useWorkstreamSocket(
       ));
       setState('unavailable');
       queryClient.removeQueries({ queryKey: ['messages', workstreamId], exact: true });
+      queryClient.removeQueries({ queryKey: workstreamFeedSourceQueryKey(workstreamId), exact: true });
+      queryClient.removeQueries({ queryKey: workstreamRecoveryFeedQueryKey(workstreamId), exact: true });
       setCachedWorkstreams(queryClient, (current) =>
         current?.filter((workstream) => workstream.id !== workstreamId));
       queryClient.removeQueries({ queryKey: ['workstream', workstreamId], exact: true });

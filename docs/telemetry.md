@@ -660,8 +660,10 @@ signals, never by weakening policy or deadline tests.
 
 **What changed:** `workstream_feed_visible.feedSource` now accepts
 `socket_snapshot`, and a cold reader populated by its first SubstreamAgent frame
-reports that source. `feed_cache` remains the already-present path, while
-`boot_payload` and `legacy_page` describe explicit REST recovery.
+reports that source. The renderer records that lineage when each cache writer
+runs rather than inferring it from unlike payload shapes. `feed_cache` remains
+the already-present path, while `boot_payload` and `legacy_page` distinguish
+embedded-window recovery from an older Worker's page fallback.
 
 **Why:** The normal reader no longer issues the detail request. Labeling a
 socket-populated feed as an HTTP boot or rollout fallback would make the new
@@ -674,8 +676,9 @@ the transport distinction the performance question needs.
 
 **Consequences:** Existing analytics consumers must include the new enum value.
 Cold-open queries should select `socket_snapshot` and join through the opening
-operation and socket lease; REST cohorts remain separately queryable. The event
-still contains no message content, URL, or authorization value.
+operation and socket lease; `legacy_page` remains reachable during regional
+version skew and REST cohorts stay separately queryable. The event still
+contains no message content, URL, or authorization value.
 
 ### 2026-08-25 — Send readiness is measured independently from feed visibility
 
