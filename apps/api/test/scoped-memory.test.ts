@@ -548,6 +548,8 @@ describe("scoped agent memory", () => {
 
   it("holds a run that declares a subscription to the work stream it names", async () => {
     const { env } = fixture();
+    // `input("owner")` is WORKSTREAM_ONE, which is ad-hoc and belongs to no
+    // subscription — so claiming this one is the mismatch, not a stale id.
     const borrowed: WorkstreamWorkflowInput = {
       ...input("owner"),
       automationSubscriptionId: AUTOMATION_SUBSCRIPTION_ID,

@@ -789,7 +789,8 @@ performs, before the model sees anything — threw
 The manual retry took the same path, so the member-facing "Retrying is unlikely
 to help" was literally true and left nothing to do but abandon the work stream.
 Production run `01a03ed2-a0cd-708a-81f0-ba6cffbf4d87` on 2026-08-26 is the report
-this was found from. `assertRunAuthorityStillValid` already treated a run with no
+this was found from. `assertRunAuthorityStillValid` (`services/integrations.ts`)
+already treated a run with no
 subscription as a non-automation run in any work stream, and that field is the
 run's authority claim rather than a description of its container; the memory
 union was the only layer disagreeing.
