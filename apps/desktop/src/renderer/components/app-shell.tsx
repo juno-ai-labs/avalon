@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { useMemo, useRef, type CSSProperties, type PropsWithChildren } from 'react';
+import { useEffect, useMemo, useRef, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { WorkstreamBatchFilter } from '@rally/contracts';
 import { ApiError } from '../lib/api';
@@ -7,6 +7,7 @@ import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
+import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WorkstreamSocketPool } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
@@ -217,8 +218,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   };
   const notes = useSocketOwnedList<NoteSummary>(['notes']);
   const featureFlags = useClientFeatureFlags(api);
+  const { setForegroundWorkstreamId } = useWorkspaceSocket();
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
+  useEffect(() => {
+    setForegroundWorkstreamId(activeWorkstreamId);
+  }, [activeWorkstreamId, setForegroundWorkstreamId]);
+  useEffect(() => {
+    return () => setForegroundWorkstreamId(null);
+  }, [setForegroundWorkstreamId]);
   const backgroundRealtimeIds = useMemo(
     () => backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams.data),
     [activeWorkstreamId, workstreams.data],

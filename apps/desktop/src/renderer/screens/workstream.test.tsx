@@ -160,8 +160,10 @@ function headerElement(
   overrides: {
     blockDashboardOpen?: boolean;
     blockDashboardAvailable?: boolean;
+    currentUserId?: string | null;
     onRename?: (title: string) => Promise<void>;
     onToggleBlockDashboard?: () => void;
+    presentUserIds?: readonly string[];
   } = {},
 ): React.JSX.Element {
   return (
@@ -169,12 +171,14 @@ function headerElement(
       <WorkstreamHeader
         blockDashboardAvailable={overrides.blockDashboardAvailable ?? true}
         blockDashboardOpen={overrides.blockDashboardOpen ?? false}
+        currentUserId={overrides.currentUserId ?? null}
         onAddParticipant={vi.fn()}
         // The screen opens the rail through the same store action, after
         // giving up the right sidebar's other occupant.
         onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
         onRename={overrides.onRename ?? (async () => undefined)}
         onToggleBlockDashboard={overrides.onToggleBlockDashboard ?? vi.fn()}
+        presentUserIds={overrides.presentUserIds ?? []}
         socketState="connected"
         workstream={workstream}
       />
@@ -185,6 +189,35 @@ function headerElement(
 function renderWorkstreamHeader(...args: Parameters<typeof headerElement>): ReturnType<typeof render> {
   return render(headerElement(...args));
 }
+
+describe('WorkstreamHeader presence', () => {
+  const current = {
+    id: 'user-current',
+    name: 'Current User',
+    email: 'current@rally.test',
+    timezone: 'America/Los_Angeles',
+  };
+  const collaborator = {
+    id: 'user-collaborator',
+    name: 'Ari Collaborator',
+    email: 'ari@rally.test',
+    timezone: 'America/Los_Angeles',
+  };
+
+  it('pings a present collaborator but never the current user', () => {
+    const { container } = renderWorkstreamHeader({
+      ...headerWorkstream,
+      participants: [current, collaborator],
+    }, {
+      currentUserId: current.id,
+      presentUserIds: [current.id, collaborator.id],
+    });
+
+    expect(screen.getByTitle(current.name).closest('.avatar-stack-item')).not.toHaveClass('is-present');
+    expect(screen.getByTitle(collaborator.name).closest('.avatar-stack-item')).toHaveClass('is-present');
+    expect(container.querySelectorAll('.avatar-presence-ping')).toHaveLength(1);
+  });
+});
 
 describe('WorkstreamHeader origin affordances', () => {
   beforeEach(() => {

@@ -321,6 +321,9 @@ export interface DesktopSystemAudioCaptureInfo {
 
 export interface RallyDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
+  /** Whether any Rally window currently owns application focus. */
+  getApplicationForegroundState: () => Promise<boolean>;
+  onApplicationForegroundChanged: (listener: (foregrounded: boolean) => void) => () => void;
   getApplicationSettings: () => Promise<DesktopApplicationSettings>;
   setLockdownMode: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setDebugEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
