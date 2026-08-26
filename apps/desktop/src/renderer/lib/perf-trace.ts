@@ -1,5 +1,6 @@
 import { logDebug } from '../../common/logger';
-import { uuidV7 } from './telemetry';
+import type { DesktopTelemetryRendererPerfFlowIntent } from '../../common/desktop';
+import { reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
 
 /**
  * Client-side phase timing for the three latency-critical work-stream flows.
@@ -8,8 +9,8 @@ import { uuidV7 } from './telemetry';
  * reach it and there is no span to attach to. This is deliberately *not* an
  * OpenTelemetry client: shipping a browser SDK and an exporter out of the
  * Electron renderer would move telemetry off the main-owned regional path
- * `docs/telemetry.md` requires everything to travel on. It is a local
- * diagnostic — one `console.debug` line per flow — whose job is to answer the
+ * `docs/telemetry.md` requires everything to travel on. It produces one local
+ * `console.debug` line and one governed diagnostic event per flow, whose job is to answer the
  * question the server's spans cannot: how much of the wait was the service, and
  * how much was the network, the renderer, or a client waiting on a socket it
  * had already been handed.
@@ -21,8 +22,10 @@ import { uuidV7 } from './telemetry';
  * (`rally.message.client_id`). `docs/performance-tracing.md` holds the flows
  * and the queries.
  *
- * Nothing here is sent anywhere. Work-stream text and attachment names never
- * reach it; only counts and ids.
+ * The event is a closed projection of the local line rather than console-log
+ * forwarding. Work-stream text, attachment names, raw errors, URLs, and
+ * arbitrary annotations never reach it; only timings, bounded counts, and the
+ * ids required to join the matching backend work.
  */
 
 export type PerfFlow = 'workstream_create' | 'workstream_open' | 'workstream_message_send';
@@ -112,6 +115,83 @@ function blockingWithin(from: number, to: number): { blockedMs: number; longTask
   return { blockedMs: round(blockedMs), longTasks: count };
 }
 
+const telemetryPhaseNames = {
+  create_request: 'createRequestMs',
+  cache_seed: 'cacheSeedMs',
+  socket_ticket: 'socketTicketMs',
+  dial: 'dialMs',
+  handshake: 'handshakeMs',
+  first_frame: 'firstFrameMs',
+  resolve_mentions: 'resolveMentionsMs',
+  command_round_trip: 'commandRoundTripMs',
+} as const;
+type TelemetryPhaseProperty = typeof telemetryPhaseNames[keyof typeof telemetryPhaseNames];
+
+function telemetryNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function telemetryOutcome(
+  flow: PerfFlow,
+  value: unknown,
+): DesktopTelemetryRendererPerfFlowIntent['outcome'] {
+  if (value === 'snapshot' || value === 'resync_required'
+    || value === 'navigation_requested' || value === 'closed' || value === 'failed'
+    || value === 'cancelled' || value === 'offline' || value === 'superseded'
+    || value === 'unmounted') return value;
+  if (flow === 'workstream_open' && typeof value === 'string') return 'replay_event';
+  return 'completed';
+}
+
+function telemetryCount(value: unknown): ReturnType<typeof telemetryCountBucket> | undefined {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? telemetryCountBucket(value)
+    : undefined;
+}
+
+export function rendererPerfFlowIntent(
+  flow: PerfFlow,
+  operationId: string,
+  durationMs: number,
+  phases: ReadonlyArray<readonly [string, number]>,
+  blocking: { blockedMs: number; longTasks: number },
+  fields: Record<string, unknown>,
+): DesktopTelemetryRendererPerfFlowIntent {
+  const phaseProperties: Partial<Record<TelemetryPhaseProperty, number>> = {};
+  for (const [phase, phaseDurationMs] of phases) {
+    const property = telemetryPhaseNames[phase as keyof typeof telemetryPhaseNames];
+    if (property) phaseProperties[property] = phaseDurationMs;
+  }
+  const workstreamId = typeof fields['workstreamId'] === 'string' ? fields['workstreamId'] : undefined;
+  const ticketId = typeof fields['ticketId'] === 'string' ? fields['ticketId'] : undefined;
+  const sinceEffectMs = telemetryNumber(fields['sinceEffectMs']);
+  const attempts = telemetryCount(fields['attempt']);
+  const participantCount = telemetryCount(fields['participantCount']);
+  const attachmentCount = telemetryCount(fields['attachmentCount']);
+  const mentionCount = telemetryCount(fields['mentionCount']);
+  const messageLength = telemetryCount(fields['openingMessageLength'] ?? fields['textLength']);
+  const messageCount = telemetryCount(fields['messageCount']);
+  return {
+    kind: 'renderer_perf_flow',
+    operationId,
+    flow,
+    outcome: telemetryOutcome(flow, fields['outcome']),
+    durationMs,
+    blockedMs: blocking.blockedMs,
+    longTaskCount: telemetryCountBucket(blocking.longTasks),
+    ...phaseProperties,
+    ...(workstreamId ? { workstreamId } : {}),
+    ...(ticketId ? { ticketId } : {}),
+    ...(sinceEffectMs !== undefined ? { sinceEffectMs } : {}),
+    ...(attempts ? { attempts } : {}),
+    ...(participantCount ? { participantCount } : {}),
+    ...(attachmentCount ? { attachmentCount } : {}),
+    ...(mentionCount ? { mentionCount } : {}),
+    ...(messageLength ? { messageLength } : {}),
+    ...(messageCount ? { messageCount } : {}),
+  };
+}
+
 export interface PerfTraceOptions {
   /** Correlates with the Worker: `x-request-id`, a ticket id, a message id. */
   traceId?: string;
@@ -155,6 +235,8 @@ export function startPerfTrace(flow: PerfFlow, options: PerfTraceOptions = {}): 
       ended = true;
       const endedAt = now();
       const durationMs = round(endedAt - startedAt);
+      const blocking = blockingWithin(startedAt, endedAt);
+      const combinedFields = { ...annotations, ...fields };
       logDebug('perf', `${flow} ${durationMs}ms`, {
         flow,
         traceId,
@@ -163,10 +245,17 @@ export function startPerfTrace(flow: PerfFlow, options: PerfTraceOptions = {}): 
         // Read against the whole flow rather than per phase: the entries are
         // coarse, and what a reader needs first is whether this flow was slow
         // because the thread was busy at all.
-        ...blockingWithin(startedAt, endedAt),
-        ...annotations,
-        ...fields,
+        ...blocking,
+        ...combinedFields,
       });
+      reportTelemetryProductIntent(rendererPerfFlowIntent(
+        flow,
+        traceId,
+        durationMs,
+        phases,
+        blocking,
+        combinedFields,
+      ));
     },
   };
 }

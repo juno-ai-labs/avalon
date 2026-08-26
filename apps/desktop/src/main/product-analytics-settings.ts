@@ -41,6 +41,16 @@ export class ProductAnalyticsSettingsController {
     };
   }
 
+  /**
+   * Whether nonessential events may enter the local spool while canonical
+   * verification is in flight. Transmission still uses `effectiveEnabled`.
+   * A pending explicit enable is not admission: it has never been accepted by
+   * the account service, while a durable same-account enable has.
+   */
+  admissionEnabled(): boolean {
+    return this.desiredEnabled && !this.pending;
+  }
+
   async initialize(requireRemoteVerification = false): Promise<ProductAnalyticsSettingsState> {
     this.remoteVerified = !requireRemoteVerification;
     const stored = await this.dependencies.readSettings();

@@ -767,6 +767,9 @@ export function useWorkstreamSocket(
           },
         };
         return await trace.step('command_round_trip', () => createWorkspaceMessage(command));
+      } catch (error) {
+        trace.end({ outcome: 'failed' });
+        throw error;
       } finally {
         trace.end();
       }

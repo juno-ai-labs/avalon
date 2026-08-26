@@ -5,6 +5,7 @@ import type { HonoAppEnv } from "../src/env";
 import { requestContext } from "../src/middleware/request-context";
 import {
   identityAttributes,
+  inDurableObjectPhase,
   inFlowSpan,
   inSpan,
   noFlowSpan,
@@ -48,6 +49,65 @@ afterEach(() => {
 });
 
 describe("custom spans over Cloudflare's automatic tracing", () => {
+  it("records Durable Object initialization as a nested span and queryable timing row", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_250);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await inDurableObjectPhase(envAt("info"), "initialize", {
+      component: "substream_agent",
+      className: "SubstreamAgent",
+      latestVersion: 26,
+      startedAt: 1_000,
+    }, () => Promise.resolve());
+
+    expect(recordedSpans()[0]).toMatchObject({
+      name: "durable_object.initialize",
+      ended: true,
+      attributes: {
+        "rally.component": "substream_agent",
+        "rally.durable_object.class": "SubstreamAgent",
+        "rally.migration.latest_version": 26,
+      },
+    });
+    expect(rows(info)[0]).toMatchObject({
+      event: "durable_object_initialization",
+      component: "substream_agent",
+      class_name: "SubstreamAgent",
+      phase: "initialize",
+      status: "completed",
+      latest_version: 26,
+      duration_ms: 250,
+    });
+  });
+
+  it("records a failed schema pass without replacing the constructor error", async () => {
+    vi.spyOn(Date, "now").mockReturnValueOnce(2_000).mockReturnValueOnce(2_080);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const failure = new Error("workstream_do_schema_hash_mismatch:27");
+
+    await expect(inDurableObjectPhase(envAt("info"), "schema_migrate", {
+      component: "workstream_do",
+      className: "WorkstreamDO",
+      latestVersion: 27,
+    }, () => Promise.reject(failure))).rejects.toBe(failure);
+
+    expect(recordedSpans()[0]).toMatchObject({
+      name: "durable_object.schema_migrate",
+      ended: true,
+      callbackFailed: true,
+      attributes: {
+        "otel.status_code": "ERROR",
+        "error.type": "durable_object_schema_migrate_failed",
+      },
+    });
+    expect(rows(error)[0]).toMatchObject({
+      event: "durable_object_schema_migration",
+      component: "workstream_do",
+      status: "failed",
+      duration_ms: 80,
+    });
+  });
+
   it("opens a runtime span per step and ends it, so the platform nests and exports it", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
 

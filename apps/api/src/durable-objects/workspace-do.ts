@@ -1282,7 +1282,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       id: state.id,
       instance: this,
     });
-    this.initialized = state.blockConcurrencyWhile(async () => {
+    this.initialized = this.initializeDurableObject(async () => {
       await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
