@@ -39,9 +39,11 @@ import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
 import {
   currentSurfaceEntrypoint,
+  cancelWorkstreamFeedOpen,
   reportTelemetryProductIntent,
   telemetryCountBucket,
   telemetryVisibility,
+  workstreamFeedOpenAttemptId,
   workstreamNavigation,
 } from '../lib/telemetry';
 import {
@@ -56,6 +58,7 @@ import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useTextClipped } from '../lib/use-text-clipped';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
+import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useBlockDashboardSockets } from '../lib/use-block-dashboard-sockets';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
@@ -65,7 +68,7 @@ import {
   reconcileCanonicalTranscript,
   type SocketState,
 } from '../lib/use-workstream-socket';
-import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
+import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
@@ -759,6 +762,7 @@ export function RunStoppedNotice({
 
 export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
+  const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
   const navigate = useNavigate();
   const { api, session } = useAppSession();
   const featureFlags = useClientFeatureFlags(api);
@@ -840,8 +844,13 @@ export function WorkstreamScreen(): React.JSX.Element {
   // onto whichever it starts first, which is hook declaration order. A queryFn
   // that writes the panel preference sitting beside one that does not would make
   // that ordering load-bearing, so neither has a side effect the other lacks.
+  const initialFeedCacheState = useMemo(() => (
+    queryClient.getQueryData(['messages', id]) !== undefined
+      ? 'feed_cached'
+      : queryClient.getQueryData(['workstream', id]) !== undefined ? 'detail_cached' : 'cold'
+  ), [id, queryClient]);
   const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal) => {
-    const detail = await api!.getWorkstream(id, signal);
+    const detail = await api!.getWorkstream(id, signal, workstreamFeedOpenAttemptId(id));
     // The detail carries the panel preference for the case where it arrives
     // before the control socket's boot frame. Null means this frame did not
     // carry it — the SubstreamAgent snapshot embeds the same shape and leaves
@@ -930,6 +939,33 @@ export function WorkstreamScreen(): React.JSX.Element {
     },
     enabled: Boolean(api && id),
     staleTime: 2_000,
+  });
+  useEffect(() => {
+    if (workstream.isError || messages.isError) {
+      cancelWorkstreamFeedOpen(id, performance.now(), readSocketOpenContext().socketLeaseId);
+    }
+  }, [id, messages.isError, readSocketOpenContext, workstream.isError]);
+  const initialFeedTelemetrySnapshot = useMemo<{
+    feedSource: 'feed_cache' | 'boot_payload' | 'legacy_page';
+    messageCount: ReturnType<typeof telemetryCountBucket>;
+  } | null>(() => {
+    if (!workstream.data || !messages.data) return null;
+    return {
+      feedSource: initialFeedCacheState === 'feed_cached'
+        ? 'feed_cache'
+        : workstream.data.resumeFeed !== undefined || workstream.data.messageFeed !== undefined
+          ? 'boot_payload'
+          : 'legacy_page',
+      messageCount: telemetryCountBucket(messages.data.length),
+    };
+  }, [initialFeedCacheState, messages.data, workstream.data]);
+  useWorkstreamFeedOpenTelemetry({
+    cacheState: initialFeedCacheState,
+    feedSource: initialFeedTelemetrySnapshot?.feedSource,
+    isReady: workstream.isSuccess && messages.isSuccess,
+    messageCount: initialFeedTelemetrySnapshot?.messageCount,
+    readSocketOpenContext,
+    workstreamId: id,
   });
   const deferredContext = useQuery({
     queryKey: ['workstream-context', id, workstream.data?.automationSubscriptionId ?? null],

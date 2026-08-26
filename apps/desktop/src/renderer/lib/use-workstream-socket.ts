@@ -28,9 +28,14 @@ import {
 } from './api';
 import { elicitationMessageId } from './elicitation';
 import { startPerfTrace, type PerfTrace } from './perf-trace';
-import { realtimeSocketTelemetry } from './socket-telemetry';
+import { realtimeSocketTelemetry, reportWorkstreamSocketStarted } from './socket-telemetry';
 import { advanceStreamReveal, applyRevealedText, flushStreamReveal } from './streaming-reveal';
-import { reportTelemetryProductIntent, uuidV7 } from './telemetry';
+import {
+  reportTelemetryProductIntent,
+  type WorkstreamSocketStartReason,
+  uuidV7,
+  workstreamFeedOpenAttemptId,
+} from './telemetry';
 import {
   appendDismissedSuggestionId,
   createElicitationMessage,
@@ -559,10 +564,22 @@ export function useWorkstreamSocket(
   // The pool owns this separately so a hover-warmed control socket survives
   // the later transition that enables the presence-publishing feed.
   controlSocketOwnedExternally = false,
+  initialReason: Exclude<WorkstreamSocketStartReason, 'reconnect'> = 'active_workstream',
+  socketLeaseId?: string,
 ): WorkstreamSocketConnection {
   const queryClient = useQueryClient();
   const { createMessage: createWorkspaceMessage } = useWorkspaceSocket();
-  useWorkstreamControlSocket(api, workstreamId, enabled && !controlSocketOwnedExternally);
+  const [generatedSocketLeaseId] = useState(() => socketLeaseId ?? uuidV7());
+  const resolvedSocketLeaseId = socketLeaseId ?? generatedSocketLeaseId;
+  const initialReasonRef = useRef(initialReason);
+  initialReasonRef.current = initialReason;
+  useWorkstreamControlSocket(
+    api,
+    workstreamId,
+    enabled && !controlSocketOwnedExternally,
+    initialReason,
+    resolvedSocketLeaseId,
+  );
   const resumeState = useWorkstreamSocketResumeState(workstreamId);
   const [state, setState] = useState<SocketState>('idle');
   const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
@@ -1299,6 +1316,15 @@ export function useWorkstreamSocket(
       const trace = startPerfTrace('workstream_open', { workstreamId });
       openTrace?.end({ outcome: 'superseded' });
       openTrace = trace;
+      reportWorkstreamSocketStarted(
+        workstreamId,
+        resolvedSocketLeaseId,
+        'substream_feed',
+        attempts.current === 0 ? initialReasonRef.current : 'reconnect',
+        attempts.current,
+        trace.traceId,
+        workstreamFeedOpenAttemptId(workstreamId),
+      );
       trace.annotate({
         attempt: attempts.current,
         afterSequence: resumeState.lastSequence,
@@ -1545,7 +1571,7 @@ export function useWorkstreamSocket(
       clearStabilityTimer();
       socket?.close();
     };
-  }, [api, createWorkspaceMessage, enabled, queryClient, resumeState, workstreamId]);
+  }, [api, createWorkspaceMessage, enabled, queryClient, resolvedSocketLeaseId, resumeState, workstreamId]);
 
   return useMemo(
     () => ({ state, activeCompaction, createMessage, loadMessagePage }),

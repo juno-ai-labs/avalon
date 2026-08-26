@@ -417,6 +417,108 @@ describe('TelemetryReporter', () => {
     });
   });
 
+  it('spools correlated work-stream paint and socket-start measurements without content', async () => {
+    const { reporter, spool } = await harness({
+      auth: {
+        apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global',
+      },
+    });
+    const workstreamId = '00000000-0000-4000-8000-000000000105';
+    const feedOperationId = '018f0000-0000-7000-8000-000000000021';
+    const socketOperationId = '018f0000-0000-7000-8000-000000000022';
+    const socketLeaseId = '018f0000-0000-7000-8000-000000000023';
+    await reporter.semanticProductIntent({
+      kind: 'workstream_open_started',
+      workstreamId,
+      sidebarSection: 'recent',
+      socketPoolState: 'control_warmup',
+      socketLeaseId,
+    }, undefined, feedOperationId);
+    await reporter.semanticProductIntent({
+      kind: 'workstream_feed_visible',
+      workstreamId,
+      socketLeaseId,
+      durationMs: 724,
+      dataReadyDurationMs: 690,
+      sidebarSection: 'recent',
+      cacheState: 'cold',
+      socketPoolState: 'control_warmup',
+      feedSource: 'boot_payload',
+      messageCount: 'six_to_twenty',
+    }, undefined, feedOperationId);
+    await reporter.semanticProductIntent({
+      kind: 'workstream_socket_started',
+      workstreamId,
+      socketLeaseId,
+      openAttemptId: feedOperationId,
+      socket: 'workstream_control',
+      reason: 'hover_warmup',
+      attempts: 'zero',
+    }, undefined, socketOperationId);
+    await reporter.semanticProductIntent({
+      kind: 'workstream_open_outcome',
+      workstreamId,
+      outcome: 'visible',
+      durationMs: 724,
+      socketLeaseId,
+    }, undefined, feedOperationId);
+
+    const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(rows.map(({ event }) => ({
+      name: event.name,
+      operationId: event.context.operationId,
+      properties: event.properties,
+    }))).toEqual([
+      {
+        name: 'workstream_open_started',
+        operationId: feedOperationId,
+        properties: {
+          workstreamId,
+          sidebarSection: 'recent',
+          socketPoolState: 'control_warmup',
+          socketLeaseId,
+        },
+      },
+      {
+        name: 'workstream_feed_visible',
+        operationId: feedOperationId,
+        properties: {
+          workstreamId,
+          socketLeaseId,
+          durationMs: 724,
+          dataReadyDurationMs: 690,
+          sidebarSection: 'recent',
+          cacheState: 'cold',
+          socketPoolState: 'control_warmup',
+          feedSource: 'boot_payload',
+          messageCount: 'six_to_twenty',
+        },
+      },
+      {
+        name: 'workstream_socket_started',
+        operationId: socketOperationId,
+        properties: {
+          workstreamId,
+          socketLeaseId,
+          openAttemptId: feedOperationId,
+          socket: 'workstream_control',
+          reason: 'hover_warmup',
+          attempts: 'zero',
+        },
+      },
+      {
+        name: 'workstream_open_outcome',
+        operationId: feedOperationId,
+        properties: {
+          workstreamId,
+          outcome: 'visible',
+          durationMs: 724,
+          socketLeaseId,
+        },
+      },
+    ]);
+  });
+
   it('suppresses realtime socket transitions for someone who opted out', async () => {
     const { reporter, spool } = await harness({
       enabled: false,

@@ -33,6 +33,7 @@ vi.mock('./workspace-socket', () => ({
 vi.mock('./use-workstream-control-socket', () => ({ useWorkstreamControlSocket: vi.fn() }));
 
 import type * as TelemetryModule from './telemetry';
+import { cancelWorkstreamFeedOpen, markWorkstreamFeedOpenStarted } from './telemetry';
 
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
 vi.mock('./telemetry', async (importOriginal) => ({
@@ -44,6 +45,12 @@ function socketTelemetry(): unknown[] {
   return reportTelemetryProductIntent.mock.calls
     .map(([intent]) => intent as { kind: string })
     .filter((intent) => intent.kind === 'realtime_socket_state');
+}
+
+function socketStartedTelemetry(): Array<Record<string, unknown>> {
+  return reportTelemetryProductIntent.mock.calls
+    .map(([intent]) => intent as Record<string, unknown>)
+    .filter((intent) => intent['kind'] === 'workstream_socket_started');
 }
 
 class FakeWebSocket extends EventTarget {
@@ -1888,16 +1895,26 @@ describe('useWorkstreamSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-7000-7000-8000-000000000407';
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
+    const getSocketTicket = vi.fn(async (id: string, substreamId?: string, requestId?: string) => {
+      void id;
+      void substreamId;
+      void requestId;
+      return {
         url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
-      })),
+      };
+    });
+    const api = socketApiWith({
+      getSocketTicket,
       getWorkstream: vi.fn(async () => workstreamBoot({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages: vi.fn(async () => []),
     });
-    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+    const openAttemptId = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 0);
+    renderHook(
+      () => useWorkstreamSocket(api, workstreamId, true, false, 'background_workstream'),
+      { wrapper: createWrapper(queryClient) },
+    );
 
     await flushPromises();
     act(() => FakeWebSocket.instances[0]!.open());
@@ -1907,6 +1924,26 @@ describe('useWorkstreamSocket', () => {
 
     // The revoked case must not have turned every close into a dead end.
     expect(api.getSocketTicket).toHaveBeenCalledTimes(2);
+    const started = socketStartedTelemetry();
+    expect(new Set(started.map((intent) => intent['socketLeaseId']))).toHaveLength(1);
+    expect(started[0]?.['socketLeaseId']).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(started.map(({ operationId, ...intent }) => {
+      expect(operationId).toMatch(/^[0-9a-f-]{36}$/u);
+      delete intent['socketLeaseId'];
+      return intent;
+    })).toEqual([
+      {
+        kind: 'workstream_socket_started', workstreamId, socket: 'substream_feed',
+        openAttemptId, reason: 'background_workstream', attempts: 'zero',
+      },
+      {
+        kind: 'workstream_socket_started', workstreamId, socket: 'substream_feed',
+        openAttemptId, reason: 'reconnect', attempts: 'one',
+      },
+    ]);
+    expect(getSocketTicket.mock.calls.map((call) => call[2]))
+      .toEqual(started.map((intent) => intent['operationId']));
+    cancelWorkstreamFeedOpen(workstreamId, 100);
   });
 
   it('refreshes run metadata when a new run starts in another client', async () => {
