@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { newRequestId, startPerfTrace } from './perf-trace';
 
+const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
+vi.mock('./telemetry', async (importOriginal) => ({
+  ...await importOriginal(),
+  reportTelemetryProductIntent,
+}));
+
 type ConsoleSpy = { mock: { calls: unknown[][] } };
 
 function traceLines(spy: ConsoleSpy): Array<Record<string, unknown>> {
@@ -10,6 +16,45 @@ function traceLines(spy: ConsoleSpy): Array<Record<string, unknown>> {
 }
 
 describe('renderer performance tracing', () => {
+  it('sends one governed projection while keeping arbitrary console fields local', async () => {
+    reportTelemetryProductIntent.mockClear();
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    const operationId = '018f22f2-4c22-7abc-8def-0123456789ab';
+    const workstreamId = '00000000-0000-4000-8000-000000000201';
+    const ticketId = '018f22f2-4c22-7abc-8def-0123456789ac';
+    const trace = startPerfTrace('workstream_open', { traceId: operationId, workstreamId });
+
+    trace.mark('socket_ticket');
+    trace.mark('dial');
+    trace.annotate({
+      attempt: 2,
+      ticketId,
+      sinceEffectMs: 14.2,
+      afterSequence: 987,
+      arbitraryConsoleField: 'stays local',
+    });
+    trace.end({ outcome: 'snapshot', messageCount: 12 });
+
+    expect(reportTelemetryProductIntent).toHaveBeenCalledOnce();
+    expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'renderer_perf_flow',
+      operationId,
+      flow: 'workstream_open',
+      outcome: 'snapshot',
+      workstreamId,
+      durationMs: expect.any(Number),
+      blockedMs: expect.any(Number),
+      longTaskCount: 'zero',
+      socketTicketMs: expect.any(Number),
+      dialMs: expect.any(Number),
+      attempts: 'two_to_five',
+      sinceEffectMs: 14.2,
+      ticketId,
+      messageCount: 'six_to_twenty',
+    });
+    expect(traceLines(debug)[0]).toMatchObject({ afterSequence: 987, arbitraryConsoleField: 'stays local' });
+  });
+
   it('prints one line naming every phase in order', async () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
     const trace = startPerfTrace('workstream_open', { traceId: 'trace-1', workstreamId: 'workstream-1' });
