@@ -78,11 +78,12 @@ export class WorkspaceAlarmInstrumentation {
     const commonFields = {
       phase,
       phase_index: phaseIndex,
-      alarm_elapsed_ms: Math.max(0, startedAt - this.startedAt),
       ...(alarmKind === undefined ? {} : { alarm_kind: alarmKind }),
     };
 
-    return inSpan("rally.workspace.scheduled_alarm.phase", {
+    let failed = false;
+    let phaseError: unknown;
+    const result = await inSpan<T | undefined>("rally.workspace.scheduled_alarm.phase", {
       "rally.component": "workspace_do",
       "rally.alarm.phase": phase,
       "rally.alarm.phase_index": phaseIndex,
@@ -91,6 +92,7 @@ export class WorkspaceAlarmInstrumentation {
       logInfo(this.env, "workspace_scheduled_alarm_phase_started", {
         status: "started",
         ...commonFields,
+        alarm_elapsed_ms: Math.max(0, startedAt - this.startedAt),
       });
       try {
         const result = await run();
@@ -114,10 +116,11 @@ export class WorkspaceAlarmInstrumentation {
         const failedAt = this.now();
         const durationMs = Math.max(0, failedAt - startedAt);
         this.samples.push({ phase, alarmKind, durationMs, failed: true });
+        const crossedRecoveryHorizon =
+          durationMs >= SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS;
         span.setAttributes({
           "rally.alarm.duration_ms": durationMs,
-          "rally.alarm.crossed_recovery_horizon":
-            durationMs >= SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
+          "rally.alarm.crossed_recovery_horizon": crossedRecoveryHorizon,
         });
         span.setError("workspace_scheduled_alarm_phase_failed");
         logInfo(this.env, "workspace_scheduled_alarm_phase_failed", {
@@ -125,12 +128,19 @@ export class WorkspaceAlarmInstrumentation {
           ...commonFields,
           duration_ms: durationMs,
           alarm_elapsed_ms: Math.max(0, failedAt - this.startedAt),
-          crossed_recovery_horizon:
-            durationMs >= SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
+          crossed_recovery_horizon: crossedRecoveryHorizon,
         });
-        throw error;
+        // Cloudflare records errors thrown from an enterSpan callback. Keep the
+        // original error in this outer closure so target ids or provider text
+        // cannot become automatic trace fields, then rethrow after the custom
+        // span has settled.
+        failed = true;
+        phaseError = error;
+        return undefined;
       }
     });
+    if (failed) throw phaseError;
+    return result as T;
   }
 
   finish(): void {

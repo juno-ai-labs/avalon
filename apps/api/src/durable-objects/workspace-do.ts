@@ -1518,6 +1518,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     alarmKind: ObservableWorkspaceScheduledAlarmKind | undefined,
     run: () => Promise<T>,
   ): Promise<T> {
+    // Defensive for direct private-method tests and future internal callers;
+    // the normal alarm sequence initializes this in armAlarmBeforeDueWork.
     this.workspaceAlarmInstrumentation ??= new WorkspaceAlarmInstrumentation(this.env);
     return this.workspaceAlarmInstrumentation.phase(phase, alarmKind, run);
   }
