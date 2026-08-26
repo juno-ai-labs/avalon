@@ -17,7 +17,7 @@ import {
   uuidV7,
   workstreamFeedOpenAttemptId,
 } from './telemetry';
-import { setCachedWorkstreams } from './workstreams-cache';
+import { evictCachedWorkstream } from './workstreams-cache';
 
 type WorkstreamControlSocketApi = Pick<RallyApi, 'getWorkstreamControlSocketTicket'>;
 const HEARTBEAT_MS = 50_000;
@@ -274,8 +274,7 @@ export function useWorkstreamControlSocket(
           if (event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
             accessRevoked = true;
             socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'access_revoked' });
-            setCachedWorkstreams(queryClient, (current) => current?.filter((item) => item.id !== workstreamId));
-            queryClient.removeQueries({ queryKey: ['workstream', workstreamId], exact: true });
+            evictCachedWorkstream(queryClient, workstreamId);
             return;
           }
           if (!stopped) {

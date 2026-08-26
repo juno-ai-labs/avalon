@@ -25,6 +25,7 @@ import {
   workstreamFeedSourceQueryKey,
   workstreamNavigation,
   workstreamRecoveryFeedQueryKey,
+  workstreamSocketSnapshotGenerationQueryKey,
 } from './telemetry';
 
 const desktopBridge = vi.hoisted(() => vi.fn());
@@ -43,6 +44,8 @@ describe('renderer semantic telemetry helpers', () => {
       .toEqual(['workstream-feed-source', workstreamId]);
     expect(workstreamRecoveryFeedQueryKey(workstreamId))
       .toEqual(['workstream-recovery-feed', workstreamId]);
+    expect(workstreamSocketSnapshotGenerationQueryKey(workstreamId))
+      .toEqual(['workstream-socket-snapshot-generation', workstreamId]);
   });
 
   it('maps only planned router destinations to stable screen enums', () => {

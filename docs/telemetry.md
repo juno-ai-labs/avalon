@@ -656,6 +656,29 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-26 — Socket lineage survives an overlapping recovery retry
+
+**What changed:** A monotonic socket-snapshot generation now fences the
+renderer-only recovery cache. If a reconnect snapshot arrives while REST Retry
+is in flight, late HTTP detail or transcript results cannot replace the
+snapshot's `socket_snapshot` lineage or its canonical feed. Recovery windows
+are consumed by their paired transcript read and cleared whenever a snapshot
+becomes canonical.
+
+**Why:** The source label describes the cache writer whose data reached paint.
+Without a generation fence, request completion order could relabel and replace
+a newer socket feed as `boot_payload` or `legacy_page`, corrupting the cohorts
+used to judge the two-second cold-open goal.
+
+**Considered and rejected:** Request cancellation is transport-dependent and
+does not prove that no post-await side effect runs. Timestamp comparison can
+tie within a millisecond and does not directly name the authority transition.
+
+**Consequences:** Recovery code must check the captured snapshot generation
+after every network await and return the current socket caches when superseded.
+The generation is renderer-only coordination state and is never emitted as
+telemetry.
+
 ### 2026-08-25 — Cold-open telemetry names the socket snapshot
 
 **What changed:** `workstream_feed_visible.feedSource` now accepts
