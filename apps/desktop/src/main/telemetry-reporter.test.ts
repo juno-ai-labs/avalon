@@ -447,6 +447,12 @@ describe('TelemetryReporter', () => {
       messageCount: 'six_to_twenty',
     }, undefined, feedOperationId);
     await reporter.semanticProductIntent({
+      kind: 'workstream_send_ready',
+      workstreamId,
+      durationMs: 731,
+      workspaceSocketState: 'reconnecting',
+    }, undefined, feedOperationId);
+    await reporter.semanticProductIntent({
       kind: 'workstream_socket_started',
       workstreamId,
       socketLeaseId,
@@ -492,6 +498,15 @@ describe('TelemetryReporter', () => {
           socketPoolState: 'control_warmup',
           feedSource: 'boot_payload',
           messageCount: 'six_to_twenty',
+        },
+      },
+      {
+        name: 'workstream_send_ready',
+        operationId: feedOperationId,
+        properties: {
+          workstreamId,
+          durationMs: 731,
+          workspaceSocketState: 'reconnecting',
         },
       },
       {

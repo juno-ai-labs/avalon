@@ -419,6 +419,8 @@ describe('useWorkstreamSocket', () => {
     });
 
     await flushPromises();
+    expect(result.current.sendReady).toBe(true);
+    expect(result.current.workspaceSocketState).toBe('connected');
     await expect(result.current.createMessage({
         text: 'Please continue.',
         clientId: clientMessageId,
