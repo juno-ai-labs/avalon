@@ -42,6 +42,21 @@ describe('parseTelemetryProductIntent', () => {
     expect(() => parseTelemetryProductIntent({ ...feedIntent, dataReadyDurationMs: 241 }))
       .toThrow('Invalid telemetry intent');
 
+    const sendReadyIntent = {
+      kind: 'workstream_send_ready',
+      operationId,
+      workstreamId,
+      durationMs: 252,
+      workspaceSocketState: 'reconnecting',
+    };
+    expect(parseTelemetryProductIntent(sendReadyIntent)).toEqual(sendReadyIntent);
+    expect(() => parseTelemetryProductIntent({ ...sendReadyIntent, workspaceSocketState: 'queued' }))
+      .toThrow('Invalid telemetry intent');
+    expect(() => parseTelemetryProductIntent({ ...sendReadyIntent, workspaceSocketState: 'unavailable' }))
+      .toThrow('Invalid telemetry intent');
+    expect(() => parseTelemetryProductIntent({ ...sendReadyIntent, composerText: 'secret' }))
+      .toThrow('Invalid telemetry intent');
+
     const socketIntent = {
       kind: 'workstream_socket_started',
       operationId,

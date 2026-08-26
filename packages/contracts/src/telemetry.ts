@@ -729,6 +729,28 @@ export const TELEMETRY_EVENTS = {
     priority: "normal",
     regionalRetention: "13-months",
   }),
+  workstream_send_ready: event({
+    ...common,
+    name: "workstream_send_ready",
+    definition: "A work stream opened from the desktop sidebar painted a composer whose installed send handler could accept a command into the workspace socket queue.",
+    productQuestion: "How long does a sidebar click take to produce a send-capable composer, and is its workspace command socket connected or queueing during connection recovery?",
+    sources: ["desktop-renderer"],
+    authoritativeSource: "desktop-renderer",
+    category: "product",
+    identityScopes: ["workspace-user"],
+    properties: z.object({
+      workstreamId: resourceId,
+      durationMs: z.number().int().nonnegative(),
+      workspaceSocketState: z.enum(["connecting", "connected", "reconnecting"]),
+    }).strict(),
+    propertyClassifications: {
+      workstreamId: "product",
+      durationMs: "operational",
+      workspaceSocketState: "operational",
+    },
+    priority: "normal",
+    regionalRetention: "13-months",
+  }),
   workstream_open_started: event({
     ...common,
     name: "workstream_open_started",

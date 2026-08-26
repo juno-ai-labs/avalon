@@ -36,9 +36,14 @@ interface PendingWorkstreamFeedOpen {
   socketPoolState: WorkstreamFeedSocketPoolState;
   socketLeaseId?: string;
   cacheState?: WorkstreamFeedCacheState;
+  sendReadyReported?: boolean;
 }
 
 let pendingWorkstreamFeedOpen: PendingWorkstreamFeedOpen | null = null;
+let visibleWorkstreamOpenAwaitingSendReady: Pick<
+  PendingWorkstreamFeedOpen,
+  'workstreamId' | 'operationId' | 'startedAt'
+> | null = null;
 
 export function markSurfaceEntrypoint(entrypoint: TelemetrySurfaceEntrypoint): void {
   pendingSurfaceEntrypoint = entrypoint;
@@ -133,6 +138,10 @@ export function markWorkstreamFeedOpenStarted(
       supersedingWorkstreamId: workstreamId,
     });
   }
+  // A painted attempt may still be waiting for its independent composer-ready
+  // milestone. A new click owns a new lineage, so its later frame cannot report
+  // against the previous click even when A is opened again after A -> B.
+  visibleWorkstreamOpenAwaitingSendReady = null;
   const operationId = uuidV7();
   pendingWorkstreamFeedOpen = {
     workstreamId,
@@ -180,8 +189,9 @@ export function workstreamFeedOpenAttemptId(workstreamId: string): string | unde
 /** Ends a click whose destination was left without another sidebar click. */
 export function abandonPendingWorkstreamFeedOpen(abandonedAt = performance.now()): void {
   const attempt = pendingWorkstreamFeedOpen;
-  if (!attempt) return;
   pendingWorkstreamFeedOpen = null;
+  visibleWorkstreamOpenAwaitingSendReady = null;
+  if (!attempt) return;
   reportTelemetryProductIntent({
     kind: 'workstream_open_outcome',
     operationId: attempt.operationId,
@@ -201,6 +211,9 @@ export function abandonWorkstreamFeedOpenOutsideRoute(
   if (pendingWorkstreamFeedOpen && pendingWorkstreamFeedOpen.workstreamId !== activeWorkstreamId) {
     abandonPendingWorkstreamFeedOpen(abandonedAt);
   }
+  if (visibleWorkstreamOpenAwaitingSendReady?.workstreamId !== activeWorkstreamId) {
+    visibleWorkstreamOpenAwaitingSendReady = null;
+  }
 }
 
 export function workstreamFeedOpenCacheState(
@@ -219,6 +232,7 @@ export function cancelWorkstreamFeedOpen(
   const attempt = pendingWorkstreamFeedOpen;
   if (attempt?.workstreamId !== workstreamId) return;
   pendingWorkstreamFeedOpen = null;
+  visibleWorkstreamOpenAwaitingSendReady = null;
   const resolvedSocketLeaseId = socketLeaseId ?? attempt.socketLeaseId;
   reportTelemetryProductIntent({
     kind: 'workstream_open_outcome',
@@ -253,6 +267,13 @@ export function completeWorkstreamFeedPaint(
   if (attempt?.workstreamId !== workstreamId || attempt.dataReadyAt === undefined
     || attempt.cacheState === undefined) return null;
   pendingWorkstreamFeedOpen = null;
+  visibleWorkstreamOpenAwaitingSendReady = attempt.sendReadyReported
+    ? null
+    : {
+      workstreamId: attempt.workstreamId,
+      operationId: attempt.operationId,
+      startedAt: attempt.startedAt,
+    };
   const dataReadyDurationMs = Math.round(attempt.dataReadyAt - attempt.startedAt);
   const durationMs = Math.max(dataReadyDurationMs, Math.round(paintedAt - attempt.startedAt));
   const resolvedSocketLeaseId = socketLeaseId ?? attempt.socketLeaseId;
@@ -279,6 +300,56 @@ export function completeWorkstreamFeedPaint(
       durationMs,
       ...(resolvedSocketLeaseId ? { socketLeaseId: resolvedSocketLeaseId } : {}),
     },
+  };
+}
+
+export type WorkstreamSendReadyWorkspaceSocketState =
+  'connecting' | 'connected' | 'reconnecting';
+
+/** Records the one independent client send-readiness milestone for an opening.
+ * A visible feed can win the paint race, so its lineage is retained until this
+ * event, another route, or another click settles which attempt owns the frame. */
+export function reportWorkstreamSendReady(
+  workstreamId: string,
+  workspaceSocketState: WorkstreamSendReadyWorkspaceSocketState,
+  readyAt = performance.now(),
+): boolean {
+  const pending = pendingWorkstreamFeedOpen?.workstreamId === workstreamId
+    ? pendingWorkstreamFeedOpen
+    : null;
+  if (pending?.sendReadyReported) return false;
+  const attempt = pending ?? (visibleWorkstreamOpenAwaitingSendReady?.workstreamId === workstreamId
+    ? visibleWorkstreamOpenAwaitingSendReady
+    : null);
+  if (!attempt) return false;
+  if (pending) pending.sendReadyReported = true;
+  else visibleWorkstreamOpenAwaitingSendReady = null;
+  reportTelemetryProductIntent({
+    kind: 'workstream_send_ready',
+    operationId: attempt.operationId,
+    workstreamId,
+    durationMs: Math.max(0, Math.round(readyAt - attempt.startedAt)),
+    workspaceSocketState,
+  });
+  return true;
+}
+
+/** Two frames prove that the composer committed beside an installed send
+ * handler has crossed a paint. Cleanup makes StrictMode and state changes
+ * reschedule rather than publishing readiness from a discarded effect. */
+export function reportWorkstreamSendReadyAfterPaint(
+  workstreamId: string,
+  workspaceSocketState: WorkstreamSendReadyWorkspaceSocketState,
+): () => void {
+  let paintedFrame = 0;
+  const committedFrame = window.requestAnimationFrame(() => {
+    paintedFrame = window.requestAnimationFrame(() => {
+      reportWorkstreamSendReady(workstreamId, workspaceSocketState);
+    });
+  });
+  return () => {
+    window.cancelAnimationFrame(committedFrame);
+    if (paintedFrame !== 0) window.cancelAnimationFrame(paintedFrame);
   };
 }
 

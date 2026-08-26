@@ -73,6 +73,10 @@ export interface CreateWorkstreamMessageInput {
 
 export interface WorkstreamSocketConnection {
   state: SocketState;
+  /** The workstream handler can admit sends to the workspace queue. The painted
+   * telemetry milestone is reported separately after the consuming UI commits. */
+  sendReady: boolean;
+  workspaceSocketState: 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
   activeCompaction: AgentCompactionState | null;
   createMessage(input: CreateWorkstreamMessageInput): Promise<Message>;
   loadMessagePage(input: LoadWorkstreamMessagePageInput): Promise<MessagePage>;
@@ -568,7 +572,10 @@ export function useWorkstreamSocket(
   socketLeaseId?: string,
 ): WorkstreamSocketConnection {
   const queryClient = useQueryClient();
-  const { createMessage: createWorkspaceMessage } = useWorkspaceSocket();
+  const {
+    createMessage: createWorkspaceMessage,
+    state: workspaceSocketState,
+  } = useWorkspaceSocket();
   const [generatedSocketLeaseId] = useState(() => socketLeaseId ?? uuidV7());
   const resolvedSocketLeaseId = socketLeaseId ?? generatedSocketLeaseId;
   const initialReasonRef = useRef(initialReason);
@@ -582,6 +589,7 @@ export function useWorkstreamSocket(
   );
   const resumeState = useWorkstreamSocketResumeState(workstreamId);
   const [state, setState] = useState<SocketState>('idle');
+  const [sendReady, setSendReady] = useState(false);
   const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
   const attempts = useRef(0);
   const createMessageRef = useRef<(input: CreateWorkstreamMessageInput) => Promise<Message>>(
@@ -612,6 +620,7 @@ export function useWorkstreamSocket(
     setActiveCompaction(null);
     if (!api || !enabled) {
       setState('idle');
+      setSendReady(false);
       createMessageRef.current = () => Promise.reject(new ApiError(
         'The work stream is not ready to receive messages.',
         409,
@@ -754,6 +763,10 @@ export function useWorkstreamSocket(
         trace.end();
       }
     };
+    // Readiness means the work-stream-specific handler is installed and can
+    // hand a command to the workspace queue. The queue owns reconnecting
+    // transport, so this intentionally does not wait for either socket to open.
+    setSendReady(true);
 
     const rejectPendingMessagePages = (error: Error): void => {
       for (const pending of pendingMessagePages.values()) {
@@ -1542,6 +1555,7 @@ export function useWorkstreamSocket(
     )) scheduleReveal();
     return () => {
       closedByEffect = true;
+      setSendReady(false);
       openTrace?.end({ outcome: 'unmounted' });
       openTrace = null;
       createMessageRef.current = () => Promise.reject(new ApiError(
@@ -1574,7 +1588,7 @@ export function useWorkstreamSocket(
   }, [api, createWorkspaceMessage, enabled, queryClient, resolvedSocketLeaseId, resumeState, workstreamId]);
 
   return useMemo(
-    () => ({ state, activeCompaction, createMessage, loadMessagePage }),
-    [activeCompaction, createMessage, loadMessagePage, state],
+    () => ({ state, sendReady, workspaceSocketState, activeCompaction, createMessage, loadMessagePage }),
+    [activeCompaction, createMessage, loadMessagePage, sendReady, state, workspaceSocketState],
   );
 }

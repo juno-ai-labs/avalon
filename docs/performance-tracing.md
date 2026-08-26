@@ -349,10 +349,11 @@ This module owns latency diagnosis for the three named flows and nothing else.
 
 - **It is not product telemetry.** [`telemetry.md`](telemetry.md) owns product
   signals, their regional routing, and the preferences that gate them. The
-  explicitly approved `workstream_feed_visible` event is the exception that
-  measures exact sidebar-click-to-paint and data-ready durations; its operation
-  ID reuses the detail request ID for correlation, but it does not export this
-  tracer's phase list, long-task buffer, URLs, or other diagnostic state. A span
+  explicitly approved `workstream_feed_visible` and `workstream_send_ready`
+  events are the exceptions that measure exact sidebar-click-to-feed-paint,
+  data-ready, and painted-send-handler durations. Their shared opening operation
+  ID correlates them to the detail flow, but neither exports this tracer's phase
+  list, long-task buffer, URLs, or other diagnostic state. A span
   and a `perf_flow` row remain diagnostics, subject to Workers Traces and Workers
   Logs retention, and reach no destination adapter through this module.
 - **It is not the run ledger.** A harness run's duration, tokens, and cost are
@@ -535,6 +536,27 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-08-25 — Client send readiness has its own opening milestone
+
+**What changed:** A sidebar opening now emits `workstream_send_ready` after the
+painted composer has an installed work-stream handler. It shares the opening
+operation ID and records the workspace command socket state.
+
+**Why:** Feed paint answers the opening question but is only a proxy for the
+separate question of when the client can accept a send. The workspace socket
+may queue a message while connecting or reconnecting, so socket-connected time
+would overstate the user's wait.
+
+**Considered and rejected:** Calling feed visibility send readiness, or waiting
+for a transport connection. The first hides an unmeasured claim; the second
+confuses queue admission with delivery. Server acknowledgement remains the
+existing `workstream_message_send` flow rather than a third reading of readiness.
+
+**Consequences:** Product analytics can compare feed and send-ready percentiles
+by operation ID. A workspace-level service error abandons the click before its
+same-work-stream retry can reuse that clock. Cloudflare spans and renderer phase
+traces remain unchanged.
 
 ### 2026-08-25 — Detail retries separate request identity from opening identity
 
