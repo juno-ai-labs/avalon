@@ -1,4 +1,8 @@
-import { WorkstreamSchema, type Workstream } from "@rally/contracts";
+import {
+  WorkstreamSchema,
+  type Workstream,
+  type WorkstreamBatchFilter,
+} from "@rally/contracts";
 import { z } from "zod";
 
 import { workspaceDOName } from "../durable-objects/names";
@@ -44,6 +48,16 @@ export class WorkstreamDirectoryService {
       userId: this.auth.userId,
       workstreamIds,
     })).items;
+  }
+
+  async batchTargets(filter: WorkstreamBatchFilter): Promise<string[]> {
+    const workspace = await this.workspace();
+    const result = await workspace.batchUpdateTargets({
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      filter,
+    });
+    return result.items;
   }
 
   async plannedForAutomation(

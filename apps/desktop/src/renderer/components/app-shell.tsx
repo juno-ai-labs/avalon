@@ -319,6 +319,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             void navigate('/workstreams/new', { replace: true });
           }
         }}
+        onApplyWorkstreamBatch={async (operationId, filter, update) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          return api.applyWorkstreamBatch(operationId, filter, update);
+        }}
         onChangeNoteScope={async (note, scope) => {
           if (!api) return;
           const updated = await api.updateNote(note.id, { scope });
@@ -410,6 +414,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           void navigate(`/workstreams/${workstream.id}`);
         }}
         onOpenMeetingNotes={() => desktopBridge().openMeetingNotes()}
+        onPreviewWorkstreamBatch={async (filter) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          return api.previewWorkstreamBatch(filter);
+        }}
         onSignOut={() => {
           void signOut().catch(() => undefined);
         }}

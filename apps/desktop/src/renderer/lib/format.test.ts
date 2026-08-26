@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatDuration,
   groupWorkstreams,
+  recencyGroupBatchFilter,
   statusLabel,
   workstreamMarkerStatus,
   workstreamNeedsAttention,
@@ -103,6 +104,22 @@ describe('work-stream presentation rules', () => {
       'before-month',
       'invalid',
     ]);
+  });
+
+  it('describes recency headings as generic half-open batch filters', () => {
+    expect(recencyGroupBatchFilter('This week', now)).toEqual({
+      lastActivityAt: {
+        atOrAfter: localDate(2026, 7, 2),
+        before: localDate(2026, 7, 6),
+      },
+      pinned: false,
+      includeSystem: false,
+    });
+    expect(recencyGroupBatchFilter('Before this month', now)).toEqual({
+      lastActivityAt: { before: localDate(2026, 7, 1) },
+      pinned: false,
+      includeSystem: false,
+    });
   });
 
   it('does not describe a gray harness state as a finished project', () => {
