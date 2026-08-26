@@ -103,6 +103,16 @@ describe('member picker controls', () => {
   });
 });
 
+describe('work-stream participant presence', () => {
+  it('draws a tokenized sonar ring and preserves a static reduced-motion state', () => {
+    const ping = rule('.avatar-presence-ping');
+    expect(ping).toContain('animation: avatar-presence-ping 2.2s ease-out infinite;');
+    expect(ping).toContain('var(--av-sys-color-success-base)');
+    expect(stylesheet).toContain('@media (prefers-reduced-motion: reduce)');
+    expect(stylesheet).toContain('animation: none;');
+  });
+});
+
 /**
  * The five-line cap on a system row exists only here. `SystemMessageBlock`
  * renders the whole string and sets one attribute; the clamp, and therefore the

@@ -27,6 +27,10 @@ vi.mock('../lib/workstream-socket-pool', () => ({
   useRetainedWorkstreamSocket: retainedSocket,
 }));
 
+vi.mock('../lib/workspace-socket', () => ({
+  useWorkspaceSocket: () => ({ presenceUserIdsByWorkstream: {} }),
+}));
+
 vi.mock('../lib/use-file-attachments', () => ({
   useFileAttachments: () => ({
     addFiles: vi.fn(),

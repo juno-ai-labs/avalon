@@ -200,6 +200,20 @@ const browserBridge: RallyDesktopBridge = {
       devAuthEnabled: import.meta.env.DEV,
     } as RuntimeConfig;
   },
+  async getApplicationForegroundState() {
+    return document.visibilityState === 'visible' && document.hasFocus();
+  },
+  onApplicationForegroundChanged(listener) {
+    const report = (): void => listener(document.visibilityState === 'visible' && document.hasFocus());
+    window.addEventListener('focus', report);
+    window.addEventListener('blur', report);
+    document.addEventListener('visibilitychange', report);
+    return () => {
+      window.removeEventListener('focus', report);
+      window.removeEventListener('blur', report);
+      document.removeEventListener('visibilitychange', report);
+    };
+  },
   async getApplicationSettings() {
     return { ...browserApplicationSettings };
   },

@@ -149,6 +149,22 @@ function nextMessage(socket: WebSocket): Promise<MessageEvent> {
   return new Promise((resolve) => socket.addEventListener("message", resolve, { once: true }));
 }
 
+function nextMessageOfType(socket: WebSocket, type: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    const onMessage = (event: MessageEvent) => {
+      try {
+        const decoded = JSON.parse(String(event.data)) as Record<string, unknown>;
+        if (decoded.type !== type) return;
+        socket.removeEventListener("message", onMessage);
+        resolve(decoded);
+      } catch {
+        // Heartbeat frames and unrelated messages are not the requested event.
+      }
+    };
+    socket.addEventListener("message", onMessage);
+  });
+}
+
 function nextClose(socket: WebSocket): Promise<CloseEvent> {
   return new Promise((resolve) => socket.addEventListener("close", resolve, { once: true }));
 }
@@ -1963,6 +1979,275 @@ describe("Durable Objects in the Workers runtime", () => {
     await subscribed;
     return socket;
   }
+
+  it("orders presence across hibernation and clears it when directory visibility changes", async () => {
+    await seedOpenAuthority();
+    const otherUserId = asUserId("00000000-0000-7000-8000-00000000040a");
+    const otherSessionId = `${SESSION_ID}-presence`;
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+        VALUES (?, ?, 'active', 'member', '2026-08-26T20:00:00.000Z')`).bind(WORKSPACE_ID, otherUserId),
+      env.DB.prepare(`INSERT INTO sessions
+        (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+        .bind(otherSessionId, otherUserId, WORKSPACE_ID),
+    ]);
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const at = "2026-08-26T20:00:00.000Z";
+    const common = {
+      kind: "directory_common" as const,
+      title: "Foreground presence",
+      description: "Presence does not follow pooled sockets",
+      preview: "idle",
+      scope: "workspace" as const,
+      state: "idle",
+      systemKind: null,
+      lastActivityAt: at,
+      completedAt: null,
+      archivedAt: null,
+      originType: "ad_hoc" as const,
+      createdByUserId: null,
+      latestAttentionOrdinal: 0,
+      unreadTrackingStartOrdinal: 0,
+      createdAt: at,
+      updatedAt: at,
+    };
+    const viewer = (userId: string, isParticipant: boolean) => ({
+      kind: "directory_user" as const,
+      userId,
+      isParticipant,
+      unreadCount: 0,
+      youAreMentioned: false,
+      listable: isParticipant,
+      seenAttentionOrdinal: 0,
+      manualUnreadFromOrdinal: null,
+      manualUnreadGeneration: 0,
+      latestMentionAttentionOrdinal: 0,
+    });
+    await workspace.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [
+        effectEnvelope(common, "00000000-0000-7000-8000-00000000040b"),
+        effectEnvelope(
+          viewer(USER_ID, true),
+          "00000000-0000-7000-8000-00000000040f",
+        ),
+      ],
+    });
+
+    const first = await openWorkspaceSocket(
+      workspace,
+      "00000000-0000-7000-8000-00000000040c",
+    );
+    const second = await openWorkspaceSocket(
+      workspace,
+      "00000000-0000-7000-8000-00000000040d",
+      otherSessionId,
+      otherUserId,
+    );
+    try {
+      const firstUpdate = nextMessage(first);
+      first.send(JSON.stringify({
+        type: "set_presence",
+        revision: 1,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      expect(JSON.parse(String((await firstUpdate).data))).toMatchObject({
+        type: "workspace_presence",
+        workstreamId: WORKSTREAM_ID,
+        userIds: [],
+      });
+      await evictDurableObject(workspace);
+      // An auth query yields the DO input gate. A newer revision must fence an
+      // older handler that resumes later, even when the newer state itself did
+      // not change and therefore emitted no snapshot.
+      first.send(JSON.stringify({
+        type: "set_presence",
+        revision: 2,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      first.send(JSON.stringify({
+        type: "set_presence",
+        revision: 1,
+        applicationState: "background",
+        foregroundWorkstreamId: null,
+      }));
+      const firstAfterWake = nextMessage(first);
+      const secondAfterWake = nextMessage(second);
+      second.send(JSON.stringify({
+        type: "set_presence",
+        revision: 1,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      expect(JSON.parse(String((await firstAfterWake).data))).toMatchObject({
+        type: "workspace_presence",
+        workstreamId: WORKSTREAM_ID,
+        userIds: [otherUserId],
+      });
+      expect(JSON.parse(String((await secondAfterWake).data))).toMatchObject({
+        type: "workspace_presence",
+        workstreamId: WORKSTREAM_ID,
+        userIds: [USER_ID],
+      });
+
+      const firstBackgrounded = nextMessage(first);
+      second.send(JSON.stringify({
+        type: "set_presence",
+        revision: 2,
+        applicationState: "background",
+        foregroundWorkstreamId: null,
+      }));
+      expect(JSON.parse(String((await firstBackgrounded).data))).toMatchObject({
+        type: "workspace_presence",
+        workstreamId: WORKSTREAM_ID,
+        userIds: [],
+      });
+      expect(first.readyState).toBe(WebSocket.OPEN);
+      expect(second.readyState).toBe(WebSocket.OPEN);
+
+      const firstReforegrounded = nextMessageOfType(first, "workspace_presence");
+      const secondReforegrounded = nextMessageOfType(second, "workspace_presence");
+      second.send(JSON.stringify({
+        type: "set_presence",
+        revision: 3,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      await Promise.all([firstReforegrounded, secondReforegrounded]);
+
+      // Narrowing a workspace stream to personal removes a foreground viewer
+      // who has no participant row. The remaining viewer gets a canonical
+      // empty set while the removed socket stays connected but backgrounded.
+      const afterScopeRestriction = nextMessageOfType(first, "workspace_presence");
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [effectEnvelope(
+          { ...common, scope: "personal", updatedAt: "2026-08-26T20:01:00.000Z" },
+          "00000000-0000-7000-8000-000000000410",
+          2,
+        )],
+      });
+      expect(await afterScopeRestriction).toMatchObject({
+        workstreamId: WORKSTREAM_ID,
+        userIds: [],
+      });
+      await runInDurableObject(workspace, (_instance, state) => {
+        const removed = state.getWebSockets()
+          .map((socket) => socket.deserializeAttachment() as Record<string, unknown>)
+          .find((candidate) => candidate.userId === otherUserId);
+        expect(removed).toMatchObject({
+          applicationState: "background",
+          foregroundWorkstreamId: null,
+        });
+      });
+
+      // Restore broad visibility, seat the second viewer, then narrow again.
+      // Restoring access alone must not resurrect the cleared attachment.
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [
+          effectEnvelope(
+            { ...common, updatedAt: "2026-08-26T20:02:00.000Z" },
+            "00000000-0000-7000-8000-000000000411",
+            3,
+          ),
+          effectEnvelope(
+            viewer(otherUserId, true),
+            "00000000-0000-7000-8000-000000000412",
+          ),
+        ],
+      });
+      const firstAfterParticipantJoin = nextMessageOfType(first, "workspace_presence");
+      const secondAfterParticipantJoin = nextMessageOfType(second, "workspace_presence");
+      second.send(JSON.stringify({
+        type: "set_presence",
+        revision: 4,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      await Promise.all([firstAfterParticipantJoin, secondAfterParticipantJoin]);
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [effectEnvelope(
+          { ...common, scope: "personal", updatedAt: "2026-08-26T20:03:00.000Z" },
+          "00000000-0000-7000-8000-000000000413",
+          4,
+        )],
+      });
+
+      const afterParticipantRemoval = nextMessageOfType(first, "workspace_presence");
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [effectEnvelope(
+          viewer(otherUserId, false),
+          "00000000-0000-7000-8000-000000000414",
+          2,
+        )],
+      });
+      expect(await afterParticipantRemoval).toMatchObject({
+        workstreamId: WORKSTREAM_ID,
+        userIds: [],
+      });
+
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [effectEnvelope(
+          viewer(otherUserId, true),
+          "00000000-0000-7000-8000-000000000415",
+          3,
+        )],
+      });
+      const firstBeforeArchive = nextMessageOfType(first, "workspace_presence");
+      const secondBeforeArchive = nextMessageOfType(second, "workspace_presence");
+      second.send(JSON.stringify({
+        type: "set_presence",
+        revision: 5,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      await Promise.all([firstBeforeArchive, secondBeforeArchive]);
+
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [effectEnvelope(
+          {
+            ...common,
+            scope: "personal",
+            archivedAt: "2026-08-26T20:04:00.000Z",
+            updatedAt: "2026-08-26T20:04:00.000Z",
+          },
+          "00000000-0000-7000-8000-000000000416",
+          5,
+        )],
+      });
+      await runInDurableObject(workspace, (_instance, state) => {
+        const attachments = state.getWebSockets()
+          .map((socket) => socket.deserializeAttachment() as Record<string, unknown>);
+        expect(attachments).toHaveLength(2);
+        expect(attachments).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            userId: USER_ID,
+            applicationState: "background",
+            foregroundWorkstreamId: null,
+          }),
+          expect.objectContaining({
+            userId: otherUserId,
+            applicationState: "background",
+            foregroundWorkstreamId: null,
+          }),
+        ]));
+      });
+    } finally {
+      first.close(1000, "test complete");
+      second.close(1000, "test complete");
+    }
+  });
 
   it("re-evaluates a changed product flag privately for subscribed users", async () => {
     await seedOpenAuthority();
