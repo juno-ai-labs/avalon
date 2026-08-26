@@ -89,4 +89,51 @@ describe('useWorkstreamSendReadyTelemetry', () => {
     expect(requestAnimationFrame).not.toHaveBeenCalled();
     expect(reportTelemetryProductIntent).not.toHaveBeenCalled();
   });
+
+  it('cancels pending paint frames and reports the latest socket state', async () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrameId = 0;
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+      nextFrameId += 1;
+      frames.set(nextFrameId, callback);
+      return nextFrameId;
+    }));
+    const cancelAnimationFrame = vi.fn((frameId: number) => {
+      frames.delete(frameId);
+    });
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame);
+    const workstreamId = '00000000-0000-4000-8000-000000000219';
+    const operationId = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold');
+    reportTelemetryProductIntent.mockClear();
+
+    const view = render(
+      <Probe workspaceSocketState="reconnecting" workstreamId={workstreamId} />,
+    );
+    expect(frames).toHaveLength(1);
+    const reconnectingFrameId = frames.keys().next().value as number;
+
+    view.rerender(<Probe workspaceSocketState="connected" workstreamId={workstreamId} />);
+
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(reconnectingFrameId);
+    expect(frames.has(reconnectingFrameId)).toBe(false);
+    expect(frames).toHaveLength(1);
+    const runNextFrame = (): void => {
+      const entry = frames.entries().next().value as [number, FrameRequestCallback] | undefined;
+      if (!entry) throw new Error('No animation frame was scheduled.');
+      frames.delete(entry[0]);
+      entry[1](performance.now());
+    };
+    act(runNextFrame);
+    expect(frames).toHaveLength(1);
+    act(runNextFrame);
+    await Promise.resolve();
+
+    expect(reportTelemetryProductIntent).toHaveBeenCalledTimes(1);
+    expect(reportTelemetryProductIntent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'workstream_send_ready',
+      operationId,
+      workstreamId,
+      workspaceSocketState: 'connected',
+    }));
+  });
 });
