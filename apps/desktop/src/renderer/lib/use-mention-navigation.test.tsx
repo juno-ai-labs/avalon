@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { useMentionNavigation } from './use-mention-navigation';
+import { draftWithMentionStarted, useMentionNavigation } from './use-mention-navigation';
 
 /**
  * The three composers exercise this hook through their own popovers; this
@@ -27,6 +27,13 @@ function selection(): Array<string | null> {
 }
 
 describe('useMentionNavigation', () => {
+  it('replaces a non-collapsed textarea selection when starting a mention', () => {
+    expect(draftWithMentionStarted('Ask Samantha today', 4, 12)).toEqual({
+      value: 'Ask @ today',
+      caret: 5,
+    });
+  });
+
   it('wraps in both directions and selects the row Enter is on', () => {
     const onSelect = vi.fn();
     render(<Harness keys={['a', 'b', 'c']} onSelect={onSelect} />);
