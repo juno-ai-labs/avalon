@@ -109,6 +109,10 @@ server pattern](https://developers.cloudflare.com/durable-objects/examples/webso
 - No object relies on an in-memory session map. Event handlers enumerate
   `state.getWebSockets()` when they need the connected set and validate
   `deserializeAttachment()` at every use, so eviction loses no required state.
+- WorkspaceDO attachments also carry explicit application foreground and the
+  renderer's foreground work-stream ID. Missing fields from an older deployment
+  default to background during rollout; healthy attachments preserve presence
+  through hibernation without a timer or database row.
 - Exact text `ping` frames receive `pong` through
   `setWebSocketAutoResponse()`, without waking an idle object. The current
   compatibility date also enables runtime close-frame replies; close handlers
@@ -323,6 +327,16 @@ than a D1 one. Losing access is carried instead by the
 holding one of that person's sockets. Every checkpoint broadcast therefore stays
 local to the execution owner.
 
+Those retained metadata/feed sockets are deliberately not presence. Electron
+main reports whether the Rally application has any focused window; each
+renderer combines that with its own document/window focus and active route,
+then reports the result over the persistent WorkspaceDO socket after subscribe.
+WorkspaceDO answers with a viewer-scoped snapshot for that one foreground work
+stream and excludes the viewer. This separates transport warmth from attention
+without adding another connection, heartbeat, or hibernation wake-up.
+After the socket's ordinary ticket handshake, presence never uses REST for
+write, read, replay, or recovery.
+
 Checkpoint, queued/running, and terminal publications enter one per-agent
 serial queue only after their SQLite transition commits. Adjacent unsent
 cumulative checkpoints coalesce to the newest value; queued/running/terminal
@@ -531,6 +545,31 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-26 — Workspace presence describes foreground attention, not socket warmth
+
+**What changed:** The WorkspaceDO protocol now accepts explicit application and
+foreground-work-stream state after subscription and returns viewer-scoped
+presence snapshots. The desktop derives the state from Electron application
+focus, renderer focus/visibility, and the selected route. Presence lives in
+hibernation attachments and is recomputed from `getWebSockets()` on change or
+close; the face pile animates only other present users.
+
+**Why:** Recently viewed work-stream metadata/feed pairs stay mounted for fast
+switching, so their open/close lifecycle cannot say where a person currently is.
+Application focus alone is also insufficient when a Settings window covers the
+workspace renderer.
+
+**Considered and rejected:** A feed subscribe/close signal would conflate the
+pool with attention. An in-memory room map would disappear on hibernation. A
+durable row with a TTL would require storage writes, alarms, and an invented
+expiry duration for state already bounded by the socket lifecycle.
+
+**Consequences:** Clients wait for the workspace sync response before sending
+presence, avoiding interleaving with asynchronous subscription admission.
+Attachments from the previous deployment resume as background. Presence frames
+remain ephemeral, authorized, recipient-specific, and outside the workspace
+waterline/replay log. Presence has no REST fallback.
 
 ### 2026-08-26 — Route handoff cannot paint a retained work stream under the next URL
 

@@ -4,10 +4,13 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceSidebarListEventSchema,
   WorkspaceFeatureFlagsEventSchema,
+  WorkspacePresenceEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
+  WorkstreamIdSchema,
   WorkstreamSocketCommandResultSchema,
+  type WorkstreamId,
   type WorkspaceSidebar,
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
@@ -86,6 +89,8 @@ interface PendingDirectoryRequest {
 interface WorkspaceSocketContextValue {
   state: WorkspaceSocketState;
   topicWaterlines: Readonly<Partial<Record<WorkspaceSyncTopic, number>>>;
+  presenceUserIdsByWorkstream: Readonly<Record<string, readonly string[]>>;
+  setForegroundWorkstreamId(workstreamId: string | null): void;
   createMessage(command: CreateMessageCommand): Promise<Message>;
   listWorkstreams(input: {
     limit: number;
@@ -180,6 +185,9 @@ export function WorkspaceSocketProvider({
   const [state, setState] = useState<WorkspaceSocketState>('connecting');
   const [topicWaterlines, setTopicWaterlines] = useState<Partial<Record<WorkspaceSyncTopic, number>>>({});
   const [sidebarConnect, setSidebarConnect] = useState<SidebarConnect | null>(null);
+  const [presenceUserIdsByWorkstream, setPresenceUserIdsByWorkstream] = useState<Record<string, readonly string[]>>({});
+  const foregroundWorkstreamIdRef = useRef<WorkstreamId | null>(null);
+  const reportPresenceRef = useRef<() => void>(() => undefined);
   const createMessageRef = useRef<(command: CreateMessageCommand) => Promise<Message>>(
     () => Promise.reject(new ApiError(
       'The workspace is not connected.',
@@ -209,6 +217,41 @@ export function WorkspaceSocketProvider({
     let lastWaterline = -1;
     const pending = new Map<string, PendingCommand>();
     const pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
+    let subscribed = false;
+    let applicationForegrounded = false;
+    let applicationFocusObservation = 0;
+    let windowForegrounded = document.visibilityState === 'visible' && document.hasFocus();
+
+    const sendPresence = (target: WebSocket | null = socket): void => {
+      if (!subscribed || target?.readyState !== WebSocket.OPEN) return;
+      target.send(JSON.stringify({
+        type: 'set_presence',
+        applicationState: applicationForegrounded ? 'foreground' : 'background',
+        foregroundWorkstreamId: applicationForegrounded && windowForegrounded
+          ? foregroundWorkstreamIdRef.current
+          : null,
+      } satisfies WorkspaceSocketClientEvent));
+    };
+    reportPresenceRef.current = sendPresence;
+    const bridge = desktopBridge();
+    const initialApplicationFocusObservation = applicationFocusObservation;
+    void bridge.getApplicationForegroundState().then((foregrounded) => {
+      if (stopped || applicationFocusObservation !== initialApplicationFocusObservation) return;
+      applicationForegrounded = foregrounded;
+      sendPresence();
+    }).catch(() => undefined);
+    const stopApplicationFocus = bridge.onApplicationForegroundChanged((foregrounded) => {
+      applicationFocusObservation += 1;
+      applicationForegrounded = foregrounded;
+      sendPresence();
+    });
+    const observeWindowFocus = (): void => {
+      windowForegrounded = document.visibilityState === 'visible' && document.hasFocus();
+      sendPresence();
+    };
+    window.addEventListener('focus', observeWindowFocus);
+    window.addEventListener('blur', observeWindowFocus);
+    document.addEventListener('visibilitychange', observeWindowFocus);
 
     const clearReconnect = (): void => {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
@@ -364,6 +407,10 @@ export function WorkspaceSocketProvider({
           }
           const sync = WorkspaceSocketSyncEventSchema.safeParse(decoded);
           if (sync.success) {
+            if (!subscribed) {
+              subscribed = true;
+              sendPresence();
+            }
             if (sync.data.featureFlags) {
               queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, sync.data.featureFlags);
               void desktopBridge().observeClientFeatureFlags(sync.data.featureFlags).catch(() => undefined);
@@ -393,6 +440,17 @@ export function WorkspaceSocketProvider({
               // socket was away for.
               if (topic === 'workstream_directory' && sync.data.sidebar && !directoryNeedsReconciling) continue;
               invalidateTopic(queryClient, topic);
+            }
+            return;
+          }
+          const presence = WorkspacePresenceEventSchema.safeParse(decoded);
+          if (presence.success) {
+            const workstreamId = presence.data.workstreamId;
+            if (workstreamId !== null) {
+              setPresenceUserIdsByWorkstream((current) => ({
+                ...current,
+                [workstreamId]: presence.data.userIds,
+              }));
             }
             return;
           }
@@ -476,6 +534,7 @@ export function WorkspaceSocketProvider({
         next.addEventListener('close', (event) => {
           if (socket !== next) return;
           clearHeartbeat();
+          subscribed = false;
           socket = null;
           const accessRevoked = event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE;
           const permanentError = accessRevoked
@@ -612,6 +671,12 @@ export function WorkspaceSocketProvider({
       ));
       window.removeEventListener('online', online);
       window.removeEventListener('offline', offline);
+      window.removeEventListener('focus', observeWindowFocus);
+      window.removeEventListener('blur', observeWindowFocus);
+      document.removeEventListener('visibilitychange', observeWindowFocus);
+      stopApplicationFocus();
+      reportPresenceRef.current = () => undefined;
+      subscribed = false;
       clearReconnect();
       clearHeartbeat();
       socket?.close();
@@ -626,9 +691,32 @@ export function WorkspaceSocketProvider({
     (input) => listWorkstreamsRef.current(input),
     [],
   );
+  const setForegroundWorkstreamId = useCallback((workstreamId: string | null): void => {
+    const parsed = WorkstreamIdSchema.safeParse(workstreamId);
+    const validatedWorkstreamId = parsed.success ? parsed.data : null;
+    if (foregroundWorkstreamIdRef.current === validatedWorkstreamId) return;
+    foregroundWorkstreamIdRef.current = validatedWorkstreamId;
+    reportPresenceRef.current();
+  }, []);
   const value = useMemo(
-    () => ({ state, topicWaterlines, createMessage, listWorkstreams, sidebarConnect }),
-    [createMessage, listWorkstreams, sidebarConnect, state, topicWaterlines],
+    () => ({
+      state,
+      topicWaterlines,
+      presenceUserIdsByWorkstream,
+      setForegroundWorkstreamId,
+      createMessage,
+      listWorkstreams,
+      sidebarConnect,
+    }),
+    [
+      createMessage,
+      listWorkstreams,
+      presenceUserIdsByWorkstream,
+      setForegroundWorkstreamId,
+      sidebarConnect,
+      state,
+      topicWaterlines,
+    ],
   );
   return <WorkspaceSocketContext.Provider value={value}>{children}</WorkspaceSocketContext.Provider>;
 }

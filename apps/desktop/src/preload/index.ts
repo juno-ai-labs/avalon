@@ -23,6 +23,12 @@ const settingsSectionListeners = new Set<(section: DesktopSettingsSection) => vo
 let queuedSettingsSection: DesktopSettingsSection | null = null;
 const meetingCloseListeners = new Set<(reason: MeetingCloseReason) => void>();
 let meetingCloseQueued: MeetingCloseReason | null = null;
+const applicationForegroundListeners = new Set<(foregrounded: boolean) => void>();
+
+ipcRenderer.on('application:foreground-changed', (_event, rawForegrounded: unknown) => {
+  if (typeof rawForegrounded !== 'boolean') return;
+  for (const listener of applicationForegroundListeners) listener(rawForegrounded);
+});
 
 // Install the privileged listener before React starts. Session changes can
 // briefly replace the renderer callback; a native OAuth/invitation callback
@@ -75,6 +81,11 @@ ipcRenderer.on('meeting:close-requested', (_event, rawReason: unknown) => {
 
 const bridge: RallyDesktopBridge = {
   getRuntimeConfig: () => ipcRenderer.invoke('runtime:get-config') as Promise<RuntimeConfig>,
+  getApplicationForegroundState: () => ipcRenderer.invoke('application:foreground-get') as Promise<boolean>,
+  onApplicationForegroundChanged: (listener) => {
+    applicationForegroundListeners.add(listener);
+    return () => applicationForegroundListeners.delete(listener);
+  },
   getApplicationSettings: () => ipcRenderer.invoke('application-settings:get') as Promise<DesktopApplicationSettings>,
   setLockdownMode: (enabled) =>
     ipcRenderer.invoke('application-settings:set-lockdown-mode', enabled) as Promise<DesktopApplicationSettings>,

@@ -60,14 +60,21 @@ describe('Electron telemetry wiring', () => {
     );
   });
 
-  it('observes real Electron application focus transitions', () => {
+  it('observes real Electron application focus transitions and relays them to renderers', () => {
     const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
+    const observer = source.match(
+      /function observeApplicationForeground\(foregrounded: boolean\)[\s\S]*?\n\}/u,
+    )?.[0];
 
     expect(source).toContain("app.on('browser-window-focus'");
     expect(source).toContain("app.on('browser-window-blur'");
     expect(source).toContain('BrowserWindow.getFocusedWindow()');
     expect(source).toContain('applicationLifecycle(state)');
-    expect(source).toContain('if (startsHidden) applicationLifecycleTelemetry.observeFocused(false)');
+    expect(observer).toContain('applicationLifecycleTelemetry.observeFocused(foregrounded)');
+    expect(observer).toContain("window.webContents.send('application:foreground-changed', foregrounded)");
+    expect(source).toContain('if (startsHidden) observeApplicationForeground(false)');
+    expect(source).toContain('observeApplicationForeground(true)');
+    expect(source).toContain("ipcMain.handle('application:foreground-get'");
   });
 
   it('derives PostHog-compatible window metadata in main instead of trusting renderer values', () => {

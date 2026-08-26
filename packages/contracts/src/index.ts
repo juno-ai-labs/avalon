@@ -1774,6 +1774,11 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     afterWaterline: z.number().int().nonnegative(),
   }).strict(),
   z.object({
+    type: z.literal("set_presence"),
+    applicationState: z.enum(["foreground", "background"]),
+    foregroundWorkstreamId: WorkstreamIdSchema.nullable(),
+  }).strict(),
+  z.object({
     type: z.literal("create_message"),
     workstreamId: IdSchema,
     substreamId: z.union([z.literal("0"), IdSchema]),
@@ -1787,7 +1792,17 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     before: WorkspaceWorkstreamCursorSchema.optional(),
     includeSystem: z.boolean(),
   }).strict(),
-]);
+]).superRefine((event, context) => {
+  if (event.type === "set_presence"
+    && event.applicationState === "background"
+    && event.foregroundWorkstreamId !== null) {
+    context.addIssue({
+      code: "custom",
+      path: ["foregroundWorkstreamId"],
+      message: "must be null while the application is backgrounded",
+    });
+  }
+});
 
 const WorkstreamStateEventIdSchema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
 
@@ -1947,6 +1962,21 @@ export const WorkspaceSocketSyncEventSchema = z.object({
 });
 
 /**
+ * Ephemeral presence for the work stream foregrounded by this socket.
+ *
+ * The event is deliberately viewer-scoped rather than a workspace-wide map:
+ * personal work-stream identities must not leak to members who cannot read
+ * them, and the face pile needs only the room currently on screen. The current
+ * user is omitted by the server.
+ */
+export const WorkspacePresenceEventSchema = z.object({
+  type: z.literal("workspace_presence"),
+  occurredAt: TimestampSchema,
+  workstreamId: WorkstreamIdSchema.nullable(),
+  userIds: z.array(UserIdSchema),
+}).strict();
+
+/**
  * User-specific flags sent outside the workspace waterline. Two people in one
  * WorkspaceDO can match different Flagship rules, so these values must never
  * ride the common `workspace_sync` event.
@@ -2103,6 +2133,7 @@ export const WorkstreamControlSocketEventSchema = z.discriminatedUnion("type", [
 export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
 export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
 export type WorkspaceSocketSyncEvent = z.infer<typeof WorkspaceSocketSyncEventSchema>;
+export type WorkspacePresenceEvent = z.infer<typeof WorkspacePresenceEventSchema>;
 export type WorkspaceFeatureFlagsEvent = z.infer<typeof WorkspaceFeatureFlagsEventSchema>;
 export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
 export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
