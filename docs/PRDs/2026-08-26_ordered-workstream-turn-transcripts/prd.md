@@ -35,6 +35,13 @@ covers. The desktop merges those ranges into a coverage set, so it can tell the
 difference between a loaded interval, an intentional tombstone, a range not yet
 requested, and a newly arrived realtime turn beyond the original snapshot.
 
+On first open, the same boot/snapshot response carries two named range slices:
+the first unread turn with up to five turns before and five after it, and the
+five latest turns in the work stream. The first slice makes the reader's return
+position paint immediately; the second makes **Jump to latest** instantaneous.
+The uncovered middle remains an explicit gap and loads lazily as scrolling
+approaches it.
+
 Text still reaches the feed token by token. Parallel tools still start and
 settle independently. The change is where those events attach and how their
 durable order is represented, not a conversion of streaming or tool execution
@@ -104,16 +111,20 @@ model replay, and desktop projections.
    unavailable large result bodies.
 5. Let a client load arbitrary blocks of complete turns and compute every gap
    inside a known snapshot without inferring coverage from returned content.
-6. Put turn persistence, snapshot fencing, range scanning, actual-coverage
+6. Deliver both initial range slices in the first work-stream boot/snapshot
+   response: the first unread turn with up to five preceding and five following
+   turns, and the five latest turns. Opening at unread and jumping to the bottom
+   must require no follow-up fetch before those messages can paint.
+7. Put turn persistence, snapshot fencing, range scanning, actual-coverage
    reporting, tombstones, and canonical model projection in one shared durable
    transcript substrate rather than reimplementing them in each route.
-7. Require every in-scope Durable Object that saves an authoritative replayable
+8. Require every in-scope Durable Object that saves an authoritative replayable
    LLM transcript to use that substrate. The current required adopter is
    `SubstreamAgent`; REST, socket, replay, and desktop paths may not implement
    competing notions of coverage above it.
-8. Keep turn identities and sequence positions stable across retries,
+9. Keep turn identities and sequence positions stable across retries,
    reconnects, tool lifecycle updates, pagination, and realtime delivery.
-9. Preserve regional authority and each transcript surface's existing
+10. Preserve regional authority and each transcript surface's existing
    visibility rules.
 
 ## Non-goals
@@ -190,6 +201,46 @@ loaded. A participant can therefore move among older pages, a live tail, and a
 reconnected snapshot without the client silently treating an unobserved middle
 as complete.
 
+### First-open dual-range loading
+
+The initial authorized `SubstreamAgent` boot/snapshot returns two independently
+described slices from one transcript snapshot:
+
+1. **Unread slice.** When the unread high-water anchor—represented by
+   `firstUnreadSequenceNumber` today—exists, include that anchored turn, up to
+   five preceding displayable turns, and up to five following displayable
+   turns. Clip naturally at the beginning or snapshot end. When there is no
+   unread turn, this named slice is `null`; the work stream opens on the latest
+   slice.
+2. **Latest slice.** Include the five latest displayable turns at or below
+   `snapshotThroughSequence`, clipped when the transcript contains fewer than
+   five.
+
+Each slice carries its own actual half-open `coverage`, even when the two slices
+overlap or touch. The desktop upserts turns by stable turn ID and unions the
+coverage intervals, so overlap never creates duplicate rows. It retains both
+loaded islands rather than discarding the latest slice when it initially draws
+the unread slice.
+
+The five-message counts refer to displayable top-level transcript turns, the
+canonical message unit after this migration. Nested text and tool blocks do not
+consume additional positions in either prefetch count.
+
+If unread is outside the latest slice, the interval between them remains a
+known gap. Approaching either edge through virtualized infinite scrolling asks
+only for the missing adjacent range and preserves the reader's visible anchor
+as turns are inserted. Pressing **Jump to latest** (the go-to-bottom action)
+switches immediately to the already loaded latest slice, without waiting for a
+network request and without pretending the middle gap was loaded. Scrolling
+upward from there lazily fills that gap. Realtime turns arriving after the
+snapshot extend the latest island through their singleton coverage and remain
+immediately reachable by the same action.
+
+Tombstones encountered while selecting either slice count as covered sequence
+positions but not as one of the requested displayable turns. Existing encoded
+response bounds may shorten a slice; if they do, its returned `coverage` and
+turn count describe only what was actually scanned and loaded.
+
 ## Impact on the product contract
 
 None—this makes the existing Rally work-stream contract truthful across live
@@ -249,7 +300,14 @@ None yet.
    new snapshot, while lifecycle revisions may update already known turns. The
    rejected alternative was freezing a copy of every tool status, which adds a
    second history authority without improving transcript order.
-9. **Implement the contract once in the durable transcript substrate.** The
+9. **Prefetch unread context and the live tail together.** One initial
+   boot/snapshot returns the unread-centered `5 + anchor + 5` slice and the five
+   latest turns from the same snapshot fence. The rejected alternatives were
+   fetching the latest slice only after **Jump to latest**, which makes the
+   action network-bound, and downloading the entire interval between the two
+   slices, which delays first paint and defeats gap-aware lazy loading. These
+   counts are product-selected prefetch sizes, not defensive ceilings.
+10. **Implement the contract once in the durable transcript substrate.** The
    substrate owns stable turn/block identities, sequence allocation, snapshot
    fences, range scans, actual coverage, tombstones, and model-protocol
    projection. `SubstreamAgent` and any future in-scope transcript-owning
@@ -257,13 +315,13 @@ None yet.
    The rejected alternative was duplicating range arithmetic and transcript
    reconstruction in each route or object, which would make equal gaps mean
    different things on different agent surfaces.
-10. **Use an audience-specific sequence domain.** Private model instructions,
+11. **Use an audience-specific sequence domain.** Private model instructions,
    operational events, and rows a participant could never read do not consume
    advertised turn positions. Coverage metadata is therefore not a side
    channel for hidden internal records. A tombstone occupies a position only
    when a previously participant-visible reserved turn produced no displayable
    content or was retracted.
-11. **Do not backfill guessed interleaving.** Existing combined run messages
+12. **Do not backfill guessed interleaving.** Existing combined run messages
     retain their stored ordering and are projected through a legacy envelope.
     Exact model-turn ordering begins at the cutover boundary. The rejected
     alternative was heuristically distributing old text around tool timestamps,
@@ -342,6 +400,32 @@ The response is conceptually:
   "turns": []
 }
 ```
+
+The first-open boot/snapshot groups two such responses under stable purposes:
+
+```json
+{
+  "initialTurnRanges": {
+    "unread": {
+      "anchorSequence": 32,
+      "coverage": { "startInclusive": 27, "endExclusive": 38 },
+      "turns": []
+    },
+    "latest": {
+      "coverage": { "startInclusive": 83, "endExclusive": 88 },
+      "turns": []
+    }
+  }
+}
+```
+
+The example has no tombstones and enough turns on both sides, so the unread
+slice covers five turns before sequence 32, the anchor, and five after it. The
+actual endpoints may be wider when selecting five displayable turns scans
+across tombstones, or narrower at transcript and transport boundaries. `unread`
+is nullable when `firstUnreadSequenceNumber` is null. Both entries use the same
+`snapshot.throughSequence`; they are never assembled from different transcript
+moments.
 
 `coverage` is the range the authority actually scanned. If an existing
 transport-size rule shortens a response, `endExclusive` stops at the scanned
@@ -433,14 +517,18 @@ identity and sequence even when the harness run is unchanged.
    turn protocol. It stores coverage as ranges, reconciles streamed and
    committed versions by turn ID, and ignores unknown stale lifecycle
    revisions.
-4. Advertise the new protocol in the work-stream socket subscription. The
+4. Replace first-open `messageFeed`/`resumeFeed` behavior for capable clients
+   with the two named initial turn ranges from one snapshot. Retain both islands
+   in the desktop cache, open at unread when present, and make **Jump to latest**
+   select the prefetched latest island without fetching.
+5. Advertise the new protocol in the work-stream socket subscription. The
    backend emits turn events only to a client that declares support; older
    desktop releases continue receiving their current projection during the
    compatibility window.
-5. Enable new-turn persistence at an object-local cutover sequence. A snapshot
+6. Enable new-turn persistence at an object-local cutover sequence. A snapshot
    may contain legacy envelopes before the cutover and canonical turns after it,
    but one stable participant-visible sequence orders the combined result.
-6. Move canonical REST pages, socket snapshots, realtime events, model replay,
+7. Move canonical REST pages, socket snapshots, realtime events, model replay,
    terminal delivery, and exports to the turn projection. Remove the legacy
    emission path only after the supported desktop floor understands the new
    protocol.
@@ -490,3 +578,19 @@ never rewrites their sequence positions.
     in-scope Durable Object transcript authorities cannot be added without
     implementing the same adapter/conformance contract. The automation wizard
     remains unchanged for its separate PR.
+14. A first open with an unread anchor returns, in one boot/snapshot response,
+    an unread slice containing the anchor plus up to five displayable turns on
+    each side and a latest slice containing five displayable turns. Both slices
+    share one snapshot fence and report independent actual coverage.
+15. A first open with no unread anchor returns a null unread slice and the five
+    latest displayable turns, and positions the transcript at that latest slice.
+16. Overlapping initial slices render each turn once and union their coverage.
+    Disjoint slices leave the middle marked as a gap rather than downloading or
+    claiming it.
+17. From an unread-centered opening, **Jump to latest** paints the prefetched
+    latest slice without a network request. Infinite scrolling toward any
+    loaded edge requests only the adjacent uncovered range and preserves the
+    visible scroll anchor when inserting it.
+18. Realtime turns received after the opening snapshot extend the latest loaded
+    island one singleton range at a time and remain immediately reachable by
+    **Jump to latest**.
