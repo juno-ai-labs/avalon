@@ -667,6 +667,31 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-26 — The packaged Crashpad gate uses its actual run date
+
+**What changed:** The two packaged Crashpad fixture launches now derive their
+timestamps from one clock reading taken during the fixture run, with the second
+launch one minute after the first. A release invariant rejects fixed ISO launch
+dates in the fixture.
+
+**Why:** The original fixture dates had crossed their 14-day deadline when
+release 1.172.0 ran. The production uploader correctly applied the absolute
+local deletion deadline, purged the rotated report, and made no request, so the
+release gate mistook correct retention behavior for a route-final upload
+failure.
+
+**Considered and rejected:** Moving the fixed timestamps farther into the
+future. That only postpones the same failure and makes the fixture's generation
+times unrelated to the launch that created them.
+
+**Consequences:** The packaged gate continues to exercise the production
+retention check rather than bypassing it, while its fresh report remains eligible
+for the upload assertion regardless of the calendar date on which a release
+runs. The two launch times must continue to come from the same run-relative
+clock.
+
+Shipped in the pull request for this change.
+
 ### 2026-08-26 — Cold launch no longer awaits preference reconciliation
 
 **What changed:** An existing authenticated launch now initializes Product
