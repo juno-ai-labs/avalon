@@ -793,6 +793,8 @@ through the preload bridge. The renderer combines application focus with its
 own window and active work-stream route, and reports the result on its existing
 WorkspaceDO connection. WorkspaceDO keeps that state in hibernation attachments
 and broadcasts authorized, viewer-scoped presence for the current face pile.
+Socket-local revisions fence asynchronous authorization, and directory effects
+clear attachments whose work-stream visibility ended.
 
 **Why:** A renderer route can remain mounted while the application or its
 window is hidden, and retained work-stream sockets intentionally outlive route
@@ -806,7 +808,7 @@ expiry machinery to connection-scoped state.
 **Consequences:** Application focus is the only new main-to-renderer signal;
 the renderer remains the authority for its visible route. Presence is
 ephemeral, hibernation-safe, excluded from workspace sync waterlines, and
-removed on background or socket loss.
+removed on background, route change, socket loss, or directory access loss.
 
 ### 2026-08-25 — Replay loss repairs the admitted socket with canonical state
 

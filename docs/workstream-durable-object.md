@@ -833,7 +833,8 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Object ID has the wrong/no jurisdiction in staging or production | Constructor activation fails before serving state; callers cannot silently use the unrestricted graph. |
 | Location hint cannot be honored | Cloudflare selects the nearest available location inside the jurisdiction; correctness and residency do not depend on the best-effort hint. |
 | Workspace socket hibernates | Runtime restores attachments, including explicit foreground presence; replayed tickets are rejected, topic waterlines resume, and pending commands resend under the same client message ID. |
-| Foreground renderer or application moves to the background | Electron sends `set_presence` with no foreground work stream; WorkspaceDO immediately rebuilds viewer-scoped presence while the retained work-stream sockets remain open. An unclean socket close/error has the same removal effect. |
+| Foreground renderer or application moves to the background | Electron sends a revisioned `set_presence` with no foreground work stream; WorkspaceDO immediately rebuilds viewer-scoped presence while the retained work-stream sockets remain open. An unclean socket close/error has the same removal effect, and the renderer clears its last snapshot until a live socket replaces it. |
+| Foreground viewer loses work-stream visibility | The applied directory effect revalidates live attachments before yielding, clears the inaccessible foreground state, and rebuilds only for the remaining authorized viewers. Restoring visibility does not resurrect the cleared state; the client must report a newer foreground revision. |
 | Workstream metadata socket hibernates | Runtime restores identity; subscribe returns a complete authoritative viewer snapshot and later effects push newer revisions. |
 | Child evicted during a 2–30 minute or rare 2+ hour run | Keep-alive reduces occurrence; dispatch ledger plus lease resumes after activation/expiry. |
 | Feed replay window lost | Child sends a canonical snapshot on the admitted socket, catches up events published during assembly, and keeps the subscription open. |
@@ -1171,8 +1172,9 @@ directory write at all.
 through the preload bridge. Each renderer combines that signal with its own
 window focus and active work-stream route, then sends `set_presence` after its
 WorkspaceDO subscription is admitted. WorkspaceDO stores the explicit state in
-the socket's hibernation attachment, validates foreground work-stream visibility
-against its local directory, and broadcasts a viewer-scoped user set. The
+the socket's hibernation attachment, orders commands by a socket-local revision,
+validates foreground work-stream visibility against its local directory on both
+focus and directory changes, and broadcasts a viewer-scoped user set. The
 work-stream face pile gives other present participants a subtle repeating ring;
 the current user is omitted and reduced-motion users receive a static ring.
 
@@ -1192,8 +1194,10 @@ healthy socket attachments and reports close/error.
 **Consequences, and what a future change has to respect:** Presence remains
 ephemeral and must never become product authority. Every reconnect reasserts it
 only after the workspace subscription response, every reported work stream is
-authorized locally, and each recipient receives only the set its visible face
-pile needs. Presence must never gain a REST read/write or recovery path. The
+authorized locally, directory visibility changes clear stale attachments, and
+each recipient receives only the set its visible face pile needs. Client
+snapshots are invalidated on route or transport loss. Presence must never gain a
+REST read/write or recovery path. The
 direct same-object broadcast is designed for the latency target,
 but production percentiles still require measurement; a future telemetry change
 must not include workspace membership or presence sets in analytics payloads.

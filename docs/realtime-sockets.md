@@ -334,6 +334,11 @@ then reports the result over the persistent WorkspaceDO socket after subscribe.
 WorkspaceDO answers with a viewer-scoped snapshot for that one foreground work
 stream and excludes the viewer. This separates transport warmth from attention
 without adding another connection, heartbeat, or hibernation wake-up.
+Each command carries a socket-local revision because its D1 session check yields
+the Durable Object input gate; a handler that resumes late cannot restore an
+older focus state. Directory visibility changes synchronously revalidate and
+clear foreground attachments, and the renderer drops its cached snapshot on a
+route change or transport loss.
 After the socket's ordinary ticket handshake, presence never uses REST for
 write, read, replay, or recovery.
 
@@ -549,11 +554,12 @@ what that leaves exposed.
 ### 2026-08-26 — Workspace presence describes foreground attention, not socket warmth
 
 **What changed:** The WorkspaceDO protocol now accepts explicit application and
-foreground-work-stream state after subscription and returns viewer-scoped
+foreground-work-stream state plus a socket-local revision after subscription and returns viewer-scoped
 presence snapshots. The desktop derives the state from Electron application
 focus, renderer focus/visibility, and the selected route. Presence lives in
-hibernation attachments and is recomputed from `getWebSockets()` on change or
-close; the face pile animates only other present users.
+hibernation attachments and is recomputed from `getWebSockets()` on focus,
+directory-visibility, or connection changes; the face pile animates only other
+present users and discards snapshots when their route or socket stops being current.
 
 **Why:** Recently viewed work-stream metadata/feed pairs stay mounted for fast
 switching, so their open/close lifecycle cannot say where a person currently is.
@@ -566,7 +572,8 @@ durable row with a TTL would require storage writes, alarms, and an invented
 expiry duration for state already bounded by the socket lifecycle.
 
 **Consequences:** Clients wait for the workspace sync response before sending
-presence, avoiding interleaving with asynchronous subscription admission.
+presence, avoiding interleaving with asynchronous subscription admission, and
+revision every command so asynchronous session authorization cannot reorder it.
 Attachments from the previous deployment resume as background. Presence frames
 remain ephemeral, authorized, recipient-specific, and outside the workspace
 waterline/replay log. Presence has no REST fallback.
