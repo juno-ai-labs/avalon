@@ -5,6 +5,7 @@ import {
   WorkspaceAlarmInstrumentation,
 } from "../src/durable-objects/workspace-alarm-instrumentation";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import { recordedSpans, resetRecordedSpans } from "./helpers/cloudflare-workers";
 
 const env = createTestEnv({
   AVALON_REGION: "global",
@@ -15,6 +16,7 @@ const env = createTestEnv({
 
 describe("WorkspaceDO alarm instrumentation", () => {
   it("records only bounded phase and kind fields and identifies work beyond the recovery horizon", async () => {
+    resetRecordedSpans();
     const rows: Record<string, unknown>[] = [];
     const info = vi.spyOn(console, "info").mockImplementation((row: unknown) => {
       rows.push(row as Record<string, unknown>);
@@ -64,6 +66,13 @@ describe("WorkspaceDO alarm instrumentation", () => {
       slowest_phase_ms: 2_501,
       crossed_recovery_horizon: true,
     });
+    expect(recordedSpans().map((span) => ({
+      name: span.name,
+      callbackFailed: span.callbackFailed,
+    }))).toEqual([
+      { name: "rally.workspace.scheduled_alarm.phase", callbackFailed: false },
+      { name: "rally.workspace.scheduled_alarm.phase", callbackFailed: false },
+    ]);
 
     const serialized = JSON.stringify(rows);
     expect(serialized).not.toContain("this message must not be logged");
