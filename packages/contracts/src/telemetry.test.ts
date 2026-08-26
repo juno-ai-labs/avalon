@@ -287,6 +287,7 @@ describe("telemetry registry", () => {
   it("keeps renderer performance diagnostics closed and content-free", () => {
     const properties = {
       flow: "workstream_message_send",
+      clientMessageId: "00000000-0000-4000-8000-000000000102",
       workstreamId: "00000000-0000-4000-8000-000000000101",
       outcome: "completed",
       durationMs: 402.7,

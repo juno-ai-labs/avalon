@@ -120,6 +120,7 @@ describe('parseTelemetryProductIntent', () => {
       attempts: 'zero',
       sinceEffectMs: 8.4,
       ticketId: '018f22f2-4c22-7abc-8def-0123456789ac',
+      clientMessageId: '00000000-0000-4000-8000-000000000202',
       messageCount: 'six_to_twenty',
     };
     expect(parseTelemetryProductIntent(intent)).toEqual(intent);

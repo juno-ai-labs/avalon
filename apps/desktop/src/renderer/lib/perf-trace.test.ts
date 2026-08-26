@@ -55,6 +55,26 @@ describe('renderer performance tracing', () => {
     expect(traceLines(debug)[0]).toMatchObject({ afterSequence: 987, arbitraryConsoleField: 'stays local' });
   });
 
+  it('keeps the UUIDv4 client message id separate from the UUIDv7 telemetry operation id', () => {
+    reportTelemetryProductIntent.mockClear();
+    const clientMessageId = '00000000-0000-4000-8000-000000000301';
+    const operationId = '018f22f2-4c22-7abc-8def-0123456789ad';
+    const trace = startPerfTrace('workstream_message_send', {
+      traceId: clientMessageId,
+      operationId,
+    });
+
+    trace.annotate({ clientMessageId });
+    trace.end();
+
+    expect(reportTelemetryProductIntent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'renderer_perf_flow',
+      operationId,
+      clientMessageId,
+      flow: 'workstream_message_send',
+    }));
+  });
+
   it('prints one line naming every phase in order', async () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
     const trace = startPerfTrace('workstream_open', { traceId: 'trace-1', workstreamId: 'workstream-1' });
