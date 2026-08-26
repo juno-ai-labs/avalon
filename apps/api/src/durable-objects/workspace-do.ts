@@ -2200,14 +2200,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         ).toArray()[0];
         if (!row) throw new Error("connector_event_not_found");
         if (row.processing_status === "processed") return { outcome: "processed" as const };
-        if (
-          row.processing_status === "processing"
-          && row.workflow_instance_id !== request.workflowInstanceId
-        ) {
-          return { outcome: "busy" as const };
+        if (row.processing_status === "processing") {
+          const ownedByAnotherProcessor = row.workflow_instance_id !== request.processingOwnerId;
+          const queueDeliveryDidNotAdvance = request.orchestrator === "queue"
+            && request.attempt <= row.processing_attempt;
+          if (ownedByAnotherProcessor) {
+            return { outcome: "busy" as const, reason: "active_other_owner" as const };
+          }
+          if (queueDeliveryDidNotAdvance) {
+            return { outcome: "busy" as const, reason: "active_attempt_not_advanced" as const };
+          }
         }
-        if (row.processing_status === "failed" && request.attempt <= row.processing_attempt) {
-          return { outcome: "busy" as const };
+        if (
+          row.processing_status === "failed"
+          && (request.attempt < row.processing_attempt
+            || (request.attempt === row.processing_attempt
+              && row.workflow_instance_id !== request.processingOwnerId))
+        ) {
+          return { outcome: "busy" as const, reason: "failed_attempt_not_advanced" as const };
         }
         const now = Date.now();
         this.state.storage.sql.exec(
@@ -2216,7 +2226,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                   processing_attempt = ?, claimed_at = ?, processing_error = NULL,
                   updated_at = ?
             WHERE event_id = ?`,
-          request.workflowInstanceId,
+          request.processingOwnerId,
           request.attempt,
           now,
           now,
@@ -2231,8 +2241,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     logInfo(this.env, "connector_event_authority_claimed", {
       workspace_id: request.workspaceId,
       connector_event_id: request.eventId,
-      workflow_instance_id: request.workflowInstanceId,
-      workflow_attempt: request.attempt,
+      processing_owner_id: request.processingOwnerId,
+      processing_attempt: request.attempt,
+      processing_orchestrator: request.orchestrator,
       outcome: result.outcome,
     });
     return result;
@@ -2255,13 +2266,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.error,
       now,
       request.eventId,
-      request.workflowInstanceId,
+      request.processingOwnerId,
     ).toArray().length;
     if (changed === 1) {
       logInfo(this.env, "connector_event_authority_terminal", {
         workspace_id: request.workspaceId,
         connector_event_id: request.eventId,
-        workflow_instance_id: request.workflowInstanceId,
+        processing_owner_id: request.processingOwnerId,
         outcome: request.outcome,
         reason: "settlement_committed",
       });
@@ -2276,13 +2287,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.eventId,
     ).toArray()[0];
     if (
-      settled?.workflow_instance_id === request.workflowInstanceId
+      settled?.workflow_instance_id === request.processingOwnerId
       && settled.processing_status === request.outcome
     ) {
       logInfo(this.env, "connector_event_authority_terminal", {
         workspace_id: request.workspaceId,
         connector_event_id: request.eventId,
-        workflow_instance_id: request.workflowInstanceId,
+        processing_owner_id: request.processingOwnerId,
         outcome: request.outcome,
         reason: "settlement_replayed",
       });
@@ -2291,10 +2302,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     logWarn(this.env, "connector_event_authority_settlement_failed", {
       workspace_id: request.workspaceId,
       connector_event_id: request.eventId,
-      workflow_instance_id: request.workflowInstanceId,
+      processing_owner_id: request.processingOwnerId,
       requested_outcome: request.outcome,
       authoritative_outcome: settled?.processing_status ?? "missing",
-      authoritative_workflow_instance_id: settled?.workflow_instance_id ?? null,
+      authoritative_processing_owner_id: settled?.workflow_instance_id ?? null,
       reason: "settlement_fenced",
     });
     throw new Error("connector_event_settlement_fenced");

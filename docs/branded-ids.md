@@ -21,7 +21,6 @@ confusions, found one at a time in production.
 | `UserId` | `asUserId` | A user's id |
 | `SubstreamId` | `asSubstreamId` | `"0"` or a child substream id |
 | `BlockId` | `asBlockId` | A HyperSight block's id |
-| `CloudflareWorkflowInstanceId` | `cloudflareWorkflowInstanceId` | A deterministic user-supplied Cloudflare Workflow instance id, derived from internal identity without exposing its bytes to the platform grammar |
 
 A brand is zod's `.brand<...>()`: zero runtime representation, and the schema
 parse is the constructor. The `asX` casts **validate** — they parse, so a
@@ -57,6 +56,28 @@ between them. Fan-in plumbing helpers with broad mixed-provenance call sets
 through their callers.
 
 ## Changelog
+
+### 2026-08-26 — Connector processing removes its external Workflow ID
+
+**What changed:** New connector events use a generated internal processing-owner
+UUID carried by the existing regional Queue instead of constructing a
+Cloudflare Workflow instance ID. The now-unused Workflow-ID constructor, brand,
+and example-specific tests are removed. The legacy Workflow input remains
+string-shaped only so already-created instances can finish.
+
+**Why:** Native Queue retry removes the external identifier boundary entirely.
+Keeping a constructor with no production caller would advertise a template that
+new code should not use and preserve a correctness obligation the architecture
+no longer needs.
+
+**Considered and rejected:** Retaining the constructor for hypothetical future
+Workflow call sites. A future external-ID boundary should define and test the
+platform contract it actually needs rather than inherit a connector-specific
+artifact.
+
+**Consequences:** Internal processing ownership is an ordinary validated UUID
+and is logged directly. The historical entry below explains why the constructor
+was correct while per-event Workflows existed; it is not current guidance.
 
 ### 2026-08-25 — Workflow instance IDs are valid by construction
 

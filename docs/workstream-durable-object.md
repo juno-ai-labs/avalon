@@ -668,8 +668,9 @@ upgrades because that platform flow must return a 101 `Response`; lint rejects
 | regional Queue Worker | WorkspaceDO | typed RPC | notification intent, bounded destination payload, and the replay receipt commit atomically; current user/member identity is resolved from D1 before the call and crosses as data |
 | connector ingress Worker | regional Queue | Cloudflare Queue | one bounded normalized event plus region/workspace/ingress UUID/content hash per workspace target; raw bytes remain in R2 |
 | regional Queue Worker | WorkspaceDO | typed RPC | complete normalized connector event plus content hash; object-local provider/dedupe constraints and ingress receipt choose the canonical ID |
-| regional Queue Worker | ConnectorEventWorkflow | Workflow binding | deterministic instance created only after WorkspaceDO acceptance; duplicate instance conflict is success |
-| ConnectorEventWorkflow | WorkspaceDO | typed RPC | claim/load/terminal settlement against the canonical event; Workflow retries never trust Queue delivery count or order |
+| regional Queue Worker | regional Queue | Cloudflare Queue | after authoritative ingress, an ID-only connector-process pointer returns to the same `ACTIVITY_QUEUE`; native per-message retry and the existing DLQ own redelivery |
+| regional Queue Worker | WorkspaceDO | typed RPC | claim/load/terminal settlement against the canonical connector event; a stable owner plus advancing Queue attempt fences active duplicates |
+| legacy ConnectorEventWorkflow | WorkspaceDO | typed RPC | drain-only compatibility for instances created before the Queue-processing cutover; no new instance is created |
 | WorkspaceDO alarm | WorkOpportunityWorkflow | Workflow binding | a deterministic instance receives only workspace, lease, and attempt fences; no model input body is copied into Workflow state |
 | WorkOpportunityWorkflow | WorkspaceDO | typed RPC | loads claimed source state and atomically persists admission/provenance or ranking/resolution settlement |
 
@@ -1179,6 +1180,35 @@ so the child receipt remains the final duplicate-delivery fence. Queue delivery
 may outlive the requesting session, so it rechecks active membership and never
 trusts delivery uniqueness or order. Dispatch receipts intentionally persist:
 deleting a completed operation would let a late HTTP retry select new targets.
+
+### 2026-08-26 — Connector processing closes over Queue and WorkspaceDO
+
+**What changed:** New canonical connector events no longer create a per-event
+Cloudflare Workflow. After ingress commits, the regional consumer sends an
+ID-only pointer back to the existing `ACTIVITY_QUEUE`; a later delivery claims,
+loads, and settles the event through typed WorkspaceDO RPCs. The claim carries a
+stable processing owner and an advancing Queue-derived attempt so an equal
+active duplicate is `busy` while a later delivery can recover an interrupted
+claim. The physical `workflow_instance_id` column and Workflow binding remain
+temporarily compatible with already-created instances.
+
+**Why:** WorkspaceDO already owns the canonical event and terminal state, while
+Queue already owns durable retry and dead-letter retention. A one-callback
+Workflow duplicated both ledgers and introduced an unnecessary external
+instance-ID contract.
+
+**Considered and rejected:** Splitting the regional activity Queue was rejected
+at Rally's current scale; no capacity evidence requires it, and strict message
+kinds plus terminal logs retain flow identity. Replacing the internal owner
+with Cloudflare's Queue message ID was rejected because stability across
+redelivery is not a contract this design needs to assume.
+
+**Consequences, and what a future change has to respect:** Connector processing
+must remain an ID-only Queue wake followed by typed object RPC, with individual
+ack/retry and authoritative settlement. Do not infer success from Queue drain
+or reintroduce raw SQL from the consumer. Remove the drain-only Workflow and
+rename its physical owner column only after pre-cutover instances are proven
+gone.
 
 ### 2026-08-26 — Notification lifecycle becomes a closed WorkspaceDO protocol
 

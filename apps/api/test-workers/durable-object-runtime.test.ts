@@ -3910,7 +3910,7 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
-  it("owns connector events, deduplicates Queue replays, and fences Workflow settlement", async () => {
+  it("owns connector events, deduplicates Queue replays, and fences processing settlement", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
       workspaceDOName("global", WORKSPACE_ID),
@@ -3941,12 +3941,13 @@ describe("Durable Objects in the Workers runtime", () => {
       processingStatus: "pending",
       processingAttempt: -1,
     });
-    const workflowInstanceId = `connector-event-${firstId}`;
+    const processingOwnerId = "00000000-0000-7000-8000-000000000304";
     const claim = await stub.claimConnectorEvent({
       workspaceId: WORKSPACE_ID,
       eventId: firstId,
-      workflowInstanceId,
+      processingOwnerId,
       attempt: 0,
+      orchestrator: "queue",
     });
     expect(claim).toMatchObject({
       outcome: "claimed",
@@ -3955,21 +3956,58 @@ describe("Durable Objects in the Workers runtime", () => {
     await expect(stub.claimConnectorEvent({
       workspaceId: WORKSPACE_ID,
       eventId: firstId,
-      workflowInstanceId: "connector-event-other",
+      processingOwnerId,
       attempt: 0,
-    })).resolves.toEqual({ outcome: "busy" });
+      orchestrator: "queue",
+    })).resolves.toEqual({ outcome: "busy", reason: "active_attempt_not_advanced" });
+    await expect(stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId: "00000000-0000-7000-8000-000000000305",
+      attempt: 0,
+      orchestrator: "queue",
+    })).resolves.toEqual({ outcome: "busy", reason: "active_other_owner" });
     await stub.settleConnectorEvent({
       workspaceId: WORKSPACE_ID,
       eventId: firstId,
-      workflowInstanceId,
+      processingOwnerId,
+      outcome: "failed",
+      error: "injected retry",
+    });
+    await expect(stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId: "00000000-0000-7000-8000-000000000305",
+      attempt: 0,
+      orchestrator: "queue",
+    })).resolves.toEqual({ outcome: "busy", reason: "failed_attempt_not_advanced" });
+    await expect(stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId,
+      attempt: 1,
+      orchestrator: "queue",
+    })).resolves.toMatchObject({ outcome: "claimed" });
+    await expect(stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId: "00000000-0000-7000-8000-000000000305",
+      attempt: 1,
+      orchestrator: "queue",
+    })).resolves.toEqual({ outcome: "busy", reason: "active_other_owner" });
+    await stub.settleConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId,
       outcome: "processed",
       error: null,
     });
     await expect(stub.claimConnectorEvent({
       workspaceId: WORKSPACE_ID,
       eventId: firstId,
-      workflowInstanceId,
-      attempt: 0,
+      processingOwnerId,
+      attempt: 1,
+      orchestrator: "queue",
     })).resolves.toEqual({ outcome: "processed" });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ count: number }>(
