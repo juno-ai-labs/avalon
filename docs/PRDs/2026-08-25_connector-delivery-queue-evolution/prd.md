@@ -1,11 +1,11 @@
 # Connector delivery queue evolution
 
-> Created 2026-08-25.
+> Created 2026-08-25. Revised 2026-08-26 after the decision to retain one
+> regional activity Queue.
 >
-> Separate Rally's multiplexed regional activity transport into purpose-owned
-> Cloudflare Queues and move canonical connector-event processing from a
-> per-event Workflow onto Queue retry and dead-letter semantics. Companion:
-> [state](state.md). Subsystem references:
+> Keep Rally's multiplexed regional activity transport and move canonical
+> connector-event processing from a per-event Workflow onto native Queue retry
+> and dead-letter semantics. Companion: [state](state.md). Subsystem references:
 > [connectors](../../connectors.md),
 > [work-stream Durable Objects](../../workstream-durable-object.md), and
 > [choosing between a Queue and RPC](../../choosing-queues-or-rpc.md). Standing
@@ -14,265 +14,244 @@
 
 ## Summary
 
-Connector activity, work-stream projection and notification effects, and Slack
-Agent ingress no longer share one regional `ACTIVITY_QUEUE`. Each flow has one
-purpose-owned Global queue and one purpose-owned EU queue, with its own
-dead-letter queue. A queue's backlog, pause state, retry policy, and dead-letter
-contents therefore describe one contract rather than three unrelated systems.
+Rally retains one `ACTIVITY_QUEUE` and one DLQ in each region. Connector
+ingress, work-stream projection and notification effects, and Slack Agent
+ingress continue to share that regional transport.
 
-Canonical connector-event processing also stops creating one Cloudflare
-Workflow per accepted event. After a connector event commits in `WorkspaceDO`,
-the connector queue carries an opaque processing pointer. The consumer claims
-and settles authoritative state in `WorkspaceDO`; transient failures use native
-Queue retry, and an exhausted delivery remains both `failed` in the object and
-present in the connector queue's DLQ for replay. Connector polling remains a
-Workflow because it owns provider calls and independently checkpointed streams.
+Canonical connector-event processing stops creating one Cloudflare Workflow
+per accepted event. After the normalized event commits in `WorkspaceDO`, the
+consumer sends an ID-only `connector_event_process` message back to the same
+regional Queue. A later delivery claims and loads the authoritative event over
+a typed WorkspaceDO RPC, performs the processing unit, and settles it through
+another typed RPC. Transient failures use per-message Queue retry; exhausted
+messages land in the existing regional activities DLQ. Connector polling
+remains a Workflow because it owns provider calls, independently checkpointed
+streams, and scheduling.
 
 ## Motivation
 
-The notification incident on 2026-08-25 exposed two different observability
-failures in one path. First, an empty `avalon-<region>-activities` queue could
-not say whether a mention had reached Slack: it could mean that the message had
-been delivered, skipped, acknowledged after a replay, or exhausted. Second, the
-same queue carried connector ingress, work-stream effects, and Slack Agent jobs,
-so even a non-empty backlog or DLQ could not identify which product contract was
-stuck without downloading and parsing messages.
+The 2026-08-25 notification investigation demonstrated that an empty queue is
+not proof of provider delivery. It may mean that a message was delivered,
+skipped, acknowledged after replay, or exhausted. Structured terminal logs and
+authoritative object state—not queue depth—must explain the outcome.
 
-The connector half adds a second orchestration system after the Queue. The
-regional consumer commits an event to `WorkspaceDO`, creates a deterministic
-`CONNECTOR_EVENT_WORKFLOW` instance, and acknowledges the Queue message. That
-Workflow then claims the same object row, performs one processing unit, records
-failure, creates a numbered redrive message, and settles the row. `WorkspaceDO`
-already owns the authoritative event, processing lease, attempt, and terminal
-state. The Workflow is therefore being used primarily for retry and terminal
-retention—the capabilities Cloudflare Queues already provides through
-at-least-once delivery, per-message acknowledgement, explicit retry, and a DLQ.
+The connector path also had two durable orchestrators for one processing unit.
+The regional Queue committed an event to WorkspaceDO, created a deterministic
+`CONNECTOR_EVENT_WORKFLOW`, and acknowledged ingress. The Workflow then claimed
+the same row, performed one callback, recorded failure, created a numbered
+Queue redrive, and settled the row. WorkspaceDO already owns event identity,
+processing ownership, attempts, and terminal state. Cloudflare Queue already
+owns durable retry and exhausted-message retention. The per-event Workflow
+duplicated those responsibilities and introduced an external instance-ID
+boundary that connector processing did not otherwise need.
 
-This is not a capacity project. Rally has no observed throughput pressure, and
-the published limit of 5,000 messages per second per queue is far above one
-message per connector event, work-stream effect, or Slack ingress action at the
-product's present scale. The reason to split is current operational meaning and
-failure isolation: Cloudflare recommends separate queues when use cases and
-processing requirements differ so an error in one consumer path does not affect
-the others. The resources are cheap to recombine if that reasoning changes.
+This is not a capacity project. Rally has no observed throughput pressure and
+does not need more queue resources to solve the orchestration defect. Keeping
+one Queue is cheaper to operate and reverse at the current stage. The accepted
+trade-off is that backlog and DLQ names do not identify a product flow; strict
+message kinds, correlated logs, and authoritative state provide that meaning.
 
 ## Goals
 
-1. An operator can identify the affected product flow from the primary queue or
-   DLQ name alone: connector event, work-stream effect, or Slack ingress.
-2. A canonical connector event reaches exactly one authoritative terminal state
-   (`processed` or `failed`) under at-least-once and out-of-order Queue delivery,
-   without depending on a per-event Workflow instance.
-3. A transient connector-processing failure retries after the producer and the
-   original ingress invocation are gone; an exhausted failure remains
-   discoverable and replayable from a dedicated regional DLQ.
-4. A work-stream mention or participant notification retains the existing
-   transactionally committed outbox handoff and gains a dedicated regional
-   Queue/DLQ whose backlog is not mixed with connector or Slack Agent work.
-5. Every successful, skipped, deferred, retried, failed, and dead-letter-bound
-   branch remains queryable through correlated structured logs; queue depth is
-   never presented as proof of provider delivery.
-6. Global and EU remain independent data planes, with no connector event,
-   notification payload, or Slack ingress body crossing regions.
-7. All new queues and DLQs are provisioned and verified idempotently by the
-   existing deployment preflight, with no Cloudflare dashboard step.
+1. A canonical connector event reaches one authoritative terminal state,
+   `processed` or `failed`, under at-least-once and out-of-order Queue delivery
+   without creating a per-event Workflow.
+2. A transient processing failure retries after the producer and original
+   ingress invocation are gone; an exhausted delivery remains in the existing
+   same-region activities DLQ.
+3. Duplicate deliveries cannot concurrently process the same claim attempt,
+   and a later Queue delivery can recover an interrupted attempt using only
+   typed WorkspaceDO outcomes.
+4. Every successful, skipped, deferred, retried, and failed branch remains
+   queryable through content-free structured logs with opaque IDs.
+5. Global and EU remain independent data planes. No connector payload or
+   processing pointer crosses regions.
+6. The change introduces no new Cloudflare Queue, DLQ, binding, or dashboard
+   provisioning step.
 
 ## Non-goals
 
-1. **Remove Durable Object outboxes.** Rejected outright. `queue.send()` cannot
-   commit atomically with object SQLite, so a product mutation still commits its
-   outbox row in the same transaction and removes it only after the downstream
-   authority acknowledges the effect.
-2. **Replace connector polling with Queue.** Rejected for this evolution.
-   `CONNECTOR_POLL_WORKFLOW` owns provider network calls, stream-local
-   checkpoints, and independently recorded partial outcomes; the incident and
-   duplicated retry machinery are on the post-ingress event processor.
-3. **Replace opportunity/model Workflows.** Rejected for this evolution. Those
-   Workflows isolate long model compute and persist meaningful multi-step
-   boundaries; they are not one Queue-shaped processing callback.
-4. **Create one queue per connector provider.** Rejected outright at Rally's
-   scale. GitHub, Google, Linear, Notion, and the other adapters share one
-   normalized event contract and one consumer policy. Provider-specific queues
-   would add resources without changing the destination or failure semantics.
-5. **Promise exactly-once Queue delivery or ordered delivery.** Rejected because
-   Cloudflare guarantees neither. Idempotency receipts, processing claims,
-   authority generations, and waterlines continue to make duplicates and
-   reordering safe.
-6. **Build a queue-depth dashboard or a second retry ledger.** Rejected. Native
-   Queue state, a dedicated DLQ, authoritative object state, and structured
-   terminal logs are the operating surfaces.
-7. **Change notification eligibility or connector routing policy.** Self-mention,
-   inactive-recipient, audience, watch, automation, contextual-routing, and
-   provider capability decisions remain exactly as they are.
+1. **Split `ACTIVITY_QUEUE` by product flow or provider.** Rejected for this
+   evolution. Rally has no capacity or isolation evidence that justifies more
+   resources; the single Queue's existing message contracts and regional DLQ
+   remain sufficient.
+2. **Remove Durable Object outboxes.** Rejected. `queue.send()` cannot commit
+   atomically with object SQLite, so a product mutation still commits its
+   outbox row in the same transaction and removes it only after downstream
+   authority accepts the effect.
+3. **Replace connector polling with Queue.** Rejected. Polling owns provider
+   calls, stream-local checkpoints, and independent partial outcomes.
+4. **Replace opportunity/model Workflows.** Rejected. Those Workflows isolate
+   long model compute and retain meaningful multi-step boundaries.
+5. **Promise exactly-once or ordered Queue delivery.** Cloudflare guarantees
+   neither. Object-local idempotency, claims, receipts, and waterlines continue
+   to make duplicates and reordering safe.
+6. **Build a queue-depth dashboard or a second retry ledger.** Native Queue
+   state, the existing regional DLQ, authoritative object state, and terminal
+   logs are the operating surfaces.
+7. **Change connector routing, notification eligibility, or delivery policy.**
+   Self-mention, inactive-recipient, audience, watch, automation,
+   contextual-routing, and provider capability decisions remain unchanged.
 
 ## Product behavior
 
-There is no new desktop or Slack surface. A person mentions a colleague, adds a
-participant, connects a provider, or waits for a polled event exactly as before.
-The expected visible result remains the existing one: eligible notifications
-arrive through configured Slack/email destinations, connector activity reaches
+There is no new desktop or provider surface. Connector activity still reaches
 the appropriate work stream or Suggested Work, and ineligible activity is
-silently withheld according to current product rules.
+withheld according to existing rules.
 
-The behavior under failure becomes explicit:
+Under failure:
 
-- A transient connector, object, inference, Slack, or email failure does not
-  depend on the originating Worker invocation remaining alive. Its owning queue
-  retries the message.
-- A permanent failure moves to the purpose-owned regional DLQ after the declared
-  retry policy. Successful siblings continue on their own queues.
-- Replaying a connector DLQ message reloads the canonical event from
-  `WorkspaceDO`; it does not trust a stale provider body in the DLQ.
-- Replaying a work-stream effect remains idempotent through the parent outbox,
-  WorkspaceDO receipt, notification intent, and provider idempotency key.
-- An empty queue means only that Cloudflare has no pending messages in that
-  lane. The correlated terminal log and authoritative row say what happened.
+- ingress commits the canonical event before it sends a processing pointer;
+- a failed pointer delivery is retried individually on `ACTIVITY_QUEUE`;
+- an exhausted pointer is retained by the existing same-region activities DLQ;
+- replay reloads canonical content from WorkspaceDO and never trusts a stale
+  provider body in the DLQ;
+- a processed replay acknowledges without repeating processing;
+- work-stream and notification outbox behavior is unchanged; and
+- an empty Queue means only that Cloudflare has no pending messages. The
+  terminal log and authoritative row explain the product outcome.
 
 ## Impact on the product contract
 
-None—this refines the reliability and operability of connector activity,
-notifications, and Slack ingress within the existing Rally contract. It does
-not change what a work stream is, who participates, what an agent may do, or
-which activity should reach a person.
+None. This refines reliability and removes an unnecessary orchestration layer;
+it does not change what a work stream is, who participates, or what connector
+activity should reach a person.
 
 ## Decision log
 
-None yet.
+### 2026-08-26 — Retain one regional activity Queue
+
+Keep `ACTIVITY_QUEUE` and its existing regional DLQ as the shared transport.
+Implement only the replacement of new per-event connector Workflows with a
+native process-message lifecycle. Queue splitting was rejected because the
+product has no observed capacity or failure-isolation pressure, new resources
+would not improve provider outcome correctness, and flow identity is already
+available from strict message kinds and structured logs.
 
 ## Key design decisions
 
-1. **Split by processing contract, not provider.** The three lanes are
-   `connector-events`, `workstream-effects`, and `slack-ingress`, each split by
-   region. Their destinations, payload shapes, and terminal outcomes differ
-   today. The rejected alternatives were the current multiplexed queue, whose
-   operational state is ambiguous, and per-provider queues, whose consumers and
-   policies would be identical.
-2. **Use Queue retry for canonical connector processing.** A
-   `connector_event_process` message carries only region, workspace ID, and
-   canonical event ID. The consumer loads, claims, and settles the event in
-   `WorkspaceDO`. The rejected alternative was retaining a Workflow whose one
-   substantive step performs the same unit and whose surrounding steps
-   duplicate the object's attempt and settlement ledger.
-3. **Keep the transactional outbox before every Queue send that follows a
-   product mutation.** Native Queue provides durable delivery after acceptance;
-   it does not make acceptance atomic with SQLite. Removing the outbox would
-   reintroduce the crash window this architecture exists to close.
-4. **Give each regional primary queue its own regional DLQ.** A shared DLQ would
-   merge the flows and regions again at the exact point where isolation matters.
-   The rejected alternative was relying on logs alone: logs explain outcomes,
-   but they do not retain an exhausted message for replay.
-5. **Keep terminal logs even after queues are separated.** Queue state describes
-   transport, not product or provider state. A notification can be correctly
-   skipped after the queue drains, and a connector event can be accepted by a
-   queue before any product mutation happens.
-6. **Use platform-generated Queue message IDs as processing lease owners.** The
-   Queue supplies the delivery identity; Rally does not build another external
-   identifier template. WorkspaceDO remains the dedupe authority for duplicate
-   messages with different delivery IDs.
+1. **Send the process pointer to the same Queue.** The existing consumer parses
+   `connector_event_process` before connector ingress and the other strict
+   variants. No new producer, consumer, or binding is introduced.
+2. **Carry an internal processing owner UUID in the body.** The owner is
+   generated once when the canonical event is admitted and remains stable over
+   Queue retries. It is not a formatted external platform identifier and does
+   not rely on Cloudflare's Queue message ID being stable across deliveries.
+3. **Use authority-issued leases to fence concurrent replay.** WorkspaceDO
+   generates a fresh lease token on every Queue acquisition and returns its exact
+   expiry. An active duplicate is `busy` until that expiry; after it, a successor
+   can recover interrupted processing. Every settlement carries the acquired
+   token, so an expired handler cannot overwrite its successor. The 15-minute
+   duration matches both Cloudflare Queue's maximum consumer wall time and the
+   retiring Workflow step timeout, so takeover cannot overlap a still-live
+   invocation.
+4. **Keep canonical state in WorkspaceDO.** The Queue carries an ID-only wake-up
+   after ingress. Claims return the event body, and settlement is a typed domain
+   RPC; callers never interpret SQLite write metadata.
+5. **Keep the legacy Workflow deployed only for drain compatibility.** No new
+   code calls `CONNECTOR_EVENT_WORKFLOW.create`. Instances admitted before the
+   cutover may finish and may use their old ingress redrive. The binding, class,
+   and legacy input field remain until operators verify that no instance is
+   live. Replaying a claim for the exact same Workflow instance remains
+   idempotent, covering a claim RPC that committed before the Workflow persisted
+   its step result; different Workflow instances remain lease-fenced.
+6. **Keep terminal logs.** Shared Queue state describes transport, not product
+   or provider outcome. Logs include opaque workspace, connection, event,
+   processing-owner, processing-attempt, and Queue-attempt IDs, never provider
+   content or credentials.
 
 ## Data model
 
-The canonical connector tables stay in `WorkspaceDO`. The connector-event
-processing claim is renamed conceptually from Workflow ownership to delivery
-ownership:
+The canonical connector tables remain in WorkspaceDO. The claim protocol now
+calls the owner `processingOwnerId` and records whether Queue or legacy
+Workflow orchestration is claiming. The physical SQLite column remains
+`workflow_instance_id` during the compatibility window, but its current meaning
+is the acquisition lease token. A legacy Workflow uses its instance ID as that
+token; a Queue acquisition receives a new WorkspaceDO-generated UUID. This lets
+new object code and an already-running Workflow read and fence the same row.
+Renaming that column is cleanup after the Workflow binding is retired, not a
+precondition for correctness.
 
-- `workflow_instance_id` becomes `processing_owner_id` on the authoritative
-  event and claim protocol.
-- Existing nonterminal Workflow-owned rows remain readable during rollout and
-  are either completed by their existing Workflow or released for Queue claim
-  by the reconciliation phase.
-- `processing_attempt`, `processing_status`, error code, and terminal timestamps
-  remain authoritative and retain their current meaning.
+`processing_attempt`, `processing_status`, error, and terminal timestamps stay
+authoritative. `processing_attempt` retains its bounded legacy/redrive meaning;
+native Queue delivery attempts are independent transport telemetry. This is
+necessary because a compatibility pointer may begin at attempt 5 and still need
+all native Queue redeliveries to recover a failed or expired claim.
 
-The Queue carries two strict connector message variants:
+The shared Queue accepts two strict connector variants:
 
-- `connector_event_ingress`: the current bounded normalized event, content hash,
-  region, workspace, ingress ID, and requested attempt.
-- `connector_event_process`: schema version, region, workspace ID, and canonical
-  event ID only. The body is loaded from the object after claim.
+- `workspace_connector_event`: the current bounded normalized event, content
+  hash, region, workspace, ingress ID, and requested initial attempt; and
+- `connector_event_process`: schema version, region, workspace ID, canonical
+  event ID, stable processing-owner UUID, and initial processing attempt.
 
-No regional D1 product row or new cross-workspace index is introduced.
+No regional D1 product row or cross-workspace index is introduced.
 
 ## Regional impact
 
-Global gets `avalon-global-connector-events`,
-`avalon-global-workstream-effects`, and `avalon-global-slack-ingress`, plus one
-DLQ named after each. EU gets the corresponding `avalon-eu-*` resources. The
-same binding names point at different physical queues in the two Wrangler files.
-
-Every message carries and validates its region even though the binding implies
-it. A misrouted message fails in that region; there is no Global fallback. Raw
-provider bytes remain in regional R2, connector product state and notification
-intents remain in the workspace's regional Durable Objects, and EU messages are
-consumed only by the EU Worker.
+There are no resource changes. Global continues to use
+`avalon-global-activities` and its DLQ; EU continues to use
+`avalon-eu-activities` and its DLQ. Every connector message carries and
+validates its region. A misrouted message is terminally skipped in that region;
+there is no Global fallback. Raw provider bytes remain in regional R2 and
+connector state remains in the workspace's regional Durable Object.
 
 ## Security and trust model
 
-The trust boundaries do not widen. Provider webhooks are verified and polling
-credentials authorized before enqueue. Every queue body is parsed with a strict
-schema at the consumer. Connector processing reloads canonical content from
-WorkspaceDO rather than treating a replayed pointer as authority. Work-stream
-effects continue to verify their payload hash, route generation, current
-membership, recipient activity, audience, and directory version before
-delivery.
+Provider webhooks are verified and polling credentials authorized before
+enqueue. Every Queue body is parsed with a strict schema. Processing reloads
+canonical content from WorkspaceDO rather than treating a replayed pointer as
+authority.
 
-Logs include opaque Rally and provider IDs needed for correlation—workspace,
-work stream, connection, event, user, channel, message, notification intent,
-Queue delivery, and processing owner IDs. Provider content, credentials,
-emails, names, work-stream text, Slack message bodies, and notification bodies
-remain excluded.
+Logs retain pure opaque IDs needed for correlation—workspace, work stream,
+connection, event, user, channel, message, Queue delivery, and processing owner.
+Provider content, credentials, emails, names, work-stream text, and notification
+bodies remain excluded.
 
 ## Provider configuration
 
-No Google, Slack, GitHub, Linear, Notion, email, or other provider setting
-changes. Cloudflare resources are declared in both regional Wrangler files and
-created or updated by `scripts/ensure-cloudflare-queues.mjs` during deploy. A
-deployment fails before either region ships if a producer/consumer name is
-unpaired, a queue has two consumers, or the declared inventory is incomplete.
+No Google, Slack, GitHub, Linear, Notion, email, Cloudflare Queue, or other
+provider configuration changes. Existing regional Wrangler declarations and
+deployment preflight remain unchanged.
 
 ## Rollout
 
-1. Declare and automatically provision the six regional primary queues and six
-   DLQs. Add explicit `batch.queue` dispatch and contract tests before moving a
-   producer.
-2. Move work-stream effect and Slack ingress producers to their dedicated
-   bindings. Preserve the current batch window and retry policy during cutover;
-   changing those numbers is a separate decision requiring evidence.
-3. Move connector ingress to `CONNECTOR_EVENT_QUEUE`, add the canonical process
-   message, and let new events use Queue processing. Keep
-   `ConnectorEventWorkflow` deployed for instances admitted before the cutover.
-4. Reconcile nonterminal connector rows: leave live Workflow claims alone;
-   enqueue only rows with no live owner or a released failed claim. Both paths
-   settle through the same WorkspaceDO fence.
-5. After the old activity queues are empty and their DLQs have no unresolved
-   messages, remove their consumers and producer bindings. After the Workflow
-   retention window and reconciliation are clear, remove
-   `CONNECTOR_EVENT_WORKFLOW` and its class/export.
+1. Add the strict process-message variant and typed Queue claim semantics.
+   After WorkspaceDO ingress commits, send a pointer to the existing regional
+   `ACTIVITY_QUEUE`; stop creating new connector-event Workflow instances.
+2. Keep `ConnectorEventWorkflow`, its binding, and its export deployed while
+   instances admitted before cutover finish. Its old redrive message remains
+   compatible: ingress dedupes in WorkspaceDO and admits a Queue process
+   pointer for the released failed attempt.
+3. Verify production logs show new events entering
+   `connector_event_process_*`, settling in WorkspaceDO, and never creating a
+   new connector-event Workflow. Verify no old instances remain live.
+4. In a later cleanup, remove the Workflow binding/class/input, then optionally
+   rename the physical SQLite owner column. Do not combine that irreversible
+   cleanup with the behavioral cutover.
 
-Every phase is an ordinary EU-first then Global deployment with the existing
-health gate. There is no dual write and no dashboard mutation.
+The behavioral change deploys EU-first then Global under the existing health
+gate. There is no dual write and no dashboard mutation.
 
 ## Acceptance
 
-1. Configuration and deployment-script tests prove every new primary queue has
-   exactly one producer declaration, one regional consumer, one same-region
-   DLQ, and an explicit dispatch branch.
-2. Contract tests reject a connector, effect, or Slack message delivered to the
-   wrong queue handler or region; no handler falls through to another schema.
-3. Duplicate and out-of-order connector process messages converge on one
-   authoritative event. A processed event acknowledges without repeating side
-   effects; an active claim defers; a released failed claim advances one
-   attempt.
-4. An injected transient connector-processing failure retries and later settles
-   `processed`. An injected permanent failure settles `failed`, exhausts into
-   the connector DLQ, and a replay converges without re-ingesting provider
-   content.
-5. Work-stream effect tests prove the child/parent outbox row survives Queue send
-   failure, is removed only after WorkspaceDO acceptance, and duplicate Queue
-   delivery does not duplicate an activity or notification.
-6. Notification tests cover delivered, self-mention, inactive recipient,
-   missing destination, provider rejection, provider retry, and already-terminal
-   replay, with one correlated terminal/deferred/failure log on every branch.
-7. Global and EU Wrangler dry-run builds expose only their own queue names and
-   bindings. `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:scripts`, and
-   both API builds pass on the final implementation.
+1. A contract test proves connector ingress commits once, sends one
+   `connector_event_process` message to the same `ACTIVITY_QUEUE`, acknowledges
+   ingress, and never calls `CONNECTOR_EVENT_WORKFLOW.create`.
+2. An injected transient processing failure settles `failed`, requests an
+   individual Queue retry, reclaims with the same stable owner and a fresh lease
+   even when the pointer begins at legacy attempt 5, settles `processed`, and
+   acknowledges.
+3. Real-workerd coverage proves duplicate/provider ingress convergence,
+   processed replay, stale-lease settlement fencing, an active Queue claim
+   returning `busy` with its exact retry time, expired-lease recovery, and a
+   later failed claim being reclaimable at the legacy attempt ceiling.
+4. Wrong-region process messages acknowledge with a correlated skipped
+   terminal log; unparseable legacy messages retain their existing behavior.
+5. No new Queue, DLQ, binding, or deployment-script inventory is present in
+   either region.
+6. Connector logs distinguish enqueue, authoritative ingest, claim, busy,
+   processing failure, delivery failure, processed, already processed, and
+   region mismatch using stable opaque IDs.
+7. `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:scripts`, and both API
+   Wrangler dry-run builds pass on the final implementation.

@@ -629,11 +629,13 @@ fan one raw provider delivery into multiple workspace targets only when the
 provider account is independently installed in each workspace; every normalized
 event then belongs to exactly one object. The regional Queue carries the bounded
 normalized event and hash; its consumer commits the complete event and replay
-receipt through typed RPC before creating a deterministic connector-event
-Workflow. Large/raw bytes remain in R2. Regional D1 carries only opaque ingress
-routes and provider-global receipts needed before one workspace is known; no
-live event body is written there. Connection-scoped webhook replay receipts live
-in WorkspaceDO. Legacy D1 activity bodies are imported and scrubbed during the maintenance
+receipt through typed RPC before sending an ID-only process pointer back to that
+same Queue. A later delivery claims, loads, and settles the canonical event
+through typed WorkspaceDO RPCs; no new per-event Workflow is created. Large/raw
+bytes remain in R2. Regional D1 carries only opaque ingress routes and
+provider-global receipts needed before one workspace is known; no live event
+body is written there. Connection-scoped webhook replay receipts live in
+WorkspaceDO. Legacy D1 activity bodies are imported and scrubbed during the maintenance
 cutover. When an event is attached/admitted to a
 particular work stream, the child stores its delivery receipt and relevant
 resource link; WorkstreamDO sends that link through Queue to WorkspaceDO's
@@ -668,8 +670,9 @@ upgrades because that platform flow must return a 101 `Response`; lint rejects
 | regional Queue Worker | WorkspaceDO | typed RPC | notification intent, bounded destination payload, and the replay receipt commit atomically; current user/member identity is resolved from D1 before the call and crosses as data |
 | connector ingress Worker | regional Queue | Cloudflare Queue | one bounded normalized event plus region/workspace/ingress UUID/content hash per workspace target; raw bytes remain in R2 |
 | regional Queue Worker | WorkspaceDO | typed RPC | complete normalized connector event plus content hash; object-local provider/dedupe constraints and ingress receipt choose the canonical ID |
-| regional Queue Worker | ConnectorEventWorkflow | Workflow binding | deterministic instance created only after WorkspaceDO acceptance; duplicate instance conflict is success |
-| ConnectorEventWorkflow | WorkspaceDO | typed RPC | claim/load/terminal settlement against the canonical event; Workflow retries never trust Queue delivery count or order |
+| regional Queue Worker | regional Queue | Cloudflare Queue | after authoritative ingress, an ID-only connector-process pointer returns to the same `ACTIVITY_QUEUE`; native per-message retry and the existing DLQ own redelivery |
+| regional Queue Worker | WorkspaceDO | typed RPC | claim/load/terminal settlement against the canonical connector event; WorkspaceDO-issued expiring leases fence active duplicates and stale settlement, while Queue attempts remain transport telemetry |
+| legacy ConnectorEventWorkflow | WorkspaceDO | typed RPC | drain-only compatibility for instances created before the Queue-processing cutover; no new instance is created |
 | WorkspaceDO alarm | WorkOpportunityWorkflow | Workflow binding | a deterministic instance receives only workspace, lease, and attempt fences; no model input body is copied into Workflow state |
 | WorkOpportunityWorkflow | WorkspaceDO | typed RPC | loads claimed source state and atomically persists admission/provenance or ranking/resolution settlement |
 
@@ -911,7 +914,7 @@ already have committed across the object boundary.
 | `workspace_identity` | Singleton row (`id = 1`) binding the object to workspace, region, and immutable placement affinity. |
 | `workspace_socket_ticket_receipts` | One consumed workspace-scoped ticket including user, expiry, and consumption time; its expiry index supports bounded cleanup. |
 | `workspace_sync_events` | Monotonic `waterline`, UUIDv7 `event_id`, JSON topic set, and occurrence time for the bounded 1,024-event reconciliation window. Rows are invalidations only, never workspace data copies. |
-| `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and Workflow claim/terminal state. It is never shared with another workspace. |
+| `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and processing claim/terminal state. It is never shared with another workspace. |
 | `workspace_connector_event_ingress_receipts` | One ingress UUID/content-hash to canonical-event mapping. It makes provider replay and at-least-once Queue delivery idempotent even when a second delivery used a different UUIDv7; ingest opportunistically reaps the oldest receipts after 30 days while the provider/dedupe keys continue to resolve the canonical event. |
 | `connector_connections`, `external_user_identities` | Workspace connector credentials, cursor/configuration/health, model plugin identity, refresh lease, and verified provider-user mappings. Global/provider ingress routes retain only the opaque fields needed to find this object. |
 | `slack_agent_*`, `slack_delivery_preferences`, `slack_user_links`, `slack_ingress_jobs`, `slack_link_challenges`, `slack_unfurled_links` | Workspace-local Slack policy, allowlist, identity, execution session, queued handoff, delivery preference, and shared-link state. Global Slack installation routing remains outside the object because the workspace is not known at initial ingress. |
@@ -1179,6 +1182,49 @@ so the child receipt remains the final duplicate-delivery fence. Queue delivery
 may outlive the requesting session, so it rechecks active membership and never
 trusts delivery uniqueness or order. Dispatch receipts intentionally persist:
 deleting a completed operation would let a late HTTP retry select new targets.
+
+### 2026-08-26 — Connector processing closes over Queue and WorkspaceDO
+
+**What changed:** New canonical connector events no longer create a per-event
+Cloudflare Workflow. After ingress commits, the regional consumer sends an
+ID-only pointer back to the existing `ACTIVITY_QUEUE`; a later delivery claims,
+loads, and settles the event through typed WorkspaceDO RPCs. The claim carries a
+stable processing owner for correlation; WorkspaceDO issues a fresh 15-minute
+lease per acquisition, returns its exact expiry to active duplicates, and fences
+settlement by the lease token. Queue delivery count stays transport telemetry,
+not a product attempt generation. The physical `workflow_instance_id` column and
+Workflow binding remain temporarily compatible with already-created instances.
+The object also accepts their frozen `workflowInstanceId` claim/settlement wire
+shape and returns their smaller strict claim result. Queue pointers older than
+the object's authoritative product attempt are terminally acknowledged because
+no redelivery can make that generation current again. The row persists its
+processing orchestrator: Queue leases expire, but a drain-only Workflow remains
+exclusive until settlement because its processing step can perform multiple
+separately timed retries. An active `NULL` discriminator is a row written before
+the migration and therefore a Workflow claim, since Queue claims did not yet
+exist.
+
+**Why:** WorkspaceDO already owns the canonical event and terminal state, while
+Queue already owns durable retry and dead-letter retention. A one-callback
+Workflow duplicated both ledgers and introduced an unnecessary external
+instance-ID contract.
+
+**Considered and rejected:** Splitting the regional activity Queue was rejected
+at Rally's current scale; no capacity evidence requires it, and strict message
+kinds plus terminal logs retain flow identity. Replacing the internal owner
+with Cloudflare's Queue message ID was rejected because stability across
+redelivery is not a contract this design needs to assume.
+
+**Consequences, and what a future change has to respect:** Connector processing
+must remain an ID-only Queue wake followed by typed object RPC, with individual
+ack/retry and authoritative, lease-fenced settlement. Do not infer success from
+Queue drain, treat Queue delivery count as a product generation, or reintroduce
+raw SQL from the consumer. Remove the drain-only Workflow and rename its physical
+owner column only after pre-cutover instances are proven gone. Until then, keep
+both the legacy Workflow wire adapter and same-instance claim replay: a running
+Workflow remains on versioned code and may repeat an RPC whose object mutation
+committed before its step result did. Do not replace the persisted orchestrator
+with an ID-format inference or a longer guessed Workflow timeout.
 
 ### 2026-08-26 — Notification lifecycle becomes a closed WorkspaceDO protocol
 

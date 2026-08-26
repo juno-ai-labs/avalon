@@ -1,4 +1,5 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
+import { asWorkspaceId } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Hoisted rather than declared beside the mock: `vi.mock` is lifted above every
@@ -8,11 +9,18 @@ const { runStructuredInference } = vi.hoisted(() => ({ runStructuredInference: v
 vi.mock("../src/services/structured-inference", () => ({ runStructuredInference }));
 
 import type { Env } from "../src/env";
+import {
+  WorkspaceConnectorEventProcessQueueMessageSchema,
+  type WorkspaceConnectorEvent,
+} from "../src/durable-objects/workspace-connector-event-protocol";
 import { __testing, consumeActivityQueue } from "../src/queues/activity-consumer";
-import { workspaceConnectorEventQueueMessage } from "../src/services/workspace-connector-event-ingress";
-import { cloudflareWorkflowInstanceId } from "../src/lib/cloudflare-workflow-instance-id";
+import {
+  workspaceConnectorEventProcessQueueMessage,
+  workspaceConnectorEventQueueMessage,
+} from "../src/services/workspace-connector-event-ingress";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { uuidV7 } from "../src/lib/uuid-v7";
 
 const { routeContextually } = __testing;
 
@@ -101,6 +109,12 @@ function roomNamespace(created: Map<string, Record<string, unknown>>): DurableOb
  */
 function workspaceNamespace(database: DatabaseSync): Env["WORKSPACE_DOS"] {
   const hashes = new Map<string, string>();
+  const connectorEvents = new Map<string, {
+    event: WorkspaceConnectorEvent;
+    status: "pending" | "processing" | "processed" | "failed";
+    leaseId: string | null;
+    attempt: number;
+  }>();
   const namespace = {
     idFromName: (name: string) => createTestDurableObjectId(name),
     get: () => ({
@@ -157,17 +171,101 @@ function workspaceNamespace(database: DatabaseSync): Env["WORKSPACE_DOS"] {
           };
         }),
       }),
-      ingestConnectorEvent: async (input: { ingressEventId: string; payloadHash: string }) => {
+      ingestConnectorEvent: async (input: {
+        ingressEventId: string;
+        payloadHash: string;
+        event: WorkspaceConnectorEvent;
+      }) => {
         const prior = hashes.get(input.ingressEventId);
         if (prior && prior !== input.payloadHash) throw new Error("connector_event_ingress_idempotency_conflict");
         hashes.set(input.ingressEventId, input.payloadHash);
+        if (!connectorEvents.has(input.ingressEventId)) {
+          connectorEvents.set(input.ingressEventId, {
+            event: input.event,
+            status: "pending",
+            leaseId: null,
+            attempt: -1,
+          });
+        }
+        const stored = connectorEvents.get(input.ingressEventId)!;
         return {
           eventId: input.ingressEventId,
           duplicate: Boolean(prior),
-          processingStatus: "pending" as const,
-          processingAttempt: -1,
+          processingStatus: stored.status,
+          processingAttempt: stored.attempt,
         };
       },
+      connectorEvent: async (input: { eventId: string }) =>
+        connectorEvents.get(input.eventId)?.event ?? null,
+      claimConnectorEvent: async (input: {
+        eventId: string;
+        processingOwnerId: string;
+        attempt: number;
+        orchestrator?: "queue" | "workflow";
+      }) => {
+        const stored = connectorEvents.get(input.eventId);
+        if (!stored) throw new Error("connector_event_not_found");
+        if (stored.status === "processed") return { outcome: "processed" as const };
+        if (stored.status === "processing") {
+          return {
+            outcome: "busy" as const,
+            reason: "active_lease_not_expired" as const,
+            retryAt: Date.now() + 15 * 60_000,
+          };
+        }
+        if (stored.status === "failed" && input.attempt < stored.attempt) {
+          return {
+            outcome: "busy" as const,
+            reason: "failed_attempt_not_advanced" as const,
+            retryAt: null,
+          };
+        }
+        const processingLeaseId = input.orchestrator === "workflow"
+          ? input.processingOwnerId
+          : uuidV7();
+        const processingLeaseExpiresAt = Date.now() + 15 * 60_000;
+        stored.status = "processing";
+        stored.leaseId = processingLeaseId;
+        stored.attempt = input.attempt;
+        return {
+          outcome: "claimed" as const,
+          event: stored.event,
+          processingLeaseId,
+          processingLeaseExpiresAt,
+        };
+      },
+      settleConnectorEvent: async (input: {
+        eventId: string;
+        processingOwnerId: string;
+        processingLeaseId?: string;
+        outcome: "processed" | "failed";
+      }) => {
+        const stored = connectorEvents.get(input.eventId);
+        const processingLeaseId = input.processingLeaseId ?? input.processingOwnerId;
+        if (!stored || stored.status !== "processing" || stored.leaseId !== processingLeaseId) {
+          throw new Error("connector_event_settlement_fenced");
+        }
+        stored.status = input.outcome;
+      },
+      enqueueOpportunitySource: async () => undefined,
+      recordActivityEvent: async () => "00000000-0000-7000-8000-0000000000ee",
+      executeRuntimeSql: async (input: {
+        statements: Array<{ sql: string; params: Array<string | number | null> }>;
+      }) => ({
+        status: 200,
+        bodyJson: JSON.stringify({
+          results: input.statements.map((statement) => {
+            const rows = database.prepare(statement.sql).all(
+              ...statement.params as SQLInputValue[],
+            ) as Array<Record<string, string | number | null>>;
+            return {
+              columns: rows[0] ? Object.keys(rows[0]) : [],
+              rows,
+              changes: 0,
+            };
+          }),
+        }),
+      }),
     }),
     jurisdiction: () => namespace,
   };
@@ -190,6 +288,7 @@ function envFor(database: DatabaseSync, overrides: Partial<Record<string, unknow
     DB: sqliteD1(database),
     SUBSTREAM_AGENTS: roomNamespace(createdSuggestions),
     WORKSPACE_DOS: workspaceNamespace(database),
+    ACTIVITY_QUEUE: { send: vi.fn().mockResolvedValue({}) },
     CONNECTOR_EVENT_WORKFLOW: { create: vi.fn().mockResolvedValue({}) },
     AVALON_REGION: "global",
     APP_ENV: "test",
@@ -358,6 +457,9 @@ describe("connector event Queue boundary", () => {
     const retry = vi.fn();
     const body = await workspaceConnectorEventQueueMessage({
       connectorType: "github",
+      // A legacy Workflow can redrive at the old ceiling. Native Queue retries
+      // must still reacquire there rather than saturating their own generation.
+      attempt: 5,
       activity: {
         id: activityId,
         workspaceId: WORKSPACE,
@@ -404,35 +506,161 @@ describe("connector event Queue boundary", () => {
       ackAll: vi.fn(),
     }, env);
 
-    const workflowInstanceId = await cloudflareWorkflowInstanceId(
-      "connector-event",
-      activityId,
-      0,
-    );
-
     expect(database.prepare("SELECT COUNT(*) AS count FROM activities").get())
       .toEqual({ count: 0 });
-    expect(env.CONNECTOR_EVENT_WORKFLOW.create).toHaveBeenCalledWith({
-      id: workflowInstanceId,
-      params: {
-        region: "global",
-        workspaceId: WORKSPACE,
-        eventId: activityId,
-        workflowInstanceId,
-        attempt: 0,
-      },
-    });
+    expect(env.ACTIVITY_QUEUE.send).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "connector_event_process",
+      schemaVersion: 1,
+      region: "global",
+      workspaceId: WORKSPACE,
+      eventId: activityId,
+      processingOwnerId: expect.any(String),
+      processingAttempt: 5,
+    }));
+    expect(env.CONNECTOR_EVENT_WORKFLOW.create).not.toHaveBeenCalled();
     expect(info).toHaveBeenCalledWith(expect.objectContaining({
       event: "connector_event_queue_terminal",
       connector_type: "github",
       connector_event_id: activityId,
-      workflow_instance_id: workflowInstanceId,
-      workflow_outcome: "created",
+      processing_owner_id: expect.any(String),
+      processing_outcome: "enqueued",
       outcome: "admitted",
       queue_attempts: 1,
     }));
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
+
+    const processBody = vi.mocked(env.ACTIVITY_QUEUE.send).mock.calls[0]?.[0];
+    expect(processBody).toBeDefined();
+    const processPointer = WorkspaceConnectorEventProcessQueueMessageSchema.parse(processBody);
+    runStructuredInference
+      .mockRejectedValueOnce(new Error("injected_connector_processing_failure"))
+      .mockResolvedValueOnce({
+        model: "test-model",
+        result: {
+          candidateWorkstreamId: null,
+          confidence: 0,
+          reason: "No contextual match",
+          matchedEntities: [],
+          suggest: false,
+        },
+      });
+    const firstProcessAck = vi.fn();
+    const firstProcessRetry = vi.fn();
+    await consumeActivityQueue({
+      messages: [{
+        id: "connector-process-message",
+        timestamp: new Date("2026-08-11T11:30:03.000Z"),
+        body: processBody,
+        attempts: 1,
+        ack: firstProcessAck,
+        retry: firstProcessRetry,
+      }],
+      queue: "activity",
+      metadata: { metrics: { backlogCount: 1, backlogBytes: 1 } },
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    }, env);
+    expect(firstProcessAck).not.toHaveBeenCalled();
+    expect(firstProcessRetry).toHaveBeenCalledWith({ delaySeconds: 5 });
+
+    const staleProcessAck = vi.fn();
+    const staleProcessRetry = vi.fn();
+    await consumeActivityQueue({
+      messages: [{
+        id: "stale-connector-process-message",
+        timestamp: new Date("2026-08-11T11:30:03.500Z"),
+        body: workspaceConnectorEventProcessQueueMessage({
+          region: processPointer.region,
+          workspaceId: processPointer.workspaceId,
+          eventId: processPointer.eventId,
+          processingOwnerId: processPointer.processingOwnerId,
+          processingAttempt: 4,
+        }),
+        attempts: 1,
+        ack: staleProcessAck,
+        retry: staleProcessRetry,
+      }],
+      queue: "activity",
+      metadata: { metrics: { backlogCount: 1, backlogBytes: 1 } },
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    }, env);
+    expect(staleProcessAck).toHaveBeenCalledOnce();
+    expect(staleProcessRetry).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "connector_event_process_terminal",
+      connector_event_id: activityId,
+      processing_attempt: 4,
+      outcome: "skipped",
+      reason: "failed_attempt_not_advanced",
+    }));
+
+    const secondProcessAck = vi.fn();
+    const secondProcessRetry = vi.fn();
+    await consumeActivityQueue({
+      messages: [{
+        id: "connector-process-message",
+        timestamp: new Date("2026-08-11T11:30:03.000Z"),
+        body: processBody,
+        attempts: 2,
+        ack: secondProcessAck,
+        retry: secondProcessRetry,
+      }],
+      queue: "activity",
+      metadata: { metrics: { backlogCount: 1, backlogBytes: 1 } },
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    }, env);
+    expect(secondProcessAck).toHaveBeenCalledOnce();
+    expect(secondProcessRetry).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "connector_event_process_terminal",
+      connector_event_id: activityId,
+      outcome: "processed",
+      queue_attempts: 2,
+    }));
+  });
+
+  it("terminally skips a connector process pointer delivered to the wrong region", async () => {
+    const database = seededDatabase();
+    const env = envFor(database, { LOG_LEVEL: "info" });
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const eventId = "00000000-0000-7000-8000-0000000000e2";
+    const processingOwnerId = "00000000-0000-7000-8000-0000000000e3";
+
+    await consumeActivityQueue({
+      messages: [{
+        id: "wrong-region-connector-process",
+        timestamp: new Date("2026-08-11T11:30:03.000Z"),
+        body: workspaceConnectorEventProcessQueueMessage({
+          region: "eu",
+          workspaceId: asWorkspaceId(WORKSPACE),
+          eventId,
+          processingOwnerId,
+          processingAttempt: 0,
+        }),
+        attempts: 1,
+        ack,
+        retry,
+      }],
+      queue: "activity",
+      metadata: { metrics: { backlogCount: 1, backlogBytes: 1 } },
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    }, env);
+
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "connector_event_process_terminal",
+      connector_event_id: eventId,
+      processing_owner_id: processingOwnerId,
+      outcome: "skipped",
+      reason: "region_mismatch",
+    }));
   });
 
   it("acks a legacy activity-queue message without reading the frozen D1 row behind it", async () => {

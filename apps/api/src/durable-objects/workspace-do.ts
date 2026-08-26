@@ -169,20 +169,24 @@ import {
 } from "./workspace-directory-protocol";
 import type { WorkstreamRegionalEffectEnvelope } from "./workstream-regional-effect";
 import {
+  LegacyWorkspaceConnectorEventClaimResultSchema,
+  WorkspaceConnectorEventClaimRpcRequestSchema,
   WorkspaceConnectorEventClaimRequestSchema,
   WorkspaceConnectorEventClaimResultSchema,
   WorkspaceConnectorEventIngestRequestSchema,
   WorkspaceConnectorEventIngestResultSchema,
   WorkspaceConnectorEventRequestSchema,
   WorkspaceConnectorEventSchema,
-  WorkspaceConnectorEventSettleRequestSchema,
+  WorkspaceConnectorEventSettleRpcRequestSchema,
   type WorkspaceConnectorEvent,
   type WorkspaceConnectorEventClaimRequest,
-  type WorkspaceConnectorEventClaimResult,
+  type WorkspaceConnectorEventClaimRpcRequest,
+  type WorkspaceConnectorEventClaimRpcResult,
   type WorkspaceConnectorEventIngestRequest,
   type WorkspaceConnectorEventIngestResult,
   type WorkspaceConnectorEventRequest,
   type WorkspaceConnectorEventSettleRequest,
+  type WorkspaceConnectorEventSettleRpcRequest,
 } from "./workspace-connector-event-protocol";
 import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
 import {
@@ -445,10 +449,17 @@ interface WorkspaceConnectorEventRow extends Record<string, SqlStorageValue> {
   external_people_json: string;
   processing_status: "pending" | "processing" | "processed" | "failed";
   processing_attempt: number;
+  workflow_instance_id: string | null;
+  processing_orchestrator: "queue" | "workflow" | null;
+  claimed_at: number | null;
 }
 
 const MAX_WORKSPACE_PINS_PER_USER = 1_000;
 const CONNECTOR_EVENT_INGRESS_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
+// Queue consumers have a 15-minute platform wall-time limit. This expiry is
+// only for Queue claims. A retiring Workflow can retry multiple 15-minute
+// processing attempts, so its claim remains exclusive until it settles.
+const CONNECTOR_EVENT_PROCESSING_LEASE_MS = 15 * 60_000;
 // Thirteen months, deliberately the most generous window in the fleet: event
 // bodies are provenance input, and the 10 GB object ceiling is the only hard
 // bound this fence exists to protect.
@@ -933,6 +944,17 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `CREATE INDEX workspace_batch_dispatch_targets_pending_idx
       ON workspace_batch_dispatch_targets(operation_id, workstream_id)
       WHERE dispatched_at IS NULL`,
+  ],
+}, {
+  version: 12,
+  description: "distinguish expiring Queue claims from drain-only Workflow ownership",
+  statements: [
+    // NULL is intentionally meaningful for rows already processing when this
+    // migration lands: Queue claims did not exist before this version, so such
+    // a row is a pre-cutover Workflow claim and remains exclusive until settle.
+    `ALTER TABLE workspace_connector_events
+       ADD COLUMN processing_orchestrator TEXT
+       CHECK (processing_orchestrator IS NULL OR processing_orchestrator IN ('queue', 'workflow'))`,
   ],
 }];
 
@@ -2185,38 +2207,88 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async claimConnectorEvent(
-    input: WorkspaceConnectorEventClaimRequest,
-  ): Promise<WorkspaceConnectorEventClaimResult> {
+    input: WorkspaceConnectorEventClaimRpcRequest,
+  ): Promise<WorkspaceConnectorEventClaimRpcResult> {
     await this.initialized;
-    const request = WorkspaceConnectorEventClaimRequestSchema.parse(input);
+    const rpcRequest = WorkspaceConnectorEventClaimRpcRequestSchema.parse(input);
+    const legacyWorkflowContract = "workflowInstanceId" in rpcRequest;
+    const request: WorkspaceConnectorEventClaimRequest = legacyWorkflowContract
+      ? {
+          workspaceId: rpcRequest.workspaceId,
+          eventId: rpcRequest.eventId,
+          processingOwnerId: rpcRequest.workflowInstanceId,
+          attempt: rpcRequest.attempt,
+          orchestrator: "workflow",
+        }
+      : WorkspaceConnectorEventClaimRequestSchema.parse(rpcRequest);
     this.assertWorkspace(request.workspaceId);
     const result = WorkspaceConnectorEventClaimResultSchema.parse(
       this.state.storage.transactionSync(() => {
-        const row = this.state.storage.sql.exec<WorkspaceConnectorEventRow & {
-          workflow_instance_id: string | null;
-        }>(
+        const row = this.state.storage.sql.exec<WorkspaceConnectorEventRow>(
           `SELECT * FROM workspace_connector_events WHERE event_id = ?`,
           request.eventId,
         ).toArray()[0];
         if (!row) throw new Error("connector_event_not_found");
         if (row.processing_status === "processed") return { outcome: "processed" as const };
-        if (
-          row.processing_status === "processing"
-          && row.workflow_instance_id !== request.workflowInstanceId
-        ) {
-          return { outcome: "busy" as const };
-        }
-        if (row.processing_status === "failed" && request.attempt <= row.processing_attempt) {
-          return { outcome: "busy" as const };
-        }
         const now = Date.now();
+        // A pre-cutover Workflow may replay its claim step after WorkspaceDO
+        // committed the claim but before Workflows persisted the step result.
+        // Reissuing that exact Workflow lease is idempotent. Queue owners are
+        // only correlation IDs, so Queue replays must never use this exception.
+        const sameLegacyWorkflowLease = request.orchestrator === "workflow"
+          && row.processing_status === "processing"
+          && (row.processing_orchestrator ?? "workflow") === "workflow"
+          && row.workflow_instance_id === request.processingOwnerId;
+        if (row.processing_status === "processing" && !sameLegacyWorkflowLease) {
+          // A pre-v12 active claim has no discriminator because only Workflows
+          // could create it. Workflow step timeouts apply per retry attempt, so
+          // no finite Queue lease can safely prove that handler has stopped.
+          // Its own terminal path either completes or enqueues a failed redrive.
+          if ((row.processing_orchestrator ?? "workflow") === "workflow") {
+            return {
+              outcome: "busy" as const,
+              reason: "legacy_workflow_active" as const,
+              retryAt: null,
+            };
+          }
+          const claimedAt = typeof row.claimed_at === "number" ? row.claimed_at : now;
+          const retryAt = claimedAt + CONNECTOR_EVENT_PROCESSING_LEASE_MS;
+          if (retryAt > now) {
+            return {
+              outcome: "busy" as const,
+              reason: "active_lease_not_expired" as const,
+              retryAt,
+            };
+          }
+        }
+        if (
+          (row.processing_status === "processing" || row.processing_status === "failed")
+          && request.attempt < row.processing_attempt
+        ) {
+          return {
+            outcome: "busy" as const,
+            reason: "failed_attempt_not_advanced" as const,
+            retryAt: null,
+          };
+        }
+        // `workflow_instance_id` is the compatibility-era physical column. A
+        // Workflow's instance ID remains its lease; Queue claims receive a new
+        // authority-generated UUID on every acquisition. Settlement fences on
+        // this value, so an expired handler cannot settle its successor's work.
+        const processingLeaseId = request.orchestrator === "workflow"
+          ? request.processingOwnerId
+          : uuidV7(now);
+        const processingLeaseExpiresAt = request.orchestrator === "workflow"
+          ? null
+          : now + CONNECTOR_EVENT_PROCESSING_LEASE_MS;
         this.state.storage.sql.exec(
           `UPDATE workspace_connector_events
               SET processing_status = 'processing', workflow_instance_id = ?,
-                  processing_attempt = ?, claimed_at = ?, processing_error = NULL,
-                  updated_at = ?
+                  processing_orchestrator = ?, processing_attempt = ?, claimed_at = ?,
+                  processing_error = NULL, updated_at = ?
             WHERE event_id = ?`,
-          request.workflowInstanceId,
+          processingLeaseId,
+          request.orchestrator,
           request.attempt,
           now,
           now,
@@ -2225,23 +2297,53 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         return {
           outcome: "claimed" as const,
           event: connectorEventFromRow(row, request.workspaceId, this.env.AVALON_REGION),
+          processingLeaseId,
+          processingLeaseExpiresAt,
         };
       }),
     );
     logInfo(this.env, "connector_event_authority_claimed", {
       workspace_id: request.workspaceId,
       connector_event_id: request.eventId,
-      workflow_instance_id: request.workflowInstanceId,
-      workflow_attempt: request.attempt,
+      processing_owner_id: request.processingOwnerId,
+      processing_attempt: request.attempt,
+      processing_orchestrator: request.orchestrator,
+      processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
+      processing_lease_id: result.outcome === "claimed" ? result.processingLeaseId : null,
+      processing_lease_expires_at: result.outcome === "claimed"
+        ? result.processingLeaseExpiresAt
+        : result.outcome === "busy"
+          ? result.retryAt
+          : null,
       outcome: result.outcome,
+      reason: result.outcome === "busy" ? result.reason : null,
     });
-    return result;
+    if (!legacyWorkflowContract) return result;
+    return LegacyWorkspaceConnectorEventClaimResultSchema.parse(
+      result.outcome === "claimed"
+        ? { outcome: "claimed", event: result.event }
+        : { outcome: result.outcome },
+    );
   }
 
-  async settleConnectorEvent(input: WorkspaceConnectorEventSettleRequest): Promise<void> {
+  async settleConnectorEvent(input: WorkspaceConnectorEventSettleRpcRequest): Promise<void> {
     await this.initialized;
-    const request = WorkspaceConnectorEventSettleRequestSchema.parse(input);
+    const rpcRequest = WorkspaceConnectorEventSettleRpcRequestSchema.parse(input);
+    const legacyWorkflowContract = "workflowInstanceId" in rpcRequest;
+    const request: WorkspaceConnectorEventSettleRequest = legacyWorkflowContract
+      ? {
+          workspaceId: rpcRequest.workspaceId,
+          eventId: rpcRequest.eventId,
+          processingOwnerId: rpcRequest.workflowInstanceId,
+          outcome: rpcRequest.outcome,
+          error: rpcRequest.error,
+        }
+      : rpcRequest;
     this.assertWorkspace(request.workspaceId);
+    // A persisted pre-cutover Workflow claim has no separate lease in its step
+    // result; its instance ID is exactly the value stored in the physical lease
+    // column, so this fallback is both narrow and replay-compatible.
+    const processingLeaseId = request.processingLeaseId ?? request.processingOwnerId;
     const now = Date.now();
     const changed = this.state.storage.sql.exec<{ event_id: string }>(
       `UPDATE workspace_connector_events
@@ -2255,13 +2357,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.error,
       now,
       request.eventId,
-      request.workflowInstanceId,
+      processingLeaseId,
     ).toArray().length;
     if (changed === 1) {
       logInfo(this.env, "connector_event_authority_terminal", {
         workspace_id: request.workspaceId,
         connector_event_id: request.eventId,
-        workflow_instance_id: request.workflowInstanceId,
+        processing_owner_id: request.processingOwnerId,
+        processing_lease_id: processingLeaseId,
+        processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
         outcome: request.outcome,
         reason: "settlement_committed",
       });
@@ -2276,13 +2380,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.eventId,
     ).toArray()[0];
     if (
-      settled?.workflow_instance_id === request.workflowInstanceId
+      settled?.workflow_instance_id === processingLeaseId
       && settled.processing_status === request.outcome
     ) {
       logInfo(this.env, "connector_event_authority_terminal", {
         workspace_id: request.workspaceId,
         connector_event_id: request.eventId,
-        workflow_instance_id: request.workflowInstanceId,
+        processing_owner_id: request.processingOwnerId,
+        processing_lease_id: processingLeaseId,
+        processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
         outcome: request.outcome,
         reason: "settlement_replayed",
       });
@@ -2291,10 +2397,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     logWarn(this.env, "connector_event_authority_settlement_failed", {
       workspace_id: request.workspaceId,
       connector_event_id: request.eventId,
-      workflow_instance_id: request.workflowInstanceId,
+      processing_owner_id: request.processingOwnerId,
+      processing_lease_id: processingLeaseId,
+      processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
       requested_outcome: request.outcome,
       authoritative_outcome: settled?.processing_status ?? "missing",
-      authoritative_workflow_instance_id: settled?.workflow_instance_id ?? null,
+      authoritative_processing_owner_id: settled?.workflow_instance_id ?? null,
       reason: "settlement_fenced",
     });
     throw new Error("connector_event_settlement_fenced");
