@@ -143,7 +143,7 @@ function telemetryOutcome(
   return 'completed';
 }
 
-function telemetryCount(value: unknown): ReturnType<typeof telemetryCountBucket> | undefined {
+function countBucketOrUndefined(value: unknown): ReturnType<typeof telemetryCountBucket> | undefined {
   return typeof value === 'number' && Number.isFinite(value)
     ? telemetryCountBucket(value)
     : undefined;
@@ -165,12 +165,15 @@ export function rendererPerfFlowIntent(
   const workstreamId = typeof fields['workstreamId'] === 'string' ? fields['workstreamId'] : undefined;
   const ticketId = typeof fields['ticketId'] === 'string' ? fields['ticketId'] : undefined;
   const sinceEffectMs = telemetryNumber(fields['sinceEffectMs']);
-  const attempts = telemetryCount(fields['attempt']);
-  const participantCount = telemetryCount(fields['participantCount']);
-  const attachmentCount = telemetryCount(fields['attachmentCount']);
-  const mentionCount = telemetryCount(fields['mentionCount']);
-  const messageLength = telemetryCount(fields['openingMessageLength'] ?? fields['textLength']);
-  const messageCount = telemetryCount(fields['messageCount']);
+  const attempts = countBucketOrUndefined(fields['attempt']);
+  const participantCount = countBucketOrUndefined(fields['participantCount']);
+  const attachmentCount = countBucketOrUndefined(fields['attachmentCount']);
+  const mentionCount = countBucketOrUndefined(fields['mentionCount']);
+  const messageLength = countBucketOrUndefined(fields['openingMessageLength'] ?? fields['textLength']);
+  const messageCount = countBucketOrUndefined(fields['messageCount']);
+  const clientMessageId = typeof fields['clientMessageId'] === 'string'
+    ? fields['clientMessageId']
+    : undefined;
   return {
     kind: 'renderer_perf_flow',
     operationId,
@@ -189,18 +192,22 @@ export function rendererPerfFlowIntent(
     ...(mentionCount ? { mentionCount } : {}),
     ...(messageLength ? { messageLength } : {}),
     ...(messageCount ? { messageCount } : {}),
+    ...(clientMessageId ? { clientMessageId } : {}),
   };
 }
 
 export interface PerfTraceOptions {
   /** Correlates with the Worker: `x-request-id`, a ticket id, a message id. */
   traceId?: string;
+  /** UUIDv7 accepted by telemetry when `traceId` is a UUIDv4 product id. */
+  operationId?: string;
   workstreamId?: string;
 }
 
 export function startPerfTrace(flow: PerfFlow, options: PerfTraceOptions = {}): PerfTrace {
   observeLongTasks();
   const traceId = options.traceId ?? uuidV7();
+  const operationId = options.operationId ?? traceId;
   const startedAt = now();
   const phases: Array<[string, number]> = [];
   let cursor = startedAt;
@@ -250,7 +257,7 @@ export function startPerfTrace(flow: PerfFlow, options: PerfTraceOptions = {}): 
       });
       reportTelemetryProductIntent(rendererPerfFlowIntent(
         flow,
-        traceId,
+        operationId,
         durationMs,
         phases,
         blocking,

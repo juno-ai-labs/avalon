@@ -686,8 +686,9 @@ phase events and made the local console evidence disappear on quit.
 **Considered and rejected:** Waiting longer spends more of the two-second
 product budget without making telemetry reliable. Treating a same-account
 cached enable as untrusted for the whole process preserves fail-closed behavior
-but recreates the loss. Session changes remain fail-closed, and explicit enable
-still requires the canonical compare-and-set acknowledgement; only ordinary
+but recreates the loss. Session changes close both local spool admission and
+delivery until the new account is verified, and explicit enable still requires
+the canonical compare-and-set acknowledgement; only ordinary
 cold-launch reconciliation moved off the critical path.
 
 **Consequences:** Early launch events can enter the durable regional spool

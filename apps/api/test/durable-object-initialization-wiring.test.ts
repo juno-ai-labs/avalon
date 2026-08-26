@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+// Deliberately structural: the invariant is that every future constructor uses
+// the one shared input gate. Keep the exact strings close to the call sites so
+// formatting-only changes fail visibly instead of silently weakening coverage.
 const migratableClasses = [
   "block-dashboard-agent.ts",
   "substream-agent.ts",

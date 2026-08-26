@@ -29,6 +29,7 @@ export class ProductAnalyticsSettingsController {
   private preferenceVersion = 0;
   private pending = false;
   private remoteVerified = true;
+  private unverifiedAdmissionAllowed = false;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly dependencies: ProductAnalyticsSettingsDependencies) {}
@@ -48,20 +49,31 @@ export class ProductAnalyticsSettingsController {
    * the account service, while a durable same-account enable has.
    */
   admissionEnabled(): boolean {
-    return this.desiredEnabled && !this.pending;
+    return this.desiredEnabled
+      && !this.pending
+      && (this.remoteVerified || this.unverifiedAdmissionAllowed);
   }
 
   async initialize(requireRemoteVerification = false): Promise<ProductAnalyticsSettingsState> {
-    this.remoteVerified = !requireRemoteVerification;
+    // A settings read failure must not leave the constructor defaults looking
+    // like a verified opt-in.
+    this.remoteVerified = false;
+    this.unverifiedAdmissionAllowed = false;
     const stored = await this.dependencies.readSettings();
     this.desiredEnabled = stored.productAnalyticsEnabled;
     this.preferenceVersion = stored.productAnalyticsPreferenceVersion;
     this.pending = stored.productAnalyticsPreferencePending;
+    this.remoteVerified = !requireRemoteVerification;
+    // This flag is used only by cold launch, where the durable preference is
+    // known to belong to the same stored account. Account transitions call
+    // `requireRemoteVerification` below and close admission as well as delivery.
+    this.unverifiedAdmissionAllowed = requireRemoteVerification;
     return this.state();
   }
 
   async requireRemoteVerification(): Promise<ProductAnalyticsSettingsState> {
     this.remoteVerified = false;
+    this.unverifiedAdmissionAllowed = false;
     this.dependencies.onChange(this.state());
     await Promise.all([
       this.dependencies.invalidateNativeCrashGeneration(),
@@ -95,6 +107,7 @@ export class ProductAnalyticsSettingsController {
     }
     if (remote.version === this.preferenceVersion && remote.enabled === this.desiredEnabled) {
       this.remoteVerified = true;
+      this.unverifiedAdmissionAllowed = false;
       this.dependencies.onChange(this.state());
       return this.state();
     }
@@ -107,6 +120,7 @@ export class ProductAnalyticsSettingsController {
     this.preferenceVersion = remote.version;
     this.pending = false;
     this.remoteVerified = true;
+    this.unverifiedAdmissionAllowed = false;
     if (!remote.enabled) {
       await Promise.all([
         this.dependencies.invalidateNativeCrashGeneration(),
@@ -153,6 +167,7 @@ export class ProductAnalyticsSettingsController {
     this.preferenceVersion = acknowledged.version;
     this.pending = false;
     this.remoteVerified = true;
+    this.unverifiedAdmissionAllowed = false;
     this.dependencies.onChange(this.state());
     return this.state();
   }

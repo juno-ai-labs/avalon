@@ -322,7 +322,9 @@ intent, validated main-process IPC, and regional telemetry spool. This is a
 closed diagnostic projection, not console forwarding: it carries exact total,
 phase, blocked, and effect-to-first-request milliseconds; a closed
 flow/outcome vocabulary; bounded structural counts; and the work-stream,
-ticket, and operation identifiers needed to join the backend work. Raw console
+ticket, client-message, and operation identifiers needed to join the backend
+work. Message sends keep the UUIDv4 client-message identifier separate from the
+UUIDv7 operation identifier required by the telemetry envelope. Raw console
 fields such as cursors and close codes are omitted, as are URLs, errors,
 messages, attachment names, and arbitrary annotations. Product analytics
 opt-out suppresses the event, Global follows the existing PostHog/lakehouse
