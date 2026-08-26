@@ -151,7 +151,6 @@ function headerElement(
       <WorkstreamHeader
         blockDashboardAvailable={overrides.blockDashboardAvailable ?? true}
         blockDashboardOpen={overrides.blockDashboardOpen ?? false}
-        blockDashboardPreferencePending={false}
         onAddParticipant={vi.fn()}
         // The screen opens the rail through the same store action, after
         // giving up the right sidebar's other occupant.

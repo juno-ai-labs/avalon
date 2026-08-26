@@ -446,7 +446,7 @@ export interface WorkstreamDetail extends WorkstreamSummary {
 }
 
 /**
- * A work stream detail plus everything else opening one needs.
+ * The REST recovery twin of the socket snapshot.
  *
  * `resumeFeed` is the window around where this viewer stopped reading, and is
  * null when that is already inside `messageFeed`. Render one of the two; they
@@ -456,7 +456,6 @@ export interface WorkstreamBoot extends WorkstreamDetail {
   /** Undefined from a Worker that predates the field; absent is not empty. */
   messageFeed?: MessagePage;
   resumeFeed: MessagePage | null;
-  blockDashboardPreference?: BlockDashboardPreference;
 }
 
 export interface WorkstreamDeferredContext {
