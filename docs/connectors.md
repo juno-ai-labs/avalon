@@ -848,9 +848,11 @@ retry and in the DLQ while still requiring the authoritative WorkspaceDO load.
 WorkspaceDO state, individual ack/retry, stable owner, authority-issued expiring
 lease, lease-fenced settlement, and content-free terminal logs. Do not use Queue
 delivery count as the product attempt fence: a pointer can begin at the legacy
-attempt ceiling. Remove the legacy Workflow binding and rename the physical
-`workflow_instance_id` column only after live pre-cutover instances are proven
-drained.
+attempt ceiling. Until the drain completes, an exact same-Workflow claim replay
+must remain idempotent because the claim RPC can commit before the Workflow
+persists its step result. Remove the legacy Workflow binding and rename the
+physical `workflow_instance_id` column only after live pre-cutover instances are
+proven drained.
 
 ### 2026-08-25 — Every connector operation is observable at two layers
 

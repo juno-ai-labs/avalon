@@ -152,7 +152,9 @@ available from strict message kinds and structured logs.
    code calls `CONNECTOR_EVENT_WORKFLOW.create`. Instances admitted before the
    cutover may finish and may use their old ingress redrive. The binding, class,
    and legacy input field remain until operators verify that no instance is
-   live.
+   live. Replaying a claim for the exact same Workflow instance remains
+   idempotent, covering a claim RPC that committed before the Workflow persisted
+   its step result; different Workflow instances remain lease-fenced.
 6. **Keep terminal logs.** Shared Queue state describes transport, not product
    or provider outcome. Logs include opaque workspace, connection, event,
    processing-owner, processing-attempt, and Queue-attempt IDs, never provider

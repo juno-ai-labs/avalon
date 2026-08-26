@@ -2205,7 +2205,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (!row) throw new Error("connector_event_not_found");
         if (row.processing_status === "processed") return { outcome: "processed" as const };
         const now = Date.now();
-        if (row.processing_status === "processing") {
+        // A pre-cutover Workflow may replay its claim step after WorkspaceDO
+        // committed the claim but before Workflows persisted the step result.
+        // Reissuing that exact Workflow lease is idempotent. Queue owners are
+        // only correlation IDs, so Queue replays must never use this exception.
+        const sameLegacyWorkflowLease = request.orchestrator === "workflow"
+          && row.processing_status === "processing"
+          && row.workflow_instance_id === request.processingOwnerId;
+        if (row.processing_status === "processing" && !sameLegacyWorkflowLease) {
           const claimedAt = typeof row.claimed_at === "number" ? row.claimed_at : now;
           const retryAt = claimedAt + CONNECTOR_EVENT_PROCESSING_LEASE_MS;
           if (retryAt > now) {
