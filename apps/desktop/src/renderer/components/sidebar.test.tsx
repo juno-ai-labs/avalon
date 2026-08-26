@@ -716,6 +716,89 @@ describe('Sidebar work-stream markers', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: menuLabel })).not.toBeInTheDocument());
   });
 
+  it('keeps one operation id when a failed Queue dispatch is retried', async () => {
+    const onApplyWorkstreamBatch = vi.fn()
+      .mockRejectedValueOnce(new Error('One Queue chunk was not published.'))
+      .mockResolvedValueOnce(20);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onApplyWorkstreamBatch={onApplyWorkstreamBatch}
+            onPreviewWorkstreamBatch={vi.fn(async () => 20)}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('recent', 'Recent planning', 'completed', 'ad_hoc', new Date().toISOString())]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Last hour actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive all' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive all' });
+    await waitFor(() => expect(dialog).toHaveTextContent('20 work streams'));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(dialog).toHaveTextContent('One Queue chunk was not published.'));
+    const retry = within(dialog).getByRole('button', { name: 'Continue' });
+    await waitFor(() => expect(retry).toBeEnabled());
+    fireEvent.click(retry);
+    await waitFor(() => expect(onApplyWorkstreamBatch).toHaveBeenCalledTimes(2));
+
+    expect(onApplyWorkstreamBatch.mock.calls[1]?.[0]).toBe(onApplyWorkstreamBatch.mock.calls[0]?.[0]);
+  });
+
+  it('moves a row at its recency boundary and previews with the new clock', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-31T20:00:00.000Z'));
+    const onPreviewWorkstreamBatch = vi.fn(async () => 1);
+    try {
+      render(
+        <MemoryRouter>
+          <Tooltip.Provider>
+            <Sidebar
+              {...defaultActions}
+              automations={[]}
+              onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
+              onSignOut={vi.fn()}
+              workspace={workspace}
+              workstreams={[workstream(
+                'boundary',
+                'Boundary planning',
+                'completed',
+                'ad_hoc',
+                '2026-07-31T19:00:30.000Z',
+              )]}
+            />
+          </Tooltip.Provider>
+        </MemoryRouter>,
+      );
+      expect(screen.getByRole('heading', { name: 'Last hour' })).toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(30_002));
+
+      expect(screen.queryByRole('heading', { name: 'Last hour' })).not.toBeInTheDocument();
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Today actions' }), {
+        button: 0,
+        ctrlKey: false,
+      });
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Mark all as read' }));
+      expect(onPreviewWorkstreamBatch).toHaveBeenCalledWith(expect.objectContaining({
+        lastActivityAt: expect.objectContaining({
+          before: '2026-07-31T19:00:30.002Z',
+        }),
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('shows the requested automation actions on right click and runs the automation', async () => {
     const onRunAutomation = vi.fn(async () => undefined);
     render(

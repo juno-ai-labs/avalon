@@ -322,6 +322,51 @@ describe("what the workspace object answers about its work streams", () => {
       expect(result.items).toEqual([included]);
       expect(result.items).not.toContain(pinned);
     });
+
+    it("freezes one operation and resumes only its undispatched targets", async () => {
+      const included = await seedWorkstream({
+        title: "Frozen target",
+        lastActivityAt: "2010-03-12T12:00:00.000Z",
+      });
+      const request = {
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        operationId: "00000000-0000-7000-8000-0000000008f1",
+        requestHash: "fnv1a64:1111111111111111",
+        filter: {
+          lastActivityAt: {
+            atOrAfter: "2010-03-10T00:00:00.000Z",
+            before: "2010-03-20T00:00:00.000Z",
+          },
+          pinned: false,
+          includeSystem: false,
+        },
+      } as const;
+
+      await expect(workspace().beginWorkstreamBatchDispatch(request)).resolves.toEqual({
+        items: [included],
+        targetCount: 1,
+      });
+      await seedWorkstream({
+        title: "Arrived after confirmation",
+        lastActivityAt: "2010-03-13T12:00:00.000Z",
+      });
+
+      await expect(workspace().beginWorkstreamBatchDispatch(request)).resolves.toEqual({
+        items: [included],
+        targetCount: 1,
+      });
+      await expect(workspace().advanceWorkstreamBatchDispatch({
+        workspaceId: WORKSPACE_ID,
+        operationId: request.operationId,
+        requestHash: request.requestHash,
+        workstreamIds: [included],
+      })).resolves.toEqual({ remainingCount: 0 });
+      await expect(workspace().beginWorkstreamBatchDispatch(request)).resolves.toEqual({
+        items: [],
+        targetCount: 1,
+      });
+    });
   });
 
   describe("lookupWorkstreamDirectory — Slack's unfurl summaries", () => {
