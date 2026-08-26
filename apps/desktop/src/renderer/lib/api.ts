@@ -1335,11 +1335,19 @@ export class RallyApi {
   async createWorkstream(input: {
     openingMessage: string;
     participantIds: string[];
+    mentions?: MentionIdentity[];
     attachmentIds?: string[];
     modelOverride?: AgentModelOverride;
     /** The caller's open `workstream_create` trace id, when it has one. */
     requestId?: string;
   }): Promise<CreatedWorkstream> {
+    const mentions = input.openingMessage.includes('@') || (input.mentions?.length ?? 0) > 0
+      ? await this.messageMentionPayload(input.openingMessage, input.mentions)
+      : [];
+    const participantUserIds = [...new Set([
+      ...input.participantIds,
+      ...mentions.flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []),
+    ])];
     const clientMessageId = crypto.randomUUID();
     const operationId = uuidV7();
     reportTelemetryProductIntent({ kind: 'workstream_create_requested', entrypoint: 'composer', operationId });
@@ -1349,9 +1357,10 @@ export class RallyApi {
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: {
         openingMessage: input.openingMessage,
-        participantUserIds: input.participantIds,
+        participantUserIds,
         clientMessageId,
         attachmentIds: input.attachmentIds ?? [],
+        ...(mentions.length > 0 ? { mentions } : {}),
         // Omitted rather than sent as null when nothing was pinned, so the work
         // stream stays on whatever `agent-model-workstream` serves it.
         ...(input.modelOverride ? { modelOverride: input.modelOverride } : {}),

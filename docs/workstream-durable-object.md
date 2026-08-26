@@ -853,7 +853,8 @@ revocation across all four roles, obsolete queued
 run coalescing, stale-arrival rejection, per-block parent head-of-line delivery,
 ticket replay, and the read-only child socket.
 `test-workers/participant-notification.test.ts` covers what seating somebody
-enqueues, on both the create and the add-afterwards paths, and it is where the
+enqueues, on both the create and the add-afterwards paths, plus identity-bearing
+mentions in an opening message, and it is where the
 one trap in asserting on effects is recorded: **never read the child's own
 `durable_outbox`.** A commit arms the child's alarm for the current instant and
 the alarm forwards and then deletes, so any assertion against that table races
@@ -887,9 +888,10 @@ is under test.
 ## Data model
 
 The DDL in source is authoritative. This catalog defines ownership and joins.
-All Durable Object tables are SQLite `STRICT` tables, use integer Unix
-milliseconds internally, bound inline/JSON payloads, and keep external object
-identity in one singleton rather than repeating it on every child row. Live
+Durable Object tables are SQLite `STRICT` tables. Native work-stream-down
+schemas use integer Unix milliseconds; WorkspaceDO's imported workspace schema
+retains its ISO timestamp columns. Tables use bounded inline/JSON payloads and
+keep external object identity in one singleton rather than repeating it on every child row. Live
 WebSockets use hibernation attachments and therefore have no `sockets` table.
 No RPC or Queue send happens inside a local SQL transaction: the source commits
 a fact plus an outbox intent, and the receiver commits its mutation plus a
@@ -1136,6 +1138,85 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-25 — Opening messages carry real person mentions
+
+**What changed:** The new-work-stream composer now retains the same selected
+mention identities as the in-work-stream composer and sends them through the
+same visible-text-to-span resolver. `POST /workstreams` accepts those spans,
+and `SubstreamAgent.initialize` resolves their people against active workspace
+membership, replaces accepted visible ranges with canonical
+`[@Name](person:<user-id>)` Markdown, writes `part_mentions` and mention
+attention in the opening-message transaction, and emits the normal durable
+mention activity and notification. A mentioned person is seated even if a
+direct API caller omitted them from `participantUserIds`. In an existing
+personal work stream, both Enter and the send button stop before a
+nonparticipant mention and ask whether to add the person, explicitly warning
+that without access they cannot see either the mention or the work stream;
+workspace-visible work streams do not raise that false warning.
+
+**Why:** Selecting a name in the launch composer previously inserted only plain
+`@Name` text and separately added a participant ID. The opening message carried
+no identity or offsets, so its persisted text could not render a mention chip,
+create mention attention, or reach the Slack mention delivery path. The control
+looked like the existing mention autocomplete while producing a different
+domain fact.
+
+**Considered and rejected:** Building canonical Markdown in the renderer. That
+would make correctness depend on a client template and a possibly stale display
+name. The client identifies the intended visible span; the object verifies the
+active member and owns the durable spelling, mention row, attention state, and
+outbox effects. A separate launch-only span finder was also rejected in favor
+of the resolver already used for ordinary workspace messages.
+
+**Consequences, and what a future change has to respect:** Mention identities
+must survive draft editing and cross the create API as spans; participant IDs
+alone are not mention metadata. A person selected as both participant and
+mention receives the specific mention notification, not an additional
+participant-added notification. The personal-work-stream confirmation must be
+shared by every submit gesture and must run before optimistic insertion; the
+object's `participant_confirmation_required` check remains the authority-side
+backstop. Empty mention arrays are omitted from creation
+receipt hashes for rolling-deploy compatibility, while non-empty spans remain
+part of the idempotency identity. The real-workerd test asserts canonical text,
+`part_mentions`, attention, directory projection, and the durable notification
+branch together.
+
+### 2026-08-25 — Notification claims prove the lease they wrote
+
+**What changed:** The WorkspaceDO notification claim now returns and verifies
+its `intent_id` and newly generated `lease_id`. It no longer decides whether the
+claim won from the D1-shaped adapter's `meta.changes`. Exact notification reaper
+progress likewise comes from returned intent identities. The same audit moved
+WorkspaceDO-routed connector cursor and GitHub policy compare-and-swaps,
+automation compensations, draft-resource reaping, and opportunity-window
+reaping to returned identities. Slack account-link redemption now routes to its
+WorkspaceDO authority and verifies the returned challenge and linked identity
+instead of two exact counters. [`durable-object-sqlite.md`](durable-object-sqlite.md)
+owns the cross-cutting rule.
+
+**Why:** A production mention claim updated one logical intent row and the
+indexes over its delivery and terminal fields. `WorkspaceDO.executeRuntimeSql`
+correctly exposed workerd's physical `rowsWritten`, which was greater than one;
+the notification service incorrectly required exactly one. It therefore wrote
+its lease, diagnosed that successful write as an active competitor, returned
+`busy`, and never reached Slack. Queue drain was real but described only the
+earlier handoff, not this later terminal outcome.
+
+**Considered and rejected:** Changing the predicate to `changes > 0`. That
+would survive index inflation but would still couple a domain ownership decision
+to a storage counter. Also rejected: normalizing the adapter globally to
+`changes()`. Existing callers and diagnostics already receive `rowsWritten`, and
+making the adapter look more like D1 would preserve the architectural mistake:
+the provable answer is the returned lease, not a more convenient count.
+
+**Consequences, and what a future change has to respect:** A claim, lease,
+compare-and-swap, or exact reaper count on Durable Object SQLite must use
+`RETURNING` or a typed object-owned outcome. A Node SQLite double is insufficient
+coverage for this rule because its logical affected-row count hides index
+writes; the notification regression therefore runs on real workerd and changes
+indexed columns. The test was proved by restoring the old exact-count branch and
+observing `busy` where the terminal result was `skipped`.
 
 ### 2026-08-25 — Being named at creation tells the person, when the caller says to
 

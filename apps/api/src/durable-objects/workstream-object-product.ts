@@ -3,6 +3,7 @@ import {
   ActivitySuggestionSchema,
   AnswerElicitationRequestSchema,
   MESSAGE_MAX_CHARACTERS,
+  MentionSchema,
   MessageSchema,
   ParticipantSchema,
   ResourceSchema,
@@ -31,7 +32,6 @@ import {
 } from "@rally/contracts";
 import type { AddressingContextMessage } from "@rally/agent-harness";
 import { truncateUtf16Safe } from "@rally/contracts/text";
-import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
@@ -66,15 +66,7 @@ type SqlRow = Record<string, SqlStorageValue>;
 export const WorkstreamObjectCreateMessageInputSchema = z.object({
   text: z.string().max(MESSAGE_MAX_CHARACTERS),
   clientMessageId: z.string().min(1).max(120),
-  mentions: z.array(z.object({
-    type: z.enum(["person", "connector"]),
-    userId: z.string().uuid().nullable(),
-    connectorType: z.string().max(80).nullable(),
-    displayName: z.string().min(1).max(180).nullable().optional(),
-    avatarUrl: HttpUrlSchema.nullable().optional(),
-    startOffset: z.number().int().nonnegative(),
-    endOffset: z.number().int().positive(),
-  })).default([]),
+  mentions: z.array(MentionSchema).default([]),
   confirmedParticipantUserIds: z.array(z.string().uuid()).default([]),
   attachmentIds: z.array(z.string().uuid()).max(10).default([]),
   runMode: z.enum(["steer", "queue"]).optional(),
@@ -116,6 +108,7 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
   emailAddress: z.string().email().max(254).nullable(),
   creatorUserId: z.string().uuid(),
   openingMessage: z.string().max(MESSAGE_MAX_CHARACTERS),
+  mentions: z.array(MentionSchema).default([]),
   openingStructuredContent: z.unknown().nullable().default(null),
   clientMessageId: z.string().min(1).max(120),
   participantUserIds: z.array(z.string().uuid()),
@@ -470,7 +463,16 @@ export class WorkstreamObjectProductService {
     if (auth.workspaceId !== input.workspaceId || auth.userId !== input.creatorUserId) {
       throw new ApiError(403, "workstream_create_denied", "The work stream cannot be created for this identity");
     }
-    const memberIds = [...new Set([input.creatorUserId, ...input.participantUserIds])];
+    const requestedPersonIds = [...new Set(input.mentions.flatMap((mention) =>
+      mention.type === "person" && mention.userId ? [mention.userId] : []))];
+    // A person mention is an audience decision as well as message metadata. A
+    // direct API caller cannot create a durable mention for somebody who is
+    // absent from the personal work stream it creates.
+    const memberIds = [...new Set([
+      input.creatorUserId,
+      ...input.participantUserIds,
+      ...requestedPersonIds,
+    ])];
     const members = await this.env.DB.prepare(
       `SELECT user_id FROM workspace_members
         WHERE workspace_id = ? AND status = 'active'
@@ -528,19 +530,30 @@ export class WorkstreamObjectProductService {
         workflowInput: this.workflowInput(input, asHarnessRunId(run.run_id), part.id),
       };
     }
-    // Everybody the creator named on the way in, minus the creator: they are
-    // looking at the work stream they just started and are not news to
-    // themselves. Empty unless this caller asked for the invitation to be
-    // announced, so a connector-origin create pays for none of the below.
+    // Resolve from the authoritative workspace directory before accepting any
+    // visible range. The client sends identity and offsets, not Markdown; the
+    // object owns the durable spelling and target.
+    const needsNames = input.mentions.length > 0
+      || (input.notifyParticipants && memberIds.some((userId) => userId !== input.creatorUserId));
+    const names = needsNames
+      ? await this.messageUsers(memberIds)
+      : new Map<string, UserRow>();
+    const mentionPeople = new Map<string, MentionPerson>([...names].map(([userId, user]) => [userId, {
+      id: user.id,
+      name: user.name,
+      avatarUrl: user.avatar_url,
+    }]));
+    const prepared = prepareMentionMarkdown(input.openingMessage, input.mentions, mentionPeople);
+    const mentionedPersonIds = [...new Set(prepared.mentions.flatMap((mention) =>
+      mention.type === "person" && mention.userId ? [mention.userId] : []))];
+    // Everybody the creator explicitly invited, minus the creator and anyone
+    // who receives the more specific mention notification. One action must not
+    // become both "you were added" and "you were mentioned" in Slack.
     const invitedUserIds = input.notifyParticipants
-      ? memberIds.filter((userId) => userId !== input.creatorUserId)
+      ? [...new Set(input.participantUserIds)].filter((userId) => (
+          userId !== input.creatorUserId && !mentionedPersonIds.includes(userId)
+        ))
       : [];
-    // Read before the commit for the reason `addParticipant` states: the
-    // effects that carry these names are built inside it, and an effect
-    // callback runs against object SQL and cannot await a regional round trip.
-    const names = invitedUserIds.length === 0
-      ? new Map<string, UserRow>()
-      : await this.messageUsers([input.creatorUserId, ...invitedUserIds]);
     const actorName = names.get(input.creatorUserId)?.name ?? "A workspace member";
     const now = Date.now();
     const messageId = uuidV7(now);
@@ -595,7 +608,7 @@ export class WorkstreamObjectProductService {
             author_type, author_user_id, content, client_message_id, visibility, pinned,
             message_type, structured_content_json, created_at, updated_at)
          VALUES (?, '0', 1, 1, 'user', 'text', 'member', ?, ?, ?, 'both', 0, 'text', ?, ?, ?)`,
-        messageId, input.creatorUserId, input.openingMessage, input.clientMessageId,
+        messageId, input.creatorUserId, prepared.text, input.clientMessageId,
         input.openingStructuredContent === null ? null : JSON.stringify(input.openingStructuredContent),
         now, now,
       );
@@ -607,6 +620,31 @@ export class WorkstreamObjectProductService {
          VALUES (?, 0, 1, NULL, 0, ?, 0, ?)`,
         input.creatorUserId, now, now,
       );
+      prepared.mentions.forEach((mention, index) => {
+        this.storage.sql.exec(
+          `INSERT INTO part_mentions
+             (part_id, mention_index, mention_kind, target_user_id, connector_type,
+              start_offset, end_offset, attention_ordinal)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+          messageId, index, mention.type, mention.userId, mention.connectorType,
+          mention.startOffset, mention.endOffset,
+        );
+        if (mention.type === "person" && mention.userId) {
+          this.storage.sql.exec(
+            `INSERT INTO member_attention
+               (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
+                manual_unread_from_ordinal, latest_mention_attention_ordinal,
+                last_seen_at, version, updated_at)
+             VALUES (?, 0, 0, NULL, 1, ?, 0, ?)
+             ON CONFLICT(user_id) DO UPDATE SET
+               latest_mention_attention_ordinal = MAX(
+                 member_attention.latest_mention_attention_ordinal,
+                 excluded.latest_mention_attention_ordinal
+               ), updated_at = excluded.updated_at`,
+            mention.userId, now, now,
+          );
+        }
+      });
       input.attachmentIds.forEach((resourceId, position) => {
         const resource = attachments.find((candidate) => String(candidate.id) === resourceId)!;
         const descriptor = {
@@ -673,6 +711,50 @@ export class WorkstreamObjectProductService {
       () => undefined,
       () => {
         const root = this.root();
+        const occurredAt = new Date(now).toISOString();
+        const activity = {
+          partitionKey: `activity:${messageId}`,
+          sourceVersion: 1,
+          dedupeKey: `message:${messageId}`,
+          effect: {
+            kind: "activity_event" as const,
+            eventId: uuidV7(now),
+            eventType: "workstream_message_created",
+            subjectSequenceNumber: 1,
+            actorType: "user" as const,
+            actorUserId: input.creatorUserId,
+            actorLabel: actorName,
+            title: truncateUtf16Safe(root.title, 500),
+            body: truncateUtf16Safe(prepared.text, 8_000),
+            canonicalUrl: null,
+            digestible: true,
+            occurredAt,
+            sourceKind: "workstream_message",
+            sourceId: messageId,
+            dedupeKey: `message:${messageId}`,
+            metadata: {},
+            targets: memberIds.map((userId) => ({ userId, relation: "participant" })),
+          },
+        };
+        const mentionNotifications = mentionedPersonIds
+          .filter((userId) => userId !== input.creatorUserId)
+          .map((userId) => ({
+            partitionKey: `notification:${messageId}:${userId}`,
+            sourceVersion: 1,
+            dedupeKey: `mention:${messageId}:${userId}`,
+            dependsOnProjectionKey: `user:${userId}`,
+            effect: {
+              kind: "mention_notification" as const,
+              intentId: `mention:${messageId}:${userId}`,
+              messageId,
+              recipientUserId: userId,
+              authorUserId: input.creatorUserId,
+              authorNameSnapshot: actorName,
+              workstreamTitleSnapshot: truncateUtf16Safe(root.title, 500),
+              messageText: truncateUtf16Safe(prepared.text, 8_000),
+              occurredAt,
+            },
+          }));
         return [
           { partitionKey: "common", effect: this.commonEffect(root) },
           ...memberIds.map((userId) => ({
@@ -693,6 +775,8 @@ export class WorkstreamObjectProductService {
             epoch: 0,
             now,
           })),
+          ...(mentionedPersonIds.length > 0 ? [activity] : []),
+          ...mentionNotifications,
         ];
       },
     );

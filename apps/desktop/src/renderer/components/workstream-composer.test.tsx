@@ -268,7 +268,7 @@ describe('WorkstreamComposer mention confirmation', () => {
 
   it('confirms every mentioned nonparticipant together and sends their IDs without a preliminary add', async () => {
     const onSend = vi.fn(async () => undefined);
-    renderComposer(onSend);
+    renderComposer(onSend, false, undefined, { ...workstream, scope: 'personal' });
 
     fireEvent.change(screen.getByLabelText('Message the work stream'), {
       target: { value: 'Please ask @Bob Builder and @Cara Chen to review.' },
@@ -278,6 +278,8 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(await screen.findByRole('heading', { name: 'Add participants?' })).toBeVisible();
     expect(screen.getByText('bob@example.com')).toBeVisible();
     expect(screen.getByText('cara@example.com')).toBeVisible();
+    expect(screen.getByText(/If you do not add them, they will not be able to see the mentions or this work stream/u))
+      .toBeVisible();
     expect(onSend).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Add all and mention' }));
@@ -288,6 +290,44 @@ describe('WorkstreamComposer mention confirmation', () => {
       ['user-2', 'user-3'],
     ));
     expect(screen.getByLabelText('Message the work stream')).toHaveValue('');
+  });
+
+  it.each(['send button', 'Enter'] as const)(
+    'warns before a nonparticipant mention in a personal work stream is submitted with %s',
+    async (gesture) => {
+      const onSend = vi.fn(async () => undefined);
+      renderComposer(onSend, false, undefined, { ...workstream, scope: 'personal' });
+      const composer = screen.getByLabelText('Message the work stream');
+      fireEvent.change(composer, { target: { value: 'Please ask @Bob Builder.' } });
+
+      if (gesture === 'Enter') fireEvent.keyDown(composer, { key: 'Enter' });
+      else fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+      expect(await screen.findByRole('heading', { name: 'Add participant?' })).toBeVisible();
+      expect(screen.getByText(
+        /If you do not add them, they will not be able to see the mention or this work stream/u,
+      )).toBeVisible();
+      expect(onSend).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Add and mention' }));
+      await waitFor(() => expect(onSend).toHaveBeenCalledWith(
+        'Please ask @Bob Builder.',
+        [],
+        ['user-2'],
+      ));
+    },
+  );
+
+  it('does not block a workspace-visible work stream on participant status', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend);
+    fireEvent.change(screen.getByLabelText('Message the work stream'), {
+      target: { value: 'Please ask @Bob Builder.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('Please ask @Bob Builder.', []));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('starts a mention where the caret is rather than at the end of the draft', async () => {

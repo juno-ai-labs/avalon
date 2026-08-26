@@ -2,6 +2,7 @@ import { LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { RallyApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
+import { completeMentionAtCaret, mentionsStillPresent, upsertMentionIdentity } from '../lib/mention-draft';
 import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
 import { NO_MENTIONS, useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
@@ -131,7 +132,7 @@ export function WorkstreamComposer({
     // `toLowerCase`, not `toLocaleLowerCase`: this has to agree with
     // `mention-highlight.ts`, which uses the locale-independent one so a Turkish
     // dotted I does not make a name highlighted here unmatched there.
-    setSelectedMentions((current) => current.filter((mention) => value.toLowerCase().includes(`@${mention.label.toLowerCase()}`)));
+    setSelectedMentions((current) => mentionsStillPresent(value, current));
     syncMentionQuery(value);
   };
 
@@ -216,31 +217,21 @@ export function WorkstreamComposer({
     draftRevisionRef.current += 1;
     const textarea = textareaRef.current;
     const caret = textarea?.selectionStart ?? text.length;
-    const before = text.slice(0, caret);
-    const after = text.slice(caret);
-    const atIndex = before.lastIndexOf('@');
+    const completed = completeMentionAtCaret(text, caret, candidate.label);
     // Nothing to replace: the caret is no longer standing after an `@`, so
     // there is no mention here to complete. `slice(0, -1)` would silently eat
     // the character before the caret instead.
-    if (atIndex < 0) {
+    if (!completed) {
       setMentionQuery(null);
       return;
     }
-    // The separator is the name's own, unless what follows already begins with
-    // one: picking mid-sentence otherwise leaves two spaces where the caret was.
-    const separator = /^\s/u.test(after) ? '' : ' ';
-    const nextText = `${before.slice(0, atIndex)}@${candidate.label}${separator}${after}`;
-    setText(nextText);
+    setText(completed.text);
     const identity: MentionIdentity = { type: 'person', label: candidate.label, userId: candidate.member.id, connectorType: null };
-    setSelectedMentions((current) => [
-      ...current.filter((mention) => !(mention.type === identity.type && mention.userId === identity.userId && mention.connectorType === identity.connectorType)),
-      identity,
-    ]);
+    setSelectedMentions((current) => upsertMentionIdentity(current, identity));
     setMentionQuery(null);
     requestAnimationFrame(() => {
       textarea?.focus();
-      const nextCaret = atIndex + candidate.label.length + 1 + separator.length;
-      textarea?.setSelectionRange(nextCaret, nextCaret);
+      textarea?.setSelectionRange(completed.caret, completed.caret);
     });
   };
 
@@ -254,7 +245,7 @@ export function WorkstreamComposer({
       const typedMention = new RegExp(`(?:^|[\\s([{])@${escapedName}(?=$|[\\s\\p{P}])`, 'iu').test(trimmed);
       return selectedPersonIds.has(member.id) || typedMention;
     });
-    if (nonparticipants.length > 0) {
+    if (workstream.scope === 'personal' && nonparticipants.length > 0) {
       setPendingConfirmation({ text: trimmed, mentions: [...selectedMentions], members: nonparticipants });
       return;
     }
@@ -407,8 +398,8 @@ export function WorkstreamComposer({
 
       <Modal
         description={pendingConfirmation && pendingConfirmation.members.length > 1
-          ? `${pendingConfirmation.members.map((member) => member.name).join(', ')} are not currently participants. Confirm adding all of them with this message.`
-          : `${pendingConfirmation?.members[0]?.name ?? 'This person'} is not currently a participant. Confirm adding them with this message.`}
+          ? `${pendingConfirmation.members.map((member) => member.name).join(', ')} are not currently participants. Would you like to add them with this message? If you do not add them, they will not be able to see the mentions or this work stream.`
+          : `${pendingConfirmation?.members[0]?.name ?? 'This person'} is not currently a participant. Would you like to add them with this message? If you do not add them, they will not be able to see the mention or this work stream.`}
         footer={
           <>
             <Button disabled={confirming} onClick={() => setPendingConfirmation(null)}>Cancel</Button>

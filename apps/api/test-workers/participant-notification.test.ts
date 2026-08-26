@@ -29,6 +29,7 @@ import {
   WorkstreamRegionalEffectEnvelopeSchema,
   type WorkstreamRegionalEffectEnvelope,
 } from "../src/durable-objects/workstream-regional-effect";
+import { processWorkstreamNotificationIntent } from "../src/services/workstream-regional-effect-service";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
@@ -37,6 +38,7 @@ const CREATOR_ID = "00000000-0000-7000-8000-0000000006a3";
 const SESSION_ID = "00000000-0000-7000-8000-0000000006a4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000006a5";
 const SECOND_INVITEE_ID = "00000000-0000-7000-8000-0000000006a7";
+const MISSING_RECIPIENT_ID = "00000000-0000-7000-8000-0000000006a8";
 
 const AUTH = {
   sessionId: SESSION_ID,
@@ -60,9 +62,9 @@ beforeEach(async () => {
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
       VALUES (1, 'durable_object_open', 1, 1, 1)`),
     env.DB.prepare(`CREATE TABLE workspaces (
-      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, region TEXT NOT NULL, analytics_workspace_id TEXT
     )`),
-    env.DB.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(WORKSPACE_ID),
+    env.DB.prepare(`INSERT INTO workspaces(id, name, region) VALUES (?, 'Notification test', 'global')`).bind(WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE workspace_members (
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
       role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
@@ -123,6 +125,14 @@ async function openWorkstream(
     workstreamId?: string;
     title?: string;
     participantUserIds?: readonly string[];
+    openingMessage?: string;
+    mentions?: readonly {
+      type: "person";
+      userId: string;
+      connectorType: null;
+      startOffset: number;
+      endOffset: number;
+    }[];
     /** What `POST /workstreams` sends; a connector ingress sends nothing. */
     notifyParticipants?: boolean;
   } = {},
@@ -141,7 +151,8 @@ async function openWorkstream(
       titleStatus: "settled",
       emailAddress: null,
       creatorUserId: CREATOR_ID,
-      openingMessage: "starting the plan",
+      openingMessage: options.openingMessage ?? "starting the plan",
+      ...(options.mentions ? { mentions: options.mentions } : {}),
       clientMessageId: `participant-open-${workstreamId}`,
       participantUserIds: options.participantUserIds ?? [],
       ...(options.notifyParticipants === undefined
@@ -237,6 +248,50 @@ async function notificationReceipts(
 }
 
 describe("adding somebody to a work stream", () => {
+  it("claims an indexed notification row by its returned lease rather than physical write count", async () => {
+    const intentId = `mention:00000000-0000-7000-8000-0000000006a9:${MISSING_RECIPIENT_ID}`;
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const inserted = await workspace.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-0000000006aa",
+      statements: [{
+        sql: `INSERT INTO workstream_notification_intents
+          (intent_id, workspace_id, workstream_id, recipient_user_id,
+           source_message_id, source_generation, source_version,
+           required_directory_version, notification_kind, payload_json,
+           payload_hash, state, attempts, lease_id, lease_expires_at,
+           last_error_code, created_at, updated_at, delivered_at)
+         VALUES (?, ?, ?, ?, ?, 1, 1, 1, 'mention', '{}', 'claim-witness-hash',
+                 'pending', 0, NULL, NULL, NULL, ?, ?, NULL)`,
+        params: [
+          intentId,
+          WORKSPACE_ID,
+          WORKSTREAM_ID,
+          MISSING_RECIPIENT_ID,
+          "00000000-0000-7000-8000-0000000006a9",
+          "2026-08-25T20:00:00.000Z",
+          "2026-08-25T20:00:00.000Z",
+        ],
+      }],
+    });
+    expect(inserted.status).toBe(200);
+
+    // `state`, `lease_expires_at`, and `updated_at` participate in two indexes,
+    // so workerd reports several physical writes for the one logical claim.
+    // The old `meta.changes === 1` branch returned `busy` here after writing its
+    // own lease and never reached this missing-recipient terminal decision.
+    await expect(processWorkstreamNotificationIntent(env, WORKSPACE_ID, intentId))
+      .resolves.toBe("skipped");
+    await runInDurableObject(workspace, (_instance, state) => {
+      expect(state.storage.sql.exec<{ state: string; attempts: number; lease_id: string | null }>(
+        `SELECT state, attempts, lease_id FROM workstream_notification_intents WHERE intent_id = ?`,
+        intentId,
+      ).one()).toEqual({ state: "skipped", attempts: 1, lease_id: null });
+    });
+  });
+
   it("enqueues their directory row, an activity event, and a notification behind it", async () => {
     const stub = agentStub();
     await openWorkstream(stub);
@@ -362,6 +417,82 @@ describe("adding somebody to a work stream", () => {
 });
 
 describe("naming somebody when the work stream is created", () => {
+  it("stores an identity-bearing opening mention and emits only its specific notification", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub, {
+      openingMessage: "Ask @Invitee to review",
+      participantUserIds: [INVITEE_ID],
+      notifyParticipants: true,
+      mentions: [{
+        type: "person",
+        userId: INVITEE_ID,
+        connectorType: null,
+        startOffset: 4,
+        endOffset: 12,
+      }],
+    });
+
+    const canonical = `[@Invitee](person:${INVITEE_ID})`;
+    await runInDurableObject(stub, (_instance, state) => {
+      const stored = state.storage.sql.exec<{
+        content: string;
+        mention_kind: string;
+        target_user_id: string;
+        start_offset: number;
+        end_offset: number;
+      }>(
+        `SELECT part.content, mention.mention_kind, mention.target_user_id,
+                mention.start_offset, mention.end_offset
+           FROM parts part JOIN part_mentions mention ON mention.part_id = part.id
+          WHERE part.client_message_id = ?`,
+        `participant-open-${WORKSTREAM_ID}`,
+      ).one();
+      expect(stored.content).toBe(`Ask ${canonical} to review`);
+      expect(stored.mention_kind).toBe("person");
+      expect(stored.target_user_id).toBe(INVITEE_ID);
+      expect(stored.content.slice(stored.start_offset, stored.end_offset)).toBe(canonical);
+      expect(state.storage.sql.exec<{
+        seen_attention_ordinal: number;
+        latest_mention_attention_ordinal: number;
+      }>(
+        `SELECT seen_attention_ordinal, latest_mention_attention_ordinal
+           FROM member_attention WHERE user_id = ?`,
+        INVITEE_ID,
+      ).one()).toEqual({
+        seen_attention_ordinal: 0,
+        latest_mention_attention_ordinal: 1,
+      });
+    });
+
+    const envelopes = await deliveredEffects(stub);
+    const mentionNotifications = envelopes.filter((envelope) => (
+      envelope.effect.kind === "mention_notification"
+      && envelope.effect.recipientUserId === INVITEE_ID
+    ));
+    const participantNotifications = envelopes.filter((envelope) => (
+      envelope.effect.kind === "participant_notification"
+      && envelope.effect.recipientUserId === INVITEE_ID
+    ));
+    const viewer = envelopes.find((envelope) => (
+      envelope.effect.kind === "directory_user" && envelope.effect.userId === INVITEE_ID
+    ));
+    expect(mentionNotifications).toHaveLength(1);
+    expect(participantNotifications).toHaveLength(0);
+    expect(viewer?.effect).toMatchObject({
+      kind: "directory_user",
+      userId: INVITEE_ID,
+      youAreMentioned: true,
+      latestMentionAttentionOrdinal: 1,
+    });
+
+    const notification = mentionNotifications[0]!.effect;
+    if (notification.kind !== "mention_notification") throw new Error("expected mention notification");
+    expect(notification.messageText).toBe(`Ask ${canonical} to review`);
+    expect(notification.intentId).toBe(`mention:${notification.messageId}:${INVITEE_ID}`);
+    expect(mentionNotifications[0]!.requiredProjectionVersion)
+      .toBe(await viewerProjectionVersion(INVITEE_ID));
+  });
+
   it("tells them the same way adding them afterwards does", async () => {
     const stub = agentStub();
     await openWorkstream(stub, { participantUserIds: [INVITEE_ID], notifyParticipants: true });
