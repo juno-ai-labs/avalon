@@ -411,6 +411,18 @@ memory. Personal automations search workspace, owner-user, and automation memory
 Workspace automations search workspace and automation memory. All work streams
 created by one automation subscription therefore share one automation scope.
 
+**A member's reply under an automation's result is neither of those**, and the
+run's own `automationSubscriptionId` — not the work stream's origin — is what
+decides which it is. Replying admits an ordinary user-principal run carrying no
+subscription, and it searches workspace and that member's own memory only: the
+subscription's automation scope stays reachable exactly from a run that declares
+it and whose principal matches it, and a work stream an automation created owns
+no work-stream scope, because the next run of that subscription gets a different
+work stream and anything left in this one could never be recalled. Whether such
+a reply should instead see what the automation remembered is an unanswered
+product question about who may read automation memory, not something the memory
+union decides on its own.
+
 Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; Workers AI embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership, and each root run stores an immutable admission-recall snapshot and hash.
 
 Root runs also receive the separate stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records. Inline children receive no direct table access.
@@ -710,6 +722,44 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-26 — A reply under an automation's result is an ordinary run, not a mismatch
+
+**What changed:** `resolveMemoryAccess` no longer requires a work stream to be
+`ad_hoc` before granting the non-automation scope union. The run's own
+`automationSubscriptionId` decides whether it is an automation run; a run without
+one now gets workspace plus its member's user scope in any work stream. The
+work-stream scope moved behind its own condition and is still granted only to an
+ad-hoc work stream with no subscription.
+
+**Why:** a work stream an automation creates is a place members reply in, and
+every reply admits a user-principal run carrying no subscription. That run fell
+past the automation branch into a check that read as a consistency assertion and
+was in fact a refusal, so `freezeRunMemoryContext` — the first recall a run
+performs, before the model sees anything — threw
+`memory_ad_hoc_workstream_mismatch` and the run ended `harness_execution_failed`.
+Every path that starts a follow-up hard-codes `automationSubscriptionId: null`
+(message send, elicitation answer, manual retry, `launchWorkstreamHarness`'s
+wake-ups and digests and Slack replies, the block-dashboard agent), so the whole
+class failed, and the manual retry took the same path — which is why the
+member-facing message, "Retrying is unlikely to help", was exactly right and left
+nothing to do. Production run `01a03ed2-a0cd-708a-81f0-ba6cffbf4d87` on
+2026-08-26 is the report this was found from. `resolveRunAuthority` already
+treated a run with no subscription as a non-automation run in any work stream;
+the memory union was the only layer that disagreed.
+
+**What a future change has to respect:** the automation branch is the only way
+into an automation scope, and reaching it still requires both the declared
+subscription and a matching principal — a personal automation's owner, or a
+workspace principal. Do not widen it by passing the work stream's subscription
+into a reply's run input: it would grant the automation's memory to any member
+who can see the work stream, and it would resolve differently for personal and
+workspace automations, which is the asymmetry this repair avoids. The
+work-stream-scope condition restates migration 0036's
+`memory_scopes_validate_workstream_owner`, which 0090 dropped along with the rest
+of D1's product enforcement when memory moved into WorkspaceDO; the workspace
+object cannot see a work stream's origin, so this function is now the only place
+that rule can hold.
 
 ### 2026-08-25 — A rejected automation draft names the field, instead of telling the model not to change it
 

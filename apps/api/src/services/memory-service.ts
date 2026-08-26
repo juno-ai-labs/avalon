@@ -296,9 +296,20 @@ export async function resolveMemoryAccess(
     return scopes;
   }
 
-  if (workstream.origin_type !== "ad_hoc" || workstream.automation_subscription_id) {
-    throw new Error("memory_ad_hoc_workstream_mismatch");
-  }
+  // Everything below is the union for a run that is *not* an automation run,
+  // and the run's own `automationSubscriptionId` is what decides that — not how
+  // the work stream was created. This used to also demand
+  // `origin_type === "ad_hoc"`, which read as a consistency check and was in
+  // fact a refusal: an automation posts its result into a work stream a member
+  // can then reply in, and that reply admits an ordinary user-principal run
+  // carrying no subscription. Every such follow-up threw
+  // `memory_ad_hoc_workstream_mismatch` out of `freezeRunMemoryContext`, the
+  // first recall the harness performs, so the run died as
+  // `harness_execution_failed` before the model saw anything — the manual retry
+  // included, since it takes the same path and so could never clear it.
+  // `resolveRunAuthority` already treats a run with no subscription as a
+  // non-automation run in any work stream; this is the memory union agreeing
+  // with it.
   if (input.executionPrincipal.type === "user") {
     scopes.push(await ensureScope(
       env,
@@ -308,13 +319,32 @@ export async function resolveMemoryAccess(
       true,
     ));
   }
-  scopes.push(await ensureScope(
-    env,
-    input.workspaceId,
-    "workstream",
-    input.workstreamId,
-    input.executionPrincipal.type === "user",
-  ));
+  // A work-stream scope, though, still belongs only to a work stream that owns
+  // one. Migration 0036's `memory_scopes_validate_workstream_owner` refused to
+  // create one for an automation-origin work stream, because every run of a
+  // subscription gets a fresh work stream and memory left in one of them is
+  // unrecallable — which is what the subscription's own scope exists for. 0090
+  // dropped that trigger with the rest of D1's product enforcement when memory
+  // moved into WorkspaceDO, but nothing retired the rule it stated, and the
+  // workspace object cannot see a work stream's origin, so this is the only
+  // place left that can hold it.
+  //
+  // The union a reply therefore gets is workspace plus the member's own user
+  // scope. It reaches neither the subscription's automation memory nor a scope
+  // of its own. Widening it either way is a product decision about who may read
+  // what an automation accumulated, and about whether a reply thread under a
+  // disposable work stream should accrue memory at all; the branch above
+  // remains the only way into an automation scope, and it is still reached only
+  // by a run that declares the subscription and whose principal matches it.
+  if (workstream.origin_type === "ad_hoc" && !workstream.automation_subscription_id) {
+    scopes.push(await ensureScope(
+      env,
+      input.workspaceId,
+      "workstream",
+      input.workstreamId,
+      input.executionPrincipal.type === "user",
+    ));
+  }
   return scopes;
 }
 
