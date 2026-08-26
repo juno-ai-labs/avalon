@@ -54,8 +54,12 @@ execution envelope and each plugin block receive durable working-started and
 working-stopped edges; an observable provider reasoning item receives thinking
 edges. While an edge is open, the desktop advances **Working for …** or
 **Thinking for …** from a local monotonic clock. The backend does not stream
-clock ticks. Once stopped, the authority supplies the canonical duration used
-for **Worked for …** or **Thought for …** on every historical load.
+clock ticks. Every active interval also carries its authoritative UTC start;
+first join and reconnect snapshots carry the UTC observation time and elapsed
+baseline, so a client joining work already in progress paints prior elapsed time
+immediately before continuing locally. Once stopped, the authority supplies the
+canonical duration used for **Worked for …** or **Thought for …** on every
+historical load.
 
 The substrate also owns a restricted, lossless model-protocol projection. At
 every accepted Bind loop boundary, Rally must either durably store the exact
@@ -208,8 +212,10 @@ but the current host boundary does not make it a durable product invariant.
 11. Show live and historical elapsed wall-clock time for the full response and
     for each plugin activity block, including correct behavior when plugins or
     calls execute in parallel.
-12. Send only lifecycle edges and authoritative reconnect baselines for timing;
-    let the desktop advance an active label locally without server clock ticks or
+12. Send only lifecycle edges and authoritative first-join/reconnect baselines
+    for timing. Every active interval includes its UTC start, and every snapshot
+    includes its UTC observation time plus elapsed-at-snapshot; the desktop then
+    advances the label from a local monotonic clock without server clock ticks or
     interference with response-text token streaming.
 13. When a provider exposes an observable reasoning item, render a separate,
     ordered, generically labeled thinking block with the same live and historical
@@ -342,11 +348,18 @@ The backend emits one monotonic-revision `activity_started` edge for each opened
 interval and one `activity_stopped` edge for every normal or abnormal terminal
 transition. It never emits periodic elapsed-time updates. The desktop snapshots
 its local monotonic clock when it receives an active interval and updates the
-formatted label locally. A reconnect or canonical snapshot supplies an
-authoritative `elapsedMsAtSnapshot`; the desktop rebases to it instead of
-trusting wall-clock time accumulated while the process was asleep or offline.
-The stop edge supplies authoritative `durationMs`, after which the local clock
-is no longer consulted. Duplicate or late edges are ignored by revision.
+formatted label locally. The edge includes the interval's authoritative
+`startedAtUtc`. A first-join, reconnect, or canonical snapshot includes that
+same start, a server-generated `snapshotAtUtc`, and authoritative
+`elapsedMsAtSnapshot`. The desktop initializes or rebases to the elapsed
+baseline—thereby including work before it subscribed—and advances from its
+local monotonic receipt point. It does not derive the canonical baseline solely
+from `Date.now() - startedAtUtc`, because client/server wall clocks can disagree.
+The UTC values preserve the real chronology and allow consistency checks; the
+server-computed elapsed baseline is authoritative for display. The stop edge
+supplies authoritative `durationMs`, `startedAtUtc`, and `stoppedAtUtc`, after
+which the local clock is no longer consulted. Duplicate or late edges are
+ignored by revision.
 
 When the provider exposes an actual reasoning output item, it appears as a
 separate ordered thinking block. Its live label is **Thinking for …** and its
@@ -718,8 +731,9 @@ with these fields:
 - Optional scope keys as appropriate: `assistant_turn_id`, `block_index`,
   `plugin_id`, and `tool_invocation_id`. Internal provider-attempt data is not a
   member-visible key.
-- One or more intervals with stable identity, monotonic `revision`,
-  `started_at`, nullable `stopped_at`, and terminal `duration_ms`.
+- One or more intervals with stable identity, monotonic `revision`, an
+  authoritative RFC 3339 UTC `started_at`, nullable RFC 3339 UTC `stopped_at`,
+  and terminal `duration_ms`.
 - Canonical `total_duration_ms` equal to the union of the activity's completed
   intervals; active snapshots add the current interval separately.
 - Lifecycle state: `active`, `completed`, `failed`, `cancelled`, `ambiguous`, or
@@ -747,6 +761,8 @@ Realtime lifecycle edges are conceptually:
   "assistantTurnId": "turn_34",
   "pluginId": "github",
   "revision": 3,
+  "startedAtUtc": "2026-08-26T17:00:00.000Z",
+  "observedAtUtc": "2026-08-26T17:00:00.000Z",
   "activeIntervalElapsedMsAtEvent": 0,
   "completedDurationMsAtEvent": 0
 }
@@ -760,15 +776,21 @@ Realtime lifecycle edges are conceptually:
   "kind": "plugin_work",
   "revision": 4,
   "outcome": "completed",
+  "startedAtUtc": "2026-08-26T17:00:00.000Z",
+  "stoppedAtUtc": "2026-08-26T17:07:42.000Z",
   "intervalDurationMs": 462000,
   "totalDurationMs": 462000,
   "timingAccuracy": "observed"
 }
 ```
 
-A boot, reconnect, or range response returns the canonical completed total and
-each active interval's `elapsedMsAtSnapshot` at the response's snapshot boundary.
-The desktop atomically rebases its monotonic presentation clock on those values.
+A boot, first join, reconnect, or range response returns `snapshotAtUtc`, the
+canonical completed total, and each active interval's `startedAtUtc` plus
+`elapsedMsAtSnapshot` at that snapshot boundary. The desktop atomically rebases
+its monotonic presentation clock on those values. Thus opening a work stream
+seven minutes into an existing run starts near seven minutes rather than zero;
+the UTC start is transmitted even though the server-computed elapsed value—not
+the client's wall-clock subtraction—is the display authority.
 Activity edges and response-text deltas are independent ordered event types:
 neither waits for, batches, or acknowledges the other, and parallel plugin/tool
 lifecycle edges may arrive in any completion order.
@@ -960,7 +982,7 @@ projector or reducer under test.
 | `T2 Causal durability` | Every state transition required for later inference is durable before Bind, tool dispatch, terminal publication, or compaction can advance past it. |
 | `T3 Live ordering and concurrency` | Response tokens remain immediately streamable while text, thinking, and multiple tool calls start and settle independently without changing model-declared display order. |
 | `T4 Range and gap truth` | Snapshot-fenced range responses report what was actually inspected, and the desktop computes loaded islands and gaps correctly for empty, shortened, overlapping, disjoint, and realtime-extended history. |
-| `T5 Activity-time truth` | Response, plugin, invocation, and observable-thinking timers use authoritative edges and interval unions; local ticking never requires server clock frames and survives pause, sleep, reconnect, and history load. |
+| `T5 Activity-time truth` | Response, plugin, invocation, and observable-thinking timers use authoritative UTC starts, first-join/reconnect elapsed baselines, lifecycle edges, and interval unions; local ticking never requires server clock frames and survives late join, pause, sleep, reconnect, and history load. |
 | `T6 Recovery and idempotency` | Worker loss, Durable Object eviction/hibernation, socket replay, retries, duplicate events, compaction, and cutover resume without loss, duplication, reordering, or identity reuse. |
 | `T7 Authorization and locality` | Participant APIs reveal neither restricted payloads nor restricted bounds, and Global/EU authorities never use one another as transcript or inference-archive fallbacks. |
 | `T8 Compatibility and migration` | Capable and legacy clients receive their declared protocols, complete legacy evidence can be reconciled deterministically, and incomplete evidence remains an honest legacy envelope. |
@@ -1008,12 +1030,13 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H17 pauses_and_resumes_response_work` | workerd + desktop | Pause for member input and resume; assert two intervals, no ticking during the gap, and historical duration equal to the union of working intervals. |
 | `H18 renders_openai_thinking_lifecycle_generically` | harness + desktop | Replay fixed OpenAI reasoning-item edges; assert one correctly ordered generic thinking block and stable terminal duration with no reasoning payload in the DOM. |
 | `H19 renders_openrouter_thinking_lifecycle_generically` | harness + desktop | Replay fixed OpenRouter reasoning-detail edges; assert the same normalized lifecycle/order/timing contract without exposing text, encrypted details, or signatures. |
-| `H20 rebases_active_timers_after_reconnect` | workerd + desktop | Miss lifecycle edges, reconnect with `elapsedMsAtSnapshot`, and assert the local monotonic baseline rebases once and later terminal `durationMs` becomes authoritative. |
+| `H20 rebases_active_timers_after_reconnect` | workerd + desktop | Miss lifecycle edges, reconnect with the original `startedAtUtc`, `snapshotAtUtc`, and `elapsedMsAtSnapshot`, and assert the local monotonic baseline rebases once and later terminal `durationMs` becomes authoritative. |
 | `H21 survives_hibernation_during_active_stream` | workerd | Stream text and parallel activity, hibernate/evict the object, reconnect, and assert exact checkpoint prefix, lifecycle state, loop revision, and subsequent frames appear once. |
 | `H22 backfills_complete_global_legacy_proof` | SQL | Supply complete inference turns, receipts, aggregate text, and counts; assert deterministic canonical turns/ledger and reconciliation hashes without runtime lakehouse reads. |
 | `H23 serves_legacy_and_capable_clients_concurrently` | workerd + desktop | Subscribe one client per capability; assert each receives only its declared projection while both converge on equivalent participant content and terminal state. |
 | `H24 keeps_participant_and_restricted_projections_linked` | SQL + workerd | Read participant ranges and resume inference from the same committed facts; assert shared opaque identities, authorized visible content, and exact private replay without deriving either projection from the other. |
 | `H25 compacts_twice_across_distinct_events_and_resumes_second_generation` | workerd | Accept activity, commit compaction event A, accept additional assistant/tool activity, then commit distinct compaction event B. Assert two `state_replaced` transitions with distinct event/source revisions, three ordered loop generations, retention of both exact replacements, unchanged participant history, and post-eviction replay from B with the exact next provider array. Replay either event ID and assert idempotency rather than a third replacement generation. |
+| `H26 joins_existing_stream_with_utc_start_and_elapsed_baseline` | workerd + desktop + E2E | Start a response before a second client opens the work stream. On first join, assert the active snapshot carries the original `startedAtUtc`, a server `snapshotAtUtc`, and the full prior `elapsedMsAtSnapshot`; the label paints the already-accrued duration immediately, continues from the local monotonic receipt point, and is replaced by canonical terminal duration. |
 
 ### Required edge-case and failure tests
 
@@ -1041,7 +1064,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E20 fences_range_against_concurrent_append_and_mutation` | workerd | Append a turn and update tool status during a range scan; assert membership/order remain at the snapshot fence while authorized mutable status follows its declared revision rule. |
 | `E21 handles_unread_near_start_end_and_missing` | SQL + desktop | Test unread at first sequence, within five of either edge, already inside latest five, absent, and beyond retained history; assert bounded slices, correct de-duplication, and declared fallback. |
 | `E22 rejects_stale_range_response_after_new_snapshot` | desktop | Resolve an older range request after a newer snapshot; assert it cannot lower bounds, replace newer revisions, or erase singleton coverage. |
-| `E23 recovers_timer_after_sleep_and_clock_skew` | desktop | Advance wall clock independently of monotonic time, suspend, and resume from an authoritative baseline; assert no negative/jumped duration and canonical terminal replacement. |
+| `E23 recovers_timer_after_sleep_and_clock_skew` | desktop | Advance client wall clock independently of monotonic time, suspend, and resume with authoritative UTC timestamps plus elapsed baseline; assert the client does not use naive local `Date.now() - startedAtUtc`, produces no negative/jumped duration, and accepts canonical terminal replacement. |
 | `E24 does_not_double_count_nested_or_overlapping_intervals` | harness + desktop | Duplicate and overlap response/plugin/tool intervals; assert normalized unions and idempotent terminal totals at every scope. |
 | `E25 hides_restricted_payloads_and_bounds_from_all_participant_surfaces` | API Node + workerd | Exercise REST, socket, range, export, search, logs, and telemetry fixtures; assert no system inputs, protocol/derived payloads, exact private results, reasoning details, or `loop_sequence` bounds escape. |
 | `E26 rejects_unauthorized_range_before_returning_bounds` | workerd | Request an existing and nonexistent range as a nonparticipant; assert authorization failure reveals neither snapshot bounds nor existence through coverage shape. |
@@ -1055,6 +1078,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E34 makes_substrate_conformance_mandatory_for_new_authority_adapter` | harness/API contract | Run the shared adapter suite against `SubstreamAgent` and a deliberately incomplete fixture adapter; assert the real adapter passes and the missing range/replay capability fails conformance. |
 | `E35 excludes_automation_wizard_from_all_new_paths` | API Node + desktop | Exercise automation draft storage and UI fixtures; assert no new substrate schema, protocol event, range contract, or renderer behavior is invoked for the explicitly out-of-scope wizard. |
 | `E36 does_not_conflate_duplicate_compaction_delivery_with_a_second_event` | SQL + workerd | Deliver compaction event A twice and a distinct event B once, including out-of-order retry delivery. Assert A creates exactly one replacement generation, B creates exactly one later generation, event/source identities remain distinguishable, and the active generation never rolls back from B to A. |
+| `E37 rejects_inconsistent_active_interval_timestamp_baseline` | workerd + desktop | Supply a snapshot whose `startedAtUtc`, `snapshotAtUtc`, and `elapsedMsAtSnapshot` cannot describe the same interval revision, then deliver an older consistent snapshot. Assert the inconsistent snapshot is rejected/resynced without resetting the label to zero, and the older revision cannot roll back a newer valid baseline. |
 
 ### Required algebraic, race, and failure-proof checks
 
@@ -1109,8 +1133,9 @@ accepted implementation of this requirement.
 5. Teach the desktop to understand both the legacy message protocol and the new
    turn/activity protocol. It stores coverage as ranges, reconciles streamed and
    committed versions by stable ID, ignores stale lifecycle revisions, and uses
-   a local monotonic clock for active labels after applying authoritative
-   baselines.
+   a local monotonic clock for active labels after applying authoritative UTC
+   start plus elapsed-at-snapshot baselines, including on first join to an
+   already-running response.
 6. Replace first-open `messageFeed`/`resumeFeed` behavior for capable clients
    with the two named initial turn ranges from one snapshot. Retain both islands
    in the desktop cache, open at unread when present, and make **Jump to latest**
@@ -1213,8 +1238,9 @@ never rewrites their sequence positions.
     resumption opens a new one. The live and historical response label sums the
     non-overlapping working intervals and excludes the paused gap.
 24. After application sleep, hibernation, socket reconnect, or a missed edge,
-    an active snapshot rebases the desktop from `elapsedMsAtSnapshot`; a terminal
-    snapshot replaces local elapsed time with canonical `durationMs`.
+    an active snapshot rebases the desktop from its original `startedAtUtc`,
+    server `snapshotAtUtc`, and `elapsedMsAtSnapshot`; a terminal snapshot
+    replaces local elapsed time with canonical `durationMs`.
 25. Response-text token deltas remain immediately renderable while response,
     plugin, tool, and thinking start/stop edges arrive independently. Parallel
     tool start/complete/error traffic neither blocks nor batches text streaming.
@@ -1272,9 +1298,15 @@ never rewrites their sequence positions.
     loop payloads nor `loop_sequence` bounds. Subsequent inference nevertheless
     reconstructs from the restricted projection without consulting the desktop
     projection or Global inference lakehouse.
-39. Every required `H01`–`H25` and `E01`–`E36` test is mapped to an actual test
+39. Every required `H01`–`H26` and `E01`–`E37` test is mapped to an actual test
     name and file, passes at its required layer, and has an implementation-PR
     failure-proof record showing the named assertion fails when its protected
     production behavior is deliberately broken. The three generated algebraic
     and state-machine suites, updated local behavioral lane, and real-window
     desktop acceptance flow also pass; none is deferred to a follow-up PR.
+40. A client that first opens or reconnects to a response already in progress
+    receives the active interval's original UTC start and a server-observed UTC
+    snapshot plus elapsed baseline. It immediately displays the time accrued
+    before subscription, then advances locally without periodic server ticks;
+    client wall-clock skew cannot reset, make negative, or become the authority
+    for that duration.
