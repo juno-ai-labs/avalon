@@ -228,6 +228,19 @@ than whichever rejection landed first.
   only a caller that *knows* the audience is wider — an ingress reading a public
   channel — says `workspace`. See
   [`data-model.md`](data-model.md#2026-08-21--a-work-stream-is-born-private).
+- **Whether the people named are told is the caller's to say, not the object's.**
+  `POST /workstreams` passes `notifyParticipants`, because its
+  `participantUserIds` is people somebody picked in "Add people"; each of them
+  then gets the activity event and the Slack-or-email notification that being
+  added to an existing work stream produces, behind their own directory row, and
+  the creator gets neither. A connector ingress passes nothing and stays quiet:
+  the same field carries a conversation's resolved roster, and nobody in a Slack
+  channel was added by anybody. A create path added later inherits neither
+  behaviour — seating somebody and telling them are separate effects, and the
+  second one has to be asked for. The notification also does not arrive on the
+  awaited drain below: it rides the ordinary outbox and alarm, so it lands after
+  the response. See
+  [`workstream-durable-object.md`](workstream-durable-object.md#2026-08-25--being-named-at-creation-tells-the-person-when-the-caller-says-to).
 - **Both launchers seed both queries, through `launchedWorkstreamDetail`.** The
   work-stream screen loads on either query being absent, so seeding one of the
   two still lands on the full-screen orb; and two hand-built details would drift
@@ -353,6 +366,23 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-08-25 — Creation is a notifying path, on request
+
+**What changed:** `POST /workstreams` passes `notifyParticipants`, so everybody
+picked in "Add people" is told they were added — the invariant above. No other
+caller of the creation service passes it.
+
+**Why:** the create path seated people and told nobody, which made "Add people"
+the one way of putting somebody in a work stream that reached them through no
+channel at all. The flag exists rather than the object deciding for itself
+because `participantUserIds` is also where a connector ingress puts a
+conversation's resolved roster, and those two lists are not the same event.
+[`workstream-durable-object.md`](workstream-durable-object.md#2026-08-25--being-named-at-creation-tells-the-person-when-the-caller-says-to)
+owns the reasoning and the effects; this document owns only which caller says yes.
+
+**Consequences:** a new create path is quiet unless it opts in, and opting in
+means asserting that its participant list is people somebody chose.
 
 ### 2026-08-24 — The launcher's `@` names a person inline instead of opening a dialog
 

@@ -20,6 +20,8 @@ export interface WorkstreamParticipantAddedEmail {
   workstreamId: string;
   workstreamTitle: string;
   workstreamObjective: string;
+  /** The work stream has no settled name yet; do not print the placeholder. */
+  titleIsProvisional: boolean;
   workstreamEmailAddress: string | null;
   region: Region;
 }
@@ -50,14 +52,25 @@ export async function sendWorkstreamParticipantAddedEmail(
   // canonical HTTPS link is a real link everywhere and ends in the same place.
   const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, input.workstreamId);
   const replyTo = input.workstreamEmailAddress?.trim() || null;
-  const subject = `${actorName} added you to ${workstreamTitle}`;
+  // A work stream created from the composer has no name yet — its title is the
+  // opening message's first line, cut at 180 characters, and the naming pass
+  // runs after this notification is enqueued. Quoting it names the room by a
+  // sentence fragment and then prints the same words again as the objective, so
+  // the unnamed case says what actually happened instead: somebody started
+  // something and put you in it. The opening line still appears, once, below.
+  const subject = input.titleIsProvisional
+    ? `${actorName} started a work stream with you`
+    : `${actorName} added you to ${workstreamTitle}`;
+  const opening = input.titleIsProvisional
+    ? `${actorName} started a work stream in ${workspaceName} and added you to it.`
+    : `${actorName} added you to "${workstreamTitle}" in ${workspaceName}.`;
   const text = [
-    recipientName ? `Hi ${recipientName},` : "You were added to a work stream in Avalon.",
+    recipientName ? `Hi ${firstName(recipientName)},` : "You were added to a work stream in Rally.",
     "",
-    `${actorName} added you to "${workstreamTitle}" in ${workspaceName}.`,
+    opening,
     ...(objective ? ["", objective] : []),
     "",
-    `Open in Avalon: ${workstreamUrl}`,
+    `Open in Rally: ${workstreamUrl}`,
     ...(replyTo ? ["", "Reply to this email to post into the work stream."] : []),
   ].join("\n");
 
@@ -72,6 +85,7 @@ export async function sendWorkstreamParticipantAddedEmail(
       objective,
       workstreamUrl,
       replyTo,
+      titleIsProvisional: input.titleIsProvisional,
     }),
     text,
     // Keyed on the participation, not on the person's whole history with the
@@ -92,6 +106,11 @@ function objectiveExcerpt(value: string): string {
   return `${normalized.slice(0, MAX_OBJECTIVE_EXCERPT_LENGTH - 1).trimEnd()}…`;
 }
 
+/** "Dana Okafor" is how a record reads; "Dana" is how a person is greeted. */
+function firstName(value: string): string {
+  return value.split(" ")[0] || value;
+}
+
 function participantAddedEmailHtml(input: {
   actorName: string;
   workspaceName: string;
@@ -100,6 +119,7 @@ function participantAddedEmailHtml(input: {
   objective: string;
   workstreamUrl: string;
   replyTo: string | null;
+  titleIsProvisional: boolean;
 }): string {
   const actorName = escapeHtml(input.actorName);
   const workspaceName = escapeHtml(input.workspaceName);
@@ -107,7 +127,15 @@ function participantAddedEmailHtml(input: {
   const recipientName = escapeHtml(input.recipientName);
   const objective = escapeHtml(input.objective);
   const workstreamUrl = escapeHtml(input.workstreamUrl);
-  const greeting = recipientName ? `Hi ${recipientName},` : "You were added to a work stream in Avalon.";
+  // The heading already says it when there is no name to greet, so the fallback
+  // is dropped rather than printed two lines under itself.
+  const greeting = recipientName ? `Hi ${escapeHtml(firstName(input.recipientName))},<br>` : "";
+  const heading = input.titleIsProvisional
+    ? "You're in a new work stream"
+    : "You were added to a work stream";
+  const opening = input.titleIsProvisional
+    ? `<strong style="color:#f2f3ec">${actorName}</strong> started a work stream in ${workspaceName} and added you to it.`
+    : `<strong style="color:#f2f3ec">${actorName}</strong> added you to <strong style="color:#f2f3ec">${workstreamTitle}</strong> in ${workspaceName}.`;
   const summary = objective
     ? `<tr><td style="padding:18px 20px;background:#20241e;border-left:3px solid #CEDC00;border-radius:8px;font-size:15px;line-height:1.55;color:#e2e5dc">${objective}</td></tr>`
     : "";
@@ -120,11 +148,11 @@ function participantAddedEmailHtml(input: {
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#10130f;padding:40px 16px">
       <tr><td align="center">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#181b17;border:1px solid #343832;border-radius:18px;padding:36px">
-          <tr><td style="font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#CEDC00">Avalon</td></tr>
-          <tr><td><h1 style="margin:18px 0 12px;font-size:26px;line-height:1.25;color:#f2f3ec">You were added to a work stream</h1></td></tr>
-          <tr><td style="padding-bottom:18px;font-size:15px;line-height:1.6;color:#c9ccc4">${greeting}<br><strong style="color:#f2f3ec">${actorName}</strong> added you to <strong style="color:#f2f3ec">${workstreamTitle}</strong> in ${workspaceName}.</td></tr>
+          <tr><td style="font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#CEDC00">Rally</td></tr>
+          <tr><td><h1 style="margin:18px 0 12px;font-size:26px;line-height:1.25;color:#f2f3ec">${heading}</h1></td></tr>
+          <tr><td style="padding-bottom:18px;font-size:15px;line-height:1.6;color:#c9ccc4">${greeting}${opening}</td></tr>
           ${summary}
-          <tr><td style="padding-top:28px"><a href="${workstreamUrl}" style="display:inline-block;background:#CEDC00;color:#11140f;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px">Open in Avalon</a></td></tr>
+          <tr><td style="padding-top:28px"><a href="${workstreamUrl}" style="display:inline-block;background:#CEDC00;color:#11140f;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px">Open in Rally</a></td></tr>
           ${reply}
         </table>
       </td></tr>

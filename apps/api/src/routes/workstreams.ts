@@ -200,7 +200,9 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
         new WorkstreamObjectCreationService(c.env, auth, requestDeferral(c)).create({
           ...body,
           descriptionSource: body.objective ? "authored" : "derived",
-        }, { span }))
+          // The one caller whose `participantUserIds` is people somebody picked
+          // by hand, which is what makes telling them the right thing to do.
+        }, { span, notifyParticipants: true }))
     );
     span.setAttributes({
       "rally.workstream.id": created.workstream.id,

@@ -345,6 +345,7 @@ export async function processWorkstreamNotificationIntent(
         sourceId: effect.sourceId,
         actorName: effect.actorNameSnapshot,
         workstreamObjective: effect.workstreamObjectiveSnapshot,
+        titleIsProvisional: effect.titleIsProvisional,
       })
       : await sendWorkstreamMentionSlack(env, {
         ...recipient,
@@ -365,6 +366,7 @@ export async function processWorkstreamNotificationIntent(
           sourceId: effect.sourceId,
           actorName: effect.actorNameSnapshot,
           workstreamObjective: effect.workstreamObjectiveSnapshot,
+          titleIsProvisional: effect.titleIsProvisional,
         });
       } else {
         await sendWorkstreamMentionEmail(env, {
