@@ -73,6 +73,16 @@ export const WorkspaceConnectorEventClaimRequestSchema = WorkspaceConnectorEvent
   orchestrator: z.enum(["queue", "workflow"]).default("workflow"),
 }).strict();
 
+/**
+ * Frozen wire shape emitted by ConnectorEventWorkflow versions deployed before
+ * Queue-native processing. Keep it distinct from the current RPC contract: an
+ * old Workflow also strictly parses the smaller legacy response below.
+ */
+export const LegacyWorkspaceConnectorEventClaimRequestSchema = WorkspaceConnectorEventRequestSchema.extend({
+  workflowInstanceId: z.string().min(1).max(100),
+  attempt: z.number().int().min(0).max(5),
+}).strict();
+
 export const WorkspaceConnectorEventClaimResultSchema = z.discriminatedUnion("outcome", [
   z.object({
     outcome: z.literal("claimed"),
@@ -91,6 +101,20 @@ export const WorkspaceConnectorEventClaimResultSchema = z.discriminatedUnion("ou
   }).strict(),
 ]);
 
+export const LegacyWorkspaceConnectorEventClaimResultSchema = z.discriminatedUnion("outcome", [
+  z.object({
+    outcome: z.literal("claimed"),
+    event: WorkspaceConnectorEventSchema,
+  }).strict(),
+  z.object({ outcome: z.literal("processed") }).strict(),
+  z.object({ outcome: z.literal("busy") }).strict(),
+]);
+
+export const WorkspaceConnectorEventClaimRpcRequestSchema = z.union([
+  WorkspaceConnectorEventClaimRequestSchema,
+  LegacyWorkspaceConnectorEventClaimRequestSchema,
+]);
+
 export const WorkspaceConnectorEventSettleRequestSchema = WorkspaceConnectorEventRequestSchema.extend({
   processingOwnerId: z.string().min(1).max(100),
   // Optional only for Workflow instances whose persisted claim step predates
@@ -99,6 +123,17 @@ export const WorkspaceConnectorEventSettleRequestSchema = WorkspaceConnectorEven
   outcome: z.enum(["processed", "failed"]),
   error: z.string().max(1_000).nullable(),
 }).strict();
+
+export const LegacyWorkspaceConnectorEventSettleRequestSchema = WorkspaceConnectorEventRequestSchema.extend({
+  workflowInstanceId: z.string().min(1).max(100),
+  outcome: z.enum(["processed", "failed"]),
+  error: z.string().max(1_000).nullable(),
+}).strict();
+
+export const WorkspaceConnectorEventSettleRpcRequestSchema = z.union([
+  WorkspaceConnectorEventSettleRequestSchema,
+  LegacyWorkspaceConnectorEventSettleRequestSchema,
+]);
 
 export const ConnectorEventWorkflowInputSchema = z.object({
   region: RegionSchema,
@@ -118,5 +153,23 @@ export type WorkspaceConnectorEventProcessQueueMessage = z.infer<
 export type WorkspaceConnectorEventRequest = z.infer<typeof WorkspaceConnectorEventRequestSchema>;
 export type WorkspaceConnectorEventClaimRequest = z.infer<typeof WorkspaceConnectorEventClaimRequestSchema>;
 export type WorkspaceConnectorEventClaimResult = z.infer<typeof WorkspaceConnectorEventClaimResultSchema>;
+export type LegacyWorkspaceConnectorEventClaimRequest = z.infer<
+  typeof LegacyWorkspaceConnectorEventClaimRequestSchema
+>;
+export type LegacyWorkspaceConnectorEventClaimResult = z.infer<
+  typeof LegacyWorkspaceConnectorEventClaimResultSchema
+>;
+export type WorkspaceConnectorEventClaimRpcRequest = z.infer<
+  typeof WorkspaceConnectorEventClaimRpcRequestSchema
+>;
+export type WorkspaceConnectorEventClaimRpcResult =
+  | WorkspaceConnectorEventClaimResult
+  | LegacyWorkspaceConnectorEventClaimResult;
 export type WorkspaceConnectorEventSettleRequest = z.infer<typeof WorkspaceConnectorEventSettleRequestSchema>;
+export type LegacyWorkspaceConnectorEventSettleRequest = z.infer<
+  typeof LegacyWorkspaceConnectorEventSettleRequestSchema
+>;
+export type WorkspaceConnectorEventSettleRpcRequest = z.infer<
+  typeof WorkspaceConnectorEventSettleRpcRequestSchema
+>;
 export type ConnectorEventWorkflowInput = z.infer<typeof ConnectorEventWorkflowInputSchema>;

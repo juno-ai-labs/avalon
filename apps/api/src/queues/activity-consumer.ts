@@ -442,9 +442,20 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
         return;
       }
       if (claim.outcome === "busy") {
-        const retryDelaySeconds = claim.retryAt === null
-          ? null
-          : Math.max(1, Math.ceil((claim.retryAt - Date.now()) / 1_000));
+        if (claim.retryAt === null) {
+          logInfo(env, "connector_event_process_terminal", {
+            workspace_id: input.workspaceId,
+            connector_event_id: input.eventId,
+            processing_owner_id: input.processingOwnerId,
+            processing_attempt: processingAttempt,
+            outcome: "skipped",
+            reason: claim.reason,
+            queue_attempts: message.attempts,
+          });
+          message.ack();
+          return;
+        }
+        const retryDelaySeconds = Math.max(1, Math.ceil((claim.retryAt - Date.now()) / 1_000));
         logInfo(env, "connector_event_process_deferred", {
           workspace_id: input.workspaceId,
           connector_event_id: input.eventId,
@@ -456,8 +467,7 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
           retry_at: claim.retryAt,
           retry_delay_seconds: retryDelaySeconds,
         });
-        if (retryDelaySeconds === null) message.retry();
-        else message.retry({ delaySeconds: retryDelaySeconds });
+        message.retry({ delaySeconds: retryDelaySeconds });
         return;
       }
 

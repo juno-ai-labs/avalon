@@ -825,7 +825,12 @@ Cloudflare Workflow per event. The pointer's stable internal owner is correlatio
 identity; WorkspaceDO issues a fresh expiring lease for each acquisition and
 fences settlement on that lease. Queue delivery attempts remain independent
 transport telemetry. The Workflow class and binding remain deployed only so
-instances created before cutover can finish.
+instances created before cutover can finish. WorkspaceDO accepts the frozen
+pre-cutover claim and settlement payloads, translates them into the current
+lease protocol internally, and projects claim results back to the old strict
+response shape. A process pointer whose product attempt is older than the
+authoritative attempt is terminally acknowledged rather than retried into the
+DLQ; only an active unexpired lease receives a delayed Queue retry.
 
 **Why:** The Queue, Workflow, and WorkspaceDO were maintaining overlapping
 retry and terminal ledgers for one processing callback. That duplication added
@@ -850,9 +855,11 @@ lease, lease-fenced settlement, and content-free terminal logs. Do not use Queue
 delivery count as the product attempt fence: a pointer can begin at the legacy
 attempt ceiling. Until the drain completes, an exact same-Workflow claim replay
 must remain idempotent because the claim RPC can commit before the Workflow
-persists its step result. Remove the legacy Workflow binding and rename the
-physical `workflow_instance_id` column only after live pre-cutover instances are
-proven drained.
+persists its step result. The legacy request and response wire shapes must also
+remain accepted: those Workflow instances execute versioned code whose strict
+schemas cannot adopt a new RPC contract after creation. Remove that adapter,
+the legacy Workflow binding, and the physical `workflow_instance_id` column
+only after live pre-cutover instances are proven drained.
 
 ### 2026-08-25 — Every connector operation is observable at two layers
 

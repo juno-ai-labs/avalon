@@ -762,7 +762,10 @@ pointer after ingress and uses typed claim/settle RPCs. The physical
 `workflow_instance_id` column temporarily stores the current acquisition's lease
 token so pre-cutover Workflow instances and Queue deliveries fence the same row.
 For Queue claims the stable processing owner is correlation identity, not the
-lease; WorkspaceDO creates a fresh lease on every acquisition.
+lease; WorkspaceDO creates a fresh lease on every acquisition. During the drain
+window, WorkspaceDO also translates the frozen pre-cutover
+`workflowInstanceId` RPC payloads and projects the old strict claim response;
+versioned Workflow code cannot migrate its wire contract after creation.
 
 **Why:** A one-callback Workflow duplicated Queue retry and WorkspaceDO terminal
 state, and required an external instance-ID contract unrelated to product
@@ -777,7 +780,9 @@ Workflow from completing against the new object code.
 messages remain bounded and region-local, and callers use typed domain outcomes
 rather than SQLite write metadata. Settlement must remain fenced by the returned
 lease, and native Queue delivery count must not be overloaded as a product
-generation. Rename the physical compatibility column only after the legacy
+generation. A pointer behind the authoritative product generation is terminally
+stale and must be acknowledged, not retried toward the DLQ. Remove the legacy
+wire adapter and rename the physical compatibility column only after the
 Workflow binding is safely retired.
 
 ### 2026-08-25 — Automation runs copy the subscription audience
