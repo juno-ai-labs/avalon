@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
-import { logWarn } from "../observability/logger";
+import { logInfo, logWarn } from "../observability/logger";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
@@ -128,7 +128,16 @@ async function deliverWorkstreamSlack(
 ): Promise<SlackMentionDelivery> {
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   let connectionId: string | null = null;
+  let providerAccountId: string | null = null;
+  let resolvedSlackUserId: string | null = null;
+  let channelId: string | null = null;
+  let threadTs: string | undefined;
+  let lastMessageTs: string | null = null;
   let postedChunks = 0;
+  let activeConnectionCount = 0;
+  let linkedConnectionCount = 0;
+  let lookupMatchCount = 0;
+  let resolutionMode: "confirmed_link" | "email_lookup" | null = null;
   try {
     const rawConnections = await env.DB.prepare(
       `SELECT cc.id, cc.workspace_id, cc.provider_account_id,
@@ -143,10 +152,14 @@ async function deliverWorkstreamSlack(
     ).bind(input.recipientUserId, input.workspaceId).all<Record<string, unknown>>();
     const connections = z.array(SlackMentionConnectionSchema).parse(rawConnections.results ?? []);
     const linked = connections.filter((candidate) => candidate.linked_slack_user_id !== null);
+    activeConnectionCount = connections.length;
+    linkedConnectionCount = linked.length;
     let destination: SlackMentionDestination | null = null;
     if (linked.length === 1) {
       const connection = linked[0]!;
       connectionId = connection.id;
+      providerAccountId = connection.provider_account_id;
+      resolutionMode = "confirmed_link";
       destination = {
         connection,
         token: await workspaceBotToken(env, connection),
@@ -157,10 +170,11 @@ async function deliverWorkstreamSlack(
       let incompleteLookup: unknown = null;
       for (const connection of connections) {
         connectionId = connection.id;
+        providerAccountId = connection.provider_account_id;
         const token = await workspaceBotToken(env, connection);
-        let slackUserId: string | null;
+        let lookup: SlackUserLookupResult;
         try {
-          slackUserId = await lookupSlackUserId(
+          lookup = await lookupSlackUserId(
             token,
             connection.provider_account_id,
             input.recipientEmail,
@@ -168,21 +182,101 @@ async function deliverWorkstreamSlack(
           );
         } catch (error) {
           const reason = slackFailureReason(error);
-          if (reason === "users_not_found") continue;
+          if (reason === "users_not_found") {
+            logInfo(env, "slack_notification_lookup_candidate", {
+              workspace_id: input.workspaceId,
+              workstream_id: workstreamId,
+              kind: input.kind,
+              source_id: input.sourceId,
+              recipient_user_id: input.recipientUserId,
+              connection_id: connection.id,
+              provider_account_id: connection.provider_account_id,
+              outcome: "rejected",
+              reason: "users_not_found",
+            });
+            continue;
+          }
           if (reason === "missing_scope") {
+            logWarn(env, "slack_notification_lookup_candidate", {
+              workspace_id: input.workspaceId,
+              workstream_id: workstreamId,
+              kind: input.kind,
+              source_id: input.sourceId,
+              recipient_user_id: input.recipientUserId,
+              connection_id: connection.id,
+              provider_account_id: connection.provider_account_id,
+              outcome: "incomplete",
+              reason: "missing_scope",
+            });
             incompleteLookup ??= error;
             continue;
           }
           throw error;
         }
-        if (slackUserId) matches.push({ connection, token, slackUserId });
+        logInfo(env, "slack_notification_lookup_candidate", {
+          workspace_id: input.workspaceId,
+          workstream_id: workstreamId,
+          kind: input.kind,
+          source_id: input.sourceId,
+          recipient_user_id: input.recipientUserId,
+          connection_id: connection.id,
+          provider_account_id: connection.provider_account_id,
+          slack_user_id: lookup.observedSlackUserId,
+          observed_team_id: lookup.observedTeamId,
+          outcome: lookup.slackUserId ? "matched" : "rejected",
+          reason: lookup.reason ?? "active_human_match",
+        });
+        if (lookup.slackUserId) matches.push({ connection, token, slackUserId: lookup.slackUserId });
       }
+      lookupMatchCount = matches.length;
       if (incompleteLookup) throw incompleteLookup;
-      if (matches.length === 1) destination = matches[0]!;
+      if (matches.length === 1) {
+        destination = matches[0]!;
+        connectionId = destination.connection.id;
+        providerAccountId = destination.connection.provider_account_id;
+        resolutionMode = "email_lookup";
+      }
     }
-    if (!destination) return "skipped";
+    if (!destination) {
+      const reason = activeConnectionCount === 0
+        ? "no_active_workspace_installation"
+        : linkedConnectionCount > 1
+          ? "multiple_confirmed_links"
+          : lookupMatchCount > 1
+            ? "ambiguous_email_lookup"
+            : "no_email_lookup_match";
+      logInfo(env, "slack_notification_terminal", {
+        workspace_id: input.workspaceId,
+        workstream_id: workstreamId,
+        kind: input.kind,
+        source_id: input.sourceId,
+        recipient_user_id: input.recipientUserId,
+        outcome: "skipped",
+        reason,
+        active_connection_count: activeConnectionCount,
+        linked_connection_count: linkedConnectionCount,
+        lookup_match_count: lookupMatchCount,
+      });
+      return "skipped";
+    }
     const { connection, token, slackUserId } = destination;
     connectionId = connection.id;
+    providerAccountId = connection.provider_account_id;
+    resolvedSlackUserId = slackUserId;
+    logInfo(env, "slack_notification_destination_resolved", {
+      workspace_id: input.workspaceId,
+      workstream_id: workstreamId,
+      kind: input.kind,
+      source_id: input.sourceId,
+      recipient_user_id: input.recipientUserId,
+      connection_id: connectionId,
+      provider_account_id: providerAccountId,
+      slack_user_id: resolvedSlackUserId,
+      resolution_mode: resolutionMode,
+      active_connection_count: activeConnectionCount,
+      linked_connection_count: linkedConnectionCount,
+      lookup_match_count: lookupMatchCount,
+    });
 
     const opened = await slackApi(
       token,
@@ -191,27 +285,75 @@ async function deliverWorkstreamSlack(
       AbortSignal.timeout(10_000),
       request,
     );
+    channelId = opened.channel.id;
+    logInfo(env, "slack_notification_conversation_opened", {
+      workspace_id: input.workspaceId,
+      workstream_id: workstreamId,
+      kind: input.kind,
+      source_id: input.sourceId,
+      recipient_user_id: input.recipientUserId,
+      connection_id: connectionId,
+      provider_account_id: providerAccountId,
+      slack_user_id: resolvedSlackUserId,
+      channel_id: channelId,
+      outcome: "opened",
+    });
     const target = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, workstreamId);
     const chunks = input.chunks(target, 40_000);
-    let threadTs: string | undefined;
     for (const [index, chunk] of chunks.entries()) {
       if (index > 0) await sleep(1_000);
+      const clientMessageId = await stableUuid(
+        `avalon-workstream-${input.kind}:${input.sourceId}:${input.recipientUserId}:${index}`,
+      );
       const response = await postSlackMentionChunk(
         token,
         {
           channel: opened.channel.id,
           ...(threadTs ? { thread_ts: threadTs } : {}),
-          client_msg_id: await stableUuid(
-            `avalon-workstream-${input.kind}:${input.sourceId}:${input.recipientUserId}:${index}`,
-          ),
+          client_msg_id: clientMessageId,
           text: chunk,
         },
         request,
         sleep,
       );
       postedChunks += 1;
+      lastMessageTs = response.ts;
       threadTs ??= response.ts;
+      logInfo(env, "slack_notification_chunk_terminal", {
+        workspace_id: input.workspaceId,
+        workstream_id: workstreamId,
+        kind: input.kind,
+        source_id: input.sourceId,
+        recipient_user_id: input.recipientUserId,
+        connection_id: connectionId,
+        provider_account_id: providerAccountId,
+        slack_user_id: resolvedSlackUserId,
+        channel_id: channelId,
+        client_msg_id: clientMessageId,
+        slack_message_ts: response.ts,
+        thread_ts: threadTs,
+        chunk_index: index,
+        chunk_count: chunks.length,
+        outcome: "sent",
+      });
     }
+    logInfo(env, "slack_notification_terminal", {
+      workspace_id: input.workspaceId,
+      workstream_id: workstreamId,
+      kind: input.kind,
+      source_id: input.sourceId,
+      recipient_user_id: input.recipientUserId,
+      connection_id: connectionId,
+      provider_account_id: providerAccountId,
+      slack_user_id: resolvedSlackUserId,
+      channel_id: channelId,
+      slack_message_ts: lastMessageTs,
+      thread_ts: threadTs ?? null,
+      resolution_mode: resolutionMode,
+      outcome: "sent",
+      reason: "slack_api_accepted",
+      posted_chunks: postedChunks,
+    });
     return "sent";
   } catch (error) {
     const reason = slackFailureReason(error);
@@ -236,6 +378,15 @@ async function deliverWorkstreamSlack(
       source_id: input.sourceId,
       recipient_user_id: input.recipientUserId,
       connection_id: connectionId,
+      provider_account_id: providerAccountId,
+      slack_user_id: resolvedSlackUserId,
+      channel_id: channelId,
+      slack_message_ts: lastMessageTs,
+      thread_ts: threadTs ?? null,
+      resolution_mode: resolutionMode,
+      active_connection_count: activeConnectionCount,
+      linked_connection_count: linkedConnectionCount,
+      lookup_match_count: lookupMatchCount,
       reason,
       posted_chunks: postedChunks,
     });
@@ -279,12 +430,19 @@ async function postSlackMentionChunk(
   throw new ConnectorError("provider_error", "Slack message retry limit reached");
 }
 
+interface SlackUserLookupResult {
+  slackUserId: string | null;
+  observedSlackUserId: string;
+  observedTeamId: string;
+  reason: "team_mismatch" | "user_deleted" | "user_is_bot" | null;
+}
+
 async function lookupSlackUserId(
   token: string,
   expectedTeamId: string,
   email: string,
   request: typeof fetch,
-): Promise<string | null> {
+): Promise<SlackUserLookupResult> {
   const result = await slackApi(
     token,
     "users.lookupByEmail",
@@ -292,12 +450,36 @@ async function lookupSlackUserId(
     AbortSignal.timeout(10_000),
     request,
   );
-  if (
-    result.user.team_id !== expectedTeamId
-    || result.user.deleted === true
-    || result.user.is_bot === true
-  ) return null;
-  return result.user.id;
+  if (result.user.team_id !== expectedTeamId) {
+    return {
+      slackUserId: null,
+      observedSlackUserId: result.user.id,
+      observedTeamId: result.user.team_id,
+      reason: "team_mismatch",
+    };
+  }
+  if (result.user.deleted === true) {
+    return {
+      slackUserId: null,
+      observedSlackUserId: result.user.id,
+      observedTeamId: result.user.team_id,
+      reason: "user_deleted",
+    };
+  }
+  if (result.user.is_bot === true) {
+    return {
+      slackUserId: null,
+      observedSlackUserId: result.user.id,
+      observedTeamId: result.user.team_id,
+      reason: "user_is_bot",
+    };
+  }
+  return {
+    slackUserId: result.user.id,
+    observedSlackUserId: result.user.id,
+    observedTeamId: result.user.team_id,
+    reason: null,
+  };
 }
 
 async function workspaceBotToken(

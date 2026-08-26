@@ -706,6 +706,19 @@ removed. Delivery compute remains a regional Worker/service, but intent,
 attempt, idempotency key, frozen destination, and provider receipt are
 WorkspaceDO rows. They must not be copied into a child.
 
+The handoff is observable at each authority boundary. SubstreamAgent records
+forwarded or deferred child outbox batches; WorkstreamDO records Queue enqueue
+or enqueue failure; the regional consumer records the effect outcome and
+whether acknowledgement actually removed the parent row. Notification intent
+logs distinguish an active lease, a missing or already-terminal intent, pending
+directory projection, inactive or non-listable recipient, self-notification,
+Slack and email transport outcomes, final delivery, and retriable failure.
+Correlate `message_id`, `notification_intent_id`, `workspace_id`,
+`workstream_id`, and `recipient_user_id`. An empty Queue therefore says nothing
+about notification delivery by itself; `workstream_notification_terminal` is
+the terminal evidence, while `workstream_notification_deferred` and
+`workstream_notification_failed` explain why no terminal result exists yet.
+
 ### SQL-only schema migration
 
 Every constructor gates requests with `state.blockConcurrencyWhile()` and calls
@@ -1214,6 +1227,31 @@ authority this call is what establishes.
   runs after these effects commit. Every other surface re-renders when the real
   name lands; an inbox does not, so `titleIsProvisional` exists and the templates
   branch on it rather than quoting a fragment and then printing it twice.
+
+### 2026-08-25 — Durable notification handoffs expose every terminal branch
+
+**What changed:** The child and parent outboxes, regional effect consumer,
+WorkspaceDO notification intent, Slack/email transports, and parent
+acknowledgement now emit correlated structured outcomes. Inactive,
+non-listable, self-originated, replayed, busy, projection-pending, delivered,
+and failed branches are individually queryable.
+
+**Why:** Queue drain was being mistaken for end-user delivery even though the
+durable path has several later authorities and intentional terminal skips. The
+outbox guarantees retry until acknowledgement; it does not guarantee that the
+notification authority will choose a transport or that a provider will accept
+the intended destination.
+
+**Considered and rejected:** One success log at the Queue consumer and
+exception-only logging were rejected. Neither identifies the durable authority
+that committed a terminal state, and both erase expected decisions such as
+self-notification and inactive-recipient suppression.
+
+**What a future change has to respect:** Every retained effect must be traceable
+from child outbox through actual parent-row removal. Every notification branch
+must end in a terminal, deferred, or failure event with content-free IDs and a
+stable reason; Queue acknowledgement alone must never be presented as provider
+delivery.
 
 ### 2026-08-25 — Hibernation replay misses stay on the child socket
 

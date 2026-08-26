@@ -21,6 +21,7 @@ confusions, found one at a time in production.
 | `UserId` | `asUserId` | A user's id |
 | `SubstreamId` | `asSubstreamId` | `"0"` or a child substream id |
 | `BlockId` | `asBlockId` | A HyperSight block's id |
+| `CloudflareWorkflowInstanceId` | `cloudflareWorkflowInstanceId` | A deterministic user-supplied Cloudflare Workflow instance id, derived from internal identity without exposing its bytes to the platform grammar |
 
 A brand is zod's `.brand<...>()`: zero runtime representation, and the schema
 parse is the constructor. The `asX` casts **validate** — they parse, so a
@@ -56,6 +57,32 @@ between them. Fan-in plumbing helpers with broad mixed-provenance call sets
 through their callers.
 
 ## Changelog
+
+### 2026-08-25 — Workflow instance IDs are valid by construction
+
+**What changed:** `cloudflareWorkflowInstanceId` hashes a typed identity tuple
+behind the fixed `wf_` prefix, validates the resulting 67-character value
+against Cloudflare's user-supplied Workflow ID contract, and returns a branded
+`CloudflareWorkflowInstanceId`. Connector-event Workflow creation now accepts
+provider and Rally identifiers only as hash input.
+
+**Why:** A colon-delimited internal idempotency key crossed unchanged into
+Cloudflare's stricter external identifier boundary. The Workflow test double
+accepted the malformed string, so tests asserted the mistake instead of
+exercising the platform contract. Fixed-alphabet digest construction makes
+validity independent of provider content or delimiter choice.
+
+**Considered and rejected:** Sanitizing arbitrary templates, because two
+different inputs can sanitize to the same value and every new call site has to
+remember the rule. Testing one hand-written example, because it proves only that
+example. Letting Cloudflare generate the ID, because connector Queue replay
+needs deterministic instance identity to converge on the already-running
+Workflow.
+
+**Consequences:** Code that needs a deterministic external Workflow ID should
+derive it through the constructor rather than interpolate internal identifiers.
+Logs carry the unhashed opaque Rally/provider IDs separately, so correlation
+does not depend on making the external ID human-readable.
 
 ### 2026-08-20 — Introduced, and applied through the execution spine
 
