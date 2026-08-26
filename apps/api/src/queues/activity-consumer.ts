@@ -75,6 +75,7 @@ import {
 } from "../services/workstream-regional-effect-service";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
+import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-update";
 
 interface ActivityRow {
   id: string;
@@ -231,6 +232,7 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
 }
 
 async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
+  if (await consumeWorkstreamBatchUpdate(message, env)) return;
   const regionalEffect = WorkstreamRegionalEffectQueueMessageSchema.safeParse(message.body);
   if (regionalEffect.success) {
     if (regionalEffect.data.region !== env.AVALON_REGION) {

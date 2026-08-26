@@ -857,6 +857,8 @@ describe("Durable Objects in the Workers runtime", () => {
           "workspace_workstream_viewers",
           "workspace_sync_events",
           "workspace_socket_ticket_receipts",
+          "workspace_batch_dispatches",
+          "workspace_batch_dispatch_targets",
           "workspace_activity_events",
           "workspace_activity_event_targets",
           "opportunity_batch_windows",

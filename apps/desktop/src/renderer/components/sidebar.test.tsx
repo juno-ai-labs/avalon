@@ -79,11 +79,13 @@ const defaultActions = {
   onArchiveDraftAutomation: async (): Promise<void> => undefined,
   onArchiveNote: async (): Promise<void> => undefined,
   onArchiveWorkstream: async (): Promise<void> => undefined,
+  onApplyWorkstreamBatch: async (): Promise<number> => 0,
   onChangeNoteScope: async (): Promise<void> => undefined,
   onChangeWorkstreamScope: async (): Promise<void> => undefined,
   onDeleteAutomation: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
   onOpenMeetingNotes: async (): Promise<void> => undefined,
+  onPreviewWorkstreamBatch: async (): Promise<number> => 0,
   onPinWorkstream: async (): Promise<boolean> => true,
   onReorderPinnedWorkstreams: async (): Promise<void> => undefined,
   onRenameWorkstream: async (): Promise<void> => undefined,
@@ -658,6 +660,140 @@ describe('Sidebar work-stream markers', () => {
         'Scheduled this month',
         'Old input request',
       ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['Mark all as read', 'mark_read', 'marked as read'],
+    ['Archive all', 'archive', 'archived'],
+  ] as const)('confirms the %s grouping action with the server-side total', async (
+    menuLabel,
+    updateKind,
+    resultCopy,
+  ) => {
+    const onPreviewWorkstreamBatch = vi.fn(async () => 20);
+    const onApplyWorkstreamBatch = vi.fn(async () => 20);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onApplyWorkstreamBatch={onApplyWorkstreamBatch}
+            onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('recent', 'Recent planning', 'completed', 'ad_hoc', new Date().toISOString())]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Last hour actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: menuLabel }));
+
+    const dialog = await screen.findByRole('dialog', { name: menuLabel });
+    await waitFor(() => expect(dialog).toHaveTextContent(
+      new RegExp(`20 work streams.*will be ${resultCopy}`, 'u'),
+    ));
+    expect(onPreviewWorkstreamBatch).toHaveBeenCalledWith(expect.objectContaining({
+      pinned: false,
+      includeSystem: false,
+      lastActivityAt: expect.objectContaining({ atOrAfter: expect.any(String) }),
+    }));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(onApplyWorkstreamBatch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ pinned: false, includeSystem: false }),
+      { kind: updateKind },
+    ));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: menuLabel })).not.toBeInTheDocument());
+  });
+
+  it('keeps one operation id when a failed Queue dispatch is retried', async () => {
+    const onApplyWorkstreamBatch = vi.fn()
+      .mockRejectedValueOnce(new Error('One Queue chunk was not published.'))
+      .mockResolvedValueOnce(20);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onApplyWorkstreamBatch={onApplyWorkstreamBatch}
+            onPreviewWorkstreamBatch={vi.fn(async () => 20)}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('recent', 'Recent planning', 'completed', 'ad_hoc', new Date().toISOString())]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Last hour actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive all' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive all' });
+    await waitFor(() => expect(dialog).toHaveTextContent('20 work streams'));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(dialog).toHaveTextContent('One Queue chunk was not published.'));
+    const retry = within(dialog).getByRole('button', { name: 'Continue' });
+    await waitFor(() => expect(retry).toBeEnabled());
+    fireEvent.click(retry);
+    await waitFor(() => expect(onApplyWorkstreamBatch).toHaveBeenCalledTimes(2));
+
+    expect(onApplyWorkstreamBatch.mock.calls[1]?.[0]).toBe(onApplyWorkstreamBatch.mock.calls[0]?.[0]);
+  });
+
+  it('moves a row at its recency boundary and previews with the new clock', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-31T20:00:00.000Z'));
+    const onPreviewWorkstreamBatch = vi.fn(async () => 1);
+    try {
+      render(
+        <MemoryRouter>
+          <Tooltip.Provider>
+            <Sidebar
+              {...defaultActions}
+              automations={[]}
+              onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
+              onSignOut={vi.fn()}
+              workspace={workspace}
+              workstreams={[workstream(
+                'boundary',
+                'Boundary planning',
+                'completed',
+                'ad_hoc',
+                '2026-07-31T19:00:30.000Z',
+              )]}
+            />
+          </Tooltip.Provider>
+        </MemoryRouter>,
+      );
+      expect(screen.getByRole('heading', { name: 'Last hour' })).toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(30_002));
+
+      expect(screen.queryByRole('heading', { name: 'Last hour' })).not.toBeInTheDocument();
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Today actions' }), {
+        button: 0,
+        ctrlKey: false,
+      });
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Mark all as read' }));
+      expect(onPreviewWorkstreamBatch).toHaveBeenCalledWith(expect.objectContaining({
+        lastActivityAt: expect.objectContaining({
+          before: '2026-07-31T19:00:30.002Z',
+        }),
+      }));
     } finally {
       vi.useRealTimers();
     }
