@@ -1775,6 +1775,7 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   z.object({
     type: z.literal("set_presence"),
+    revision: z.number().int().positive(),
     applicationState: z.enum(["foreground", "background"]),
     foregroundWorkstreamId: WorkstreamIdSchema.nullable(),
   }).strict(),

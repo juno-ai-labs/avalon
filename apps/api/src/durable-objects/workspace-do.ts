@@ -382,6 +382,7 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
   connectedAt: string;
   subscribed: boolean;
   lastWaterline: number;
+  presenceRevision: number;
   applicationState: "foreground" | "background";
   foregroundWorkstreamId: string | null;
 }
@@ -973,9 +974,10 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       connectedAt: z.string().datetime({ offset: true }),
       subscribed: z.boolean(),
       lastWaterline: z.number().int().nonnegative(),
-      // Sockets accepted by the previous deployment carry neither field. They
+      // Sockets accepted by the previous deployment carry none of these fields. They
       // resume safely as backgrounded and write the explicit shape on their
       // first presence event instead of being disconnected during rollout.
+      presenceRevision: z.number().int().nonnegative().default(0),
       applicationState: z.enum(["foreground", "background"]).default("background"),
       foregroundWorkstreamId: WorkstreamIdSchema.nullable().default(null),
     }).safeParse(socket.deserializeAttachment());
@@ -1468,25 +1470,33 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         });
         return;
       }
-      if (!attachment.subscribed
+      // D1 authentication yields the input gate. A newer focus transition can
+      // therefore finish while this one is waiting; re-read the attachment and
+      // fence the older command before it can restore stale presence.
+      const currentAttachment = readAttachment(socket);
+      if (!currentAttachment || parsed.data.revision <= currentAttachment.presenceRevision) return;
+      if (!currentAttachment.subscribed
         || (parsed.data.foregroundWorkstreamId !== null
-          && !this.directoryVisible(attachment.userId, parsed.data.foregroundWorkstreamId))) {
-        this.closeSocket(socket, attachment, {
+          && !this.directoryVisible(currentAttachment.userId, parsed.data.foregroundWorkstreamId))) {
+        this.closeSocket(socket, currentAttachment, {
           code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
           reason: "Invalid workspace presence",
-          cause: attachment.subscribed ? "presence_workstream_inaccessible" : "presence_before_subscribe",
+          cause: currentAttachment.subscribed
+            ? "presence_workstream_inaccessible"
+            : "presence_before_subscribe",
           operation: "presence",
         });
         return;
       }
-      if (attachment.applicationState === parsed.data.applicationState
-        && attachment.foregroundWorkstreamId === parsed.data.foregroundWorkstreamId) return;
+      const presenceChanged = currentAttachment.applicationState !== parsed.data.applicationState
+        || currentAttachment.foregroundWorkstreamId !== parsed.data.foregroundWorkstreamId;
       socket.serializeAttachment({
-        ...attachment,
+        ...currentAttachment,
+        presenceRevision: parsed.data.revision,
         applicationState: parsed.data.applicationState,
         foregroundWorkstreamId: parsed.data.foregroundWorkstreamId,
       } satisfies WorkspaceSocketAttachment);
-      this.broadcastPresence();
+      if (presenceChanged) this.broadcastPresence();
       return;
     }
     if (parsed.data.type === "list_workstreams") {
@@ -1533,12 +1543,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceSocketCloseInput,
   ): void {
     const wasPresent = contributesPresence(attachment);
-    if (wasPresent) socket.serializeAttachment({
-      ...attachment,
-      applicationState: "background",
-      foregroundWorkstreamId: null,
-    } satisfies WorkspaceSocketAttachment);
+    if (wasPresent) {
+      try {
+        socket.serializeAttachment({
+          ...attachment,
+          applicationState: "background",
+          foregroundWorkstreamId: null,
+        } satisfies WorkspaceSocketAttachment);
+      } catch {
+        // Closing and the exclusion fence below still remove this socket from
+        // the canonical set when its attachment cannot be rewritten.
+      }
+    }
     closeWorkspaceSocket(this.env, socket, attachment, input);
+    // Exclusion is the cleanup fence even if attachment serialization failed
+    // while disconnecting. A broken socket cannot block or rejoin this rebuild.
     if (wasPresent) this.broadcastPresence(socket);
   }
 
@@ -1548,12 +1567,28 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * keeps the frame equal to the one face pile the renderer can paint.
    */
   private broadcastPresence(excluding?: WebSocket): void {
-    const sockets = this.state.getWebSockets()
-      .filter((socket) => socket !== excluding)
-      .flatMap((socket) => {
-        const attachment = readAttachment(socket);
-        return attachment?.subscribed ? [{ socket, attachment }] : [];
-      });
+    const sockets: Array<{ socket: WebSocket; attachment: WorkspaceSocketAttachment }> = [];
+    for (const socket of this.state.getWebSockets()) {
+      if (socket === excluding) continue;
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      if (contributesPresence(attachment)
+        && !this.directoryVisible(attachment.userId, attachment.foregroundWorkstreamId)) {
+        try {
+          socket.serializeAttachment({
+            ...attachment,
+            applicationState: "background",
+            foregroundWorkstreamId: null,
+          } satisfies WorkspaceSocketAttachment);
+        } catch {
+          // Fail closed: an attachment that cannot record lost visibility must
+          // reconnect before it can contribute or receive presence again.
+          disconnect(socket, WORKSPACE_SOCKET_INVALID_MESSAGE_CODE, "Invalid workspace presence");
+        }
+        continue;
+      }
+      sockets.push({ socket, attachment });
+    }
     const presentUsers = new Map<string, Set<string>>();
     for (const { attachment } of sockets) {
       if (attachment.applicationState !== "foreground" || attachment.foregroundWorkstreamId === null) continue;
@@ -2092,11 +2127,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (!attachment || !revocationClosesSocket(request, attachment)) continue;
       const wasPresent = contributesPresence(attachment);
       presenceChanged ||= wasPresent;
-      if (wasPresent) socket.serializeAttachment({
-        ...attachment,
-        applicationState: "background",
-        foregroundWorkstreamId: null,
-      } satisfies WorkspaceSocketAttachment);
+      if (wasPresent) {
+        try {
+          socket.serializeAttachment({
+            ...attachment,
+            applicationState: "background",
+            foregroundWorkstreamId: null,
+          } satisfies WorkspaceSocketAttachment);
+        } catch {
+          // `disconnect` still unsubscribes or closes the socket; a failed
+          // attachment rewrite must not interrupt access revocation.
+        }
+      }
       disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer access this workspace");
       closed += 1;
     }
@@ -3021,6 +3063,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       await this.refreshTerminalSchedule();
     }
     if (directoryChanged) {
+      // Scope, participant, generation, and archival effects can invalidate a
+      // foreground attachment without another client focus event. Rebuild now,
+      // before the async state publications yield, so removed viewers neither
+      // contribute to nor receive the next presence snapshot.
+      this.broadcastPresence();
       await Promise.all([
         ...commonChanges,
       ].map((workstreamId) => this.publishWorkstreamState(workstreamId)));
@@ -3814,6 +3861,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       connectedAt: new Date().toISOString(),
       subscribed: false,
       lastWaterline: 0,
+      presenceRevision: 0,
       applicationState: "background",
       foregroundWorkstreamId: null,
     };

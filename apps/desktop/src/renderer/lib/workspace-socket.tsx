@@ -215,6 +215,7 @@ export function WorkspaceSocketProvider({
     const socketTelemetry = realtimeSocketTelemetry('workspace');
     const isOffline = (): boolean => navigator.onLine === false;
     let lastWaterline = -1;
+    let presenceRevision = 0;
     const pending = new Map<string, PendingCommand>();
     const pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
     let subscribed = false;
@@ -226,6 +227,7 @@ export function WorkspaceSocketProvider({
       if (!subscribed || target?.readyState !== WebSocket.OPEN) return;
       target.send(JSON.stringify({
         type: 'set_presence',
+        revision: presenceRevision += 1,
         applicationState: applicationForegrounded ? 'foreground' : 'background',
         foregroundWorkstreamId: applicationForegrounded && windowForegrounded
           ? foregroundWorkstreamIdRef.current
@@ -536,6 +538,7 @@ export function WorkspaceSocketProvider({
           clearHeartbeat();
           subscribed = false;
           socket = null;
+          setPresenceUserIdsByWorkstream({});
           const accessRevoked = event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE;
           const permanentError = accessRevoked
             ? new ApiError(
@@ -642,6 +645,7 @@ export function WorkspaceSocketProvider({
       clearHeartbeat();
       if (socket) socketTelemetry.willClose('offline');
       setState('unavailable');
+      setPresenceUserIdsByWorkstream({});
       rejectPendingDirectoryRequests(new ApiError(
         'The work-stream directory cannot be loaded while offline.',
         0,
@@ -696,6 +700,10 @@ export function WorkspaceSocketProvider({
     const validatedWorkstreamId = parsed.success ? parsed.data : null;
     if (foregroundWorkstreamIdRef.current === validatedWorkstreamId) return;
     foregroundWorkstreamIdRef.current = validatedWorkstreamId;
+    // Presence snapshots are valid only for the foreground route and live
+    // transport that received them. Never paint a prior visit while the next
+    // canonical socket frame is in flight.
+    setPresenceUserIdsByWorkstream({});
     reportPresenceRef.current();
   }, []);
   const value = useMemo(
