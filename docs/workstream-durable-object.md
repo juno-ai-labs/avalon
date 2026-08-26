@@ -1254,6 +1254,30 @@ stable reason; Queue acknowledgement alone must never be presented as provider
 delivery.
 
 
+### 2026-08-25 — Automation opens stay on their authorized workspace state
+
+**What changed:** Automation detail uses its first authorized subscription row
+for the stored email address and calls an internal bounded run-history reader.
+The standalone run-history route retains the subscription authorization. The
+manual, scheduled, and activity-triggered provisioners now copy subscription
+scope to each generated WorkstreamDO.
+
+**Why:** Re-reading the same subscription did not change the permission result,
+and re-verifying an owner-verified email route made a regional detail read wait
+on Global. A generated object's scope must also agree with the automation's
+declared user/workspace audience so its native detail, directory, socket, and
+resource checks all enforce the same rule.
+
+**Considered and rejected:** Caching Global verification and adding an
+automation-specific reader exception inside WorkstreamDO. The former keeps an
+unnecessary cross-region dependency; the latter makes stored scope cease to be
+the reader authority.
+
+**What a future change has to respect:** Public entry points authorize once,
+then use internal helpers for subordinate reads. Route repair remains a
+lifecycle operation, and every automation run producer supplies the subscription
+scope during object provisioning.
+
 ### 2026-08-25 — Automation history stops waking every run object
 
 **What changed:** An authorized automation detail or run-history read now returns

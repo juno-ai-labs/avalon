@@ -974,7 +974,7 @@ async function startActivityAutomation(
         workstreamId: asWorkstreamId(workstreamId),
         title: `${subscription.template_name}: ${activity.title}`.slice(0, 180),
         objective: subscription.template_description,
-        scope: "personal",
+        scope: subscription.scope,
         originType: "automation",
         createdByUserId: audienceUserId,
         participantUserIds: [audienceUserId],

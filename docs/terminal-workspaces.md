@@ -450,6 +450,29 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-25 — Start fresh authorizes once at the participant authority
+
+**What changed:** `startFresh` checks the calling member directly against the
+work stream's authoritative participant rows, then returns state through an
+internal post-authorization reader. It no longer checks the workspace directory
+before that participant lookup or calls the public visibility-checking `get`
+method afterward.
+
+**Why:** Starting fresh requires participation, which is stricter than visibility
+for workspace-scoped work streams and is already decided by WorkstreamDO. The
+two directory reads repeated weaker authorization before and after the mutation
+without protecting a separate resource.
+
+**Considered and rejected:** Keeping one visibility read to preserve the exact
+404/403 distinction for nonparticipants. That distinction would require a
+second authority lookup on every successful start and does not alter who may
+replace a Terminal workspace.
+
+**What a future change has to respect:** Public state reads still require
+visibility. Mutations that require participation authorize at the participant
+authority once and must use internal readers after that boundary rather than
+re-entering public authorization.
+
 ### 2026-08-25 — Sandbox paths are .rally
 
 **What changed:** `/workspace/.avalon` and `/workspace/.avalon-output` are

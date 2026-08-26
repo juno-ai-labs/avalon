@@ -57,6 +57,7 @@ const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
   ensureAutomationAddress.mockClear();
+  vi.restoreAllMocks();
 });
 
 function serviceFor(
@@ -143,6 +144,20 @@ function runCount(database: DatabaseSync): number {
 }
 
 describe("automation lifecycle", () => {
+  it("loads detail from the authorized subscription without reconciling its email or authorizing twice", async () => {
+    const database = seededDatabase();
+    const runs = vi.spyOn(AutomationService.prototype, "runs");
+
+    await expect(serviceFor(database).get("00000000-0000-7000-8000-000000000007"))
+      .resolves.toMatchObject({
+        emailAddress: "calm-bright-gentle-otter@automation.with-avalon.com",
+        recentRuns: [],
+      });
+
+    expect(ensureAutomationAddress).not.toHaveBeenCalled();
+    expect(runs).not.toHaveBeenCalled();
+  });
+
   it("returns every run authorized by the automation without waking run work streams", async () => {
     const database = seededDatabase();
     const visibleWorkstreamId = "00000000-0000-7000-8000-000000000041";
