@@ -531,7 +531,7 @@ Queue message must be self-contained because no canonical WorkspaceDO event
 exists yet. Once step 5 commits, WorkspaceDO is the only event authority. A
 second event copy would either have to be ignored or hash-checked against that
 authority, so it cannot remove the claim/load RPC; it could also become stale,
-increases every retry, and leaves normalized provider content in the DLQ when
+increase every retry's payload, and leave normalized provider content in the DLQ when
 processing exhausts. The ID-only pointer makes processing retries and exhausted
 messages content-free. The cost is one additional same-Queue send after commit.
 That handoff is closed by acknowledging ingress only after Cloudflare accepts
