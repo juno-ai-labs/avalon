@@ -140,6 +140,48 @@ function memoryRevisionConflict(): MemoryToolError {
   );
 }
 
+/** The scope kinds a refusal names, in the order the union resolved them. */
+function scopeList(scopes: readonly MemoryScope[]): string {
+  return scopes.length === 0 ? "none" : scopes.map((scope) => scope.kind).join(", ");
+}
+
+/**
+ * The two refusals a write tool raises when the kind the model chose is not in
+ * this run's union — each naming the kinds that are.
+ *
+ * `scopeKind` is declared as the whole static enum, so every run is offered
+ * kinds it may not resolve, and a bare `memory_scope_not_available:workstream`
+ * told the model only that its choice was wrong, never which to make instead.
+ * That became a routine answer rather than an edge case when runs carrying no
+ * automation subscription started reaching the tool loop in a work stream an
+ * automation created: they hold no work-stream scope, and the standing plugin
+ * policy points a conversational run at that kind first. Typed for the reason
+ * `memoryRevisionConflict` is — an untyped `Error` reaches the model with no
+ * code and no next action (`docs/agent-tools.md`).
+ */
+export function unavailableScopeError(
+  kind: MemoryScopeKind,
+  scopes: readonly MemoryScope[],
+): MemoryToolError {
+  return new MemoryToolError(
+    "memory_scope_not_available",
+    `This run cannot reach ${kind} memory. Its scopes are: ${scopeList(scopes)}.`,
+    { reason: `Retry with one of: ${scopeList(scopes)} — narrowest first. If none of them fits, say the fact could not be stored durably instead of storing it elsewhere.` },
+  );
+}
+
+export function unwritableScopeError(
+  kind: MemoryScopeKind,
+  scopes: readonly MemoryScope[],
+): MemoryToolError {
+  const writable = scopes.filter((scope) => scope.writable);
+  return new MemoryToolError(
+    "memory_scope_not_writable",
+    `This run may read ${kind} memory but not write it. It may write: ${scopeList(writable)}.`,
+    { reason: `Retry with one of: ${scopeList(writable)}. If none of them fits, say the fact could not be stored durably instead of storing it elsewhere.` },
+  );
+}
+
 function d1Changes(result: D1Result<unknown>): number {
   return Number((result.meta as { changes?: unknown } | undefined)?.changes ?? 0);
 }
@@ -300,16 +342,12 @@ export async function resolveMemoryAccess(
   // and the run's own `automationSubscriptionId` is what decides that — not how
   // the work stream was created. This used to also demand
   // `origin_type === "ad_hoc"`, which read as a consistency check and was in
-  // fact a refusal: an automation posts its result into a work stream a member
-  // can then reply in, and that reply admits an ordinary user-principal run
-  // carrying no subscription. Every such follow-up threw
-  // `memory_ad_hoc_workstream_mismatch` out of `freezeRunMemoryContext`, the
-  // first recall the harness performs, so the run died as
-  // `harness_execution_failed` before the model saw anything — the manual retry
-  // included, since it takes the same path and so could never clear it.
-  // `resolveRunAuthority` already treats a run with no subscription as a
-  // non-automation run in any work stream; this is the memory union agreeing
-  // with it.
+  // fact a refusal of every run a member's reply admits.
+  // `assertRunAuthorityStillValid` treats a run with no subscription as a
+  // non-automation run in any work stream, and that field is the run's
+  // authority claim rather than a description of its container; this is the
+  // memory union agreeing with it. See `docs/agent-harness.md` §Scoped durable
+  // memory for the class this covers and the two questions left open.
   if (input.executionPrincipal.type === "user") {
     scopes.push(await ensureScope(
       env,
@@ -319,24 +357,35 @@ export async function resolveMemoryAccess(
       true,
     ));
   }
-  // A work-stream scope, though, still belongs only to a work stream that owns
-  // one. Migration 0036's `memory_scopes_validate_workstream_owner` refused to
-  // create one for an automation-origin work stream, because every run of a
-  // subscription gets a fresh work stream and memory left in one of them is
-  // unrecallable — which is what the subscription's own scope exists for. 0090
-  // dropped that trigger with the rest of D1's product enforcement when memory
-  // moved into WorkspaceDO, but nothing retired the rule it stated, and the
-  // workspace object cannot see a work stream's origin, so this is the only
-  // place left that can hold it.
+  // A work-stream scope, though, belongs only to a work stream that owns one.
+  // Migration 0036's `memory_scopes_validate_workstream_owner` refused to create
+  // one for a work stream an automation made, because every run of a
+  // subscription gets a fresh work stream and memory left in one of them can
+  // never be recalled — which is what the subscription's own scope exists for.
+  // 0090 dropped that trigger with the rest of D1's product enforcement when
+  // memory moved into WorkspaceDO, and nothing retired the rule it stated.
   //
-  // The union a reply therefore gets is workspace plus the member's own user
-  // scope. It reaches neither the subscription's automation memory nor a scope
-  // of its own. Widening it either way is a product decision about who may read
-  // what an automation accumulated, and about whether a reply thread under a
-  // disposable work stream should accrue memory at all; the branch above
-  // remains the only way into an automation scope, and it is still reached only
-  // by a run that declares the subscription and whose principal matches it.
-  if (workstream.origin_type === "ad_hoc" && !workstream.automation_subscription_id) {
+  // Held here rather than back in the schema, and not for lack of visibility:
+  // `workspace_workstream_directory` does carry both fields. But that row is a
+  // generation-fenced projection behind a waterline, so a constraint reading it
+  // would gate scope creation on projection timing and fail closed on a work
+  // stream not yet projected — and memory rows there deliberately hold
+  // work-stream ids as opaque provenance rather than foreign keys
+  // (`docs/workstream-durable-object.md`). This function reads the identity
+  // object directly and owes no such timing. It reads it safely only because
+  // every automation producer provisions the work stream before dispatching a
+  // run into it; a producer that dispatched first would reach this with the
+  // identity root's `origin_type` default still standing.
+  //
+  // Only the subscription id is tested, where 0036 tested the origin label too.
+  // The label is a second name for the same bit — the three automation
+  // producers set both together and nothing updates either afterwards — and it
+  // is the weaker of the two: the identity root declares
+  // `origin_type TEXT NOT NULL DEFAULT 'ad_hoc'` with no CHECK, so keying on it
+  // would silently drop this scope for any value that is neither. The
+  // subscription id is the fact the rule is about, and the same field the
+  // automation branch above keys on.
+  if (!workstream.automation_subscription_id) {
     scopes.push(await ensureScope(
       env,
       input.workspaceId,
@@ -666,8 +715,8 @@ async function writableScope(
 ): Promise<MemoryScope> {
   const scopes = await resolveMemoryAccess(env, input);
   const scope = scopes.find((candidate) => candidate.kind === kind);
-  if (!scope) throw new Error(`memory_scope_not_available:${kind}`);
-  if (!scope.writable) throw new Error(`memory_scope_not_writable:${kind}`);
+  if (!scope) throw unavailableScopeError(kind, scopes);
+  if (!scope.writable) throw unwritableScopeError(kind, scopes);
   return scope;
 }
 
