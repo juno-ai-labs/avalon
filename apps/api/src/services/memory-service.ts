@@ -140,9 +140,35 @@ function memoryRevisionConflict(): MemoryToolError {
   );
 }
 
-/** The scope kinds a refusal names, in the order the union resolved them. */
+/**
+ * The scope kinds a refusal names, narrowest first.
+ *
+ * `MEMORY_SCOPE_KINDS` is declared in that order and the plugin policy asks for
+ * the narrowest scope that fits, so a retry list has to agree with both. The
+ * union itself resolves broadest first — workspace, then user, then the work
+ * stream — and handing that order back told the model to try workspace first,
+ * which is the widest audience and the one an ordinary member usually cannot
+ * write at all.
+ */
 function scopeList(scopes: readonly MemoryScope[]): string {
-  return scopes.length === 0 ? "none" : scopes.map((scope) => scope.kind).join(", ");
+  if (scopes.length === 0) return "none";
+  return [...scopes]
+    .sort((left, right) =>
+      MEMORY_SCOPE_KINDS.indexOf(left.kind) - MEMORY_SCOPE_KINDS.indexOf(right.kind))
+    .map((scope) => scope.kind)
+    .join(", ");
+}
+
+/**
+ * What a refusal may tell the model to retry with: the scopes it can actually
+ * write, never the ones it may only read. Naming a readable-but-unwritable
+ * scope spends the model's next turn on a second refusal.
+ */
+function retryInstruction(scopes: readonly MemoryScope[]): string {
+  const writable = scopes.filter((scope) => scope.writable);
+  return writable.length === 0
+    ? "This run can write no durable memory at all. Say the fact could not be stored rather than looking for another scope."
+    : `Retry with one of: ${scopeList(writable)} — narrowest first. If none of them fits, say the fact could not be stored durably instead of storing it elsewhere.`;
 }
 
 /**
@@ -166,7 +192,7 @@ export function unavailableScopeError(
   return new MemoryToolError(
     "memory_scope_not_available",
     `This run cannot reach ${kind} memory. Its scopes are: ${scopeList(scopes)}.`,
-    { reason: `Retry with one of: ${scopeList(scopes)} — narrowest first. If none of them fits, say the fact could not be stored durably instead of storing it elsewhere.` },
+    { reason: retryInstruction(scopes) },
   );
 }
 
@@ -178,7 +204,7 @@ export function unwritableScopeError(
   return new MemoryToolError(
     "memory_scope_not_writable",
     `This run may read ${kind} memory but not write it. It may write: ${scopeList(writable)}.`,
-    { reason: `Retry with one of: ${scopeList(writable)}. If none of them fits, say the fact could not be stored durably instead of storing it elsewhere.` },
+    { reason: retryInstruction(scopes) },
   );
 }
 
