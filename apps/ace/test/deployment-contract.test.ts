@@ -104,7 +104,7 @@ describe('Ace deployment contract', () => {
     }
   });
 
-  it('provisions the Access application and every enabled-named flag', async () => {
+  it('provisions Access and flags, then validates the runtime Queue permission', async () => {
     const deploy = await readFile(`${aceDirectory}/scripts/deploy.mjs`, 'utf8');
 
     expect(deploy).toContain("const migrationDomain = 'migrations.internal.rallywith.ai'");
@@ -114,6 +114,7 @@ describe('Ace deployment contract', () => {
     expect(deploy).toContain("ensureFlag('suggested-work-enabled'");
     expect(deploy).toContain("ensureFlag('automation-workspace-templates-enabled'");
     expect(deploy).toContain('variations: { off: false, on: true }');
+    expect(deploy).toContain('await verifyRuntimeQueuePermissions({ accountId, token: aceRuntimeToken })');
   });
 
   it("provisions every managed flag with the default variation its own catalog entry declares", async () => {

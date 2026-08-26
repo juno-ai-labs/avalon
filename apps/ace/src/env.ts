@@ -18,6 +18,7 @@ export interface Env extends AccessEnvironment {
   ACE_DEV_AUTH?: string;
   CLOUDFLARE_ACCOUNT_ID: string;
   FLAGSHIP_APP_ID: string;
+  /** Historical name; the dedicated Ace token also holds Queues Edit. */
   CLOUDFLARE_FLAGSHIP_API_TOKEN: string;
 }
 
