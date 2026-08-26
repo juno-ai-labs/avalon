@@ -71,7 +71,10 @@ docs/                      Product, architecture, security, setup, runbooks
    [`menu-bar.md`](menu-bar.md) owns it. Main also owns the typed telemetry
    reporter, route and identity epochs, local spool, Crashpad generations, and
    authenticated regional upload; the renderer can only invoke registered
-   semantic calls.
+   semantic calls. Main additionally publishes application foreground changes
+   over that bridge. A renderer combines them with its own window focus and
+   active work-stream route before reporting ephemeral presence to WorkspaceDO;
+   pooled work-stream sockets are never treated as attention.
 2. **`apps/api`** is a Hono application deployed as the same Cloudflare Worker
    code in Global and EU environments. It owns authentication, authorization,
    REST endpoints, WebSocket upgrades, D1 repositories, R2 objects, Queue
@@ -90,7 +93,7 @@ docs/                      Product, architecture, security, setup, runbooks
 ```mermaid
 flowchart LR
   E["Electron renderer"] -->|"typed HTTPS"| H["Hono API"]
-  E <-->|"workspace sync + command WebSocket"| WD["WorkspaceDO"]
+  E <-->|"workspace sync + command + presence WebSocket"| WD["WorkspaceDO"]
   E <-->|"aggregate metadata WebSocket"| WS["WorkstreamDO (no agent)"]
   E <-->|"direct feed WebSocket"| SA["SubstreamAgent"]
   E <-->|"derived block WebSocket"| HB["BlockDashboardAgent"]
@@ -782,6 +785,28 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-26 — Foreground presence crosses the desktop and WorkspaceDO boundary
+
+**What changed:** Electron main now exposes application foreground transitions
+through the preload bridge. The renderer combines application focus with its
+own window and active work-stream route, and reports the result on its existing
+WorkspaceDO connection. WorkspaceDO keeps that state in hibernation attachments
+and broadcasts authorized, viewer-scoped presence for the current face pile.
+
+**Why:** A renderer route can remain mounted while the application or its
+window is hidden, and retained work-stream sockets intentionally outlive route
+selection. Neither fact alone represents current attention.
+
+**Considered and rejected:** Main-process route ownership would duplicate
+renderer navigation state. WorkstreamDO/SubstreamAgent socket liveness would
+misclassify pooled connections. Durable presence storage would add writes and
+expiry machinery to connection-scoped state.
+
+**Consequences:** Application focus is the only new main-to-renderer signal;
+the renderer remains the authority for its visible route. Presence is
+ephemeral, hibernation-safe, excluded from workspace sync waterlines, and
+removed on background or socket loss.
 
 ### 2026-08-25 — Replay loss repairs the admitted socket with canonical state
 

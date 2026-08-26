@@ -208,6 +208,21 @@ Electron does not fall back to a D1 work-stream list. A user message is never ac
 workspace authorization and routing at the parent boundary while keeping the
 high-volume read/stream path direct to its child.
 
+The same persistent workspace socket carries explicit foreground presence. Each
+hibernation attachment records whether Rally itself is foregrounded and which
+work stream, if any, is foreground in that renderer window. WorkspaceDO
+validates that work stream against its local viewer directory, reconstructs the
+present-user set from all healthy attachments, and sends each connection only
+the set for its own foreground work stream. The recipient's user ID is omitted.
+Presence is not inferred from the selected work stream's retained metadata or
+feed sockets: those remain open in the background precisely to make switching
+instantaneous. There is no presence SQL table, alarm, timeout, or expiry guess;
+healthy attachments survive hibernation and socket close/error removes their
+contribution.
+No presence state or recovery travels over REST. The existing HTTP ticket
+exchange may establish the WebSocket, but every presence update and snapshot
+after that handshake is a non-replayed socket frame.
+
 A window that only listens is never re-checked against D1. A socket is authorized
 when it connects and then holds until something closes it; no publish path asks
 D1 whether the person may still listen, and no object re-checks on a timer. Two
@@ -780,6 +795,8 @@ misrouted product statement now fails because the table or column is absent.
 - **`WorkstreamDO` runs no model and owns no transcript.** Putting an agent there recreates one serialization bottleneck across substreams.
 - **High-volume child reads and streams never proxy through a parent.** Doing so would turn the control plane into the throughput and availability ceiling for every child.
 - **User messages enter through `WorkspaceDO`; aggregate metadata streams from `WorkstreamDO`; transcript/token feeds stream directly from `SubstreamAgent`.** Accepting writes on either read socket creates another authorization and ordering boundary.
+- **An open work-stream socket is not foreground presence.** Electron reports application, window, and route foreground explicitly on its WorkspaceDO socket; retained metadata/feed sockets may stay open while their work stream is in the background.
+- **Workspace presence is ephemeral, attachment-backed, and viewer-scoped.** WorkspaceDO validates the reported work stream against its local directory, omits the receiving user, and never persists a presence table or sends a workspace-wide personal-work-stream map.
 - **Every Durable Object persists through explicit SQL.** KV calls create invisible schema and bypass migration, constraints, inspection, and lint.
 - **Room sequence and active text commit atomically.** Advancing only the cursor loses streamed text after eviction.
 - **One unexpired attempt lease owns a child run.** Two owners can duplicate an external tool effect or terminal assistant message.
@@ -815,7 +832,8 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Migration hash mismatch/schema ahead/foreign-key violation | Constructor activation fails; no request observes a partially migrated schema. |
 | Object ID has the wrong/no jurisdiction in staging or production | Constructor activation fails before serving state; callers cannot silently use the unrestricted graph. |
 | Location hint cannot be honored | Cloudflare selects the nearest available location inside the jurisdiction; correctness and residency do not depend on the best-effort hint. |
-| Workspace socket hibernates | Runtime restores attachments; replayed tickets are rejected, topic waterlines resume, and pending commands resend under the same client message ID. |
+| Workspace socket hibernates | Runtime restores attachments, including explicit foreground presence; replayed tickets are rejected, topic waterlines resume, and pending commands resend under the same client message ID. |
+| Foreground renderer or application moves to the background | Electron sends `set_presence` with no foreground work stream; WorkspaceDO immediately rebuilds viewer-scoped presence while the retained work-stream sockets remain open. An unclean socket close/error has the same removal effect. |
 | Workstream metadata socket hibernates | Runtime restores identity; subscribe returns a complete authoritative viewer snapshot and later effects push newer revisions. |
 | Child evicted during a 2–30 minute or rare 2+ hour run | Keep-alive reduces occurrence; dispatch ledger plus lease resumes after activation/expiry. |
 | Feed replay window lost | Child sends a canonical snapshot on the admitted socket, catches up events published during assembly, and keeps the subscription open. |
@@ -852,7 +870,8 @@ schema history and compaction singleton lifecycle. The real runtime suite uses
 `evictDurableObject`. `test-workers/durable-object-runtime.test.ts` exercises
 constructor migrations, per-object SQL isolation across eviction, keep-alive
 alarms, `WorkstreamDO` aggregation and metadata snapshots, hibernating workspace
-and work-stream control sockets, typed native-RPC success/conflict envelopes,
+and work-stream control sockets, foreground presence across WorkspaceDO eviction
+plus inaccessible-work-stream rejection, typed native-RPC success/conflict envelopes,
 bidirectional message pages without room-cursor movement, page revocation,
 compaction recovery, HyperSight checkpoint recovery/revocation, socket
 revocation across all four roles, obsolete queued
@@ -1145,6 +1164,39 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-26 — Foreground presence is explicit on the workspace socket
+
+**What changed:** Electron main now publishes application foreground changes
+through the preload bridge. Each renderer combines that signal with its own
+window focus and active work-stream route, then sends `set_presence` after its
+WorkspaceDO subscription is admitted. WorkspaceDO stores the explicit state in
+the socket's hibernation attachment, validates foreground work-stream visibility
+against its local directory, and broadcasts a viewer-scoped user set. The
+work-stream face pile gives other present participants a subtle repeating ring;
+the current user is omitted and reduced-motion users receive a static ring.
+
+**Why:** The metadata/feed socket pool deliberately retains recently viewed
+work streams, so socket liveness describes warm transport rather than current
+attention. Presence must also disappear when Rally or the renderer window is in
+the background, and it needs a direct broadcast path compatible with the
+500 ms P50 and 1.5 s P90 product targets.
+
+**Considered and rejected:** Inferring presence from any open work-stream socket
+would mark pooled background work streams as active. Route state alone would
+leave a hidden or unfocused Rally window present. A class-memory map would be
+lost when WorkspaceDO hibernates. A SQL presence table plus TTL/alarm would add
+writes and guessed expiry behavior even though Cloudflare already preserves
+healthy socket attachments and reports close/error.
+
+**Consequences, and what a future change has to respect:** Presence remains
+ephemeral and must never become product authority. Every reconnect reasserts it
+only after the workspace subscription response, every reported work stream is
+authorized locally, and each recipient receives only the set its visible face
+pile needs. Presence must never gain a REST read/write or recovery path. The
+direct same-object broadcast is designed for the latency target,
+but production percentiles still require measurement; a future telemetry change
+must not include workspace membership or presence sets in analytics payloads.
 
 ### 2026-08-26 — Group actions use one generic filter and queued per-stream updates
 

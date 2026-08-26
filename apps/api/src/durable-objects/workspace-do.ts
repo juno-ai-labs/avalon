@@ -17,9 +17,11 @@ import {
   WorkspaceWorkstreamStateEventSchema,
   WorkspaceSocketClientEventSchema,
   WorkspaceFeatureFlagsEventSchema,
+  WorkspacePresenceEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceSyncTopicSchema,
   WORKSTREAM_NAMING_GRACE_MS,
+  WorkstreamIdSchema,
   WorkstreamSchema,
   WorkstreamSocketCommandResultSchema,
   type AutomationSummary,
@@ -380,6 +382,8 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
   connectedAt: string;
   subscribed: boolean;
   lastWaterline: number;
+  applicationState: "foreground" | "background";
+  foregroundWorkstreamId: string | null;
 }
 
 interface WorkspaceDirectoryRow extends Record<string, SqlStorageValue> {
@@ -969,11 +973,28 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       connectedAt: z.string().datetime({ offset: true }),
       subscribed: z.boolean(),
       lastWaterline: z.number().int().nonnegative(),
+      // Sockets accepted by the previous deployment carry neither field. They
+      // resume safely as backgrounded and write the explicit shape on their
+      // first presence event instead of being disconnected during rollout.
+      applicationState: z.enum(["foreground", "background"]).default("background"),
+      foregroundWorkstreamId: WorkstreamIdSchema.nullable().default(null),
     }).safeParse(socket.deserializeAttachment());
     return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }
+}
+
+function contributesPresence(
+  attachment: WorkspaceSocketAttachment | null,
+): attachment is WorkspaceSocketAttachment & {
+  subscribed: true;
+  applicationState: "foreground";
+  foregroundWorkstreamId: string;
+} {
+  return attachment?.subscribed === true
+    && attachment.applicationState === "foreground"
+    && attachment.foregroundWorkstreamId !== null;
 }
 
 /**
@@ -1007,21 +1028,24 @@ type WorkspaceSocketOperation =
   | "decode"
   | "validate"
   | "subscribe"
+  | "presence"
   | "list_workstreams"
   | "create_message";
+
+interface WorkspaceSocketCloseInput {
+  code: number;
+  reason: string;
+  cause: string;
+  operation: WorkspaceSocketOperation;
+  frameBytes?: number;
+  validationIssues?: ReadonlyArray<{ path: string; code: string }>;
+}
 
 function closeWorkspaceSocket(
   env: Env,
   socket: WebSocket,
   attachment: WorkspaceSocketAttachment | null,
-  input: {
-    code: number;
-    reason: string;
-    cause: string;
-    operation: WorkspaceSocketOperation;
-    frameBytes?: number;
-    validationIssues?: ReadonlyArray<{ path: string; code: string }>;
-  },
+  input: WorkspaceSocketCloseInput,
 ): void {
   logWarn(env, "workspace_socket_closed", {
     code: input.cause,
@@ -1359,7 +1383,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const attachment = readAttachment(socket);
     if (!attachment) {
-      closeWorkspaceSocket(this.env, socket, null, {
+      this.closeSocket(socket, null, {
         code: 1011,
         reason: "Missing workspace connection identity",
         cause: "missing_connection_identity",
@@ -1375,7 +1399,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     try {
       decoded = JSON.parse(raw);
     } catch {
-      closeWorkspaceSocket(this.env, socket, attachment, {
+      this.closeSocket(socket, attachment, {
         code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
         reason: "Workspace commands must be JSON",
         cause: "invalid_json",
@@ -1406,7 +1430,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const parsed = WorkspaceSocketClientEventSchema.safeParse(decoded);
     if (!parsed.success) {
-      closeWorkspaceSocket(this.env, socket, attachment, {
+      this.closeSocket(socket, attachment, {
         code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
         reason: "Invalid workspace socket event",
         cause: "invalid_event",
@@ -1422,7 +1446,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (parsed.data.type === "subscribe") {
       const auth = await this.sessionAuth(attachment);
       if (!auth) {
-        closeWorkspaceSocket(this.env, socket, attachment, {
+        this.closeSocket(socket, attachment, {
           code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
           reason: "Session no longer active",
           cause: "session_inactive",
@@ -1433,10 +1457,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       await this.subscribe(socket, attachment, parsed.data.afterWaterline);
       return;
     }
+    if (parsed.data.type === "set_presence") {
+      const auth = await this.sessionAuth(attachment);
+      if (!auth) {
+        this.closeSocket(socket, attachment, {
+          code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
+          reason: "Session no longer active",
+          cause: "session_inactive",
+          operation: "presence",
+        });
+        return;
+      }
+      if (!attachment.subscribed
+        || (parsed.data.foregroundWorkstreamId !== null
+          && !this.directoryVisible(attachment.userId, parsed.data.foregroundWorkstreamId))) {
+        this.closeSocket(socket, attachment, {
+          code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
+          reason: "Invalid workspace presence",
+          cause: attachment.subscribed ? "presence_workstream_inaccessible" : "presence_before_subscribe",
+          operation: "presence",
+        });
+        return;
+      }
+      if (attachment.applicationState === parsed.data.applicationState
+        && attachment.foregroundWorkstreamId === parsed.data.foregroundWorkstreamId) return;
+      socket.serializeAttachment({
+        ...attachment,
+        applicationState: parsed.data.applicationState,
+        foregroundWorkstreamId: parsed.data.foregroundWorkstreamId,
+      } satisfies WorkspaceSocketAttachment);
+      this.broadcastPresence();
+      return;
+    }
     if (parsed.data.type === "list_workstreams") {
       const auth = await this.sessionAuth(attachment);
       if (!auth) {
-        closeWorkspaceSocket(this.env, socket, attachment, {
+        this.closeSocket(socket, attachment, {
           code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
           reason: "Session no longer active",
           cause: "session_inactive",
@@ -1461,12 +1517,68 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.createMessage(socket, attachment, parsed.data);
   }
 
-  override webSocketClose(): void {
-    // Hibernating sockets carry all durable identity in their attachment.
+  override webSocketClose(socket: WebSocket): void {
+    if (contributesPresence(readAttachment(socket))) this.broadcastPresence(socket);
   }
 
-  override webSocketError(): void {
-    // The client reconnects with a new one-time ticket when it still has work.
+  override webSocketError(socket: WebSocket): void {
+    // The client reconnects with a new one-time ticket when it still has work;
+    // everyone else must stop seeing the failed connection immediately.
+    if (contributesPresence(readAttachment(socket))) this.broadcastPresence(socket);
+  }
+
+  private closeSocket(
+    socket: WebSocket,
+    attachment: WorkspaceSocketAttachment | null,
+    input: WorkspaceSocketCloseInput,
+  ): void {
+    const wasPresent = contributesPresence(attachment);
+    if (wasPresent) socket.serializeAttachment({
+      ...attachment,
+      applicationState: "background",
+      foregroundWorkstreamId: null,
+    } satisfies WorkspaceSocketAttachment);
+    closeWorkspaceSocket(this.env, socket, attachment, input);
+    if (wasPresent) this.broadcastPresence(socket);
+  }
+
+  /**
+   * Send each connection only the presence for the work stream it currently
+   * foregrounds. This both avoids leaking personal work-stream identities and
+   * keeps the frame equal to the one face pile the renderer can paint.
+   */
+  private broadcastPresence(excluding?: WebSocket): void {
+    const sockets = this.state.getWebSockets()
+      .filter((socket) => socket !== excluding)
+      .flatMap((socket) => {
+        const attachment = readAttachment(socket);
+        return attachment?.subscribed ? [{ socket, attachment }] : [];
+      });
+    const presentUsers = new Map<string, Set<string>>();
+    for (const { attachment } of sockets) {
+      if (attachment.applicationState !== "foreground" || attachment.foregroundWorkstreamId === null) continue;
+      const users = presentUsers.get(attachment.foregroundWorkstreamId) ?? new Set<string>();
+      users.add(attachment.userId);
+      presentUsers.set(attachment.foregroundWorkstreamId, users);
+    }
+    const occurredAt = new Date().toISOString();
+    for (const { socket, attachment } of sockets) {
+      if (!contributesPresence(attachment)) continue;
+      const workstreamId = attachment.foregroundWorkstreamId;
+      const userIds = [...(presentUsers.get(workstreamId) ?? [])]
+        .filter((userId) => userId !== attachment.userId);
+      try {
+        socket.send(JSON.stringify(WorkspacePresenceEventSchema.parse({
+          type: "workspace_presence",
+          occurredAt,
+          workstreamId,
+          userIds,
+        })));
+      } catch {
+        // Presence is reconstructed from healthy attachments on the next
+        // foreground change. One stale socket must not block the others.
+      }
+    }
   }
 
   /**
@@ -1970,6 +2082,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = SocketAccessRevocationSchema.parse(revocation);
     let closed = 0;
+    let presenceChanged = false;
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       // A revoked session closes only the windows that presented it; an ended
@@ -1977,10 +2090,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // one place because the four socket roles disagree about their own
       // attachments — see `revocationClosesSocket`.
       if (!attachment || !revocationClosesSocket(request, attachment)) continue;
+      const wasPresent = contributesPresence(attachment);
+      presenceChanged ||= wasPresent;
+      if (wasPresent) socket.serializeAttachment({
+        ...attachment,
+        applicationState: "background",
+        foregroundWorkstreamId: null,
+      } satisfies WorkspaceSocketAttachment);
       disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer access this workspace");
       closed += 1;
     }
     if (closed > 0) {
+      if (presenceChanged) this.broadcastPresence();
       logWarn(this.env, "workspace_socket_access_revoked", {
         workspace_id: this.workspaceId(),
         user_id: request.userId,
@@ -3693,6 +3814,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       connectedAt: new Date().toISOString(),
       subscribed: false,
       lastWaterline: 0,
+      applicationState: "background",
+      foregroundWorkstreamId: null,
     };
     this.state.acceptWebSocket(server, [attachment.workspaceId, attachment.userId]);
     // Register the server end with the hibernation API before attaching the
@@ -3739,7 +3862,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }));
         if (!auth) {
           span.setError("session_inactive");
-          closeWorkspaceSocket(this.env, socket, attachment, {
+          this.closeSocket(socket, attachment, {
             code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
             reason: "Session no longer active",
             cause: "session_inactive",
