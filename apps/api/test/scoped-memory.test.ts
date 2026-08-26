@@ -454,7 +454,11 @@ describe("scoped agent memory", () => {
       toolContext(memberInput, "member-workspace-write"),
     // The refusal names what this run may write instead, because `scopeKind`
     // offers every kind and a bare code left the model nothing to retry with.
-    )).rejects.toThrow(/may read workspace memory but not write it.*may write: user, workstream/);
+    )).rejects.toMatchObject({
+      code: "memory_scope_not_writable",
+      message: expect.stringContaining("may write: workstream, user"),
+      details: { reason: expect.stringContaining("Retry with one of: workstream, user — narrowest first") },
+    });
   });
 
   it("shares one automation scope across every workstream from a subscription", async () => {
@@ -529,21 +533,31 @@ describe("scoped agent memory", () => {
     expect((await memorySearch(routedEnv(env, reply), reply, "vendor floor chartreuse")).results)
       .toEqual([]);
 
-    // The same branch admits a workspace principal, which is what an
-    // automation's own continuation reaches it as — a scheduled wake-up or a
-    // digest declares no subscription either. It gets workspace memory alone:
-    // no person to own a user scope, and still no scope of its own.
+    // The same branch admits a workspace principal, which is what a workspace
+    // automation's own continuation reaches it as — a scheduled wake-up
+    // declares no subscription either. It gets workspace memory alone: no
+    // person to own a user scope, and no scope of its own because the work
+    // stream belongs to a subscription. (A digest is not this case: it is
+    // ad-hoc with a user principal, so it does take a work-stream scope.)
     const wakeup = { ...input("workspace", 1), automationSubscriptionId: null };
     expect((await resolveMemoryAccess(routedEnv(env, wakeup), wakeup)).map((scope) => scope.kind))
       .toEqual(["workspace"]);
 
     // And the tool surface still offers a scope kind this run cannot reach —
     // `scopeKind` is the full static enum — so the model's recovery from
-    // picking it is the executor's refusal, not a resolved scope.
+    // picking it is the executor's refusal, not a resolved scope. `reason` is
+    // asserted, not just the message: it is the field the model acts on, and
+    // it must name only what this run can *write*, narrowest first. Listing the
+    // union order instead would send it back to `workspace`, which a plain
+    // member cannot write, spending the next turn on a second refusal.
     await expect(memoryTool(env, reply, "add").execute(
       { scopeKind: "workstream", text: "Reply thread note", rationale: "Should not resolve" },
       toolContext(reply, "add-workstream-under-automation"),
-    )).rejects.toThrow(/cannot reach workstream memory.*scopes are: workspace, user/);
+    )).rejects.toMatchObject({
+      code: "memory_scope_not_available",
+      message: expect.stringContaining("Its scopes are: user, workspace"),
+      details: { reason: expect.stringContaining("Retry with one of: user — narrowest first") },
+    });
   });
 
   it("holds a run that declares a subscription to the work stream it names", async () => {
