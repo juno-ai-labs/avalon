@@ -532,6 +532,39 @@ what that leaves exposed.
 
 ## Changelog
 
+### 2026-08-26 — Route handoff cannot paint a retained work stream under the next URL
+
+**What changed:** The main Electron workspace router now commits its small local
+route tree synchronously instead of wrapping hash-history updates in a React
+transition. The reused work-stream route then verifies that both the detail
+payload and every transcript row belong to the work-stream id in the current URL
+before rendering them. During a socket-pool handoff it keeps the opening surface
+up until both keyed query observers have moved to that id.
+
+**Why:** The keyed socket pool correctly retained each work stream's own
+connection and cache, but the visible `WorkstreamScreen` intentionally remained
+mounted while its route parameter changed. React Router could move the URL and
+active sidebar row while its concurrent route render left the prior screen on
+the page; after that render began, the detail and transcript observers could
+also publish their new keyed results in separate phases. Together those gaps
+briefly painted the previous work stream under the newly selected sidebar row.
+
+**Considered and rejected:** Closing the previous sockets would remove the
+five-minute back-navigation benefit without making the visible route update
+atomic. Keying and remounting the whole screen would also discard unrelated
+screen-local state on every switch. Trying to flush individual `navigate` calls
+does not override a declarative `HashRouter` whose history listener itself uses
+`startTransition`. The synchronous policy is therefore scoped to the main
+workspace router; the standalone Settings and Meeting windows keep their
+defaults. The identity fence is the next narrow boundary: retained connections
+stay live and their caches stay warm, while only data for the selected id may
+paint.
+
+**Consequences:** A handoff can show the existing Opening work stream surface
+for an intermediate render, but it cannot flash another work stream's header or
+transcript. Every future payload rendered by this reused route must participate
+in the same route-identity fence.
+
 ### 2026-08-26 — Canonical snapshots fence recovery and revocation clears the reader
 
 **What changed:** Every accepted SubstreamAgent snapshot advances a renderer
