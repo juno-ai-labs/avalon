@@ -153,7 +153,14 @@ async function withStores<T>(
 function isMentionIdentity(value: unknown): value is MentionIdentity {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;
-  return (candidate['type'] === 'person' || candidate['type'] === 'connector') && typeof candidate['label'] === 'string';
+  const offsetsAbsent = candidate['startOffset'] === undefined && candidate['endOffset'] === undefined;
+  const offsetsValid = Number.isInteger(candidate['startOffset'])
+    && Number.isInteger(candidate['endOffset'])
+    && Number(candidate['startOffset']) >= 0
+    && Number(candidate['endOffset']) > Number(candidate['startOffset']);
+  return (candidate['type'] === 'person' || candidate['type'] === 'connector')
+    && typeof candidate['label'] === 'string'
+    && (offsetsAbsent || offsetsValid);
 }
 
 function parseCachedText(value: unknown): CachedDraftText | null {

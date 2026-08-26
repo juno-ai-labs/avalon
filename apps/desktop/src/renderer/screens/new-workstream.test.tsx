@@ -341,6 +341,8 @@ describe('New work-stream home', () => {
         label: 'Samantha Lee',
         userId: 'user-2',
         connectorType: null,
+        startOffset: 4,
+        endOffset: 17,
       }],
     })));
   });

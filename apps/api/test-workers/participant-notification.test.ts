@@ -417,6 +417,39 @@ describe("adding somebody to a work stream", () => {
 });
 
 describe("naming somebody when the work stream is created", () => {
+  it("does not seat the raw target of a rejected opening mention", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub, {
+      openingMessage: "No person is named",
+      mentions: [{
+        type: "person",
+        userId: INVITEE_ID,
+        connectorType: null,
+        startOffset: 0,
+        endOffset: 2,
+      }],
+    });
+
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM participants WHERE user_id = ?`,
+        INVITEE_ID,
+      ).one().count).toBe(0);
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM part_mentions WHERE target_user_id = ?`,
+        INVITEE_ID,
+      ).one().count).toBe(0);
+    });
+    const envelopes = await deliveredEffects(stub);
+    expect(envelopes.some((envelope) => (
+      "userId" in envelope.effect && envelope.effect.userId === INVITEE_ID
+    ))).toBe(false);
+    expect(envelopes.some((envelope) => (
+      envelope.effect.kind === "mention_notification"
+      && envelope.effect.recipientUserId === INVITEE_ID
+    ))).toBe(false);
+  });
+
   it("stores an identity-bearing opening mention and emits only its specific notification", async () => {
     const stub = agentStub();
     await openWorkstream(stub, {
@@ -557,6 +590,84 @@ describe("naming somebody when the work stream is created", () => {
 
     expect(await notificationReceipts(stub))
       .toEqual([`effect:participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`]);
+  });
+});
+
+describe("confirming a nonparticipant mention on an existing work stream", () => {
+  it("seats the accepted target and emits only the specific mention notification", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub);
+    const sent = await product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: {
+        text: "Ask @Invitee to review",
+        clientMessageId: "confirmed-mention-message",
+        mentions: [{
+          type: "person",
+          userId: INVITEE_ID,
+          connectorType: null,
+          startOffset: 4,
+          endOffset: 12,
+        }],
+        confirmedParticipantUserIds: [INVITEE_ID],
+        attachmentIds: [],
+      },
+    });
+    expect(sent.status).toBe(200);
+
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM participants WHERE user_id = ?`, INVITEE_ID,
+      ).one().status).toBe("active");
+      expect(state.storage.sql.exec<{ target_user_id: string }>(
+        `SELECT target_user_id FROM part_mentions WHERE part_id = ?`,
+        (sent.body.message as { id: string }).id,
+      ).one().target_user_id).toBe(INVITEE_ID);
+    });
+    const envelopes = await deliveredEffects(stub);
+    expect(envelopes.filter((envelope) => (
+      envelope.effect.kind === "mention_notification"
+      && envelope.effect.recipientUserId === INVITEE_ID
+    ))).toHaveLength(1);
+    expect(envelopes.filter((envelope) => (
+      envelope.effect.kind === "participant_notification"
+      && envelope.effect.recipientUserId === INVITEE_ID
+    ))).toHaveLength(0);
+  });
+
+  it("does not let confirmation seat the raw target of a rejected mention", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub);
+    const sent = await product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: {
+        text: "No person is named",
+        clientMessageId: "rejected-confirmed-mention-message",
+        mentions: [{
+          type: "person",
+          userId: INVITEE_ID,
+          connectorType: null,
+          startOffset: 0,
+          endOffset: 2,
+        }],
+        confirmedParticipantUserIds: [INVITEE_ID],
+        attachmentIds: [],
+      },
+    });
+    expect(sent.status).toBe(200);
+
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM participants WHERE user_id = ?`,
+        INVITEE_ID,
+      ).one().count).toBe(0);
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM part_mentions WHERE target_user_id = ?`,
+        INVITEE_ID,
+      ).one().count).toBe(0);
+    });
   });
 });
 

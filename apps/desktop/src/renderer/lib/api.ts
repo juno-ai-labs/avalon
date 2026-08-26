@@ -56,6 +56,7 @@ import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { elicitationMessageId, normalizeElicitation } from './elicitation';
+import { resolveMentionPayload } from './mention-draft';
 import { createElicitationMessage, upsertTranscriptMessage, visibleTranscriptMessages } from './transcript';
 import { newRequestId } from './perf-trace';
 import { logDebug } from '../../common/logger';
@@ -240,6 +241,9 @@ export interface MentionIdentity {
   label: string;
   userId: string | null;
   connectorType: string | null;
+  /** UTF-16 offsets for the exact autocomplete selection in the draft. */
+  startOffset?: number;
+  endOffset?: number;
 }
 
 const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
@@ -1511,31 +1515,10 @@ export class RallyApi {
     // `@<connection>` still left as a connector span — a chip in the transcript
     // for something the composer had already stopped naming. A connector
     // mention a caller states outright still travels, through `selected` below.
-    const discovered = members.map((member) => ({ type: 'person' as const, label: member.name, userId: member.id, connectorType: null }));
-    const explicitlySelectedLabels = new Set(selected.map((candidate) => candidate.label.toLocaleLowerCase()));
-    const candidates = [
-      ...selected,
-      ...discovered.filter((candidate) => !explicitlySelectedLabels.has(candidate.label.toLocaleLowerCase())),
-    ].filter((candidate, index, list) => list.findIndex((item) =>
-      item.type === candidate.type && item.userId === candidate.userId && item.connectorType === candidate.connectorType && item.label === candidate.label,
-    ) === index);
-    return candidates.flatMap((candidate) => {
-      const escaped = candidate.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-      const expression = new RegExp(`@${escaped}(?=$|[\\s\\p{P}])`, 'giu');
-      return [...text.matchAll(expression)].filter((match) => {
-        const startOffset = match.index;
-        return startOffset === 0 || /[\s([{]/u.test(text[startOffset - 1] ?? '');
-      }).map((match) => {
-        const startOffset = match.index;
-        return {
-          type: candidate.type,
-          userId: candidate.userId,
-          connectorType: candidate.connectorType,
-          startOffset,
-          endOffset: startOffset + match[0].length,
-        };
-      });
-    }).sort((left, right) => left.startOffset - right.startOffset);
+    const discovered = members
+      .filter((member) => (member.status ?? 'active') === 'active')
+      .map((member) => ({ type: 'person' as const, label: member.name, userId: member.id, connectorType: null }));
+    return resolveMentionPayload(text, selected, discovered);
   }
 
   async createMessage(id: string, input: {

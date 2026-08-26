@@ -6,7 +6,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
-import { completeMentionAtCaret, mentionsStillPresent, upsertMentionIdentity } from '../lib/mention-draft';
+import {
+  completeMentionAtCaret,
+  mentionsInTrimmedText,
+  rebaseMentionIdentities,
+  upsertMentionIdentity,
+} from '../lib/mention-draft';
 import { formatRelative, workstreamMarkerStatus, workstreamNeedsAttention } from '../lib/format';
 import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
 import type { MentionIdentity } from '../lib/api';
@@ -481,7 +486,8 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   }, [api, impressionKey, suggestedWorkEnabled]);
 
   const submit = (): void => {
-    const openingMessage = message.trim();
+    const submitted = mentionsInTrimmedText(message, selectedMentions);
+    const openingMessage = submitted.text;
     const readyAttachments = attachmentDraft.ready;
     if ((!openingMessage && readyAttachments.length === 0) || attachmentDraft.uploading || submittingRef.current) return;
     // Before the launch state, not after it. The screen below opens optimistically
@@ -494,7 +500,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     setTooLong(false);
     submittingRef.current = true;
     const participantIds = selectedMembers.map((member) => member.id);
-    const mentions = [...selectedMentions];
+    const mentions = submitted.mentions;
     setMessage('');
     setSelectedMentions([]);
     const createdAt = new Date().toISOString();
@@ -550,7 +556,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
 
   const updateMessage = (value: string): void => {
     setMessage(value);
-    setSelectedMentions((current) => mentionsStillPresent(value, current));
+    setSelectedMentions((current) => rebaseMentionIdentities(message, value, current));
     syncMentionQuery(value);
   };
 
@@ -599,9 +605,17 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       return;
     }
     setMessage(completed.text);
-    setSelectedMentions((current) => upsertMentionIdentity(current, {
-      type: 'person', label: member.name, userId: member.id, connectorType: null,
-    }));
+    setSelectedMentions((current) => upsertMentionIdentity(
+      rebaseMentionIdentities(message, completed.text, current),
+      {
+        type: 'person',
+        label: member.name,
+        userId: member.id,
+        connectorType: null,
+        startOffset: completed.startOffset,
+        endOffset: completed.endOffset,
+      },
+    ));
     if (member.id !== workspace.currentUser.id) {
       setSelectedMembers((current) => current.some((candidate) => candidate.id === member.id) ? current : [...current, member]);
     }
