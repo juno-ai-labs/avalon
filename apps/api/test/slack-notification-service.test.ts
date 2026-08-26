@@ -29,6 +29,7 @@ describe("workspace Slack mention delivery", () => {
     await seed(database, env, false);
     const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
     const request = slackApiFixture(calls);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     await expect(sendWorkstreamMentionSlack(env, mention(), request)).resolves.toBe("sent");
 
@@ -52,6 +53,22 @@ describe("workspace Slack mention delivery", () => {
     expect(String(calls[2]?.body.text)).not.toContain("/open#");
     expect(calls[2]?.body.client_msg_id).toMatch(/^[0-9a-f-]{36}$/u);
     expect(database.prepare("SELECT COUNT(*) AS count FROM slack_user_links").get()).toEqual({ count: 0 });
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "slack_notification_destination_resolved",
+      connection_id: connectionId,
+      provider_account_id: "TACME",
+      slack_user_id: "UADA",
+      resolution_mode: "email_lookup",
+    }));
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "slack_notification_chunk_terminal",
+      channel_id: "DADA",
+      slack_user_id: "UADA",
+      slack_message_ts: "1786060000.001",
+      thread_ts: "1786060000.001",
+      chunk_index: 0,
+      outcome: "sent",
+    }));
   });
 
   it("prefers a confirmed Slack identity and does not perform email lookup", async () => {
@@ -135,6 +152,7 @@ describe("workspace Slack mention delivery", () => {
     await seed(database, env, false);
     await seedConnection(database, env, secondConnectionId, "TOTHER", "2026-08-06T20:01:00.000Z");
     const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     await expect(sendWorkstreamMentionSlack(env, mention(), slackApiFixture(calls, undefined, {
       lookupResponseByToken: {
@@ -144,6 +162,38 @@ describe("workspace Slack mention delivery", () => {
     }))).resolves.toBe("skipped");
 
     expect(calls.map((call) => call.method)).toEqual(["users.lookupByEmail", "users.lookupByEmail"]);
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "slack_notification_terminal",
+      outcome: "skipped",
+      reason: "ambiguous_email_lookup",
+      active_connection_count: 2,
+      lookup_match_count: 2,
+    }));
+  });
+
+  it("logs every linked identity when multiple confirmed Slack links make the destination ambiguous", async () => {
+    const database = migratedDatabase();
+    const env = environment(database);
+    await seed(database, env, true);
+    await seedConnection(database, env, secondConnectionId, "TOTHER", "2026-08-06T20:01:00.000Z");
+    database.prepare(
+      `INSERT INTO slack_user_links
+       (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id, status, created_at, updated_at)
+       VALUES ('00000000-0000-7000-8000-000000000008', ?, ?, ?, 'TOTHER', 'UOTHER', 'active', ?, ?)`,
+    ).run(workspaceId, secondConnectionId, recipientId, at, at);
+    const request: typeof fetch = vi.fn();
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await expect(sendWorkstreamMentionSlack(env, mention(), request)).resolves.toBe("skipped");
+
+    expect(request).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "slack_notification_terminal",
+      outcome: "skipped",
+      reason: "multiple_confirmed_links",
+      active_connection_count: 2,
+      linked_connection_count: 2,
+    }));
   });
 
   it("uses Slack-sized threaded chunks without truncating the Rally message", async () => {
@@ -216,10 +266,20 @@ describe("workspace Slack mention delivery", () => {
     const request = slackApiFixture(calls, {
       user: { id: "UOTHER", team_id: "TOTHER", deleted: false, is_bot: false },
     });
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     await expect(sendWorkstreamMentionSlack(env, mention(), request)).resolves.toBe("skipped");
 
     expect(calls.map((call) => call.method)).toEqual(["users.lookupByEmail"]);
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "slack_notification_lookup_candidate",
+      connection_id: connectionId,
+      provider_account_id: "TACME",
+      slack_user_id: "UOTHER",
+      observed_team_id: "TOTHER",
+      outcome: "rejected",
+      reason: "team_mismatch",
+    }));
   });
 
   it("fails closed to email when the installation has not yet received the lookup scope", async () => {
@@ -249,9 +309,16 @@ describe("workspace Slack mention delivery", () => {
     const env = environment(database);
     seedWorkspace(database);
     const request: typeof fetch = vi.fn();
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     await expect(sendWorkstreamMentionSlack(env, mention(), request)).resolves.toBe("skipped");
     expect(request).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "slack_notification_terminal",
+      outcome: "skipped",
+      reason: "no_active_workspace_installation",
+      active_connection_count: 0,
+    }));
   });
 });
 

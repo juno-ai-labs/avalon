@@ -10,6 +10,7 @@ vi.mock("../src/services/structured-inference", () => ({ runStructuredInference 
 import type { Env } from "../src/env";
 import { __testing, consumeActivityQueue } from "../src/queues/activity-consumer";
 import { workspaceConnectorEventQueueMessage } from "../src/services/workspace-connector-event-ingress";
+import { cloudflareWorkflowInstanceId } from "../src/lib/cloudflare-workflow-instance-id";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
@@ -350,7 +351,8 @@ function suggestionCount(): number {
 describe("connector event Queue boundary", () => {
   it("admits a post-cutover Queue event without a D1 activity-body handoff", async () => {
     const database = seededDatabase();
-    const env = envFor(database);
+    const env = envFor(database, { LOG_LEVEL: "info" });
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const activityId = "00000000-0000-7000-8000-0000000000e1";
     const ack = vi.fn();
     const retry = vi.fn();
@@ -402,25 +404,41 @@ describe("connector event Queue boundary", () => {
       ackAll: vi.fn(),
     }, env);
 
+    const workflowInstanceId = await cloudflareWorkflowInstanceId(
+      "connector-event",
+      activityId,
+      0,
+    );
+
     expect(database.prepare("SELECT COUNT(*) AS count FROM activities").get())
       .toEqual({ count: 0 });
     expect(env.CONNECTOR_EVENT_WORKFLOW.create).toHaveBeenCalledWith({
-      id: `connector-event:${activityId}:0`,
+      id: workflowInstanceId,
       params: {
         region: "global",
         workspaceId: WORKSPACE,
         eventId: activityId,
-        workflowInstanceId: `connector-event:${activityId}:0`,
+        workflowInstanceId,
         attempt: 0,
       },
     });
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "connector_event_queue_terminal",
+      connector_type: "github",
+      connector_event_id: activityId,
+      workflow_instance_id: workflowInstanceId,
+      workflow_outcome: "created",
+      outcome: "admitted",
+      queue_attempts: 1,
+    }));
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
   });
 
   it("acks a legacy activity-queue message without reading the frozen D1 row behind it", async () => {
     const database = seededDatabase();
-    const env = envFor(database);
+    const env = envFor(database, { LOG_LEVEL: "info" });
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const activityId = "00000000-0000-7000-8000-0000000000f1";
     insertActivity(database, { id: activityId, eventType: NEWS });
     database.prepare("UPDATE activities SET processing_status = 'pending' WHERE id = ?").run(activityId);
@@ -454,6 +472,13 @@ describe("connector event Queue boundary", () => {
     expect(env.CONNECTOR_EVENT_WORKFLOW.create).not.toHaveBeenCalled();
     expect(runStructuredInference).not.toHaveBeenCalled();
     expect(suggestionCount()).toBe(0);
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "connector_event_queue_terminal",
+      workspace_id: WORKSPACE,
+      connector_event_id: activityId,
+      outcome: "skipped",
+      reason: "legacy_message_after_cutover",
+    }));
     expect(database.prepare("SELECT processing_status FROM activities WHERE id = ?").get(activityId))
       .toEqual({ processing_status: "pending" });
   });

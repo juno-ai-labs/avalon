@@ -5,6 +5,7 @@ import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
+import { logInfo, logWarn } from "../observability/logger";
 import {
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamParticipantNotificationEffectSchema,
@@ -131,6 +132,16 @@ export async function applyWorkstreamRegionalEffect(
     // A previous authority generation can still have Queue messages in flight.
     // Its state was superseded at cutover, so acknowledging it is the only
     // terminal and safe outcome; applying it would regress the current owner.
+    logInfo(env, "workstream_regional_effect_apply_terminal", {
+      workspace_id: message.workspaceId,
+      workstream_id: message.workstreamId,
+      message_id: message.messageId,
+      effect_kind: message.effect.kind,
+      outcome: "skipped",
+      reason: "authority_generation_superseded",
+      message_generation: message.generation,
+      active_generation: route.generation,
+    });
     return { replayed: true, notificationIntentId: null };
   }
   if (route?.state !== "active" || route.generation !== message.generation) {
@@ -185,6 +196,19 @@ export async function applyWorkstreamRegionalEffect(
     }),
   );
 
+  if (message.effect.kind !== "activity_event" && !applied.notificationIntentId) {
+    logInfo(env, "workstream_notification_terminal", {
+      workspace_id: message.workspaceId,
+      workstream_id: message.workstreamId,
+      message_id: message.messageId,
+      kind: message.effect.kind,
+      recipient_user_id: message.effect.recipientUserId,
+      outcome: "skipped",
+      reason: recipientIsActiveMember ? "notification_intent_not_created" : "recipient_inactive",
+      replayed: applied.replayed,
+    });
+  }
+
   if (
     message.effect.kind === "activity_event"
     && message.effect.sourceKind === "workstream_message"
@@ -235,19 +259,63 @@ export async function processWorkstreamNotificationIntent(
   ).run();
   if ((claim.meta.changes ?? 0) !== 1) {
     const settled = await env.DB.prepare(
-      `SELECT state FROM workstream_notification_intents WHERE intent_id = ?`,
-    ).bind(intentId).first<{ state: string }>();
-    if (!settled) return "skipped";
+      `SELECT state, notification_kind, recipient_user_id, workstream_id
+         FROM workstream_notification_intents WHERE intent_id = ?`,
+    ).bind(intentId).first<{
+      state: string;
+      notification_kind: string;
+      recipient_user_id: string;
+      workstream_id: string;
+    }>();
+    if (!settled) {
+      logInfo(env, "workstream_notification_terminal", {
+        workspace_id: workspaceId,
+        notification_intent_id: intentId,
+        outcome: "skipped",
+        reason: "notification_intent_missing",
+      });
+      return "skipped";
+    }
     if (settled.state === "skipped") {
       await refreshWorkspaceSchedule(env, workspaceId);
+      logInfo(env, "workstream_notification_terminal", {
+        workspace_id: workspaceId,
+        workstream_id: settled.workstream_id,
+        notification_intent_id: intentId,
+        kind: settled.notification_kind,
+        recipient_user_id: settled.recipient_user_id,
+        outcome: "skipped",
+        reason: "notification_already_skipped",
+        replayed: true,
+      });
       return "skipped";
     }
     if (settled.state === "delivered") {
       // A prior delivery may have committed before scheduler refresh failed.
       // Retrying the Queue item repairs that alarm edge without re-sending.
       await refreshWorkspaceSchedule(env, workspaceId);
+      logInfo(env, "workstream_notification_terminal", {
+        workspace_id: workspaceId,
+        workstream_id: settled.workstream_id,
+        notification_intent_id: intentId,
+        kind: settled.notification_kind,
+        recipient_user_id: settled.recipient_user_id,
+        outcome: "delivered",
+        reason: "notification_already_delivered",
+        replayed: true,
+      });
       return "delivered";
     }
+    logInfo(env, "workstream_notification_deferred", {
+      workspace_id: workspaceId,
+      workstream_id: settled.workstream_id,
+      notification_intent_id: intentId,
+      kind: settled.notification_kind,
+      recipient_user_id: settled.recipient_user_id,
+      outcome: "busy",
+      reason: "notification_lease_active",
+      state: settled.state,
+    });
     return "busy";
   }
 
@@ -274,6 +342,15 @@ export async function processWorkstreamNotificationIntent(
   const row: NotificationIntentRow | null = intent && identity ? { ...intent, ...identity } : null;
   if (!row) {
     await settleNotificationIntent(env, workspaceId, intentId, leaseId, "skipped");
+    logInfo(env, "workstream_notification_terminal", {
+      workspace_id: workspaceId,
+      workstream_id: intent?.workstream_id ?? null,
+      notification_intent_id: intentId,
+      kind: intent?.notification_kind ?? null,
+      recipient_user_id: intent?.recipient_user_id ?? null,
+      outcome: "skipped",
+      reason: intent ? "recipient_inactive_or_identity_missing" : "claimed_intent_missing",
+    });
     return "skipped";
   }
 
@@ -305,10 +382,32 @@ export async function processWorkstreamNotificationIntent(
               last_error_code = 'directory_projection_pending', updated_at = ?
         WHERE intent_id = ? AND lease_id = ?`,
     ).bind(nowIso(), intentId, leaseId).run();
+    logInfo(env, "workstream_notification_deferred", {
+      workspace_id: row.workspace_id,
+      workstream_id: row.workstream_id,
+      notification_intent_id: intentId,
+      kind: row.notification_kind,
+      recipient_user_id: row.recipient_user_id,
+      outcome: "busy",
+      reason: "directory_projection_pending",
+      required_generation: row.source_generation,
+      current_generation: viewer?.authorityGeneration ?? null,
+      required_directory_version: row.required_directory_version,
+      current_directory_version: viewer?.viewerVersion ?? null,
+    });
     return "busy";
   }
   if (!viewer.listable) {
     await settleNotificationIntent(env, workspaceId, intentId, leaseId, "skipped");
+    logInfo(env, "workstream_notification_terminal", {
+      workspace_id: row.workspace_id,
+      workstream_id: row.workstream_id,
+      notification_intent_id: intentId,
+      kind: row.notification_kind,
+      recipient_user_id: row.recipient_user_id,
+      outcome: "skipped",
+      reason: "recipient_not_listable",
+    });
     return "skipped";
   }
 
@@ -325,6 +424,15 @@ export async function processWorkstreamNotificationIntent(
     : effect.actorUserId;
   if (effect.recipientUserId === originatorUserId) {
     await settleNotificationIntent(env, workspaceId, intentId, leaseId, "skipped");
+    logInfo(env, "workstream_notification_terminal", {
+      workspace_id: row.workspace_id,
+      workstream_id: row.workstream_id,
+      notification_intent_id: intentId,
+      kind: row.notification_kind,
+      recipient_user_id: effect.recipientUserId,
+      outcome: "skipped",
+      reason: "self_notification",
+    });
     return "skipped";
   }
   try {
@@ -339,6 +447,7 @@ export async function processWorkstreamNotificationIntent(
       workstreamId: row.workstream_id,
       workstreamTitle: effect.workstreamTitleSnapshot,
     };
+    const sourceId = effect.kind === "participant_notification" ? effect.sourceId : effect.messageId;
     const slack = effect.kind === "participant_notification"
       ? await sendWorkstreamParticipantAddedSlack(env, {
         ...recipient,
@@ -353,6 +462,18 @@ export async function processWorkstreamNotificationIntent(
         authorName: effect.authorNameSnapshot,
         messageText: effect.messageText,
       });
+    logInfo(env, "workstream_notification_transport_terminal", {
+      workspace_id: row.workspace_id,
+      workstream_id: row.workstream_id,
+      notification_intent_id: intentId,
+      kind: row.notification_kind,
+      source_id: sourceId,
+      recipient_user_id: effect.recipientUserId,
+      channel: "slack",
+      outcome: slack,
+      reason: slack === "sent" ? "provider_accepted" : "fallback_required",
+    });
+    let email: "sent" | "skipped" | null = null;
     if (slack !== "sent") {
       const fallback = {
         ...recipient,
@@ -361,7 +482,7 @@ export async function processWorkstreamNotificationIntent(
         region: env.AVALON_REGION,
       };
       if (effect.kind === "participant_notification") {
-        await sendWorkstreamParticipantAddedEmail(env, {
+        email = await sendWorkstreamParticipantAddedEmail(env, {
           ...fallback,
           sourceId: effect.sourceId,
           actorName: effect.actorNameSnapshot,
@@ -369,15 +490,39 @@ export async function processWorkstreamNotificationIntent(
           titleIsProvisional: effect.titleIsProvisional,
         });
       } else {
-        await sendWorkstreamMentionEmail(env, {
+        email = await sendWorkstreamMentionEmail(env, {
           ...fallback,
           messageId: effect.messageId,
           authorName: effect.authorNameSnapshot,
           messageText: effect.messageText,
         });
       }
+      logInfo(env, "workstream_notification_transport_terminal", {
+        workspace_id: row.workspace_id,
+        workstream_id: row.workstream_id,
+        notification_intent_id: intentId,
+        kind: row.notification_kind,
+        source_id: sourceId,
+        recipient_user_id: effect.recipientUserId,
+        channel: "email",
+        outcome: email,
+        reason: email === "sent" ? "provider_accepted" : "transport_disabled_for_environment",
+      });
     }
     await settleNotificationIntent(env, workspaceId, intentId, leaseId, "delivered");
+    logInfo(env, "workstream_notification_terminal", {
+      workspace_id: row.workspace_id,
+      workstream_id: row.workstream_id,
+      notification_intent_id: intentId,
+      kind: row.notification_kind,
+      source_id: sourceId,
+      recipient_user_id: effect.recipientUserId,
+      outcome: "delivered",
+      reason: slack === "sent" ? "slack_sent" : "email_fallback_completed",
+      delivery_channel: slack === "sent" ? "slack" : "email",
+      slack_outcome: slack,
+      email_outcome: email,
+    });
     return "delivered";
   } catch (error) {
     const code = error instanceof ApiError ? error.code : "notification_delivery_failed";
@@ -385,8 +530,18 @@ export async function processWorkstreamNotificationIntent(
       `UPDATE workstream_notification_intents
           SET state = 'failed', lease_id = NULL, lease_expires_at = NULL,
               last_error_code = ?, updated_at = ?
-        WHERE intent_id = ? AND lease_id = ?`,
+      WHERE intent_id = ? AND lease_id = ?`,
     ).bind(code, nowIso(), intentId, leaseId).run();
+    logWarn(env, "workstream_notification_failed", {
+      workspace_id: row.workspace_id,
+      workstream_id: row.workstream_id,
+      notification_intent_id: intentId,
+      kind: row.notification_kind,
+      recipient_user_id: row.recipient_user_id,
+      outcome: "failed",
+      reason: code,
+      error_name: error instanceof Error ? error.name : "Error",
+    });
     throw error;
   }
 }
@@ -428,9 +583,17 @@ export async function acknowledgeWorkstreamOutboxEffect(
     message.workspaceId,
     objectName,
   );
-  await workstream.acknowledgeRegionalEffect({
+  const removed = await workstream.acknowledgeRegionalEffect({
     messageId: message.messageId,
     payloadHash: message.payloadHash,
+  });
+  logInfo(env, "workstream_outbox_acknowledged", {
+    workspace_id: message.workspaceId,
+    workstream_id: message.workstreamId,
+    message_id: message.messageId,
+    effect_kind: message.effect.kind,
+    removed,
+    outcome: removed ? "deleted" : "already_absent",
   });
 }
 

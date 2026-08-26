@@ -3939,7 +3939,7 @@ describe("Durable Objects in the Workers runtime", () => {
       processingStatus: "pending",
       processingAttempt: -1,
     });
-    const workflowInstanceId = `connector-event:${firstId}`;
+    const workflowInstanceId = `connector-event-${firstId}`;
     const claim = await stub.claimConnectorEvent({
       workspaceId: WORKSPACE_ID,
       eventId: firstId,
@@ -3953,7 +3953,7 @@ describe("Durable Objects in the Workers runtime", () => {
     await expect(stub.claimConnectorEvent({
       workspaceId: WORKSPACE_ID,
       eventId: firstId,
-      workflowInstanceId: "connector-event:other",
+      workflowInstanceId: "connector-event-other",
       attempt: 0,
     })).resolves.toEqual({ outcome: "busy" });
     await stub.settleConnectorEvent({
