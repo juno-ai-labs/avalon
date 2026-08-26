@@ -830,7 +830,12 @@ pre-cutover claim and settlement payloads, translates them into the current
 lease protocol internally, and projects claim results back to the old strict
 response shape. A process pointer whose product attempt is older than the
 authoritative attempt is terminally acknowledged rather than retried into the
-DLQ; only an active unexpired lease receives a delayed Queue retry.
+DLQ; only an active unexpired Queue lease receives a delayed Queue retry.
+WorkspaceDO persists whether the active claimant is Queue or Workflow. A
+draining Workflow claim never expires into Queue takeover because its processing
+step can make several independently timed retry attempts; a concurrent cutover
+pointer is acknowledged and the Workflow either settles success or enqueues its
+own failed redrive.
 
 **Why:** The Queue, Workflow, and WorkspaceDO were maintaining overlapping
 retry and terminal ledgers for one processing callback. That duplication added
@@ -857,9 +862,12 @@ attempt ceiling. Until the drain completes, an exact same-Workflow claim replay
 must remain idempotent because the claim RPC can commit before the Workflow
 persists its step result. The legacy request and response wire shapes must also
 remain accepted: those Workflow instances execute versioned code whose strict
-schemas cannot adopt a new RPC contract after creation. Remove that adapter,
-the legacy Workflow binding, and the physical `workflow_instance_id` column
-only after live pre-cutover instances are proven drained.
+schemas cannot adopt a new RPC contract after creation. Preserve the stored
+orchestrator discriminator too: `NULL` on an active claim means a pre-migration
+Workflow because Queue claims did not exist when that row could have been
+written. Remove that adapter, the legacy Workflow binding, discriminator
+compatibility, and the physical `workflow_instance_id` column only after live
+pre-cutover instances are proven drained.
 
 ### 2026-08-25 — Every connector operation is observable at two layers
 
