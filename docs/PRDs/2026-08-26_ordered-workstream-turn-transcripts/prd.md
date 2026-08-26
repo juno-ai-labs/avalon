@@ -223,6 +223,11 @@ but the current host boundary does not make it a durable product invariant.
 15. Prove the lossless projection continuously: before each provider call, the
     canonical reconstruction and Bind's post-healing message array must have the
     same ordered canonical encoding and hash.
+16. Deliver the complete happy-path, edge-case, failure-injection, recovery, and
+    visible-desktop test suite specified in this PRD. The implementation is not
+    complete when behavior exists without its named test objective, required
+    assertions, correct runtime layer, and proof that the new test fails when
+    the protected production behavior is deliberately broken.
 
 ## Non-goals
 
@@ -937,6 +942,149 @@ and increments its existing stream epoch; it may reset only that turn's
 uncommitted text. A new provider turn always receives a new turn identity and
 sequence even when the harness run is unchanged.
 
+## Test objectives and required test suite
+
+The tests below are implementation deliverables, not examples or optional
+follow-up work. The implementation pull request must map every test ID to its
+actual test file and test name in the PR description. An implementer may split a
+listed target file when that makes ownership clearer, but may not omit or weaken
+the stated objective or assertions. Tests use fixed protocol fixtures and
+literal expectations; they do not generate the expected result by calling the
+projector or reducer under test.
+
+### Test objectives
+
+| Objective | What the suite must prove |
+| --- | --- |
+| `T1 Protocol fidelity` | The restricted substrate reconstructs the exact accepted Bind loop state, including the freshly rendered system head, message/content-part order, roles, IDs, exact strings, and provider continuation fields. |
+| `T2 Causal durability` | Every state transition required for later inference is durable before Bind, tool dispatch, terminal publication, or compaction can advance past it. |
+| `T3 Live ordering and concurrency` | Response tokens remain immediately streamable while text, thinking, and multiple tool calls start and settle independently without changing model-declared display order. |
+| `T4 Range and gap truth` | Snapshot-fenced range responses report what was actually inspected, and the desktop computes loaded islands and gaps correctly for empty, shortened, overlapping, disjoint, and realtime-extended history. |
+| `T5 Activity-time truth` | Response, plugin, invocation, and observable-thinking timers use authoritative edges and interval unions; local ticking never requires server clock frames and survives pause, sleep, reconnect, and history load. |
+| `T6 Recovery and idempotency` | Worker loss, Durable Object eviction/hibernation, socket replay, retries, duplicate events, compaction, and cutover resume without loss, duplication, reordering, or identity reuse. |
+| `T7 Authorization and locality` | Participant APIs reveal neither restricted payloads nor restricted bounds, and Global/EU authorities never use one another as transcript or inference-archive fallbacks. |
+| `T8 Compatibility and migration` | Capable and legacy clients receive their declared protocols, complete legacy evidence can be reconciled deterministically, and incomplete evidence remains an honest legacy envelope. |
+| `T9 Visible product behavior` | A real desktop window visibly preserves interleaving, gap loading, unread opening, instant jump-to-latest, smooth streaming, parallel activity, and historical timing labels. |
+
+### Required test layers and artifacts
+
+| Layer | Required target | Responsibility |
+| --- | --- | --- |
+| Pure harness protocol | `packages/agent-harness/src/bind-loop-projection.test.ts` | Fixed-message canonicalization, projector round trips, system-projection revision changes, provider continuation fields, protocol/derivative classification, and mismatch detection. |
+| Substrate and SQL | `apps/api/test/workstream-transcript-substrate.test.ts` using the real object schema through `createTestSqlStorage()` | Schema constraints, transactions, exact range scans, tombstones, immutable payload references, transition ordering, and legacy reconciliation queries. |
+| Real Cloudflare runtime | `apps/api/test-workers/workstream-transcript-runtime.test.ts` | Real `SubstreamAgent`, object-local SQLite, RPC, WebSocket, eviction/hibernation, concurrency, failure boundaries, and snapshot fencing. This suite may not replace the Durable Object or its storage with a double. |
+| Desktop range/state reducer | `apps/desktop/src/renderer/lib/workstream-turn-ranges.test.ts` | Range union/complement, stable identity reconciliation, stream epochs, stale lifecycle rejection, timers, and realtime singleton coverage. |
+| Desktop component | `apps/desktop/src/renderer/screens/workstream-turn-feed.test.tsx` | Ordered DOM blocks, streaming updates, dual initial islands, jump/scroll behavior, generic thinking/timing labels, and accessibility names. |
+| Full local member pipeline | Extend `scripts/e2e-local.mjs` and `scripts/e2e-local-oracles.test.mjs` | Public API/socket behavior against opened Durable Object authority, including real provider interleaving when credentials are configured and a fixed scripted-provider fixture in CI. |
+| Visible desktop acceptance | Add this feature's flow to `docs/e2e.md` and capture the exercised desktop window as required by the repository's visible-change rule. | Human-visible order, scroll anchoring, live clocks, parallel cards, reconnect, cold reload, and historical labels. |
+
+Provider HTTP streams, clocks, and fault injectors may use typed capability
+doubles because they cannot be controlled deterministically otherwise. The
+transcript substrate, Durable Object, SQLite, socket, range projector, and
+desktop reducer themselves are not doubled in the test that claims to prove
+their behavior. Anything dependent on Cloudflare storage, hibernation,
+WebSockets, transactions, or RPC runs in the real workerd suite.
+
+### Required happy-path tests
+
+| ID and required test name | Layer | Required setup and assertions |
+| --- | --- | --- |
+| `H01 interleaves_text_and_tools_live_and_after_reload` | workerd + desktop + E2E | Drive `text A → tool 1 → text B → tool 2 → final C`; assert that exact visible order while streaming, after socket reconnect, after cold reload, and in restricted replay. |
+| `H02 streams_first_text_token_before_turn_commit` | workerd + desktop | Hold provider-turn completion after the first token; assert the token paints, no tool dispatch has occurred, and the eventual canonical commit reconciles the same turn without duplication. |
+| `H03 runs_parallel_tools_in_declared_order` | workerd + desktop | Declare multiple tools in one assistant message, settle them out of order with success and failure, and assert cards stay in call-index order while lifecycle states advance independently. |
+| `H04 persists_assistant_before_dispatch_and_tool_result_before_bind` | workerd | Read durable rows at both execution fences; assert the full assistant/tool plan exists before dispatch and the exact model-facing tool result exists before the next model call. |
+| `H05 reconstructs_fixed_bind_fixture_exactly` | harness + SQL | Persist a literal fixture containing system, participant, protocol-only, derived, assistant/tool, and continuation fields; assert the literal canonical encoding and hash at each boundary. |
+| `H06 regenerates_system_after_plugin_activation` | harness + workerd | Activate a plugin during the loop; assert a durable projection revision precedes use, the regenerated system head contains the new activation, non-system ordering is unchanged, and both hashes match. |
+| `H07 records_protocol_and_derivative_provenance` | harness + SQL | Persist a continuation nudge, compaction summary, recalled-memory wrapper, trigger wrapper, interrupt wrapper, and tool result; assert their explicit kinds and required/no-source identities match the definitions. |
+| `H08 compacts_and_resumes_the_same_loop_generation` | workerd | Commit an exact compaction replacement, evict the object, resume, and assert the next provider array equals the pre-eviction projected generation while earlier ledger/history remains queryable. |
+| `H09 loads_disjoint_ranges_and_reports_middle_gap` | SQL + desktop | Load `[1,21)` and `[41,61)` against snapshot 87; assert exact actual coverage, gaps `[21,41)` and `[61,88)`, stable ordering, and no inferred coverage from row count. |
+| `H10 merges_overlapping_ranges_idempotently` | SQL + desktop | Load overlapping ranges in both arrival orders; assert one copy per stable turn, normalized coverage union, and identical final state. |
+| `H11 opens_with_unread_and_latest_islands` | workerd + desktop | Return unread `−5/+5` and five latest turns from one fence; assert unread paints first, both islands are cached, and the uncovered middle remains a gap. |
+| `H12 jumps_to_prefetched_latest_without_fetch` | desktop + E2E | From a disjoint unread opening, invoke **Jump to latest**; assert the latest island paints immediately and the range transport receives no request. |
+| `H13 lazy_loads_only_adjacent_gap_and_preserves_anchor` | desktop | Scroll toward each loaded edge; assert only the adjacent uncovered interval is requested, inserted turns do not move the visible anchor, and overlap is de-duplicated. |
+| `H14 extends_latest_coverage_with_realtime_singletons` | workerd + desktop | Receive turns newer than the opening fence; assert each adds only its singleton interval and remains immediately reachable from **Jump to latest**. |
+| `H15 times_response_and_plugin_from_edges` | workerd + desktop | Emit response/plugin start and stop edges; assert local **Working for …** advances without clock frames and cold history renders the canonical **Worked for …** duration. |
+| `H16 unions_parallel_plugin_and_invocation_intervals` | harness + desktop | Overlap calls within and across plugins; assert each plugin spans earliest start through last settlement and response time is the wall-clock union rather than a sum of children. |
+| `H17 pauses_and_resumes_response_work` | workerd + desktop | Pause for member input and resume; assert two intervals, no ticking during the gap, and historical duration equal to the union of working intervals. |
+| `H18 renders_openai_thinking_lifecycle_generically` | harness + desktop | Replay fixed OpenAI reasoning-item edges; assert one correctly ordered generic thinking block and stable terminal duration with no reasoning payload in the DOM. |
+| `H19 renders_openrouter_thinking_lifecycle_generically` | harness + desktop | Replay fixed OpenRouter reasoning-detail edges; assert the same normalized lifecycle/order/timing contract without exposing text, encrypted details, or signatures. |
+| `H20 rebases_active_timers_after_reconnect` | workerd + desktop | Miss lifecycle edges, reconnect with `elapsedMsAtSnapshot`, and assert the local monotonic baseline rebases once and later terminal `durationMs` becomes authoritative. |
+| `H21 survives_hibernation_during_active_stream` | workerd | Stream text and parallel activity, hibernate/evict the object, reconnect, and assert exact checkpoint prefix, lifecycle state, loop revision, and subsequent frames appear once. |
+| `H22 backfills_complete_global_legacy_proof` | SQL | Supply complete inference turns, receipts, aggregate text, and counts; assert deterministic canonical turns/ledger and reconciliation hashes without runtime lakehouse reads. |
+| `H23 serves_legacy_and_capable_clients_concurrently` | workerd + desktop | Subscribe one client per capability; assert each receives only its declared projection while both converge on equivalent participant content and terminal state. |
+| `H24 keeps_participant_and_restricted_projections_linked` | SQL + workerd | Read participant ranges and resume inference from the same committed facts; assert shared opaque identities, authorized visible content, and exact private replay without deriving either projection from the other. |
+| `H25 compacts_twice_across_distinct_events_and_resumes_second_generation` | workerd | Accept activity, commit compaction event A, accept additional assistant/tool activity, then commit distinct compaction event B. Assert two `state_replaced` transitions with distinct event/source revisions, three ordered loop generations, retention of both exact replacements, unchanged participant history, and post-eviction replay from B with the exact next provider array. Replay either event ID and assert idempotency rather than a third replacement generation. |
+
+### Required edge-case and failure tests
+
+| ID and required test name | Layer | Required setup and assertions |
+| --- | --- | --- |
+| `E01 rejects_bind_advance_when_assistant_commit_fails` | workerd | Inject the required assistant-transition write failure; assert no tool dispatch, later model call, terminal completion, or participant canonical commit occurs. |
+| `E02 rejects_bind_advance_when_tool_result_commit_fails` | workerd | Fail exact tool-result persistence; assert Bind never receives it and no continuation inference occurs, while the receipt remains truthful. |
+| `E03 fails_provider_boundary_on_any_canonical_mismatch` | harness + workerd | Table-drive changes to role, message order, content-part order, name, ID, argument string, result string, refusal, and continuation field; every mutation must fail before provider I/O. |
+| `E04 detects_system_renderer_or_activation_drift` | harness | Change renderer version/input/activation revision independently; assert the regenerated system hash mismatch is explicit and inference is blocked. |
+| `E05 replays_historical_system_renderer_revision` | harness | Make a newer renderer current while replaying an older generation; assert the recorded historical renderer revision recreates the old head exactly rather than silently upgrading it. |
+| `E06 rejects_invalid_protocol_derivative_classification` | SQL | Attempt a protocol-only row with a source identity, a derivative without a source identity, and a system row in `loop_sequence`; assert storage rejects all three. |
+| `E07 fails_closed_for_missing_or_tampered_payload_reference` | SQL + workerd | Delete, change, or cross-region an immutable out-of-line payload; assert protocol-integrity failure and no summary, display value, refetch, or placeholder substitution. |
+| `E08 excludes_abandoned_provider_bytes_from_bind_state` | workerd | Stream partial text/tool syntax, reset the route, and assert only the active checkpoint changes; the accepted loop revision and committed prior turns remain unchanged. |
+| `E09 closes_stale_thinking_on_provider_retry` | harness + desktop | Retry/reset during thinking; assert the stale interval closes or is abandoned, the next epoch starts independently, and committed text/tool/timing blocks do not regress. |
+| `E10 emits_no_thinking_block_without_provider_evidence` | harness + desktop | Provide latency and ordinary text but no reasoning event; assert no inferred thinking block or duration. |
+| `E11 never_streams_server_clock_ticks` | workerd + desktop | Hold an active response/plugin interval while inspecting socket frames; assert only lifecycle/content events arrive and the visible timer still advances locally. |
+| `E12 handles_every_tool_terminal_outcome_once` | harness + workerd | Exercise success, error, timeout, cancellation, ambiguous receipt, and intervention; assert one matching terminal transition and plugin interval closure for each. |
+| `E13 ignores_duplicate_late_and_regressive_lifecycle_events` | workerd + desktop | Deliver duplicate starts/stops, lower revisions, and a late completion after terminal state; assert no reopen, double duration, status rollback, or card movement. |
+| `E14 projects_parallel_tool_results_in_bind_call_order` | harness + workerd | Settle tools in reverse and mixed order; assert durable completion facts retain real timing while Bind's accepted tool messages project in its defined call order. |
+| `E15 commits_terminal_state_only_after_final_turn` | workerd | Race run settlement against final assistant persistence; assert terminal publication references the committed final turn and never exposes concatenated or missing narration. |
+| `E16 reports_empty_range_as_covered` | SQL + desktop | Scan an interval containing no displayable rows; assert actual coverage advances and the client does not refetch it indefinitely. |
+| `E17 reports_shortened_range_actual_coverage_only` | SQL + desktop | Trigger the existing response-size shortening boundary; assert claimed coverage stops at the last inspected sequence, not the requested end or returned-row count. |
+| `E18 preserves_tombstone_and_never_reuses_sequence` | SQL + workerd | Reserve a turn that becomes non-displayable; assert a covered tombstone, stable sequence, and a later turn receiving a new sequence. |
+| `E19 does_not_fill_old_gaps_from_new_realtime_turn` | desktop | Start with an earlier gap and receive a newer socket turn; assert only the new singleton is covered and the old gap remains requestable. |
+| `E20 fences_range_against_concurrent_append_and_mutation` | workerd | Append a turn and update tool status during a range scan; assert membership/order remain at the snapshot fence while authorized mutable status follows its declared revision rule. |
+| `E21 handles_unread_near_start_end_and_missing` | SQL + desktop | Test unread at first sequence, within five of either edge, already inside latest five, absent, and beyond retained history; assert bounded slices, correct de-duplication, and declared fallback. |
+| `E22 rejects_stale_range_response_after_new_snapshot` | desktop | Resolve an older range request after a newer snapshot; assert it cannot lower bounds, replace newer revisions, or erase singleton coverage. |
+| `E23 recovers_timer_after_sleep_and_clock_skew` | desktop | Advance wall clock independently of monotonic time, suspend, and resume from an authoritative baseline; assert no negative/jumped duration and canonical terminal replacement. |
+| `E24 does_not_double_count_nested_or_overlapping_intervals` | harness + desktop | Duplicate and overlap response/plugin/tool intervals; assert normalized unions and idempotent terminal totals at every scope. |
+| `E25 hides_restricted_payloads_and_bounds_from_all_participant_surfaces` | API Node + workerd | Exercise REST, socket, range, export, search, logs, and telemetry fixtures; assert no system inputs, protocol/derived payloads, exact private results, reasoning details, or `loop_sequence` bounds escape. |
+| `E26 rejects_unauthorized_range_before_returning_bounds` | workerd | Request an existing and nonexistent range as a nonparticipant; assert authorization failure reveals neither snapshot bounds nor existence through coverage shape. |
+| `E27 never_falls_back_across_regions` | API Node + workerd | Make the owning regional authority unavailable with the other region populated; assert no transcript, restricted state, payload, legacy archive, or range read crosses regions. |
+| `E28 keeps_incomplete_and_eu_legacy_runs_legacy` | SQL | Remove each required Global proof component and supply an EU run without archive evidence; assert no guessed interleaving and an explicit legacy envelope. |
+| `E29 rolls_back_activation_if_system_projection_commit_fails` | workerd | Fail `system_projection_changed`; assert the plugin/skill activation is not visible to Bind and the previous system revision remains current. |
+| `E30 survives_crash_at_every_compaction_boundary` | workerd | Crash before replacement commit, after commit/before old-array discard, and after discard; assert restart selects exactly one valid generation and never combines old/new arrays. |
+| `E31 replays_socket_frames_without_duplicate_tokens_or_blocks` | workerd + desktop | Disconnect at token, tool-start, tool-stop, and turn-commit boundaries; assert replay plus snapshot reconciliation produces each token/block/lifecycle revision once. |
+| `E32 preserves_streaming_under_parallel_start_complete_error_burst` | workerd + desktop | Burst parallel tool start/success/error events while text tokens continue; assert token delivery is not blocked or batched behind lifecycle processing. |
+| `E33 keeps_old_client_protocol_stable_during_cutover` | workerd | Mix legacy envelopes before the cutover and canonical turns after it; assert one stable participant order and unchanged old-client decoding until the supported floor advances. |
+| `E34 makes_substrate_conformance_mandatory_for_new_authority_adapter` | harness/API contract | Run the shared adapter suite against `SubstreamAgent` and a deliberately incomplete fixture adapter; assert the real adapter passes and the missing range/replay capability fails conformance. |
+| `E35 excludes_automation_wizard_from_all_new_paths` | API Node + desktop | Exercise automation draft storage and UI fixtures; assert no new substrate schema, protocol event, range contract, or renderer behavior is invoked for the explicitly out-of-scope wizard. |
+| `E36 does_not_conflate_duplicate_compaction_delivery_with_a_second_event` | SQL + workerd | Deliver compaction event A twice and a distinct event B once, including out-of-order retry delivery. Assert A creates exactly one replacement generation, B creates exactly one later generation, event/source identities remain distinguishable, and the active generation never rolls back from B to A. |
+
+### Required algebraic, race, and failure-proof checks
+
+In addition to the named examples, three deterministic generated suites are
+required:
+
+1. **Range-set algebra:** for generated ordered combinations of overlapping,
+   adjacent, disjoint, empty, and singleton intervals, union is commutative and
+   idempotent, complement never overlaps coverage, and every sequence within the
+   snapshot is exactly covered or a gap.
+2. **Protocol-ledger state machine:** for generated valid sequences of
+   initialization, activation, assistant, tool-result, protocol/derived append,
+   and compaction transitions, reconstruction after every prefix equals the
+   literal reference reducer. Invalid transition orders fail closed.
+3. **Lifecycle reducer:** for generated duplicate, reordered, and stale
+   start/stop revisions across response, plugin, invocation, and thinking scopes,
+   the terminal state is monotonic, intervals are normalized, and call-index
+   display order never changes.
+
+Every new or substantially changed automated test must be proven capable of
+failing: deliberately break the production behavior it names, run the smallest
+relevant file, observe the expected assertion fail for that reason, and revert
+the break. The implementation PR records that failure proof by test ID. Merely
+changing a fixture, making a mock throw, or observing a timeout is not proof.
+The final validation runs `pnpm lint`, `pnpm typecheck`, `pnpm test`, the updated
+script tests, the local behavioral lane when provider credentials are available,
+and the real-window desktop flow. Any flaky failure encountered is fixed or
+explicitly reported under the repository's flaky-test rule; retries are not an
+accepted implementation of this requirement.
+
 ## Rollout
 
 1. Add the shared durable transcript substrate, its authority adapter contract,
@@ -979,6 +1127,10 @@ sequence even when the harness run is unchanged.
    terminal delivery, and exports to the turn projection. Remove the legacy
    emission path only after the supported desktop floor understands the new
    protocol.
+10. Implement the required test IDs alongside the behavior each rollout step
+    introduces. No phase is complete with deferred coverage: its harness, SQL,
+    real-workerd, desktop, E2E, failure-injection, and visible-window cases must
+    pass at the layer assigned by this PRD before the next phase relies on it.
 
 The cutover is deploy-driven and idempotent. It requires no dashboard mutation,
 manual data rewrite, or cross-region coordination. Rollback leaves already
@@ -1120,3 +1272,9 @@ never rewrites their sequence positions.
     loop payloads nor `loop_sequence` bounds. Subsequent inference nevertheless
     reconstructs from the restricted projection without consulting the desktop
     projection or Global inference lakehouse.
+39. Every required `H01`–`H25` and `E01`–`E36` test is mapped to an actual test
+    name and file, passes at its required layer, and has an implementation-PR
+    failure-proof record showing the named assertion fails when its protected
+    production behavior is deliberately broken. The three generated algebraic
+    and state-machine suites, updated local behavioral lane, and real-window
+    desktop acceptance flow also pass; none is deferred to a follow-up PR.
