@@ -90,8 +90,14 @@ repository preparation/inspection, backup, cleanup, and trusted publication use
 Daytona's direct `process.executeCommand` operation. These inputs are fixed by
 Rally and need neither participant-command replay nor a recoverable named
 session. They still run in the same bounded Bash envelope, working directory,
-and session environment. The trusted publisher uses the direct operation in its
-fresh ephemeral sandbox as well.
+and session environment. Daytona's direct response exposes one stdout-shaped
+result and no separate stderr stream, so these internal utilities use exit
+status plus fixed private stdout markers; participant `run_command` continues
+to preserve separate stdout and stderr through its named session. Cancellation
+of an accepted direct utility stops and restarts the sandbox before Rally lets
+the abandoned invocation return, establishing process quiescence without adding
+named-session setup to the success path. The trusted publisher uses the direct
+operation in its fresh ephemeral sandbox as well.
 
 Command results expose three deliberately different clocks. `durationMs` is
 the provider command interval derived from the durable task timestamps;
@@ -447,10 +453,16 @@ and output bytes are derivable from local `terminal_workspace` and
 
 Within one harness run, acquisition, authority/policy validation, repository
 preparation, and the loaded Daytona SDK sandbox object are reused rather than
-looked up before every tool or provider operation. A
+looked up before every tool or provider operation. The cached acquisition is
+discarded and performed again when its existing sixteen-minute exclusive
+operation lease expires; ordinary tools do not renew or recheck that lease one
+by one. Provider lifecycle changes evict every SDK-object alias so a stopped,
+archived, or deleted object cannot be returned by another cached key. A
 model-facing file read runs containment, regular-file validation, the 10 MiB
 limit, strict UTF-8 decoding, line selection, and the 256 KiB response bound in
 one sandbox-side Python operation; it does not download the complete file. A
+single UTF-8 line over that response bound returns actionable guidance to use a
+bounded CLI extraction instead of a non-advancing page cursor. A
 complete write uses one upload and one containment/metadata/atomic-replacement
 command; that command reports whether the file existed and its previous line
 count, so Rally does not download content that the model asked to replace.
@@ -467,6 +479,32 @@ the command, path, output, repository, resource title, or file contents. The
 operation vocabulary distinguishes sandbox get/create/refresh/lifecycle/policy,
 file upload/download, direct utility execution, named-session get/create/
 submit/poll/log/delete, and secret list/create/update/delete.
+
+The exact `operation` vocabulary is `sandbox.get`, `sandbox.refresh`,
+`sandbox.create`, `sandbox.start`, `sandbox.stop`, `sandbox.archive`,
+`sandbox.delete`, `sandbox.update_network`, `sandbox.update_secrets`,
+`file.download`, `file.upload`, `process.execute_utility`,
+`process.session_get`, `process.session_create`, `process.session_submit`,
+`process.session_poll`, `process.session_logs`, `process.session_delete`,
+`secret.list`, `secret.create`, `secret.update`, and `secret.delete`. A direct
+utility additionally supplies one fixed `operation_detail`: `path.resolve`,
+`file.inspect`, `file.read_page`, `file.replace`, `file.apply_patch`,
+`file.temp_cleanup`, `resource.publish.inspect_before`,
+`resource.publish.inspect_after`, `resource.import.inspect`,
+`resource.import.finalize`, `repository.bootstrap`, one of the six
+`repository.publish.*` inspection phases, `lifecycle.final_diff`,
+`lifecycle.backup`, or `lifecycle.backup_cleanup`.
+
+Each `terminal_provider_request_finished` record carries
+`workspace_id`, `workstream_id`, `harness_run_id`, nullable
+`tool_invocation_id`, `tool_call_id`, and `tool_name`, plus `operation`, nullable
+`operation_detail`, `provider_operation_index`, `state`, `duration_ms`,
+`provider_request_count`, `provider_poll_count`, and `bytes`. Each
+`terminal_tool_finished` record carries those correlation identities and
+`state`, failure `code` when applicable, `duration_ms`,
+`acquisition_duration_ms`, nullable `acquisition_cache_hit`,
+`provider_duration_ms`, provider request/poll/operation counts,
+`provider_bytes`, and residual `rally_duration_ms`.
 
 The terminal `terminal_tool_finished` event retains end-to-end duration and now
 also reports acquisition duration/cache hit, summed provider request duration,
@@ -509,6 +547,12 @@ Rally-authored commands use Daytona's direct execution API; only participant
 paging inside the sandbox. The provider SDK sandbox object is cached for the
 harness run. Each provider request and the aggregate tool execution now emit
 correlated content-free latency, request, poll, byte, and acquisition fields.
+Review hardening made the acquisition cache expire with its existing operation
+lease, evicts every alias on lifecycle changes, rejects oversized text lines
+without a stuck cursor, cleans uploaded temp files after provider failures, and
+quiesces cancelled direct utilities by stopping and restarting the sandbox.
+Named-session cancellation also repeats cleanup after an in-flight session
+creation settles, so an abort cannot leave a late-created empty session behind.
 
 **Why:** Production timing for a simple create-and-publish task showed that the
 implementation was paying repeated provider and authority round trips rather
@@ -532,9 +576,11 @@ and an operation that can replace the sandbox generation must invalidate the
 run-local acquisition. Input-specific path validation remains at the consuming
 provider operation. Participant commands retain durable named-session recovery;
 fixed utilities must not silently acquire that overhead. Trace operation names
-must remain bounded and content-free. Do not restore a separate preflight or per-tool setup check
-unless it protects a distinct authority transition that has no existing
-invalidation path.
+must remain bounded and content-free. The operation lease is the cache lifetime:
+reacquire at expiry, not before every tool. Do not restore a separate preflight
+or per-tool setup check unless it protects a distinct authority transition that
+has no existing invalidation path. An accepted direct utility must establish
+process quiescence before cancellation returns.
 
 ### 2026-08-25 — Start fresh authorizes once at the participant authority
 

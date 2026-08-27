@@ -274,7 +274,6 @@ export async function bootstrapTerminalRepository(
     "grep -qxF '.rally/' .git/info/exclude || printf '.rally/\\n' >> .git/info/exclude",
   ].join("\n");
   const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
-    taskName: `avalon-bootstrap-${sandbox.generation}`,
     operation: "repository.bootstrap",
     command,
     cwd: "/workspace",
@@ -364,7 +363,6 @@ async function runInspection(
   command: string,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return provider.runUtilityCommand(sandboxId, {
-    taskName: `avalon-publish-${operation}`,
     operation: `repository.publish.${operation}`,
     command,
     cwd: "/workspace",

@@ -12,6 +12,7 @@ import {
 import { createResourceObjectPort } from "../../runtime/resource-port";
 import { loadVisibleWorkstreamResourcesByIds } from "../workstream-resource-visibility";
 import type { TerminalPortFactory } from "./object-port";
+import type { TerminalSandboxProvider } from "./daytona-provider";
 import type { TerminalResourceBridge } from "./runtime";
 import { requireTerminalEffectIntent, TerminalToolError, type TerminalPublishedResourceOutput } from "./tools";
 
@@ -129,7 +130,6 @@ export function createTerminalResourceBridge(
       const destination = destinationPath;
       const absolute = `/workspace/${destination}`;
       const existence = await provider.runUtilityCommand(providerSandboxId, {
-        taskName: `avalon-import-check-${row.id}`,
         operation: "resource.import.inspect",
         command: [
           `target='${absolute.replace(/'/gu, `'"'"'`)}'`,
@@ -203,21 +203,31 @@ export function createTerminalResourceBridge(
       const parent = absolute.slice(0, Math.max(absolute.lastIndexOf("/"), 1));
       const temporary = `/workspace/.rally/tmp/${newId()}`;
       await provider.writeFile(providerSandboxId, temporary, bytes, context.signal);
-      const verified = await provider.runUtilityCommand(providerSandboxId, {
-        taskName: `avalon-import-verify-${row.id}`,
-        operation: "resource.import.finalize",
-        command: [
-          `target='${absolute.replace(/'/gu, `'"'"'`)}'`,
-          `temporary='${temporary.replace(/'/gu, `'"'"'`)}'`,
-          'trap \'rm -f -- "$temporary"\' EXIT',
-          `mkdir -p -- '${parent.replace(/'/gu, `'"'"'`)}' || exit 46`,
-          'mv -- "$temporary" "$target" || exit 46',
-          "trap - EXIT",
-          'printf "%s %s\\n" "$(stat -c %s -- "$target")" "$(sha256sum -- "$target" | cut -d " " -f 1)"',
-        ].join("\n"),
-        cwd: "/workspace",
-        timeoutMs: 30_000,
-      });
+      let verified: Awaited<ReturnType<TerminalSandboxProvider["runUtilityCommand"]>>;
+      try {
+        verified = await provider.runUtilityCommand(providerSandboxId, {
+          operation: "resource.import.finalize",
+          command: [
+            `target='${absolute.replace(/'/gu, `'"'"'`)}'`,
+            `temporary='${temporary.replace(/'/gu, `'"'"'`)}'`,
+            'trap \'rm -f -- "$temporary"\' EXIT',
+            `mkdir -p -- '${parent.replace(/'/gu, `'"'"'`)}' || exit 46`,
+            'mv -- "$temporary" "$target" || exit 46',
+            "trap - EXIT",
+            'printf "%s %s\\n" "$(stat -c %s -- "$target")" "$(sha256sum -- "$target" | cut -d " " -f 1)"',
+          ].join("\n"),
+          cwd: "/workspace",
+          timeoutMs: 30_000,
+        });
+      } catch (error) {
+        await provider.runUtilityCommand(providerSandboxId, {
+          operation: "file.temp_cleanup",
+          command: `rm -f -- '${temporary.replace(/'/gu, `'"'"'`)}'`,
+          cwd: "/workspace",
+          timeoutMs: 10_000,
+        }).catch(() => undefined);
+        throw error;
+      }
       const observed = /^(\d+) ([0-9a-f]{64})\s*$/u.exec(verified.stdout);
       if (verified.exitCode !== 0 || !observed || Number(observed[1]) !== bytes.byteLength || observed[2] !== digest) {
         throw new TerminalToolError(
