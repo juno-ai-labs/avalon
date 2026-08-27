@@ -52,6 +52,7 @@
     "remark-gfm": "latest",
     "thinking-orbs": "0.2.0",
     "tw-fade": "^0.8.0",
+    "ws": "8.21.0",
     "zod": "catalog:",
     "zustand": "latest"
   },
@@ -62,6 +63,7 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@types/ws": "latest",
     "@vitejs/plugin-react": "^5.0.0",
     "app-builder-lib": "26.15.3",
     "autoprefixer": "latest",

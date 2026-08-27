@@ -32,6 +32,13 @@ import {
 import { elicitationMessageId } from './elicitation';
 import { startPerfTrace, type PerfTrace } from './perf-trace';
 import { realtimeSocketTelemetry, reportWorkstreamSocketStarted } from './socket-telemetry';
+import {
+  createRealtimeSocket,
+  REALTIME_SOCKET_CLOSED,
+  REALTIME_SOCKET_CONNECTING,
+  REALTIME_SOCKET_OPEN,
+  type RealtimeSocket,
+} from './realtime-socket';
 import { advanceStreamReveal, applyRevealedText, flushStreamReveal } from './streaming-reveal';
 import {
   reportTelemetryProductIntent,
@@ -716,7 +723,7 @@ export function useWorkstreamSocket(
     // it, and nothing should dial back until the effect re-runs on a work stream
     // they can read.
     let accessRevoked = false;
-    let socket: WebSocket | null = null;
+    let socket: RealtimeSocket | null = null;
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
@@ -862,7 +869,7 @@ export function useWorkstreamSocket(
     };
 
     loadMessagePageRef.current = (input): Promise<MessagePage> => {
-      if (closedByEffect || accessRevoked || socket?.readyState !== WebSocket.OPEN) {
+      if (closedByEffect || accessRevoked || socket?.readyState !== REALTIME_SOCKET_OPEN) {
         return Promise.reject(new ApiError(
           'The work stream connection is not ready to load messages.',
           409,
@@ -953,7 +960,7 @@ export function useWorkstreamSocket(
     const requestCanonicalSnapshot = (): void => {
       if (closedByEffect || accessRevoked || canonicalResyncTarget !== null) return;
       if (snapshotRequestInFlight) return;
-      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      if (!socket || socket.readyState !== REALTIME_SOCKET_OPEN) return;
       snapshotRequestInFlight = true;
       try {
         socket.send(JSON.stringify({ type: 'request_snapshot' }));
@@ -996,7 +1003,7 @@ export function useWorkstreamSocket(
         // has run finds `socket` null, and that drop has been reported too. So
         // the close listener makes the single report, and a cause armed with no
         // close to consume it would be left to mislabel the next one.
-        if (socket && socket.readyState !== WebSocket.CLOSED) {
+        if (socket && socket.readyState !== REALTIME_SOCKET_CLOSED) {
           socketTelemetry.willClose('resync_required');
           socket.close();
         } else scheduleReconnect();
@@ -1347,24 +1354,24 @@ export function useWorkstreamSocket(
       stabilityTimer = null;
     };
 
-    const scheduleStabilityReset = (target: WebSocket): void => {
+    const scheduleStabilityReset = (target: RealtimeSocket): void => {
       clearStabilityTimer();
       stabilityTimer = window.setTimeout(() => {
         stabilityTimer = null;
-        if (closedByEffect || socket !== target || target.readyState !== WebSocket.OPEN) return;
+        if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
         attempts.current = 0;
       }, SOCKET_STABLE_CONNECTION_MS);
     };
 
-    const scheduleHeartbeat = (target: WebSocket): void => {
+    const scheduleHeartbeat = (target: RealtimeSocket): void => {
       clearHeartbeat();
       heartbeatTimer = window.setTimeout(() => {
         heartbeatTimer = null;
-        if (closedByEffect || socket !== target || target.readyState !== WebSocket.OPEN) return;
+        if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
         target.send('ping');
         pongTimer = window.setTimeout(() => {
           pongTimer = null;
-          if (closedByEffect || socket !== target || target.readyState !== WebSocket.OPEN) return;
+          if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
           socketTelemetry.willClose('heartbeat_timeout');
           target.close();
         }, PONG_TIMEOUT_MS);
@@ -1417,8 +1424,8 @@ export function useWorkstreamSocket(
         closedByEffect
         || ticketRequestInFlight
         || canonicalResyncInFlight
-        || socket?.readyState === WebSocket.CONNECTING
-        || socket?.readyState === WebSocket.OPEN
+        || socket?.readyState === REALTIME_SOCKET_CONNECTING
+        || socket?.readyState === REALTIME_SOCKET_OPEN
       ) return;
       if (isOffline()) {
         setState('unavailable');
@@ -1530,7 +1537,7 @@ export function useWorkstreamSocket(
           scheduleReconnect();
           return;
         }
-        const nextSocket = new WebSocket(socketTicket.url, socketTicket.protocols);
+        const nextSocket = createRealtimeSocket('substream_feed', socketTicket.url, socketTicket.protocols);
         // Splits the wait between holding a ticket and being connected into the
         // two halves that have opposite fixes. Nothing is awaited between the
         // ticket resolving and this line, so `dial` can only be large if the
@@ -1688,7 +1695,7 @@ export function useWorkstreamSocket(
 
     const handleOnline = (): void => {
       if (closedByEffect || accessRevoked) return;
-      if (socket?.readyState === WebSocket.CONNECTING || socket?.readyState === WebSocket.OPEN) return;
+      if (socket?.readyState === REALTIME_SOCKET_CONNECTING || socket?.readyState === REALTIME_SOCKET_OPEN) return;
       clearReconnectTimer();
       void connect();
     };

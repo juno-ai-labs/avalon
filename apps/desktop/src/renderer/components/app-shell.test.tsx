@@ -90,15 +90,39 @@ describe('RUNNING_HARNESS_STATUSES', () => {
 });
 
 describe('backgroundRealtimeWorkstreamIds', () => {
-  it('keeps other running work streams live without opening sockets for scheduled or foreground work', () => {
+  it('opens every pinned pair, five recent unpinned pairs, and any other running pair', () => {
     const running = summary('running');
     const scheduled = summary('scheduled', '00000000-0000-7000-8000-000000000002');
     const completed = summary('completed', '00000000-0000-7000-8000-000000000003');
+    const pinned = {
+      ...summary('completed', '00000000-0000-7000-8000-000000000004'),
+      pinPosition: 0,
+      lastActivityAt: '2025-01-01T00:00:00.000Z',
+    };
+    const unpinned = Array.from({ length: 7 }, (_, index) => ({
+      ...summary('completed', `00000000-0000-7000-8000-${String(index + 5).padStart(12, '0')}`),
+      lastActivityAt: `2026-08-${String(index + 1).padStart(2, '0')}T10:00:00.000Z`,
+    }));
+    const oldButRunning = {
+      ...running,
+      lastActivityAt: '2024-01-01T00:00:00.000Z',
+    };
+    const finishedOld = {
+      ...completed,
+      lastActivityAt: '2023-01-01T00:00:00.000Z',
+    };
 
-    expect(backgroundRealtimeWorkstreamIds(running.id, [running, scheduled, completed]))
-      .toEqual([]);
-    expect(backgroundRealtimeWorkstreamIds(null, [running, scheduled, completed]))
-      .toEqual([running.id]);
+    expect(backgroundRealtimeWorkstreamIds(scheduled.id, [
+      oldButRunning,
+      scheduled,
+      finishedOld,
+      pinned,
+      ...unpinned,
+    ])).toEqual([
+      oldButRunning.id,
+      pinned.id,
+      ...unpinned.slice(2).map((workstream) => workstream.id),
+    ]);
   });
 });
 

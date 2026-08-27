@@ -26,6 +26,9 @@ vi.mock('./telemetry', async (importOriginal) => ({
   reportTelemetryProductIntent,
 }));
 vi.mock('./platform', () => ({
+  // This store-ordering suite exercises the browser-shaped transport. The
+  // Electron broker contract has its own adapter and main-process tests.
+  desktopServicesAvailable: () => false,
   desktopBridge: () => ({
     getApplicationForegroundState: async () => applicationFocus.foregrounded,
     onApplicationForegroundChanged: (listener: (foregrounded: boolean) => void) => {

@@ -79,6 +79,11 @@ so the two agree. `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused pinned row mo
 it one step, and each row announces its position to a screen reader, so the
 order is not reachable by pointer alone. Plain arrows are left to move focus.
 
+In Electron, every pinned row also keeps its WorkstreamDO control socket and
+substream `0` feed socket proactively connected. It joins the active work
+stream, the five most recently active unpinned rows, and any running work stream
+in the socket pool; pin order does not sequence their handshakes.
+
 Holding Command overlays `⌘1` through `⌘9` on one continuous row order: pinned
 work streams first in their manual order, followed by recent work streams and
 notes in the recency order already rendered below them. Pressing one of those
@@ -262,6 +267,27 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-26 — Pins proactively retain both work-stream sockets
+
+**What changed:** Every pinned work stream now participates in Electron's
+background realtime pool with both its WorkstreamDO control connection and
+substream `0` feed connection. The same pool retains the five most recently
+active unpinned rows and any other running work stream.
+
+**Why:** A pin is the user's durable declaration that a work stream should be
+immediately reachable. Warming only the visible row or only its metadata still
+leaves the feed handshake and snapshot on the critical path when the pin is
+opened.
+
+**Considered and rejected:** Warming a fixed number of pins would silently make
+pin order a performance priority and invent a cap the product did not choose.
+Opening pins sequentially would recreate the cold queue this transport change
+removes.
+
+**Consequences:** Pinning and unpinning change the background connection set as
+soon as the directory cache updates. The pool still deduplicates active,
+running, recently viewed, recent-unpinned, and pinned roles by work-stream ID.
 
 ### 2026-08-20 — The imported D1 pin source is removed
 
