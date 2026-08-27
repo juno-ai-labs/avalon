@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Rally web and Electron brand assets from the canonical alpha mask."""
+"""Generate Rally web and Electron brand assets from the canonical Rally mark."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import math
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
+
+from selectable_icon_artwork import TEXTURED_SELECTABLE_ICONS
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +36,9 @@ MACOS_ICON_CORNER_EXPONENT = 5
 MACOS_ICON_SHADOW_OFFSET = 10 / 1024
 MACOS_ICON_SHADOW_RADIUS = 8 / 1024
 MACOS_ICON_SHADOW_OPACITY = 64
+# The social card is the only generated asset with type in it, and it is set in
+# the system font the site uses. Nothing else here depends on a font.
+SOCIAL_CARD_FONT = Path("/System/Library/Fonts/SFNS.ttf")
 
 
 def mark(size: int, color: tuple[int, int, int, int] = PRIMARY) -> Image.Image:
@@ -178,6 +183,18 @@ def save_social_card(image: Image.Image, path: Path) -> None:
     image.convert("RGB").save(path, format="JPEG", quality=88, optimize=True, progressive=True)
 
 
+def prune_stale_application_icons(names: set[str]) -> None:
+    """Delete artwork and previews for identifiers that no longer exist.
+
+    The previews are built by globbing the artwork directory, so a renamed icon
+    would otherwise leave a preview that Vite still bundles and nothing imports.
+    """
+    for directory in (APPLICATION_ICON_DIRECTORY, APPLICATION_ICON_PREVIEW_DIRECTORY):
+        for path in sorted(directory.glob("*.png")):
+            if path.stem not in names:
+                path.unlink()
+
+
 def generate_application_icon_previews() -> None:
     """Build compact Retina thumbnails without duplicating 1024px app assets in Vite."""
     for source_path in sorted(APPLICATION_ICON_DIRECTORY.glob("*.png")):
@@ -199,6 +216,11 @@ def main() -> None:
     # and platform effects in the shipped ICNS renditions.
     save(app_icon(1024, LIGHT_CANVAS, DARK_CANVAS), APPLICATION_ICON_DIRECTORY / "light.png")
     save(app_icon(1024, DARK_CANVAS, PRIMARY), APPLICATION_ICON_DIRECTORY / "dark.png")
+    # The textured treatments carry the same mark, taken from the same canonical
+    # path, so the whole shelf moves together when the logo changes.
+    for name, render in TEXTURED_SELECTABLE_ICONS.items():
+        save(render(1024), APPLICATION_ICON_DIRECTORY / f"{name}.png")
+    prune_stale_application_icons({"light", "dark", *TEXTURED_SELECTABLE_ICONS})
     # Icon Composer recolors this transparent mark for each appearance and
     # lets macOS own the enclosure. The separate ICNS is only the DMG volume
     # icon, whose legacy format still requires a baked silhouette.
@@ -227,9 +249,16 @@ def main() -> None:
     )
     save(app_icon(64), ROOT / "apps" / "site" / "public" / "favicon.png")
     save(app_icon(180), ROOT / "apps" / "site" / "public" / "apple-touch-icon.png")
-    social = social_card()
-    save_social_card(social, ROOT / "apps" / "site" / "public" / "rally-social.jpg")
-    save_social_card(social, ROOT / "apps" / "site" / "public" / "og-2026.jpg")
+    # Off macOS the card would silently pick up a substitute typeface and
+    # overwrite the committed one, which is a regression nobody reviewing an
+    # icon change would think to look for. Every other asset here is
+    # reproducible anywhere, so only this one is conditional.
+    if SOCIAL_CARD_FONT.exists():
+        social = social_card()
+        save_social_card(social, ROOT / "apps" / "site" / "public" / "rally-social.jpg")
+        save_social_card(social, ROOT / "apps" / "site" / "public" / "og-2026.jpg")
+    else:
+        print(f"Skipped the social card: {SOCIAL_CARD_FONT} is only present on macOS")
     generate_application_icon_previews()
 
 

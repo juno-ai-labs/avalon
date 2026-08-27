@@ -51,8 +51,8 @@ describe('application icon persistence', () => {
   });
 
   it('accepts only the versioned allowlisted preference shape', () => {
-    expect(parseStoredApplicationIcon({ version: 1, icon: 'blueprint' })).toBe('blueprint');
-    expect(parseStoredApplicationIcon({ version: 2, icon: 'blueprint' })).toBeNull();
+    expect(parseStoredApplicationIcon({ version: 1, icon: 'grass-court' })).toBe('grass-court');
+    expect(parseStoredApplicationIcon({ version: 2, icon: 'grass-court' })).toBeNull();
     expect(parseStoredApplicationIcon({ version: 1, icon: '../../private' })).toBeNull();
     expect(parseStoredApplicationIcon(null)).toBeNull();
   });
@@ -62,10 +62,10 @@ describe('application icon persistence', () => {
     temporaryDirectories.push(directory);
 
     expect(await readStoredApplicationIcon(directory)).toBeNull();
-    await writeStoredApplicationIcon(directory, 'ruby');
-    expect(await readStoredApplicationIcon(directory)).toBe('ruby');
-    await writeStoredApplicationIcon(directory, 'leather');
-    expect(await readStoredApplicationIcon(directory)).toBe('leather');
+    await writeStoredApplicationIcon(directory, 'clay-court');
+    expect(await readStoredApplicationIcon(directory)).toBe('clay-court');
+    await writeStoredApplicationIcon(directory, 'ball-felt');
+    expect(await readStoredApplicationIcon(directory)).toBe('ball-felt');
     expect((await stat(resolve(directory, 'application-icon.json'))).mode & 0o777).toBe(0o600);
     await clearStoredApplicationIcon(directory);
     expect(await readStoredApplicationIcon(directory)).toBeNull();
@@ -82,8 +82,8 @@ describe('application icon persistence', () => {
   });
 
   it('resolves packaged selectable icons to system-compiled ICNS resources', () => {
-    expect(applicationIconPath('/Applications/Rally.app/Contents/Resources/app-icons', 'ruby'))
-      .toBe('/Applications/Rally.app/Contents/Resources/app-icons/ruby.icns');
+    expect(applicationIconPath('/Applications/Rally.app/Contents/Resources/app-icons', 'clay-court'))
+      .toBe('/Applications/Rally.app/Contents/Resources/app-icons/clay-court.icns');
   });
 
   it('provides compact Retina previews for every selectable icon', async () => {

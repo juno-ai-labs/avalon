@@ -47,12 +47,11 @@ export type TelemetryWorkstreamCreationSource = typeof TELEMETRY_WORKSTREAM_CREA
 export const TELEMETRY_APPLICATION_ICON_IDS = [
   "light",
   "dark",
-  "sunset-sherbet",
-  "ludicrous-speed",
-  "ruby",
-  "holographic",
-  "leather",
-  "blueprint",
+  "grass-court",
+  "clay-court",
+  "hard-court",
+  "ball-felt",
+  "night-match",
 ] as const;
 export type TelemetryApplicationIconId = typeof TELEMETRY_APPLICATION_ICON_IDS[number];
 
