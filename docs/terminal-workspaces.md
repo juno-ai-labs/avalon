@@ -418,8 +418,8 @@ report; a deadline the pass finds nothing to do for does.
 
 See [`runbook.md`](runbook.md#terminal-provider-activation-and-recovery) for
 activation and recovery. Structured events are
-`terminal_tool_finished`, `terminal_sandbox_lifecycle_transition`, and
-`terminal_sandbox_lifecycle_failed`, plus
+`terminal_plugin_activation_finished`, `terminal_tool_finished`,
+`terminal_sandbox_lifecycle_transition`, and `terminal_sandbox_lifecycle_failed`, plus
 `terminal_operation_commit_failed` and
 `terminal_operation_alarm_schedule_failed` for the typed object-port boundary,
 plus
@@ -443,9 +443,12 @@ reconciliation.
 
 ## Performance and cost
 
-Allocation is lazy and reuse is scoped to one work stream. Five-minute warm stop
-reduces compute time, sixty-minute archive reduces retained live-disk cost, and
-thirty-day deletion bounds provider storage. Only user-visible generated files,
+An explicit Terminal `load_plugin` starts and initializes the sandbox because
+the next model action is overwhelmingly likely to use one of its tools. A
+restored durable activation remains lazy so an unrelated later run does not
+allocate merely because an earlier run used Terminal. Reuse is scoped to one
+work stream. Five-minute warm stop reduces compute time, sixty-minute archive
+reduces retained live-disk cost, and thirty-day deletion bounds provider storage. Only user-visible generated files,
 complete eligible command logs, and the last bounded Git diff are copied to R2;
 Rally does not pay to maintain a second cold filesystem archive. Provider time
 and output bytes are derivable from local `terminal_workspace` and
@@ -514,6 +517,16 @@ application events complement Cloudflare's automatic outbound-fetch spans: the
 automatic spans prove the HTTP path, while the semantic events identify which
 Terminal tool and provider operation caused it.
 
+`terminal_plugin_activation_finished` uses the same acquisition and provider
+timing fields under the fixed `terminal_plugin_activation` tool identity. It
+also records a one-based `activation_attempt`, gives every retry a distinct
+synthetic tool-call ID, and records `repository_state` as `prepared` or
+`deferred` and a bounded `repository_code` when the repair belongs to the
+visible Terminal tool surface.
+This separates cold sandbox/repository preparation from the subsequent tool and
+makes first-tool improvement measurable without logging repository identity or
+content.
+
 `pnpm terminal:analytics -- --days 7` queries Cloudflare's SQL API and prints
 the actual first/last observation time, sampled and sampling-weighted counts,
 and average/p50/p95/max latency for create, bootstrap, stopped warming, and
@@ -531,6 +544,42 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-27 — Explicit Terminal loading initializes the sandbox
+
+**What changed:** The explicit Terminal `load_plugin` path now acquires the
+work-stream sandbox and prepares a selected repository before exposing the nine
+tools. Repairable repository failures are deferred so checkout remains visible;
+a selected repository that failed preparation is removed from the shared
+preparation cache so ordinary tools revalidate it before touching retained
+files. A missing selection keeps the sandbox warm because there is no repository
+authorization to recheck.
+Restored activation hints skip preparation and retain first-tool acquisition.
+Explicit preparation populates the same per-run promise used by every tool, so
+the first tool does not reacquire or bootstrap the selected repository again.
+Activation emits correlated acquisition, provider-operation, repository-state,
+residual Rally timing, and a distinct attempt identity for each retry. Eight
+repeated explicit loads single-flight one activation, and a 64-operation utility
+burst proves one acquisition and one repository preparation.
+
+**Why:** Production use shows that loading Terminal is nearly always immediately
+followed by a Terminal tool. Cold setup therefore belonged in the load latency,
+where it can complete before the next model turn, instead of appearing as a
+surprise first-tool delay.
+
+**Considered and rejected:** Prewarming every restored hint, rerunning sandbox
+security/policy checks before every tool, and failing the whole plugin for a
+stale or repairable repository selection. They respectively allocate for
+unrelated runs, repay setup after the authority is already established, or hide
+the only repair operation.
+
+**Consequences:** Explicit load may take the bounded acquisition-plus-repository
+budget, but the first Terminal tool should be warm. Activation remains
+convergent and cancellation-fenced; provider details remain out of the model and
+traces. A revoked or stale selected repository cannot reuse activation's sandbox
+cache, while `checkout_repository` remains available to repair the selection.
+Performance comparisons must count `load_plugin` plus the first tool, not claim
+a faster tool by moving cold setup outside the measured boundary.
 
 ### 2026-08-27 — Direct utilities, request tracing, and setup pay once
 

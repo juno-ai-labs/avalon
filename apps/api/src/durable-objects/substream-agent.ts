@@ -155,7 +155,11 @@ import {
   MessageOperationRequestSchema,
   mutatesTranscript,
 } from "./workstream-message-protocol";
-import { WorkstreamHarnessRunStorage } from "./workstream-harness-run-storage";
+import {
+  expireLocalAttemptLeasesFromPreviousInstance,
+  previousInstanceRecoveryOwner,
+  WorkstreamHarnessRunStorage,
+} from "./workstream-harness-run-storage";
 import {
   type HarnessRunOperationRequest,
   HarnessRunOperationRequestSchema,
@@ -625,6 +629,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
+  /** Distinguishes this live object instance from the predecessor it replaces. */
+  private readonly harnessLeaseOwnerNonce = uuidV7();
+  private readonly recoverableHarnessAttempts = new Map<string, string>();
   /**
    * Whether the drain this alarm just ran left a run in someone else's hands.
    *
@@ -634,6 +641,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    */
   private runDrainDeferred = false;
   private activeRunDispatch: { runId: string; leaseToken: string } | null = null;
+
+  private harnessAttemptOwner(
+    input: Pick<WorkstreamWorkflowInput, "substreamId" | "harnessRunId">,
+    attemptId: string,
+  ): string {
+    return `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}:${this.harnessLeaseOwnerNonce}`;
+  }
 
   constructor(
     state: DurableObjectState,
@@ -697,12 +711,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // the maintenance cutover. A non-main child records its external id on
       // its first scoped request and may never change it afterward.
       if (this.objectStore.identity()) this.ensureSubstreamIdentity("0");
-      // Whatever leases survive belong to the isolate this one replaced, so
-      // the runs they cover are recoverable now rather than at expiry.
+      // Still-live local leases belong to the isolate this one replaced, so
+      // their runs are recoverable now. Already-expired rows stay with the
+      // ordinary stale-run reaper.
+      const recoveryStartedAt = Date.now();
+      for (const attempt of expireLocalAttemptLeasesFromPreviousInstance(
+        state.storage,
+        recoveryStartedAt,
+      )) {
+        this.recoverableHarnessAttempts.set(attempt.runId, attempt.attemptId);
+      }
       releaseAgentRunDispatchLeases(
         this.state.storage.sql,
         SUBSTREAM_AGENT_RUN_DISPATCHES,
-        Date.now(),
+        recoveryStartedAt,
       );
       // A run left behind by a previous isolate is rediscovered here, by
       // arming the alarm rather than by starting a drain this constructor
@@ -2603,7 +2625,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return this.settleAgentRunWithRetry(executionEnv, input, terminalOutcome);
     }
     const runs = createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId);
-    await reapStaleHarnessRuns(runs, {
+    const recoveryOptions: Parameters<typeof reapStaleHarnessRuns>[1] = {
       receipts: createToolReceiptPortFactory(executionEnv),
       blocks: createBlockDashboardPortFactory(executionEnv),
       workspaceId: input.workspaceId,
@@ -2618,17 +2640,45 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         repair_phase: failure.phase,
         reason: failure.reason,
       }),
-    });
-    const attemptId = uuidV7();
+    };
+    const recoverableAttemptId = this.recoverableHarnessAttempts.get(input.harnessRunId) ?? null;
+    if (recoverableAttemptId === null) {
+      await reapStaleHarnessRuns(runs, recoveryOptions);
+    }
+    const attemptId = recoverableAttemptId ?? uuidV7();
+    const attemptOwner = this.harnessAttemptOwner(input, attemptId);
     const claim = await claimHarnessAttempt(
       runs,
       input,
       {
         attemptId,
-        owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}`,
+        owner: attemptOwner,
         leaseSeconds: 300,
       },
     );
+    if (recoverableAttemptId !== null
+      && claim.state !== "busy"
+      && claim.state !== "cancelled") {
+      this.recoverableHarnessAttempts.delete(input.harnessRunId);
+    }
+    if (recoverableAttemptId !== null && claim.state === "claimed") {
+      logWarn(this.env, "substream_agent_previous_instance_attempt_resumed", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        substream_id: input.substreamId ?? "0",
+        harness_run_id: input.harnessRunId,
+        attempt_id: recoverableAttemptId,
+        attempt_epoch: claim.lease.attemptNumber,
+      });
+      // The root is live before this pass. Its children were expired with it,
+      // so the reaper keeps them resumable instead of treating them as stale.
+      await reapStaleHarnessRuns(runs, recoveryOptions);
+    } else if (recoverableAttemptId !== null) {
+      // The recovered row was busy, cancelled, or terminal. Repair old
+      // terminal receipts without letting the general reaper fail the attempt
+      // this instance still intends to reclaim on a later busy retry.
+      await repairTerminalResidualReceipts(runs, recoveryOptions);
+    }
     if (claim.state === "busy") {
       const leaseAt = claim.leaseExpiresAt ? Date.parse(claim.leaseExpiresAt) : Number.NaN;
       // A lease nobody will release leaves the run "running" forever, and this
@@ -2672,18 +2722,32 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
     }
     if (claim.state === "cancelled") {
-      await terminalizeQueuedHarnessRun(
-        runs,
-        input,
-        { attemptId, owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}` },
-        { code: "run_cancelled", message: "The run was stopped before it started" },
-        "stopped",
-      );
-      return this.persistAndSettleAgentRun(executionEnv, input, {
+      const stopped = {
         status: "stopped",
         error: { code: "run_cancelled", message: "The run was stopped before it started" },
         cancellationReason: "run_cancelled",
-      });
+      } as const;
+      if (recoverableAttemptId !== null) {
+        await terminalizeHarnessAttempt(
+          runs,
+          createMessageObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+          input,
+          { attemptId, owner: previousInstanceRecoveryOwner(attemptId) },
+          stopped,
+          createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+          createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+        );
+        this.recoverableHarnessAttempts.delete(input.harnessRunId);
+      } else {
+        await terminalizeQueuedHarnessRun(
+          runs,
+          input,
+          { attemptId, owner: attemptOwner },
+          stopped.error,
+          "stopped",
+        );
+      }
+      return this.persistAndSettleAgentRun(executionEnv, input, stopped);
     }
 
     let outcome: WorkstreamHarnessResult;

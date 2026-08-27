@@ -1136,11 +1136,12 @@ describe("boundary contracts", () => {
     }))).toEqual({ code: "provider_error" });
     expect(readStructuredFailure(new ProviderError("unauthorized", "Reconnect", {
       reconnectRequired: true,
+      retryable: false,
       reason: "invalid_grant",
       payload: { error_description: "Token has been revoked" },
     }))).toEqual({
       code: "unauthorized",
-      details: { reason: "invalid_grant", reconnectRequired: true },
+      details: { reason: "invalid_grant", reconnectRequired: true, retryable: false },
     });
     expect(readStructuredFailure(new ProviderError("invalid_payload", "Ambiguous", {
       reason: "ambiguous_calendar_name",
