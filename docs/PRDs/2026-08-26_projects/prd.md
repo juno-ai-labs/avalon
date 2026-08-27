@@ -492,6 +492,16 @@ message only after `WorkspaceDO` reports failed or already terminal. If that
 receipt write is unavailable, the DLQ message retries. The failure consumer
 never calls the work-stream resource effect and never retries delivery itself.
 
+`PROJECT_RESOURCE_DLQ` itself dead-letters exhausted failure-consumer messages
+to a separate regional `PROJECT_RESOURCE_FAILURE_DLQ`. That terminal Queue has
+no automatic consumer: a non-empty backlog is the visible signal that
+`WorkspaceDO` could not record failure, and it preserves the application
+pointer instead of letting Cloudflare delete it. After the authority recovers,
+an operator can replay the pointer into the failure consumer; its claim and
+terminal-state check make replay idempotent. The implementation leaves the
+failure-consumer retry count open for the team to set rather than guessing a
+defensive limit in this PRD.
+
 The project space shows **Adding to work streams…** until every target is
 applied, already satisfied, superseded, or failed. A failed target is named by
 work-stream title only to readers who may see that work stream and can be
@@ -859,12 +869,13 @@ Default-resource delivery is split by region because each Queue consumer must
 bind and call only that region's `WorkspaceDO`, `WorkstreamDO`, and
 `SubstreamAgent` namespaces. Global and EU use the same logical
 `PROJECT_RESOURCE_QUEUE` producer binding in code, backed by separate
-region-named Queue and dead-letter resources in deployment. Both regional
-Wrangler configurations declare their producer, primary consumer, DLQ failure
-consumer, and dead-letter resource, and deployment preflight rejects an
-unpaired or multiply consumed Queue. The region is still present in every
-message and is validated by the consumer. A failed EU delivery retries or
-dead-letters in EU; it never falls back to Global, and the reverse is also true.
+region-named primary, dead-letter, and terminal failure Queues in deployment.
+Both regional Wrangler configurations declare their producer, primary
+consumer, DLQ failure consumer, terminal DLQ, and every dead-letter edge;
+deployment preflight rejects an unpaired or multiply consumed Queue. The region
+is still present in every message and is validated by the consumer. A failed EU
+delivery retries or dead-letters in EU; it never falls back to Global, and the
+reverse is also true.
 
 All multi-work-stream audience fan-out follows the same regional rule through
 the logical `PROJECT_AUDIENCE_QUEUE` binding and separate region-named
@@ -873,7 +884,10 @@ widening share its idempotent target-and-receipt path. Its consumer may call
 only the same region's `WorkspaceDO` and `WorkstreamDO`; no project audience or
 target crosses regions. The regional dead-letter consumer marks an exhausted
 still-current target `failed` before acknowledging it so an authorized reader
-can retry the operation without repeating applied targets.
+can retry the operation without repeating applied targets. Its own exhausted
+messages go to a passive regional `PROJECT_AUDIENCE_FAILURE_DLQ`, with the same
+visible-backlog and idempotent operational-replay contract as the resource
+failure chain.
 
 ## Security and trust model
 
@@ -924,7 +938,9 @@ the named audience effect.
    an existing resource link. Messages are acknowledged or retried
    independently, and exhausted work reaches a regional dead-letter queue whose
    failure consumer durably changes the matching application to `failed` before
-   acknowledging it. Closing the desktop does not stop the fan-out. Future
+   acknowledging it. If that consumer also exhausts retries, a separate passive
+   regional terminal DLQ preserves the pointer for visible, idempotent
+   operational replay. Closing the desktop does not stop the fan-out. Future
    members and project restoration use the same application path; restoration
    creates a fresh generation even when an older receipt was applied.
 6. Removing a work stream or a default resource leaves every resource already
@@ -1003,4 +1019,6 @@ the named audience effect.
     with this convergence, and participant addition or scope widening cannot
     start while a default-resource application is unfinished. Participant
     removal remains immediate and replaces any resource applications that its
-    audience change superseded.
+    audience change superseded. An exhausted audience failure-consumer message
+    is likewise preserved in a passive regional terminal DLQ for visible,
+    idempotent operational replay.
