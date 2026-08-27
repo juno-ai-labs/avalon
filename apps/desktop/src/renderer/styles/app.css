@@ -309,24 +309,24 @@ pre {
 }
 
 .avatar-presence-ping {
-  animation: avatar-presence-ping 2.2s ease-out infinite;
-  border: 1px solid color-mix(in srgb, var(--av-sys-color-success-base) 70%, transparent);
+  animation: avatar-presence-ping 1s cubic-bezier(0, 0, .2, 1) infinite;
+  background: color-mix(in srgb, var(--av-sys-color-success-base) 35%, transparent);
   border-radius: var(--av-sys-size-radius-pill);
-  inset: 1px;
+  inset: 0;
   pointer-events: none;
   position: absolute;
+  z-index: 1;
 }
 
 @keyframes avatar-presence-ping {
-  0%, 25% { opacity: .38; transform: scale(.9); }
-  78%, 100% { opacity: 0; transform: scale(1.55); }
+  75%, 100% { opacity: 0; transform: scale(2); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .avatar-presence-ping {
     animation: none;
-    inset: -2px;
-    opacity: .45;
+    opacity: .3;
+    transform: scale(1.35);
   }
 }
 
