@@ -1,6 +1,7 @@
 import {
   ArrowUp,
   AudioLines,
+  CalendarDays,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -72,6 +73,7 @@ const icons = {
   microphone: Mic,
   more: Ellipsis,
   private: Lock,
+  schedule: CalendarDays,
   refresh: RefreshCcw,
   region: Globe2,
   search: Search,
