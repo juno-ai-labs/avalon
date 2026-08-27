@@ -11,11 +11,13 @@ const stylesheet = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.
 
 /** The declarations inside one rule, or null when the selector is absent. */
 function rule(selector: string): string | null {
-  const start = stylesheet.indexOf(`\n${selector} {`);
-  if (start === -1) return null;
-  const open = stylesheet.indexOf('{', start);
-  const close = stylesheet.indexOf('}', open);
-  return stylesheet.slice(open + 1, close);
+  return ruleWithin(stylesheet, selector);
+}
+
+/** The declarations inside one rule within an already bounded stylesheet fragment. */
+function ruleWithin(source: string, selector: string): string | null {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return source.match(new RegExp(`(?:^|\\n)\\s*${escapedSelector} \\{([^}]*)\\}`, 'u'))?.[1] ?? null;
 }
 
 /**
@@ -258,19 +260,20 @@ describe('work-stream participant presence', () => {
     );
     expect(presentAvatar).toContain('border-color: var(--av-sys-color-brand-base);');
     expect(stylesheet).toContain('42% { transform: translateY(-3px); }');
-    const reducedMotion = stylesheet.match(
-      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.avatar-presence-ping \{([^}]*)\}/,
-    )?.[1];
+    const reducedMotionBlock = stylesheet.match(
+      /@media \(prefers-reduced-motion: reduce\) \{\n([\s\S]*?)\n\}\n/,
+    )?.[1] ?? '';
+    expect(reducedMotionBlock).not.toBe('');
+    const reducedMotion = ruleWithin(reducedMotionBlock, '.avatar-presence-ping');
     expect(reducedMotion).toContain('animation: none;');
     expect(reducedMotion).toContain('opacity: .3;');
     expect(reducedMotion).toContain('transform: scale(1.35);');
-    const reducedMotionAvatar = stylesheet.match(
-      /@media \(prefers-reduced-motion: reduce\) \{\s*\.avatar-stack \.avatar \{([^}]*)\}/,
-    )?.[1];
+    const reducedMotionAvatar = ruleWithin(reducedMotionBlock, '.avatar-stack .avatar');
     expect(reducedMotionAvatar).toContain('transition: none;');
-    const reducedMotionEntry = stylesheet.match(
-      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.avatar-stack-item\.is-present > \.avatar \{([^}]*)\}/,
-    )?.[1];
+    const reducedMotionEntry = ruleWithin(
+      reducedMotionBlock,
+      '.avatar-stack-item.is-present > .avatar',
+    );
     expect(reducedMotionEntry).toContain('animation: none;');
     const overflow = stylesheet.match(/\n\.avatar-overflow \{\n {2}align-items: center;[^}]*\}/)?.[0];
     expect(overflow).toContain('position: relative;');
