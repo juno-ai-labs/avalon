@@ -234,6 +234,25 @@ describe('Modal', () => {
     fireEvent.keyDown(field, { key: 'Escape' });
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+
+  it('shows no tooltip on the close button, whose meaning its position already carries', async () => {
+    render(
+      <Tooltip.Provider>
+        <Modal onOpenChange={vi.fn()} open title="Mark all as read?">
+          <p>body</p>
+        </Modal>
+      </Tooltip.Provider>,
+    );
+
+    const close = screen.getByRole('button', { name: 'Close dialog' });
+    // Radix opens a tooltip on hover and on keyboard focus alike; a hover-only
+    // assertion would keep passing if a later refactor restored just the focus path.
+    fireEvent.pointerMove(close, { pointerType: 'mouse' });
+    fireEvent.focus(close);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  });
 });
 
 describe('DropdownSelect', () => {
