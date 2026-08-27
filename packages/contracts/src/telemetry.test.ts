@@ -84,7 +84,7 @@ describe("telemetry registry", () => {
       launchAtLoginAvailable: true,
       lockdownModeEnabled: false,
       lockdownModeAvailable: true,
-      applicationIcon: "ruby",
+      applicationIcon: "clay-court",
       applicationIconAutomatic: false,
       applicationIconAvailable: true,
     }],
@@ -103,7 +103,7 @@ describe("telemetry registry", () => {
     ["application_icon_changed", "desktop-main", {
       previousIcon: "dark",
       previousAutomatic: true,
-      selectedIcon: "sunset-sherbet",
+      selectedIcon: "night-match",
       automatic: false,
     }],
     ["application_opened", "desktop-main", {
@@ -566,7 +566,7 @@ describe("telemetry registry", () => {
     ["application_settings_state_v2", "desktop-main", "workspace-user", {
       launchAtLoginEnabled: true, launchAtLoginAvailable: true, lockdownModeEnabled: false,
       lockdownModeAvailable: true, menuBarEnabled: true, menuBarAvailable: true,
-      menuBarPresent: true, applicationIcon: "ruby", applicationIconAutomatic: false,
+      menuBarPresent: true, applicationIcon: "clay-court", applicationIconAutomatic: false,
       applicationIconAvailable: true,
     }],
     ["application_setting_change_completed_v2", "desktop-main", "workspace-user", {
