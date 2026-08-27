@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { useRef } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   nextTranscriptFollowState,
   useTranscriptFollow,
@@ -14,7 +14,9 @@ interface Geometry { scrollHeight: number; clientHeight: number; scrollTop: numb
  * an assignment to `scrollTop` is discarded. The three properties are backed by
  * a plain object instead, and the setter recording what the follow writes is the
  * assertion surface. `smoothTargets` records `scrollTo` calls without moving the
- * viewport, which is what an unfinished smooth animation looks like.
+ * viewport, which is what an unfinished smooth animation looks like; `behaviors`
+ * records the `behavior` option each of those calls carried, which is the
+ * reduced-motion gate's whole assertion surface.
  *
  * The descriptors are captured and put back rather than deleted: they live on
  * `Element.prototype` today, so deleting the shadow happens to restore them, but
@@ -22,12 +24,14 @@ interface Geometry { scrollHeight: number; clientHeight: number; scrollTop: numb
  * no accessor at all and a failure nowhere near this file.
  */
 function stubScrollGeometry(initial: Geometry): {
+  behaviors: (ScrollBehavior | undefined)[];
   geometry: Geometry;
   smoothTargets: number[];
   restore: () => void;
 } {
   const geometry = { ...initial };
   const smoothTargets: number[] = [];
+  const behaviors: (ScrollBehavior | undefined)[] = [];
   const names = ['scrollHeight', 'clientHeight', 'scrollTop', 'scrollTo'] as const;
   const original = new Map(names.map((name) =>
     [name, Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)]));
@@ -45,11 +49,15 @@ function stubScrollGeometry(initial: Geometry): {
   });
   Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
     configurable: true,
-    value: (options: { top: number }) => { smoothTargets.push(options.top); },
+    value: (options: { behavior?: ScrollBehavior; top: number }) => {
+      smoothTargets.push(options.top);
+      behaviors.push(options.behavior);
+    },
     writable: true,
   });
 
   return {
+    behaviors,
     geometry,
     smoothTargets,
     restore: (): void => {
@@ -107,7 +115,10 @@ describe('nextTranscriptFollowState', () => {
 describe('useTranscriptFollow', () => {
   let stub: ReturnType<typeof stubScrollGeometry>;
 
-  afterEach(() => stub?.restore());
+  afterEach(() => {
+    stub?.restore();
+    vi.unstubAllGlobals();
+  });
 
   const element = (): HTMLElement => screen.getByTestId('transcript');
   const atEnd = (): string => screen.getByTestId('at-end').textContent ?? '';
@@ -348,6 +359,10 @@ describe('useTranscriptFollow', () => {
 
     follow.scrollToEnd({ smooth: true });
     expect(stub.smoothTargets).toEqual([3_500]);
+    // jsdom defines no `matchMedia` at all, so this test also pins the
+    // preference-cannot-be-read path: the optional call short-circuits to
+    // undefined and the jump stays smooth.
+    expect(stub.behaviors).toEqual(['smooth']);
     // The animation has not started moving yet, and must not be snapped past.
     expect(stub.geometry.scrollTop).toBe(400);
     stub.geometry.scrollHeight += 200;
@@ -365,6 +380,48 @@ describe('useTranscriptFollow', () => {
     stub.geometry.scrollHeight += 200;
     rerender(<Transcript revision={3} />);
     expect(stub.geometry.scrollTop).toBe(3_900);
+  });
+
+  // The stylesheet's global reduced-motion kill switch
+  // (`scroll-behavior: auto !important`) cannot override an explicit `smooth`
+  // passed to `scrollTo` — the option wins over the page's CSS per spec — so
+  // the preference has to be read in script, the same way `sidebar.tsx` reads
+  // it for its own jump. Under the preference the hook takes its instant path:
+  // no `scrollTo` call at all, a recorded `scrollTop` write, and the follow
+  // re-armed synchronously rather than on the animation's arrival.
+  it('jumps instantly instead of smoothly when the reader prefers reduced motion', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(prefers-reduced-motion: reduce)' }));
+    stub = stubScrollGeometry({ scrollHeight: 4_000, clientHeight: 500, scrollTop: 3_500 });
+    const { rerender } = render(<Transcript revision={0} />);
+    follow.release();
+    follow.scrollTo(400);
+    rerender(<Transcript revision={1} />);
+
+    follow.scrollToEnd({ smooth: true });
+
+    expect(stub.smoothTargets).toEqual([]);
+    expect(stub.behaviors).toEqual([]);
+    expect(stub.geometry.scrollTop).toBe(3_500);
+    // The instant jump re-arms the follow without waiting for a scroll event.
+    stub.geometry.scrollHeight += 200;
+    rerender(<Transcript revision={2} />);
+    expect(stub.geometry.scrollTop).toBe(3_700);
+  });
+
+  it('keeps the jump smooth when the reader has not asked for less motion', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query !== '(prefers-reduced-motion: reduce)' }));
+    stub = stubScrollGeometry({ scrollHeight: 4_000, clientHeight: 500, scrollTop: 3_500 });
+    const { rerender } = render(<Transcript revision={0} />);
+    follow.release();
+    follow.scrollTo(400);
+    rerender(<Transcript revision={1} />);
+
+    follow.scrollToEnd({ smooth: true });
+
+    expect(stub.smoothTargets).toEqual([3_500]);
+    expect(stub.behaviors).toEqual(['smooth']);
+    // The animation has not arrived, so the viewport has not been snapped.
+    expect(stub.geometry.scrollTop).toBe(400);
   });
 
   it('does not touch the viewport before the screen says it may follow', () => {
