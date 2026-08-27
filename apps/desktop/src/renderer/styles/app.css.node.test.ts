@@ -137,9 +137,15 @@ describe('work-stream participant presence', () => {
     expect(ping).toContain('inset: 0;');
     expect(ping).toContain('z-index: 1;');
     expect(stylesheet).toContain('75%, 100% { opacity: 0; transform: scale(2); }');
-    expect(stylesheet).toContain('@media (prefers-reduced-motion: reduce)');
-    expect(stylesheet).toContain('animation: none;');
-    expect(stylesheet).toContain('transform: scale(1.35);');
+    const reducedMotion = stylesheet.match(
+      /@media \(prefers-reduced-motion: reduce\) \{\s*\.avatar-presence-ping \{([^}]*)\}/,
+    )?.[1];
+    expect(reducedMotion).toContain('animation: none;');
+    expect(reducedMotion).toContain('opacity: .3;');
+    expect(reducedMotion).toContain('transform: scale(1.35);');
+    const overflow = stylesheet.match(/\n\.avatar-overflow \{\n {2}align-items: center;[^}]*\}/)?.[0];
+    expect(overflow).toContain('position: relative;');
+    expect(overflow).toContain('z-index: 1;');
   });
 });
 
