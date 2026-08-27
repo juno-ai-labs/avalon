@@ -10,8 +10,10 @@ export * from "./workstream-transcript";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 import { AttachmentKindSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
+import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
 
 export * from "./attachment-contracts";
+export * from "./resource-relationships";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export {
@@ -628,6 +630,28 @@ export const ResourceSchema = z.object({
   updatedAt: TimestampSchema,
   contentAvailable: z.boolean().default(false),
   sizeBytes: z.number().int().nonnegative().default(0),
+  currentVersion: z.number().int().positive().default(1),
+});
+
+export const WorkstreamResourceSchema = ResourceSchema.extend({
+  relationshipType: ResourceRelationshipTypeSchema,
+  direction: ResourceDirectionSchema,
+});
+
+export const ResourceRevisionSchema = z.object({
+  resourceId: IdSchema,
+  version: z.number().int().positive(),
+  title: z.string().min(1).max(300),
+  resourceType: z.string().min(1).max(80),
+  provider: z.string().min(1).max(80),
+  providerResourceId: z.string().max(500).nullable(),
+  mimeType: z.string().max(160).nullable(),
+  canonicalUrl: HttpUrlSchema.nullable(),
+  lastHydratedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema,
+  contentAvailable: z.boolean(),
+  modelContentAvailable: z.boolean(),
+  sizeBytes: z.number().int().nonnegative(),
 });
 
 export const NoteRecordingStatusSchema = z.enum(["idle", "recording", "complete"]);
@@ -1056,7 +1080,7 @@ export const UpdateBlockDashboardRequestSchema = z.object({
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   participants: z.array(ParticipantSchema),
   viewers: z.array(ViewerSchema),
-  resources: z.array(ResourceSchema),
+  resources: z.array(WorkstreamResourceSchema),
   connections: z.array(ConnectionSchema),
   backgroundTasks: z.array(BackgroundTaskSchema).default([]),
   openElicitations: z.array(ElicitationSchema),
@@ -2460,8 +2484,8 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("elicitation_answered"), elicitation: ElicitationSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("participant_added"), participant: ParticipantSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("participant_removed"), userId: IdSchema }),
-  ServerEventBaseSchema.extend({ type: z.literal("resource_attached"), resource: ResourceSchema }),
-  ServerEventBaseSchema.extend({ type: z.literal("resource_updated"), resource: ResourceSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("resource_attached"), resource: WorkstreamResourceSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("resource_updated"), resource: WorkstreamResourceSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: ActivitySuggestionSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: ActivitySuggestionSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_configuration_updated"), blockDashboard: BlockDashboardSchema }),
@@ -3107,6 +3131,8 @@ export type WorkstreamContext = z.infer<typeof WorkstreamContextSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 export type ExternalActor = z.infer<typeof ExternalActorSchema>;
 export type Resource = z.infer<typeof ResourceSchema>;
+export type WorkstreamResource = z.infer<typeof WorkstreamResourceSchema>;
+export type ResourceRevision = z.infer<typeof ResourceRevisionSchema>;
 export type NoteRecordingStatus = z.infer<typeof NoteRecordingStatusSchema>;
 export type NoteTranscriptSegment = z.infer<typeof NoteTranscriptSegmentSchema>;
 export type NoteSummary = z.infer<typeof NoteSummarySchema>;

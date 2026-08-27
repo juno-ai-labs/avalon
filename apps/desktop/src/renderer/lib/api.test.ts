@@ -144,6 +144,7 @@ const resource = {
   updatedAt: timestamp,
   contentAvailable: false,
   sizeBytes: 0,
+  currentVersion: 1,
 };
 
 const session: DesktopSession = {

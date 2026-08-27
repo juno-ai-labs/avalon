@@ -30,7 +30,10 @@ import {
   MessageSchema,
   MentionSchema,
   NoteDetailSchema,
+  RESOURCE_RELATIONSHIP_TYPES,
   RefreshRequestSchema,
+  ResourceRelationshipTypeSchema,
+  resourceDirectionForRelationship,
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
   StartWorkOpportunityRequestSchema,
@@ -47,6 +50,14 @@ import {
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
 
 describe("boundary contracts", () => {
+  it("derives artifacts only from generated work-stream relationships", () => {
+    expect(ResourceRelationshipTypeSchema.options).toEqual(RESOURCE_RELATIONSHIP_TYPES);
+    expect(ResourceRelationshipTypeSchema.safeParse("made_up").success).toBe(false);
+    expect(resourceDirectionForRelationship("generated")).toBe("artifact");
+    expect(resourceDirectionForRelationship("origin")).toBe("source");
+    expect(resourceDirectionForRelationship("attachment")).toBe("source");
+  });
+
   it("adds a bounded optional suggested-work surface without breaking older clients", () => {
     const legacy = { version: 3, idempotencyKey: "legacy-attempt" };
     expect(StartWorkOpportunityRequestSchema.safeParse(legacy).success).toBe(true);

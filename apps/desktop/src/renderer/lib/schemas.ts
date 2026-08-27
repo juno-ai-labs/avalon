@@ -1,4 +1,8 @@
-import { AutomationPluginActivitySchema } from '@rally/contracts';
+import {
+  AutomationPluginActivitySchema,
+  ResourceDirectionSchema,
+  ResourceRelationshipTypeSchema,
+} from '@rally/contracts';
 import { z } from 'zod';
 
 const scopeSchema = z.enum(['you', 'workspace']);
@@ -68,6 +72,9 @@ export const resourceSchema = z
     watchEnabled: z.boolean().default(false),
     watchStatus: z.enum(['watching', 'paused', 'unsupported', 'error']).default('paused'),
     updatedAt: z.string().optional(),
+    currentVersion: z.number().int().positive().default(1),
+    relationshipType: ResourceRelationshipTypeSchema.default('attachment'),
+    direction: ResourceDirectionSchema.default('source'),
   })
   .passthrough();
 

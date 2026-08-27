@@ -85,6 +85,7 @@ export const WORKSPACE_LOCAL_TABLES = [
   "digest_deliveries",
   "schedules",
   "resources",
+  "resource_versions",
   "resource_watches",
   "notes",
   "note_transcript_segments",
