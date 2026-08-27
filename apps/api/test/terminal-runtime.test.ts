@@ -282,6 +282,27 @@ describe("Daytona Terminal runtime", () => {
     expect(prepareSandbox).toHaveBeenCalledOnce();
   });
 
+  it("single-flights acquisition and preparation across a burst of utility operations", async () => {
+    const prepareSandbox = vi.fn(async () => undefined);
+    const { coordinator, provider, runtime } = fixture(undefined, undefined, prepareSandbox);
+    const acquire = vi.spyOn(coordinator, "acquire");
+
+    const pages = await Promise.all(Array.from({ length: 64 }, (_, index) =>
+      runtime.readFilePage(
+        { ...context, toolCallId: `call-runtime-stress-${index}` },
+        "src/file.txt",
+        1,
+        200,
+      )));
+
+    expect(pages).toHaveLength(64);
+    expect(pages.every((page) => page?.content === "hello")).toBe(true);
+    expect(acquire).toHaveBeenCalledOnce();
+    expect(prepareSandbox).toHaveBeenCalledOnce();
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+    expect(provider.runUtilityCommand).toHaveBeenCalledTimes(64);
+  });
+
   it("reacquires after the cached operation lease expires", async () => {
     vi.useFakeTimers();
     try {
