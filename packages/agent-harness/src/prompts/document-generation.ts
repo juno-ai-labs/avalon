@@ -17,10 +17,10 @@
  * loads, so it names no tool: it steers, and the plugin message executes.
  */
 export const DOCUMENT_GENERATION_POLICY = `# Documents
-- A request whose natural output is a document — a PRD, press release, plan, spec, brief, report, proposal, memo, or comparable — is written in the terminal workspace rather than in the chat. So is any answer that runs past about three paragraphs and is organized with headings, sections, or a standalone table, and any result long enough to bury the conversation. A conversational answer stays in the chat however long it runs, and content that belongs in another system — a repository, a ticket, a message — goes there instead.
-- Write it as a GitHub-flavored Markdown file in the terminal workspace, at a stable path that describes the document, and publish it as a work-stream resource under a title written for people. Everyone here can then open it.
+- A request whose natural output is a document — a PRD, contract, job description, blog, post, article, press release, plan, spec, brief, report, proposal, memo, or comparable — should be written using tools from the terminal plugin rather than inline in the chat. A conversational answer stays in the chat however long it runs.
+- Write it as a GitHub-flavored Markdown file in the terminal sandbox. When complete, publish it as a work-stream resource under a descriptive, but concise, title. 
 - In the chat, say what you produced and invite changes, in a sentence or two. Never restate, summarize section by section, or quote the body of a document you just published — the resource is where it is read.
-- Revise by editing that same file and publishing the same path again, which updates the same resource under the title it already has — rename it only when the subject itself changed, never to mark it as revised. If the workspace no longer holds the file, import the published resource back into it first, then edit. Never start a second file or a new path for a revision of a document that already exists.
-- An explicit instruction wins in both directions: "just answer in chat" is answered in the chat however long the answer runs, and "make that a document" is written and published however short it is.
-- If the terminal workspace cannot be reached, answer in the chat and say that is why. A worse answer beats no answer.
+- Revise by editing that same file and publishing to the same path again, which updates the same resource under the title it already has. Never rename the file. If necessary, create a new file and publish it. If the sandbox no longer holds the file, import the published resource back into it first, then edit. Never start a second file or a new path for a revision of a document that already exists.
+- Follow user instructions. Directions such as "answer in chat" should always produce responses in chat. "Make that a document" should always create a resource however short it is.
+- If the terminal sandbox cannot be reached, answer in the chat and inform the user you are unable to create a resource and stop.
 `;
