@@ -3014,33 +3014,36 @@ describe("agent harness", () => {
     // the persist is failing, so `timedOut` is genuinely true and the arm below
     // it is genuinely reachable. That is what makes this a test of the
     // ordering rather than of the platform arm, which the spec above covers.
-    const fetcher = vi.fn(async () => streamResponse([{
-      choices: [{
-        delta: { tool_calls: [toolDelta(0, "provider-write", "create_record")] },
-        finish_reason: "tool_calls",
-      }],
-    }])) as typeof fetch;
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn(async () => streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-write", "create_record")] },
+          finish_reason: "tool_calls",
+        }],
+      }])) as typeof fetch;
 
-    const outcome = await runHarness({
-      // Leave enough pre-deadline budget to reach the persistence port even
-      // when the complete repository suite is contending for the event loop.
-      ...runInput(fetcher, { maxWallClockMs: 100 }),
-      corePlugins: [testCorePlugin([harnessTool("create_record", "write", [])])],
-      persistToolExecutionPlan: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        throw new Error(
-          "D1_ERROR: Subrequest depth limit exceeded. This request recursed through Workers too many times.",
-        );
-      },
-    });
+      const outcome = await runHarness({
+        ...runInput(fetcher, { maxWallClockMs: 5 }),
+        corePlugins: [testCorePlugin([harnessTool("create_record", "write", [])])],
+        persistToolExecutionPlan: async () => {
+          await vi.advanceTimersByTimeAsync(25);
+          throw new Error(
+            "D1_ERROR: Subrequest depth limit exceeded. This request recursed through Workers too many times.",
+          );
+        },
+      });
 
-    expect(outcome).toMatchObject({
-      status: "failed",
-      failure: {
-        kind: "platform",
-        code: "platform_limit_exceeded",
-      },
-    });
+      expect(outcome).toMatchObject({
+        status: "failed",
+        failure: {
+          kind: "platform",
+          code: "platform_limit_exceeded",
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("files the count limit the same way as the depth limit", () => {

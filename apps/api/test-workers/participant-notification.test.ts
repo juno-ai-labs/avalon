@@ -25,6 +25,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import { substreamAgentName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import {
   WorkstreamRegionalEffectEnvelopeSchema,
   type WorkstreamRegionalEffectEnvelope,
@@ -39,6 +40,7 @@ const SESSION_ID = "00000000-0000-7000-8000-0000000006a4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000006a5";
 const SECOND_INVITEE_ID = "00000000-0000-7000-8000-0000000006a7";
 const MISSING_RECIPIENT_ID = "00000000-0000-7000-8000-0000000006a8";
+const ATTACHMENT_ID = "00000000-0000-7000-8000-0000000006a9";
 
 const AUTH = {
   sessionId: SESSION_ID,
@@ -528,6 +530,51 @@ describe("naming somebody when the work stream is created", () => {
         seen_attention_ordinal: 0,
         latest_mention_attention_ordinal: 1,
       });
+      const partId = state.storage.sql.exec<{ id: string }>(
+        `SELECT id FROM parts WHERE client_message_id = ?`,
+        `participant-open-${WORKSTREAM_ID}`,
+      ).one().id;
+      state.storage.sql.exec(
+        `INSERT INTO workstream_resource_links
+           (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+            resource_json, attached_at, updated_at)
+         VALUES (?, ?, 0, 'message_attachment', ?, ?, ?)`,
+        ATTACHMENT_ID,
+        CREATOR_ID,
+        JSON.stringify({
+          id: ATTACHMENT_ID,
+          title: "sonar.png",
+          mimeType: "image/png",
+          contentRef: "uploads/sonar.png",
+          metadata: { size: 1024 },
+        }),
+        Date.parse("2026-08-26T12:00:00.000Z"),
+        Date.parse("2026-08-26T12:00:00.000Z"),
+      );
+      state.storage.sql.exec(
+        `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+         VALUES (?, ?, 0, ?)`,
+        partId,
+        ATTACHMENT_ID,
+        JSON.stringify({ attachedAt: "2026-08-26T12:00:00.000Z" }),
+      );
+      const transcript = new WorkstreamTranscriptStorage(state.storage)
+        .createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null });
+      expect(transcript.ranges[0]!.turns[0]).toMatchObject({
+        authorUserId: CREATOR_ID,
+        blocks: [{
+          type: "text",
+          mentions: [{ type: "person", userId: INVITEE_ID }],
+          attachments: [{
+            id: ATTACHMENT_ID,
+            fileName: "sonar.png",
+            mimeType: "image/png",
+            sizeBytes: 1024,
+            contentAvailable: true,
+            createdAt: "2026-08-26T12:00:00.000Z",
+          }],
+        }],
+      });
     });
 
     const envelopes = await deliveredEffects(stub);
@@ -739,6 +786,79 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         `SELECT COUNT(*) AS count FROM part_mentions WHERE target_user_id = ?`,
         INVITEE_ID,
       ).one().count).toBe(0);
+    });
+  });
+});
+
+describe("answering an elicitation in the ordered transcript", () => {
+  it("keeps the member response as a typed attributed turn after reload", async () => {
+    const stub = agentStub();
+    const opened = await openWorkstream(stub);
+    const runId = String(opened.body.harnessRunId);
+    const elicitationId = "00000000-0000-7000-8000-0000000006aa";
+    const messageId = "00000000-0000-7000-8000-0000000006ab";
+    const createdAt = "2026-08-26T12:00:00.000Z";
+    const question = await stub.fetch("https://object.test/internal/scheduling", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        operation: "openElicitation",
+        args: [{
+          elicitationId,
+          runId,
+          prompt: "Which environment?",
+          responseType: "text",
+          optionsJson: "[]",
+          minimumSelections: 0,
+          maximumSelections: null,
+          targetUserId: null,
+          messageId,
+          structuredContentJson: JSON.stringify({
+            kind: "elicitation",
+            elicitation: {
+              id: elicitationId,
+              workstreamId: WORKSTREAM_ID,
+              harnessRunId: runId,
+              prompt: "Which environment?",
+              responseType: "text",
+              options: [],
+              minimumSelections: 0,
+              maximumSelections: null,
+              targetUserId: null,
+              status: "open",
+              answer: null,
+              answeredByUserId: null,
+              createdAt,
+              answeredAt: null,
+            },
+          }),
+          now: Date.parse(createdAt),
+        }],
+      }),
+    });
+    expect(question.status).toBe(200);
+
+    const answered = await product(stub, {
+      operation: "answer_elicitation",
+      auth: AUTH,
+      elicitationId,
+      input: { answer: "staging" },
+    });
+    expect(answered.status).toBe(200);
+
+    await runInDurableObject(stub, (_instance, state) => {
+      const transcript = new WorkstreamTranscriptStorage(state.storage)
+        .createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null });
+      const response = transcript.ranges[0]!.turns.find(
+        (turn) => turn.clientMessageId === `elicitation-response:${elicitationId}`,
+      );
+      expect(response).toMatchObject({
+        actor: "human",
+        authorUserId: CREATOR_ID,
+        blocks: [{ type: "text", messageType: "elicitation" }],
+      });
     });
   });
 });

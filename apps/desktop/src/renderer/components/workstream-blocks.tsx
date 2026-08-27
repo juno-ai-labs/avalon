@@ -1227,16 +1227,28 @@ export function MessageBlock({
   if (message.messageType === 'elicitation' && message.elicitation) {
     if (message.elicitation.status === 'answered') {
       const externalResponse = message.authorType === 'external';
+      const ownHumanResponse = (message.authorType === 'human'
+        && currentUserId !== undefined
+        && message.author?.id === currentUserId)
+        // The automation builder resolves its assistant-authored question in
+        // place before it appends the person's follow-up turn. That local-only
+        // representation has no second author record, but it can only be the
+        // signed-in person's response; canonical work-stream answers arrive as
+        // attributed human or external turns.
+        || (message.authorType === 'agent' && message.author === undefined);
+      const responseAuthor = externalResponse
+        ? `${message.externalActor?.displayName ?? 'Slack workspace member'} · Slack`
+        : message.author?.name ?? 'Workspace member';
       return (
         <article
-          aria-label={externalResponse ? `Response from ${message.externalActor?.displayName ?? 'Slack workspace member'}` : 'Human elicitation response'}
+          aria-label={ownHumanResponse ? 'Your elicitation response' : `Response from ${responseAuthor}`}
           className={clsx(
             'message-block human-message elicitation-response-message',
-            externalResponse ? 'coworker-message' : 'own-human-message',
+            ownHumanResponse ? 'own-human-message' : 'coworker-message',
           )}
           id={`message-${message.id}`}
         >
-          {externalResponse && <header><span aria-hidden="true" className="message-author-dot" /><span className="message-author">{message.externalActor?.displayName ?? 'Slack workspace member'} · Slack</span><time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time></header>}
+          {!ownHumanResponse && <header><span aria-hidden="true" className="message-author-dot" /><span className="message-author">{responseAuthor}</span><time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time></header>}
           <div className="human-message-content">
             <ElicitationPanel
               elicitation={message.elicitation}

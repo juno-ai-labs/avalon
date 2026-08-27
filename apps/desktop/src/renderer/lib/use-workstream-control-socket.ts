@@ -65,7 +65,11 @@ function metadataState(metadata: WorkstreamControlMetadata): {
     scope: metadata.scope,
     systemKind: metadata.systemKind ?? undefined,
     nextPendingWakeup: metadata.nextPendingWakeup,
-    preview: metadata.preview,
+    // The sidebar's subtitle is the standing description. `preview` is a
+    // legacy WorkstreamDO field and is empty for newly created object-owned
+    // work streams; letting the direct socket copy it here makes the subtitle
+    // disappear only while that work stream is open.
+    preview: metadata.description,
   };
   const viewer: Partial<WorkstreamSummary> = {
     readThroughSequenceNumber: seen,
@@ -107,7 +111,7 @@ function metadataState(metadata: WorkstreamControlMetadata): {
       systemKind: metadata.systemKind ?? undefined,
       nextPendingWakeup: metadata.nextPendingWakeup,
       pinPosition: null,
-      preview: metadata.preview,
+      preview: metadata.description,
     },
   };
 }
