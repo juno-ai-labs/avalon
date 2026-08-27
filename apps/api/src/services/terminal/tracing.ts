@@ -41,7 +41,7 @@ export type TerminalUtilityOperation =
   | "repository.publish.head"
   | "repository.publish.ancestry"
   | "repository.publish.paths"
-  | "repository.publish.bundle"
+  | "repository.publish.push"
   | "lifecycle.final_diff"
   | "lifecycle.backup"
   | "lifecycle.backup_cleanup";
