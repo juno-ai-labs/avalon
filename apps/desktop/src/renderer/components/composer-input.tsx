@@ -25,6 +25,7 @@ import {
   agentModelTriggerLabel,
   type AgentModelOverride,
 } from '../lib/agent-models';
+import { isComposingKeyEvent } from '../lib/ime';
 import { normalizeMentionLabels, splitMentionHighlights } from '../lib/mention-highlight';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { appendDictationTranscript, useRealtimeDictation } from '../lib/use-realtime-dictation';
@@ -117,6 +118,13 @@ interface ComposerInputProps {
       pinned: boolean;
     };
   onAttach: (files: FileList | File[]) => void;
+  /**
+   * The host's own key handling — mention navigation, dismissing a popover,
+   * slash commands. It never receives a keydown dispatched during an IME
+   * composition: this composer drops those before calling it, because the IME
+   * owns every key between `compositionstart` and `compositionend`. The reasons
+   * and the signals are in `lib/ime.ts`.
+   */
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onMention: () => void;
   /**
@@ -154,6 +162,11 @@ const NO_MENTION_LABELS: readonly string[] = [];
  * The shared text-entry surface for both a new work stream and an existing one.
  * Keeping attachments, mentions, dictation, keyboard submission, and the toolbar
  * here prevents the two primary composers from evolving separate controls.
+ *
+ * Owning keyboard submission also means owning what an IME is allowed to reach:
+ * a keydown belonging to an in-flight composition is dropped here, before the
+ * host's `onKeyDown` and before this composer's own Enter, so no host has to
+ * remember the rule. See `lib/ime.ts`.
  */
 export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>(function ComposerInput({
   api,
@@ -326,6 +339,10 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
               resizeTextarea(event.target.value);
             }}
             onKeyDown={(event) => {
+              // First, and before the host's handler: while an IME is composing
+              // it owns every key, and nothing in this composer or above it may
+              // act on one. See `lib/ime.ts`.
+              if (isComposingKeyEvent(event.nativeEvent)) return;
               onKeyDown?.(event);
               if (
                 !event.defaultPrevented

@@ -35,6 +35,7 @@ import remarkGfm from 'remark-gfm';
 import { logError } from '../../common/logger';
 import { messageExportDate, messageExportFileName, type MessageExportFormat } from '../../common/message-export';
 import { formatDuration, formatRelative } from '../lib/format';
+import { isComposingKeyEvent } from '../lib/ime';
 import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
@@ -1054,6 +1055,11 @@ export function ElicitationPanel({
       className="elicitation-panel"
       onKeyDown={(event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && canSubmit && !submitting) {
+          // `isComposing` is set on every key dispatched during a composition,
+          // chords included, and this one answers a question that resumes a
+          // paused run: submitting mid-composition would send the pre-conversion
+          // reading as the answer. See `../lib/ime.ts`.
+          if (isComposingKeyEvent(event.nativeEvent)) return;
           event.preventDefault();
           void submit();
           return;

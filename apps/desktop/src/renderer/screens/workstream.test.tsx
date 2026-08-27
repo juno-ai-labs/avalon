@@ -388,6 +388,27 @@ describe('WorkstreamHeader inline rename', () => {
     expect(onRename).not.toHaveBeenCalled();
   });
 
+  it('keeps the draft when Escape is cancelling an IME candidate rather than the rename', () => {
+    const onRename = vi.fn(async () => undefined);
+    renderWorkstreamHeader(headerWorkstream, { onRename });
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Daily product brief' }));
+    const input = screen.getByRole('textbox', { name: 'Work stream name' });
+    fireEvent.change(input, { target: { value: 'Half-converted name' } });
+
+    // Escape abandons the IME's candidate, not the rename. Discarding here
+    // throws away the whole draft, and nothing offers it back.
+    fireEvent.keyDown(input, { key: 'Escape', isComposing: true });
+    expect(screen.getByRole('textbox', { name: 'Work stream name' })).toHaveValue('Half-converted name');
+
+    fireEvent.keyDown(input, { key: 'Escape', keyCode: 229 });
+    expect(screen.getByRole('textbox', { name: 'Work stream name' })).toHaveValue('Half-converted name');
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('textbox', { name: 'Work stream name' })).not.toBeInTheDocument();
+    expect(onRename).not.toHaveBeenCalled();
+  });
+
   it('refuses an empty name and keeps the editor open when the rename fails', async () => {
     const onRename = vi.fn(async () => {
       throw new Error('The work stream could not be renamed.');

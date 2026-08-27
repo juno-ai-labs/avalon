@@ -40,6 +40,7 @@ import { useAppSession } from '../lib/app-session';
 import { ApiError, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
 import { answerElicitationOptimistically } from '../lib/elicitation';
 import { formatDateTime } from '../lib/format';
+import { isComposingKeyEvent } from '../lib/ime';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
@@ -597,6 +598,11 @@ export function WorkstreamHeader({
                   }}
                   onFocus={(event) => event.currentTarget.select()}
                   onKeyDown={(event) => {
+                    // While an IME is composing, Escape cancels the candidate
+                    // rather than the rename — discarding the draft here would
+                    // throw away a name somebody is halfway through typing,
+                    // with nothing to undo it. See `../lib/ime.ts`.
+                    if (isComposingKeyEvent(event.nativeEvent)) return;
                     if (event.key === 'Escape') {
                       event.preventDefault();
                       cancelRename();
