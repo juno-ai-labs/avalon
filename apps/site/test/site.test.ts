@@ -82,6 +82,7 @@ describe('public Rally site', () => {
       'index.html',
       'concepts/index.html',
       'concepts/horizon/index.html',
+      'concepts/hero/index.html',
       'invite/index.html',
       'slack/link/index.html',
       'open/index.html',
@@ -208,7 +209,7 @@ describe('public Rally site', () => {
   });
 
   it('keeps internal landing-page studies out of search indexes', () => {
-    for (const path of ['concepts/index.html', 'concepts/horizon/index.html']) {
+    for (const path of ['concepts/index.html', 'concepts/horizon/index.html', 'concepts/hero/index.html']) {
       expect(readProjectFile(path)).toContain('<meta name="robots" content="noindex, nofollow" />');
     }
   });
