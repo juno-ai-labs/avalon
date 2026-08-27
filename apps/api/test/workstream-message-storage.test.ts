@@ -81,7 +81,7 @@ describe("appending to the transcript", () => {
     // caller's own `UPDATE workstreams` advanced `next_sequence_number`.
     expect(sql.exec(
       `SELECT sequence_number, attention_ordinal, role, author_type, visibility, content
-         FROM parts`,
+         FROM workstream_message_details`,
     ).toArray()).toEqual([{
       sequence_number: 1,
       attention_ordinal: 1,
@@ -111,7 +111,7 @@ describe("appending to the transcript", () => {
     // re-read the table to find out what had happened.
     expect(await storage.appendMessage(message({ messageId: "message-2", text: "again" })))
       .toEqual({ outcome: "replayed", messageId: "message-1", sequenceNumber: 1 });
-    expect(sql.exec(`SELECT COUNT(*) AS n FROM parts`).one().n).toBe(1);
+    expect(sql.exec(`SELECT COUNT(*) AS n FROM workstream_message_records`).one().n).toBe(1);
     // And the counters do not move for a message that was not written.
     expect(sql.exec(`SELECT next_sequence_number FROM workstream`).one().next_sequence_number)
       .toBe(2);
@@ -137,7 +137,7 @@ describe("appending to the transcript", () => {
     // The retired trigger's mapping, which is not one-to-one: `external` is a
     // `user` role written by an `external` author, because what a person says
     // through Slack is still something a person said.
-    expect(sql.exec(`SELECT id, role, author_type FROM parts ORDER BY sequence_number`).toArray())
+    expect(sql.exec(`SELECT id, role, author_type FROM workstream_message_details ORDER BY sequence_number`).toArray())
       .toEqual([
         { id: "message-1", role: "assistant", author_type: "agent" },
         { id: "message-2", role: "user", author_type: "external" },
@@ -262,7 +262,7 @@ describe("the windows a reader asks for", () => {
     await storage.appendMessage(message({ messageId: "m2", clientMessageId: "c2", now: NOW + 1_000 }));
     for (const [part, resource, position] of [["m1", "r1", 0], ["m1", "r2", 1], ["m2", "r3", 0]] as const) {
       sql.exec(
-        `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+        `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
          VALUES (?, ?, ?, '{}')`,
         part,
         resource,
@@ -298,7 +298,7 @@ describe("a tool card in the transcript", () => {
     // to, so it takes no attention ordinal and does not move the people clock.
     // That distinction was in the retired trigger rather than in any caller.
     expect(sql.exec(
-      `SELECT sequence_number, attention_ordinal, tool_name, tool_status, visibility FROM parts`,
+      `SELECT sequence_number, attention_ordinal, tool_name, tool_status, visibility FROM workstream_message_details`,
     ).toArray()).toEqual([{
       sequence_number: 1,
       attention_ordinal: null,
@@ -337,12 +337,12 @@ describe("a tool card in the transcript", () => {
       createdAt: NOW,
       editedAt: NOW + 5_000,
     })).toEqual({ outcome: "refreshed", sequenceNumber: 1 });
-    expect(sql.exec(`SELECT COUNT(*) AS n FROM parts`).one().n).toBe(1);
-    expect(sql.exec(`SELECT tool_status, edited_at FROM parts`).toArray())
+    expect(sql.exec(`SELECT COUNT(*) AS n FROM workstream_message_records`).one().n).toBe(1);
+    expect(sql.exec(`SELECT tool_status, edited_at FROM workstream_message_details`).toArray())
       .toEqual([{ tool_status: "completed", edited_at: NOW + 5_000 }]);
     expect(sql.exec(
       `SELECT tool_name, tool_mode, tool_status, edited_at
-         FROM workstream_message_records WHERE message_id = 'invocation-1'`,
+         FROM workstream_message_records WHERE id = 'invocation-1'`,
     ).toArray()).toEqual([{
       tool_name: "linear.issue.get",
       tool_mode: "read",
@@ -354,7 +354,7 @@ describe("a tool card in the transcript", () => {
          FROM workstream_message_records record
          JOIN transcript_facts fact ON fact.fact_id = record.fact_id
          JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
-        WHERE record.message_id = 'invocation-1'`,
+        WHERE record.id = 'invocation-1'`,
     ).one().payload_json)).toMatchObject({
       structuredContent: { invocation: { status: "completed" } },
     });
@@ -387,7 +387,7 @@ describe("a tool card in the transcript", () => {
     // `started` is not a settled status. A tool the model has begun is still a
     // card a member is waiting on, and rendering it as completed would say the
     // work finished.
-    expect(sql.exec(`SELECT tool_status FROM parts`).toArray())
+    expect(sql.exec(`SELECT tool_status FROM workstream_message_details`).toArray())
       .toEqual([{ tool_status: "pending" }]);
   });
 });
@@ -422,13 +422,13 @@ describe("reading a page of transcript", () => {
     const { storage, sql } = open();
     await seed(storage, 2);
     sql.exec(
-      `INSERT INTO part_mentions
-         (part_id, mention_index, mention_kind, target_user_id, connector_type,
+      `INSERT INTO workstream_message_mentions
+         (message_id, mention_index, mention_kind, target_user_id, connector_type,
           start_offset, end_offset, attention_ordinal)
        VALUES ('message-1', 0, 'person', 'user-2', NULL, 0, 5, 1)`,
     );
     sql.exec(
-      `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+      `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
        VALUES ('message-2', 'resource-1', 0, ?)`,
       JSON.stringify({ attachedAt: new Date(NOW).toISOString() }),
     );

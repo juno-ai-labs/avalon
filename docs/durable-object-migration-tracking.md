@@ -45,7 +45,6 @@ happen.
 | `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | The `MIGRATION_REPORT_QUEUE` producer binding and the `avalon-<region>-migration-commands` consumer in each region. |
 | `scripts/ensure-cloudflare-queues.mjs` | The deployment preflight that reads every Wrangler file and creates each queue it declares that the account does not hold, so the configuration stays the single source of truth and no queue is made by hand. |
 | `scripts/force-substream-agent-migrations.mjs` | The explicit one-off fleet wake for `SubstreamAgent`: inventories stored IDs, classifies their encoded jurisdiction, sends only region-addressable IDs through the existing command queues, and verifies queue drain without a new dead letter. |
-| `scripts/backfill-substream-agent-transcripts.mjs` | The separate content operator: its default mode projects legacy participant/checkpoint order; `--payload-transfer` moves exact payload ownership into canonical facts. Both inventory and classify the reviewed fleet, require exact eligible-count witnesses, invoke each object's deployed RPC, and persist every PITR bookmark/outcome in a mode-0600 local receipt. |
 | `scripts/substream-agent-jurisdiction-probe/` | A remote-development-only Worker that parses enumerated IDs through unrestricted external bindings and returns their encoded jurisdiction without opening an object. |
 
 ## How it works
@@ -734,49 +733,6 @@ goes through `hono/html` escaping.
   if either DLQ grows from its starting depth. This operation runs object-local
   schema migrations only.
 
-- The legacy transcript projection is a separate explicit data operation, run
-  only after the backend that exposes schema v28 and the object-owned RPC is
-  successfully deployed. The remote-preview probe's backfill mode calls that
-  deployed RPC through the matching regional external binding; it does not
-  weaken the production binding or add a public administration route. Inventory
-  first, then apply using the reviewed fleet counts:
-
-  ```bash
-  pnpm exec dotenv -e <credential-repo>/.env.local -- \
-    pnpm migrate:legacy-workstream-transcripts -- \
-      --jurisdiction-probe-url=http://localhost:8790
-
-  pnpm exec dotenv -e <credential-repo>/.env.local -- \
-    pnpm migrate:legacy-workstream-transcripts -- --apply \
-      --jurisdiction-probe-url=http://localhost:8790 \
-      --expected-global=389 --expected-eu=3 \
-      --global-target-ids=/tmp/rally-global-main-substream-ids.json
-  ```
-
-  The optional regional target files are JSON arrays of object IDs resolved
-  from the authoritative work-stream route set. The script verifies every ID
-  is unique, structurally valid, present in the current stored inventory, and
-  encoded for the matching jurisdiction. This lets an unrelated auxiliary or
-  test object remain visible as `excluded` without guessing from inventory
-  order or widening the reviewed main-feed target. Apply refuses target-count
-  drift before the first object RPC. Every object returns a
-  real pre-write PITR bookmark and reconciliation outcome, persisted to a
-  mode-0600 file under `/tmp` by default. Any object error makes the command
-  fail after preserving completed outcomes. Re-run the same command after a
-  successful fleet pass: all 392 eligible objects must report `applied=false`
-  and `verified=true`. Legacy unrestricted IDs remain explicit skips because a
-  regional binding cannot address them; this operation never crosses regions.
-  The object RPC also requires `external_substream_id = '0'`. An auxiliary
-  substream fails visibly without writing an empty success receipt; if one
-  appears in a future inventory, the operator must separate it from the
-  reviewed main-feed target rather than increasing the witness count.
-
-  The probe's `resolve` response retains each input name beside its derived ID
-  for auditability. Convert it to the protected flat-array input with
-  `jq '[.objects[] | select(.error == null) | .objectId]'`, verify its count,
-  and set mode `0600` before passing it to `--global-target-ids` or
-  `--eu-target-ids`. Never redirect the raw resolve envelope into a target file.
-
 ## Performance and cost
 
 The design's budget is one queue send per object per schema change, plus one per
@@ -813,6 +769,20 @@ radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
 
 ## Changelog
+
+### 2026-08-27 — Completed transcript operators retired after ownership transfer
+
+**What changed:** Schema v32 consumes the verified per-object transfer state and
+then removes the legacy tables, receipts, operator RPCs, package commands, and
+fleet script. The jurisdiction probe returns only classification/resolution.
+
+**Why:** These commands were intentionally single-use. Keeping callable
+migration paths after their source tables disappear creates misleading and
+untestable operational surface.
+
+**Consequences:** Deployment order is the stack order: complete and verify the
+v30 fleet transfer, then deploy v32. A v32 object with unverified retained source
+data refuses to migrate instead of deleting it.
 
 ### 2026-08-27 — Payload ownership transfer is a second receipted fleet pass
 

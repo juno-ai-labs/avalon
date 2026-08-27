@@ -65,8 +65,6 @@ const DISPATCHED_OPERATIONS = [
   "deleteUnarmedWakeup",
   "activationHints",
   "recordPluginActivation",
-  "compactionCheckpoint",
-  "persistCompactionCheckpoint",
   "descriptionRefreshState",
   "claimDescriptionEvaluation",
   "recordDescriptionOutcome",

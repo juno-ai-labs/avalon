@@ -91,7 +91,7 @@ or a safe compaction status versus the private replacement.
 Participant turns retain the source part's client identity, author user or
 validated external actor, and message type. Each participant text block hydrates
 its canonical mentions, ordered message-local attachment descriptors, and
-validated structured content from the same `parts` row and its relationship
+validated structured content from the same `workstream_message_records` fact and its relationship
 tables. The transcript carries presentation-safe metadata, not resource bytes or
 mutable profile snapshots; the desktop resolves stable person IDs and maps the
 descriptors into its existing participant message renderer.
@@ -114,38 +114,15 @@ writes. Preparation therefore carries immutable inputs into the callback, which
 re-checks the attempt, lease, authority generation, or source revision that may
 have changed while preparation was in flight.
 
-Schema v28 supports one explicit projection backfill for retained pre-v27
-history. The v27 migration receipt supplies the cutover fence. The operation
-orders every participant-visible legacy `parts` row by its existing
-`sequence_number`, inserts that prefix ahead of any post-cutover canonical
-suffix, and adds canonical references to exact legacy compaction checkpoints.
-It does not copy text, tool summaries/results, or checkpoint arrays: the old
-rows remain their sole payload owners and the normal canonical reader hydrates
-through the stable references. Aggregate legacy rows cannot reproduce Bind's
-exact provider array, so the operation creates no historical Bind head/message
-and records that limitation explicitly rather than inventing interleaving.
-
-The data operation is an object-owned RPC, not constructor work. It requires a
-main-feed (`external_substream_id = '0'`) authority. Before a first-time
-backfill, a separate explicit operator RPC may abandon an active pre-v27 run
-only when it has no attempt ID, lease owner, lease deadline, heartbeat, or open
-tool receipt. The abandonment records a terminal `failed` row with
-`migration_cutover_abandoned`; any post-cutover or leased shape aborts without
-mutation. Schema v29 commits the original operator run and abandonment count in
-the same transaction, so a later retry returns the same cleanup evidence even
-when the first backfill attempt failed. The backfill RPC then runs only the terminal-run residual-receipt phase of the existing
-reaper so a tool
-receipt left open after its owning run terminalized is settled through the same
-runtime path used at ordinary run admission. It does not expire or terminalize
-a nonterminal root or child. Repair failure aborts the
-operation; an already committed replay never runs repair. The operation then
-requires a quiescent writer,
-captures a real pre-write PITR bookmark, hashes and prepares
-the source outside the transaction, then re-reads the entire source inside the
-single SQLite transaction that shifts sequences, inserts projections, and
-commits the one-row receipt. Movement, partial state, or a uniqueness conflict
-rolls back everything. Replay recomputes the digest and reconciles exact counts
-and prefix order before returning `verified`.
+Schema v32 is the canonical-only boundary. It verifies row-for-row equality of
+the former message, attachment, mention, and compaction owners against their
+canonical facts and projections before any destructive statement runs, then
+removes the legacy tables, compatibility views, receipts, and operator RPCs.
+The verification is an object-local SQLite guard inside the same constructor
+migration: an object missing even one canonical owner refuses activation rather
+than dropping or partially exposing data. The one-time fleet transfer that made
+that guard pass is historical deployment evidence, not a runtime read or repair
+path.
 
 Participant history is read through snapshot-fenced half-open ranges. Opening
 creates one fence and returns the first-unread conversation turn with up to five
@@ -553,7 +530,8 @@ Each accepted `stream_started` or batched `stream_delta` receives a monotonic
 room sequence and updates `active_output_turns` plus bounded
 `active_output_chunks` in the same SQLite transaction. The cursor therefore
 cannot advance past text that was not checkpointed. Final assistant text is
-stored once as an ordinary `parts` row and the active checkpoint is removed.
+stored once as an ordinary `workstream_message_records` row whose fact owns the
+payload, and the active checkpoint is removed.
 Token frames never write regional D1 and never update the sidebar.
 
 Compaction uses the same ordered publication boundary but no token checkpoint.
@@ -563,7 +541,7 @@ harness attempt, index, trigger, and start time; the matching
 (or the attempt fails). A finish from an abandoned attempt cannot clear a
 recovered attempt at the same run/index. Snapshot and resync frames carry that
 singleton. It exists solely to restore the desktop activity indicator and never
-substitutes for `compaction_checkpoints`.
+substitutes for `transcript_compaction_checkpoints`.
 
 #### Hibernation replay recovery
 
@@ -943,7 +921,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Transcript page requested | The agent accepts an opaque before/after cursor, defaults to 200 rows, and rejects limits above 250. A per-socket request has a 15-second desktop timeout and is queued again after reconnect without advancing the room cursor. |
 | Encoded transcript page would exceed 900 KB | The agent shortens the page toward the requested boundary and returns an adjusted continuation cursor. A single defensive oversize message produces a correlated `message_page_too_large` error instead of an oversized frame. |
 | Historical-page read loses authorization | The agent returns a correlated authorization error and closes the revoked socket with policy code 1008; cached history is not treated as current authority. |
-| A part predates the typed writer's ordered-turn projection | The authorized compatibility message page keeps the row visible and identity-matched in the desktop. This is not a durable backfill; the overlay must remain until a bounded historical repair has populated the ordered projection. |
+| Schema v32 finds an unverified legacy payload owner | Constructor activation fails with `transcript_payload_retirement_not_verified`; every legacy row remains intact and the object serves nothing until an operator completes ownership transfer under the pre-retirement Worker. |
 | Somebody loses access while holding sockets | A queue message per object closes their sockets; a failed hop retries and then dead-letters. Nothing else closes them, so a message that is never published leaves the socket open until the client reconnects. See [`access-revocation.md`](access-revocation.md). |
 | RPC or Queue duplicates/reorders effects | Stable IDs/hashes deduplicate immutable effects; generation/version orders WorkspaceDO state and delivery receipts. |
 | A synchronous transaction callback returns a Promise | The callback finishes before the Promise continuation, so SQLite can commit an incomplete state transition and later writes can escape the transaction. Prepare all yielding work first; the commit callback performs only synchronous SQLite and revalidates its fences. |
@@ -954,7 +932,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Substream child not provisioned | No feed ticket should be issued; the object must not bootstrap product authority from an untrusted socket route. |
 | Object approaches SQLite storage limit | Alert and archive/export; do not split one ordered child implicitly. Cloudflare's per-object limit is 10 GB. |
 
-The realtime in-memory window is an optimization. Canonical parts and active
+The realtime in-memory window is an optimization. Canonical message records and active
 output are SQL. Provider fragments are batched; regional D1 sees semantic
 projection changes only, not token cadence.
 
@@ -1158,19 +1136,19 @@ join crosses an object boundary.
 | `_sql_schema_migrations`, `object_versions` | Schema versions and the applied-migration receipts. |
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
-| `parts`, `part_attachments`, `part_mentions`, `content_refs` | One provider-neutral semantic order plus exact attachment, mention, and large-content joins. One stable tool part advances in place from started to its terminal state even though both its id and `client_message_id` conflict; a different part under the same client id remains an ignored replay. A terminal `tool_effects` update also projects into the same-id visible tool part, so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; queued messages are fenced by their admitted run rather than leaking into an older run. |
+| `workstream_message_records`, `workstream_message_attachments`, `workstream_message_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose records reference content-addressed payloads plus exact attachment, mention, and large-content joins. One stable tool message advances in place from started to its terminal state even though both its id and `client_message_id` conflict; a different message under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; queued messages are fenced by their admitted run rather than leaking into an older run. |
 | `runs`, `agent_run_dispatches`, `run_steering`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Full-loop admission/recovery, targeted steering, frozen authority/context, and provider attempts. Terminal dispatch and spent wake-up rows age out after 180 days; `runs` is the durable record. |
 | `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. |
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output and active compaction phase, and the room sequence. `active_agent_compaction` is a singleton operational checkpoint; immutable summary history remains below. |
-| `compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints are immutable per projection/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
+| `transcript_compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints reference immutable model-only facts per principal/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
 | `workstream_resource_links`, `resource_inventory_revision`, `suggested_actions` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `suggested_activity`, `inbound_email`, or `context`), the authorization revision every relationship change advances, and operational suggestion overlays. `generated` derives artifact direction; every other value derives source direction. A suggestion is not transcript/model input unless acceptance explicitly authors a new part. |
 | `block_dashboard_configuration_versions`, `block_dashboard_block_runs`, `block_dashboard_user_preferences` | Source-runtime compatibility records used by the Bind harness and maintenance import. WorkstreamDO is the post-cutover product authority for configuration, published run state, and viewer preference. |
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent effects and inbound dedupe such as feed tickets. |
 
-`parts.sequence_number` is transcript order, including tool and system rows.
-`parts.attention_ordinal` is the independent people-visible main-substream
+`workstream_message_records.sequence_number` is transcript order, including tool and system rows.
+`workstream_message_records.attention_ordinal` is the independent people-visible main-substream
 waterline used by unread tracking. Product messages expose the latter as the
 nullable `attentionSequenceNumber`; tool/transient rows carry `null`. Desktop
 read receipts and unread anchors must never substitute transcript sequence for
@@ -1271,6 +1249,12 @@ recovery. Cloudflare does not move an existing object when a hint changes; a
 placement/jurisdiction change requires the same explicit maintenance export,
 import, verification, and authority switch used here.
 
+Transcript ownership transfer is no longer an operational endpoint after schema
+v32. `transcript_payload_retirement_not_verified` means the object missed the
+pre-retirement fleet or final-delta pass; do not bypass the guard or recreate a
+fallback reader. Restore the pre-retirement Worker long enough to run the
+receipted transfer, verify replay, and only then retry retirement.
+
 ## Performance and cost
 
 Hibernating sockets do not bill idle object duration, and runtime auto-response
@@ -1289,6 +1273,31 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-27 — Canonical transcript ownership becomes the only runtime path
+
+**What changed:** SubstreamAgent schema v32 first proves exact parity for every
+legacy message, relationship, and compaction checkpoint, then removes the old
+tables, compatibility reads, transfer receipts, and operator RPCs. Runtime
+message and residual-tool settlement now update canonical records and their
+content-addressed facts directly.
+
+**Why:** The v30 staging period existed only to transfer historical payload
+ownership. Keeping both storage families after the fleet and final delta passes
+would retain two plausible authorities and allow future writers to diverge.
+
+**Considered and rejected:** Keeping a permanent legacy fallback or copying
+unverified rows during constructor migration. A fallback preserves split brain;
+constructor SQL cannot perform the asynchronous hashing and source-fenced
+preparation required to create canonical facts faithfully.
+
+**Consequences:** An untransferred object fails closed before deletion. Releases
+must complete a final delta transfer immediately before deploying this boundary;
+afterward, new objects create only canonical storage and the retired operator
+surface no longer exists. Compaction facts, participant status edges, and exact
+Bind replacements remain distinct and are not synthesized or rewritten.
+
+Shipped in #353. Design: `docs/PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md`.
 
 ### 2026-08-27 — Async transcript preparation stays outside product commits
 

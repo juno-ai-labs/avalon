@@ -16,8 +16,6 @@ import type { z } from "zod";
  * `lease_owner`. Those joins become this port's own fence.
  */
 type LocalOnlyHarnessRunOperation =
-  | "abandonPreCutoverLeaseLessRuns"
-  | "preCutoverLeaseLessCleanupReceipt"
   | "prepareFinalMessage"
   | "publishPreparedFinalMessage";
 export type HarnessRunOperation = Exclude<keyof WorkstreamHarnessRunStorage, LocalOnlyHarnessRunOperation>;

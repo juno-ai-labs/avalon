@@ -25,9 +25,9 @@ weeks ago.
 | [`packages/agent-harness/src/index.ts`](../packages/agent-harness/src/index.ts) | `HarnessCompactionConfig` and `HarnessCompactionCheckpoint`: the host's opt-in and the checkpoint it is handed to persist; plus the `HarnessEvent` `compaction_started`/`compaction_finished` lifecycle delivered around that durable boundary. |
 | [`packages/agent-harness/src/prompts/compaction.ts`](../packages/agent-harness/src/prompts/compaction.ts) | Pure checkpoint content renderer shared by live application and API replay. |
 | `@juno-ai/bind` (`loop/tool-loop.ts`) | Calls `needsCompaction` after a turn and `applyCompaction` at a batch boundary, then swaps in whatever transcript it is given. Bind holds no opinion about that transcript's shape. |
-| [`apps/api/src/services/integrations.ts`](../apps/api/src/services/integrations.ts) | Durability and replay: `persistWorkstreamContextCompaction`, `loadWorkstreamContextCompaction`, `PersistedCompactionMessagesSchema`, and the run assembly that prepends a stored checkpoint to the fenced transcript. |
+| [`apps/api/src/services/integrations.ts`](../apps/api/src/services/integrations.ts) | Durability and replay: the atomic `onBindCompaction` commit, `loadWorkstreamContextCompaction`, `PersistedCompactionMessagesSchema`, and the run assembly that prepends a stored checkpoint to the fenced transcript. |
 | [`apps/api/src/services/workstream-resource-inventory.ts`](../apps/api/src/services/workstream-resource-inventory.ts) | Fixed-order authorized totals and natural-language attachment-kind groups appended to a live checkpoint. |
-| [`apps/api/src/durable-objects/workstream-object-schema.ts`](../apps/api/src/durable-objects/workstream-object-schema.ts) | Principal-scoped `compaction_checkpoints`, the reconnect-only `active_agent_compaction` singleton, plus the monotonic local resource-inventory revision and relationship triggers. Migration `0073` is the pre-cutover source schema. |
+| [`apps/api/src/durable-objects/workstream-object-schema.ts`](../apps/api/src/durable-objects/workstream-object-schema.ts) | Principal-scoped `transcript_compaction_checkpoints`, the reconnect-only `active_agent_compaction` singleton, plus the monotonic local resource-inventory revision and relationship triggers. |
 
 ## How it works
 
@@ -137,18 +137,12 @@ Immutable private replay remains in `transcript_compaction_checkpoints`; safe
 participant history remains in `participant_transcript_turns` plus the activity
 interval. Two compactions produce two identities and two timings.
 
-For checkpoints created before the canonical transcript cutover, the v28
-backfill first inserts an indexed `legacy_compaction_checkpoint_reference` fact
-without copying `messages_json` or `summary`. Schema v30 then enables the
-explicit, content-sized ownership transfer: it hashes the complete legacy
-source, moves each exact message array and summary into a canonical model-only
-fact, switches the checkpoint projection, and commits one PITR bookmark plus a
-reconciliation receipt atomically. A post-cutover checkpoint already has an
-exact canonical fact, so transfer reuses that fact instead of manufacturing a
-second owner or changing the compaction event's identity. Neither phase creates
-a historical Bind generation or participant compaction status that the old
-runtime never stored, and neither phase changes existing compaction activity
-edges.
+Pre-cutover checkpoint arrays and summaries were moved into canonical model-only
+facts by the explicit v30 fleet transfer. Schema v32 verifies every retained
+legacy checkpoint against that fact before dropping the old owner. Canonical-only
+post-cutover checkpoints are allowed and remain untouched. Retirement never
+rewrites participant compaction statuses, activities, intervals, or Bind state;
+two compactions remain two checkpoint identities and two completed edges.
 
 ## Invariants
 
@@ -284,6 +278,20 @@ results.
   every routed model.
 
 ## Changelog
+
+### 2026-08-27 — Legacy checkpoint storage retired without rewriting edges
+
+**What changed:** Schema v32 removes the old checkpoint table after exact
+payload reconciliation. All runtime reads and writes now use the canonical
+checkpoint fact committed atomically with the Bind replacement.
+
+**Why:** Keeping an already-transferred owner made compaction persistence appear
+to have two authorities and left a dead fallback path in production.
+
+**Consequences:** Canonical-only checkpoints are valid; every legacy checkpoint
+must have an exact canonical counterpart. Compaction status/activity rows are a
+separate participant-safe history and may not be deleted or synthesized during
+retirement.
 
 ### 2026-08-27 — Exact checkpoint ownership can leave the legacy table
 

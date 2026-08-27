@@ -19,6 +19,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { asSubstreamId } from "@rally/contracts";
 
 import { substreamAgentName } from "../src/durable-objects/names";
+import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import type { SchedulingObjectPort } from "../src/durable-objects/workstream-scheduling-protocol";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import type { Env } from "../src/env";
@@ -327,38 +328,31 @@ describe("scheduling authority on real workerd", () => {
       state.storage.sql.exec(`UPDATE workstream SET authority_mode = 'quarantined' WHERE id = 1`);
     });
 
-    // `persistCompactionCheckpoint` is the review's example, and the one this
-    // slice moved: it is a write whose only fence was the routed path's
-    // `authority_mode` check, and unlike the wake-up mutations it does not
-    // reach `commitRuntimeMutation` to pick an equivalent one up by accident.
-    const { status, body } = await post(stub, "/internal/scheduling", {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      operation: "persistCompactionCheckpoint",
-      args: [{
-        executionPrincipalKey: "user:someone",
-        resourceVisibilityFingerprint: "fingerprint",
-        checkpointTemplateVersion: 1,
-        runId: RUN,
-        compactedThroughSequence: 4,
-        messagesJson: "[]",
-        summary: "A summary nobody should be able to persist here.",
-        model: "a-model",
-        contextTokensBeforeCompaction: 100,
-        contextWindowTokens: 1000,
-        inputTokens: 10,
-        outputTokens: 20,
-        costMicros: 30,
-        expectedInventoryRevision: 0,
-        now: 1,
-      }],
-    });
+    // Compaction status is owned by the canonical transcript port. It must
+    // inherit the same authority fence as every other object-local write, so a
+    // quarantined object cannot publish a phantom "compacting" turn.
+    const result = await runInDurableObject(stub, (instance) =>
+      (instance as SubstreamAgent).executeTranscriptOperation({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        operation: "reserveCompactionStatus",
+        args: [{
+          compactionEventId: "00000000-0000-7000-8000-000000000099",
+          runId: RUN,
+          trigger: "auto",
+          occurredAtUtc: new Date(1).toISOString(),
+        }],
+      }));
+    const body = JSON.parse(result.bodyJson) as unknown;
 
-    expect(status).toBe(409);
+    expect(result.status).toBe(409);
     expect(body).toMatchObject({ error: "workstream_runtime_authority_fenced" });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(
-        `SELECT COUNT(*) AS count FROM compaction_checkpoints`,
+        `SELECT COUNT(*) AS count FROM participant_transcript_turns`,
+      ).one().count).toBe(0);
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM transcript_facts WHERE fact_kind = 'compaction_status'`,
       ).one().count).toBe(0);
     });
   });
@@ -413,7 +407,7 @@ describe("scheduling authority on real workerd", () => {
       // sequence and the root's next one cannot disagree.
       expect(state.storage.sql.exec(
         `SELECT sequence_number, attention_ordinal, author_type, message_type
-           FROM parts WHERE client_message_id = 'elicitation:' || ?`,
+           FROM workstream_message_details WHERE client_message_id = 'elicitation:' || ?`,
         ELICITATION,
       ).toArray()).toEqual([{
         sequence_number: 1,
@@ -473,7 +467,7 @@ describe("scheduling authority on real workerd", () => {
         external_actor_json: ACTOR,
       }]);
       expect(state.storage.sql.exec(
-        `SELECT client_message_id FROM parts WHERE message_type = 'elicitation'
+        `SELECT client_message_id FROM workstream_message_details WHERE message_type = 'elicitation'
           ORDER BY sequence_number`,
       ).toArray()).toEqual([
         { client_message_id: `elicitation:${ELICITATION}` },
