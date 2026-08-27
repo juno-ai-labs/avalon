@@ -76,6 +76,19 @@ but each state transition still needs an explicit atomic boundary.
 - Keep all SQL that establishes one invariant in a synchronous
   `storage.transactionSync` callback, or in one statement when SQLite can
   express it.
+- A synchronous transaction callback must not be declared `async` **or return a
+  Promise indirectly**. Calling an async helper without `await` is still wrong:
+  the callback returns before that helper's post-`await` SQL runs, so the
+  transaction can commit only its earlier writes and the helper can later write
+  outside the transaction. Rally's `commitRuntimeMutation` and
+  `commitWithRegionalEffects` callbacks have the same restriction because they
+  execute inside `transactionSync`.
+- Split mixed work into **prepare asynchronously, commit synchronously**. Do
+  hashing, provider work, serialization that can yield, and other asynchronous
+  preparation before entering the callback. Pass the prepared value into a
+  callback that performs only synchronous reads and writes, and re-check every
+  authority fence or source version whose truth could have changed while
+  preparation yielded.
 - Do not put `await`, provider calls, Queue sends, or cross-object RPC inside a
   SQLite transaction. Persist an outbox row atomically with the product change,
   commit, and perform the external effect afterward.
@@ -243,17 +256,20 @@ Before merging Durable Object SQLite work:
 1. Is this the correct object authority and object key?
 2. Does every table and migration belong to that one authority?
 3. Is the invariant committed in one synchronous transaction or one statement?
-4. Does work after an `await` carry and verify a lease, attempt, generation, or
+4. Can the transaction callback return a Promise, including through a helper,
+   dynamic dispatch, `.call()`, or `.apply()`? If preparation can yield, is it
+   complete before the callback begins?
+5. Does work after an `await` carry and verify a lease, attempt, generation, or
    expected version?
-5. Does every externally visible side effect have a durable intent and a
+6. Does every externally visible side effect have a durable intent and a
    terminal outcome?
-6. Do claims, compare-and-swaps, and exact counts use returned identities and
+7. Do claims, compare-and-swaps, and exact counts use returned identities and
    tokens instead of `rowsWritten` or adapter `meta.changes`?
-7. Are values bound and dynamic identifiers closed over code-owned choices?
-8. Are pagination and alarm passes deterministic, bounded, and resumable?
-9. Does a real-workerd test cover the platform behavior, and was that test
+8. Are values bound and dynamic identifiers closed over code-owned choices?
+9. Are pagination and alarm passes deterministic, bounded, and resumable?
+10. Does a real-workerd test cover the platform behavior, and was that test
    proved capable of failing?
-10. Are the owning module document and its running changelog updated with the
+11. Are the owning module document and its running changelog updated with the
     reason for the change?
 
 As an audit aid, search affected paths for `meta.changes`, `rowsWritten`,
@@ -262,7 +278,41 @@ leave the object. Classify each occurrence by authority and domain purpose; do
 not replace counters mechanically without understanding the transition they
 were trying to represent.
 
+`rally/durable-object-sync-transaction` is a type-aware backstop for direct and
+indirect Promise returns from `transactionSync`, `commitRuntimeMutation`, and
+`commitWithRegionalEffects` callbacks. It cannot prove a callee is synchronous
+after its return type has been erased to `unknown` or `any`; dynamically indexed
+methods and `.call()`/`.apply()` inside these callbacks therefore remain a
+mandatory review target. Do not silence the rule or cast a Promise-shaped result
+to make it pass—make the prepare/commit split explicit instead.
+
 ## Changelog
+
+### 2026-08-27 — Promise-returning callbacks cannot cross synchronous transactions
+
+**What changed:** The transaction guidance now requires asynchronous
+preparation to finish before `transactionSync` or either Rally wrapper enters
+SQLite, and the review checklist calls out indirect and dynamically dispatched
+Promise returns. A type-aware ESLint rule rejects explicit async callbacks and
+callbacks whose return type can be a Promise.
+
+**Why:** Four transcript-producing operations performed asynchronous payload
+preparation through a callback passed to `commitRuntimeMutation`. The enclosing
+`transactionSync` committed the regional projection before those continuations
+wrote the canonical payload, separating facts that were required to be one
+SQLite commit.
+
+**Considered and rejected:** Documenting only `await` inside the callback and
+relying only on lint. An async helper returns a Promise even when no `await`
+appears at the call site, while dynamic dispatch can erase the return type that
+static analysis needs. The rule is a backstop; explicit prepare-then-commit
+structure and review remain the invariant.
+
+**Consequences:** Async hashing, provider work, and other yielding preparation
+must happen before the transaction. The synchronous phase revalidates stale
+inputs and commits the canonical fact, transcript/root state, and regional
+projection together. Reviewers search dynamic calls manually when the type is
+not statically knowable.
 
 ### 2026-08-26 — Persist claimant kind when lease semantics differ
 
