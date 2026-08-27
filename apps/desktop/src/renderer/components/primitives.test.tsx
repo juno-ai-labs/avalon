@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
+import { SEAM_SPIN_RATE, SEAM_START_RADIANS, seamPath } from '../lib/rally-seam';
+import { AvatarStack, RallyMark, RallySeam, DropdownSelect, Modal, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state }: { size: number; state: string }) => (
@@ -25,6 +26,69 @@ describe('RallyMark', () => {
     const { container } = render(<RallyMark className="test-mark" />);
     expect(container.querySelector('.rally-mark.test-mark')).not.toBeNull();
     expect(container.querySelector('svg')).toBeNull();
+  });
+});
+
+/**
+ * A `matchMedia` that answers one question, so a test can say what the reader's
+ * motion preference is. Absent entirely, the component has to carry on turning.
+ */
+function stubReducedMotion(reduced: boolean): void {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: reduced && query.includes('prefers-reduced-motion'),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+}
+
+/** The frames the component asked for, so a test can play them itself. */
+function captureFrames(): FrameRequestCallback[] {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => frames.push(callback));
+  vi.stubGlobal('cancelAnimationFrame', () => {});
+  return frames;
+}
+
+function seamAttribute(container: HTMLElement): string {
+  const path = container.querySelector('.rally-seam path');
+  if (!path) throw new Error('the seam drew no path');
+  return path.getAttribute('d') ?? '';
+}
+
+describe('RallySeam', () => {
+  it('turns on both axes, so the crossings pass rather than the drawing rotating', () => {
+    stubReducedMotion(false);
+    const frames = captureFrames();
+    const { container } = render(<RallySeam className="test-seam" />);
+
+    act(() => frames.shift()?.(0));
+    const first = seamAttribute(container);
+    act(() => frames.shift()?.(1_200));
+    const later = seamAttribute(container);
+
+    expect(first).not.toEqual(later);
+    // A single-axis turn at the same instant is a different drawing. Asserting
+    // only that the frame changed would pass with the tilt removed, which is
+    // the half of the motion that cannot be had from a CSS rotation either.
+    expect(later).not.toEqual(seamPath(SEAM_START_RADIANS + 1_200 * SEAM_SPIN_RATE));
+  });
+
+  it('holds the resting frame for a reader who asked for less motion', () => {
+    stubReducedMotion(true);
+    const frames = captureFrames();
+    const { container } = render(<RallySeam />);
+
+    expect(frames).toHaveLength(0);
+    expect(seamAttribute(container)).toEqual(seamPath(SEAM_START_RADIANS));
+  });
+
+  // jsdom defines no `matchMedia`, and neither does an Electron window in some
+  // startup states. Unreadable is not the same as "asked for less motion".
+  it('still turns where the preference cannot be read', () => {
+    const frames = captureFrames();
+    render(<RallySeam />);
+
+    expect(frames.length).toBeGreaterThan(0);
   });
 });
 
