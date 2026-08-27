@@ -128,8 +128,9 @@ export function createTerminalResourceBridge(
       // metadata after that check.
       const destination = destinationPath;
       const absolute = `/workspace/${destination}`;
-      const existence = await provider.runCommand(providerSandboxId, {
+      const existence = await provider.runUtilityCommand(providerSandboxId, {
         taskName: `avalon-import-check-${row.id}`,
+        operation: "resource.import.inspect",
         command: [
           `target='${absolute.replace(/'/gu, `'"'"'`)}'`,
           'if [ ! -e "$target" ]; then exit 44; fi',
@@ -200,19 +201,20 @@ export function createTerminalResourceBridge(
           now: plannedAt,
         });
       const parent = absolute.slice(0, Math.max(absolute.lastIndexOf("/"), 1));
-      const mkdir = await provider.runCommand(providerSandboxId, {
-        taskName: `avalon-import-dir-${row.id}`,
-        command: `mkdir -p -- '${parent.replace(/'/gu, `'"'"'`)}'`,
-        cwd: "/workspace",
-        timeoutMs: 10_000,
-      });
-      if (mkdir.exitCode !== 0) {
-        throw new TerminalToolError("resource_import_failed", "The destination directory could not be created. Choose another destinationPath and retry.", { reason: "Choose a writable destination beneath the Terminal workspace." });
-      }
-      await provider.writeFile(providerSandboxId, absolute, bytes, context.signal);
-      const verified = await provider.runCommand(providerSandboxId, {
+      const temporary = `/workspace/.rally/tmp/${newId()}`;
+      await provider.writeFile(providerSandboxId, temporary, bytes, context.signal);
+      const verified = await provider.runUtilityCommand(providerSandboxId, {
         taskName: `avalon-import-verify-${row.id}`,
-        command: `target='${absolute.replace(/'/gu, `'"'"'`)}'; printf "%s %s\\n" "$(stat -c %s -- "$target")" "$(sha256sum -- "$target" | cut -d " " -f 1)"`,
+        operation: "resource.import.finalize",
+        command: [
+          `target='${absolute.replace(/'/gu, `'"'"'`)}'`,
+          `temporary='${temporary.replace(/'/gu, `'"'"'`)}'`,
+          'trap \'rm -f -- "$temporary"\' EXIT',
+          `mkdir -p -- '${parent.replace(/'/gu, `'"'"'`)}' || exit 46`,
+          'mv -- "$temporary" "$target" || exit 46',
+          "trap - EXIT",
+          'printf "%s %s\\n" "$(stat -c %s -- "$target")" "$(sha256sum -- "$target" | cut -d " " -f 1)"',
+        ].join("\n"),
         cwd: "/workspace",
         timeoutMs: 30_000,
       });
