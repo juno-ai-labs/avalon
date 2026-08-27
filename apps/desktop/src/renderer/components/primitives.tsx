@@ -175,7 +175,7 @@ export function AvatarStack({
         present.has(member.id) && member.id !== currentUserId
           ? `${member.name} is viewing this workstream.`
           : member.name
-      )).join(', ')}
+      )).join('; ')}
       className="avatar-stack"
     >
       {visible.map((member) => {
@@ -192,8 +192,8 @@ export function AvatarStack({
           <Tooltip.Root delayDuration={300} key={member.id}>
             <Tooltip.Trigger asChild>
               <span className="avatar-stack-item is-present">
-                <Avatar member={member} size="small" title={null} />
                 <span aria-hidden="true" className="avatar-presence-ping" />
+                <Avatar member={member} size="small" title={null} />
               </span>
             </Tooltip.Trigger>
             <Tooltip.Portal>
