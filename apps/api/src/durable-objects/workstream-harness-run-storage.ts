@@ -313,10 +313,11 @@ function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageVa
  * Cloudflare may stop an object while an external await is in flight. The
  * await may still return, but the next storage operation is rejected because
  * the old instance no longer owns the object. When the constructor runs
- * again, any local-agent lease still present therefore belongs to an executor
- * that cannot write again. Expiring it here lets the replacement reclaim the
- * same attempt immediately, preserving its frozen scope and tool receipts
- * rather than waiting five minutes and reaping the run as failed.
+ * again, any still-live local-agent lease belongs to an executor that cannot
+ * write again. Expiring it here lets the replacement reclaim the same attempt
+ * immediately, preserving its frozen scope and tool receipts rather than
+ * waiting five minutes. A lease already expired before reconstruction remains
+ * the stale-run reaper's authority and is not resumed.
  *
  * HyperSight roots are deliberately excluded: their executor is a separate
  * BlockDashboardAgent, so this object's restart says nothing about whether
@@ -339,7 +340,8 @@ export function expireLocalAttemptLeasesFromPreviousInstance(
           AND terminalized_at IS NULL
           AND legacy_attempt_id IS NOT NULL
           AND lease_owner IS NOT NULL
-          AND lease_expires_at IS NOT NULL`,
+          AND lease_expires_at > ?`,
+      now,
     ).toArray();
     if (roots.length === 0) return [];
     storage.sql.exec(
@@ -354,12 +356,14 @@ export function expireLocalAttemptLeasesFromPreviousInstance(
                WHERE parent_tool_call_id IS NULL
                  AND origin != 'block_dashboard_block'
                  AND terminalized_at IS NULL
+                 AND lease_expires_at > ?1
             )
             OR chain_root_run_id IN (
               SELECT run_id FROM runs
                WHERE parent_tool_call_id IS NULL
                  AND origin != 'block_dashboard_block'
                  AND terminalized_at IS NULL
+                 AND lease_expires_at > ?1
             )
           )`,
       now,

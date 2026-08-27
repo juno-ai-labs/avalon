@@ -175,6 +175,16 @@ describe("claiming a run's attempt", () => {
       .toMatchObject({ lease_owner: "owner-1", lease_expires_at: NOW + 300_000 });
   });
 
+  it("leaves an already-expired attempt for the stale-run reaper", () => {
+    const { binding, storage, sql } = open();
+    seedRun(sql, RUN);
+    storage.claimAttempt({ ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-1" });
+
+    expect(expireLocalAttemptLeasesFromPreviousInstance(binding, NOW + 60_001)).toEqual([]);
+    expect(sql.exec(`SELECT lease_owner, lease_expires_at FROM runs WHERE run_id = ?`, RUN).one())
+      .toMatchObject({ lease_owner: "owner-1", lease_expires_at: NOW + 60_000 });
+  });
+
   it("refuses while another interactive run holds a live lease", () => {
     const { storage, sql } = open();
     seedRun(sql, RUN);

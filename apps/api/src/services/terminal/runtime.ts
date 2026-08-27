@@ -93,6 +93,20 @@ export interface TerminalRepositoryPublisher {
   ): Promise<TerminalPublishedBranchAndPrOutput>;
 }
 
+export type TerminalSandboxPreparation = (
+  context: HarnessToolContext,
+  sandbox: AcquiredTerminalSandbox,
+  provider: TerminalSandboxProvider,
+) => Promise<void>;
+
+export interface DaytonaTerminalRuntime extends TerminalRuntime {
+  /** Populate the same per-run acquisition/preparation promise every tool consumes. */
+  prepare(
+    context: HarnessToolContext,
+    preparation?: TerminalSandboxPreparation,
+  ): Promise<AcquiredTerminalSandbox>;
+}
+
 /**
  * The object stores unix milliseconds; a tool result reports ISO-8601, which
  * is the model-facing contract. This is the only place the two meet.
@@ -233,16 +247,15 @@ export function createDaytonaTerminalRuntime(
   resources: TerminalResourceBridge,
   publisher: TerminalRepositoryPublisher,
   selector: TerminalRepositorySelector | null = null,
-  prepareSandbox?: (
-    context: HarnessToolContext,
-    sandbox: AcquiredTerminalSandbox,
-    provider: TerminalSandboxProvider,
-  ) => Promise<void>,
+  prepareSandbox?: TerminalSandboxPreparation,
   cacheNow: () => number = Date.now,
-): TerminalRuntime {
+): DaytonaTerminalRuntime {
   const acquiredByRun = new Map<string, Promise<AcquiredTerminalSandbox>>();
 
-  async function acquire(context: HarnessToolContext): Promise<AcquiredTerminalSandbox> {
+  async function acquire(
+    context: HarnessToolContext,
+    preparation: TerminalSandboxPreparation | undefined = prepareSandbox,
+  ): Promise<AcquiredTerminalSandbox> {
     if (context.signal.aborted) {
       throw new TerminalToolError("cancelled", "The Terminal operation was cancelled before sandbox startup.");
     }
@@ -261,7 +274,7 @@ export function createDaytonaTerminalRuntime(
     const startedAt = cacheNow();
     const pending = (async () => {
       const sandbox = await coordinator.acquire(context);
-      await prepareSandbox?.(context, sandbox, provider);
+      await preparation?.(context, sandbox, provider);
       return sandbox;
     })();
     acquiredByRun.set(context.harnessRunId, pending);
@@ -355,6 +368,7 @@ export function createDaytonaTerminalRuntime(
   }
 
   return {
+    prepare: acquire,
     async checkoutRepository(context, input) {
       if (!selector) {
         throw new TerminalToolError("repository_checkout_unavailable", "Repository checkout is unavailable in this Terminal runtime.");
