@@ -11,11 +11,13 @@ const stylesheet = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.
 
 /** The declarations inside one rule, or null when the selector is absent. */
 function rule(selector: string): string | null {
-  const start = stylesheet.indexOf(`\n${selector} {`);
-  if (start === -1) return null;
-  const open = stylesheet.indexOf('{', start);
-  const close = stylesheet.indexOf('}', open);
-  return stylesheet.slice(open + 1, close);
+  return ruleWithin(stylesheet, selector);
+}
+
+/** The declarations inside one rule within an already bounded stylesheet fragment. */
+function ruleWithin(source: string, selector: string): string | null {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return source.match(new RegExp(`(?:^|\\n)\\s*${escapedSelector} \\{([^}]*)\\}`, 'u'))?.[1] ?? null;
 }
 
 /**
@@ -106,7 +108,7 @@ describe('work-stream launch surface geometry', () => {
 describe('member picker controls', () => {
   it('keeps custom controls out of the flexible member-copy rule', () => {
     const copy = rule(
-      '.member-picker-row > span:not(.avatar):not(.member-checkbox):not(.resource-picker-icon),\n.member-action-list button > span:not(.avatar)',
+      '.member-picker-row > span:not(.avatar):not(.member-checkbox):not(.resource-picker-icon),\n.member-action-row > span:not(.avatar)',
     );
     const checkbox = rule('.member-checkbox');
 
@@ -209,6 +211,18 @@ describe('overscroll containment on the shared rail and sidebar scrollers', () =
   });
 });
 
+describe('Needs attention row geometry', () => {
+  it('reserves a project slot and pins time and chevron to stable columns', () => {
+    expect(rule('.waiting-workstream-row')).toContain(
+      'grid-template-columns: 112px auto minmax(0, 1fr) auto auto 15px;',
+    );
+    expect(rule('.waiting-workstream-projects')).toContain('min-width: 20px;');
+    expect(rule('.waiting-workstream-source')).toContain('grid-column: 4;');
+    expect(rule('.waiting-workstream-row time')).toContain('grid-column: 5;');
+    expect(rule('.waiting-workstream-row > svg')).toContain('grid-column: 6;');
+  });
+});
+
 describe('raised popover interaction states', () => {
   it('highlights ordinary menu rows and preserves the danger override', () => {
     const content = rule('.menu-content');
@@ -239,21 +253,40 @@ describe('raised popover interaction states', () => {
 });
 
 describe('work-stream participant presence', () => {
-  it('draws a tokenized Tailwind-style ping and preserves a static reduced-motion state', () => {
+  it('finishes the arrival pop before pulsing every ten seconds and preserves a static reduced-motion state', () => {
     const ping = rule('.avatar-presence-ping');
     expect(ping).not.toBeNull();
-    expect(ping).toContain('animation: avatar-presence-ping 1s cubic-bezier(0, 0, .2, 1) infinite;');
+    expect(ping).toContain('animation: avatar-presence-ping 10s cubic-bezier(0, 0, .2, 1) infinite;');
+    expect(ping).toContain('animation-delay: 420ms;');
     expect(ping).toContain('background: color-mix(');
     expect(ping).toContain('var(--av-sys-color-success-base)');
     expect(ping).toContain('inset: 0;');
+    expect(ping).toContain('opacity: 0;');
+    expect(ping).toContain('transform: scale(1);');
     expect(ping).toContain('z-index: 1;');
-    expect(stylesheet).toContain('75%, 100% { opacity: 0; transform: scale(2); }');
-    const reducedMotion = stylesheet.match(
-      /@media \(prefers-reduced-motion: reduce\) \{\s*\.avatar-presence-ping \{([^}]*)\}/,
-    )?.[1];
+    expect(stylesheet).toContain('20%, 100% { opacity: 0; transform: scale(2); }');
+    expect(rule('.avatar-stack .avatar')).toContain('transition: border-color 180ms ease;');
+    const presentAvatar = rule('.avatar-stack-item.is-present > .avatar');
+    expect(presentAvatar).toContain(
+      'animation: avatar-presence-entry 420ms cubic-bezier(.2, .75, .24, 1);',
+    );
+    expect(presentAvatar).toContain('border-color: var(--av-sys-color-brand-base);');
+    expect(stylesheet).toContain('42% { transform: translateY(-3px); }');
+    const reducedMotionBlock = stylesheet.match(
+      /@media \(prefers-reduced-motion: reduce\) \{\n([\s\S]*?)\n\}\n/,
+    )?.[1] ?? '';
+    expect(reducedMotionBlock).not.toBe('');
+    const reducedMotion = ruleWithin(reducedMotionBlock, '.avatar-presence-ping');
     expect(reducedMotion).toContain('animation: none;');
     expect(reducedMotion).toContain('opacity: .3;');
     expect(reducedMotion).toContain('transform: scale(1.35);');
+    const reducedMotionAvatar = ruleWithin(reducedMotionBlock, '.avatar-stack .avatar');
+    expect(reducedMotionAvatar).toContain('transition: none;');
+    const reducedMotionEntry = ruleWithin(
+      reducedMotionBlock,
+      '.avatar-stack-item.is-present > .avatar',
+    );
+    expect(reducedMotionEntry).toContain('animation: none;');
     const overflow = stylesheet.match(/\n\.avatar-overflow \{\n {2}align-items: center;[^}]*\}/)?.[0];
     expect(overflow).toContain('position: relative;');
     expect(overflow).toContain('z-index: 1;');

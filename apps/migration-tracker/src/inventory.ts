@@ -6,14 +6,17 @@
  * never says anything, and those are precisely the objects a schema change is
  * most likely to strand. Cloudflare's account API can list them: a paged call
  * for the namespaces, then a paged call per namespace for the object IDs it
- * holds.
+ * holds. The object listing also says whether each identity currently has
+ * stored data, which distinguishes an object awaiting its first report from a
+ * cleared identity Cloudflare still enumerates.
  *
  * What the sweep deliberately does *not* do is ask each object for its version.
  * A Durable Object binding can address another script's class, so it would be
  * possible — and it would wake every hibernating object in the account on every
  * sweep, turning a monitor into the largest single source of Durable Object
- * duration in the bill. Enumerate cheaply, let the objects report on their own
- * wakes, and treat "seen but never reported" as a first-class state instead.
+ * duration in the bill. Enumerate cheaply, let stored objects report on their
+ * own wakes, and retain enumerated identities without treating cleared storage
+ * as a live migration target.
  */
 import type { InventoryNamespace, InventoryObject, InventorySweep } from "./protocol";
 
@@ -123,7 +126,7 @@ export async function sweepInventory(
       objects: null,
     };
     try {
-      const listing = await listObjects(credentials, namespaceId, fetcher);
+      const listing = await listObjects(credentials, namespaceId, fetcher, now);
       namespace.objects = listing.objects;
       if (listing.truncated) truncatedNamespaces.push(namespaceId);
     } catch (error) {
@@ -199,6 +202,7 @@ async function listObjects(
   credentials: InventoryCredentials,
   namespaceId: string,
   fetcher: typeof fetch,
+  now: () => number,
 ): Promise<{ objects: InventoryObject[]; truncated: boolean }> {
   const objects: InventoryObject[] = [];
   const seen = new Set<string>();
@@ -213,10 +217,22 @@ async function listObjects(
     if (cursor) url.searchParams.set("cursor", cursor);
 
     const envelope = await request<ObjectPayload[]>(url.toString(), credentials, fetcher);
+    // This is the narrowest observation fence available from the account API:
+    // per page, immediately after its response, rather than after every
+    // namespace has been enumerated and the registry RPC finally runs.
+    const observedAt = now();
     for (const payload of envelope.result ?? []) {
-      if (typeof payload.id !== "string" || seen.has(payload.id)) continue;
+      if (typeof payload.id !== "string" || payload.id.length === 0) {
+        throw new Error("cloudflare_object_missing_id");
+      }
+      if (seen.has(payload.id)) continue;
+      if (typeof payload.hasStoredData !== "boolean") {
+        // Missing is not false. Treating an API shape change as cleared storage
+        // would silently empty the fleet and disable forced migrations.
+        throw new Error("cloudflare_object_missing_has_stored_data");
+      }
       seen.add(payload.id);
-      objects.push({ objectId: payload.id, hasStoredData: payload.hasStoredData === true });
+      objects.push({ objectId: payload.id, hasStoredData: payload.hasStoredData, observedAt });
     }
 
     cursor = envelope.result_info?.cursor ?? null;
