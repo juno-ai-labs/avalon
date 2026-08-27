@@ -356,6 +356,75 @@ ${syntax}
     padding: 0 7px;
   }
   .mention-chip-avatar { display: none; }
+  /* Citations, drawn for a still card rather than an application.
+
+     What the card cannot have is the part that makes a citation useful: the
+     click. So the chip and the embed keep their shape — a reader recognises the
+     thing they clicked in the app — and lose everything that promises
+     interaction. The popover goes entirely: a hover affordance printed into a
+     PNG is a grey box over the text with no way to dismiss it, and the source it
+     would have named is on the pill's own line in the app, not here. The pill
+     stays a plain numbered superscript, which is what a citation degrades to
+     everywhere outside this renderer anyway. */
+  .citation-chip {
+    align-items: center;
+    background: #eceade;
+    border: 1px solid #dcd9c9;
+    border-radius: 999px;
+    color: #3d3f33;
+    display: inline-flex;
+    font-size: 0.92em;
+    font-weight: 560;
+    gap: 4px;
+    padding: 1px 8px 1px 6px;
+  }
+  .citation-chip-icon { color: #6b6d5e; display: inline-flex; }
+  .markdown-body .citation-chip-icon svg { height: 0.95em; width: 0.95em; }
+  .citation-chip-label { display: inline; }
+  .citation-card {
+    align-items: center;
+    background: #f1efe5;
+    border: 1px solid #dcd9c9;
+    border-radius: 10px;
+    color: #3d3f33;
+    display: flex;
+    gap: 10px;
+    margin: 16px 0;
+    padding: 11px 13px;
+    text-align: left;
+    width: 100%;
+  }
+  .citation-card-icon { color: #6b6d5e; display: inline-flex; }
+  .citation-card-text { display: flex; flex-direction: column; gap: 2px; }
+  .citation-card-title { font-size: 0.97em; font-weight: 640; }
+  .citation-card-kind { color: #6b6d5e; font-size: 0.82em; text-transform: capitalize; }
+  .citation-card-chevron { display: none; }
+  .citation-pill-wrap { display: inline; }
+  .citation-pill {
+    background: #e4e6c8;
+    border: 0;
+    border-radius: 999px;
+    color: #4a6a12;
+    display: inline-block;
+    font-size: 0.7em;
+    font-weight: 640;
+    margin: 0 1px;
+    min-width: 1.5em;
+    padding: 0 0.35em;
+    text-align: center;
+    vertical-align: super;
+  }
+  .citation-pill-popover { display: none; }
+  .citation-identity-card {
+    background: #eceade;
+    border: 1px solid #dcd9c9;
+    border-radius: 6px;
+    color: #3d3f33;
+    display: inline-block;
+    font-size: 0.92em;
+    font-weight: 560;
+    padding: 3px 9px;
+  }
   .mention-text-fallback { color: #3d3f33; font-weight: 560; }
   /* Paged output only: a heading stranded at the foot of a page reads as a
      heading for nothing, and a table split across pages loses its header. */

@@ -3151,6 +3151,11 @@ span.citation-pill { cursor: default; }
 .inspector-detail h3 { font-size: 14px; margin: 0; }
 .inspector-detail > p { color: var(--av-sys-color-text-muted); font-size: 10.5px; margin: 3px 0 20px; }
 .inspector-detail .detail-list { margin-bottom: 18px; }
+/* The readable half of a resource detail. It is capped and scrolls inside its
+   own box rather than growing the rail: a cited document can be any length, and
+   the actions under it have to stay reachable. */
+.inspector-detail-preview { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-subtle); border-radius: var(--av-sys-size-radius-md); font-size: 12.5px; margin-bottom: 18px; max-height: 42vh; overflow-y: auto; padding: 12px 14px; }
+.inspector-detail-preview-status { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 11.5px; gap: 6px; margin-bottom: 18px; }
 .inspector-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 
 /* Conversational automation creation */
