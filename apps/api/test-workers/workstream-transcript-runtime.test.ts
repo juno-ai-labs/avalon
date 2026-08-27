@@ -14,6 +14,42 @@ const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000702");
 beforeEach(async () => reset());
 
 describe("work-stream transcript on workerd SQLite", () => {
+  it("refuses to renumber while a client holds an immutable transcript snapshot", async () => {
+    const id = env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    );
+    const stub = env.SUBSTREAM_AGENTS.get(id);
+    await runInDurableObject(stub, async (instance, state) => {
+      const pair = new WebSocketPair();
+      const server = pair[1];
+      state.acceptWebSocket(server);
+      server.serializeAttachment({
+        connectionId: "00000000-0000-7000-8000-000000000710",
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        substreamId: "0",
+        userId: "00000000-0000-7000-8000-000000000711",
+        connectedAt: "2026-08-26T00:00:00.000Z",
+        afterSequence: 0,
+        subscribed: true,
+        snapshotInFlight: false,
+        transcriptSnapshot: {
+          snapshotId: "snapshot-before-backfill",
+          snapshotThrough: 1,
+          snapshotAtUtc: "2026-08-26T00:00:00.000Z",
+        },
+      });
+
+      await expect(instance.backfillLegacyTranscript({
+        objectId: id.toString(),
+        operatorRunId: "00000000-0000-7000-8000-000000000712",
+        cutoverVersion: 27,
+      })).rejects.toThrow("legacy_transcript_backfill_live_snapshot");
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count
+        FROM legacy_transcript_backfills`).one().count).toBe(0);
+    });
+  });
+
   it("refuses to create a successful no-op receipt for an auxiliary substream", async () => {
     const id = env.SUBSTREAM_AGENTS.idFromName("auxiliary-substream-backfill-test");
     const stub = env.SUBSTREAM_AGENTS.get(id);

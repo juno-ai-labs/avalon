@@ -1256,6 +1256,11 @@ wake on the migration path.
 **What a future change has to respect:** source rows referenced by a completed
 receipt are immutable transcript owners. A backfill must be quiescent,
 object-local, atomic with its receipt, PITR-recoverable, and replay-reconciled.
+Quiescence includes both mutable pending legacy tools and connected clients
+holding immutable transcript snapshots: later tool settlement would invalidate
+the recorded source digest, while prefix insertion would change an open fence's
+sequence meaning. An already committed replay is read-only and does not require
+disconnection.
 It may never claim exact historical Bind state unless a byte-faithful source for
 that loop boundary exists.
 
