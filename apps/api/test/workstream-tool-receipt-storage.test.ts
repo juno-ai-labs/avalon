@@ -139,6 +139,19 @@ describe("admitting a tool call's execution plan", () => {
     expect(storage.admit(plan())).toEqual({ state: "replay_completed", effectIntentId: "effect-1" });
   });
 
+  it("replays an exact completed receipt after its executor lease is gone", () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    storage.complete({
+      effectIntentId: "effect-1", checkpointIndex: 1, outputRef: "ref",
+      outputSummary: "done", providerOperationId: null, payloadJson: "{}",
+      allowAmbiguousReconciliation: false, fence, now: NOW,
+    });
+    sql.exec(`UPDATE runs SET lease_expires_at = ?`, NOW - 1);
+
+    expect(storage.admit(plan())).toEqual({ state: "replay_completed", effectIntentId: "effect-1" });
+  });
+
   it("refuses a write whose coordinate was already admitted, and marks it ambiguous", () => {
     const { storage, sql } = open();
     const write = plan({ mode: "write", executionPlanJson: '{"mode":"write"}' });

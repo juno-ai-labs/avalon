@@ -155,7 +155,10 @@ import {
   MessageOperationRequestSchema,
   mutatesTranscript,
 } from "./workstream-message-protocol";
-import { WorkstreamHarnessRunStorage } from "./workstream-harness-run-storage";
+import {
+  expireLocalAttemptLeasesFromPreviousInstance,
+  WorkstreamHarnessRunStorage,
+} from "./workstream-harness-run-storage";
 import {
   type HarnessRunOperationRequest,
   HarnessRunOperationRequestSchema,
@@ -625,6 +628,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
+  private readonly recoverableHarnessAttempts = new Map<string, string>();
   /**
    * Whether the drain this alarm just ran left a run in someone else's hands.
    *
@@ -699,10 +703,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (this.objectStore.identity()) this.ensureSubstreamIdentity("0");
       // Whatever leases survive belong to the isolate this one replaced, so
       // the runs they cover are recoverable now rather than at expiry.
+      const recoveryStartedAt = Date.now();
+      for (const attempt of expireLocalAttemptLeasesFromPreviousInstance(
+        state.storage,
+        recoveryStartedAt,
+      )) {
+        this.recoverableHarnessAttempts.set(attempt.runId, attempt.attemptId);
+      }
       releaseAgentRunDispatchLeases(
         this.state.storage.sql,
         SUBSTREAM_AGENT_RUN_DISPATCHES,
-        Date.now(),
+        recoveryStartedAt,
       );
       // A run left behind by a previous isolate is rediscovered here, by
       // arming the alarm rather than by starting a drain this constructor
@@ -2603,7 +2614,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return this.settleAgentRunWithRetry(executionEnv, input, terminalOutcome);
     }
     const runs = createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId);
-    await reapStaleHarnessRuns(runs, {
+    const recoveryOptions: Parameters<typeof reapStaleHarnessRuns>[1] = {
       receipts: createToolReceiptPortFactory(executionEnv),
       blocks: createBlockDashboardPortFactory(executionEnv),
       workspaceId: input.workspaceId,
@@ -2618,8 +2629,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         repair_phase: failure.phase,
         reason: failure.reason,
       }),
-    });
-    const attemptId = uuidV7();
+    };
+    const recoverableAttemptId = this.recoverableHarnessAttempts.get(input.harnessRunId) ?? null;
+    if (recoverableAttemptId === null) {
+      await reapStaleHarnessRuns(runs, recoveryOptions);
+    }
+    const attemptId = recoverableAttemptId ?? uuidV7();
     const claim = await claimHarnessAttempt(
       runs,
       input,
@@ -2629,6 +2644,27 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         leaseSeconds: 300,
       },
     );
+    if (recoverableAttemptId !== null && claim.state !== "busy") {
+      this.recoverableHarnessAttempts.delete(input.harnessRunId);
+    }
+    if (recoverableAttemptId !== null && claim.state === "claimed") {
+      logWarn(this.env, "substream_agent_previous_instance_attempt_resumed", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        substream_id: input.substreamId ?? "0",
+        harness_run_id: input.harnessRunId,
+        attempt_id: recoverableAttemptId,
+        attempt_epoch: claim.lease.attemptNumber,
+      });
+      // Claim the root before this pass. Its children were expired with it,
+      // and a live parent makes them resumable rather than stale-reapable.
+      await reapStaleHarnessRuns(runs, recoveryOptions);
+    } else if (recoverableAttemptId !== null) {
+      // The recovered row was busy, cancelled, or terminal. Repair old
+      // terminal receipts without letting the general reaper fail the attempt
+      // this instance still intends to reclaim on a later busy retry.
+      await repairTerminalResidualReceipts(runs, recoveryOptions);
+    }
     if (claim.state === "busy") {
       const leaseAt = claim.leaseExpiresAt ? Date.parse(claim.leaseExpiresAt) : Number.NaN;
       // A lease nobody will release leaves the run "running" forever, and this

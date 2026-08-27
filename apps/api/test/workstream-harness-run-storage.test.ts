@@ -2,7 +2,10 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-object-schema";
-import { WorkstreamHarnessRunStorage } from "../src/durable-objects/workstream-harness-run-storage";
+import {
+  expireLocalAttemptLeasesFromPreviousInstance,
+  WorkstreamHarnessRunStorage,
+} from "../src/durable-objects/workstream-harness-run-storage";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
@@ -35,7 +38,7 @@ function open() {
               'idle','s',1,1,0,0,0,0,0,0,0,1,1,1,1)`);
   sql.exec(`INSERT INTO substreams (id,kind,inherit_mode,depth,return_mode,audience,tool_policy,status,created_at)
     VALUES ('0','main','none',0,'none','workspace','full','open',1)`);
-  return { storage: new WorkstreamHarnessRunStorage(binding), sql };
+  return { binding, storage: new WorkstreamHarnessRunStorage(binding), sql };
 }
 
 function seedRun(
@@ -129,6 +132,47 @@ describe("claiming a run's attempt", () => {
     // run did not start again — `started_at` is what the member sees as the
     // beginning of the work.
     expect(again).toMatchObject({ outcome: "claimed", attemptEpoch: 1, startedAt: NOW });
+  });
+
+  it("resumes a previous instance's attempt immediately under a new owner", () => {
+    const { binding, storage, sql } = open();
+    seedRun(sql, RUN);
+    storage.claimAttempt({ ...fence, runId: RUN, leaseSeconds: 300, lifecycleEventId: "event-1" });
+
+    const recoverable = expireLocalAttemptLeasesFromPreviousInstance(binding, NOW + 1_000);
+    expect(recoverable).toEqual([{ runId: RUN, attemptId: "attempt-1" }]);
+
+    const resumed = storage.claimAttempt({
+      runId: RUN,
+      attemptId: "attempt-1",
+      owner: "owner-2",
+      now: NOW + 1_000,
+      leaseSeconds: 300,
+      lifecycleEventId: "event-2",
+    });
+    expect(resumed).toMatchObject({
+      outcome: "claimed",
+      attemptEpoch: 2,
+      startedAt: NOW,
+    });
+    expect(sql.exec(
+      `SELECT legacy_attempt_id, lease_owner, lease_expires_at FROM runs WHERE run_id = ?`,
+      RUN,
+    ).one()).toMatchObject({
+      legacy_attempt_id: "attempt-1",
+      lease_owner: "owner-2",
+      lease_expires_at: NOW + 301_000,
+    });
+  });
+
+  it("does not expire a HyperSight attempt owned by another agent object", () => {
+    const { binding, storage, sql } = open();
+    seedRun(sql, RUN, { origin: "block_dashboard_block" });
+    storage.claimAttempt({ ...fence, runId: RUN, leaseSeconds: 300, lifecycleEventId: "event-1" });
+
+    expect(expireLocalAttemptLeasesFromPreviousInstance(binding, NOW + 1_000)).toEqual([]);
+    expect(sql.exec(`SELECT lease_owner, lease_expires_at FROM runs WHERE run_id = ?`, RUN).one())
+      .toMatchObject({ lease_owner: "owner-1", lease_expires_at: NOW + 300_000 });
   });
 
   it("refuses while another interactive run holds a live lease", () => {
