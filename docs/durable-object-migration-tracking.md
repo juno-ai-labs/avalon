@@ -771,6 +771,12 @@ goes through `hono/html` escaping.
   appears in a future inventory, the operator must separate it from the
   reviewed main-feed target rather than increasing the witness count.
 
+  The probe's `resolve` response retains each input name beside its derived ID
+  for auditability. Convert it to the protected flat-array input with
+  `jq '[.objects[] | select(.error == null) | .objectId]'`, verify its count,
+  and set mode `0600` before passing it to `--global-target-ids` or
+  `--eu-target-ids`. Never redirect the raw resolve envelope into a target file.
+
 ## Performance and cost
 
 The design's budget is one queue send per object per schema change, plus one per
