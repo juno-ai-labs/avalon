@@ -57,6 +57,7 @@
     "deploy:release-retention": "dotenv -e .env.local -- pnpm --filter @rally/release-retention run deploy",
     "deploy:migration-tracker": "dotenv -e .env.local -- pnpm --filter @rally/migration-tracker run deploy",
     "migrate:substream-agents": "node scripts/force-substream-agent-migrations.mjs",
+    "migrate:legacy-workstream-transcripts": "node scripts/backfill-substream-agent-transcripts.mjs",
     "migrate:substream-agents:probe": "pnpm --filter @rally/api exec wrangler dev --remote --config ../../scripts/substream-agent-jurisdiction-probe/wrangler.jsonc --port 8790",
     "deploy:ace": "dotenv -e .env.local -- pnpm --filter @rally/ace run deploy",
     "deploy:global": "dotenv -e .env.local -- pnpm --filter @rally/api run deploy:global",

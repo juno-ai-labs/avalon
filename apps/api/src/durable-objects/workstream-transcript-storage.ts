@@ -72,6 +72,7 @@ interface BlockRow extends Record<string, SqlStorageValue> {
   lifecycle_state: string | null;
   activity_id: string | null;
   part_content: string | null;
+  part_structured_content_json: string | null;
 }
 
 interface ActivityRow extends Record<string, SqlStorageValue> {
@@ -141,6 +142,72 @@ export interface TranscriptCompactionCheckpointRow {
   model: string;
 }
 
+interface LegacyParticipantPartRow extends Record<string, SqlStorageValue> {
+  id: string;
+  sequence_number: number;
+  attention_ordinal: number | null;
+  role: string;
+  kind: string;
+  author_type: string;
+  author_user_id: string | null;
+  content: string | null;
+  content_ref_id: string | null;
+  message_type: string;
+  structured_content_json: string | null;
+  tool_name: string | null;
+  tool_status: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface LegacyCompactionCheckpointRow extends Record<string, SqlStorageValue> {
+  projection_key: string;
+  execution_principal_key: string;
+  resource_visibility_fingerprint: string;
+  checkpoint_template_version: number;
+  run_id: string;
+  compacted_through_sequence: number;
+  messages_json: string;
+  summary: string;
+  model: string;
+  context_tokens_before_compaction: number;
+  context_window_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_micros: number;
+  created_at: number;
+  updated_at: number;
+}
+
+interface LegacyBackfillReceiptRow extends Record<string, SqlStorageValue> {
+  operator_run_id: string;
+  cutover_version: number;
+  cutover_applied_at: number;
+  pre_backfill_bookmark: string;
+  source_part_count: number;
+  source_checkpoint_count: number;
+  source_sha256: string;
+  participant_turn_count: number;
+  checkpoint_projection_count: number;
+  bind_history_status: "not_reconstructable_from_legacy_aggregate_rows";
+  completed_at: number;
+}
+
+export interface LegacyTranscriptBackfillOutcome {
+  applied: boolean;
+  verified: boolean;
+  operatorRunId: string;
+  cutoverAppliedAt: number;
+  preBackfillBookmark: string;
+  sourcePartCount: number;
+  sourceCheckpointCount: number;
+  sourceSha256: string;
+  participantTurnCount: number;
+  checkpointProjectionCount: number;
+  bindHistoryStatus: "not_reconstructable_from_legacy_aggregate_rows";
+  completedAt: number;
+}
+
 /**
  * Canonical transcript substrate for the main work-stream child.
  *
@@ -153,6 +220,228 @@ export class WorkstreamTranscriptStorage {
 
   private get sql(): SqlStorage {
     return this.storage.sql;
+  }
+
+  /**
+   * Project the participant-visible pre-v27 feed into the ordered transcript.
+   *
+   * The old `parts.sequence_number` is a faithful order for what the member
+   * could see, but it is not a faithful Bind history: assistant turns were
+   * concatenated and tool protocol messages were stored in other ledgers. This
+   * operation therefore moves only facts the old authority actually retained.
+   * Exact compaction checkpoint arrays remain owned by their immutable legacy
+   * rows and receive canonical references; no Bind-loop state is invented.
+   *
+   * Hash preparation and the PITR bookmark happen before the transaction. The
+   * transaction re-reads and byte-compares the complete source snapshot before
+   * writing, so an event interleaved across either await makes the operation
+   * abort rather than commit a projection of two different source moments.
+   */
+  async backfillLegacyTranscript(input: {
+    operatorRunId: string;
+    cutoverVersion: 27;
+  }): Promise<LegacyTranscriptBackfillOutcome> {
+    const existing = this.legacyBackfillReceipt();
+    if (existing) return this.verifyLegacyBackfill(existing, false);
+    const cutover = this.sql.exec<{ applied_at: number } & Record<string, SqlStorageValue>>(
+      `SELECT applied_at FROM _sql_schema_migrations WHERE version = ?`,
+      input.cutoverVersion,
+    ).toArray()[0];
+    if (!cutover) throw new Error("legacy_transcript_cutover_receipt_missing");
+    const cutoverAppliedAt = Number(cutover.applied_at);
+    const parts = this.legacyParticipantParts(cutoverAppliedAt);
+    const checkpoints = this.legacyCompactionCheckpoints(cutoverAppliedAt);
+    const sourceCanonical = canonicalJson({ parts, checkpoints });
+    const sourceSha256 = await sha256(sourceCanonical);
+    const preparedParts = await Promise.all(parts.map(async (part) => ({
+      part,
+      fact: await this.prepareFact(this.legacyParticipantFact(part)),
+      tool: legacyToolProjection(part),
+    })));
+    const preparedCheckpoints = await Promise.all(checkpoints.map(async (checkpoint) => ({
+      checkpoint,
+      fact: await this.prepareFact({
+        factId: legacyCheckpointFactId(checkpoint),
+        factKind: "legacy_compaction_checkpoint_reference",
+        audience: "model",
+        payload: {
+          legacyProjectionKey: checkpoint.projection_key,
+          runId: checkpoint.run_id,
+          compactedThroughSequence: Number(checkpoint.compacted_through_sequence),
+        },
+        origin: derivedOrigin(
+          "legacy_compaction_checkpoint",
+          `${checkpoint.projection_key}:${checkpoint.run_id}:${checkpoint.compacted_through_sequence}`,
+          Number(checkpoint.checkpoint_template_version),
+        ),
+        runId: checkpoint.run_id,
+        turnId: null,
+        toolCallId: null,
+      }),
+    })));
+    const preBackfillBookmark = await this.storage.getCurrentBookmark();
+    const completedAt = Date.now();
+    const applied = this.storage.transactionSync(() => {
+      if (this.legacyBackfillReceipt()) return false;
+      const activeRun = this.sql.exec<{ run_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT run_id FROM runs
+          WHERE status IN ('admitted', 'running', 'waiting', 'steering', 'needs_input')
+          LIMIT 1`,
+      ).toArray()[0];
+      const activeActivity = this.sql.exec<{
+        activity_id: string;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT activity_id FROM transcript_activities
+          WHERE lifecycle_state = 'active'
+          LIMIT 1`,
+      ).toArray()[0];
+      if (activeRun || activeActivity) throw new Error("legacy_transcript_backfill_not_quiescent");
+      const currentCanonical = canonicalJson({
+        parts: this.legacyParticipantParts(cutoverAppliedAt),
+        checkpoints: this.legacyCompactionCheckpoints(cutoverAppliedAt),
+      });
+      if (currentCanonical !== sourceCanonical) throw new Error("legacy_transcript_source_moved");
+      const overlappingTurn = this.sql.exec<{ turn_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT turn.turn_id
+           FROM participant_transcript_turns turn
+           JOIN parts part ON part.id = turn.turn_id
+          WHERE part.created_at < ?
+          LIMIT 1`,
+        cutoverAppliedAt,
+      ).toArray()[0];
+      if (overlappingTurn) throw new Error("legacy_transcript_partial_participant_projection");
+
+      const legacyTurnCount = preparedParts.length;
+      if (legacyTurnCount > 0) {
+        const currentMaximum = Number(this.sql.exec<{
+          maximum: number;
+        } & Record<string, SqlStorageValue>>(
+          `SELECT COALESCE(MAX(transcript_sequence), 0) AS maximum
+             FROM participant_transcript_turns`,
+        ).one().maximum);
+        // First move every post-cutover row above both its old and final range.
+        // The second update can then lower it behind the inserted legacy prefix
+        // without colliding with another primary key during row-by-row writes.
+        const temporaryOffset = currentMaximum + legacyTurnCount + 1;
+        this.sql.exec(
+          `UPDATE participant_transcript_turns
+              SET transcript_sequence = transcript_sequence + ?`,
+          temporaryOffset,
+        );
+        for (let index = 0; index < preparedParts.length; index += 1) {
+          const { part, fact, tool } = preparedParts[index]!;
+          const sequence = index + 1;
+          this.insertFact(fact, Number(part.created_at));
+          this.sql.exec(
+            `INSERT INTO participant_transcript_turns
+               (transcript_sequence, turn_id, entry_kind, actor, author_user_id,
+                root_fact_id, activity_id, attention_ordinal, revision, created_at, updated_at)
+             VALUES (?, ?, 'conversation', ?, ?, ?, NULL, ?, 1, ?, ?)`,
+            sequence,
+            part.id,
+            legacyParticipantActor(part.author_type),
+            part.author_type === "member" ? part.author_user_id : null,
+            fact.factId,
+            part.attention_ordinal,
+            part.created_at,
+            part.updated_at,
+          );
+          this.sql.exec(
+            `INSERT INTO participant_transcript_blocks
+               (turn_id, block_id, block_index, block_kind, fact_id, tool_call_id,
+                plugin_id, tool_name, call_index, lifecycle_state, activity_id,
+                revision, updated_at)
+             VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?)`,
+            part.id,
+            tool ? `${part.id}:tool:0` : `${part.id}:text:0`,
+            tool ? "tool" : "text",
+            fact.factId,
+            tool?.toolCallId ?? null,
+            tool?.pluginId ?? null,
+            tool?.toolName ?? null,
+            tool ? 0 : null,
+            tool?.status ?? null,
+            part.updated_at,
+          );
+        }
+        this.sql.exec(
+          `UPDATE participant_transcript_turns
+              SET transcript_sequence = transcript_sequence - ? + ?
+            WHERE transcript_sequence > ?`,
+          temporaryOffset,
+          legacyTurnCount,
+          temporaryOffset,
+        );
+        this.sql.exec(
+          `UPDATE transcript_counters
+              SET next_transcript_sequence = next_transcript_sequence + ?, updated_at = ?
+            WHERE id = 1`,
+          legacyTurnCount,
+          completedAt,
+        );
+      }
+
+      for (const { checkpoint, fact } of preparedCheckpoints) {
+        this.insertFact(fact, Number(checkpoint.created_at));
+        this.sql.exec(
+          `INSERT INTO transcript_compaction_checkpoints
+             (checkpoint_fact_id, execution_principal_key, resource_visibility_fingerprint,
+              checkpoint_template_version, run_id, compacted_through_sequence, model,
+              context_tokens_before_compaction, context_window_tokens, input_tokens,
+              output_tokens, cost_micros, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(execution_principal_key, run_id, compacted_through_sequence) DO NOTHING`,
+          fact.factId,
+          checkpoint.execution_principal_key,
+          checkpoint.resource_visibility_fingerprint,
+          checkpoint.checkpoint_template_version,
+          checkpoint.run_id,
+          checkpoint.compacted_through_sequence,
+          checkpoint.model,
+          checkpoint.context_tokens_before_compaction,
+          checkpoint.context_window_tokens,
+          checkpoint.input_tokens,
+          checkpoint.output_tokens,
+          checkpoint.cost_micros,
+          checkpoint.created_at,
+          checkpoint.updated_at,
+        );
+        const projected = this.sql.exec<{ checkpoint_fact_id: string } & Record<string, SqlStorageValue>>(
+          `SELECT checkpoint_fact_id FROM transcript_compaction_checkpoints
+            WHERE execution_principal_key = ? AND run_id = ?
+              AND compacted_through_sequence = ?`,
+          checkpoint.execution_principal_key,
+          checkpoint.run_id,
+          checkpoint.compacted_through_sequence,
+        ).one();
+        if (projected.checkpoint_fact_id !== fact.factId) {
+          throw new Error("legacy_compaction_projection_conflict");
+        }
+      }
+      this.sql.exec(
+        `INSERT INTO legacy_transcript_backfills
+           (id, operator_run_id, cutover_version, cutover_applied_at,
+            pre_backfill_bookmark, source_part_count, source_checkpoint_count,
+            source_sha256, participant_turn_count, checkpoint_projection_count,
+            bind_history_status, completed_at)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                 'not_reconstructable_from_legacy_aggregate_rows', ?)`,
+        input.operatorRunId,
+        input.cutoverVersion,
+        cutoverAppliedAt,
+        preBackfillBookmark,
+        parts.length,
+        checkpoints.length,
+        sourceSha256,
+        preparedParts.length,
+        preparedCheckpoints.length,
+        completedAt,
+      );
+      return true;
+    });
+    const receipt = this.legacyBackfillReceipt();
+    if (!receipt) throw new Error("legacy_transcript_backfill_receipt_missing");
+    return this.verifyLegacyBackfill(receipt, applied);
   }
 
   async commitBindTransition(transition: BindLoopTransition, now = Date.now()): Promise<void> {
@@ -346,11 +635,21 @@ export class WorkstreamTranscriptStorage {
               checkpoint.resource_visibility_fingerprint,
               checkpoint.checkpoint_template_version, checkpoint.run_id,
               checkpoint.compacted_through_sequence, checkpoint.model,
-              json_extract(payload.payload_json, '$.messages') AS messages_json,
-              json_extract(payload.payload_json, '$.summary') AS summary
+              COALESCE(
+                json_extract(payload.payload_json, '$.messages'), legacy.messages_json
+              ) AS messages_json,
+              COALESCE(
+                json_extract(payload.payload_json, '$.summary'), legacy.summary
+              ) AS summary
          FROM transcript_compaction_checkpoints checkpoint
          JOIN transcript_facts fact ON fact.fact_id = checkpoint.checkpoint_fact_id
          JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+         LEFT JOIN compaction_checkpoints legacy
+           ON fact.fact_kind = 'legacy_compaction_checkpoint_reference'
+          AND legacy.projection_key = json_extract(payload.payload_json, '$.legacyProjectionKey')
+          AND legacy.run_id = json_extract(payload.payload_json, '$.runId')
+          AND legacy.compacted_through_sequence =
+              json_extract(payload.payload_json, '$.compactedThroughSequence')
         WHERE ${where}
         ORDER BY checkpoint.compacted_through_sequence DESC, checkpoint.updated_at DESC
         LIMIT 1`,
@@ -888,7 +1187,8 @@ export class WorkstreamTranscriptStorage {
       `SELECT block.turn_id, block.block_id, block.block_index, block.block_kind,
               payload.payload_json, block.tool_call_id, block.plugin_id,
               block.tool_name, block.call_index, block.lifecycle_state, block.activity_id
-              , part.content AS part_content
+              , part.content AS part_content,
+              part.structured_content_json AS part_structured_content_json
          FROM participant_transcript_blocks block
          JOIN transcript_facts fact ON fact.fact_id = block.fact_id
          JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
@@ -1365,6 +1665,144 @@ export class WorkstreamTranscriptStorage {
     throw new Error("bind_loop_message_origin_unavailable");
   }
 
+  private legacyParticipantParts(cutoverAppliedAt: number): LegacyParticipantPartRow[] {
+    return this.sql.exec<LegacyParticipantPartRow>(
+      `SELECT id, sequence_number, attention_ordinal, role, kind, author_type,
+              author_user_id, content, content_ref_id, message_type,
+              structured_content_json, tool_name, tool_status, created_at, updated_at
+         FROM parts
+        WHERE substream_id = '0'
+          AND visibility IN ('people', 'both')
+          AND (
+            created_at < ?
+            OR (
+              created_at = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM participant_transcript_turns projected
+                 WHERE projected.turn_id = parts.id
+              )
+            )
+          )
+        ORDER BY sequence_number, id`,
+        cutoverAppliedAt,
+        cutoverAppliedAt,
+    ).toArray();
+  }
+
+  private legacyCompactionCheckpoints(cutoverAppliedAt: number): LegacyCompactionCheckpointRow[] {
+    return this.sql.exec<LegacyCompactionCheckpointRow>(
+      `SELECT projection_key, execution_principal_key, resource_visibility_fingerprint,
+              checkpoint_template_version, run_id, compacted_through_sequence,
+              messages_json, summary, model, context_tokens_before_compaction,
+              context_window_tokens, input_tokens, output_tokens, cost_micros,
+              created_at, updated_at
+         FROM compaction_checkpoints
+        WHERE created_at <= ?
+        ORDER BY execution_principal_key, run_id, compacted_through_sequence,
+                 projection_key`,
+      cutoverAppliedAt,
+    ).toArray();
+  }
+
+  private legacyBackfillReceipt(): LegacyBackfillReceiptRow | undefined {
+    return this.sql.exec<LegacyBackfillReceiptRow>(
+      `SELECT operator_run_id, cutover_version, cutover_applied_at,
+              pre_backfill_bookmark, source_part_count, source_checkpoint_count,
+              source_sha256, participant_turn_count, checkpoint_projection_count,
+              bind_history_status, completed_at
+         FROM legacy_transcript_backfills WHERE id = 1`,
+    ).toArray()[0];
+  }
+
+  private legacyParticipantFact(part: LegacyParticipantPartRow): FactMaterial {
+    const tool = legacyToolProjection(part);
+    return {
+      factId: tool ? `${part.id}:legacy-tool` : `${part.id}:message`,
+      factKind: tool ? "legacy_participant_tool" : "participant_message",
+      audience: tool ? "participant" : "shared",
+      // The immutable legacy part remains the one owner of its content. The
+      // canonical fact is a stable semantic identity and source reference, as
+      // it is for every new human/system participant message after v27.
+      payload: {
+        role: legacyParticipantActor(part.author_type),
+        partId: part.id,
+        ...(tool ? { legacyTool: true } : {}),
+      },
+      origin: canonicalOrigin(),
+      runId: null,
+      turnId: part.id,
+      toolCallId: tool?.toolCallId ?? null,
+    };
+  }
+
+  private async verifyLegacyBackfill(
+    receipt: LegacyBackfillReceiptRow,
+    applied: boolean,
+  ): Promise<LegacyTranscriptBackfillOutcome> {
+    const parts = this.sql.exec<LegacyParticipantPartRow>(
+      `SELECT part.id, part.sequence_number, part.attention_ordinal, part.role, part.kind,
+              part.author_type, part.author_user_id, part.content, part.content_ref_id,
+              part.message_type, part.structured_content_json, part.tool_name,
+              part.tool_status, part.created_at, part.updated_at
+         FROM participant_transcript_turns turn
+         JOIN parts part ON part.id = turn.turn_id
+        WHERE turn.transcript_sequence <= ?
+        ORDER BY turn.transcript_sequence`,
+      receipt.participant_turn_count,
+    ).toArray();
+    const checkpoints = this.legacyCompactionCheckpoints(Number(receipt.cutover_applied_at));
+    const digest = await sha256(canonicalJson({ parts, checkpoints }));
+    const projectedParts = this.sql.exec<{
+      source_sequence: number;
+      transcript_sequence: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT part.sequence_number AS source_sequence, turn.transcript_sequence
+         FROM parts part
+         JOIN participant_transcript_turns turn ON turn.turn_id = part.id
+        WHERE turn.transcript_sequence <= ?
+        ORDER BY part.sequence_number, part.id`,
+      receipt.participant_turn_count,
+    ).toArray();
+    const projectedCheckpoints = Number(this.sql.exec<{
+      count: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count
+         FROM compaction_checkpoints legacy
+         JOIN transcript_compaction_checkpoints projected
+           ON projected.execution_principal_key = legacy.execution_principal_key
+          AND projected.run_id = legacy.run_id
+          AND projected.compacted_through_sequence = legacy.compacted_through_sequence
+         JOIN transcript_facts fact ON fact.fact_id = projected.checkpoint_fact_id
+        WHERE legacy.created_at <= ?
+          AND fact.fact_kind = 'legacy_compaction_checkpoint_reference'`,
+      receipt.cutover_applied_at,
+    ).one().count);
+    const sequencesMatch = projectedParts.every(
+      (row, index) => Number(row.transcript_sequence) === index + 1,
+    );
+    const verified = digest === receipt.source_sha256
+      && parts.length === Number(receipt.source_part_count)
+      && checkpoints.length === Number(receipt.source_checkpoint_count)
+      && projectedParts.length === Number(receipt.participant_turn_count)
+      && projectedCheckpoints === Number(receipt.checkpoint_projection_count)
+      && sequencesMatch;
+    if (!verified) throw new Error("legacy_transcript_backfill_reconciliation_failed");
+    return {
+      applied,
+      verified,
+      operatorRunId: receipt.operator_run_id,
+      cutoverAppliedAt: Number(receipt.cutover_applied_at),
+      preBackfillBookmark: receipt.pre_backfill_bookmark,
+      sourcePartCount: Number(receipt.source_part_count),
+      sourceCheckpointCount: Number(receipt.source_checkpoint_count),
+      sourceSha256: receipt.source_sha256,
+      participantTurnCount: Number(receipt.participant_turn_count),
+      checkpointProjectionCount: Number(receipt.checkpoint_projection_count),
+      bindHistoryStatus: receipt.bind_history_status,
+      completedAt: Number(receipt.completed_at),
+    };
+  }
+
   private allocateTranscriptSequence(now: number): number {
     const value = Number(this.sql.exec<{ next_transcript_sequence: number } & Record<string, SqlStorageValue>>(
       `SELECT next_transcript_sequence FROM transcript_counters WHERE id = 1`,
@@ -1418,6 +1856,9 @@ function hydrateBlock(row: BlockRow): TranscriptBlock {
   const fn = call?.function && typeof call.function === "object"
     ? call.function as Record<string, unknown>
     : null;
+  const legacyInvocation = payload.legacyTool === true
+    ? legacyToolInvocation(row.part_structured_content_json)
+    : null;
   const safe = payload.status ? payload : {};
   return {
     type: "tool",
@@ -1425,12 +1866,20 @@ function hydrateBlock(row: BlockRow): TranscriptBlock {
     blockIndex: Number(row.block_index),
     toolCallId: row.tool_call_id ?? row.block_id,
     pluginId: row.plugin_id,
-    toolName: row.tool_name ?? (typeof fn?.name === "string" ? fn.name : "tool"),
+    toolName: row.tool_name
+      ?? (typeof legacyInvocation?.toolName === "string" ? legacyInvocation.toolName : null)
+      ?? (typeof fn?.name === "string" ? fn.name : "tool"),
     callIndex: Number(row.call_index ?? 0),
     status: (row.lifecycle_state ?? "planned") as Extract<TranscriptBlock, { type: "tool" }>["status"],
-    participantSafeInput: safe.participantSafeInput ?? null,
-    participantSafeResult: safe.participantSafeResult ?? null,
-    error: typeof safe.error === "string" ? safe.error : null,
+    participantSafeInput: safe.participantSafeInput
+      ?? legacyInvocation?.inputSummary
+      ?? null,
+    participantSafeResult: safe.participantSafeResult
+      ?? legacyInvocation?.outputSummary
+      ?? null,
+    error: typeof safe.error === "string"
+      ? safe.error
+      : legacyToolError(legacyInvocation),
     activityId: row.activity_id,
   };
 }
@@ -1507,6 +1956,76 @@ function sortActivities(activities: TranscriptActivity[]): TranscriptActivity[] 
 
 function canonicalJson(value: unknown): string {
   return JSON.stringify(sortJson(value));
+}
+
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function legacyParticipantActor(authorType: string): ParticipantMessageInput["actor"] {
+  if (authorType === "member") return "human";
+  if (authorType === "agent") return "assistant";
+  if (authorType === "external" || authorType === "connector") return "external";
+  return "system";
+}
+
+function legacyToolProjection(part: LegacyParticipantPartRow): {
+  toolCallId: string;
+  pluginId: string | null;
+  toolName: string;
+  status: "started" | "completed" | "failed" | "cancelled";
+} | null {
+  if (part.message_type !== "tool" && part.kind !== "tool_call" && part.kind !== "tool_result") {
+    return null;
+  }
+  const invocation = legacyToolInvocation(part.structured_content_json);
+  const plugin = invocation?.plugin && typeof invocation.plugin === "object"
+    ? invocation.plugin as Record<string, unknown>
+    : null;
+  const pluginId = typeof plugin?.pluginId === "string" && plugin.pluginId.length > 0
+    ? plugin.pluginId
+    : null;
+  const rawStatus = typeof invocation?.status === "string" ? invocation.status : part.tool_status;
+  const status = rawStatus === "completed"
+    ? "completed" as const
+    : rawStatus === "failed" || rawStatus === "ambiguous"
+      ? "failed" as const
+      : "started" as const;
+  return {
+    // A legacy card's stable participant identity was its effect-intent/part
+    // id. Prefixing it keeps it disjoint from Bind's model-facing tool-call id.
+    toolCallId: `legacy:${part.id}`,
+    pluginId,
+    toolName: typeof invocation?.toolName === "string" && invocation.toolName.length > 0
+      ? invocation.toolName
+      : part.tool_name ?? "tool",
+    status,
+  };
+}
+
+function legacyToolInvocation(value: string | null): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return parsed.invocation && typeof parsed.invocation === "object"
+      ? parsed.invocation as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function legacyToolError(invocation: Record<string, unknown> | null): string | null {
+  if (!invocation?.error || typeof invocation.error !== "object") return null;
+  const message = (invocation.error as Record<string, unknown>).message;
+  return typeof message === "string" ? message : null;
+}
+
+function legacyCheckpointFactId(checkpoint: LegacyCompactionCheckpointRow): string {
+  return `legacy-compaction:${checkpoint.projection_key}:${checkpoint.run_id}:${checkpoint.compacted_through_sequence}`;
 }
 
 function sortJson(value: unknown): unknown {

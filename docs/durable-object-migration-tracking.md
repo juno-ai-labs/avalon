@@ -45,6 +45,7 @@ happen.
 | `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | The `MIGRATION_REPORT_QUEUE` producer binding and the `avalon-<region>-migration-commands` consumer in each region. |
 | `scripts/ensure-cloudflare-queues.mjs` | The deployment preflight that reads every Wrangler file and creates each queue it declares that the account does not hold, so the configuration stays the single source of truth and no queue is made by hand. |
 | `scripts/force-substream-agent-migrations.mjs` | The explicit one-off fleet wake for `SubstreamAgent`: inventories stored IDs, classifies their encoded jurisdiction, sends only region-addressable IDs through the existing command queues, and verifies queue drain without a new dead letter. |
+| `scripts/backfill-substream-agent-transcripts.mjs` | The separate content-projection operator: inventories and classifies the same fleet, requires exact eligible-count witnesses, invokes each object's deployed backfill RPC, and persists every PITR bookmark/outcome in a mode-0600 local receipt. |
 | `scripts/substream-agent-jurisdiction-probe/` | A remote-development-only Worker that parses enumerated IDs through unrestricted external bindings and returns their encoded jurisdiction without opening an object. |
 
 ## How it works
@@ -472,6 +473,8 @@ report is out of scope by design.
 | A class holds more objects than one run sends | The run stops at 5,000, is marked `truncated`, and the page says so. Running it again continues. |
 | The manual `SubstreamAgent` fleet wake sees legacy unrestricted IDs | The account inventory includes every jurisdiction in the namespace, while the product Worker deliberately addresses only `us` or `eu`. The local probe classifies the jurisdiction encoded in each ID; unrestricted or wrong-region IDs are counted as skipped and never sent to a regional command queue. |
 | The manual fleet wake cannot reach its local jurisdiction probe | Apply mode refuses to enqueue anything. A dry run without the probe reports only stored-object counts and leaves eligible/skipped counts unknown. |
+| The transcript backfill sees an active writer, moved source, partial projection, or conflicting checkpoint | The object-local transaction commits nothing and no receipt. The fleet command records the object error locally and exits nonzero; it never skips the conflict or reports partial success. |
+| The transcript backfill is replayed | The object recomputes its source digest, exact participant-prefix order, and checkpoint counts. It writes nothing and returns the original receipt with `applied=false`, or fails reconciliation if an owning source row changed. |
 
 Numeric limits: report heartbeat **24 hours**; sweep cadence **hourly**; object
 listing **20 pages × 1,000**; report consumer batch **100 messages / 10 seconds**
@@ -498,6 +501,8 @@ banner carrying the error.
 | `pnpm --filter @rally/api test:workers` (`test-workers/forced-migration.test.ts`) | `forceMigration` through a real Durable Object stub, its two identity guards, the unconditional report, and the consumer's ack/retry contract. |
 | `pnpm --filter @rally/contracts test` | The report contract, the command contract, the opaque-name guard, and the queue-name predicates. |
 | `node --test scripts/force-substream-agent-migrations.test.mjs` | Dry-run safety, stored-object filtering, jurisdiction filtering, 100-message queue batches, queue drain, DLQ growth, and ambiguous resource discovery. |
+| `node --test scripts/backfill-substream-agent-transcripts.test.mjs` | Exact 389 Global/3 EU targeting, bounded regional RPC batches, count-drift refusal, per-object recovery receipts, partial-failure persistence, and replay totals. |
+| `pnpm --filter @rally/api test:workers` (`test-workers/workstream-transcript-runtime.test.ts`) | The production object RPC against real workerd SQLite, including a real PITR bookmark, atomic projection receipt, and idempotent reconciliation. |
 
 Traps:
 
@@ -723,11 +728,37 @@ goes through `hono/html` escaping.
       --jurisdiction-probe-url=http://localhost:8790
   ```
 
-  The probe is a Wrangler remote preview, not a deployed production Worker. It
-  parses IDs only; it never calls `get`, `fetch`, or an RPC on an object. Stop it
-  after the apply reports both command queues drained. The apply fails if either
-  DLQ grows from its starting depth. This operation runs object-local schema
-  migrations only; it does not invent or rewrite historical transcript rows.
+  The probe is a Wrangler remote preview, not a deployed production Worker. In
+  its default classifier mode it parses IDs only and never opens an object.
+  Stop it after the apply reports both command queues drained. The apply fails
+  if either DLQ grows from its starting depth. This operation runs object-local
+  schema migrations only.
+
+- The legacy transcript projection is a separate explicit data operation, run
+  only after the backend that exposes schema v28 and the object-owned RPC is
+  successfully deployed. The remote-preview probe's backfill mode calls that
+  deployed RPC through the matching regional external binding; it does not
+  weaken the production binding or add a public administration route. Inventory
+  first, then apply using the reviewed fleet counts:
+
+  ```bash
+  pnpm exec dotenv -e <credential-repo>/.env.local -- \
+    pnpm migrate:legacy-workstream-transcripts -- \
+      --jurisdiction-probe-url=http://localhost:8790
+
+  pnpm exec dotenv -e <credential-repo>/.env.local -- \
+    pnpm migrate:legacy-workstream-transcripts -- --apply \
+      --jurisdiction-probe-url=http://localhost:8790 \
+      --expected-global=389 --expected-eu=3
+  ```
+
+  Apply refuses count drift before the first object RPC. Every object returns a
+  real pre-write PITR bookmark and reconciliation outcome, persisted to a
+  mode-0600 file under `/tmp` by default. Any object error makes the command
+  fail after preserving completed outcomes. Re-run the same command after a
+  successful fleet pass: all 392 eligible objects must report `applied=false`
+  and `verified=true`. Legacy unrestricted IDs remain explicit skips because a
+  regional binding cannot address them; this operation never crosses regions.
 
 ## Performance and cost
 
@@ -765,6 +796,34 @@ radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
 
 ## Changelog
+
+### 2026-08-26 — Transcript content backfill has per-object recovery evidence
+
+**What changed:** a second operator command uses the jurisdiction classifier to
+invoke the deployed `SubstreamAgent` transcript-backfill RPC for exactly the
+reviewed regional fleet. It persists each object's PITR bookmark, source and
+projection counts, reconciliation result, and error to a mode-0600 local
+receipt. Apply rejects inventory drift before mutation; a complete replay is the
+fleet audit.
+
+**Why:** waking the fleet installed schema v27 but did not project existing
+participant/checkpoint facts into the new canonical indexes. This is content
+work and therefore cannot run as unbounded constructor SQL. The account
+inventory is still the only complete object list, and its mixed-jurisdiction
+shape still requires Cloudflare's own ID parser before any regional RPC.
+
+**Considered and rejected:** using the migration-command Queue for a payload-
+scanning operation, because that protocol proves schema wake rather than content
+reconciliation; adding a permanent production admin endpoint, because a
+one-time operation does not justify a new attack surface; and treating a
+successful HTTP batch as sufficient evidence, because it would lose the
+per-object rollback bookmark and partial-failure boundary.
+
+**What a future change has to respect:** schema migration and content migration
+are distinct operations. Content apply requires explicit fleet-count witnesses,
+regional classification, durable object-local atomic receipts, protected local
+recovery evidence, nonzero exit on any unverified object, and a full idempotent
+replay before completion.
 
 ### 2026-08-26 — A manual SubstreamAgent fleet wake respects jurisdictions
 
