@@ -1273,9 +1273,10 @@ directory write at all.
 
 ### 2026-08-27 — Replacement instances resume the attempt their predecessor fenced
 
-**What changed:** SubstreamAgent construction now expires local harness leases
-left by the previous object instance together with its dispatch lease. The
-replacement reclaims the same attempt ID under a new owner and epoch before it
+**What changed:** SubstreamAgent construction now expires still-live local
+harness leases left by the previous object instance together with its dispatch
+lease. Already-expired leases remain stale-reaper failures. The replacement
+reclaims the same attempt ID under a new owner and epoch before it
 runs the stale-lease sweep, preserving frozen scope, completed tool receipts,
 and resumable child attempts. An exact completed tool receipt remains replayable
 while ownership transfers; receipt mutation and mismatched-plan paths still

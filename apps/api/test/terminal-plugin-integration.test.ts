@@ -224,6 +224,25 @@ describe("Terminal Bind integration", () => {
     const { database, objectStore, env, input } = fixture("supported");
     selectRepository(database, objectStore);
     const sandboxProvider = provider();
+    vi.mocked(sandboxProvider.runUtilityCommand).mockImplementation(async (_id, request) => {
+      if (request.operation === "file.inspect") {
+        return { exitCode: 0, stdout: "0\n", stderr: "" };
+      }
+      if (request.operation === "file.read_page") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            content: "",
+            startLine: 1,
+            endLine: 0,
+            totalLines: 0,
+            truncated: false,
+          }),
+          stderr: "",
+        };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
     const githubReadGateway = readGateway();
     const plugin = await createAvalonTerminalPlugin(env, input, undefined, {
       provider: sandboxProvider,
@@ -255,6 +274,22 @@ describe("Terminal Bind integration", () => {
       objectStore,
       "SELECT bootstrapped_sandbox_generation FROM terminal_repository",
     )).toEqual({ bootstrapped_sandbox_generation: 1 });
+
+    await expect(plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
+      { filePath: "README.md", offset: 1, limit: 200 },
+      {
+        workspaceId: W,
+        workstreamId: S,
+        harnessRunId: R,
+        toolCallId: "first-tool-after-activation",
+        executionPrincipal: { type: "user", userId: U },
+        signal: new AbortController().signal,
+      },
+    )).resolves.toMatchObject({ output: { content: "" } });
+    expect(vi.mocked(sandboxProvider.runUtilityCommand).mock.calls
+      .filter(([, request]) => request.operation === "repository.bootstrap"))
+      .toHaveLength(1);
+    expect(githubReadGateway.mintRepositoryToken).toHaveBeenCalledOnce();
   });
 
   it("keeps checkout available when selected-repository preparation needs repair", async () => {
