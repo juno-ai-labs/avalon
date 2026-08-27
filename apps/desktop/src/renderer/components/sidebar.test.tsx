@@ -7,7 +7,7 @@ import { WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { formatDateTime } from '../lib/format';
-import { useUiStore } from '../lib/ui-store';
+import { useUiStore, WIDTH_PERSIST_DEBOUNCE_MS } from '../lib/ui-store';
 import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
 
 const copyText = vi.hoisted(() => vi.fn());
@@ -177,24 +177,37 @@ describe('Sidebar work-stream markers', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  it('resizes from the keyboard and exposes its constrained width', () => {
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
+  it('resizes from the keyboard, blocks the key from also scrolling an ancestor, and persists the debounced width', () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <MemoryRouter>
+          <Tooltip.Provider>
+            <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          </Tooltip.Provider>
+        </MemoryRouter>,
+      );
 
-    const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
-    expect(resizer).toHaveAttribute('aria-valuenow', '300');
+      const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
+      expect(resizer).toHaveAttribute('aria-valuenow', '300');
 
-    fireEvent.keyDown(resizer, { key: 'ArrowRight' });
-    expect(resizer).toHaveAttribute('aria-valuenow', '316');
-    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('316');
+      // fireEvent's return value is Element.dispatchEvent's: false only when a
+      // cancelable event was prevented. ArrowRight/ArrowLeft must prevent the
+      // default so the key does not also scroll whatever ancestor would
+      // otherwise treat it as a scroll gesture.
+      expect(fireEvent.keyDown(resizer, { key: 'ArrowRight' })).toBe(false);
+      expect(resizer).toHaveAttribute('aria-valuenow', '316');
+      vi.advanceTimersByTime(WIDTH_PERSIST_DEBOUNCE_MS);
+      expect(window.localStorage.getItem('rally.sidebar-width')).toBe('316');
 
-    fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
-    expect(resizer).toHaveAttribute('aria-valuenow', '300');
+      expect(fireEvent.keyDown(resizer, { key: 'ArrowLeft' })).toBe(false);
+      expect(resizer).toHaveAttribute('aria-valuenow', '300');
+
+      // A key this handler ignores is left alone rather than blanket-prevented.
+      expect(fireEvent.keyDown(resizer, { key: 'Tab' })).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('forwards a work-stream row hover to the pooled socket warm-up', () => {
@@ -330,6 +343,65 @@ describe('Sidebar work-stream markers', () => {
 
     fireEvent.pointerUp(window, { pointerId: 3 });
     fireEvent.pointerMove(window, { clientX: 400, pointerId: 3 });
+    expect(resizer).toHaveAttribute('aria-valuenow', '340');
+  });
+
+  // An OS-level interruption (an alt-tab, a system drag-and-drop, a palm
+  // rejection) never fires pointerup — only pointercancel or a loss of the
+  // capture the drag took on pointerdown. Before this, resizing stayed true
+  // through either one, and the sidebar kept tracking the next pointermove
+  // anywhere in the window with a grab offset from a drag that had already
+  // ended.
+  it('ends the drag on pointercancel rather than leaving the sidebar glued to the pointer', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
+    resizer.setPointerCapture = vi.fn();
+    const aside = container.querySelector('.sidebar');
+    if (!aside) throw new Error('The sidebar aside is missing.');
+
+    fireEvent.pointerDown(resizer, { clientX: 318, pointerId: 3 });
+    fireEvent.pointerMove(window, { clientX: 358, pointerId: 3 });
+    expect(aside).toHaveClass('is-resizing');
+    expect(resizer).toHaveAttribute('aria-valuenow', '340');
+
+    fireEvent.pointerCancel(window, { pointerId: 3 });
+    expect(aside).not.toHaveClass('is-resizing');
+
+    // The stop path's cleanup removed the window pointermove listener; a move
+    // that arrives after the cancel must not keep dragging the sidebar.
+    fireEvent.pointerMove(window, { clientX: 460, pointerId: 3 });
+    expect(resizer).toHaveAttribute('aria-valuenow', '340');
+  });
+
+  it('ends the drag on losing pointer capture, the same way', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
+    resizer.setPointerCapture = vi.fn();
+    const aside = container.querySelector('.sidebar');
+    if (!aside) throw new Error('The sidebar aside is missing.');
+
+    fireEvent.pointerDown(resizer, { clientX: 318, pointerId: 3 });
+    fireEvent.pointerMove(window, { clientX: 358, pointerId: 3 });
+    expect(aside).toHaveClass('is-resizing');
+
+    act(() => { window.dispatchEvent(new Event('lostpointercapture')); });
+    expect(aside).not.toHaveClass('is-resizing');
+
+    fireEvent.pointerMove(window, { clientX: 460, pointerId: 3 });
     expect(resizer).toHaveAttribute('aria-valuenow', '340');
   });
 

@@ -1458,9 +1458,19 @@ export function Sidebar({
     const stop = (): void => setResizing(false);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', stop, { once: true });
+    // An OS-level interruption (an alt-tab, a system drag-and-drop, a palm
+    // rejection) never fires pointerup — only pointercancel or a loss of the
+    // capture this drag took on pointerdown. Without these, resizing stays
+    // true and the sidebar keeps tracking a pointer that has stopped sending
+    // moves, so the next real pointermove anywhere snaps it to that stale
+    // grab offset. rail-resize-handle.tsx covers the same two cases.
+    window.addEventListener('pointercancel', stop, { once: true });
+    window.addEventListener('lostpointercapture', stop, { once: true });
     return () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      window.removeEventListener('lostpointercapture', stop);
     };
   }, [resizing, setSidebarWidth]);
 
@@ -1833,8 +1843,9 @@ export function Sidebar({
           aria-valuenow={sidebarWidth}
           className={clsx('sidebar-resizer', pointerNearEdge && 'is-near')}
           onKeyDown={(event) => {
-            if (event.key === 'ArrowLeft') setSidebarWidth(sidebarWidth - 16);
-            if (event.key === 'ArrowRight') setSidebarWidth(sidebarWidth + 16);
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            setSidebarWidth(sidebarWidth + (event.key === 'ArrowLeft' ? -16 : 16));
           }}
           onPointerDown={(event) => {
             event.currentTarget.setPointerCapture(event.pointerId);

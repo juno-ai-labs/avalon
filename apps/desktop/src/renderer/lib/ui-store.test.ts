@@ -1,8 +1,12 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { useUiStore } from './ui-store';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useUiStore, WIDTH_PERSIST_DEBOUNCE_MS } from './ui-store';
 
 describe('context rail state', () => {
   beforeEach(() => {
+    // The width setters now persist through a debounce (see ui-store.ts); fake
+    // timers make that deterministic here rather than leaving a real pending
+    // setTimeout to land at some unpredictable point relative to the next test.
+    vi.useFakeTimers();
     window.localStorage.clear();
     useUiStore.setState({
       sidebarOpen: false,
@@ -15,6 +19,11 @@ describe('context rail state', () => {
       blockDashboardWidth: 360,
       railScope: null,
     });
+  });
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
   });
 
   it('clamps HyperSight to the same width range as the rail it shares the sidebar with', () => {
@@ -50,11 +59,31 @@ describe('context rail state', () => {
   it('clamps and persists sidebar resizing', () => {
     useUiStore.getState().setSidebarWidth(120);
     expect(useUiStore.getState().sidebarWidth).toBe(260);
+    vi.advanceTimersByTime(WIDTH_PERSIST_DEBOUNCE_MS);
     expect(window.localStorage.getItem('rally.sidebar-width')).toBe('260');
 
     useUiStore.getState().setSidebarWidth(900);
     expect(useUiStore.getState().sidebarWidth).toBe(480);
+    vi.advanceTimersByTime(WIDTH_PERSIST_DEBOUNCE_MS);
     expect(window.localStorage.getItem('rally.sidebar-width')).toBe('480');
+  });
+
+  it('debounces the persisted write behind rapid width updates, but never the live value', () => {
+    useUiStore.getState().setSidebarWidth(310);
+    useUiStore.getState().setSidebarWidth(320);
+    useUiStore.getState().setSidebarWidth(330);
+
+    // The pointermove path this stands in for updates the live value on every
+    // call, whatever becomes of the write behind it.
+    expect(useUiStore.getState().sidebarWidth).toBe(330);
+    // Nothing has been written yet — three rapid calls are still one pending
+    // write, not three.
+    expect(window.localStorage.getItem('rally.sidebar-width')).toBeNull();
+
+    vi.advanceTimersByTime(WIDTH_PERSIST_DEBOUNCE_MS);
+
+    // The write that lands is the last width, not the first or a stale one.
+    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('330');
   });
 
   it('opens the requested contextual variant and resets stale detail state', () => {
