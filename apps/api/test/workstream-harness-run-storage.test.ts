@@ -1180,7 +1180,7 @@ describe("publishing a run's final message", () => {
       .toEqual({ outcome: "published", sequenceNumber: 1 });
     expect(sql.exec(
       `SELECT author_type, message_type, content, client_message_id, produced_by_run_id
-         FROM parts WHERE id = ?`,
+         FROM workstream_message_details WHERE id = ?`,
       publish.messageId,
     ).one()).toMatchObject({
       author_type: "agent",
@@ -1221,7 +1221,7 @@ describe("publishing a run's final message", () => {
     expect(await storage.publishFinalMessage({
       ...fence, runId: RUN, owner: "someone-else", ...publish,
     })).toEqual({ outcome: "ownership_lost" });
-    expect(sql.exec(`SELECT COUNT(*) AS count FROM parts WHERE id = ?`, publish.messageId).one())
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records WHERE id = ?`, publish.messageId).one())
       .toEqual({ count: 0 });
     expect(storage.lifecycleEvent({ runId: RUN, eventKey: "final_message" })).toBeUndefined();
   });
@@ -1257,7 +1257,7 @@ describe("publishing a run's final message", () => {
       messageId: "00000000-0000-7000-8000-0000000000c2",
       lifecycleEventId: "event-final-2",
     })).toEqual({ outcome: "replayed", sequenceNumber: 1 });
-    expect(sql.exec(`SELECT COUNT(*) AS count FROM parts WHERE substream_id = '0'`).one())
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records WHERE substream_id = '0'`).one())
       .toEqual({ count: 1 });
   });
 });

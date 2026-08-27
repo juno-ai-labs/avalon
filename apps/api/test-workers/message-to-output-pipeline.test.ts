@@ -26,6 +26,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import { substreamAgentName, workspaceDOName } from "../src/durable-objects/names";
+import {
+  seedCanonicalMessageRecord,
+  seedParticipantMessage,
+} from "./helpers/substream-fixture";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000005a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000005a2");
@@ -308,7 +312,8 @@ describe("a member's message travels the whole pipeline", () => {
 
     await runInDurableObject(stub, (_instance, state) => {
       const copies = state.storage.sql.exec<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM parts WHERE client_message_id = 'pipeline-dup-1'`,
+        `SELECT COUNT(*) AS n FROM workstream_message_records
+          WHERE client_message_id = 'pipeline-dup-1'`,
       ).toArray()[0]!;
       expect(copies.n).toBe(1);
     });
@@ -336,7 +341,8 @@ describe("a member's message travels the whole pipeline", () => {
     expect(attempt.status).toBe(401);
     await runInDurableObject(stub, (_instance, state) => {
       const copies = state.storage.sql.exec<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM parts WHERE client_message_id = 'pipeline-revoked-1'`,
+        `SELECT COUNT(*) AS n FROM workstream_message_records
+          WHERE client_message_id = 'pipeline-revoked-1'`,
       ).toArray()[0]!;
       expect(copies.n).toBe(0);
     });
@@ -347,36 +353,32 @@ describe("a member's message travels the whole pipeline", () => {
     const opened = await initializeWorkstream(stub, "the opening message");
     await settledRun(stub, opened.body.harnessRunId as string);
 
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       const counters = state.storage.sql.exec<{
         next_sequence_number: number;
         next_attention_ordinal: number;
       }>(
         `SELECT next_sequence_number, next_attention_ordinal FROM workstream WHERE id = 1`,
       ).one();
-      state.storage.sql.exec(
-        `INSERT INTO parts
-           (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
-            content, effect_intent_id, tool_name, tool_mode, tool_status, visibility,
-            pinned, created_at, updated_at)
-         VALUES ('00000000-0000-7000-8000-0000000005b1', '0', ?, NULL, 'assistant', 'tool_call', 'agent', '',
-                 '00000000-0000-7000-8000-0000000005b3', 'attachment_read', 'read', 'completed', 'people',
-                 0, ?, ?)`,
-        counters.next_sequence_number,
-        Date.now(),
-        Date.now(),
-      );
-      state.storage.sql.exec(
-        `INSERT INTO parts
-           (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
-            content, visibility, pinned, created_at, updated_at)
-         VALUES ('00000000-0000-7000-8000-0000000005b2', '0', ?, ?, 'assistant', 'text', 'agent',
-                 'answer after tool', 'both', 0, ?, ?)`,
-        counters.next_sequence_number + 1,
-        counters.next_attention_ordinal,
-        Date.now(),
-        Date.now(),
-      );
+      const now = Date.now();
+      await seedCanonicalMessageRecord(state, {
+        id: "00000000-0000-7000-8000-0000000005b1",
+        sequence: counters.next_sequence_number,
+        messageType: "tool",
+        structuredContentJson: '{"invocation":{"status":"completed"}}',
+        effectIntentId: "00000000-0000-7000-8000-0000000005b3",
+        toolName: "attachment_read",
+        toolStatus: "completed",
+        now,
+      });
+      await seedParticipantMessage(state, {
+        id: "00000000-0000-7000-8000-0000000005b2",
+        sequence: counters.next_sequence_number + 1,
+        text: "answer after tool",
+        authorType: "agent",
+        attentionOrdinal: counters.next_attention_ordinal,
+        now,
+      });
       state.storage.sql.exec(
         `UPDATE workstream
             SET next_sequence_number = ?, next_attention_ordinal = ?, updated_at = ?

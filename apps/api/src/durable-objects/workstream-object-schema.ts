@@ -17,7 +17,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 31;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 32;
 
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
@@ -1765,6 +1765,92 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
          ON workstream_resource_links(relationship_type, attached_at, resource_id)`,
     ],
   },
+  {
+    version: 32,
+    description: "retire legacy transcript payload storage",
+    statements: [
+      `CREATE TABLE transcript_payload_retirement_guard (
+        id INTEGER PRIMARY KEY CHECK (id = 1)
+      ) STRICT`,
+      ...transcriptPayloadRetirementGuards(),
+      `INSERT INTO transcript_payload_retirement_guard(id) VALUES (1)`,
+      ...transcriptPayloadRetirementGuardDrops(),
+      `DROP TABLE transcript_payload_retirement_guard`,
+      ...transcriptCompatibilityRetirement(),
+      `DROP TRIGGER workstream_message_attachments_mirror_insert`,
+      `DROP TRIGGER workstream_message_mentions_mirror_insert`,
+      `UPDATE participant_transcript_turns
+          SET root_fact_id = (
+            SELECT fact_id FROM workstream_message_records
+             WHERE message_id = participant_transcript_turns.turn_id
+          )
+        WHERE entry_kind = 'conversation'
+          AND EXISTS (
+            SELECT 1 FROM workstream_message_records
+             WHERE message_id = participant_transcript_turns.turn_id
+          )`,
+      `UPDATE participant_transcript_blocks
+          SET fact_id = (
+            SELECT fact_id FROM workstream_message_records
+             WHERE message_id = participant_transcript_blocks.turn_id
+          )
+        WHERE EXISTS (
+          SELECT 1 FROM workstream_message_records
+           WHERE message_id = participant_transcript_blocks.turn_id
+        )`,
+      `DROP TABLE part_attachments`,
+      `DROP TABLE part_mentions`,
+      `ALTER TABLE workstream_message_records RENAME COLUMN message_id TO id`,
+      `PRAGMA legacy_alter_table = ON`,
+      `ALTER TABLE parts RENAME TO retired_transcript_parts`,
+      `ALTER TABLE workstream_message_records RENAME TO parts`,
+      `DROP TABLE retired_transcript_parts`,
+      `PRAGMA legacy_alter_table = OFF`,
+      `ALTER TABLE parts RENAME TO retired_transcript_parts`,
+      `ALTER TABLE retired_transcript_parts RENAME TO workstream_message_records`,
+      `DROP INDEX substreams_origin_part_uq`,
+      `ALTER TABLE substreams RENAME COLUMN origin_part_id TO origin_message_id`,
+      `CREATE UNIQUE INDEX substreams_origin_message_uq
+         ON substreams(origin_message_id) WHERE origin_message_id IS NOT NULL`,
+      `ALTER TABLE tool_effects RENAME COLUMN result_part_id TO result_message_id`,
+      `ALTER TABLE terminal_publication_grants
+         RENAME COLUMN source_part_id TO source_message_id`,
+      `DROP INDEX suggested_actions_authored_part_idx`,
+      `ALTER TABLE suggested_actions RENAME COLUMN authored_part_id TO authored_message_id`,
+      `CREATE INDEX suggested_actions_authored_message_idx
+         ON suggested_actions(authored_message_id) WHERE authored_message_id IS NOT NULL`,
+      `ALTER TABLE run_steering RENAME COLUMN steering_part_id TO steering_message_id`,
+      `DROP TABLE compaction_checkpoints`,
+      `DROP TABLE legacy_transcript_backfills`,
+      `DROP TABLE legacy_transcript_cleanup_receipts`,
+      `DROP TABLE legacy_transcript_payload_transfers`,
+      `CREATE VIEW workstream_message_details AS
+         SELECT record.id, record.substream_id, record.sequence_number,
+                record.attention_ordinal, record.turn_id, record.turn_open_sequence,
+                record.part_index, record.role, record.kind, record.author_type,
+                record.author_user_id, record.external_actor_json,
+                json_extract(payload.payload_json, '$.content') AS content,
+                record.content_ref_id, record.content_bytes, record.content_hash,
+                record.answers_message_id, record.input_message_ids_json,
+                record.client_message_id, record.effect_intent_id, record.occurrence_key,
+                record.produced_by_run_id, record.attempt_epoch, record.executor_event_seq,
+                record.model_turn_id, record.tool_position, record.delivery_intent,
+                record.input_batch_id, record.admission_cut_seq, record.tool_name,
+                record.tool_mode, record.tool_status, record.compacts_through_sequence,
+                record.compacts_through_turn_id, record.projected_input_hash,
+                record.projection_key, record.authorization_revisions_json,
+                record.lineage_fences_json, record.terminal_reason, record.visibility,
+                record.pinned, record.message_type,
+                CASE WHEN json_type(payload.payload_json, '$.structuredContent') = 'null'
+                  THEN NULL
+                  ELSE json_extract(payload.payload_json, '$.structuredContent')
+                END AS structured_content_json,
+                record.edited_at, record.created_at, record.updated_at
+           FROM workstream_message_records record
+           JOIN transcript_facts fact ON fact.fact_id = record.fact_id
+            JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id`,
+    ],
+  },
 ];
 
 /**
@@ -1798,6 +1884,165 @@ function identityAuthorityPromotion(): string[] {
     /^_runtime_workstreams$|^_runtime_workstreams_|^_runtime_workstream_participants/,
     7,
     "identity",
+  );
+}
+
+/** Drops the frozen runtime views whose backing transcript tables retire in v32. */
+function transcriptPayloadRetirementGuardDrops(): string[] {
+  return [
+    "transcript_payload_guard_receipt",
+    "transcript_payload_guard_message_rows",
+    "transcript_payload_guard_structured_content",
+    "transcript_payload_guard_relations",
+    "transcript_payload_guard_checkpoints",
+  ].map((name) => `DROP TRIGGER ${name}`);
+}
+
+function transcriptPayloadRetirementGuards(): string[] {
+  const abort = "SELECT RAISE(ABORT, 'transcript_payload_retirement_not_verified');";
+  return [
+    `CREATE TRIGGER transcript_payload_guard_receipt
+       BEFORE INSERT ON transcript_payload_retirement_guard
+       WHEN (
+         (
+           EXISTS (SELECT 1 FROM parts)
+           OR EXISTS (SELECT 1 FROM part_attachments)
+           OR EXISTS (SELECT 1 FROM part_mentions)
+           OR EXISTS (SELECT 1 FROM compaction_checkpoints)
+         ) AND NOT EXISTS (SELECT 1 FROM legacy_transcript_payload_transfers WHERE id = 1)
+       ) OR (SELECT COUNT(*) FROM parts) != (SELECT COUNT(*) FROM workstream_message_records)
+         OR (SELECT COUNT(*) FROM part_attachments) !=
+            (SELECT COUNT(*) FROM workstream_message_attachments)
+         OR (SELECT COUNT(*) FROM part_mentions) !=
+            (SELECT COUNT(*) FROM workstream_message_mentions)
+       BEGIN ${abort} END`,
+    `CREATE TRIGGER transcript_payload_guard_message_rows
+       BEFORE INSERT ON transcript_payload_retirement_guard
+       WHEN EXISTS (
+         SELECT 1 FROM parts part
+         LEFT JOIN workstream_message_records record ON record.message_id = part.id
+         LEFT JOIN transcript_facts fact ON fact.fact_id = record.fact_id
+         LEFT JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+         WHERE record.message_id IS NULL
+            OR record.substream_id IS NOT part.substream_id
+            OR record.sequence_number IS NOT part.sequence_number
+            OR record.attention_ordinal IS NOT part.attention_ordinal
+            OR record.turn_id IS NOT part.turn_id
+            OR record.turn_open_sequence IS NOT part.turn_open_sequence
+            OR record.part_index IS NOT part.part_index
+            OR record.role IS NOT part.role
+            OR record.kind IS NOT part.kind
+            OR record.author_type IS NOT part.author_type
+            OR record.author_user_id IS NOT part.author_user_id
+            OR record.external_actor_json IS NOT part.external_actor_json
+            OR record.content_ref_id IS NOT part.content_ref_id
+            OR record.content_bytes IS NOT part.content_bytes
+            OR record.content_hash IS NOT part.content_hash
+            OR record.answers_message_id IS NOT part.answers_part_id
+            OR record.input_message_ids_json IS NOT part.input_part_ids_json
+            OR record.client_message_id IS NOT part.client_message_id
+            OR record.effect_intent_id IS NOT part.effect_intent_id
+            OR record.occurrence_key IS NOT part.occurrence_key
+            OR record.produced_by_run_id IS NOT part.produced_by_run_id
+            OR record.attempt_epoch IS NOT part.attempt_epoch
+            OR record.executor_event_seq IS NOT part.executor_event_seq
+            OR record.model_turn_id IS NOT part.model_turn_id
+            OR record.tool_position IS NOT part.tool_position
+            OR record.delivery_intent IS NOT part.delivery_intent
+            OR record.input_batch_id IS NOT part.input_batch_id
+            OR record.admission_cut_seq IS NOT part.admission_cut_seq
+            OR record.tool_name IS NOT part.tool_name
+            OR record.tool_mode IS NOT part.tool_mode
+            OR record.tool_status IS NOT part.tool_status
+            OR record.compacts_through_sequence IS NOT part.compacts_through_sequence
+            OR record.compacts_through_turn_id IS NOT part.compacts_through_turn_id
+            OR record.projected_input_hash IS NOT part.projected_input_hash
+            OR record.projection_key IS NOT part.projection_key
+            OR record.authorization_revisions_json IS NOT part.authorization_revisions_json
+            OR record.lineage_fences_json IS NOT part.lineage_fences_json
+            OR record.terminal_reason IS NOT part.terminal_reason
+            OR record.visibility IS NOT part.visibility
+            OR record.pinned IS NOT part.pinned
+            OR record.message_type IS NOT part.message_type
+            OR record.edited_at IS NOT part.edited_at
+            OR record.created_at IS NOT part.created_at
+            OR record.updated_at IS NOT part.updated_at
+            OR json_extract(payload.payload_json, '$.role') IS NOT part.role
+            OR json_extract(payload.payload_json, '$.content') IS NOT COALESCE(part.content, '')
+       ) BEGIN ${abort} END`,
+    `CREATE TRIGGER transcript_payload_guard_structured_content
+       BEFORE INSERT ON transcript_payload_retirement_guard
+       WHEN EXISTS (
+         SELECT part.id FROM parts part
+         JOIN workstream_message_records record ON record.message_id = part.id
+         JOIN transcript_facts fact ON fact.fact_id = record.fact_id
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+         WHERE (part.structured_content_json IS NOT NULL
+                OR json_type(payload.payload_json, '$.structuredContent') IS NOT 'null')
+           AND (EXISTS (
+             SELECT fullkey, type, atom FROM json_tree(part.structured_content_json)
+             EXCEPT
+             SELECT fullkey, type, atom
+               FROM json_tree(json_extract(payload.payload_json, '$.structuredContent'))
+           ) OR EXISTS (
+             SELECT fullkey, type, atom
+               FROM json_tree(json_extract(payload.payload_json, '$.structuredContent'))
+             EXCEPT
+             SELECT fullkey, type, atom FROM json_tree(part.structured_content_json)
+           ))
+       ) BEGIN ${abort} END`,
+    `CREATE TRIGGER transcript_payload_guard_relations
+       BEFORE INSERT ON transcript_payload_retirement_guard
+       WHEN EXISTS (
+         SELECT part_id AS message_id, resource_id, position, attachment_json FROM part_attachments
+         EXCEPT SELECT message_id, resource_id, position, attachment_json
+                  FROM workstream_message_attachments
+       ) OR EXISTS (
+         SELECT message_id, resource_id, position, attachment_json
+           FROM workstream_message_attachments
+         EXCEPT SELECT part_id AS message_id, resource_id, position, attachment_json
+                  FROM part_attachments
+       ) OR EXISTS (
+         SELECT part_id AS message_id, mention_index, mention_kind, target_user_id,
+                connector_type, start_offset, end_offset, attention_ordinal FROM part_mentions
+         EXCEPT SELECT message_id, mention_index, mention_kind, target_user_id,
+                       connector_type, start_offset, end_offset, attention_ordinal
+                  FROM workstream_message_mentions
+       ) OR EXISTS (
+         SELECT message_id, mention_index, mention_kind, target_user_id,
+                connector_type, start_offset, end_offset, attention_ordinal
+           FROM workstream_message_mentions
+         EXCEPT SELECT part_id AS message_id, mention_index, mention_kind, target_user_id,
+                       connector_type, start_offset, end_offset, attention_ordinal FROM part_mentions
+       ) BEGIN ${abort} END`,
+    `CREATE TRIGGER transcript_payload_guard_checkpoints
+       BEFORE INSERT ON transcript_payload_retirement_guard
+       WHEN EXISTS (
+         SELECT 1 FROM compaction_checkpoints legacy
+         LEFT JOIN transcript_compaction_checkpoints checkpoint
+           ON checkpoint.execution_principal_key = legacy.execution_principal_key
+          AND checkpoint.run_id = legacy.run_id
+          AND checkpoint.compacted_through_sequence = legacy.compacted_through_sequence
+         LEFT JOIN transcript_facts fact ON fact.fact_id = checkpoint.checkpoint_fact_id
+         LEFT JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+         WHERE checkpoint.checkpoint_fact_id IS NULL
+            OR json_extract(payload.payload_json, '$.summary') IS NOT legacy.summary
+            OR EXISTS (
+              SELECT fullkey, type, atom FROM json_tree(legacy.messages_json)
+              EXCEPT SELECT fullkey, type, atom FROM json_tree(payload.payload_json, '$.messages')
+            ) OR EXISTS (
+              SELECT fullkey, type, atom FROM json_tree(payload.payload_json, '$.messages')
+              EXCEPT SELECT fullkey, type, atom FROM json_tree(legacy.messages_json)
+            )
+       ) BEGIN ${abort} END`,
+  ];
+}
+
+function transcriptCompatibilityRetirement(): string[] {
+  return compatObjectDrops(
+    /^_runtime_messages(?:$|_)|^_runtime_compactions(?:$|_)|^_runtime_message_(?:attachments|mentions)$/,
+    6,
+    "transcript retirement",
   );
 }
 
@@ -2754,31 +2999,53 @@ export function applyWorkstreamObjectSchema(
   workerVersionId: string,
   now = Date.now(),
 ): void {
-  applyDurableObjectSqliteMigrations({
-    storage,
-    migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
-    component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
-    workerVersionId,
-    now,
-    afterMigrations: (sql) => {
-      sql.exec(
-      `INSERT INTO object_versions
-         (id, worker_version_id, contract_version, schema_version, data_version,
-          projection_version, restore_generation, updated_at)
-       VALUES (1, ?, ?, ?, 0, 0, 0, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         worker_version_id = excluded.worker_version_id,
-         contract_version = excluded.contract_version,
-         schema_version = excluded.schema_version,
-         updated_at = excluded.updated_at
-       WHERE object_versions.worker_version_id != excluded.worker_version_id
-          OR object_versions.contract_version != excluded.contract_version
-          OR object_versions.schema_version != excluded.schema_version`,
+  const ledgerExists = storage.sql.exec<{ name: string }>(
+    `SELECT name FROM sqlite_master
+      WHERE type = 'table' AND name = '_sql_schema_migrations'`,
+  ).toArray().length > 0;
+  const currentVersion = ledgerExists
+    ? Number(storage.sql.exec<{ version: number }>(
+      `SELECT COALESCE(MAX(version), 0) AS version FROM _sql_schema_migrations`,
+    ).one().version)
+    : 0;
+  const retiringTranscript = currentVersion < 32;
+  if (retiringTranscript) {
+    // v32 swaps the verified canonical record table under existing local FKs.
+    // SQLite must preserve the old FK target names across the first rename;
+    // the final rename rewrites them to the canonical table before the runner's
+    // mandatory foreign_key_check. This happens outside the migration
+    // transaction because SQLite ignores a foreign_keys toggle inside one.
+    storage.sql.exec(`PRAGMA foreign_keys = OFF`);
+  }
+  try {
+    applyDurableObjectSqliteMigrations({
+      storage,
+      migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+      component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
       workerVersionId,
-      WORKSTREAM_OBJECT_CONTRACT_VERSION,
-      WORKSTREAM_OBJECT_SCHEMA_VERSION,
       now,
-      );
-    },
-  });
+      afterMigrations: (sql) => {
+        sql.exec(
+        `INSERT INTO object_versions
+           (id, worker_version_id, contract_version, schema_version, data_version,
+            projection_version, restore_generation, updated_at)
+         VALUES (1, ?, ?, ?, 0, 0, 0, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           worker_version_id = excluded.worker_version_id,
+           contract_version = excluded.contract_version,
+           schema_version = excluded.schema_version,
+           updated_at = excluded.updated_at
+         WHERE object_versions.worker_version_id != excluded.worker_version_id
+            OR object_versions.contract_version != excluded.contract_version
+            OR object_versions.schema_version != excluded.schema_version`,
+        workerVersionId,
+        WORKSTREAM_OBJECT_CONTRACT_VERSION,
+        WORKSTREAM_OBJECT_SCHEMA_VERSION,
+        now,
+        );
+      },
+    });
+  } finally {
+    if (retiringTranscript) storage.sql.exec(`PRAGMA foreign_keys = ON`);
+  }
 }

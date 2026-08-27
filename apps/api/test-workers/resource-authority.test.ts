@@ -21,6 +21,7 @@ import {
   WORKSTREAM_ID,
   boot,
   post,
+  seedParticipantMessage,
   seedOpenWorkstreamAuthority,
   seedWorkstreamRoot,
 } from "./helpers/substream-fixture";
@@ -76,7 +77,7 @@ describe("resource authority on real workerd", () => {
   it("commits a watch toggle and the directory projection in one step", async () => {
     const stub = agent();
     await boot(stub);
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       seedWorkstreamRoot(state);
       attach(state);
     });
@@ -103,7 +104,7 @@ describe("resource authority on real workerd", () => {
   it("leaves no projection behind for a read", async () => {
     const stub = agent();
     await boot(stub);
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       seedWorkstreamRoot(state);
       attach(state);
     });
@@ -196,7 +197,7 @@ describe("resource authority on real workerd", () => {
       { length: 250 },
       (_, index) => `00000000-0000-7000-8000-${String(index).padStart(12, "0")}`,
     );
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       seedWorkstreamRoot(state);
       for (const [index, resourceId] of resourceIds.entries()) {
         state.storage.sql.exec(
@@ -208,19 +209,17 @@ describe("resource authority on real workerd", () => {
           index + 1,
           index + 1,
         );
+        await seedParticipantMessage(state, {
+          id: `p${index}`,
+          sequence: index + 1,
+          text: "hi",
+          authorUserId: "u1",
+          clientMessageId: `c${index}`,
+          attentionOrdinal: index + 1,
+          now: 1,
+        });
         state.storage.sql.exec(
-          `INSERT INTO parts
-             (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
-              author_user_id, content, client_message_id, visibility, pinned, message_type,
-              created_at, updated_at)
-           VALUES (?, '0', ?, ?, 'user', 'text', 'member', 'u1', 'hi', ?, 'both', 0, 'text', 1, 1)`,
-          `p${index}`,
-          index + 1,
-          index + 1,
-          `c${index}`,
-        );
-        state.storage.sql.exec(
-          `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+          `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
            VALUES (?, ?, 0, '{}')`,
           `p${index}`,
           resourceId,
