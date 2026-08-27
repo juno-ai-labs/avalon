@@ -249,11 +249,13 @@ design, not by oversight.
   and `assets/brand/rally-mark.png`. The generator writes the same real mark to
   the desktop, native icon, menu bar, site, favicon, and social-card surfaces.
 - The public site's pages render the redesigned vector mark
-  (`/brand/rally-mark.svg`, with `/brand/rally-mark-small.svg` below 24 px);
+  (`/brand/rally-mark.svg`, with `/brand/rally-mark-small.svg` below 24 px).
   `/brand/rally-mark.png` is still served because provider manifests hotlink
-  that URL, and it carries the previous woven mark until the generator's source
-  mask is redrawn from the new vector. The obsolete public Avalon mark and
-  oversized `og.png` were removed.
+  that URL; it and `assets/brand/rally-mark.png` were re-rendered from the new
+  vector out of band of the generator, whose source mask still holds the woven
+  mark — rerunning `scripts/generate-brand-assets.py` before the mask is
+  redrawn regresses both PNGs to the old mark. The obsolete public Avalon mark
+  and oversized `og.png` were removed.
 - `apps/api/test/avalon-tool-prose.test.ts` — filename.
 - `docs/PRDs/2026-08-05_avalon-implementation-brief/` — folder name, and the
   standing product contract [`docs/README.md`](README.md) points at. PRDs
