@@ -26,6 +26,7 @@ const STATUS_ORDER: ObjectStatus[] = [
   "unreported",
   "current",
   "not_reporting",
+  "empty",
   "absent",
 ];
 
@@ -35,6 +36,7 @@ const STATUS_LABEL: Record<ObjectStatus, string> = {
   unreported: "Unreported",
   current: "Current",
   not_reporting: "Not reporting",
+  empty: "Empty",
   absent: "Absent",
 };
 
@@ -114,7 +116,7 @@ const STYLES = `
           font-size: 12px; font-weight: 600; }
   .pill.failed { color: var(--failed); background: var(--failed-bg); }
   .pill.behind { color: var(--behind); background: var(--behind-bg); }
-  .pill.unreported, .pill.absent, .pill.not_reporting, .pill.retired {
+  .pill.unreported, .pill.empty, .pill.absent, .pill.not_reporting, .pill.retired {
     color: var(--unreported); background: var(--unreported-bg); }
   .pill.current, .pill.applied { color: var(--current); background: var(--current-bg); }
   .muted { color: var(--muted); }
@@ -131,7 +133,7 @@ const STYLES = `
   .filters button { cursor: pointer; font-weight: 600; }
   .pager { display: flex; gap: 14px; align-items: center; margin-top: 14px; color: var(--muted);
            font-size: 13px; }
-  .empty { padding: 22px; color: var(--muted); }
+  .empty-state { padding: 22px; color: var(--muted); }
   .failure { color: var(--failed); white-space: normal; max-width: 520px; }
   dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px;
              margin: 0; padding: 16px; }
@@ -244,13 +246,13 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
       <h2>Components</h2>
       <div class="panel scroll">
         ${overview.components.length === 0
-          ? html`<p class="empty">No component has reported a migration yet.</p>`
+          ? html`<p class="empty-state">No component has reported a migration yet.</p>`
           : html`<table>
               <thead>
                 <tr>
                   <th>Component</th><th>Class</th><th>Region</th><th>Head</th>
                   <th>Worker version</th><th>Current</th><th>Behind</th><th>Failed</th>
-                  <th>Unreported</th><th>Absent</th><th>Seen</th>
+                  <th>Unreported</th><th>Empty</th><th>Absent</th><th>Seen</th>
                 </tr>
               </thead>
               <tbody>
@@ -268,6 +270,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
                     <td>${component.behind > 0 ? html`<span class="pill behind">${component.behind}</span>` : "0"}</td>
                     <td>${component.failed > 0 ? html`<span class="pill failed">${component.failed}</span>` : "0"}</td>
                     <td class="muted">${component.unreported}</td>
+                    <td class="muted">${component.empty}</td>
                     <td class="muted">${component.absent}</td>
                     <td class="muted">${timestamp(component.observedAt)}</td>
                   </tr>`)}
@@ -280,7 +283,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
       <h2>Open failures</h2>
       <div class="panel scroll">
         ${overview.recentFailures.length === 0
-          ? html`<p class="empty">No object is currently reporting a failed migration.</p>`
+          ? html`<p class="empty-state">No object is currently reporting a failed migration.</p>`
           : objectTable(overview.recentFailures)}
       </div>
     </section>
@@ -289,7 +292,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
       <h2>Recent reports</h2>
       <div class="panel scroll">
         ${overview.recentEvents.length === 0
-          ? html`<p class="empty">No migration report has arrived yet.</p>`
+          ? html`<p class="empty-state">No migration report has arrived yet.</p>`
           : eventTable(overview.recentEvents, true)}
       </div>
     </section>
@@ -298,11 +301,11 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
       <h2>Namespaces</h2>
       <div class="panel scroll">
         ${overview.namespaces.length === 0
-          ? html`<p class="empty">No inventory sweep has enumerated the account yet.</p>`
+          ? html`<p class="empty-state">No inventory sweep has enumerated the account yet.</p>`
           : html`<table>
               <thead>
                 <tr>
-                  <th>Script</th><th>Class</th><th>Storage</th><th>Objects</th><th>Swept</th>
+                  <th>Script</th><th>Class</th><th>Storage</th><th>Stored</th><th>IDs</th><th>Swept</th>
                 </tr>
               </thead>
               <tbody>
@@ -316,6 +319,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
                     </td>
                     <td>${namespace.className}</td>
                     <td class="muted">${namespace.usesSqlite ? "SQLite" : "key-value"}</td>
+                    <td>${namespace.storedObjectCount}</td>
                     <td>${namespace.objectCount}</td>
                     <td class="muted">${namespace.retiredAt === null
                       ? timestamp(namespace.lastSweptAt)
@@ -329,7 +333,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
         ${sweep === null
           ? "No sweep recorded."
           : html`Last sweep ${sweep.status}, ${sweep.namespaceCount} namespaces,
-              ${sweep.objectCount} objects, finished ${timestamp(sweep.finishedAt)}.
+              ${sweep.objectCount} object IDs, finished ${timestamp(sweep.finishedAt)}.
               ${sweep.truncatedNamespaces.length > 0
                 ? html`<strong>${sweep.truncatedNamespaces.length} namespace(s) truncated.</strong>`
                 : ""}
@@ -392,7 +396,7 @@ export function objectsPage(
 
       <div class="panel scroll">
         ${page.objects.length === 0
-          ? html`<p class="empty">No object matches this filter.</p>`
+          ? html`<p class="empty-state">No object matches this filter.</p>`
           : objectTable(page.objects)}
       </div>
 
@@ -451,11 +455,17 @@ export function objectPage(detail: ObjectDetail): HtmlEscapedString | Promise<Ht
       </div>
     </section>
 
+    ${object.status === "empty"
+      ? html`<div class="banner">Cloudflare still enumerates this object ID, but the latest
+          inventory sweep found no stored data. It is retained as history and is not a
+          forced-migration target.</div>`
+      : ""}
+
     <section>
       <h2>Report history</h2>
       <div class="panel scroll">
         ${detail.events.length === 0
-          ? html`<p class="empty">This object has never reported. The inventory sweep found it,
+          ? html`<p class="empty-state">This object has never reported. The inventory sweep found it,
               and it has not woken since.</p>`
           : eventTable(detail.events, false)}
       </div>
@@ -513,7 +523,7 @@ export function migrationsPage(
         </form>
         <p class="note">Every live object of the class is sent one message, and each
           message wakes that object so it applies whatever its schema ledger is
-          missing. Objects already marked absent are not woken. Nothing here is
+          missing. Empty and absent identities are not woken. Nothing here is
           instant: the objects report back as they wake, and the
           <a href="/">overview</a> is where that arrives.</p>
         </div>
@@ -524,7 +534,7 @@ export function migrationsPage(
       <h2>What a run would reach</h2>
       <div class="panel scroll">
         ${overview.components.length === 0
-          ? html`<p class="empty">No inventory sweep has enumerated a migrating class yet.</p>`
+          ? html`<p class="empty-state">No inventory sweep has enumerated a migrating class yet.</p>`
           : html`<table>
               <thead>
                 <tr>
@@ -555,7 +565,7 @@ export function migrationsPage(
       <h2>Recent runs</h2>
       <div class="panel scroll">
         ${overview.runs.length === 0
-          ? html`<p class="empty">No migration has been forced from this site.</p>`
+          ? html`<p class="empty-state">No migration has been forced from this site.</p>`
           : html`<table>
               <thead>
                 <tr>
@@ -590,7 +600,7 @@ export function migrationsPage(
 export function notFoundPage(): HtmlEscapedString | Promise<HtmlEscapedString> {
   return html`
     <section>
-      <div class="panel"><p class="empty">No such object is tracked.</p></div>
+      <div class="panel"><p class="empty-state">No such object is tracked.</p></div>
     </section>`;
 }
 

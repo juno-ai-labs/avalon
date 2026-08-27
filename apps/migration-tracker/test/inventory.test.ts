@@ -58,15 +58,18 @@ describe("sweepInventory", () => {
         }
       : { body: namespaceListing() }));
 
-    const sweep = await sweepInventory(CREDENTIALS, { fetcher });
+    const sweep = await sweepInventory(CREDENTIALS, {
+      fetcher,
+      now: () => 1_700_000_000_000,
+    });
 
     expect(sweep.status).toBe("complete");
     expect(sweep.namespaces).toHaveLength(1);
     expect(sweep.namespaces[0]?.scriptName).toBe("avalon-api-global");
     expect(sweep.namespaces[0]?.usesSqlite).toBe(true);
     expect(sweep.namespaces[0]?.objects).toEqual([
-      { objectId: "a".repeat(64), hasStoredData: true },
-      { objectId: "b".repeat(64), hasStoredData: false },
+      { objectId: "a".repeat(64), hasStoredData: true, observedAt: 1_700_000_000_000 },
+      { objectId: "b".repeat(64), hasStoredData: false, observedAt: 1_700_000_000_000 },
     ]);
     expect(calls[0]).toContain("/workers/durable_objects/namespaces");
   });
@@ -131,6 +134,42 @@ describe("sweepInventory", () => {
     expect(sweep.status).toBe("partial");
     expect(sweep.namespaces[0]?.objects).toBeNull();
     expect(sweep.errorMessage).toBe("ns-1: cloudflare_api_status_429");
+  });
+
+  it("fails the namespace listing visibly when an object omits its storage fact", async () => {
+    const { fetcher } = stubFetch((url) => (url.pathname.endsWith("/objects")
+      ? {
+          body: {
+            success: true,
+            result: [{ id: "a".repeat(64) }],
+            result_info: { cursor: "" },
+          },
+        }
+      : { body: namespaceListing() }));
+
+    const sweep = await sweepInventory(CREDENTIALS, { fetcher });
+
+    expect(sweep.status).toBe("partial");
+    expect(sweep.namespaces[0]?.objects).toBeNull();
+    expect(sweep.errorMessage).toBe("ns-1: cloudflare_object_missing_has_stored_data");
+  });
+
+  it("fails the namespace listing visibly when an object omits its id", async () => {
+    const { fetcher } = stubFetch((url) => (url.pathname.endsWith("/objects")
+      ? {
+          body: {
+            success: true,
+            result: [{ hasStoredData: true }],
+            result_info: { cursor: "" },
+          },
+        }
+      : { body: namespaceListing() }));
+
+    const sweep = await sweepInventory(CREDENTIALS, { fetcher });
+
+    expect(sweep.status).toBe("partial");
+    expect(sweep.namespaces[0]?.objects).toBeNull();
+    expect(sweep.errorMessage).toBe("ns-1: cloudflare_object_missing_id");
   });
 
   /**
