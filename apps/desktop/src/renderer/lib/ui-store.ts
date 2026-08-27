@@ -107,6 +107,66 @@ function saveSidebarWidth(width: number): void {
   }
 }
 
+/**
+ * Coalesces rapid calls to a persistence function into one trailing call, and
+ * exposes `flush` so a caller that is about to *read* what this writes can
+ * force it out first rather than race it.
+ *
+ * `set({ width })` still runs on every call — only the localStorage write
+ * scheduled here is deferred, so the live value a drag tracks is never
+ * delayed; only the copy that survives to the next launch is.
+ */
+function debouncePersist<Args extends unknown[]>(
+  persist: (...args: Args) => void,
+  delayMs: number,
+): { schedule: (...args: Args) => void; flush: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let pending: Args | undefined;
+  const flush = (): void => {
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    timer = undefined;
+    const args = pending;
+    pending = undefined;
+    if (args) persist(...args);
+  };
+  const schedule = (...args: Args): void => {
+    pending = args;
+    if (timer !== undefined) clearTimeout(timer);
+    timer = setTimeout(flush, delayMs);
+  };
+  return { schedule, flush };
+}
+
+/**
+ * LIMIT UNSET — open, enforcing no delay: every scheduled width write reaches
+ * localStorage on its own turn of the event loop, matching the previously-
+ * synchronous behavior as closely as a deferred write can. Awaiting a value
+ * from the team; see docs/adding-security-defensive-and-other-limits.md.
+ *
+ * Bounds: milliseconds a sidebar/rail/HyperSight width write to localStorage
+ *   is held after the caller's last update, before it is flushed.
+ * Without it: setSidebarWidth, setRailWidth, and setBlockDashboardWidth each
+ *   ran a synchronous localStorage.setItem on every call, and a resize drag
+ *   drives the pointermove path that calls them at 60-120/s — a blocking
+ *   main-thread write on every frame of the drag.
+ * Direction: a wait; the open value is 0.
+ * Trips: nothing is rejected or truncated. The deferred write still lands —
+ *   after the caller has been quiet for this many ms, or immediately if
+ *   something needs to read the value back first (setRailScope flushes
+ *   before it reads) — while the live width in the store updates on every
+ *   call regardless of this constant.
+ * Derive from: how much of a gap between the pointer settling and the write
+ *   landing is acceptable against how often a drag calls the setter, since a
+ *   longer wait coalesces more writes per drag at the cost of a wider window
+ *   in which a killed process loses the latest width.
+ */
+export const WIDTH_PERSIST_DEBOUNCE_MS = 0;
+
+const sidebarWidthPersist = debouncePersist(saveSidebarWidth, WIDTH_PERSIST_DEBOUNCE_MS);
+const railWidthPersist = debouncePersist(saveRailWidth, WIDTH_PERSIST_DEBOUNCE_MS);
+const blockDashboardWidthPersist = debouncePersist(saveRailWidth, WIDTH_PERSIST_DEBOUNCE_MS);
+
 export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
   sidebarWidth: loadSidebarWidth(),
@@ -121,7 +181,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   setSidebarWidth: (width) => {
     const sidebarWidth = clampSidebarWidth(width);
-    saveSidebarWidth(sidebarWidth);
+    sidebarWidthPersist.schedule(sidebarWidth);
     set({ sidebarWidth });
   },
   openRail: (railVariant = 'context') => set({ railOpen: true, railVariant, inspector: null }),
@@ -132,20 +192,28 @@ export const useUiStore = create<UiState>((set, get) => ({
   setRailVariant: (railVariant) => set({ railVariant, inspector: null }),
   setRailWidth: (width) => {
     const railWidth = clampRailWidth(width);
-    saveRailWidth(RAIL_WIDTH_STORAGE_PREFIX, get().railScope, railWidth);
+    railWidthPersist.schedule(RAIL_WIDTH_STORAGE_PREFIX, get().railScope, railWidth);
     set({ railWidth });
   },
   inspect: (inspector) => set({ inspector }),
   setBlockDashboardOpen: (blockDashboardOpen) => set({ blockDashboardOpen }),
   setBlockDashboardWidth: (width) => {
     const blockDashboardWidth = clampRailWidth(width);
-    saveRailWidth(BLOCK_DASHBOARD_WIDTH_STORAGE_PREFIX, get().railScope, blockDashboardWidth);
+    blockDashboardWidthPersist.schedule(BLOCK_DASHBOARD_WIDTH_STORAGE_PREFIX, get().railScope, blockDashboardWidth);
     set({ blockDashboardWidth });
   },
   setRailLeaving: (railLeaving) => set({ railLeaving }),
-  setRailScope: (railScope) => set({
-    railScope,
-    railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, railScope),
-    blockDashboardWidth: loadRailWidth(BLOCK_DASHBOARD_WIDTH_STORAGE_PREFIX, railScope),
-  }),
+  setRailScope: (railScope) => {
+    // The width this is about to read back is keyed by scope, so a write for
+    // the scope being left that is still sitting in the debounce window has
+    // to land before the read or switching away and back inside that window
+    // would find the value the drag was replacing rather than the one it left.
+    railWidthPersist.flush();
+    blockDashboardWidthPersist.flush();
+    set({
+      railScope,
+      railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, railScope),
+      blockDashboardWidth: loadRailWidth(BLOCK_DASHBOARD_WIDTH_STORAGE_PREFIX, railScope),
+    });
+  },
 }));
