@@ -214,7 +214,8 @@ describe('WorkstreamHeader presence', () => {
     });
 
     expect(screen.getByTitle(current.name).closest('.avatar-stack-item')).not.toHaveClass('is-present');
-    expect(screen.getByTitle(collaborator.name).closest('.avatar-stack-item')).toHaveClass('is-present');
+    expect(container.querySelector('.avatar-stack-item.is-present')).not.toBeNull();
+    expect(screen.queryByTitle(collaborator.name)).not.toBeInTheDocument();
     expect(container.querySelectorAll('.avatar-presence-ping')).toHaveLength(1);
   });
 });
