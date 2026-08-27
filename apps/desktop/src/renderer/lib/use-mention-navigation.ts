@@ -1,4 +1,5 @@
 import { type KeyboardEvent, useCallback, useEffect, useState } from 'react';
+import { isComposingKeyEvent } from './ime';
 
 /**
  * The `@`-query the caret is standing in, or `null` when it is not standing in
@@ -117,12 +118,13 @@ export function useMentionNavigation(
     activeOptionRef,
     handleKeyDown: (event) => {
       if (optionKeys.length === 0) return false;
-      // An IME is mid-word: this same Enter commits the composition and these
-      // same arrows move through its candidate window. Taking them would
-      // replace what is being composed with a Rally name and swallow the
-      // keystroke that was going to finish it, which is how a mention query
-      // typed in Japanese, Chinese, or Korean would be lost.
-      if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return false;
+      // Taking these keys mid-composition would replace what is being composed
+      // with a Rally name and swallow the keystroke that was going to finish
+      // it, which is how a mention query typed in Japanese, Chinese, or Korean
+      // is lost. Every caller today reaches this through ComposerInput, which
+      // has already dropped those keys; the hook still guards, because its
+      // contract is any composer's key handler rather than that one.
+      if (isComposingKeyEvent(event.nativeEvent)) return false;
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         // Wraps, so holding one arrow reaches every option without knowing
         // which end the list is at.

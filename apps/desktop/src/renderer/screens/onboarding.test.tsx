@@ -118,15 +118,43 @@ describe('identity-first onboarding screens', () => {
 
     fireEvent.keyDown(nameField, { key: 'Enter', isComposing: true });
     expect(sessionState.finishWorkspaceSetup).not.toHaveBeenCalled();
+    // Nor is the funnel told a create was requested: the guard has to sit ahead
+    // of the intent reports, or one is emitted per committed IME candidate.
+    expect(telemetry.reportTelemetryProductIntent).not.toHaveBeenCalled();
 
-    // Safari reports the composition only as the legacy keycode.
     fireEvent.keyDown(nameField, { key: 'Enter', keyCode: 229 });
     expect(sessionState.finishWorkspaceSetup).not.toHaveBeenCalled();
+    expect(telemetry.reportTelemetryProductIntent).not.toHaveBeenCalled();
 
     fireEvent.keyDown(nameField, { key: 'Enter' });
     await waitFor(() => expect(sessionState.finishWorkspaceSetup).toHaveBeenCalledWith(
       'Acme Research', 'global', telemetry.operationId,
     ));
+  });
+
+  it('creates the organization once however many times Enter repeats', async () => {
+    let finishSetup: (() => void) | undefined;
+    // `Once`, so the pending create cannot outlive this test: the shared session
+    // double is cleared between tests but keeps whatever implementation it was
+    // last given.
+    sessionState.finishWorkspaceSetup.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishSetup = resolve;
+    }));
+    render(<RegionOnboarding />);
+    const nameField = screen.getByRole('textbox', { name: 'Organization name' });
+    fireEvent.change(nameField, { target: { value: 'Acme Research' } });
+
+    // Auto-repeat: holding Enter down while the first create is in flight. Each
+    // repeat would otherwise mint a fresh operation id, so the second create
+    // collides with the first's reservation and the funnel counts both.
+    fireEvent.keyDown(nameField, { key: 'Enter' });
+    await waitFor(() => expect(sessionState.finishWorkspaceSetup).toHaveBeenCalledOnce());
+    fireEvent.keyDown(nameField, { key: 'Enter' });
+    fireEvent.keyDown(nameField, { key: 'Enter' });
+
+    expect(sessionState.finishWorkspaceSetup).toHaveBeenCalledOnce();
+    expect(telemetry.reportTelemetryProductIntent).toHaveBeenCalledTimes(2);
+    finishSetup?.();
   });
 
   it('shows Terminal as unavailable only while the European Union region is selected', () => {

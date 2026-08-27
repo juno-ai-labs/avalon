@@ -278,14 +278,55 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.keyDown(composer, { key: 'Enter', isComposing: true });
     expect(composer).toHaveValue('/part');
     expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
+    // The command list is still standing: a blocked keystroke must leave the
+    // composer exactly as the IME found it, not quietly dismiss what it shows.
+    expect(screen.getByRole('listbox', { name: 'Composer commands' })).toBeVisible();
 
-    // Safari reports the composition only as the legacy keycode.
     fireEvent.keyDown(composer, { key: 'Enter', keyCode: 229 });
     expect(composer).toHaveValue('/part');
     expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
+    expect(screen.getByRole('listbox', { name: 'Composer commands' })).toBeVisible();
 
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(composer).toHaveValue('@'));
+  });
+
+  it('does not let a composition-committing Tab run the slash command it is displaying', async () => {
+    renderComposer();
+
+    const composer = screen.getByLabelText('Message the work stream');
+    fireEvent.change(composer, { target: { value: '/part' } });
+    expect(screen.getByRole('listbox', { name: 'Composer commands' })).toBeVisible();
+
+    // Tab picks a candidate in an IME's own window, and the command it would
+    // otherwise run here can be `/stop`.
+    fireEvent.keyDown(composer, { key: 'Tab', isComposing: true });
+    expect(composer).toHaveValue('/part');
+    expect(screen.getByRole('listbox', { name: 'Composer commands' })).toBeVisible();
+
+    fireEvent.keyDown(composer, { key: 'Tab', keyCode: 229 });
+    expect(composer).toHaveValue('/part');
+    expect(screen.getByRole('listbox', { name: 'Composer commands' })).toBeVisible();
+
+    fireEvent.keyDown(composer, { key: 'Tab' });
+    await waitFor(() => expect(composer).toHaveValue('@'));
+  });
+
+  it('keeps the command list open when Escape is cancelling an IME candidate', () => {
+    renderComposer();
+
+    const composer = screen.getByLabelText('Message the work stream');
+    fireEvent.change(composer, { target: { value: '/part' } });
+    expect(screen.getByRole('listbox', { name: 'Composer commands' })).toBeVisible();
+
+    fireEvent.keyDown(composer, { key: 'Escape', isComposing: true });
+    expect(screen.getByRole('listbox', { name: 'Composer commands' })).toBeVisible();
+
+    fireEvent.keyDown(composer, { key: 'Escape', keyCode: 229 });
+    expect(screen.getByRole('listbox', { name: 'Composer commands' })).toBeVisible();
+
+    fireEvent.keyDown(composer, { key: 'Escape' });
+    expect(screen.queryByRole('listbox', { name: 'Composer commands' })).not.toBeInTheDocument();
   });
 
   it('confirms every mentioned nonparticipant together and sends their IDs without a preliminary add', async () => {
