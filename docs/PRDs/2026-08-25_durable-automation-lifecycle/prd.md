@@ -19,8 +19,10 @@
 
 Every automation is represented by one regional SQLite-backed Durable Object,
 called the **AutomationAgent** in this PRD. The object is created before the
-automation architect begins its first compiler run. It owns the automation's
-canonical identity and lifecycle from that point onward:
+automation architect begins its first compiler run, but only after the person
+sends the first prompt. Merely opening the new-automation screen creates no
+server record or Durable Object. From first-prompt admission onward, the object
+owns the automation's canonical identity and lifecycle:
 
 ```text
 draft -> activating -> active <-> paused
@@ -266,16 +268,28 @@ tables, and let the post-merge system have exactly one canonical writer.
 
 ### Starting and returning to a draft
 
-Selecting **New automation** creates an AutomationAgent and a personal sidebar
-draft before starting the first compiler run. The server, not the renderer,
-mints the ID. The URL adopts that ID immediately, and all later requests name
-the same object.
+Selecting **New automation** continues to do only what it does today: it opens
+the empty new-automation screen. The route remains the unpersisted new route,
+the composer follows the desktop's local draft behavior, and no AutomationAgent,
+automation ID, WorkspaceDO directory row, or Automations-sidebar draft exists
+yet. Navigating away without sending leaves nothing to clean up or return to.
 
-Submitting a turn durably appends the person's message and admits a compiler
-run before provider work begins. The builder then renders a snapshot followed
-by live sequenced changes. Navigating elsewhere, closing the window, losing the
-SSE connection, or restarting Rally does not cancel the admitted run. Reopening
-the draft shows:
+Sending the first prompt crosses the durable boundary. The renderer supplies a
+stable client creation key and client message ID, but the regional server mints
+the automation ID. A regional WorkspaceDO idempotency claim maps
+`(author, client creation key)` to that ID, then the named AutomationAgent's
+first object-local transaction records its immutable identity, the original
+human turn, and compiler-run admission before any provider work begins. An
+uncertain retry with the same creation key resolves the same ID and message
+rather than creating a second object. The response changes the URL from the new
+route to that durable ID, and the admitted draft becomes eligible for the
+personal Automations sidebar through its ordinary projection.
+
+Later turns name the existing AutomationAgent and durably append the person's
+message and compiler-run admission before provider work. The builder renders a
+snapshot followed by live sequenced changes. Navigating elsewhere, closing the
+window, losing the SSE connection, or restarting Rally does not cancel an
+admitted run. Reopening the draft shows:
 
 - every settled human and Rally turn in canonical order;
 - the latest compiled definition and whether it is ready to accept;
@@ -985,8 +999,10 @@ parent or WorkspaceDO summary.
 Unsent composer text continues to follow the desktop's existing local composer
 draft behavior. Once the API has admitted a turn, it is server-owned work and
 continues without the window. Reconnect never converts an uncertain submission
-into a new automation: the client first resolves the AutomationAgent ID and
-client message ID, then either observes the admitted turn or safely submits it.
+into a new automation. For the first prompt, the API resolves the stable client
+creation key to the server-minted AutomationAgent ID and then resolves the client
+message ID; for a later prompt, the client already names the AutomationAgent.
+Either path observes the admitted turn or safely retries that same admission.
 
 ## Impact on the product contract
 
@@ -1003,12 +1019,25 @@ to a paged list on their automation home. Active automation semantics,
 `You`/`Workspace` scope badges, generated work-stream privacy, and typed
 authorized tool execution remain unchanged.
 
+Selecting **New automation** is deliberately not one of those changes. It still
+opens an unpersisted screen and does not add a sidebar item. Durability begins
+when the person sends the first prompt; from that admission onward, even a
+failed first compiler attempt is returnable.
+
 The cutover deliberately removes any pre-cutover internal drafts instead of
 migrating them. That is a one-time deployment decision enabled by the absence of
 customers, not a change to the post-cutover product promise: a draft created in
 AutomationAgent remains durable and returnable from its first admitted turn.
 
 ## Decision log
+
+- **2026-08-27 — Create AutomationAgent on the first prompt, not on screen
+  open.** Selecting **New automation** remains ephemeral UI and creates no
+  server-side draft. First-prompt submission uses a stable client creation key
+  to claim one server-minted automation ID, then creates the named object and
+  commits identity, the human turn, and compiler admission before provider
+  work. Creating empty objects on navigation was rejected because abandoned
+  composers are not drafts the person asked Rally to retain.
 
 - **2026-08-27 — Give the architect one complete-replacement evaluator tool.**
   `automation_set_evaluator_rules` stages a structurally and contextually parsed
@@ -1046,10 +1075,16 @@ AutomationAgent remains durable and returnable from its first admitted turn.
    subscribers; and one object per run, which would leave the automation itself
    without a durable owner.
 
-2. **The object exists before compiler work starts.** This is what makes a
-   failed first turn resumable and gives retries one idempotency domain.
-   *Rejected:* allocate on the first successful compiled draft, which preserves
-   today's gap while merely moving later rows.
+2. **The object is created by first-prompt admission, before compiler work—not
+   by opening the screen.** This preserves today's lightweight new-automation
+   screen while making a failed first submitted turn resumable. A stable client
+   creation key resolves uncertain first-submit retries to one server-minted
+   automation ID, and the object's first local transaction commits identity,
+   the human turn, and run admission before provider work. *Rejected:* creating
+   an empty object when the person selects **New automation**, which would fill
+   the sidebar and storage with abandoned empty drafts; and allocating only
+   after the first successful compile, which preserves today's durability gap
+   while merely moving later rows.
 
 3. **Acceptance is a state transition, not a transfer.** The AutomationAgent
    stays canonical after activation, so freezing the definition and claiming
@@ -1183,7 +1218,7 @@ authority split is fixed by this PRD:
 | Authority | Canonical records |
 | --- | --- |
 | AutomationAgent SQLite | Immutable automation identity and workspace/region fence; lifecycle and revision; draft canonical facts plus author-visible `transcript_sequence` and restricted `loop_sequence` projections from the shared ordered transcript substrate; attachments, active checkpoints, activities, and event fences; compiled and accepted definition revisions; elicitation; local Bind runtime ledger; canonical timer configuration and due work; the shared `_internal_durable_alarms` index; the compiled external-event evaluator snapshot and projection receipts; run occurrence admission/idempotency/history plus content-free child execution projections and their receipts; automation memory/table definitions; resource and connector references; delivery targets and receipts; projection/registration outbox and receipts; tombstone. |
-| WorkspaceDO SQLite | Automation directory projections; viewer visibility summaries; validated automation evaluators and watched work-stream resource registrations in one exact connection/event/resource candidate index; canonical normalized events and closed evaluation contexts; destination-typed evaluation delivery receipts/outbox; shared template/version catalog; connector connections and workspace resources; membership-derived routing inputs. |
+| WorkspaceDO SQLite | First-prompt creation-key claims mapping one workspace author submission to one server-minted automation ID; automation directory projections; viewer visibility summaries; validated automation evaluators and watched work-stream resource registrations in one exact connection/event/resource candidate index; canonical normalized events and closed evaluation contexts; destination-typed evaluation delivery receipts/outbox; shared template/version catalog; connector connections and workspace resources; membership-derived routing inputs. |
 | Generated SubstreamAgent SQLite | Ordered-turn canonical facts, participant transcript and restricted Bind-loop projections; participants and reader audience; run scope; Bind execution, tools, activity/checkpoints and output; authoritative work-stream resource links/watch flags and memory provenance; idempotent connected-activity message receipts; content-free automation-run and resource-link projection outbox. |
 | Global control-plane D1 | Permanent inbound-email address route and tombstone, plus the existing region/workspace routing facts needed before a regional object can be selected. |
 
@@ -1470,6 +1505,10 @@ never-reuse/tombstone rules.
 - The session fixes region and workspace before an AutomationAgent is resolved.
   The object records immutable workspace, region, and original-author identity
   and fails closed if a request disagrees.
+- A renderer-provided first-prompt creation key is an idempotency input, not an
+  automation identity or authorization capability. WorkspaceDO scopes its claim
+  to the authenticated workspace and author; the server mints the automation ID,
+  and replay by another principal cannot resolve or create that draft.
 - Draft read and write access belongs only to the author. Suggested workspace
   scope grants nothing. Acceptance reauthorizes the selected principal and
   scope; later mutations recheck current membership and role.
@@ -1632,11 +1671,16 @@ steps.
 
 ## Acceptance
 
-1. Start a new automation, close Rally during connector research, reopen it in
-   another window, and observe the same automation ID, stable ordered turns and
-   blocks, explicit loaded coverage, current checkpoint/event fence, and
-   eventual result without duplicate tool effects. At each provider boundary,
-   the AutomationAgent substrate reconstruction equals Bind's exact post-healing
+1. Select **New automation**, type without sending, and navigate away. Verify no
+   AutomationAgent was created and no automation ID, WorkspaceDO directory row,
+   or sidebar draft exists. Open the screen again, send the first prompt, lose
+   the response, and retry with the same client creation key and message ID.
+   Exactly one server-minted automation ID, object identity, human turn, and
+   compiler run exist. Close Rally during connector research, reopen it in
+   another window, and observe that same ID, stable ordered turns and blocks,
+   explicit loaded coverage, current checkpoint/event fence, and eventual
+   result without duplicate tool effects. At each provider boundary, the
+   AutomationAgent substrate reconstruction equals Bind's exact post-healing
    message state.
 2. Force the first provider attempt to fail before valid draft submission. The
    Automations sidebar still contains one resumable draft with the original
