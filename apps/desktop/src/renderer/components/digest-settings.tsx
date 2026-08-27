@@ -217,7 +217,7 @@ export function DigestSettings({
 
       <div className="settings-list-card">
         <label className="settings-preference-row">
-          <span className="settings-row-icon"><Icon name="clock" size="lg" /></span>
+          <span className="settings-row-icon"><Icon name="schedule" size="lg" /></span>
           <span className="settings-row-copy">
             <strong>Send me a digest</strong>
             <small>

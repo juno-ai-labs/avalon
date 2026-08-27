@@ -100,8 +100,14 @@ export function ComponentExplorerScreen(): React.JSX.Element {
   const [checked, setChecked] = useState(true);
 
   return (
+    // `surface-canvas` rather than `pane.background`, which Air and Air Dark
+    // both set to `transparent` so their painted backdrop shows through the
+    // feed. That backdrop is on `body`, which belongs to the *application's*
+    // theme — so an explorer previewing Air Dark inside a light window came out
+    // as near-white text on the light backdrop. Every theme declares its canvas
+    // outright, which is what a preview needs: a surface of its own.
     <div
-      className="h-full overflow-auto bg-pane-background p-pane text-ink"
+      className="h-full overflow-auto bg-surface-canvas p-pane text-ink"
       {...(theme === 'app' ? {} : { 'data-theme': theme })}
     >
       <header className="mb-8 flex flex-wrap items-end justify-between gap-4">

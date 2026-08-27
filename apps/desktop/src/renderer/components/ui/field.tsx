@@ -71,9 +71,15 @@ export function Fieldset({
   className?: string;
 }): React.JSX.Element {
   return (
-    <fieldset className={cn('m-0 grid gap-4 border-0 p-0', className)}>
+    // The fields live in a wrapper rather than directly in the `<fieldset>`.
+    // Chromium lays a rendered `<legend>` out in the fieldset's border box
+    // instead of as a child of its layout, so neither a margin nor padding on
+    // the legend pushes the first field away from it — the gap has to belong to
+    // something that *is* in the flow. The `<fieldset>`/`<legend>` pair stays
+    // because it is what tells a screen reader these controls are one group.
+    <fieldset className={cn('m-0 border-0 p-0', className)}>
       <legend className="p-0 text-[11.5px] font-strong text-ink">{legend}</legend>
-      {children}
+      <div className="mt-3 grid gap-4">{children}</div>
     </fieldset>
   );
 }
