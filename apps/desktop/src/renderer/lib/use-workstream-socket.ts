@@ -23,7 +23,6 @@ import {
   mapResource,
   mapSuggestion,
   mapToolInvocation,
-  mapViewer,
   mapWorkstreamDetail,
   normalizeHarnessStatus,
   type RallyApi,
@@ -1130,9 +1129,8 @@ export function useWorkstreamSocket(
             : current,
         );
       } else if (event.type === 'presence_changed') {
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
-          current ? { ...current, viewers: event.viewers.map(mapViewer) } : current,
-        );
+        // Legacy feed subscribers represented viewers. Proactive feeds do not:
+        // WorkspaceDO foreground presence is the sole current-client source.
       } else if (event.type === 'message_created') {
         const message = mapMessage(event.message);
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => insertMessage(current, message));
@@ -1561,7 +1559,11 @@ export function useWorkstreamSocket(
           // that answer and paid two REST round trips to arrive at the same
           // place.
           snapshotRequestInFlight = false;
-          nextSocket.send(JSON.stringify({ type: 'subscribe', afterSequence: resumeState.lastSequence }));
+          nextSocket.send(JSON.stringify({
+            type: 'subscribe',
+            afterSequence: resumeState.lastSequence,
+            publishPresence: false,
+          }));
           scheduleStabilityReset(nextSocket);
           scheduleHeartbeat(nextSocket);
         });

@@ -3,7 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import type { DesktopSession } from '../../common/desktop';
-import type { ElicitationData, HarnessRunMetadata, Message, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import {
   AddParticipantDialog,
@@ -23,9 +23,31 @@ import {
   WorkstreamErrorState,
   WorkstreamHeader,
   workstreamPayloadBelongsToRoute,
+  workstreamPresenceViewers,
   workstreamRunTiming,
   workspaceMemberFromSession,
 } from './workstream';
+
+describe('workspace foreground presence', () => {
+  const member = (id: string, name: string): WorkspaceMember => ({
+    id,
+    name,
+    email: `${id}@example.test`,
+    timezone: 'America/Los_Angeles',
+  });
+
+  it('resolves non-participant viewers from WorkspaceDO presence instead of feed subscribers', () => {
+    const participant = member('participant', 'Participant');
+    const viewer = member('viewer', 'Viewer');
+    const offline = member('offline', 'Offline');
+
+    expect(workstreamPresenceViewers(
+      [participant],
+      [participant, viewer, offline],
+      [participant.id, viewer.id],
+    )).toEqual([{ ...viewer, viewing: true }]);
+  });
+});
 
 function transcriptMessage(
   sequenceNumber: number,

@@ -42,11 +42,12 @@ connection lifecycle around that admission protocol.
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete waterlined WorkstreamDO metadata snapshots to detail and sidebar caches. |
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
-| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps the selected/running SubstreamAgent feed and invokes the separate WorkstreamDO control lifecycle. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps a pooled SubstreamAgent feed, explicitly disables legacy feed-derived presence, and invokes the separate WorkstreamDO control lifecycle. |
 | `packages/contracts/src/workstream-transcript.ts` | Ordered turn/block, snapshot-fenced range, gap coverage, and nested UTC activity contracts used by the SubstreamAgent feed. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the work-stream sockets above the route, gives each mounted owner one opaque lease ID shared by its control/feed starts, warms one presence-free WorkstreamDO control socket after a one-second sidebar hover, and retains recently viewed work-stream pairs without remounting their connection hooks. |
 | `apps/desktop/src/renderer/lib/realtime-socket.ts` | Preserves the browser `WebSocket` event/readiness contract for the work-stream hooks while routing Electron transport through one socket-ID-multiplexed privileged-bridge listener; browser development keeps the native constructor. |
-| `apps/desktop/src/main/realtime-socket-broker.ts` | Owns Electron's WorkstreamDO and SubstreamAgent TCP/TLS handshakes in Node, fixes the application Origin, confines destinations to configured regional work-stream routes, and closes every owned connection when its renderer goes away. |
+| `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Share strict dependency-free event/channel validation and register the main-window-only IPC capability. |
+| `apps/desktop/src/main/realtime-socket-broker.ts` | Owns Electron's WorkstreamDO and SubstreamAgent TCP/TLS handshakes in Node, fixes the application Origin, follows the complete ordered PAC route, enforces the shared frame ceiling, and closes every owned connection when its renderer goes away. |
 | `apps/desktop/src/renderer/lib/api.ts` | Parses every ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
 
 ## How it works
@@ -164,6 +165,10 @@ The Node broker resolves every new destination through Electron's system/PAC
 proxy configuration and trusts both Node's bundled roots and the operating
 system CA store. Moving handshakes out of Chromium therefore does not opt the
 work-stream swarm out of managed-network routing or locally installed trust.
+Semicolon-delimited directives retain their order: a failed pre-open attempt
+advances to the next resolved proxy, and `DIRECT` is available only when policy
+returned it. Node and the two object endpoints use one shared 1 MB maximum
+application-frame size instead of `ws`'s 100 MB default.
 While the HyperSight panel is visible it additionally maintains one direct socket per
 configured block. Switching away keeps the exact metadata/feed socket pair
 mounted for at least five minutes, so returning to a recently viewed work stream
@@ -365,6 +370,11 @@ Those retained metadata/feed sockets are deliberately not presence. Electron
 main reports whether the Rally application has any focused window; each
 renderer combines that with its own document/window focus and active route,
 then reports the result over the persistent WorkspaceDO socket after subscribe.
+Current SubstreamAgent subscriptions send `publishPresence: false`, so an
+inactive pin or recent row never enters the legacy feed viewer set. Omitted
+fields still default to `true` for older clients during compatibility, but the
+current renderer ignores `presence_changed` and resolves the inspector viewer
+list exclusively from WorkspaceDO's foreground user IDs.
 WorkspaceDO answers with a viewer-scoped snapshot for that one foreground work
 stream and excludes the viewer. This separates transport warmth from attention
 without adding another connection, heartbeat, or hibernation wake-up.
@@ -551,6 +561,7 @@ client message IDs make reconnect resend idempotent.
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @rally/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
+| `apps/desktop/src/main/realtime-socket-broker.test.ts`, `realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop test` | Ordered PAC fallback, shared frame ceiling, normal-close removal, renderer-owner isolation, shared IPC channels, main-window authorization, and strict main-to-preload events. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @rally/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial-read admission for the pooled WorkstreamDO/SubstreamAgent pair, exact-pair reuse for five minutes after switching streams, background/recent overlap, expiry and backward-clock recovery, in-place route reconciliation, direct SubstreamAgent feed reconnect/resync, streaming, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
@@ -584,6 +595,29 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-26 — Proactive feeds stop publishing legacy presence
+
+**What changed:** Electron's pooled SubstreamAgent subscriptions now send
+`publishPresence: false`; the renderer ignores legacy `presence_changed` frames
+and resolves non-participant viewers from WorkspaceDO foreground presence. The
+Node broker tries Electron's entire supported PAC route in order and uses the
+same 1 MB frame ceiling enforced by WorkstreamDO and SubstreamAgent.
+
+**Why:** Feed liveness became a warming signal once pins and recent rows stayed
+connected, so it could no longer mean “Viewing now.” Dropping PAC fallback hops
+and retaining `ws`'s 100 MB default also made the new transport behave
+differently from Chromium and the application protocol.
+
+**Considered and rejected:** Rendering WorkspaceDO presence while continuing to
+publish feed presence would leave durable event churn and other consumers
+wrong. An implicit direct fallback would violate managed-network policy.
+
+**Consequences:** Older clients preserve their legacy default, current Rally has
+one foreground-presence authority, PAC route order is part of the broker
+contract, and application frame bounds are transport-independent.
+
+Shipped in #341.
 
 ### 2026-08-26 — Node socket transport retains Electron network policy
 

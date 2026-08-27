@@ -82,12 +82,15 @@ function socketApi(): WorkstreamSocketApi & {
 function ActiveConnection({
   api,
   enabled,
+  onRender,
   workstreamId,
 }: {
   api: WorkstreamSocketApi;
   enabled: boolean;
+  onRender?: () => void;
   workstreamId: string;
 }): React.JSX.Element {
+  onRender?.();
   const connection = useRetainedWorkstreamSocket(api, workstreamId, enabled);
   return <div>{connection.state}</div>;
 }
@@ -296,6 +299,42 @@ describe('WorkstreamSocketPool', () => {
     await flushPromises();
 
     expect(rendered).toHaveBeenCalledTimes(rendersBeforeConnectionChange);
+  });
+
+  it('does not publish background connection churn through the active connection context', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const activeWorkstreamId = '00000000-0000-7000-8000-000000000646';
+    const backgroundWorkstreamId = '00000000-0000-7000-8000-000000000647';
+    const rendered = vi.fn();
+    render(
+      <WorkstreamSocketPool
+        activeWorkstreamId={activeWorkstreamId}
+        api={api}
+        backgroundWorkstreamIds={[backgroundWorkstreamId]}
+      >
+        <ActiveConnection
+          api={api}
+          enabled
+          onRender={rendered}
+          workstreamId={activeWorkstreamId}
+        />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+    await flushPromises();
+    const rendersBeforeBackgroundChange = rendered.mock.calls.length;
+    const backgroundFeed = FakeWebSocket.instances.find((socket) =>
+      String(socket.url).includes(backgroundWorkstreamId) && String(socket.url).endsWith('/feed'));
+    if (!backgroundFeed) throw new Error('The background work stream opened no feed socket.');
+
+    act(() => {
+      backgroundFeed.readyState = FakeWebSocket.OPEN;
+      backgroundFeed.dispatchEvent(new Event('open'));
+    });
+    await flushPromises();
+
+    expect(rendered).toHaveBeenCalledTimes(rendersBeforeBackgroundChange);
   });
 
   it('does not add a hover warm-up beyond the active socket pair', async () => {

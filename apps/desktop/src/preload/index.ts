@@ -17,7 +17,10 @@ import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 import type { ThemeChoice } from '../common/themes';
 import type { DesktopRealtimeSocketEvent } from '../common/realtime-socket';
-import { REALTIME_SOCKET_ID_PATTERN } from '../common/realtime-socket-validation';
+import {
+  REALTIME_SOCKET_IPC_CHANNELS,
+  parseRealtimeSocketEvent,
+} from '../common/realtime-socket-validation';
 
 const deepLinkListeners = new Set<(navigation: DesktopDeepLinkNavigation) => void>();
 const queuedDeepLinks: DesktopDeepLinkNavigation[] = [];
@@ -28,40 +31,7 @@ let meetingCloseQueued: MeetingCloseReason | null = null;
 const applicationForegroundListeners = new Set<(foregrounded: boolean) => void>();
 const realtimeSocketListeners = new Set<(event: DesktopRealtimeSocketEvent) => void>();
 
-function parseRealtimeSocketEvent(rawEvent: unknown): DesktopRealtimeSocketEvent | null {
-  // Keep this dependency-free: importing the shared Zod schema externalizes
-  // `zod` from the sandboxed preload bundle, where Electron cannot resolve it.
-  // The shared ID pattern prevents the two validation paths from drifting.
-  if (!rawEvent || typeof rawEvent !== 'object') return null;
-  const event = rawEvent as Record<string, unknown>;
-  if (typeof event['socketId'] !== 'string'
-    || !REALTIME_SOCKET_ID_PATTERN.test(event['socketId'])) return null;
-  if (event['type'] === 'open'
-    && typeof event['protocol'] === 'string'
-    && typeof event['extensions'] === 'string') {
-    return {
-      type: 'open', socketId: event['socketId'],
-      protocol: event['protocol'], extensions: event['extensions'],
-    };
-  }
-  if (event['type'] === 'message' && typeof event['data'] === 'string') {
-    return { type: 'message', socketId: event['socketId'], data: event['data'] };
-  }
-  if (event['type'] === 'error') return { type: 'error', socketId: event['socketId'] };
-  if (event['type'] === 'close'
-    && typeof event['code'] === 'number'
-    && Number.isInteger(event['code'])
-    && typeof event['reason'] === 'string'
-    && typeof event['wasClean'] === 'boolean') {
-    return {
-      type: 'close', socketId: event['socketId'], code: event['code'],
-      reason: event['reason'], wasClean: event['wasClean'],
-    };
-  }
-  return null;
-}
-
-ipcRenderer.on('realtime-socket:event', (_event, rawEvent: unknown) => {
+ipcRenderer.on(REALTIME_SOCKET_IPC_CHANNELS.event, (_event, rawEvent: unknown) => {
   const parsed = parseRealtimeSocketEvent(rawEvent);
   if (!parsed) return;
   for (const listener of realtimeSocketListeners) listener(parsed);
@@ -238,9 +208,9 @@ const bridge: RallyDesktopBridge = {
     ipcRenderer.on('session:changed', handler);
     return () => ipcRenderer.removeListener('session:changed', handler);
   },
-  openRealtimeSocket: (input) => ipcRenderer.invoke('realtime-socket:open', input) as Promise<void>,
-  sendRealtimeSocket: (input) => ipcRenderer.invoke('realtime-socket:send', input) as Promise<void>,
-  closeRealtimeSocket: (input) => ipcRenderer.invoke('realtime-socket:close', input) as Promise<void>,
+  openRealtimeSocket: (input) => ipcRenderer.invoke(REALTIME_SOCKET_IPC_CHANNELS.open, input) as Promise<void>,
+  sendRealtimeSocket: (input) => ipcRenderer.invoke(REALTIME_SOCKET_IPC_CHANNELS.send, input) as Promise<void>,
+  closeRealtimeSocket: (input) => ipcRenderer.invoke(REALTIME_SOCKET_IPC_CHANNELS.close, input) as Promise<void>,
   onRealtimeSocketEvent: (listener) => {
     realtimeSocketListeners.add(listener);
     return () => realtimeSocketListeners.delete(listener);

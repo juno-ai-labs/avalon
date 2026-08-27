@@ -183,8 +183,9 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
   cursor is opaque to Electron and must be returned unchanged.
 - **At most 1,000 pins belong to one person.** The WorkspaceDO transaction counts
   every stored pin, including one currently hidden by visibility, before
-  accepting a new one. That keeps the reorder input and first-page response
-  within their shared bound.
+  accepting a new one. That bounds the pin-derived reorder and response work;
+  the independently complete live-state supplement may make the combined first
+  page larger.
 - **Pinning is gated on readability; unpinning is not.** Removing a pin is never
   a question about the work stream, and a pin that has gone dark can only be
   reached by a caller that already knows the id.
@@ -212,9 +213,10 @@ It deliberately does not:
 ## Failure modes and limits
 
 - **A person may pin at most 1,000 work streams.** The same bound applies to a
-  reorder request and keeps the first WorkspaceDO page (which carries pins in
-  addition to recent rows) under its 1,250-row contract. Pinning the 1,001st row
-  fails with `workstream_pin_limit_reached`; existing pins remain unchanged.
+  reorder request. The first WorkspaceDO page may contain all pins, at most 250
+  recent unpinned rows, and every visible live-state row; that combined response
+  intentionally has no separate guessed row cap. Pinning the 1,001st row fails
+  with `workstream_pin_limit_reached`; existing pins remain unchanged.
 - **A refused drag reverts.** The local arrangement is dropped and the section
   re-renders from what the server holds, which is what the person's other
   devices are showing. The dialog says so rather than leaving a list that
@@ -269,6 +271,26 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-26 — The complete live-state supplement is independent of the pin cap
+
+**What changed:** The initial WorkspaceDO directory contract no longer caps the
+combined pins, recent rows, and live-state supplement at 1,250 entries. The
+existing 1,000-pin product limit and 250-row recency cursor remain unchanged.
+
+**Why:** Every live-state row must be available for proactive sockets even when
+a workspace already has the maximum pins and recent page. Reusing the arithmetic
+sum as a parser maximum made valid product states reject the entire sync frame.
+
+**Considered and rejected:** Truncating live rows would silently violate the
+warming policy. Lowering the pin or recency limits would change unrelated
+product decisions to accommodate a transport-schema shortcut.
+
+**Consequences:** The first page can exceed 1,250 rows, while later recency pages
+remain cursor-bounded. Any future defensive payload limit needs its own measured
+product decision rather than an inferred row count.
+
+Shipped in #341.
 
 ### 2026-08-26 — Pins proactively retain both work-stream sockets
 
