@@ -4,7 +4,7 @@
 >
 > Add projects as an optional way to group related work streams, give them
 > shared resources, and find them in the sidebar.
-> Companion: [state](state.md). Subsystem references:
+> Companions: [state](state.md), [build plan](plan.md). Subsystem references:
 > [data model](../../data-model.md),
 > [Queue versus RPC](../../choosing-queues-or-rpc.md),
 > [work-stream creation](../../workstream-creation.md),
