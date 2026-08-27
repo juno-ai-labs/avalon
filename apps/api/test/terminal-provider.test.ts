@@ -883,21 +883,35 @@ describe("Daytona Terminal provider", () => {
     expect(executeCommand).toHaveBeenCalledWith(
       expect.stringContaining("git fsck --strict"),
       "/workspace",
-      { GITHUB_WRITE_BASIC: "encoded-credential" },
+      {
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "http.https://github.com/owner/repo.git.extraheader",
+        GIT_CONFIG_VALUE_0: "Authorization: Basic encoded-credential",
+      },
       180,
     );
     expect(executeCommand).toHaveBeenCalledWith(
       expect.stringContaining('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'),
       "/workspace",
-      { GITHUB_WRITE_BASIC: "encoded-credential" },
+      {
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "http.https://github.com/owner/repo.git.extraheader",
+        GIT_CONFIG_VALUE_0: "Authorization: Basic encoded-credential",
+      },
       180,
     );
     expect(executeCommand.mock.calls[0]?.[0]).not.toContain("encoded-credential");
+    expect(executeCommand.mock.calls[0]?.[0]).not.toContain("git config");
     expect(removePublisher).toHaveBeenCalledWith(60, true);
   });
 
   it("reports the safe trusted-publication stage when Daytona cannot execute it", async () => {
-    const executeCommand = vi.fn(async () => ({
+    const executeCommand = vi.fn<(
+      command: string,
+      cwd?: string,
+      env?: Record<string, string>,
+      timeout?: number,
+    ) => Promise<{ exitCode: number; result: string }>>(async () => ({
       exitCode: -1,
       result: "RALLY_PUBLISH_FAILED_STAGE=remote_push\n",
     }));
@@ -926,6 +940,11 @@ describe("Daytona Terminal provider", () => {
       expectedOldSha: null,
       githubBasicCredential: "encoded-credential",
     })).rejects.toThrow("Trusted Git publication failed at remote_push with exit code -1");
+    expect(executeCommand.mock.calls[0]?.[0]).not.toContain("git config");
+    expect(executeCommand.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
+      GIT_CONFIG_KEY_0: "http.https://github.com/owner/repo.git.extraheader",
+      GIT_CONFIG_VALUE_0: "Authorization: Basic encoded-credential",
+    }));
     expect(removePublisher).toHaveBeenCalledWith(60, true);
   });
 });
