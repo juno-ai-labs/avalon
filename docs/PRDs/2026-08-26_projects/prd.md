@@ -42,13 +42,21 @@ attach the same resources again and remember the relationship from titles
 alone. Pinning does not solve that: a pin means “keep this work stream handy for
 me,” not “these work streams share a goal.”
 
-The immediate product direction is to make that relationship explicit and
-useful, not merely cosmetic. A project should reduce repeated setup by applying
-the same default resources to its work streams.
+The product owner raised this as a current, recurring setup problem in the
+2026-08-26 direction brief that initiated [PR #350](https://github.com/juno-ai-labs/avalon/pull/350):
+recruiting, design, product, accounting, and other company efforts commonly
+need several work streams, but each additional work stream repeats resource
+setup and leaves the relationship encoded only in titles or one person's pins.
+The frequency is therefore per related work stream: setup is repeated every
+time another one is created or brought into the effort. The cost is user time,
+inconsistent inputs between related work streams, and a grouping that other
+participants cannot see.
 
-This PRD is based on the product direction recorded on 2026-08-26. It is not
-based on production usage measurements or a support-ticket count, and it does
-not claim that those exist.
+Rally does not yet have usage measurements or a support-ticket count that can
+quantify that frequency. The evidence for doing this now is the direct product
+decision above, not a claimed incident or metric. The selected direction makes
+the relationship useful rather than merely cosmetic by applying the same
+authorized resources to each work stream.
 
 ## Goals
 
@@ -264,13 +272,14 @@ with the creator as a participant. Personal is the default, matching new work
 streams. Project settings in the project space provide the same fields for
 later editing, plus participants.
 
-When the person may read at least one archived project, the **New project**
-dialog footer also offers **Restore archived project**. It opens a
-keyboard-searchable picker of readable archived projects, ordered by most
-recently archived. Choosing one opens that archived project space, where the
-person can review conflicts and restore it. This is the deliberate route back
-to archived projects; archived projects remain absent from the Projects
-sidebar section and its menus.
+When the person may read at least one archived or restoring project, the **New
+project** dialog footer also offers **Restore archived project**. It opens a
+keyboard-searchable recovery picker of readable archived and restoring
+projects, ordered by most recent lifecycle activity and labelled by state.
+Choosing one opens that project space, where the person can review conflicts,
+retry or cancel an unfinished restoration, or restore an archived project.
+This is the deliberate route back to inactive projects; they remain absent
+from the Projects sidebar section and its menus.
 
 Archived projects continue to reserve their normalized names. A conflicting
 create or rename says **A project with that name already exists** without
@@ -301,6 +310,9 @@ Its menu also provides **Archive project**. Archiving is confirmed because it
 removes the project from active navigation and stops new assignments and
 default-resource propagation. An archived project space is read-only except for
 **Restore project** and removing a retained work stream from the project.
+A restoring project space is read-only except for **Retry restore**, **Cancel
+restore**, and removing a retained work stream through the command that first
+supersedes its pending restore targets.
 
 Every project reader can read every work stream admitted to that project: a
 personal project's participants are seated in each work stream, and a workspace
@@ -365,6 +377,13 @@ Archiving is one `WorkspaceDO` transaction; the project space shows
 resumable because it may need to reapply audiences and default resources across
 several work streams. It shows **Restoring…** until every target acknowledges
 readiness. Closing the desktop does not abandon restoration.
+
+If a restore target fails, the restoring project remains in the recovery picker
+with **Retry restore** and **Cancel restore**. Retry requeues only failed
+current-generation targets. Cancel is one `WorkspaceDO` transaction that
+returns the project to `archived`, supersedes its unfinished audience and
+resource targets, and releases its work-stream reservations. It does not undo
+audience expansion or resource links already applied before cancellation.
 
 ### Starting a work stream in a project
 
@@ -505,10 +524,12 @@ this PRD does not introduce a second `user` project-scope value. The existing
 - A `personal` project is readable only by its active participants. The creator
   is seated at creation. Adding and removing participants follows the same
   rules as a personal work stream.
-- Anyone who may read a project may edit its presentation, manage its
-  participants and default resources, add a work stream they are also allowed
-  to read, and archive or restore it. This matches the current work-stream
-  collaboration model and does not create an owner-only project role.
+- Anyone who may read a project may edit its presentation, add participants,
+  manage default resources, add a work stream they are also allowed to read,
+  and archive or restore it. A participant may remove themself. Removing
+  somebody else requires the workspace `owner` or `admin` role, matching the
+  current work-stream collaboration model rather than creating a
+  project-specific mass-revocation privilege.
 
 Project resources may be applied only after the work stream has the project's
 audience:
@@ -546,7 +567,10 @@ the project and this operation has completed. An empty project has no targets,
 so the participant becomes active in the creating transaction.
 
 Removing a participant from a non-empty personal project is one durable
-operation, not a sequence the person must perform by hand. `WorkspaceDO` first
+operation, not a sequence the person must perform by hand. The caller may
+remove themself; removing somebody else fails with
+`participant_removal_denied` unless the caller is a workspace owner or admin.
+After that authorization, `WorkspaceDO` first
 changes the project participant from `active` to `removing`. A removing
 participant immediately stops being a project reader, cannot receive new
 project propagation, and disappears from the active participant list. The
@@ -590,14 +614,20 @@ makes its work streams private as a side effect. Widening an empty project
 completes in the creating transaction.
 
 While one of these audience operations is unfinished, `WorkspaceDO` refuses a
-second participant or project-scope change and any add, move, or new-work-stream
-command for that project with a retryable `project_busy` result. Removing a
-member work stream supersedes its still-pending target before removing the
-membership. This keeps a membership created halfway through convergence from
-missing the audience being applied. The ordinary guard permits an
-operation-authenticated `scope_widen` target to create the temporary safe state
-where a personal project contains some already-workspace-scoped members; no
-ordinary direct scope command receives that exception.
+second participant or project-scope change and any add, move, new-work-stream,
+default-resource, or archive command for that project with a retryable
+`project_busy` result. A `participant_add` or `scope_widen` operation cannot
+start while the project has an unfinished default-resource application.
+Participant removal is an access revocation and is never delayed by resource
+delivery; after it settles, `WorkspaceDO` creates a fresh application generation
+for each current default/member pair whose earlier application was superseded
+by the removal. Removing a member work stream supersedes its still-pending
+target before removing the membership. These fences and replacement
+generations keep a membership or default created halfway through convergence
+from going missing. The ordinary guard permits an operation-authenticated
+`scope_widen` target to create the temporary safe state where a personal
+project contains some already-workspace-scoped members; no ordinary direct
+scope command receives that exception.
 
 The error for an unsafe change states the shortest correction: add or remove
 the person through the project, remove the work stream from the project, or
@@ -744,10 +774,12 @@ meaningless local `workspace_id` column.
   Applied receipts are retained when a membership or default is removed because
   the work-stream resource link remains. No resource content is stored here.
 - `project_restore_operations` owns resumable restore work. It records the
-  project revision, requester, progress, and each member work stream's audience
-  and resource readiness. A restore changes `archived` to `restoring` only after
-  its full safety preflight and changes it to `active` only after all targets
-  acknowledge readiness.
+  project revision, requester, `running`, `failed`, `applied`, or `cancelled`
+  state, and each member work stream's audience and resource readiness. A
+  restore changes `archived` to `restoring` only after its full safety preflight
+  and changes it to `active` only after all targets acknowledge readiness. A
+  cancelled operation leaves the project archived and its unfinished targets
+  superseded.
 
 The actual resource relationship stays in the owning `SubstreamAgent`'s
 `workstream_resource_links`, and the resource metadata stays in `WorkspaceDO`.
@@ -902,7 +934,8 @@ the named audience effect.
    spaces, sidebar rows, work-stream membership, and resources. Every direct
    participant or scope mutation for a member work stream passes through the
    authoritative `WorkspaceDO` membership guard before `WorkstreamDO` changes
-   the audience.
+   the audience. Any project participant may remove themself; only a workspace
+   owner or admin may remove somebody else from a project and its work streams.
 8. A work stream can remain pinned while it is in a project. Neither action
    changes the other.
 9. V1 moves a work stream between projects, while storage and internal
@@ -915,10 +948,10 @@ the named audience effect.
     expand a project, open a nested work stream, reorder projects, and use the
     same add, move, and remove actions available through drag and drop. They can
     also open a project space, start a project work stream from its plus button,
-    archive a project, find a readable archived project through **Restore
-    archived project** in the **New project** dialog, and restore it. Archived
-    projects do not return to the Projects sidebar section or its menus until
-    restoration completes.
+    archive a project, find a readable archived or restoring project through
+    **Restore archived project** in the **New project** dialog, and restore,
+    retry, or cancel it. Inactive projects do not return to the Projects sidebar
+    section or its menus until restoration completes.
 12. A Needs attention row with projects shows their colored icon pile directly
     left of the work-stream name, exposes the project names once to assistive
     technology, preserves the existing status marker, and reserves no gap when
@@ -937,7 +970,9 @@ the named audience effect.
     membership the person must remove or keep instead. A project in
     `restoring` reserves every retained work stream against concurrent add,
     move, or restore commands until activation succeeds or restoration is
-    cancelled back to archived.
+    cancelled back to archived. A failed restoration remains discoverable and
+    offers retry and cancel without undoing already-applied audience or
+    resource effects.
 15. Every active sidebar project row renders, in order, a stateful Tabler
     `IconTriangle` accordion control, project icon, project name, flexible empty
     space, and a Tabler `IconPlus` control. The middle link opens the project
@@ -957,10 +992,15 @@ the named audience effect.
     through the regional project-audience Queue, and remains resumable in
     `removing` state until every work-stream authority acknowledges the change.
     A direct one-work-stream removal cannot bypass this operation or leave the
-    project audience inconsistent.
+    project audience inconsistent, and the operation preserves the existing
+    self-or-workspace-owner/admin removal rule.
 20. Adding a personal-project participant and widening a project to workspace
     scope each create one durable audience target per current work stream and
     converge through the regional project-audience Queue. Project access or
     workspace scope becomes active only after all retained targets acknowledge
     the enlarged audience; failed targets remain visible and retryable without
-    replaying successful effects.
+    replaying successful effects. Default-resource mutations cannot interleave
+    with this convergence, and participant addition or scope widening cannot
+    start while a default-resource application is unfinished. Participant
+    removal remains immediate and replaces any resource applications that its
+    audience change superseded.
