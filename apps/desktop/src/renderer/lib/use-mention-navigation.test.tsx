@@ -64,7 +64,7 @@ describe('useMentionNavigation', () => {
     fireEvent.keyDown(draft, { key: 'Enter', isComposing: true });
     expect(onSelect).not.toHaveBeenCalled();
 
-    // Safari reports the composition only as the legacy keycode.
+    // The legacy composition signal, for the paths that set no `isComposing`.
     fireEvent.keyDown(draft, { key: 'Enter', keyCode: 229 });
     expect(onSelect).not.toHaveBeenCalled();
 

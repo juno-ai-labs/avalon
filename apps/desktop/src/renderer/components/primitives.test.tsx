@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AvatarStack, RallyMark, DropdownSelect, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
+import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state }: { size: number; state: string }) => (
@@ -210,6 +210,29 @@ describe('OpeningState', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Opening automation…');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-state', 'connecting');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-size', '64');
+  });
+});
+
+describe('Modal', () => {
+  it('leaves the dialog standing when Escape is cancelling an IME candidate', () => {
+    const onOpenChange = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <Modal onOpenChange={onOpenChange} open title="Add participants?">
+          <input aria-label="Note" defaultValue="half composed" />
+        </Modal>
+      </Tooltip.Provider>,
+    );
+
+    const field = screen.getByLabelText('Note');
+    // Escape belongs to the IME here: dismissing the dialog would take the
+    // typed draft with it, and there is nothing to undo that with.
+    fireEvent.keyDown(field, { key: 'Escape', isComposing: true });
+    fireEvent.keyDown(field, { key: 'Escape', keyCode: 229 });
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(field, { key: 'Escape' });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });
 

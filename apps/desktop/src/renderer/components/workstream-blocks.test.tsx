@@ -182,6 +182,34 @@ describe('ElicitationPanel', () => {
     await waitFor(() => expect(onAnswer).toHaveBeenCalledWith('compare', undefined));
   });
 
+  it('does not answer on a Cmd+Enter that is only committing an IME composition', async () => {
+    const onAnswer = vi.fn(async () => undefined);
+    render(
+      <ElicitationPanel
+        elicitation={{
+          ...singleSelectElicitation,
+          id: 'elicitation-text',
+          responseType: 'text',
+          options: undefined,
+        }}
+        onAnswer={onAnswer}
+      />,
+    );
+
+    const response = screen.getByRole('textbox', { name: 'Response' });
+    fireEvent.change(response, { target: { value: 'nihao' } });
+
+    // A chord carries the composition flag like any other key, and this answer
+    // is what resumes a paused run: submitting here sends the pre-conversion
+    // reading in place of the characters the person was typing.
+    fireEvent.keyDown(response, { key: 'Enter', metaKey: true, isComposing: true });
+    fireEvent.keyDown(response, { key: 'Enter', ctrlKey: true, keyCode: 229 });
+    expect(onAnswer).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(response, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledWith('nihao', undefined));
+  });
+
   it('combines checked options with an inline custom response', async () => {
     const onAnswer = vi.fn(async () => undefined);
     render(
