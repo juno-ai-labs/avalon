@@ -22,6 +22,11 @@ import type {
   WorkspaceProjectUpdateRequest,
 } from "./workspace-project-protocol";
 
+export interface WorkspaceProjectDefaultPublication extends WorkspaceProjectDefaultTarget {
+  requestedByUserId: string;
+  attempts: number;
+}
+
 interface ProjectRow extends Record<string, SqlStorageValue> {
   project_id: string;
   name: string;
@@ -57,7 +62,7 @@ export class WorkspaceProjectStorage {
     request: WorkspaceProjectCreateRequest,
     projectId: string,
     now = Date.now(),
-  ): ProjectSummary | null {
+  ): ProjectSummary {
     return this.storage.transactionSync(() => {
       const previousCreatedAt = this.storage.sql.exec<{
         created_at: number | null;
@@ -66,12 +71,6 @@ export class WorkspaceProjectStorage {
       ).one().created_at;
       const createdAt = Math.max(now, (previousCreatedAt ?? -1) + 1);
       const normalizedName = normalizeProjectName(request.project.name);
-      const conflict = this.storage.sql.exec<{ project_id: string } & Record<string, SqlStorageValue>>(
-        "SELECT project_id FROM projects WHERE normalized_name = ?",
-        normalizedName,
-      ).toArray()[0];
-      if (conflict) return null;
-
       this.storage.sql.exec(
         `INSERT INTO projects (
            project_id, name, normalized_name, icon_key, icon_color_key, scope, status,
@@ -111,17 +110,11 @@ export class WorkspaceProjectStorage {
     });
   }
 
-  updatePresentation(request: WorkspaceProjectUpdateRequest, now = Date.now()): ProjectSummary | null | false {
+  updatePresentation(request: WorkspaceProjectUpdateRequest, now = Date.now()): ProjectSummary | false {
     return this.storage.transactionSync(() => {
       if (!this.visibleProjectIds(request.userId).includes(request.projectId)
         && !this.listInactive(request.userId).items.some((project) => project.id === request.projectId)) return false;
       const normalizedName = normalizeProjectName(request.presentation.name);
-      const conflict = this.storage.sql.exec<{ project_id: string } & Record<string, SqlStorageValue>>(
-        "SELECT project_id FROM projects WHERE normalized_name = ? AND project_id <> ?",
-        normalizedName,
-        request.projectId,
-      ).toArray()[0];
-      if (conflict) return null;
       const updated = this.storage.sql.exec<{ project_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE projects
             SET name = ?, normalized_name = ?, icon_key = ?, icon_color_key = ?,
@@ -397,6 +390,7 @@ export class WorkspaceProjectStorage {
           workstreamId: asWorkstreamId(target.workstream_id),
           membershipGeneration: target.membership_generation,
         }));
+        this.stageDefaultPublications(targets, request.userId, now);
         return { ok: true, project: this.project(request.projectId), targets };
       }
       const defaultGeneration = (existing?.generation ?? 0) + 1;
@@ -452,6 +446,7 @@ export class WorkspaceProjectStorage {
           now,
         );
       }
+      this.stageDefaultPublications(targets, request.userId, now);
       this.advanceWaterline(now);
       return { ok: true, project: this.project(request.projectId), targets };
     });
@@ -527,6 +522,146 @@ export class WorkspaceProjectStorage {
         target.workstreamId,
         target.membershipGeneration,
       ).toArray().length === 1;
+    });
+  }
+
+  recordDefaultTargetFailure(
+    target: WorkspaceProjectDefaultTarget,
+    errorCode: string,
+    now = Date.now(),
+  ): boolean {
+    return this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
+      `UPDATE project_default_resource_targets
+          SET attempts = attempts + 1, updated_at = ?, last_error_code = ?
+        WHERE project_id = ? AND resource_id = ? AND default_generation = ?
+          AND workstream_id = ? AND membership_generation = ? AND state = 'pending'
+        RETURNING workstream_id`,
+      now,
+      errorCode,
+      target.projectId,
+      target.resourceId,
+      target.defaultGeneration,
+      target.workstreamId,
+      target.membershipGeneration,
+    ).toArray().length === 1;
+  }
+
+  failDefaultTarget(
+    target: WorkspaceProjectDefaultTarget,
+    errorCode: string,
+    now = Date.now(),
+  ): boolean {
+    return this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
+      `UPDATE project_default_resource_targets
+          SET state = 'terminal', attempts = attempts + 1, updated_at = ?, last_error_code = ?
+        WHERE project_id = ? AND resource_id = ? AND default_generation = ?
+          AND workstream_id = ? AND membership_generation = ? AND state = 'pending'
+        RETURNING workstream_id`,
+      now,
+      errorCode,
+      target.projectId,
+      target.resourceId,
+      target.defaultGeneration,
+      target.workstreamId,
+      target.membershipGeneration,
+    ).toArray().length === 1;
+  }
+
+  nextDefaultPublicationDueAt(): number | null {
+    return this.storage.sql.exec<{ due_at: number | null } & Record<string, SqlStorageValue>>(
+      `SELECT MIN(publication.next_attempt_at) AS due_at
+         FROM project_default_resource_publications publication
+         JOIN project_default_resource_targets target
+           ON target.project_id = publication.project_id
+          AND target.resource_id = publication.resource_id
+          AND target.default_generation = publication.default_generation
+          AND target.workstream_id = publication.workstream_id
+          AND target.membership_generation = publication.membership_generation
+        WHERE publication.state = 'pending' AND target.state = 'pending'`,
+    ).one().due_at;
+  }
+
+  claimDefaultPublications(
+    now: number,
+    retryAt: (attempt: number) => number,
+  ): WorkspaceProjectDefaultPublication[] {
+    return this.storage.transactionSync(() => {
+      const rows = this.storage.sql.exec<{
+        project_id: string;
+        resource_id: string;
+        default_generation: number;
+        workstream_id: string;
+        membership_generation: number;
+        requested_by_user_id: string;
+        attempts: number;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT publication.project_id, publication.resource_id,
+                publication.default_generation, publication.workstream_id,
+                publication.membership_generation, publication.requested_by_user_id,
+                publication.attempts
+           FROM project_default_resource_publications publication
+           JOIN project_default_resource_targets target
+             ON target.project_id = publication.project_id
+            AND target.resource_id = publication.resource_id
+            AND target.default_generation = publication.default_generation
+            AND target.workstream_id = publication.workstream_id
+            AND target.membership_generation = publication.membership_generation
+          WHERE publication.state = 'pending' AND publication.next_attempt_at <= ?
+            AND target.state = 'pending'
+          ORDER BY publication.next_attempt_at, publication.project_id,
+                   publication.resource_id, publication.workstream_id
+          LIMIT 100`,
+        now,
+      ).toArray();
+      for (const row of rows) {
+        const attempt = row.attempts + 1;
+        this.storage.sql.exec(
+          `UPDATE project_default_resource_publications
+              SET attempts = ?, next_attempt_at = ?, updated_at = ?
+            WHERE project_id = ? AND resource_id = ? AND default_generation = ?
+              AND workstream_id = ? AND membership_generation = ? AND state = 'pending'`,
+          attempt,
+          retryAt(attempt),
+          now,
+          row.project_id,
+          row.resource_id,
+          row.default_generation,
+          row.workstream_id,
+          row.membership_generation,
+        );
+      }
+      return rows.map((row) => ({
+        projectId: asProjectId(row.project_id),
+        resourceId: row.resource_id,
+        defaultGeneration: row.default_generation,
+        workstreamId: asWorkstreamId(row.workstream_id),
+        membershipGeneration: row.membership_generation,
+        requestedByUserId: row.requested_by_user_id,
+        attempts: row.attempts + 1,
+      }));
+    });
+  }
+
+  acceptDefaultPublications(
+    publications: readonly WorkspaceProjectDefaultPublication[],
+    now = Date.now(),
+  ): void {
+    this.storage.transactionSync(() => {
+      for (const publication of publications) {
+        this.storage.sql.exec(
+          `UPDATE project_default_resource_publications
+              SET state = 'accepted', updated_at = ?, accepted_at = ?
+            WHERE project_id = ? AND resource_id = ? AND default_generation = ?
+              AND workstream_id = ? AND membership_generation = ? AND state = 'pending'`,
+          now,
+          now,
+          publication.projectId,
+          publication.resourceId,
+          publication.defaultGeneration,
+          publication.workstreamId,
+          publication.membershipGeneration,
+        );
+      }
     });
   }
 
@@ -681,6 +816,7 @@ export class WorkspaceProjectStorage {
           );
         }
       }
+      this.stageDefaultPublications(targets, request.userId, now);
       this.appendOrder(request.userId, request.projectId, now);
       this.advanceWaterline(now);
       return { project: this.project(request.projectId), targets };
@@ -713,6 +849,30 @@ export class WorkspaceProjectStorage {
       this.advanceWaterline(now);
       return this.directory(userId);
     });
+  }
+
+  private stageDefaultPublications(
+    targets: readonly WorkspaceProjectDefaultTarget[],
+    requestedByUserId: string,
+    now: number,
+  ): void {
+    for (const target of targets) {
+      this.storage.sql.exec(
+        `INSERT OR IGNORE INTO project_default_resource_publications (
+           project_id, resource_id, default_generation, workstream_id, membership_generation,
+           requested_by_user_id, state, attempts, next_attempt_at, created_at, updated_at, accepted_at
+         ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, NULL)`,
+        target.projectId,
+        target.resourceId,
+        target.defaultGeneration,
+        target.workstreamId,
+        target.membershipGeneration,
+        requestedByUserId,
+        now,
+        now,
+        now,
+      );
+    }
   }
 
   private visibleProjectIds(userId: string): string[] {

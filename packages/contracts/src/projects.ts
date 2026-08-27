@@ -119,3 +119,17 @@ export const ProjectDirectorySchema = z.object({
   items: z.array(ProjectSummarySchema),
 }).strict();
 export type ProjectDirectory = z.infer<typeof ProjectDirectorySchema>;
+
+export const ProjectSnapshotSchema = z.object({
+  active: ProjectDirectorySchema,
+  inactive: ProjectDirectorySchema,
+}).strict().superRefine((snapshot, context) => {
+  if (snapshot.active.waterline !== snapshot.inactive.waterline) {
+    context.addIssue({
+      code: "custom",
+      path: ["inactive", "waterline"],
+      message: "must match the active project directory waterline",
+    });
+  }
+});
+export type ProjectSnapshot = z.infer<typeof ProjectSnapshotSchema>;

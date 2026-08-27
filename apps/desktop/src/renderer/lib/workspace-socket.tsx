@@ -2,6 +2,7 @@ import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  WorkspaceProjectSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
@@ -37,7 +38,7 @@ import {
   applyWorkspaceWorkstreamFields,
   workstreamSummaryState,
 } from './workstream-state-store';
-import { applyVersionedSidebarList } from './sidebar-list-store';
+import { applyVersionedProjectSnapshot, applyVersionedSidebarList } from './sidebar-list-store';
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
@@ -132,7 +133,10 @@ function invalidateTopic(
     // longer names them — it carries the detail surfaces REST still serves.
     automations: [['automation'], ['automation-draft']],
     notes: [['note']],
-    projects: [['projects']],
+    // Project state is carried by the connect snapshot and every later project
+    // push. This legacy topic can arrive during rolling deployment, but it must
+    // never turn the socket into news followed by a REST read.
+    projects: [],
     resources: [['resources'], ['workstream-context']],
     activity: [['work-opportunities']],
     work_opportunities: [['work-opportunities']],
@@ -317,7 +321,7 @@ export function WorkspaceSocketProvider({
         sidebar.automations.items.map(mapAutomationSummary),
       );
       applyVersionedSidebarList(queryClient, 'notes', sidebar.notes.waterline, sidebar.notes.items);
-      if (sidebar.projects) queryClient.setQueryData(['projects'], sidebar.projects);
+      if (sidebar.projects) applyVersionedProjectSnapshot(queryClient, sidebar.projects);
       setSidebarConnect((current) => ({
         generation: (current?.generation ?? 0) + 1,
         nextCursor: page.nextCursor,
@@ -516,6 +520,11 @@ export function WorkspaceSocketProvider({
                 sidebarList.data.items,
               );
             }
+            return;
+          }
+          const projectSnapshot = WorkspaceProjectSnapshotEventSchema.safeParse(decoded);
+          if (projectSnapshot.success) {
+            applyVersionedProjectSnapshot(queryClient, projectSnapshot.data.projects);
             return;
           }
           const result = WorkstreamSocketCommandResultSchema.safeParse(decoded);

@@ -266,10 +266,12 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
       `SELECT user_id, role FROM workspace_members
         WHERE workspace_id = ? AND status = 'active'
           AND user_id IN (${actorIds.map(() => "?").join(",")})
-        ORDER BY user_id LIMIT 1`,
-    ).bind(target.workspaceId, ...actorIds).first<{ user_id: string; role: AuthContext["role"] }>();
+        ORDER BY CASE WHEN user_id = ? THEN 0 ELSE 1 END, user_id LIMIT 1`,
+    ).bind(target.workspaceId, ...actorIds, target.requestedByUserId)
+      .first<{ user_id: string; role: AuthContext["role"] }>();
     if (!member) {
-      message.retry();
+      await workspace.failProjectDefaultTarget(target);
+      message.ack();
       return;
     }
     const auth: AuthContext = {
@@ -286,7 +288,9 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
       await workspace.completeProjectDefaultTarget(target);
       message.ack();
     } catch {
-      message.retry();
+      await workspace.recordProjectDefaultTargetFailure(target).catch(() => undefined);
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
     }
     return;
   }

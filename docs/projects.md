@@ -22,11 +22,22 @@ behavior is in the approved [Projects design](PRDs/2026-08-26_projects/prd.md).
 
 ## How it works
 
-An active workspace member calls a typed WorkspaceDO RPC with their workspace
-and user identifiers. The object rechecks active membership in regional D1,
-then performs the project mutation or read synchronously against its own SQLite
-authority. Creating a project writes the project, makes its creator an active
-participant, and appends it to that person's stored order in one transaction.
+Project changes go up through authenticated HTTP mutations, which call typed
+WorkspaceDO RPCs with the workspace and user identifiers. The object rechecks
+active membership in regional D1, then performs the project mutation
+synchronously against its own SQLite authority. Creating a project writes the
+project, makes its creator an active participant, and appends it to that
+person's stored order in one transaction.
+
+Project reads do not use HTTP. The workspace socket's subscribe response carries
+the viewer's active and inactive project directories. After every committed
+project mutation, WorkspaceDO reads that pair again for every subscribed user
+and pushes `workspace_project_snapshot`. Personal-project visibility and order
+are therefore evaluated separately for each socket. The active and inactive
+lists carry the same WorkspaceDO project waterline and land through one desktop
+receiver; a reconnect sends the same pair, and an equal or older pair is
+dropped. Removing somebody from a personal project reaches their open socket as
+a newer snapshot in which that project is absent.
 
 Personal projects are returned only to active project participants. Workspace
 projects are returned to every active workspace member. The first time a person
@@ -67,9 +78,8 @@ cannot observe a pre-project resource set.
   Without that check, a removed member could keep using a retained object stub.
 - Personal visibility requires an active participant row; workspace visibility
   still requires active workspace membership. Scope never bypasses admission.
-- Names are unique after trimming, Unicode normalization, and case folding
-  across every lifecycle state. Reusing an archived name would make restore and
-  navigation ambiguous.
+- Names are display labels rather than identity. Duplicate visible and private
+  names are allowed; navigation and mutation use the project ID.
 - Icon and color keys come from the shared closed registries. Persisting an
   arbitrary key would create rows no supported client can render consistently.
 - Presentation, audience, and lifecycle revisions advance independently. A
@@ -87,14 +97,23 @@ cannot observe a pre-project resource set.
 - An active project fences direct participant removal; a workspace-scoped
   project also fences direct work-stream scope narrowing. Audience changes go
   through the project so retained work streams converge first.
+- Project mutation authorization is deliberately flat in V1: anyone who may
+  read a project may rename it, manage defaults, change its audience, archive
+  it, or restore it. A workspace project's creator has no extra privilege.
+  Removing another participant is the exception and requires a workspace owner
+  or admin; a regular member may remove only themselves.
 - Projects add no prompt text, project memory, or compaction snapshot.
+- Project state comes down the workspace socket. HTTP project routes mutate
+  only; a project sync event must carry the state itself and must never trigger
+  a project GET.
 
 ## Boundary
 
 This module owns project metadata and project-level authorization inside one
 workspace. It exposes validated contracts and WorkspaceDO RPCs; regional HTTP
-routes and the desktop call those RPCs instead of accessing SQLite. Regional D1
-remains the authority for active workspace membership and placement only.
+mutation routes call those RPCs instead of accessing SQLite, while WorkspaceDO
+publishes reads directly on the admitted workspace socket. Regional D1 remains
+the authority for active workspace membership and placement only.
 
 Workstream content and audience remain owned by WorkstreamDO, while resources
 remain owned by the existing regional resource authority. WorkspaceDO records
@@ -104,19 +123,25 @@ SQLite directly.
 ## Failure modes and limits
 
 Malformed inputs fail strict contract parsing. An inactive workspace member
-receives `project_access_denied`; a normalized-name collision receives
-`project_name_conflict`; and an unreadable or inactive project receives
-`project_not_found`. Transactions are local to one WorkspaceDO, so a failed
+receives `project_access_denied`, and an unreadable or inactive project receives
+`project_not_found`. Project names are not a shared workspace namespace:
+duplicate names are allowed because identity and navigation use project IDs,
+and a conflict would reveal the names of personal projects. Transactions are local to one WorkspaceDO, so a failed
 write leaves no partial project, participant, or ordering row.
 
-There is no product-level project-count or name-length ceiling in this slice.
-Those are product decisions and must not be invented as defensive limits.
+There is no product-level project-count, default-resource-count, or name-length
+ceiling in this slice. The prior eight-item `originResourceIds` transport cap
+was removed because project defaults use that initialization field and a hidden
+ninth-item failure would make an otherwise valid project unable to start a work
+stream. Choosing a product ceiling is a team decision; the implementation does
+not substitute the old attachment-oriented number for one. Those limits must
+not be invented as defensive details.
 
 ## Testing
 
 `packages/contracts/src/projects.test.ts` proves the exact picker registries and
 closed schemas. `apps/api/test/workspace-project-schema.test.ts` applies the
-real migration ledger to SQLite and proves constraints through version 15.
+real migration ledger to SQLite and proves constraints through version 17.
 `apps/api/test-workers/project-authority.test.ts` runs the RPC behavior
 on workerd with real Durable Object storage and D1 membership rows.
 
@@ -134,11 +159,14 @@ order.
 
 ## Data model
 
-`projects` stores one row per project, including its normalized unique name,
+`projects` stores one row per project, including its normalized display name,
 closed presentation keys, scope/status, creator, archive fields, timestamps,
 and three independent revisions. `project_participants` is keyed by project and
 user and carries a state plus per-membership generation. `workspace_project_order`
-is keyed by user and project and stores a non-negative position. Foreign keys
+is keyed by user and project and stores a non-negative position. Default target
+and publication rows share the target generation key, so their insertion is one
+SQLite transaction and Queue publication can resume after a failed send.
+Foreign keys
 are local to WorkspaceDO and cascade only from a deleted project.
 
 ## Regional impact
@@ -157,7 +185,7 @@ accepts SQL fragments or client-selected revision values.
 
 ## Operations
 
-Migration version 15 is visible through the existing Durable Object migration
+Migration version 17 is visible through the existing Durable Object migration
 tracker. A project RPC failing before its transaction returns its stable domain
 error; a migration or SQLite failure remains an object invocation failure and is
 handled by the existing Worker logging and migration reporting paths.
@@ -166,11 +194,74 @@ handled by the existing Worker logging and migration reporting paths.
 
 All authoritative writes are synchronous SQLite operations in one Durable
 Object. Directory reads lazily add missing order rows and then return the visible
-ordered set. This intentionally avoids a cache or secondary projection while
-the product has no project load history; later pagination can extend the typed
-directory without moving authority.
+ordered set. Each write re-reads the viewer-shaped snapshot once per subscribed
+socket; this intentionally avoids a cache or secondary projection while the
+product has no project load history. Later pagination can extend the typed
+socket directory without moving authority or adding an HTTP read.
+Default-resource target publication is the one external await: the WorkspaceDO alarm claims at most 100 due outbox rows,
+advances their durable retry gates, and then sends one Queue batch. A rejected
+send leaves them pending for a later alarm; accepted messages remain safe to
+duplicate because the consumer rechecks target generations.
 
 ## Changelog
+
+### 2026-08-27 — Project editing moves onto the owning surfaces
+
+**What changed:** The project icon opens the shared icon/color grid, the name
+renames inline, the participant face pile opens the shared people picker, and
+scope changes through a confirming live dropdown. Default resources use a
+right-aligned modal picker. Project navigation expands its accordion, sidebar
+plus actions align without painted hover containers, and Add to project uses a
+reusable nested-menu component with a selected checkmark.
+
+**Why:** One Settings dialog hid unrelated actions behind an extra step and
+made a partially saved multi-mutation form possible. The inline resource
+dropdown also left the section visually unbalanced and did not scale to choosing
+more than one resource.
+
+**Considered and rejected:** Keeping the general Settings dialog and styling
+only this one project submenu. Direct controls make each mutation's boundary
+visible, while a shared nested-menu primitive keeps submenu spacing and selected
+state consistent for later consumers.
+
+### 2026-08-27 — Project reads become socket-owned state
+
+**What changed:** The subscribe payload now carries active and inactive project
+directories, and every successful project write broadcasts a versioned,
+viewer-specific replacement to all subscribed workspace sockets. Public project
+GET routes and desktop project fetchers were removed.
+
+**Why:** Project invalidation followed by REST could race its own mutation and
+left another person's open window stale. Rally's socket boundary requires data,
+not change notifications, to come down the connection.
+
+**Considered and rejected:** Keeping `projects` as a generic workspace-sync
+topic and invalidating React Query. That preserves two readers for one authority
+and pays a second round trip whenever project state changes.
+
+### 2026-08-27 — Review closes audience and delivery gaps
+
+**What changed:** Project participant removals now require the documented role
+and converge through member work streams, personal-project admission rejects a
+broader work-stream audience, project-start creation derives its audience from
+the project, and default-resource Queue publication uses a WorkspaceDO outbox.
+The desktop also orders project snapshots by waterline, keeps project controls
+as independent mutations, and reports drag failures honestly. Duplicate names
+are allowed.
+
+**Why:** Review found paths that could widen a personal project, strand a
+committed default before Queue admission, overwrite a newer project directory,
+or disclose an invisible personal-project name. These are authority and user
+trust failures rather than presentation polish.
+
+**Considered and rejected:** Direct Queue sends after the RPC, a workspace-wide
+project-name namespace, and one combined settings save spanning two mutations.
+They respectively lose committed work, leak private metadata, and create a
+partial-write interaction the project space does not need.
+
+**Consequences:** WorkspaceDO alarms now include project publication work;
+Queue consumers prefer the requester but can use another active participant.
+Duplicate display names must always be disambiguated by project ID and context.
 
 ### 2026-08-27 — Membership, Queue defaults, lifecycle, and desktop flows ship
 

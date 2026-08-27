@@ -80,11 +80,49 @@ export function ProjectIcon({ project, size = 15 }: { project: ProjectSummary; s
   return (
     <Icon
       aria-hidden="true"
-      fill={`var(--av-sys-color-project-${project.colorKey})`}
       size={size}
       stroke={`var(--av-sys-color-project-${project.colorKey})`}
       strokeWidth={1.8}
     />
+  );
+}
+
+export function ProjectAppearancePicker({
+  colorKey,
+  iconKey,
+  onColorChange,
+  onIconChange,
+}: {
+  colorKey: ProjectColorKey;
+  iconKey: ProjectIconKey;
+  onColorChange: (colorKey: ProjectColorKey) => void;
+  onIconChange: (iconKey: ProjectIconKey) => void;
+}): React.JSX.Element {
+  return (
+    <div className="project-appearance-picker">
+      <fieldset>
+        <legend>Icon</legend>
+        <div className="project-icon-grid">
+          {PROJECT_ICON_KEYS.map((key) => {
+            const Icon = PROJECT_ICONS[key];
+            return <button aria-label={label(key)} aria-pressed={iconKey === key} className={clsx(iconKey === key && 'is-selected')} key={key} onClick={() => onIconChange(key)} type="button"><Icon aria-hidden="true" size={17} /></button>;
+          })}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Color</legend>
+        <div className="project-color-grid">
+          {PROJECT_COLOR_KEYS.map((key) => (
+            <Tooltip.Root delayDuration={250} key={key}>
+              <Tooltip.Trigger asChild>
+                <button aria-label={label(key)} aria-pressed={colorKey === key} className={clsx(colorKey === key && 'is-selected')} onClick={() => onColorChange(key)} type="button"><span style={{ background: `var(--av-sys-color-project-${key})` }} /></button>
+              </Tooltip.Trigger>
+              <Tooltip.Portal><Tooltip.Content className="tooltip" sideOffset={5}>{label(key)}<Tooltip.Arrow className="tooltip-arrow" /></Tooltip.Content></Tooltip.Portal>
+            </Tooltip.Root>
+          ))}
+        </div>
+      </fieldset>
+    </div>
   );
 }
 
@@ -128,7 +166,8 @@ export function ProjectSidebarSection({
   const [colorKey, setColorKey] = useState<ProjectColorKey>('blue');
   const [scope, setScope] = useState<'personal' | 'workspace'>('personal');
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [sectionError, setSectionError] = useState<string | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const dragging = useRef<string | null>(null);
   const ordered = dragOrder
@@ -142,19 +181,19 @@ export function ProjectSidebarSection({
     setIconKey('briefcase');
     setColorKey('blue');
     setScope('personal');
-    setError(null);
+    setModalError(null);
   };
 
   const submit = async (): Promise<void> => {
     if (!name.trim() || saving) return;
     setSaving(true);
-    setError(null);
+    setModalError(null);
     try {
       await onCreate({ name: name.trim(), iconKey, colorKey, scope });
       setSaving(false);
       closeCreate();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The project could not be created.');
+      setModalError(cause instanceof Error ? cause.message : 'The project could not be created.');
       setSaving(false);
     }
   };
@@ -166,10 +205,11 @@ export function ProjectSidebarSection({
 
   const commit = async (ids: string[]): Promise<void> => {
     setDragOrder(ids);
+    setSectionError(null);
     try {
       await onReorder(ids);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Projects could not be reordered.');
+      setSectionError(cause instanceof Error ? cause.message : 'Projects could not be reordered.');
     } finally {
       setDragOrder(null);
     }
@@ -180,7 +220,7 @@ export function ProjectSidebarSection({
       <section aria-labelledby="projects-heading" className="sidebar-section projects-section">
         <div className="sidebar-section-heading">
           <h2 id="projects-heading">Projects</h2>
-          <IconButton label="New project" onClick={() => { setError(null); setCreateOpen(true); }}>
+          <IconButton className="project-sidebar-action" label="New project" onClick={() => { setModalError(null); setCreateOpen(true); }}>
             <IconPlus size={15} stroke={1.8} />
           </IconButton>
         </div>
@@ -218,7 +258,7 @@ export function ProjectSidebarSection({
                     event.stopPropagation();
                     dragging.current = null;
                     void onAddWorkstream(project.id, workstreamId).catch((cause: unknown) => {
-                      setError(cause instanceof Error ? cause.message : 'The work stream could not be added.');
+                      setSectionError(cause instanceof Error ? cause.message : 'The work stream could not be added.');
                     });
                   }}
                   onDragStart={(event) => {
@@ -245,6 +285,10 @@ export function ProjectSidebarSection({
                     </button>
                     <NavLink
                       className={({ isActive }) => clsx('project-row-link', isActive && 'is-active')}
+                      onClick={() => setExpanded((current) => {
+                        if (current.has(project.id)) return current;
+                        return new Set(current).add(project.id);
+                      })}
                       onKeyDown={(event) => {
                         if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
                         event.preventDefault();
@@ -260,6 +304,7 @@ export function ProjectSidebarSection({
                       <span />
                     </NavLink>
                     <IconButton
+                      className="project-sidebar-action"
                       label={`New work stream in ${project.name}`}
                       onClick={() => void navigate(`/projects/${project.id}/workstreams/new`)}
                     >
@@ -273,22 +318,24 @@ export function ProjectSidebarSection({
                         new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime()
                         || left.id.localeCompare(right.id)
                       ));
-                    return members.length === 0
+                    const missing = project.workstreamIds.length - members.length;
+                    return project.workstreamIds.length === 0
                       ? <p className="project-sidebar-empty">No work streams</p>
                       : <div className="project-sidebar-workstreams">{members.map((workstream) => (
                         <NavLink className="project-sidebar-workstream" key={workstream.id} to={`/workstreams/${workstream.id}`}>
                           {workstream.title}
                         </NavLink>
-                      ))}</div>;
+                      ))}{missing > 0 && <p className="project-sidebar-empty">{project.workstreamIds.length} work streams; load more to see all</p>}</div>;
                   })()}
                 </div>
               );
             })}
           </div>
         )}
+        {sectionError && <InlineError>{sectionError}</InlineError>}
       </section>
       <Modal
-        footer={<>{inactiveProjects.length > 0 && <Button disabled={saving} onClick={() => { setError(null); setCreateOpen(false); setRecoveryOpen(true); }}>Restore archived project</Button>}<Button disabled={saving} onClick={closeCreate}>Cancel</Button><Button className="button-primary" disabled={saving || !name.trim()} onClick={() => void submit()}>Create project</Button></>}
+        footer={<>{inactiveProjects.length > 0 && <Button disabled={saving} onClick={() => { setModalError(null); setCreateOpen(false); setRecoveryOpen(true); }}>Restore archived project</Button>}<Button disabled={saving} onClick={closeCreate}>Cancel</Button><Button className="button-primary" disabled={saving || !name.trim()} onClick={() => void submit()}>Create project</Button></>}
         onOpenChange={(open) => open ? setCreateOpen(true) : closeCreate()}
         open={createOpen}
         title="New project"
@@ -298,28 +345,7 @@ export function ProjectSidebarSection({
             <span>Name</span>
             <input autoFocus onChange={(event) => setName(event.target.value)} value={name} />
           </label>
-          <fieldset>
-            <legend>Icon</legend>
-            <div className="project-icon-grid">
-              {PROJECT_ICON_KEYS.map((key) => {
-                const Icon = PROJECT_ICONS[key];
-                return <button aria-label={label(key)} aria-pressed={iconKey === key} className={clsx(iconKey === key && 'is-selected')} key={key} onClick={() => setIconKey(key)} type="button"><Icon aria-hidden="true" size={17} /></button>;
-              })}
-            </div>
-          </fieldset>
-          <fieldset>
-            <legend>Color</legend>
-            <div className="project-color-grid">
-              {PROJECT_COLOR_KEYS.map((key) => (
-                <Tooltip.Root delayDuration={250} key={key}>
-                  <Tooltip.Trigger asChild>
-                    <button aria-label={label(key)} aria-pressed={colorKey === key} className={clsx(colorKey === key && 'is-selected')} onClick={() => setColorKey(key)} type="button"><span style={{ background: `var(--av-sys-color-project-${key})` }} /></button>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal><Tooltip.Content className="tooltip" sideOffset={5}>{label(key)}<Tooltip.Arrow className="tooltip-arrow" /></Tooltip.Content></Tooltip.Portal>
-                </Tooltip.Root>
-              ))}
-            </div>
-          </fieldset>
+          <ProjectAppearancePicker colorKey={colorKey} iconKey={iconKey} onColorChange={setColorKey} onIconChange={setIconKey} />
           <label className="form-field">
             <span>Who can see this project?</span>
             <select onChange={(event) => setScope(event.target.value as 'personal' | 'workspace')} value={scope}>
@@ -327,24 +353,24 @@ export function ProjectSidebarSection({
               <option value="workspace">Everyone in the workspace</option>
             </select>
           </label>
-          {error && <InlineError>{error}</InlineError>}
+          {modalError && <InlineError>{modalError}</InlineError>}
         </form>
       </Modal>
       <Modal
-        footer={<Button onClick={() => { setError(null); setRecoveryOpen(false); }}>Cancel</Button>}
-        onOpenChange={(open) => { if (!open) setError(null); setRecoveryOpen(open); }}
+        footer={<Button onClick={() => { setModalError(null); setRecoveryOpen(false); }}>Cancel</Button>}
+        onOpenChange={(open) => { if (!open) setModalError(null); setRecoveryOpen(open); }}
         open={recoveryOpen}
         title="Restore archived project"
       >
         <div className="project-recovery-list">{inactiveProjects.map((project) => (
           <Button key={project.id} onClick={() => {
-            setError(null);
+            setModalError(null);
             void onRestore(project.id)
               .then(() => { setRecoveryOpen(false); void navigate(`/projects/${project.id}`); })
-              .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'The project could not be restored.'));
+              .catch((cause: unknown) => setModalError(cause instanceof Error ? cause.message : 'The project could not be restored.'));
           }}><ProjectIcon project={project} /> {project.name}</Button>
         ))}</div>
-        {error && <InlineError>{error}</InlineError>}
+        {modalError && <InlineError>{modalError}</InlineError>}
       </Modal>
     </>
   );

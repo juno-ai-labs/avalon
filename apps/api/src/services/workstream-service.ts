@@ -597,9 +597,9 @@ export class WorkstreamService {
   }
 
 
-  async update(id: string, input: UpdateWorkstreamInput, options: { projectEffect?: boolean } = {}) {
+  async update(id: string, input: UpdateWorkstreamInput) {
     const client = await this.authoritativeClient(id);
-    if (input.scope === "personal" && options.projectEffect !== true) {
+    if (input.scope === "personal") {
       const constraints = await this.projectConstraints(id);
       if (constraints.requiresWorkspaceScope) {
         throw new ApiError(409, "project_audience_managed_by_project", "Remove the work stream from its workspace project before making it private");
@@ -637,9 +637,9 @@ export class WorkstreamService {
     return (await this.authoritativeClient(id)).addParticipant(userId);
   }
 
-  async removeParticipant(id: string, userId: string): Promise<void> {
+  async removeParticipant(id: string, userId: string, options: { projectEffect?: boolean } = {}): Promise<void> {
     const client = await this.authoritativeClient(id);
-    if ((await this.projectConstraints(id)).activeProject) {
+    if (options.projectEffect !== true && (await this.projectConstraints(id)).activeProject) {
       throw new ApiError(409, "project_audience_managed_by_project", "Change project participants before removing this person");
     }
     return client.removeParticipant(userId);
