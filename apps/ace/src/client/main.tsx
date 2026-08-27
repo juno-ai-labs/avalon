@@ -4,6 +4,7 @@ import type { ProductFeatureFlagKey } from '@rally/contracts';
 import type { AceCondition } from '../protocol';
 import { FLAG_ATTRIBUTES, MANAGED_FLAGS, ManagedFlagUpdateSchema, MAX_CONDITION_DEPTH } from '../protocol';
 import { Button, EmptyState, Field, Panel, SegmentedControl, StatusDot } from './components/ui';
+import { ModelsView } from './models';
 import { QueuesView } from './queues';
 import './styles.css';
 
@@ -227,7 +228,7 @@ function RuleEditor({ rule, index, dragging, onChange, onRemove, onDragStart, on
 }
 
 function App(): React.JSX.Element {
-  const [activeSection, setActiveSection] = useState<'feature-flags' | 'queues'>('feature-flags');
+  const [activeSection, setActiveSection] = useState<'feature-flags' | 'models' | 'queues'>('feature-flags');
   const [flags, setFlags] = useState<Flag[]>(MANAGED_FLAGS.map((flag) => emptyFlag(flag.key)));
   const [selectedKey, setSelectedKey] = useState<Flag['key']>('meeting-recording-enabled');
   const [operatorEmail, setOperatorEmail] = useState<string | null>(null);
@@ -239,7 +240,11 @@ function App(): React.JSX.Element {
   const [focusRuleIndex, setFocusRuleIndex] = useState<number | null>(null);
   const ruleHandleRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-  useEffect(() => { document.title = activeSection === 'queues' ? 'Ace · Queues' : 'Ace · Feature flags'; }, [activeSection]);
+  useEffect(() => {
+    document.title = activeSection === 'queues'
+      ? 'Ace · Queues'
+      : activeSection === 'models' ? 'Ace · Models' : 'Ace · Feature flags';
+  }, [activeSection]);
 
   // Rule cards are keyed by array position, not a stable rule identity, so a
   // keyboard-driven move reorders the data but leaves focus sitting on the
@@ -316,8 +321,8 @@ function App(): React.JSX.Element {
   };
 
   return <div className="ace-shell">
-    <aside className="primary-nav"><div className="brand"><span>A</span><strong>Ace</strong></div><nav><button aria-current={activeSection === 'feature-flags' ? 'page' : undefined} className={activeSection === 'feature-flags' ? 'active' : ''} onClick={() => setActiveSection('feature-flags')} type="button"><i>⚑</i>Feature flags</button><button aria-current={activeSection === 'queues' ? 'page' : undefined} className={activeSection === 'queues' ? 'active' : ''} onClick={() => setActiveSection('queues')} type="button"><i>⇥</i>Queues</button></nav><footer><span className="avatar">{operatorEmail?.[0]?.toUpperCase() ?? 'A'}</span><div><strong>{operatorEmail ?? 'Internal operator'}</strong><small>Cloudflare Access</small></div></footer></aside>
-    {activeSection === 'queues' ? <QueuesView /> : <><aside className="flag-list"><header><p>Product controls</p><h1>Feature flags</h1><small>{MANAGED_FLAGS.length} managed flags</small></header><div className="flags">
+    <aside className="primary-nav"><div className="brand"><span>A</span><strong>Ace</strong></div><nav><button aria-current={activeSection === 'feature-flags' ? 'page' : undefined} className={activeSection === 'feature-flags' ? 'active' : ''} onClick={() => setActiveSection('feature-flags')} type="button"><i>⚑</i>Feature flags</button><button aria-current={activeSection === 'models' ? 'page' : undefined} className={activeSection === 'models' ? 'active' : ''} onClick={() => setActiveSection('models')} type="button"><i>◇</i>Models</button><button aria-current={activeSection === 'queues' ? 'page' : undefined} className={activeSection === 'queues' ? 'active' : ''} onClick={() => setActiveSection('queues')} type="button"><i>⇥</i>Queues</button></nav><footer><span className="avatar">{operatorEmail?.[0]?.toUpperCase() ?? 'A'}</span><div><strong>{operatorEmail ?? 'Internal operator'}</strong><small>Cloudflare Access</small></div></footer></aside>
+    {activeSection === 'queues' ? <QueuesView /> : activeSection === 'models' ? <ModelsView /> : <><aside className="flag-list"><header><p>Product controls</p><h1>Feature flags</h1><small>{MANAGED_FLAGS.length} managed flags</small></header><div className="flags">
       {MANAGED_FLAGS.map((flag) => { const current = flags.find((candidate) => candidate.key === flag.key); const ruleCount = (current?.rules ?? []).length; const stateLabel = flagshipConnected === false ? 'Unavailable' : current?.enabled ? 'Enabled' : 'Paused'; return <button className={selectedKey === flag.key ? 'selected' : ''} key={flag.key} onClick={() => setSelectedKey(flag.key)} type="button"><StatusDot active={flagshipConnected === true && current?.enabled === true} label={stateLabel} /><div><strong>{flag.label}</strong><small>{current?.default_variation === 'on' ? 'Default on' : 'Default off'} · {ruleCount} {ruleCount === 1 ? 'rule' : 'rules'}</small></div><b>›</b></button>; })}
     </div><footer><span className={flagshipConnected === true ? 'healthy-dot' : 'status-dot'} />{flagshipConnected === null ? 'Connecting to Flagship…' : flagshipConnected ? 'Flagship connected' : 'Flagship unavailable'}</footer></aside>
     <main className="flag-editor"><header className="editor-header"><div><p>Feature flag</p><h2>{definition.label}</h2><code>{selected.key}</code></div><Button variant="primary" disabled={saving || flagshipConnected !== true} onClick={() => void save()} type="button">{saving ? 'Saving…' : 'Save changes'}</Button></header>

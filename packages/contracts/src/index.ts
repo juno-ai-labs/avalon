@@ -190,6 +190,47 @@ export const AGENT_MODEL_OVERRIDES = [
 export const AgentModelOverrideSchema = z.enum(AGENT_MODEL_OVERRIDES);
 export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
 
+/** Every distinct model-using Rally task whose route is controlled by Flagship. */
+export const AGENT_MODEL_ROLES = [
+  "workstream",
+  "inline_child",
+  "automation_compiler",
+  "block_dashboard",
+  "meeting_notes",
+  "addressing_classifier",
+  "workstream_naming",
+  "activity_structured",
+  "work_opportunity_admission",
+  "work_opportunity_ranking",
+  "workstream_description",
+] as const;
+export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
+
+/** Flagship flag key per model-using task. */
+export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
+  workstream: "agent-model-workstream",
+  inline_child: "agent-model-inline-child",
+  automation_compiler: "agent-model-automation-compiler",
+  block_dashboard: "agent-model-block-dashboard",
+  meeting_notes: "agent-model-meeting-notes",
+  addressing_classifier: "agent-model-addressing-classifier",
+  workstream_naming: "agent-model-workstream-naming",
+  activity_structured: "agent-model-activity-structured",
+  work_opportunity_admission: "agent-model-work-opportunity-admission",
+  work_opportunity_ranking: "agent-model-work-opportunity-ranking",
+  workstream_description: "agent-model-workstream-description",
+};
+
+/** One task's primary OpenRouter model and its ordered fallback route. */
+export const AgentModelRoutingSchema = z.object({
+  model: z.string().trim().min(1),
+  // Older or manually-authored Flagship values may omit the array. Treating
+  // that shape as no fallbacks keeps every evaluator and operator surface in
+  // agreement instead of silently substituting a different checked-in route.
+  fallbackModels: z.array(z.string().trim().min(1)).default([]),
+});
+export type AgentModelRouting = z.infer<typeof AgentModelRoutingSchema>;
+
 export const MemberRoleSchema = z.enum(["owner", "admin", "member"]);
 export const IanaTimezoneSchema = z.string().trim().min(1).max(100).refine((value) => {
   try {
