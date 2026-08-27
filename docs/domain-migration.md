@@ -277,23 +277,30 @@ rather than assertions.
 **What changed:** Every public HTML page now references the redesigned vector
 mark — `/brand/rally-mark.svg`, with `/brand/rally-mark-small.svg` as the
 thicker-stroke cut for placements narrower than 24 px. The public mark path for
-provider manifests is unchanged: `/brand/rally-mark.png` is still served at its
-published URL.
+provider manifests is unchanged, and the PNG served there was re-rendered from
+the new vector (1024 px, transparent, the mark at the same ~68 % scale the
+previous raster used), so hotlinking providers pick up the new mark on their
+next fetch without any registration change. `assets/brand/rally-mark.png` — the
+copy the provider setup docs say to upload — was replaced with the same render.
 
 **Why:** The mark itself was redesigned (a single continuous line replacing the
 woven ring), delivered as SVG. Pages we control were switched in one pass;
-Linear and Notion manifests hotlink the PNG URL by absolute address, so that
-file has to keep answering until each provider registration is updated.
+Linear manifests hotlink the PNG URL by absolute address, so new bytes at the
+same URL are what updates them. Icons that were *uploaded* to a provider
+(Notion, Slack, GitHub) hold their own copy and must be re-uploaded in each
+provider's settings.
 
 **Considered and rejected:** Deleting the PNG in the same change. It would
 break the provider icons silently — nothing in this repository fails when a
 hotlinked asset disappears.
 
-**Consequences:** Until the brand-asset generator's source mask is regenerated
-from the new vector, `/brand/rally-mark.png`, the favicon, the social card, and
-the desktop icons still carry the previous woven mark. The site tests enforce
-the split: pages must reference the SVGs and must not reference the PNG, while
-the PNG file must continue to exist.
+**Consequences:** The PNG was replaced out of band of
+`scripts/generate-brand-assets.py`, whose source mask still holds the woven
+mark — rerunning the generator before that mask is redrawn would silently
+regress `/brand/rally-mark.png` to the old mark. The favicon, social card, and
+desktop icons still carry the woven mark until that regeneration happens. The
+site tests enforce the split: pages must reference the SVGs and must not
+reference the PNG, while the PNG file must continue to exist.
 
 ### 2026-08-25 — Email compatibility retains the domain in route identity
 

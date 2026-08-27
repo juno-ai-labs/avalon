@@ -55,7 +55,7 @@ describe('public Rally site', () => {
     expect(page).toContain('class="rally-merge reveal"');
     expect(styles).toContain('--paper:#f0efe8');
     expect(styles).toContain('--blue:#47c7fc');
-    expect(styles).toContain('--volt:#cedc00');
+    expect(styles).toContain('--volt:#ccff00');
     expect(styles).toContain('--orange:#ff6337');
     expect(styles).toContain('.rally-home .rally-button-dark:hover{background:var(--volt);border-color:var(--black);color:var(--black)}');
     expect(page).not.toContain('data-theme-select');
@@ -161,7 +161,7 @@ describe('public Rally site', () => {
       expect(page).not.toContain('✣');
       expect(page).not.toContain('/favicon.svg');
     }
-    expect(styles).toContain('--brand-primary: #cedc00');
+    expect(styles).toContain('--brand-primary: #ccff00');
     expect(styles).toContain('--brand-secondary: #47c7fc');
     expect(styles).toContain('--orange:#ff6337');
     expect(manifest.theme_color).toBe('#111210');
