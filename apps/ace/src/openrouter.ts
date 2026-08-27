@@ -12,6 +12,16 @@ export interface OpenRouterModelValidation {
   valid: boolean;
 }
 
+/**
+ * The product owner selected five seconds on 2026-08-26. Without a deadline,
+ * Cloudflare imposes no wall-time limit on an HTTP-triggered Worker or one of
+ * its outbound subrequests, so a stalled OpenRouter connection can wedge both
+ * advisory validation and the authoritative save path indefinitely. A trip is
+ * reported through the existing 502 validation-unavailable response and no
+ * Flagship read or write occurs.
+ */
+export const OPENROUTER_MODEL_VALIDATION_TIMEOUT_MS = 5_000;
+
 function endpointsUrl(modelId: string): string | null {
   const segments = modelId.split('/');
   if (segments.length !== 2 || segments.some((segment) => segment.length === 0)) return null;
@@ -27,7 +37,20 @@ export async function validateOpenRouterModel(modelId: string): Promise<OpenRout
   const url = endpointsUrl(normalized);
   if (url === null) return { modelId: normalized, valid: false };
 
-  const response = await fetch(url, { headers: { Accept: 'application/json' } });
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(
+    () => controller.abort(),
+    OPENROUTER_MODEL_VALIDATION_TIMEOUT_MS,
+  );
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
   if (response.status === 404) return { modelId: normalized, valid: false };
   if (!response.ok) throw new Error(`OpenRouter model validation failed (${response.status})`);
 

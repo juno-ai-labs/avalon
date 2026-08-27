@@ -101,7 +101,10 @@ app.put('/api/models/:role', async (c) => {
   const role = ManagedModelRoleSchema.safeParse(decodeURIComponent(c.req.param('role')));
   const body = ManagedModelUpdateSchema.safeParse(await c.req.json().catch(() => null));
   if (!role.success || !body.success || body.data.role !== role.data) {
-    return c.json({ error: 'invalid_model_configuration' }, 400);
+    return c.json({
+      error: 'invalid_model_configuration',
+      message: 'The model route is incomplete or does not match the requested role.',
+    }, 400);
   }
   let validations;
   try {

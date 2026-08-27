@@ -138,6 +138,7 @@ input, select { background: #fff; border: 1px solid #d6d6d1; border-radius: 6px;
 .queue-count.has-messages { background: #ffe0d1; color: #b63d12; }
 .queue-list > footer { align-items: center; border-top: 1px solid #e4e2dc; color: #64717e; display: flex; font-size: 11px; gap: 9px; padding: 18px 24px; }
 .queue-error { background: #fff0ec; border: 1px solid #efc7bc; border-radius: 7px; color: #9b3b24; font-size: 11px; margin: 12px 20px; padding: 10px 12px; }
+.model-save-error { background: #fff0ec; border: 1px solid #efc7bc; border-radius: 7px; color: #9b3b24; font-size: 11px; margin: 12px 0; padding: 10px 12px; }
 .queue-detail { background: #f8f7f3; min-width: 0; }
 .queue-detail-header { align-items: center; background: #fffefa; border-bottom: 1px solid #dddcd7; display: flex; justify-content: space-between; min-height: 120px; padding: 24px 42px; }
 .queue-detail-header h2 { font-size: 23px; letter-spacing: -.03em; margin: 0 0 7px; overflow-wrap: anywhere; }

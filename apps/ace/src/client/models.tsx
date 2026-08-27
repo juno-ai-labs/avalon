@@ -19,6 +19,7 @@ interface FlagshipModelFlag {
 interface ModelConfiguration {
   role: ManagedModelRole;
   routing: AgentModelRouting;
+  persistedRouting: AgentModelRouting;
   source: 'flagship' | 'checked-in';
 }
 
@@ -41,6 +42,10 @@ function checkedInConfigurations(): ModelConfiguration[] {
       model: definition.defaultRouting.model,
       fallbackModels: [...definition.defaultRouting.fallbackModels],
     },
+    persistedRouting: {
+      model: definition.defaultRouting.model,
+      fallbackModels: [...definition.defaultRouting.fallbackModels],
+    },
     source: 'checked-in',
   }));
 }
@@ -51,11 +56,16 @@ export function routingFromFlag(flag: FlagshipModelFlag | undefined, role: Manag
     ? flag.variations?.[flag.default_variation]
     : undefined;
   const parsed = AgentModelRoutingSchema.safeParse(variation);
+  const routing = parsed.success ? parsed.data : {
+    model: definition.defaultRouting.model,
+    fallbackModels: [...definition.defaultRouting.fallbackModels],
+  };
   return {
     role,
-    routing: parsed.success ? parsed.data : {
-      model: definition.defaultRouting.model,
-      fallbackModels: [...definition.defaultRouting.fallbackModels],
+    routing,
+    persistedRouting: {
+      model: routing.model,
+      fallbackModels: [...routing.fallbackModels],
     },
     source: parsed.success ? 'flagship' : 'checked-in',
   };
@@ -77,13 +87,14 @@ export function ModelsView(): React.JSX.Element {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
+  const [statusIsError, setStatusIsError] = useState(false);
   const [validation, setValidation] = useState<ValidationState>({
     status: 'checking',
     invalidModelIds: [],
   });
 
   const load = useCallback(async (): Promise<void> => {
-    setLoading(true); setStatus('');
+    setLoading(true); setStatus(''); setStatusIsError(false);
     try {
       const body = await responseBody<{ flags?: FlagshipModelFlag[] }>(await fetch('/api/models'));
       const byKey = new Map((body.flags ?? []).map((flag) => [flag.key, flag]));
@@ -91,6 +102,7 @@ export function ModelsView(): React.JSX.Element {
       setConnected(true);
     } catch (error) {
       setConnected(false);
+      setStatusIsError(true);
       setStatus(error instanceof Error ? error.message : 'Model routing is unavailable.');
     } finally { setLoading(false); }
   }, []);
@@ -102,6 +114,7 @@ export function ModelsView(): React.JSX.Element {
     ?? routingFromFlag(undefined, selectedRole);
   const updateRouting = (routing: AgentModelRouting): void => {
     setStatus('');
+    setStatusIsError(false);
     setConfigurations((current) => current.map((configuration) => (
       configuration.role === selectedRole ? { ...configuration, routing } : configuration
     )));
@@ -115,6 +128,7 @@ export function ModelsView(): React.JSX.Element {
     selected.routing.model,
     ...selected.routing.fallbackModels,
   ]);
+  const routeIsDirty = JSON.stringify(selected.routing) !== JSON.stringify(selected.persistedRouting);
   const invalidModelIds = new Set(validation.invalidModelIds);
 
   useEffect(() => {
@@ -150,15 +164,17 @@ export function ModelsView(): React.JSX.Element {
 
   const save = async (): Promise<void> => {
     if (connected !== true) {
+      setStatusIsError(true);
       setStatus('Flagship is unavailable. Reload before making changes.');
       return;
     }
     const parsed = ManagedModelUpdateSchema.safeParse({ role: selectedRole, routing: selected.routing });
     if (!parsed.success) {
+      setStatusIsError(true);
       setStatus('Choose a primary model and complete or remove every fallback model.');
       return;
     }
-    setSaving(true); setStatus('');
+    setSaving(true); setStatus(''); setStatusIsError(false);
     try {
       const body = await responseBody<{ flag?: FlagshipModelFlag }>(await fetch(`/api/models/${encodeURIComponent(selectedRole)}`, {
         method: 'PUT',
@@ -167,10 +183,16 @@ export function ModelsView(): React.JSX.Element {
       }));
       const next = routingFromFlag(body.flag, selectedRole);
       setConfigurations((current) => current.map((configuration) => configuration.role === selectedRole
-        ? { ...next, routing: parsed.data.routing, source: 'flagship' }
+        ? {
+            ...next,
+            routing: parsed.data.routing,
+            persistedRouting: parsed.data.routing,
+            source: 'flagship',
+          }
         : configuration));
       setStatus('Saved to Flagship. New runs will resolve this route on their next admission.');
     } catch (error) {
+      setStatusIsError(true);
       setStatus(error instanceof Error ? error.message : 'Save failed.');
     } finally { setSaving(false); }
   };
@@ -182,7 +204,7 @@ export function ModelsView(): React.JSX.Element {
         {MANAGED_MODELS.map((model) => {
           const current = configurations.find((candidate) => candidate.role === model.role)!;
           const sourceLabel = current.source === 'flagship' ? 'Flagship default' : 'Checked-in fallback';
-          return <button className={selectedRole === model.role ? 'selected' : ''} key={model.role} onClick={() => { setSelectedRole(model.role); setStatus(''); }} type="button">
+          return <button className={selectedRole === model.role ? 'selected' : ''} key={model.role} onClick={() => { setSelectedRole(model.role); setStatus(''); setStatusIsError(false); }} type="button">
             <StatusDot active={connected === true && current.source === 'flagship'} label={sourceLabel} />
             <div><strong><span className="model-rank-number">{model.rank}</span>{model.label}</strong><small className="model-rank-reason">{model.rankReason}</small><small>{current.routing.model} · {current.routing.fallbackModels.length} {current.routing.fallbackModels.length === 1 ? 'fallback' : 'fallbacks'}</small></div><b>›</b>
           </button>;
@@ -190,7 +212,7 @@ export function ModelsView(): React.JSX.Element {
       </div>
       <footer><span className={connected === true ? 'healthy-dot' : 'status-dot'} />{loading ? 'Connecting to Flagship…' : connected ? 'Flagship connected' : 'Flagship unavailable'}</footer>
     </aside>
-    <main className="model-editor"><header className="model-editor-header"><div><p>Model route</p><h2>{definition.label}</h2><code>{definition.key}</code></div><Button variant="primary" disabled={saving || connected !== true || validation.status !== 'valid'} onClick={() => void save()} type="button">{saving ? 'Saving…' : 'Save route'}</Button></header>
+    <main className="model-editor"><header className="model-editor-header"><div><p>Model route</p><h2>{definition.label}</h2><code>{definition.key}</code></div><Button variant="primary" disabled={saving || !routeIsDirty || connected !== true || validation.status !== 'valid'} onClick={() => void save()} type="button">{saving ? 'Saving…' : 'Save route'}</Button></header>
       <section className="model-purpose"><div><h3>What this model does</h3><p>{definition.description}</p></div><span className={`route-source ${selected.source}`}>{selected.source === 'flagship' ? 'Flagship default' : 'Checked-in fallback'}</span></section>
       <section className="model-routing"><div className="section-title"><div><h3>Default route</h3><p>The primary model is tried first. Fallbacks are traversed in the order shown when Bind classifies a failure as routable.</p></div></div>
         <Panel className="model-route-card">
@@ -213,8 +235,8 @@ export function ModelsView(): React.JSX.Element {
                     : 'Complete or remove every model entry before saving.'
           }</p>
         </Panel>
-        <p className="model-preservation">Saving changes only the current default variation. Existing staged variations, targeting rules, rollout percentages, and flag status are preserved.</p>
-        {status && <p className={connected === false ? 'queue-error' : 'save-status'} role="status">{status}</p>}
+        <p className="model-preservation">Saving changes only the current default variation. Existing staged variations, targeting rules, rollout percentages, and flag status are preserved. Targeted rules may still serve a different variation to specific workspaces or people.</p>
+        {status && <p className={statusIsError ? 'model-save-error' : 'save-status'} role="status">{status}</p>}
       </section>
     </main>
   </>;
