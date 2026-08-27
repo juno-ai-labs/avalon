@@ -49,6 +49,14 @@ function envFor(database: DatabaseSync): Env {
     AVALON_REGION: "global",
     APP_ENV: "test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
+    // Configured supported so the document section's absence below is the
+    // digest origin's doing rather than a region that has no workspace.
+    TERMINAL_REGION_CAPABILITY: "supported",
+    DAYTONA_API_KEY: "daytona-key",
+    DAYTONA_API_URL: "https://app.daytona.io/api",
+    DAYTONA_TARGET: "us",
+    DAYTONA_TERMINAL_SNAPSHOT: "terminal-snapshot",
+    TERMINAL_EMERGENCY_DISABLED: "false",
   });
   // The prompt loader runs inside the SubstreamAgent, which hands it the
   // routed execution environment — transcript reads reach the object, never D1.
@@ -191,6 +199,14 @@ describe("the window a scheduled digest run is given", () => {
     // rather than quoted from anybody.
     expect(brief?.content).toContain("2026-08-11T16:00:00.000Z");
     expect(brief?.content).toContain("covering 42 events");
+  });
+
+  it("is not told to write the digest as a document", async () => {
+    const context = await loadRunPromptContext(envFor(seededDatabase()), workflowInput(), lease, workstream);
+
+    // The delivery sends this run's final message. A digest that named a
+    // document instead of carrying the news would arrive saying nothing.
+    expect(context.systemPrompt).not.toContain("# Documents");
   });
 
   it("never carries the window in the system prompt", async () => {
