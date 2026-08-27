@@ -59,12 +59,23 @@ export default {
     const objects = await Promise.all(input.objectIds.map(async (objectId) => {
       try {
         const id = namespace.idFromString(objectId);
+        const cleanup = await namespace.get(id).abandonPreCutoverRunsForTranscriptBackfill({
+          objectId,
+          operatorRunId: input.operatorRunId,
+          cutoverVersion: input.cutoverVersion,
+        });
         const outcome = await namespace.get(id).backfillLegacyTranscript({
           objectId,
           operatorRunId: input.operatorRunId,
           cutoverVersion: input.cutoverVersion,
         });
-        return { objectId, outcome };
+        return {
+          objectId,
+          outcome: {
+            ...outcome,
+            abandonedPreCutoverRunCount: cleanup.abandonedRunCount,
+          },
+        };
       } catch (error) {
         return { objectId, error: error instanceof Error ? error.message : 'unknown' };
       }

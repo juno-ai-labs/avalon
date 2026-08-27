@@ -139,6 +139,7 @@ async function invokeBackfill(probeUrl, region, objectIds, operatorRunId, fetche
       || outcome.preBackfillBookmark.length === 0
       || typeof outcome.sourceSha256 !== 'string'
       || !/^[a-f0-9]{64}$/u.test(outcome.sourceSha256)
+      || !validCount(outcome.abandonedPreCutoverRunCount)
       || !validCount(outcome.sourcePartCount)
       || !validCount(outcome.participantTurnCount)
       || outcome.sourcePartCount !== outcome.participantTurnCount
@@ -243,6 +244,10 @@ export async function backfillSubstreamAgentTranscripts({
     participantTurns: rows.reduce((sum, row) => sum + row.outcome.participantTurnCount, 0),
     sourceCheckpoints: rows.reduce((sum, row) => sum + row.outcome.sourceCheckpointCount, 0),
     checkpointProjections: rows.reduce((sum, row) => sum + row.outcome.checkpointProjectionCount, 0),
+    abandonedPreCutoverRuns: rows.reduce(
+      (sum, row) => sum + row.outcome.abandonedPreCutoverRunCount,
+      0,
+    ),
   }]));
   logger.log(JSON.stringify({ operatorRunId, receiptPath, regions: totals }, null, 2));
   return { mode: 'apply', operatorRunId, receiptPath, regions: totals };

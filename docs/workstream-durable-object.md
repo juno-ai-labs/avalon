@@ -106,7 +106,11 @@ and records that limitation explicitly rather than inventing interleaving.
 
 The data operation is an object-owned RPC, not constructor work. It requires a
 main-feed (`external_substream_id = '0'`) authority. Before a first-time
-backfill, it runs only the terminal-run residual-receipt phase of the existing
+backfill, a separate explicit operator RPC may abandon an active pre-v27 run
+only when it has no attempt ID, lease owner, lease deadline, heartbeat, or open
+tool receipt. The abandonment records a terminal `failed` row with
+`migration_cutover_abandoned`; any post-cutover or leased shape aborts without
+mutation. The backfill RPC then runs only the terminal-run residual-receipt phase of the existing
 reaper so a tool
 receipt left open after its owning run terminalized is settled through the same
 runtime path used at ordinary run admission. It does not expire or terminalize
@@ -1244,7 +1248,10 @@ participant order and compaction checkpoints into the canonical range/checkpoint
 indexes, shifts a post-cutover suffix atomically, records a pre-write PITR
 bookmark and full source digest, and reconciles every replay. Legacy payloads
 remain in their existing owning rows; canonical facts store only stable source
-references. Historical Bind state is explicitly unavailable.
+references. Historical Bind state is explicitly unavailable. An operator-only
+precursor terminalizes lease-less pre-v27 active rows with an explicit
+migration-abandonment reason; it refuses every run that acquired a durable
+attempt, lease, heartbeat, or open receipt.
 
 **Why:** the v27 breaking cutover created the correct durable substrate but did
 not make existing work-stream rows visible through it. The old `parts` table
@@ -1274,7 +1281,10 @@ card without an open receipt has no settlement writer and is projected as the
 faithful `started` state it owns. An already committed replay is read-only and
 does not require disconnection.
 It may never claim exact historical Bind state unless a byte-faithful source for
-that loop boundary exists.
+that loop boundary exists. Pre-cutover run abandonment must remain a separate,
+explicit operator action with a strict v27 timestamp plus null
+attempt/lease/heartbeat and no-open-receipt fence. It may not be generalized
+into ordinary backfill quiescence or used to expire current runs.
 
 ### 2026-08-26 — Foreground presence is explicit on the workspace socket
 

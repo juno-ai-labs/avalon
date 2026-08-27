@@ -1540,6 +1540,93 @@ export class WorkstreamHarnessRunStorage {
   }
 
   /**
+   * Explicitly abandon only lease-less runs inherited from before the ordered
+   * transcript cutover. This is an operator migration primitive, not ordinary
+   * stale-run recovery: current runs and any row that ever acquired a durable
+   * attempt or lease are outside its authority.
+   */
+  abandonPreCutoverLeaseLessRuns(input: {
+    cutoverVersion: number;
+    now: number;
+  }): { abandonedRunCount: number } {
+    return this.storage.transactionSync(() => {
+      const cutover = first(this.sql.exec<{
+        applied_at: number;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT applied_at FROM _sql_schema_migrations WHERE version = ?`,
+        input.cutoverVersion,
+      ));
+      if (!cutover) throw new Error("legacy_transcript_cutover_receipt_missing");
+      const active = this.sql.exec<{
+        run_id: string;
+        abandonable: number;
+        origin: string;
+        parent_tool_call_id: string | null;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT run_id, origin, parent_tool_call_id,
+                CASE WHEN started_at <= ?1
+                       AND legacy_attempt_id IS NULL
+                       AND lease_owner IS NULL
+                       AND lease_expires_at IS NULL
+                       AND heartbeat_at IS NULL
+                     THEN 1 ELSE 0 END AS abandonable
+           FROM runs
+          WHERE status IN ('admitted', 'running', 'waiting', 'steering')
+            AND terminalized_at IS NULL`,
+        Number(cutover.applied_at),
+      ).toArray();
+      if (active.some((run) => Number(run.abandonable) !== 1)) {
+        throw new Error("legacy_transcript_pre_cutover_run_not_abandonable");
+      }
+      if (active.length === 0) return { abandonedRunCount: 0 };
+      const openReceipt = first(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+        `SELECT COUNT(*) AS count
+           FROM tool_effects effect
+           JOIN runs run ON run.run_id = effect.run_id
+          WHERE run.status IN ('admitted', 'running', 'waiting', 'steering')
+            AND run.terminalized_at IS NULL
+            AND effect.status IN ('admitted', 'executing')`,
+      ))?.count ?? 0;
+      if (Number(openReceipt) > 0) {
+        throw new Error("legacy_transcript_pre_cutover_run_has_open_receipt");
+      }
+      const updatesMainState = active.some((run) =>
+        run.origin !== "block_dashboard_block" && run.parent_tool_call_id === null);
+      this.sql.exec(
+        `UPDATE runs
+            SET status = 'failed',
+                terminal_reason = 'migration_cutover_abandoned',
+                error_json = '{"code":"migration_cutover_abandoned","message":"The pre-cutover run had no durable attempt or lease and was abandoned during transcript migration"}',
+                completed_at = ?2,
+                terminalized_at = ?2,
+                updated_at = ?2
+          WHERE status IN ('admitted', 'running', 'waiting', 'steering')
+            AND terminalized_at IS NULL
+            AND started_at <= ?1
+            AND legacy_attempt_id IS NULL
+            AND lease_owner IS NULL
+            AND lease_expires_at IS NULL
+            AND heartbeat_at IS NULL`,
+        Number(cutover.applied_at),
+        input.now,
+      );
+      if (updatesMainState) {
+        this.sql.exec(
+          `UPDATE workstream
+              SET exact_state = 'failed',
+                  state_reason_code = 'runtime_failed',
+                  state_changed_at = ?1,
+                  last_people_activity_at = ?1,
+                  updated_at = ?1
+            WHERE id = 1`,
+          input.now,
+        );
+      }
+      return { abandonedRunCount: active.length };
+    });
+  }
+
+  /**
    * End a root run whose executor lost its lease.
    *
    * The routed version was another four-statement batch whose last two asked,
