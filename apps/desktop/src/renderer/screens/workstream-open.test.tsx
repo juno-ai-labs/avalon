@@ -217,6 +217,21 @@ describe('socket-first work-stream open', () => {
     await waitFor(() => expect(scrollTranscriptToEnd).toHaveBeenCalledTimes(1));
   });
 
+  it('does not flash the empty invitation while a new run is scheduled', async () => {
+    const boot = recoveryBoot({ harnessStatus: 'scheduled' });
+    const { messageFeed: _messageFeed, resumeFeed: _resumeFeed, ...detail } = boot;
+    void _messageFeed;
+    void _resumeFeed;
+
+    renderScreen((queryClient) => {
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
+      queryClient.setQueryData<Message[]>(['messages', workstreamId], []);
+    });
+
+    expect(screen.queryByText('Ready to begin')).not.toBeInTheDocument();
+    await waitFor(() => expect(api.getWorkstreamContext).toHaveBeenCalledTimes(1));
+  });
+
   it('offers REST recovery after the first socket attempt fails', async () => {
     retainedSocket.mockReturnValue({
       activeCompaction: null,

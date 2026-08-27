@@ -150,6 +150,7 @@ import {
   type TranscriptOperationRequest,
 } from "./workstream-transcript-protocol";
 import {
+  AppendMessageInputSchema,
   type MessageOperationRequest,
   MessageOperationRequestSchema,
   mutatesTranscript,
@@ -174,6 +175,8 @@ import {
 } from "./workstream-resource-protocol";
 import { WorkstreamSchedulingStorage } from "./workstream-scheduling-storage";
 import {
+  AnswerElicitationExternallyInputSchema,
+  OpenElicitationInputSchema,
   type SchedulingOperationRequest,
   mutatesWakeups,
   SchedulingOperationRequestSchema,
@@ -217,6 +220,22 @@ import {
 } from "./rpc-result";
 
 export { applyActiveStreamCheckpointEvent, splitActiveStreamCheckpointText } from "./workstream-object-storage";
+
+function isAppendedMessageOutcome(
+  value: unknown,
+): value is { outcome: "appended"; messageId: string; sequenceNumber: number } {
+  if (value === null || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.outcome === "appended"
+    && typeof candidate.messageId === "string"
+    && typeof candidate.sequenceNumber === "number";
+}
+
+function isPersistedElicitationOutcome(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  const outcome = (value as Record<string, unknown>).outcome;
+  return outcome === "opened" || outcome === "answered";
+}
 
 const SocketAttachmentSchema = z.object({
   connectionId: z.string().uuid(),
@@ -1389,12 +1408,48 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (refusal) return refusal;
     const method = this.scheduling[parsed.data.operation] as (...args: unknown[]) => unknown;
     const mutates = mutatesWakeups(parsed.data.operation);
-    const value = mutates
+    const elicitationInput = parsed.data.operation === "openElicitation"
+      ? OpenElicitationInputSchema.safeParse(parsed.data.args[0])
+      : parsed.data.operation === "answerElicitationExternally"
+        ? AnswerElicitationExternallyInputSchema.safeParse(parsed.data.args[0])
+        : null;
+    if (elicitationInput && !elicitationInput.success) {
+      return { status: 400, payload: { ok: false, error: "invalid_scheduling_operation" } };
+    }
+    const parsedElicitationInput = elicitationInput?.data ?? null;
+    const preparedTranscript = parsedElicitationInput
+      ? await this.transcript.prepareParticipantMessage({
+        turnId: parsedElicitationInput.messageId,
+        actor: parsed.data.operation === "openElicitation" ? "assistant" : "external",
+        authorUserId: null,
+        createdAtUtc: new Date(parsedElicitationInput.now).toISOString(),
+        attentionOrdinal: null,
+      })
+      : null;
+    const value = mutates || preparedTranscript
       ? await this.product.commitRuntimeMutation(
-        () => method.apply(this.scheduling, parsed.data.args),
+        () => {
+          const result = method.apply(this.scheduling, parsed.data.args);
+          if (preparedTranscript && isPersistedElicitationOutcome(result)) {
+            const row = this.messages.message({ messageId: preparedTranscript.input.turnId });
+            if (!row) throw new Error("participant_transcript_part_missing");
+            this.transcript.appendPreparedParticipantMessage({
+              ...preparedTranscript,
+              input: {
+                ...preparedTranscript.input,
+                attentionOrdinal: row.attention_ordinal,
+              },
+            });
+          }
+          return result;
+        },
         true,
       )
       : method.apply(this.scheduling, parsed.data.args);
+    if (preparedTranscript && isPersistedElicitationOutcome(value)) {
+      const turn = this.transcript.participantTurn(preparedTranscript.input.turnId);
+      if (turn) await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn });
+    }
     if (mutates) {
       this.syncAgentTimerAlarms();
       // Arming is best-effort, as it is in `acceptRuntimeSql` and
@@ -1455,12 +1510,46 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (refusal) return refusal;
     const method = this.messages[parsed.data.operation] as (...args: unknown[]) => unknown;
     const mutates = mutatesTranscript(parsed.data.operation);
+    const appendInput = parsed.data.operation === "appendMessage"
+      ? AppendMessageInputSchema.safeParse(parsed.data.args[0])
+      : null;
+    if (appendInput && !appendInput.success) {
+      return { status: 400, payload: { ok: false, error: "invalid_message_operation" } };
+    }
+    const parsedAppendInput = appendInput?.data ?? null;
+    const preparedTranscript = parsedAppendInput
+      ? await this.transcript.prepareParticipantMessage({
+        turnId: parsedAppendInput.messageId,
+        actor: parsedAppendInput.authorType === "agent" ? "assistant" : parsedAppendInput.authorType,
+        authorUserId: parsedAppendInput.authorUserId,
+        createdAtUtc: new Date(parsedAppendInput.now).toISOString(),
+        attentionOrdinal: null,
+      })
+      : null;
     const value = mutates
       ? await this.product.commitRuntimeMutation(
-        () => method.apply(this.messages, parsed.data.args),
+        () => {
+          const result = method.apply(this.messages, parsed.data.args);
+          if (preparedTranscript && isAppendedMessageOutcome(result)) {
+            const row = this.messages.message({ messageId: result.messageId });
+            if (!row) throw new Error("participant_transcript_part_missing");
+            this.transcript.appendPreparedParticipantMessage({
+              ...preparedTranscript,
+              input: {
+                ...preparedTranscript.input,
+                attentionOrdinal: row.attention_ordinal,
+              },
+            });
+          }
+          return result;
+        },
         true,
       )
       : method.apply(this.messages, parsed.data.args);
+    if (preparedTranscript && isAppendedMessageOutcome(value)) {
+      const turn = this.transcript.participantTurn(value.messageId);
+      if (turn) await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn });
+    }
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
@@ -2092,6 +2181,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             type: "elicitation_answered",
             elicitation: result.elicitation,
           });
+        }
+        const transcriptTurn = this.transcript.participantTurn(result.responsePartId);
+        if (transcriptTurn) {
+          await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn: transcriptTurn });
         }
         return jsonResponse({ elicitation: result.elicitation, harnessRunId: result.harnessRunId });
       }

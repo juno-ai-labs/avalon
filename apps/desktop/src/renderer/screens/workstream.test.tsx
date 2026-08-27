@@ -25,6 +25,7 @@ import {
   workstreamPayloadBelongsToRoute,
   workstreamPresenceViewers,
   workstreamRunTiming,
+  workstreamShowsReadyState,
   workspaceMemberFromSession,
 } from './workstream';
 
@@ -789,6 +790,16 @@ describe('workstreamRunTiming', () => {
       ...harnessRun,
       status: 'needs_input',
     })).toBeNull();
+  });
+});
+
+describe('workstreamShowsReadyState', () => {
+  it('never invites another start while a newly created run is admitted or running', () => {
+    expect(workstreamShowsReadyState(0, false, 'scheduled')).toBe(false);
+    expect(workstreamShowsReadyState(0, false, 'running')).toBe(false);
+    expect(workstreamShowsReadyState(0, false, 'completed')).toBe(true);
+    expect(workstreamShowsReadyState(1, false, 'completed')).toBe(false);
+    expect(workstreamShowsReadyState(0, true, 'completed')).toBe(false);
   });
 });
 

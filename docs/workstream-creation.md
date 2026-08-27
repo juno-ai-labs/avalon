@@ -141,10 +141,11 @@ The two launchers differ only in the transcript. A typed create authored its
 opening turn and seeds it. Suggested work's turn is the selecting member's too,
 but its text was expanded server-side from the prompt, so it seeds an empty
 transcript and lets the refetch bring the real turn a moment later — and the
-work-stream screen withholds its
-`Ready to begin` empty state while a run is active, because inviting someone to
-start a work stream an agent is already working on contradicts the timer beside
-it.
+work-stream screen withholds its `Ready to begin` empty state while a run is
+scheduled or running, because an admitted run is already work even before its
+Workflow starts. During a rolling transcript cutover, the routed opening turn
+also remains visible until its canonical ordered turn arrives; a temporarily
+incomplete projection must not erase the turn the person already saw.
 
 ### What the server makes you wait for
 
@@ -245,6 +246,11 @@ than whichever rejection landed first.
   work-stream screen loads on either query being absent, so seeding one of the
   two still lands on the full-screen orb; and two hand-built details would drift
   into one path quietly losing its work timer at the navigation.
+- **A scheduled create is never “Ready to begin.”** `scheduled` is the durable
+  state between run admission and Workflow start, not an empty work stream. An
+  empty or lagging ordered snapshot keeps the routed opening turn as a
+  compatibility overlay, and even a suggested-work create with no locally known
+  turn withholds the empty invitation until the run settles.
 - **Concurrent refusals are reported in a fixed order.** The pre-flight pair is
   settled and rethrown in order, so one bad request always gets the same code.
 - **The room snapshot answers exactly what `GET /workstreams/:id` answers.** Same
@@ -320,6 +326,10 @@ see
   the hand-off, and the optimistic turn being taken back when the create fails.
   The suite clears the draft cache in `beforeEach` and stubs `ResizeObserver`;
   a test that skips either will see a restored draft from its predecessor.
+- `apps/desktop/src/renderer/screens/workstream-open.test.tsx` and
+  `apps/desktop/src/renderer/lib/transcript.test.ts` cover the destination side:
+  a scheduled run cannot paint `Ready to begin`, and an unmatched routed opening
+  turn remains until the ordered projection supplies its logical replacement.
 - `apps/api/test/workstream-create-latency.test.ts` —
   `pnpm --filter @rally/api exec vitest run test/workstream-create-latency.test.ts`.
   Covers what the create finishes before it answers: the run started, the route
@@ -366,6 +376,33 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-08-26 — The scheduled hand-off cannot regress to “Ready to begin”
+
+**What changed:** The work-stream screen now treats both `scheduled` and
+`running` as active creation states when deciding whether the empty invitation
+is legal. Its transcript reconciliation also retains a routed message until an
+ordered message with the same durable, client, elicitation, suggestion, or tool
+identity exists.
+
+**Why:** A newly created work stream first showed its optimistic opening turn and
+work timer, then the first authoritative snapshot replaced `running` with the
+short-lived `scheduled` state. The empty-state predicate inferred activity only
+from the running timer, so that valid intermediate state painted “Ready to
+begin” for several seconds. When an ordered transcript snapshot lagged its
+message page, the compatibility filter discarded the opening message merely
+because it was settled human text, making the false empty state visible.
+
+**Considered and rejected:** Delaying navigation until Workflow admission. The
+launcher exists so creation already looks open while durable work completes,
+and adding another server wait would trade a truthful intermediate state for a
+slower hand-off. Also rejected was trusting the optimistic cache indefinitely;
+the ordered transcript still replaces it once the same logical turn arrives.
+
+**Consequences:** No payload that says a run is admitted or executing may invite
+the participant to start it again. Compatibility rows are reconciled by stable
+identity, not by message type, so rolling deployments and temporarily incomplete
+ordered projections do not erase already-visible work.
 
 ### 2026-08-25 — Creation is a notifying path, on request
 
