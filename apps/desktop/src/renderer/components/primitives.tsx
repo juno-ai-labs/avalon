@@ -192,8 +192,15 @@ export function AvatarStack({
         const showingPresence = present.has(member.id) && member.id !== currentUserId;
         const presenceDescription = `${member.name} is viewing this workstream.`;
         return (
-          <Tooltip.Root delayDuration={300} key={member.id}>
-            <Tooltip.Trigger asChild>
+          <Tooltip.Root
+            delayDuration={300}
+            key={member.id}
+          >
+            <Tooltip.Trigger
+              asChild
+              onFocus={showingPresence ? undefined : (event) => event.preventDefault()}
+              onPointerMove={showingPresence ? undefined : (event) => event.preventDefault()}
+            >
               <span className={clsx('avatar-stack-item', showingPresence && 'is-present')}>
                 {showingPresence && <span aria-hidden="true" className="avatar-presence-ping" />}
                 <Avatar member={member} size="small" title={showingPresence ? null : member.name} />

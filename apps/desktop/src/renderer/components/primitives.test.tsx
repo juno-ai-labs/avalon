@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
@@ -173,9 +173,14 @@ describe('AvatarStack', () => {
     if (!currentItem || !collaboratorItem) throw new Error('avatar stack item missing');
 
     fireEvent.pointerMove(currentItem, { pointerType: 'mouse' });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 350)));
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(currentItem).not.toHaveAttribute('aria-describedby');
+    fireEvent.focus(currentItem);
+    expect(currentItem).not.toHaveAttribute('aria-describedby');
 
     fireEvent.pointerMove(collaboratorItem, { pointerType: 'mouse' });
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
       'Ari Collaborator is viewing this workstream.',
     );
