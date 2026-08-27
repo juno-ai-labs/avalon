@@ -208,6 +208,11 @@ tables, and let the post-merge system have exactly one canonical writer.
     person, and bounded sensitive-content vocabulary sufficient for the Slack,
     Linear, Granola, GitHub, and Notion trigger intents in this PRD, and refuse
     activation when a connector cannot yet normalize the required evidence.
+16. Give the automation architect one strict complete-replacement tool for
+    staging evaluator rules, so every external-event draft is produced through
+    the same typed and registry-aware boundary that acceptance and WorkspaceDO
+    later enforce, without exposing authority-owned IDs or projection fields to
+    the model.
 
 ## Non-goals
 
@@ -555,6 +560,123 @@ type ExternalEventPredicateV1 =
     };
 ```
 
+#### Automation architect evaluator tool
+
+The `rally_automation_architect` plugin adds one model-visible tool whose short
+name is `set_evaluator_rules` and whose provider wire name is
+`automation_set_evaluator_rules`. The tool authors the external-event portion
+of the current draft; it does not write WorkspaceDO registrations or accept an
+automation. Its harness definition is:
+
+```ts
+const AUTOMATION_SET_EVALUATOR_RULES_TOOL = {
+  name: "set_evaluator_rules",
+  description:
+    "Replace the complete external-event evaluator rule set staged for the " +
+    "current automation draft. Use [] to clear it. Inspect every named plugin " +
+    "first, and use only event types, event families, resources, fields, and " +
+    "operators that inspection declared.",
+  capability: "rally.automation.evaluators.set",
+  mode: "write",
+  idempotency: "provider_key",
+  inputSchema: AutomationSetEvaluatorRulesInputV1JsonSchema,
+} satisfies ToolDefinition;
+```
+
+The model supplies authoring keys and inspected source vocabulary, never
+canonical object or projection identities:
+
+```ts
+type AutomationSetEvaluatorRulesInputV1 = {
+  schemaVersion: 1;
+  evaluators: DraftExternalEventEvaluatorV1[]; // empty is an explicit clear
+};
+
+type DraftExternalEventEvaluatorV1 = {
+  evaluatorKey: DraftEvaluatorKey;
+  source: {
+    sourceBindingKey: ActivitySourceBindingKey;
+    suggestedSourcePluginId: ModelPluginId;
+    event:
+      | { kind: "event_type"; eventType: ConnectorEventType }
+      | { kind: "event_family"; eventFamily: ConnectorEventFamily };
+    resourceId?: ResourceId;
+  };
+  rules: NonEmptyArray<{
+    ruleKey: DraftEvaluatorRuleKey;
+    when: ExternalEventPredicateV1;
+    result: "match" | "no_match";
+  }>;
+  gate:
+    | { kind: "deterministic" }
+    | { kind: "semantic"; condition: NonEmptyString };
+};
+
+type AutomationSetEvaluatorRulesResultV1 = {
+  accepted: true;
+  stagedSetRevision: DraftEvaluatorSetRevision;
+  stagedSetHash: CanonicalPayloadHash;
+  evaluators: Array<{
+    evaluatorKey: DraftEvaluatorKey;
+    expandedEventTypes: NonEmptyArray<ConnectorEventType>;
+  }>;
+};
+```
+
+`DraftEvaluatorKey` and `DraftEvaluatorRuleKey` are bounded non-empty stable
+keys unique within the submitted set. They are model-authored references such
+as `github_pr_merged`, not UUIDs and not storage authority. The host derives
+canonical evaluator and rule IDs from the AutomationAgent ID, accepted
+definition revision, authoring key, and exact expanded event type. The host
+also supplies the automation ID, author, workspace, region, expected draft
+revision, authority generation, projection version, resolved connection ID,
+and payload hash; none is accepted from tool arguments.
+
+The tool uses complete-replacement semantics. Every successful call supersedes
+the previously staged set for that compiler run, and `evaluators: []` is the
+only clear operation. A recovered provider call replays its durable tool receipt
+and returns the same staged revision/hash. It never appends implicitly, because
+an append API would retain rules the architect stopped mentioning and make it
+impossible to distinguish a retry from a second desired rule. More than one
+successful call in a compiler run is allowed so the architect can revise its
+work; only the latest successful staged revision may be submitted.
+
+The architect must successfully call `automation_set_evaluator_rules` during
+every compiler run before `automation_submit_draft`, including with an empty set
+when the draft has only manual/timer triggers or when a partial draft cannot yet
+name a legal source. This per-run requirement makes changing an existing draft
+from event-driven to timer-only remove the old rules rather than inherit them.
+`automation_submit_draft` references evaluator keys from the latest staged set;
+it does not carry `deterministicFilters`, `deterministicPrefilter`, raw evaluator
+JSON, canonical IDs, or projection metadata. For a `ready = true` draft, the
+host requires an exact correspondence between every external-event trigger and
+the referenced staged evaluator keys, rejects unused evaluators, and rejects a
+trigger whose keys span incompatible source bindings. A `ready = false` draft
+may stage an empty or incomplete set, but it cannot be accepted or projected.
+Resource-watch registrations synthesized from authoritative watched links do
+not pass through this model tool and cannot acquire a semantic gate or custom
+predicate through it.
+
+The first parser is the strict recursive Zod schema advertised to the provider;
+the tool's `validateInput` hook runs the same structural parse so refinements
+produce correctable argument errors. A second contextual parser uses only the
+frozen manifests of plugins successfully loaded and inspected in the current
+compiler run. It expands an event family to its declared exact event types and
+rejects unknown or duplicate keys, sources, resources, families, event types,
+attributes, operators, and person IDs. It also rejects a field kind/operator
+combination that the exact event descriptor does not allow. It does not accept
+a raw object through a type assertion or silently remove an illegal leaf.
+
+A successful tool call durably records its provider-call receipt and run-scoped
+staged set in AutomationAgent SQLite. It performs no connector RPC, Queue send,
+timer arm, or WorkspaceDO write. `automation_submit_draft` atomically promotes
+the latest staged revision and the submitted definition into one new canonical
+draft revision; a crash before submission leaves only resumable compiler-run
+state, not a half-updated draft. Acceptance later resolves each binding to an
+authorized connection, repeats contextual parsing against the frozen accepted
+manifest revision, mints the authoritative envelope shown above, and projects
+it through the receipt-backed WorkspaceDO path.
+
 That AutomationAgent-owned envelope is one publisher's wire contract, not a
 reason to build an automation-only matcher. WorkspaceDO compiles every accepted
 automation evaluator and every watched work-stream resource link into the same
@@ -647,7 +769,8 @@ the snapshot unless:
 The successful result is a branded `ValidatedExternalEvaluatorSet`, and
 internal compilation, persistence, projection, and evaluation APIs accept that
 type rather than the raw wire type. Serialization erases the brand, so the
-receiver parses again. Validation occurs when the architect submits a draft,
+receiver parses again. Validation occurs when the architect stages evaluator
+rules, when `automation_submit_draft` binds that staged set to a definition,
 when acceptance resolves the proposed source binding to a connection, when
 AutomationAgent reads or writes its SQLite record, on every
 AutomationAgent-to-WorkspaceDO projection RPC, when WorkspaceDO reads or writes
@@ -887,6 +1010,16 @@ AutomationAgent remains durable and returnable from its first admitted turn.
 
 ## Decision log
 
+- **2026-08-27 — Give the architect one complete-replacement evaluator tool.**
+  `automation_set_evaluator_rules` stages a structurally and contextually parsed
+  authoring set inside the compiler run, and `automation_submit_draft` promotes
+  that set with the definition. Host-owned IDs, generations, resolved
+  connections, and projections never enter model arguments. Embedding opaque
+  filter JSON in `submit_draft`, exposing the authoritative evaluator envelope,
+  and incremental add/remove tools were rejected because they respectively
+  evade type safety, cross an authority boundary, and make retries and stale
+  rule removal ambiguous.
+
 - **2026-08-27 — Cut over in one merge, migrate accepted automations, and
   discard legacy drafts.** There are no customer automations to support through
   a compatibility window. The merge-triggered workflow imports every visible
@@ -1122,6 +1255,14 @@ than from review-sensitive line positions:
   contains the pure Bind transition reducer, canonical projection, hashing, and
   provider-boundary verification. Search for `BindLoopTransition`,
   `applyBindLoopTransition`, `canonicalizeBindLoop`, and `hashBindLoop`.
+- [`packages/agent-harness/src/index.ts`](../../../packages/agent-harness/src/index.ts)
+  contains `AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS`, the creator-tool
+  executors inside `compileAutomationDraft`, and the existing `submit_draft`
+  `validateInput` boundary. Add `set_evaluator_rules` beside those definitions,
+  give its executor the same advertised-schema/strict-Zod validation symmetry,
+  and keep its staged state in the durable host adapter rather than a process
+  closure. The automation compiler prompt in the `prompts` section is where the
+  required set-before-submit and explicit-clear behavior is taught.
 - [`apps/api/src/durable-objects/workstream-object-schema.ts`](../../../apps/api/src/durable-objects/workstream-object-schema.ts)
   contains the SubstreamAgent object migration history. Find the migration
   whose description says it adds the canonical ordered transcript and lossless
@@ -1388,10 +1529,13 @@ never-reuse/tombstone rules.
 ## Agent behavior
 
 This PRD changes the host and durability of the existing
-`rally_automation_architect`; it does not add a model-visible plugin or tool.
-The architect keeps its current prompt, strict `submit_draft` result,
-request-scoped attachment tools, connector discovery policy, structured
-elicitation, narration rules, and inability to activate an automation itself.
+`rally_automation_architect`. It adds the model-visible
+`automation_set_evaluator_rules` tool defined above to that existing plugin; it
+does not add a plugin, expose internal registration RPCs, or let the model write
+an accepted evaluator projection. The architect keeps its current prompt,
+strict `submit_draft` result, request-scoped attachment tools, connector
+discovery policy, structured elicitation, narration rules, and inability to
+activate an automation itself.
 
 From the person's perspective, the architect gains durable continuity:
 
@@ -1407,6 +1551,15 @@ revision, and acceptance authority. Loading a connector plugin grants only the
 same frozen, reauthorized capability surface it grants today. The architect may
 propose a definition but cannot install routes, choose final scope, accept the
 draft, create generated work streams, or broaden a connector grant.
+
+The automation compiler prompt requires one successful
+`automation_set_evaluator_rules` call in every compiler run before
+`automation_submit_draft`. It teaches complete replacement and explicit empty
+clears, requires source plugin inspection first, and tells the architect to use
+the staged evaluator keys in its external-event triggers. Tool-call turns keep
+the existing no-assistant-text rule. A validation rejection is repaired through
+the tool's named issue path; it is not narrated to the person and does not erase
+the last canonical draft revision.
 
 The shared runtime kernel is internal and introduces no model-visible wire
 names. Each host's existing tool catalog and product policy remain distinct.
@@ -1426,8 +1579,10 @@ deployment phase.
    fences, and conformance fixtures, never the removed aggregate run-level
    transcript protocol.
 2. In the one implementation PR, add the typed evaluator grammar and connector
-   normalizers; the shared destination-typed evaluator/resource-watch engine;
-   the extracted durable Bind kernel; the AutomationAgent
+   normalizers; the architect's strict `set_evaluator_rules` definition,
+   prompt, durable staging store, tool receipts, and submit-time join; the shared
+   destination-typed evaluator/resource-watch engine; the extracted durable Bind
+   kernel; the AutomationAgent
    `ScheduledDurableObject` subclass; its ordered-transcript author adapter;
    child-run projections and automation-home history; and the final serving
    paths for draft creation, acceptance, trigger admission, and lifecycle
@@ -1549,12 +1704,13 @@ steps.
     reads or writes the removed run-level aggregate transcript protocol, and
     no migration path imports legacy `draft_conversation_json` or retains it as
     a readable or writable fallback.
-17. Parse table-driven legal and illegal evaluator fixtures at every boundary.
-    Reject unknown schema versions and keys, empty groups and values, duplicate
-    IDs and source tuples, non-finite numbers, mismatched field kinds,
-    unsupported operators, undeclared attributes, wrong connection/event pairs,
-    stale projection versions, and same-version hash conflicts. Demonstrate
-    that production evaluator APIs cannot receive an unbranded raw object.
+17. Parse table-driven legal and illegal evaluator fixtures at every boundary,
+    beginning with `automation_set_evaluator_rules`. Reject unknown schema
+    versions and keys, empty groups and values, duplicate authoring keys, IDs and
+    source tuples, non-finite numbers, mismatched field kinds, unsupported
+    operators, undeclared attributes, wrong plugin/connection/event pairs, stale
+    projection versions, and same-version hash conflicts. Demonstrate that
+    production evaluator APIs cannot receive an unbranded raw object.
 18. Evaluate nested first-match rules for string, number, boolean, and string
     array attributes. Verify case-sensitive comparisons, no coercion, and that a
     missing attribute makes positive and negative leaves false. No matching rule
@@ -1621,6 +1777,18 @@ steps.
     rolls forward without reopening legacy authority. At no point does the
     serving product dual-write or expose a per-automation authority flag, and
     the completed implementation requires no follow-up cleanup merge.
+29. Run the architect through a timer-only draft, one exact event, one event
+    family, several rules, a semantic gate, a selected resource, and an edit
+    from event-driven to timer-only. Every compiler run calls
+    `automation_set_evaluator_rules` before `automation_submit_draft`; the final
+    edit sends `evaluators: []`; provider-call replay returns the same staged
+    revision; a later successful set replaces rather than appends; and draft
+    submission atomically binds only the latest staged hash. Reject submission
+    when the set tool was not called in that run, when a ready trigger references
+    a missing or incompatible evaluator key, or when an evaluator is unused.
+    Prove that the tool performs no connector effect or WorkspaceDO write and
+    that acceptance, not the model, resolves connections and mints canonical
+    evaluator identities and projection metadata.
 
 ## Open questions
 
