@@ -311,12 +311,14 @@ export class WorkstreamTranscriptStorage {
       const pendingLegacyTool = this.sql.exec<{
         id: string;
       } & Record<string, SqlStorageValue>>(
-        `SELECT id FROM parts
-          WHERE substream_id = '0'
-            AND visibility IN ('people', 'both')
-            AND kind = 'tool_call'
-            AND tool_status = 'pending'
-            AND created_at <= ?
+        `SELECT part.id FROM parts part
+          JOIN tool_effects effect ON effect.effect_intent_id = part.effect_intent_id
+         WHERE part.substream_id = '0'
+           AND part.visibility IN ('people', 'both')
+           AND part.kind = 'tool_call'
+           AND part.tool_status = 'pending'
+           AND part.created_at <= ?
+           AND effect.status IN ('admitted', 'executing')
           LIMIT 1`,
         cutoverAppliedAt,
       ).toArray()[0];
