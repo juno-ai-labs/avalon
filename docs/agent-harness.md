@@ -853,6 +853,20 @@ and given no way to open it. EU workspaces get nothing from this until Terminal
 is regionally supported there; the gate is the plugin's own regional rule, so
 that follows automatically rather than needing its own condition.
 
+**A published document currently has no reading surface in the desktop client,
+and the PRD assumed it had one.** Verified in a real window: a generated
+resource appears in the rail under `Artifacts`, and opening it shows the
+metadata panel — title, provider, type, direction, version, last updated,
+`Remove` — with no content. `InspectorDetail` in `inspector-rail.tsx` renders
+no body, and `AttachmentLightbox`, the one surface that fetches
+`/resources/:id/preview`, is wired only to attachments on messages. So the
+guidance can produce a document that nobody can read in the app, which is why
+this PRD is not `completed`: what it specifies has shipped, and its first
+acceptance criterion — a rail entry that opens to the formatted document —
+cannot be met until the rail can show one. That is a client change the PRD
+deliberately excluded ("no desktop release"), so it is named here rather than
+smuggled in.
+
 ### 2026-08-27 — Explicit plugin activation may prepare convergent runtime state
 
 **What changed:** Deferred plugins may provide an `onActivate` hook with a
