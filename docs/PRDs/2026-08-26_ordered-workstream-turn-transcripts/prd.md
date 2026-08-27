@@ -75,14 +75,15 @@ participant feed is an authorized projection of the same committed facts, not
 the source from which private protocol-only messages or model-facing derivatives
 are guessed.
 
-Deployment is a single coordinated breaking cutover. Rally has no production
-users or production transcript-continuity obligation at the time of this
-decision, so the implementation does not carry a legacy feed, dual-read or
-dual-write path, capability-negotiated protocol, or historical backfill. The
-backend may require the new desktop version immediately; downloading that
-version is an acceptable prerequisite to opening a work stream. If the no-user
-assumption becomes false before release, this PRD must be revisited rather than
-quietly adding compatibility machinery during implementation.
+Deployment is a single coordinated breaking protocol cutover followed by an
+explicit object-local projection backfill. The implementation does not carry a
+legacy feed, dual-read or dual-write path, capability-negotiated protocol, or
+infer history that the old stores never retained. It does preserve every
+participant-visible pre-cutover `parts` row in its durable legacy order and
+every exact legacy compaction checkpoint through canonical references to their
+existing owning rows. Historical Bind interleaving is marked unavailable rather
+than fabricated. The backend may require the new desktop version immediately;
+downloading that version is an acceptable prerequisite to opening a work stream.
 
 ### Terminology and definitions
 
@@ -106,6 +107,14 @@ the content would be useful in the participant feed.
   that references canonical fact/payload IDs. A projection row does not become
   the owner of referenced text, result, or provider payload merely because an
   API flattens the join when returning it.
+- **Legacy transcript projection backfill:** the one-time, object-local operation
+  that adds canonical ordering/reference rows for participant-visible legacy
+  `parts` and exact legacy compaction checkpoints. It does not copy their
+  payloads, query the inference archive, or create a Bind-loop generation from
+  aggregate rows. The v27 schema receipt is its cutover fence; a v28 receipt
+  records the exact source digest, counts, pre-write PITR bookmark, operator run,
+  and the explicit `not_reconstructable_from_legacy_aggregate_rows` Bind-history
+  status.
 - **Field naming:** conceptual storage records and SQL columns use
   `snake_case`; TypeScript properties and JSON wire fields use `camelCase`.
   Thus `transcript_sequence` and `timing_accuracy` are exposed as
@@ -414,11 +423,11 @@ a turn, block, slice, or hydration loop.
 4. **Write canonical transcript content on every token.** The bounded active
    stream checkpoint remains the recovery mechanism while a turn is open; the
    canonical turn commits at the model-turn boundary.
-5. **Migrate or preserve pre-cutover transcript history.** There are no
-   production users whose stored work-stream history must survive this cutover.
-   The implementation does not backfill from the Global inference archive,
-   retain legacy envelopes, or infer historical interleaving. Non-production
-   stale transcript rows may be discarded by the idempotent schema cutover.
+5. **Reconstruct pre-cutover Bind interleaving that was never stored.** The
+   backfill preserves the participant-visible ordering and exact compaction
+   checkpoint arrays that exist in object-local SQLite. It does not query the
+   Global inference archive, synthesize protocol messages from aggregate text,
+   or claim that the old participant order is the exact provider order.
 6. **Introduce cross-work-stream transcript search, a global transcript index,
    or cross-region transcript movement.** The owning `SubstreamAgent` remains
    authoritative.
@@ -840,8 +849,10 @@ None yet.
     protocol replaces the existing work-stream feed in one coordinated backend
     and desktop release. The server accepts only the new protocol; old desktops
     are unsupported and may fail closed without a guaranteed error shape. There
-    is no capability negotiation, dual emission, dual read/write, historical
-    backfill, or compatibility window. The rejected alternative was paying
+    is no capability negotiation, dual emission, dual read/write, or
+    compatibility window. A separate one-time object-local operation projects
+    the faithful legacy participant order and checkpoint references into the
+    new substrate; it is not a compatibility reader. The rejected alternative was paying
     implementation and test cost for transitional behavior when Rally has no
     production users or transcript continuity to preserve.
 13. **Signal activity edges; do not stream a clock.** Durable start/stop edges
@@ -1073,7 +1084,8 @@ The request-boundary record stores the loop revision, system-projection revision
 renderer/projector versions, and both hashes. For newly canonical state, the
 healer changing the reconstructed array is itself a mismatch. Initial input may
 be healed before `state_initialized`; the exact post-healing output becomes the
-first durable baseline and there is no pre-cutover reconstruction path. A
+first durable baseline. The backfill does not create a pre-cutover Bind
+generation because the legacy aggregate rows cannot reproduce one exactly. A
 mismatch fails before provider inference rather than silently allowing Bind and
 the durable transcript to fork.
 
@@ -1086,9 +1098,12 @@ Bind. Parallel tools may settle in any order, but their accepted protocol
 messages project in the call order Bind uses.
 
 Neither deployment nor replay queries the Global raw-inference lakehouse to
-construct participant turns or Bind state. Canonical history begins at the
-breaking cutover; pre-cutover aggregate rows are not converted, wrapped, or
-served through the new protocol.
+construct participant turns or Bind state. Pre-cutover participant-visible rows
+are projected from their owning object-local `parts` records, in
+`parts.sequence_number` order, without copying their payloads. Exact legacy
+compaction arrays remain owned by `compaction_checkpoints` and are reached by a
+canonical reference. No pre-cutover aggregate row becomes a Bind message or
+loop generation.
 
 ### Participant transcript projection
 
@@ -1634,7 +1649,7 @@ mapping makes the coverage explicit.
 | `T5 Activity-time truth` | Response, plugin, invocation, and observable-thinking timers use authoritative UTC starts, first-join/reconnect elapsed baselines, lifecycle edges, and interval unions; local ticking never requires server clock frames and survives late join, pause, sleep, reconnect, and history load. |
 | `T6 Recovery and idempotency` | Worker loss, Durable Object eviction/hibernation, socket replay strictly beyond the durable `resumeAfterEventSequence`, retries, duplicate events, and compaction recover without loss, duplication, reordering, or identity reuse. |
 | `T7 Authorization and locality` | Participant APIs reveal neither restricted payloads nor restricted bounds, and Global/EU authorities never use one another as transcript or inference-archive fallbacks. |
-| `T8 Breaking cutover` | One idempotent coordinated release establishes a quiescent old-protocol boundary and the canonical protocol without backfill, dual paths, capability negotiation, or a compatibility window; no pre-cutover run crosses the schema boundary, and old desktops cannot receive transcript data through the removed protocol. |
+| `T8 Breaking cutover and faithful backfill` | One coordinated release establishes the canonical-only protocol without dual paths, capability negotiation, or a compatibility window; a separate idempotent, quiescent object-local backfill projects all retained pre-v27 participant rows and exact checkpoint references, records a PITR bookmark/receipt, and explicitly leaves unavailable Bind history unavailable. |
 | `T9 Visible product behavior` | A real desktop window visibly preserves interleaving, gap loading, unread opening, instant jump-to-latest, smooth streaming, parallel activity, and historical timing labels. |
 | `T10 Constant-cost reader admission` | One external boot/range operation or socket admission authorizes once and reuses an epoch-fenced capability across all slices, active state, and hydration; authorization work never scales with returned entries, blocks, or gaps. |
 | `T11 Indexed initial loading` | Attention-ordinal resolution, unread-anchor, neighbor, latest, bounds, and arbitrary-range production queries choose declared SQLite indexes; the two initial islands share one snapshot and one deduplicated bulk-hydration pass without a full scan, temporary sort, offset walk, or transcript-length-dependent statement count. |
@@ -1688,7 +1703,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H20 rebases_active_timers_after_reconnect` | workerd + desktop | Miss lifecycle edges, reconnect with the original `startedAtUtc`, `snapshotAtUtc`, and `elapsedMsAtSnapshot`, and assert the local monotonic baseline rebases once and later terminal `durationMs` becomes authoritative. |
 | `H21 survives_hibernation_during_active_stream` | workerd | Stream text and parallel activity, hibernate/evict the object, reconnect, and assert exact checkpoint prefix, lifecycle state, loop revision, and subsequent frames appear once. |
 | `H22 deploys_canonical_protocol_as_the_only_feed` | workerd + desktop | Install the new object schema, backend protocol, and current desktop fixture; assert first open, range loading, streaming, replay, and terminal history use only canonical transcript entries/activity and register no legacy emitter, reader, or capability branch. |
-| `H23 starts_canonical_history_without_legacy_backfill` | SQL + workerd | Seed non-production pre-cutover aggregate rows, run the idempotent cutover twice, and create a new response. Assert the old rows are neither converted nor returned, the inference archive is never queried, and canonical sequence/history begins solely from post-cutover activity. |
+| `H23 backfills_legacy_participant_order_before_canonical_suffix` | SQL + workerd | Seed participant-visible pre-v27 human, assistant, external, text, and tool rows with non-contiguous legacy sequence numbers plus post-cutover canonical turns. Run the backfill and assert the old rows occupy the exact ordered prefix, the existing suffix shifts without changing turn identity/content, the counter advances correctly, and no Bind head or message is invented. |
 | `H24 keeps_participant_and_restricted_projections_linked_without_copying_payloads` | SQL + workerd | Commit an assistant turn used by both views, an exact model-facing tool result plus participant-safe summary, provider continuation metadata plus render-safe content, and compaction status plus private replacement. Inspect durable rows and read participant ranges/resume inference: assert identical assistant text exists under one canonical payload ID referenced by both orderings; genuinely different safe/private facts have different owners and visibility; no projection table contains an independent payload copy. Exact private replay must not derive from the participant view, and the participant view must not expose the restricted fact. |
 | `H25 compacts_twice_across_distinct_events_and_resumes_second_generation` | workerd | Accept activity, commit compaction event A, accept additional assistant/tool activity, then commit distinct compaction event B. Assert two `state_replaced` transitions with distinct event/source revisions, three ordered loop generations, retention of both exact replacements, unchanged participant conversation turns plus two separately ordered safe compaction status entries, and post-eviction replay from B with the exact next provider array. For each event, assert the restricted replacement and terminal safe-status revision commit atomically while retaining separate canonical facts. Replay either event ID and assert idempotency rather than a third replacement generation or status entry. |
 | `H26 joins_existing_stream_with_utc_start_and_elapsed_baseline` | workerd + desktop + E2E | Start a response before a second client opens the work stream. On first join, assert every active scope carries `activityId`, `intervalId`, lifecycle `revision`, `completedDurationMs`, original `startedAtUtc`, server `snapshotAtUtc`, full prior `elapsedMsAtSnapshot`, and `timingAccuracy`; the label paints completed plus active duration immediately, continues from the local monotonic receipt point, and is replaced by canonical terminal duration. |
@@ -1698,6 +1713,12 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H30 persists_compaction_lifecycle_for_future_rendering` | SQL + workerd + desktop reducer | Begin automatic compaction between two conversation turns. Assert one participant-safe `context_compaction` entry is durably ordered before mutation, its active snapshot/reconnect state includes the original UTC start plus elapsed baseline, and one SQLite transaction commits the exact restricted replacement fact/loop reference plus that same safe entry's `completed` revision. Assert canonical duration survives cold/range load, the current reducer retains but need not paint it, and a fixed future-view projection can produce **Context automatically compacting** or **… compacting for 2m 34s**, then **Context automatically compacted** or **… compacted in 2m 34s**, without reading restricted payloads. |
 | `H31 projects_nested_activity_with_parallel_tool_children` | SQL + workerd + desktop reducer | Run one response with two assistant turns. Under the first turn, stream thinking plus two ordered plugin blocks whose tool children start and settle in parallel/out of order; place compaction under the second turn. Assert live, reconnect, range, and cold projections produce response → assistant turn → plugin → tool ancestry with thinking/compaction at their causal turn, stable sibling order, independent child labels, parent wall-clock unions, no double counting, and uninterrupted response-text token streaming. Run the same fixture through a flat-row adapter and a nested in-memory fixture and assert identical product projection without requiring identical persistence. |
 | `H32 benchmarks_complete_workstream_open_distribution` | real Electron + local E2E performance lane | From an already-running authenticated desktop, exercise declared warm/cold cache and object, unread/latest, overlapping/disjoint, large-history, and mid-stream cohorts through the production click/navigation path. Stop each client-monotonic sample only when the target range is visibly committed, both islands and active fence are resident, and the composer is usable. Preserve raw samples and environment metadata; assert the combined distribution is p50 ≤ 1,000 ms and p90 ≤ 2,000 ms and report every cohort separately. |
+| `H33 backfills_legacy_tool_cards_by_reference` | SQL + workerd | Seed completed, failed, ambiguous, and in-progress legacy tool rows with participant-safe structured summaries. Assert stable tool identities, plugin/tool names, statuses, inputs/results/errors, and old display order hydrate from the owning `parts` rows while new payload rows contain only stable references and no copied summary/result. |
+| `H34 backfills_exact_legacy_compaction_references` | SQL + workerd | Seed two distinct legacy compaction events and exact message arrays. Assert two new checkpoint projections reference the old owning rows, each array/summary resumes byte-for-byte through the canonical reader, no payload copy exists, and no participant status or Bind generation is fabricated. |
+| `H35 records_empty_and_populated_backfill_receipts` | SQL + workerd | Backfill an empty object and a populated object. Assert each commits exactly one v28 receipt containing v27 cutover time, exact source counts/digest, operator run, non-empty real PITR bookmark, completion time, and explicit unavailable-Bind-history status. |
+| `H36 replays_backfill_idempotently_and_reconciles_every_fact` | SQL + workerd | Invoke the same object through two operator runs. Assert the second call writes nothing, returns the first receipt with `applied=false`, recomputes source integrity, and verifies exact participant prefix/checkpoint counts and order. |
+| `H37 targets_exact_regional_fleet_without_crossing_jurisdictions` | script + remote-preview contract | Inventory the production-shaped 389 Global plus 3 EU addressable IDs and legacy unrestricted IDs. Assert runtime classification sends every eligible ID once through its matching regional binding, skips every wrong/unrestricted ID, bounds batches, rejects count drift before writes, and persists every per-object outcome/bookmark in a mode-0600 local receipt. |
+| `H38 replay_audits_the_complete_backfilled_fleet` | operator acceptance | Re-run the production backfill after all objects report success. Assert exactly 389 Global and 3 EU results are `applied=false`, every result remains `verified=true`, fleet source/projection totals match the first receipt, and no new receipt, fact, turn, checkpoint projection, or sequence change occurs. |
 
 ### Required edge-case and failure tests
 
@@ -1749,6 +1770,14 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E44 rolls_back_canonical_fact_and_required_projections_atomically` | SQL + workerd | For assistant acceptance, exact tool-result acceptance, and compaction completion, inject failure after canonical fact insertion and after each required participant/Bind projection write. Assert the object-local SQLite transaction leaves no orphan fact, independent duplicate payload, advanced sequence/revision, one-sided projection, dispatchable tool plan, completed safe status without a replacement, or replacement visible without its completed safe status. Retry each transition and assert exactly one owning fact plus the required stable projection references commit. |
 | `E45 hydrates_oversized_indivisible_turn_without_stranding_range` | workerd + desktop | Create one valid turn whose combined text/tool blocks and then whose block manifest exceed the existing encoded page/socket bound. Assert the range returns one small envelope with stable sequence and immutable `turnManifestRef` rather than `message_page_too_large`; accepting it advances transcript coverage exactly once and permits older/newer range loading. Hydrate manifest and payload byte ranges under one admission, verify revision/length/hash, then inject missing, tampered, unauthorized, interrupted, duplicate, and out-of-order chunks. Assert only the turn/payload hydration state retries or errors, no restricted fallback appears, and transcript gap coverage never regresses or loops. |
 | `E46 prevents_pre_cutover_run_from_crossing_schema_boundary` | workerd + release-contract | Seed queued, active, paused, and externally unsettled old-protocol runs while racing new admission with the coordinated cutover. Assert admission is fenced first; the release operation either observes quiescence/cancelled-abandoned non-production state and installs the canonical-only schema or aborts before schema mutation. No run reads/writes both protocols, no legacy dual-write/reader remains, and a new post-cutover run uses only canonical facts/projections. |
+| `E47 aborts_backfill_when_source_moves_during_preparation` | SQL + workerd | Pause PITR-bookmark/hash preparation, edit or append a legacy source row, then resume. Assert the transaction's full source re-read detects the change and commits no fact, projection, counter shift, or receipt. |
+| `E48 refuses_backfill_until_object_is_quiescent` | SQL + workerd | Seed each write-capable run/activity state and race a new write with backfill. Assert the operation fails before renumbering or receipt creation; after terminal settlement, the same source backfills once. |
+| `E49 rejects_partial_or_conflicting_legacy_projection` | SQL | Preinsert one legacy turn projection, a mismatched fact identity, and a conflicting compaction uniqueness key in separate cases. Assert each aborts the complete object transaction instead of skipping the conflict or producing a mixed projection. |
+| `E50 detects_tampered_legacy_owner_after_backfill` | SQL + workerd | Change referenced legacy text, structured tool data, or checkpoint bytes after a successful backfill. Assert replay reconciliation fails against the recorded source digest rather than blessing changed history. |
+| `E51 handles_cutover_timestamp_boundary_without_loss_or_duplication` | SQL | Create an unprojected legacy row at the v27 `applied_at` millisecond and a post-v27 row already carrying a canonical projection at that same millisecond. Assert the first is included exactly once, the second remains only in the suffix, and all other source predicates are strict and deterministic. |
+| `E52 preserves_receipts_when_a_fleet_batch_partially_fails` | script | Return success and error outcomes in one regional batch. Assert the mode-0600 local receipt durably contains every completed per-object bookmark/error before the command exits nonzero; rerunning safely reconciles prior successes and applies only missing object receipts. |
+| `E53 rejects_inventory_or_jurisdiction_drift_before_mutation` | script + remote-preview contract | Change the eligible count, duplicate/omit a classifier result, return a wrong jurisdiction, or expose an ambiguous namespace. Assert apply fails before the first object RPC and never treats an expected Cloudflare parser failure as an eligible target. |
+| `E54 fails_replay_if_any_fleet_object_is_unverified` | operator acceptance | On the post-apply fleet audit, return one missing receipt, empty bookmark, digest/count/order mismatch, or object RPC error. Assert the run cannot report success and identifies the object in the protected local receipt without printing transcript content or secrets. |
 
 ### Required algebraic, race, and failure-proof checks
 
@@ -1808,14 +1837,29 @@ coordinated cutover and no compatibility phases:
    may require that version to be downloaded before a work stream opens. Older
    desktops are unsupported and are not served a fallback feed; this PRD does
    not require a special compatibility response.
+4. After the backend containing the v28 receipt schema and object-owned
+   backfill RPC is deployed, inventory the `SubstreamAgent` namespace, classify
+   each opaque ID with Cloudflare's jurisdiction parser, and require the
+   operator-confirmed eligible counts before the first write. For the initial
+   production operation those witnesses are 389 Global and 3 EU objects;
+   unrestricted legacy IDs are not addressable through a regional binding and
+   remain explicit skips rather than cross-region fallbacks.
+5. Backfill only quiescent objects. Each object captures a pre-write PITR
+   bookmark, hashes the complete v27-fenced source, re-reads it inside the same
+   SQLite transaction that adds the ordered projections and v28 receipt, and
+   aborts on movement or conflict. The operator writes every outcome/bookmark to
+   a mode-0600 local receipt. Any object error makes the fleet command fail.
+6. Replay the operation across the complete eligible fleet. Every object must
+   return `applied=false` and `verified=true`, with source/projection totals
+   matching the first run. Inspect representative raw SQLite rows and the fleet
+   receipt before declaring the migration complete.
 
-There is no data migration job, inference-archive backfill, dual write, dual
+There is no inference-archive backfill, legacy protocol reader, dual write, dual
 read, capability negotiation, compatibility window, staged client floor, or
-manual dashboard/cross-region step. Non-production pre-cutover transcript rows
-and cancelled/abandoned pre-cutover runs need not remain readable. A backend rollback is not required to understand new
+cross-region step. The one-time object-local data projection is required and is
+recoverable from each receipt's PITR bookmark. A backend rollback is not required to understand new
 canonical rows; use a forward fix rather than preserving the removed protocol
-solely for rollback. If production users or transcript-continuity requirements
-exist before deployment, stop and revise this release plan before shipping.
+solely for rollback.
 
 ## Acceptance
 
@@ -1962,16 +2006,17 @@ exist before deployment, stop and revise this release plan before shipping.
 37. One idempotent coordinated release first fences old-protocol run admission
     and establishes a quiescent boundary, then installs the canonical schema,
     deploys the canonical-only backend protocol, and publishes the matching desktop.
-    Pre-cutover rows are not backfilled or served, no inference archive is
-    queried, and an older desktop cannot receive transcript bounds or content
-    through a compatibility projection. No stable old-client error shape is
-    required.
+    The subsequent object-local operation faithfully projects all retained
+    pre-v27 participant rows and exact checkpoint references, but creates no
+    historical Bind state and queries no inference archive. An older desktop
+    cannot receive transcript bounds or content through a compatibility
+    projection. No stable old-client error shape is required.
 38. Participant range reads and coverage metadata reveal neither restricted
     loop payloads nor `loop_sequence` bounds. Subsequent inference nevertheless
     reconstructs from the restricted projection without consulting the desktop
     projection or Global inference lakehouse.
 39. Every `T1`–`T14` objective is mapped to its proving suites/files, and every
-    required `H01`–`H32` and `E01`–`E46` test is mapped to an actual test
+    required `H01`–`H38` and `E01`–`E54` test is mapped to an actual test
     name and file, passes at its required layer, and has an implementation-PR
     failure-proof record showing the named assertion fails when its protected
     production behavior is deliberately broken. The three generated algebraic

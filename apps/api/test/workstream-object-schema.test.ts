@@ -50,6 +50,7 @@ const EXPECTED_TABLES = [
   "durable_outbox",
   "elicitation_requests",
   "inference_attempts",
+  "legacy_transcript_backfills",
   "member_attention",
   "object_versions",
   "part_attachments",

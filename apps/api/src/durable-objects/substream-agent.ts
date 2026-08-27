@@ -139,7 +139,10 @@ import {
 } from "./workstream-tool-receipt-protocol";
 import { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-storage";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
-import { WorkstreamTranscriptStorage } from "./workstream-transcript-storage";
+import {
+  WorkstreamTranscriptStorage,
+  type LegacyTranscriptBackfillOutcome,
+} from "./workstream-transcript-storage";
 import {
   TranscriptOperationRequestSchema,
   type TranscriptOperationRequest,
@@ -1051,6 +1054,27 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async executeIdentityOperation(input: IdentityOperationRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return objectPortRpcResult(await this.identityOperationOutcome(input));
+  }
+
+  /** Operator-only, binding-addressed projection of pre-v27 transcript rows. */
+  async backfillLegacyTranscript(input: {
+    objectId: string;
+    operatorRunId: string;
+    cutoverVersion: 27;
+  }): Promise<LegacyTranscriptBackfillOutcome> {
+    await this.initialized;
+    if (input.objectId !== this.state.id.toString()) {
+      throw new Error(`legacy_transcript_backfill_object_mismatch:${input.objectId}`);
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+      .test(input.operatorRunId)) {
+      throw new Error("legacy_transcript_backfill_run_id_invalid");
+    }
+    if (input.cutoverVersion !== 27) throw new Error("legacy_transcript_backfill_cutover_invalid");
+    return this.transcript.backfillLegacyTranscript({
+      operatorRunId: input.operatorRunId,
+      cutoverVersion: input.cutoverVersion,
+    });
   }
 
   async dispatchRun(input: WorkstreamWorkflowInput): Promise<DurableObjectRpcResult> {

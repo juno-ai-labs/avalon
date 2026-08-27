@@ -16,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 27;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 28;
 
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
@@ -1562,6 +1562,28 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `CREATE INDEX transcript_active_interval_idx
          ON transcript_activity_intervals(activity_id, started_at)
          WHERE stopped_at IS NULL`,
+    ],
+  },
+  {
+    version: 28,
+    description: "record the one-time legacy transcript projection backfill",
+    statements: [
+      `CREATE TABLE legacy_transcript_backfills (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        operator_run_id TEXT NOT NULL,
+        cutover_version INTEGER NOT NULL CHECK (cutover_version = 27),
+        cutover_applied_at INTEGER NOT NULL,
+        pre_backfill_bookmark TEXT NOT NULL,
+        source_part_count INTEGER NOT NULL CHECK (source_part_count >= 0),
+        source_checkpoint_count INTEGER NOT NULL CHECK (source_checkpoint_count >= 0),
+        source_sha256 TEXT NOT NULL,
+        participant_turn_count INTEGER NOT NULL CHECK (participant_turn_count >= 0),
+        checkpoint_projection_count INTEGER NOT NULL CHECK (checkpoint_projection_count >= 0),
+        bind_history_status TEXT NOT NULL CHECK (
+          bind_history_status = 'not_reconstructable_from_legacy_aggregate_rows'
+        ),
+        completed_at INTEGER NOT NULL
+      ) STRICT`,
     ],
   },
 ];
