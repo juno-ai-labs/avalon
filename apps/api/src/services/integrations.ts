@@ -4686,11 +4686,25 @@ async function loadAutomationResultDelivery(
  * prompt, which this section is not part of.
  */
 function runPublishesDocuments(env: Env, input: WorkstreamWorkflowInput): boolean {
-  if (parseTerminalRegionConfiguration(env).capability !== "supported") return false;
+  const terminal = parseTerminalRegionConfiguration(env);
+  // The emergency switch is part of "available": it keeps the plugin
+  // discoverable but refuses every acquisition, so rendering the section
+  // through an incident costs a guaranteed-failing sandbox call on every
+  // document-shaped request across the region — which is when that traffic is
+  // least wanted. Both halves are deploy-time values, so a run still renders
+  // the same bytes on every attempt.
+  if (terminal.capability !== "supported" || terminal.emergencyDisabled) return false;
   return !input.automationSubscriptionId
     && !input.digestDeliveryId
     && !input.slackOrigin
-    && input.reason !== "inbound_email";
+    && input.reason !== "inbound_email"
+    // A HyperSight block's product is the Markdown it submits, and the run is
+    // read-only — every step of the section is a write tool the loop refuses
+    // before it runs. Worse, a dashboard block is itself structured and
+    // sectioned, so the trigger fires on the very thing the run exists to
+    // produce, and a model that obeys submits a block saying it published a
+    // document somewhere.
+    && input.reason !== "block_dashboard_block";
 }
 
 async function loadRunPromptContext(

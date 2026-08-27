@@ -31,8 +31,8 @@ const RESOURCE = "10000000-0000-4000-8000-000000000006";
 
 const context: HarnessToolContext = {
   workspaceId: W, workstreamId: S, harnessRunId: R, toolCallId: "resource-call",
-  // Publication is keyed to the receipt, not the call: `terminal:<id>` is the
-  // provider resource identity a retry has to land on again.
+  // The receipt still gates the publish; it is no longer the resource's
+  // identity, which is now the work stream plus the published path.
   effectIntentId: I,
   executionPrincipal: { type: "user", userId: U }, signal: new AbortController().signal,
 };
@@ -398,13 +398,17 @@ describe("Terminal resource bridge", () => {
       sourcePath: "mute-windows-prd.md",
       size: revised.byteLength,
     });
-    // New bytes invalidate the derivative the old bytes produced.
-    expect(row.model_content_status).toBe("pending");
     expect(second.derivativeStatus).toBe("pending");
     expect(put).toHaveBeenCalledTimes(2);
-    // A won compare-and-swap cancels the new object's pre-registered deletion.
-    expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())
-      .toEqual({ count: 0 });
+    // A won compare-and-swap cancels the deletion this call pre-registered for
+    // the bytes it wrote. It says nothing about the superseded object: in
+    // production `resources_track_original_after_update` enqueues that one and
+    // `resource_versions` keeps it alive, and this fixture carries neither
+    // trigger — so asserting a total of zero here would pin a state only the
+    // fixture reaches.
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM resource_object_deletion_outbox WHERE object_ref = ?",
+    ).get(row.content_ref)).toEqual({ count: 0 });
   });
 
   it("applies a new title to a republished document and keeps the old one otherwise", async () => {
@@ -507,6 +511,127 @@ describe("Terminal resource bridge", () => {
     expect(objectStore.prepare(
       "SELECT relationship_type FROM workstream_resource_links WHERE resource_id = ?",
     ).get(String(first.resourceId))).toEqual({ relationship_type: "generated" });
+  });
+
+  it("invalidates the derivative the superseded bytes produced", async () => {
+    const { database, bridge } = fixture();
+    const first = await bridge.publishResource(
+      context,
+      { filePath: "prd.md" },
+      new TextEncoder().encode("# One\n"),
+    );
+    // The extractor has since run against the first draft, so the row is not
+    // already in the state the swap is supposed to put it back into.
+    database.prepare(
+      `UPDATE resources
+          SET model_content_status = 'ready', model_content_ref = 'global/derivative-1',
+              model_content_sha256 = ?, model_content_character_count = 6,
+              model_content_extractor_version = 'v3', model_content_extracted_at = '2026-08-27'
+        WHERE id = ?`,
+    ).run("a".repeat(64), String(first.resourceId));
+
+    const second = await bridge.publishResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "prd.md" },
+      new TextEncoder().encode("# Two\n"),
+    );
+
+    expect(database.prepare(
+      `SELECT model_content_status, model_content_ref, model_content_sha256,
+              model_content_character_count, model_content_extractor_version, model_content_extracted_at
+         FROM resources WHERE id = ?`,
+    ).get(String(first.resourceId))).toEqual({
+      model_content_status: "pending",
+      model_content_ref: null,
+      model_content_sha256: null,
+      model_content_character_count: null,
+      model_content_extractor_version: null,
+      model_content_extracted_at: null,
+    });
+    expect(second.derivativeStatus).toBe("pending");
+  });
+
+  it("keeps a description a republish does not restate, and replaces one it does", async () => {
+    const { database, bridge } = fixture();
+    const first = await bridge.publishResource(
+      context,
+      { filePath: "prd.md", description: "The mute-windows design." },
+      new TextEncoder().encode("# One\n"),
+    );
+    const metadata = () => JSON.parse(String((database.prepare(
+      "SELECT metadata_json FROM resources WHERE id = ?",
+    ).get(String(first.resourceId)) as { metadata_json: string }).metadata_json)) as Record<string, unknown>;
+
+    await bridge.publishResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "prd.md" },
+      new TextEncoder().encode("# Two\n"),
+    );
+    expect(metadata()).toMatchObject({ description: "The mute-windows design." });
+
+    await bridge.publishResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "prd.md", description: "Rewritten after review." },
+      new TextEncoder().encode("# Three\n"),
+    );
+    expect(metadata()).toMatchObject({ description: "Rewritten after review." });
+  });
+
+  it("bounds a published identity the model could otherwise push past the wire contract", async () => {
+    const { database, bridge } = fixture();
+    // Each component is well under NAME_MAX, so the sandbox writes this happily
+    // and the publish succeeds — the overflow is only visible on the way out.
+    const longPath = `${"a".repeat(230)}/${"b".repeat(230)}.md`;
+    const published = await bridge.publishResource(
+      context,
+      { filePath: longPath },
+      new TextEncoder().encode("# Long\n"),
+    );
+
+    const identity = String((database.prepare(
+      "SELECT provider_resource_id FROM resources WHERE id = ?",
+    ).get(String(published.resourceId)) as { provider_resource_id: string }).provider_resource_id);
+    // Past the readable form's budget the path becomes a digest, so the stored
+    // identity stays inside `ResourceSchema`'s 500-character bound. A row past
+    // it stops the whole work stream opening and fails the workspace's resource
+    // list, and nothing in the product can delete a published row to recover.
+    expect(identity.length).toBeLessThanOrEqual(500);
+    expect(identity).toMatch(new RegExp(`^terminal:${S}:sha256:[0-9a-f]{64}$`, "u"));
+    // Still one document per path: republishing it lands on the same row.
+    const again = await bridge.publishResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: longPath },
+      new TextEncoder().encode("# Longer\n"),
+    );
+    expect(again.resourceId).toBe(published.resourceId);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 1 });
+  });
+
+  it("keeps a caller-named identity out of the path space the model shares", async () => {
+    const { database, bridge } = fixture();
+    // A command-log capture Rally writes on the model's behalf. Its sandbox path
+    // is one the model can also name, so deriving identity from that path would
+    // let a run republish over its own audit record.
+    const log = await bridge.publishResource(
+      context,
+      {
+        providerResourceId: `terminal-command-log:${I}`,
+        filePath: `.rally/logs/${I}.log`,
+        displayName: `Terminal command log ${I}`,
+      },
+      new TextEncoder().encode("real output\n"),
+    );
+    const forged = await bridge.publishResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: `.rally/logs/${I}.log` },
+      new TextEncoder().encode("fabricated output\n"),
+    );
+
+    expect(forged.resourceId).not.toBe(log.resourceId);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 2 });
+    expect(database.prepare(
+      "SELECT provider_resource_id FROM resources WHERE id = ?",
+    ).get(String(log.resourceId))).toEqual({ provider_resource_id: `terminal-command-log:${I}` });
   });
 
   it("publishes opaque binaries as download-only resources", async () => {
