@@ -24,6 +24,7 @@ import { watchSystemAppearance, watchThemeBroadcast } from './lib/theme';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { WorkspaceSocketProvider } from './lib/workspace-socket';
 import { AutomationOverviewScreen } from './screens/automation-overview';
+import { ComponentExplorerScreen } from './screens/component-explorer';
 import { MeetingNotesScreen } from './screens/meeting-notes';
 import { NoteDetailScreen } from './screens/note-detail';
 import { NewAutomationScreen } from './screens/new-automation';
@@ -236,6 +237,10 @@ function WorkspaceApp(): React.JSX.Element {
               <Route element={<NewAutomationScreen workspace={workspace.data} />} path="/automations/new" />
               <Route element={<AutomationOverviewScreen />} path="/automations/:id" />
               <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
+              {/* Unlinked on purpose — see `docs/component-library.md`. A
+                  developer reaches it by typing the hash; a navigation entry
+                  would have to answer who is allowed to see it. */}
+              <Route element={<ComponentExplorerScreen />} path="/explorer" />
               <Route element={<NotFoundScreen />} path="*" />
             </Routes>
           </AppShell>

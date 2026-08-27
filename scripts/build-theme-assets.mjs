@@ -17,6 +17,7 @@
  * | `renderer/styles/themes.css` | The renderer: `@font-face` rules and one custom-property block per theme. |
  * | `renderer/backdrops/<id>.html` | The main process, which serves it over `rally-backdrop://`. |
  * | `common/theme-assets.ts` | Both: which themes have a backdrop, and which fonts the main process caches. |
+ * | `renderer/styles/tailwind-theme.ts` | `apps/desktop/tailwind.config.ts`: the palette and scales a utility class may name. |
  *
  * A token path becomes a custom property by prefixing the namespace and
  * swapping dots for hyphens: `sys.color.text.default` is
@@ -42,6 +43,16 @@ export const manifestPath = join(desktopSource, 'common', 'theme-assets.ts');
 // at a URL and never holds the markup, which is the whole point of serving it
 // from an origin the renderer does not share.
 export const backdropModulePath = join(desktopSource, 'main', 'theme-backdrops.ts');
+/**
+ * The Tailwind palette and scales, as a module the config imports.
+ *
+ * Generated rather than hand-written because the two vocabularies have to be
+ * the same one: a utility class that names a colour Tailwind knows about and
+ * the registry does not is pinned to whichever theme it was written against,
+ * which is the failure `themes.css` was built to end and which a utility class
+ * would have quietly reintroduced.
+ */
+export const tailwindThemePath = join(desktopSource, 'renderer', 'styles', 'tailwind-theme.ts');
 /** Where a `bundled` font source resolves to, and what `themes.css` points at. */
 export const fontsDirectory = join(desktopSource, 'renderer', 'fonts');
 const fontsHrefPrefix = '../fonts/';
@@ -516,11 +527,190 @@ export function backdropModule(sources) {
   ].join('\n');
 }
 
+/**
+ * The names a Tailwind utility may use, derived from the registry.
+ *
+ * Two rules decide what appears here, and both are about keeping one
+ * vocabulary rather than two:
+ *
+ * - **`ref.*` is never exposed.** The ramps are how a theme builds its
+ *   semantic tokens, not something a component names. A component that reached
+ *   for `--av-ref-color-neutral-4` would be asserting a contrast step rather
+ *   than a meaning, and every theme that reorders its ramp would break it.
+ * - **`sys.*` defines the scales; `sys.*` and `cmp.*` colours define the
+ *   palette.** `cmp.markdown.heading-1` and the rest of the component
+ *   measurements stay with `app.css`, which owns the rules that use them.
+ *
+ * `sys.color.text` is published as `ink` and `sys.color.border` as `line`, so
+ * the utilities read `text-ink-muted` and `border-line-strong` rather than
+ * `text-text-muted` and `border-border-strong`.
+ */
+const COLOUR_GROUP_NAMES = { text: 'ink', border: 'line' };
+
+/** `default` is Tailwind's bare utility — `bg-surface`, not `bg-surface-default`. */
+function scaleKey(segments) {
+  const key = segments.join('-');
+  return key === 'default' ? 'DEFAULT' : key;
+}
+
+/**
+ * Groups token paths into the nested shape Tailwind wants for a colour
+ * namespace, throwing rather than letting one silently win: two tokens landing
+ * on `bg-tooltip-background` would make the utility mean whichever the object
+ * literal happened to spell last.
+ */
+function collect(entries) {
+  const out = {};
+  for (const [group, key, path] of entries) {
+    const bucket = (out[group] ??= {});
+    if (key in bucket) {
+      throw new Error(`Two tokens both become the Tailwind name '${group}-${key}': ${bucket[key]} and ${path}`);
+    }
+    bucket[key] = path;
+  }
+  return out;
+}
+
+/** Every token in the registry, split into the Tailwind namespace it feeds. */
+export function tailwindNamespaces(registry) {
+  const paths = Object.keys(registry.tokens);
+  const typeOf = (path) => registry.tokens[path].$type;
+  const under = (prefix, path) => path.startsWith(`${prefix}.`);
+
+  const colourEntries = [];
+  for (const path of paths) {
+    if (typeOf(path) !== 'color' || under('ref', path)) continue;
+    const segments = path.split('.');
+    if (under('sys.color', path)) {
+      const [, , group, ...rest] = segments;
+      colourEntries.push([COLOUR_GROUP_NAMES[group] ?? group, scaleKey(rest), path]);
+    } else if (under('cmp', path)) {
+      const [, group, ...rest] = segments;
+      colourEntries.push([group, scaleKey(rest), path]);
+    }
+  }
+
+  /** One flat namespace: `sys.space.stack.gap` is the `stack` step of the spacing scale. */
+  const flat = (predicate, name) => {
+    const out = {};
+    for (const path of paths) {
+      const key = predicate(path);
+      if (key === null) continue;
+      if (key in out) throw new Error(`Two tokens both become the Tailwind ${name} '${key}'`);
+      out[key] = path;
+    }
+    return out;
+  };
+
+  const spacing = flat((path) => {
+    if (under('sys.space', path)) return path.split('.')[2];
+    if (path === 'sys.size.control.height') return 'control';
+    return null;
+  }, 'spacing');
+
+  const boxShadow = flat((path) => {
+    if (under('sys.elevation.shadow', path)) return scaleKey([path.split('.').at(-1)]);
+    if (under('sys.focus.ring', path)) {
+      const step = path.split('.').at(-1);
+      return step === 'default' ? 'focus' : `focus-${step}`;
+    }
+    return null;
+  }, 'shadow');
+
+  const tail = (prefix) => flat((path) => (under(prefix, path) ? scaleKey([path.split('.').at(-1)]) : null), prefix);
+
+  return {
+    colors: collect(colourEntries),
+    borderRadius: { ...tail('sys.size.radius'), DEFAULT: 'sys.size.radius.md' },
+    borderWidth: tail('sys.size.border'),
+    spacing,
+    fontSize: tail('sys.font.size'),
+    fontWeight: tail('sys.font.weight'),
+    fontFamily: tail('sys.font.family'),
+    lineHeight: tail('sys.font.leading'),
+    boxShadow,
+  };
+}
+
+/** The literal a Tailwind scale entry holds: a reference, never a value. */
+function tailwindValue(path) {
+  return `'var(${customProperty(path)})'`;
+}
+
+function tailwindObject(shape, indent = '  ') {
+  return Object.entries(shape).map(([key, value]) => {
+    const name = /^[A-Za-z_$][\w$]*$/u.test(key) ? key : `'${key}'`;
+    if (typeof value === 'string') return `${indent}${name}: ${tailwindValue(value)},`;
+    return [`${indent}${name}: {`, tailwindObject(value, `${indent}  `), `${indent}},`].join('\n');
+  }).join('\n');
+}
+
+/**
+ * The module `apps/desktop/tailwind.config.ts` imports.
+ *
+ * `colors` is handed to `theme.colors` rather than `theme.extend.colors`, which
+ * is the point of generating it: replacing the palette outright deletes
+ * Tailwind's own `zinc-500`s and `red-600`s from the class vocabulary, so
+ * `bg-zinc-800` is a build error rather than a literal colour that renders
+ * correctly under one theme and wrongly under the other three. The stylesheet
+ * has had that rule since the theme engine landed and a test enforces it there;
+ * this is the same rule reaching the utilities.
+ */
+export function tailwindTheme(registry) {
+  const namespaces = tailwindNamespaces(registry);
+  const sections = [
+    ['colors', 'Every colour a utility may name. Nothing else resolves.', {
+      transparent: null, current: null, inherit: null,
+    }],
+    ['borderRadius', 'The corner scale. `rounded` is `sys.size.radius.md`.'],
+    ['borderWidth', 'Border widths beyond Tailwind’s own 0/2/4/8.'],
+    ['spacing', 'Named spaces, alongside Tailwind’s numeric scale.'],
+    ['fontSize', 'The sizes the interface sets.'],
+    ['fontWeight', 'Weights, to the degree the resolved family supports them.'],
+    ['fontFamily', 'The families.'],
+    ['lineHeight', 'Line heights.'],
+    ['boxShadow', 'Depth, and the focus rings — whole `box-shadow` values.'],
+  ];
+
+  const blocks = sections.map(([name, description, literals]) => {
+    const body = tailwindObject(namespaces[name]);
+    const fixed = literals
+      ? Object.keys(literals).map((key) => `  ${key}: '${key === 'current' ? 'currentColor' : key}',`).join('\n')
+      : '';
+    return [
+      `/** ${description} */`,
+      `export const ${name} = {`,
+      ...(fixed ? [fixed] : []),
+      body,
+      '} as const;',
+    ].join('\n');
+  });
+
+  return [
+    '/*',
+    ' * GENERATED FILE — do not edit.',
+    ' *',
+    ' * Written by `scripts/build-theme-assets.mjs` from the design-token JSON',
+    ' * under `config/design-tokens/`. Run `pnpm tokens:build` after editing a',
+    ' * theme; `pnpm tokens:check` fails if this file and that JSON disagree.',
+    ' *',
+    ' * Imported by `apps/desktop/tailwind.config.ts`. Every entry is a `var()`',
+    ' * reference, so a utility class follows the active theme for the same',
+    ' * reason a hand-written rule in `app.css` does — and a colour Tailwind',
+    ' * ships but the registry does not name is not in the vocabulary at all.',
+    ' */',
+    '',
+    blocks.join('\n\n'),
+    '',
+  ].join('\n');
+}
+
 export function outputs(sources) {
   return [
     { path: stylesheetPath, contents: generate(sources) },
     { path: manifestPath, contents: assetManifest(sources.themes) },
     { path: backdropModulePath, contents: backdropModule(sources) },
+    { path: tailwindThemePath, contents: tailwindTheme(sources.registry) },
   ];
 }
 

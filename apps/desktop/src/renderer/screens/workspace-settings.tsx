@@ -47,7 +47,8 @@ import type { ConnectorOAuthProvider, ConnectorOAuthStart } from '@rally/contrac
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings, DesktopTelemetryInspectorEntry } from '../../common/desktop';
-import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError, Modal } from '../components/primitives';
+import { Avatar, Badge, Button, EmptyState, InlineError, Modal } from '../components/primitives';
+import { Select, Switch } from '../components/ui';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { ThemePicker } from '../components/theme-picker';
 import { DigestSettings } from '../components/digest-settings';
@@ -1102,16 +1103,16 @@ export function WorkspaceSettingsScreen({
                   <label className="settings-preference-row">
                     <span className="settings-row-icon"><Clock3 aria-hidden="true" size={18} /></span>
                     <span className="settings-row-copy"><strong>Default timezone</strong><small>Used for your personal automations when no timezone is specified.</small></span>
-                    <DropdownSelect
-                      ariaLabel="Personal default timezone"
+                    <Select
+                      label="Personal default timezone"
                       disabled={updateUserTimezone.isPending}
                       onValueChange={(timezone) => {
                         setUserTimezone(timezone);
                         updateUserTimezone.mutate(timezone);
                       }}
-                      options={timezoneOptions.map((timezone) => ({ label: timezone, value: timezone }))}
+                      options={timezoneOptions.map((timezone: string) => ({ label: timezone, value: timezone }))}
                       value={userTimezone}
-                      variant="secondary"
+                      variant="quiet"
                     />
                   </label>
                 </div>
@@ -1163,16 +1164,16 @@ export function WorkspaceSettingsScreen({
                   <label className="settings-preference-row">
                     <span className="settings-row-icon"><Clock3 aria-hidden="true" size={18} /></span>
                     <span className="settings-row-copy"><strong>Default timezone</strong><small>Used when a workspace automation does not specify a timezone.</small></span>
-                    <DropdownSelect
-                      ariaLabel="Workspace default timezone"
+                    <Select
+                      label="Workspace default timezone"
                       disabled={!isAdmin || updateWorkspaceTimezone.isPending}
                       onValueChange={(timezone) => {
                         setWorkspaceTimezone(timezone);
                         updateWorkspaceTimezone.mutate(timezone);
                       }}
-                      options={timezoneOptions.map((timezone) => ({ label: timezone, value: timezone }))}
+                      options={timezoneOptions.map((timezone: string) => ({ label: timezone, value: timezone }))}
                       value={workspaceTimezone}
-                      variant="secondary"
+                      variant="quiet"
                     />
                   </label>
                 </div>
@@ -1756,21 +1757,16 @@ export function WorkspaceSettingsScreen({
                           : 'Protect the saved session with this Mac’s keystore instead of Rally’s shared encryption key.'}
                       </small>
                     </span>
-                    <span className="settings-toggle">
-                      <input
-                        aria-label="Lockdown mode"
-                        checked={applicationSettings?.lockdownMode ?? false}
-                        disabled={
-                          applicationSettings === null
-                          || updateLockdownMode.isPending
-                          || (!applicationSettings.lockdownAvailable && !applicationSettings.lockdownMode)
-                        }
-                        onChange={(event) => updateLockdownMode.mutate(event.currentTarget.checked)}
-                        role="switch"
-                        type="checkbox"
-                      />
-                      <span aria-hidden="true" />
-                    </span>
+                    <Switch
+                      aria-label="Lockdown mode"
+                      checked={applicationSettings?.lockdownMode ?? false}
+                      disabled={
+                        applicationSettings === null
+                        || updateLockdownMode.isPending
+                        || (!applicationSettings.lockdownAvailable && !applicationSettings.lockdownMode)
+                      }
+                      onChange={(event) => updateLockdownMode.mutate(event.currentTarget.checked)}
+                    />
                   </label>
                 </div>
                 {(applicationSettingsLoadError || updateLockdownMode.error) && (
@@ -1786,21 +1782,16 @@ export function WorkspaceSettingsScreen({
                         Share semantic product usage, sanitized errors and breadcrumbs, and native crash reports. Global telemetry can include your verified name and email so Rally can contact you; EU telemetry stays in Rally’s EU platform. Essential content-free reliability signals continue when this is off.
                       </small>
                     </span>
-                    <span className="settings-toggle">
-                      <input
-                        aria-label="Product analytics"
-                        checked={applicationSettings?.productAnalyticsEnabled ?? true}
-                        disabled={
-                          applicationSettings?.productAnalyticsAvailable === false
-                          || applicationSettings === null
-                          || updateProductAnalytics.isPending
-                        }
-                        onChange={(event) => updateProductAnalytics.mutate(event.currentTarget.checked)}
-                        role="switch"
-                        type="checkbox"
-                      />
-                      <span aria-hidden="true" />
-                    </span>
+                    <Switch
+                      aria-label="Product analytics"
+                      checked={applicationSettings?.productAnalyticsEnabled ?? true}
+                      disabled={
+                        applicationSettings?.productAnalyticsAvailable === false
+                        || applicationSettings === null
+                        || updateProductAnalytics.isPending
+                      }
+                      onChange={(event) => updateProductAnalytics.mutate(event.currentTarget.checked)}
+                    />
                   </label>
                 </div>
                 {applicationSettings?.productAnalyticsAvailable === false && (
@@ -1824,25 +1815,20 @@ export function WorkspaceSettingsScreen({
                           <strong>Show Rally in the menu bar</strong>
                           <small>Keep the Rally mark in the menu bar for a new meeting or note, a new automation, what Rally suggests next, and your recent work streams.</small>
                         </span>
-                        <span className="settings-toggle">
-                          <input
-                            aria-label="Show Rally in the menu bar"
-                            checked={applicationSettings?.menuBarEnabled ?? true}
-                            /* One preference file behind all three toggles, and
-                             * a Lockdown transition holds it for as long as it
-                             * takes to re-encrypt the session. Keep one write in
-                             * flight. */
-                            disabled={
-                              applicationSettings === null
-                              || updateMenuBarEnabled.isPending
-                              || updateLockdownMode.isPending
-                            }
-                            onChange={(event) => updateMenuBarEnabled.mutate(event.currentTarget.checked)}
-                            role="switch"
-                            type="checkbox"
-                          />
-                          <span aria-hidden="true" />
-                        </span>
+                        <Switch
+                          aria-label="Show Rally in the menu bar"
+                          checked={applicationSettings?.menuBarEnabled ?? true}
+                          /* One preference file behind all three toggles, and
+                          * a Lockdown transition holds it for as long as it
+                          * takes to re-encrypt the session. Keep one write in
+                          * flight. */
+                          disabled={
+                            applicationSettings === null
+                            || updateMenuBarEnabled.isPending
+                            || updateLockdownMode.isPending
+                          }
+                          onChange={(event) => updateMenuBarEnabled.mutate(event.currentTarget.checked)}
+                        />
                       </label>
                     </div>
                     {updateMenuBarEnabled.error && <InlineError>{updateMenuBarEnabled.error.message}</InlineError>}
@@ -1871,25 +1857,20 @@ export function WorkspaceSettingsScreen({
                           <strong>Open Rally at login</strong>
                           <small>Start Rally when you log in. With Rally in the menu bar it starts there quietly, with no window; without it, a window opens as usual.</small>
                         </span>
-                        <span className="settings-toggle">
-                          <input
-                            aria-label="Open Rally at login"
-                            /* macOS owns this, not Rally's preference file, so
-                             * the checked state is what the system reports back
-                             * after the write — which is how a registration it
-                             * is still waiting to have approved shows honestly. */
-                            checked={applicationSettings?.launchAtLogin ?? false}
-                            disabled={
-                              applicationSettings === null
-                              || updateLaunchAtLogin.isPending
-                              || updateLockdownMode.isPending
-                            }
-                            onChange={(event) => updateLaunchAtLogin.mutate(event.currentTarget.checked)}
-                            role="switch"
-                            type="checkbox"
-                          />
-                          <span aria-hidden="true" />
-                        </span>
+                        <Switch
+                          aria-label="Open Rally at login"
+                          /* macOS owns this, not Rally's preference file, so
+                          * the checked state is what the system reports back
+                          * after the write — which is how a registration it
+                          * is still waiting to have approved shows honestly. */
+                          checked={applicationSettings?.launchAtLogin ?? false}
+                          disabled={
+                            applicationSettings === null
+                            || updateLaunchAtLogin.isPending
+                            || updateLockdownMode.isPending
+                          }
+                          onChange={(event) => updateLaunchAtLogin.mutate(event.currentTarget.checked)}
+                        />
                       </label>
                     </div>
                     {updateLaunchAtLogin.error && <InlineError>{updateLaunchAtLogin.error.message}</InlineError>}
@@ -1910,20 +1891,15 @@ export function WorkspaceSettingsScreen({
                           <strong>Debug enabled</strong>
                           <small>Show debugging actions such as copying a work stream or automation identifier from its right-click menu, and the rows describing how a work stream is wired in its Details.</small>
                         </span>
-                        <span className="settings-toggle">
-                          <input
-                            aria-label="Debug enabled"
-                            checked={applicationSettings.debugEnabled}
-                            /* A Lockdown transition re-encrypts every durable session
-                             * component, so it stays pending long enough to click this.
-                             * Both preferences write one file; keep one in flight. */
-                            disabled={updateDebugEnabled.isPending || updateLockdownMode.isPending}
-                            onChange={(event) => updateDebugEnabled.mutate(event.currentTarget.checked)}
-                            role="switch"
-                            type="checkbox"
-                          />
-                          <span aria-hidden="true" />
-                        </span>
+                        <Switch
+                          aria-label="Debug enabled"
+                          checked={applicationSettings.debugEnabled}
+                          /* A Lockdown transition re-encrypts every durable session
+                          * component, so it stays pending long enough to click this.
+                          * Both preferences write one file; keep one in flight. */
+                          disabled={updateDebugEnabled.isPending || updateLockdownMode.isPending}
+                          onChange={(event) => updateDebugEnabled.mutate(event.currentTarget.checked)}
+                        />
                       </label>
                     </div>
                     {updateDebugEnabled.error && <InlineError>{updateDebugEnabled.error.message}</InlineError>}

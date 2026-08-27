@@ -1,12 +1,11 @@
-import { IconAugmentedReality } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { AlertTriangle, GripVertical, LoaderCircle, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import type { BlockDashboard, BlockDashboardBlock } from '../lib/types';
 import type { BlockDashboardBlockConnectionState } from '../lib/use-block-dashboard-sockets';
 import { useUiStore } from '../lib/ui-store';
 import { Button, IconButton, Modal } from './primitives';
+import { Icon } from './ui';
 import { RailSurface } from './rail-surface';
 import { MarkdownBody } from './workstream-blocks';
 
@@ -67,8 +66,8 @@ function BlockDashboardBlockContent({
             {...(connectionUnavailable ? { role: 'alert' as const } : {})}
           >
             {connectionUnavailable
-              ? <AlertTriangle aria-hidden="true" size={12} />
-              : <LoaderCircle aria-hidden="true" className="spin" size={12} />}
+              ? <Icon name="warning" size="xs" />
+              : <Icon name="spinner" size="xs" spinning />}
             <span>{connectionLabel}</span>
           </div>
         </div>
@@ -81,8 +80,8 @@ function BlockDashboardBlockContent({
         {...(connectionUnavailable ? { role: 'alert' as const } : {})}
       >
         {connectionUnavailable
-          ? <AlertTriangle aria-hidden="true" size={14} />
-          : <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+          ? <Icon name="warning" size="sm" />
+          : <Icon name="spinner" size="sm" spinning />}
         <span>{connectionLabel}</span>
       </div>
     );
@@ -90,7 +89,7 @@ function BlockDashboardBlockContent({
   if (run.status === 'failed' || run.status === 'stopped') {
     return (
       <div className="block-dashboard-block-state is-error" role="alert">
-        <AlertTriangle aria-hidden="true" size={14} />
+        <Icon name="warning" size="sm" />
         <span>{run.error?.message ?? 'This block could not be refreshed.'}</span>
       </div>
     );
@@ -199,7 +198,7 @@ export function BlockDashboardPanel({
                 label={block.prompt ? 'Edit HyperSight prompt' : 'Add HyperSight prompt'}
                 onClick={() => openPrompt(block)}
               >
-                <Sparkles size={15} />
+                <Icon name="suggestion" size="md" />
               </IconButton>
               <div className="block-dashboard-block-hover-controls">
                 <button
@@ -237,7 +236,7 @@ export function BlockDashboardPanel({
                   }}
                   type="button"
                 >
-                  <GripVertical aria-hidden="true" size={15} />
+                  <Icon name="drag-handle" size="md" />
                 </button>
                 <IconButton
                   className="block-dashboard-delete"
@@ -245,7 +244,7 @@ export function BlockDashboardPanel({
                   label="Delete HyperSight block"
                   onClick={() => void commit(blocks.filter((candidate) => candidate.id !== block.id))}
                 >
-                  <Trash2 size={14} />
+                  <Icon name="trash" size="sm" />
                 </IconButton>
               </div>
             </div>
@@ -263,7 +262,7 @@ export function BlockDashboardPanel({
           }}
           type="button"
         >
-          <Plus aria-hidden="true" size={15} />
+          <Icon name="add" size="md" />
           <span>Add block</span>
         </button>
         {error ? <p className="block-dashboard-panel-error" role="alert">{error}</p> : null}
@@ -284,7 +283,7 @@ export function BlockDashboardPanel({
               });
             }}
           >
-            {pending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <Sparkles aria-hidden="true" size={14} />}
+            {pending ? <Icon name="spinner" size="sm" spinning /> : <Icon name="suggestion" size="sm" />}
             Save prompt
           </Button>
         )}
@@ -345,12 +344,12 @@ export function BlockDashboardRail({
     >
       <header className="rail-header window-drag">
         <div className="rail-title window-no-drag">
-          <span aria-hidden="true" className="block-dashboard-rail-icon"><IconAugmentedReality size={15} stroke={1.7} /></span>
+          <span aria-hidden="true" className="block-dashboard-rail-icon"><Icon name="dashboard" size="md" /></span>
           <h2>HyperSight</h2>
           <span className="block-dashboard-block-count">{blockCount === 1 ? '1 block' : `${blockCount} blocks`}</span>
         </div>
         <div className="rail-header-actions window-no-drag">
-          <IconButton label="Close HyperSight" onClick={onClose}><X size={15} /></IconButton>
+          <IconButton label="Close HyperSight" onClick={onClose}><Icon name="close" size="md" /></IconButton>
         </div>
       </header>
       <div className="rail-scroll">{children}</div>

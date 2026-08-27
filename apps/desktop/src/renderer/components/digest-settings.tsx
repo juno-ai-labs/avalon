@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarDays, Clock3, Mail, MessageSquare, Plus, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { RallyApi } from '../lib/api';
 import type {
@@ -8,6 +7,7 @@ import type {
   WorkstreamConnection,
 } from '../lib/types';
 import { RallyMark, Button, InlineError, LoadingState } from './primitives';
+import { Icon, Switch } from './ui';
 
 /** Sunday first, matching `Date#getDay` and every calendar in the product. */
 const WEEKDAYS = [
@@ -217,7 +217,7 @@ export function DigestSettings({
 
       <div className="settings-list-card">
         <label className="settings-preference-row">
-          <span className="settings-row-icon"><CalendarDays aria-hidden="true" size={18} /></span>
+          <span className="settings-row-icon"><Icon name="clock" size="lg" /></span>
           <span className="settings-row-copy">
             <strong>Send me a digest</strong>
             <small>
@@ -226,14 +226,10 @@ export function DigestSettings({
                 : 'Rally writes it at the times you choose and sends it where you choose.'}
             </small>
           </span>
-          <span className="settings-toggle">
-            <input
-              checked={draft.enabled}
-              onChange={(event) => update({ enabled: event.target.checked })}
-              type="checkbox"
-            />
-            <span />
-          </span>
+          <Switch
+            checked={draft.enabled}
+            onChange={(event) => update({ enabled: event.target.checked })}
+          />
         </label>
       </div>
 
@@ -276,14 +272,14 @@ export function DigestSettings({
             <ul className="digest-time-list">
               {draft.times.map((minuteOfDay) => (
                 <li className="digest-time" key={minuteOfDay}>
-                  <Clock3 aria-hidden="true" size={13} />
+                  <Icon name="clock" size="xs" />
                   <span>{minutesToLabel(minuteOfDay)}</span>
                   <button
                     aria-label={`Remove ${minutesToLabel(minuteOfDay)}`}
                     onClick={() => update({ times: draft.times.filter((time) => time !== minuteOfDay) })}
                     type="button"
                   >
-                    <X aria-hidden="true" size={12} />
+                    <Icon name="close" size="xs" />
                   </button>
                 </li>
               ))}
@@ -305,7 +301,7 @@ export function DigestSettings({
             value={pendingTime}
           />
           <Button disabled={draft.times.length >= MAX_TIMES} onClick={addTime}>
-            <Plus aria-hidden="true" size={13} /> Add time
+            <Icon name="add" size="xs" /> Add time
           </Button>
         </div>
         {timeError && <InlineError>{timeError}</InlineError>}
@@ -324,37 +320,29 @@ export function DigestSettings({
       <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Deliver to</h2></div>
       <div className="settings-list-card">
         <label className="settings-preference-row">
-          <span className="settings-row-icon"><Mail aria-hidden="true" size={18} /></span>
+          <span className="settings-row-icon"><Icon name="mail" size="lg" /></span>
           <span className="settings-row-copy">
             <strong>Email</strong>
             <small>Sent to your Rally account address.</small>
           </span>
-          <span className="settings-toggle">
-            <input
-              checked={draft.targetKeys.includes('email')}
-              onChange={() => toggleTarget('email')}
-              type="checkbox"
-            />
-            <span />
-          </span>
+          <Switch
+            checked={draft.targetKeys.includes('email')}
+            onChange={() => toggleTarget('email')}
+          />
         </label>
         {deliveryConnections.map((connection) => {
           const key = targetKey(connection.userDelivery!.targetType, connection.id);
           return (
             <label className="settings-preference-row" key={connection.id}>
-              <span className="settings-row-icon"><MessageSquare aria-hidden="true" size={18} /></span>
+              <span className="settings-row-icon"><Icon name="message" size="lg" /></span>
               <span className="settings-row-copy">
                 <strong>{connection.userDelivery!.label} · {connection.displayName}</strong>
                 <small>{connection.userDelivery!.description}</small>
               </span>
-              <span className="settings-toggle">
-                <input
-                  checked={draft.targetKeys.includes(key)}
-                  onChange={() => toggleTarget(key)}
-                  type="checkbox"
-                />
-                <span />
-              </span>
+              <Switch
+                checked={draft.targetKeys.includes(key)}
+                onChange={() => toggleTarget(key)}
+              />
             </label>
           );
         })}
