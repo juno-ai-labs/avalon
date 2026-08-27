@@ -2,6 +2,7 @@ export * from "./activity-routing";
 export * from "./addressing";
 export * from "./automation-compiler";
 export * from "./compaction";
+export * from "./document-generation";
 export * from "./response-formatting";
 export * from "./semantic-trigger";
 export * from "./types";
