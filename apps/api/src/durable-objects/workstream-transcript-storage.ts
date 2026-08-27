@@ -285,7 +285,7 @@ export class WorkstreamTranscriptStorage {
       if (this.legacyBackfillReceipt()) return false;
       const activeRun = this.sql.exec<{ run_id: string } & Record<string, SqlStorageValue>>(
         `SELECT run_id FROM runs
-          WHERE status IN ('admitted', 'running', 'waiting', 'steering', 'needs_input')
+          WHERE status IN ('admitted', 'running', 'waiting', 'steering')
           LIMIT 1`,
       ).toArray()[0];
       const activeActivity = this.sql.exec<{
@@ -1785,6 +1785,8 @@ export class WorkstreamTranscriptStorage {
       && checkpoints.length === Number(receipt.source_checkpoint_count)
       && projectedParts.length === Number(receipt.participant_turn_count)
       && projectedCheckpoints === Number(receipt.checkpoint_projection_count)
+      && parts.length === projectedParts.length
+      && checkpoints.length === projectedCheckpoints
       && sequencesMatch;
     if (!verified) throw new Error("legacy_transcript_backfill_reconciliation_failed");
     return {
