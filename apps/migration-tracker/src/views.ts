@@ -133,7 +133,7 @@ const STYLES = `
   .filters button { cursor: pointer; font-weight: 600; }
   .pager { display: flex; gap: 14px; align-items: center; margin-top: 14px; color: var(--muted);
            font-size: 13px; }
-  .empty { padding: 22px; color: var(--muted); }
+  .empty-state { padding: 22px; color: var(--muted); }
   .failure { color: var(--failed); white-space: normal; max-width: 520px; }
   dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px;
              margin: 0; padding: 16px; }
@@ -246,7 +246,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
       <h2>Components</h2>
       <div class="panel scroll">
         ${overview.components.length === 0
-          ? html`<p class="empty">No component has reported a migration yet.</p>`
+          ? html`<p class="empty-state">No component has reported a migration yet.</p>`
           : html`<table>
               <thead>
                 <tr>
@@ -283,7 +283,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
       <h2>Open failures</h2>
       <div class="panel scroll">
         ${overview.recentFailures.length === 0
-          ? html`<p class="empty">No object is currently reporting a failed migration.</p>`
+          ? html`<p class="empty-state">No object is currently reporting a failed migration.</p>`
           : objectTable(overview.recentFailures)}
       </div>
     </section>
@@ -292,7 +292,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
       <h2>Recent reports</h2>
       <div class="panel scroll">
         ${overview.recentEvents.length === 0
-          ? html`<p class="empty">No migration report has arrived yet.</p>`
+          ? html`<p class="empty-state">No migration report has arrived yet.</p>`
           : eventTable(overview.recentEvents, true)}
       </div>
     </section>
@@ -301,7 +301,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
       <h2>Namespaces</h2>
       <div class="panel scroll">
         ${overview.namespaces.length === 0
-          ? html`<p class="empty">No inventory sweep has enumerated the account yet.</p>`
+          ? html`<p class="empty-state">No inventory sweep has enumerated the account yet.</p>`
           : html`<table>
               <thead>
                 <tr>
@@ -396,7 +396,7 @@ export function objectsPage(
 
       <div class="panel scroll">
         ${page.objects.length === 0
-          ? html`<p class="empty">No object matches this filter.</p>`
+          ? html`<p class="empty-state">No object matches this filter.</p>`
           : objectTable(page.objects)}
       </div>
 
@@ -465,7 +465,7 @@ export function objectPage(detail: ObjectDetail): HtmlEscapedString | Promise<Ht
       <h2>Report history</h2>
       <div class="panel scroll">
         ${detail.events.length === 0
-          ? html`<p class="empty">This object has never reported. The inventory sweep found it,
+          ? html`<p class="empty-state">This object has never reported. The inventory sweep found it,
               and it has not woken since.</p>`
           : eventTable(detail.events, false)}
       </div>
@@ -534,7 +534,7 @@ export function migrationsPage(
       <h2>What a run would reach</h2>
       <div class="panel scroll">
         ${overview.components.length === 0
-          ? html`<p class="empty">No inventory sweep has enumerated a migrating class yet.</p>`
+          ? html`<p class="empty-state">No inventory sweep has enumerated a migrating class yet.</p>`
           : html`<table>
               <thead>
                 <tr>
@@ -565,7 +565,7 @@ export function migrationsPage(
       <h2>Recent runs</h2>
       <div class="panel scroll">
         ${overview.runs.length === 0
-          ? html`<p class="empty">No migration has been forced from this site.</p>`
+          ? html`<p class="empty-state">No migration has been forced from this site.</p>`
           : html`<table>
               <thead>
                 <tr>
@@ -600,7 +600,7 @@ export function migrationsPage(
 export function notFoundPage(): HtmlEscapedString | Promise<HtmlEscapedString> {
   return html`
     <section>
-      <div class="panel"><p class="empty">No such object is tracked.</p></div>
+      <div class="panel"><p class="empty-state">No such object is tracked.</p></div>
     </section>`;
 }
 
