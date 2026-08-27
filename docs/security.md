@@ -695,6 +695,8 @@ path-validation branch. Tickets remain renderer-visible because the existing
 ticket protocol needs them, but main never logs protocols or URLs and no ticket
 is placed in a URL.
 
+Shipped in #341.
+
 ### 2026-08-25 — The public Trust Center describes only implemented boundaries
 
 **What changed:** The public security page became an ungated Trust Center with
