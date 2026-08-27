@@ -11,9 +11,11 @@ import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 import { AttachmentKindSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
 import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
+import { ProjectIdSchema, ProjectSnapshotSchema } from "./projects";
 
 export * from "./attachment-contracts";
 export * from "./resource-relationships";
+export * from "./projects";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export {
@@ -1511,6 +1513,8 @@ export const UpdateDigestScheduleRequestSchema = z.object({
 );
 
 export const CreateWorkstreamRequestSchema = z.object({
+  /** Optional organizer chosen by the caller; the API reauthorizes it. */
+  projectId: ProjectIdSchema.optional(),
   title: z.string().min(1).max(180).optional(),
   objective: z.string().trim().min(1).max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS).optional(),
   /**
@@ -1844,6 +1848,7 @@ export const WORKSPACE_SYNC_TOPICS = [
   "digest_schedule",
   "automations",
   "notes",
+  "projects",
   "resources",
   "activity",
   "work_opportunities",
@@ -2004,6 +2009,8 @@ export const WorkspaceSidebarSchema = z.object({
     waterline: z.number().int().nonnegative(),
     items: z.array(NoteSummarySchema).max(250),
   }).strict(),
+  /** Optional during the rolling deployment; current servers always send it. */
+  projects: ProjectSnapshotSchema.optional(),
 }).strict();
 
 /**
@@ -2115,6 +2122,19 @@ export const WorkspaceSidebarListEventSchema = z.discriminatedUnion("list", [
     items: z.array(NoteSummarySchema).max(250),
   }).strict(),
 ]);
+
+/**
+ * The viewer's complete active and inactive project state after a project write.
+ *
+ * WorkspaceDO owns both lists and their shared waterline. The payload is read
+ * per subscribed socket because personal-project visibility and ordering are
+ * viewer-specific. Absence is the tombstone when a participant is removed.
+ */
+export const WorkspaceProjectSnapshotEventSchema = z.object({
+  type: z.literal("workspace_project_snapshot"),
+  occurredAt: TimestampSchema,
+  projects: ProjectSnapshotSchema,
+}).strict();
 
 /** A current state row pushed by WorkspaceDO after Queue ingestion. */
 export const WorkspaceWorkstreamStateEventSchema = z.object({
@@ -2229,6 +2249,7 @@ export type WorkspaceFeatureFlagsEvent = z.infer<typeof WorkspaceFeatureFlagsEve
 export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
 export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
 export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
+export type WorkspaceProjectSnapshotEvent = z.infer<typeof WorkspaceProjectSnapshotEventSchema>;
 export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
 export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
 export type WorkstreamControlMetadata = z.infer<typeof WorkstreamControlMetadataSchema>;

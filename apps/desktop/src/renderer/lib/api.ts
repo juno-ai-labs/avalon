@@ -55,6 +55,13 @@ import {
   type WorkstreamBatchUpdate,
   type WorkstreamDetail as WireWorkstreamDetail,
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
+  ProjectDirectorySchema as WireProjectDirectorySchema,
+  ProjectSummarySchema as WireProjectSummarySchema,
+  type CreateProjectRequest,
+  type ProjectDirectory,
+  type ProjectSummary,
+  type UpdateProjectPresentationRequest,
+  type UpdateProjectAudienceRequest,
 } from '@rally/contracts';
 import { socketTicketProtocols, socketUrlWithoutTicket } from '@rally/contracts/socket-tickets';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
@@ -1154,6 +1161,82 @@ export class RallyApi {
     return page.items;
   }
 
+  createProject(input: CreateProjectRequest): Promise<ProjectSummary> {
+    return this.request('/projects', {
+      method: 'POST',
+      body: input,
+      schema: WireProjectSummarySchema,
+    });
+  }
+
+  updateProject(id: string, input: UpdateProjectPresentationRequest): Promise<ProjectSummary> {
+    return this.request(`/projects/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: input,
+      schema: WireProjectSummarySchema,
+    });
+  }
+
+  updateProjectAudience(id: string, input: UpdateProjectAudienceRequest): Promise<ProjectSummary> {
+    return this.request(`/projects/${encodeURIComponent(id)}/audience`, {
+      method: 'PATCH',
+      body: input,
+      schema: WireProjectSummarySchema,
+    });
+  }
+
+  archiveProject(id: string): Promise<ProjectSummary> {
+    return this.request(`/projects/${encodeURIComponent(id)}/archive`, {
+      method: 'POST',
+      schema: WireProjectSummarySchema,
+    });
+  }
+
+  restoreProject(id: string): Promise<ProjectSummary> {
+    return this.request(`/projects/${encodeURIComponent(id)}/restore`, {
+      method: 'POST',
+      schema: WireProjectSummarySchema,
+    });
+  }
+
+  reorderProjects(projectIds: string[]): Promise<ProjectDirectory> {
+    return this.request('/projects/order', {
+      method: 'PUT',
+      body: { projectIds },
+      schema: WireProjectDirectorySchema,
+    });
+  }
+
+  addWorkstreamToProject(projectId: string, workstreamId: string): Promise<ProjectSummary> {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/workstreams`, {
+      method: 'POST',
+      body: { workstreamId },
+      schema: WireProjectSummarySchema,
+    });
+  }
+
+  removeWorkstreamFromProject(projectId: string, workstreamId: string): Promise<ProjectSummary> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectId)}/workstreams/${encodeURIComponent(workstreamId)}`,
+      { method: 'DELETE', schema: WireProjectSummarySchema },
+    );
+  }
+
+  addProjectDefaultResource(projectId: string, resourceId: string): Promise<ProjectSummary> {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/default-resources`, {
+      method: 'POST',
+      body: { resourceId },
+      schema: WireProjectSummarySchema,
+    });
+  }
+
+  removeProjectDefaultResource(projectId: string, resourceId: string): Promise<ProjectSummary> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectId)}/default-resources/${encodeURIComponent(resourceId)}`,
+      { method: 'DELETE', schema: WireProjectSummarySchema },
+    );
+  }
+
   createNote(id: string, title: string): Promise<NoteDetail> {
     return this.request('/notes', {
       method: 'POST',
@@ -1370,6 +1453,7 @@ export class RallyApi {
   async createWorkstream(input: {
     openingMessage: string;
     participantIds: string[];
+    projectId?: string;
     mentions?: MentionIdentity[];
     attachmentIds?: string[];
     modelOverride?: AgentModelOverride;
@@ -1391,6 +1475,7 @@ export class RallyApi {
       method: 'POST',
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: {
+        ...(input.projectId ? { projectId: input.projectId } : {}),
         openingMessage: input.openingMessage,
         participantUserIds,
         clientMessageId,

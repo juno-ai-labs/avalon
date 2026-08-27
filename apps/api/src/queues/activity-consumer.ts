@@ -13,6 +13,7 @@ import {
   WorkstreamWorkflowInputSchema,
   asWorkspaceId,
   asWorkstreamId,
+  asUserId,
   type Message as AvalonMessage,
   type WorkspaceId,
   type WorkstreamWorkflowInput
@@ -20,6 +21,7 @@ import {
 import { z } from "zod";
 
 import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/workstream-regional-effect";
+import { ProjectDefaultResourceQueueMessageSchema } from "../durable-objects/workspace-project-protocol";
 import { workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceConnectorEventClaimResultSchema,
@@ -28,6 +30,7 @@ import {
   type WorkspaceConnectorEvent,
 } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
+import type { AuthContext } from "../env";
 import { contentAudienceContainsWorkstream } from "../lib/audience-containment";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
@@ -80,6 +83,7 @@ import {
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-update";
+import { WorkstreamService } from "../services/workstream-service";
 
 interface ActivityRow {
   id: string;
@@ -236,6 +240,60 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
 }
 
 async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
+  const projectDefault = ProjectDefaultResourceQueueMessageSchema.safeParse(message.body);
+  if (projectDefault.success) {
+    const target = projectDefault.data;
+    if (target.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      target.workspaceId,
+      workspaceDOName(env.AVALON_REGION, target.workspaceId),
+    );
+    if (!await workspace.projectDefaultTargetCurrent(target)) {
+      message.ack();
+      return;
+    }
+    const actorIds = await workspace.projectDefaultTargetActors(target);
+    if (actorIds.length === 0) {
+      message.ack();
+      return;
+    }
+    const member = await env.DB.prepare(
+      `SELECT user_id, role FROM workspace_members
+        WHERE workspace_id = ? AND status = 'active'
+          AND user_id IN (${actorIds.map(() => "?").join(",")})
+        ORDER BY CASE WHEN user_id = ? THEN 0 ELSE 1 END, user_id LIMIT 1`,
+    ).bind(target.workspaceId, ...actorIds, target.requestedByUserId)
+      .first<{ user_id: string; role: AuthContext["role"] }>();
+    if (!member) {
+      await workspace.failProjectDefaultTarget(target);
+      message.ack();
+      return;
+    }
+    const auth: AuthContext = {
+      sessionId: `project-default:${target.projectId}:${target.defaultGeneration}`,
+      userId: asUserId(member.user_id),
+      workspaceId: target.workspaceId,
+      region: env.AVALON_REGION,
+      role: member.role,
+      analyticsWorkspaceId: null,
+      principal: "connector",
+    };
+    try {
+      await new WorkstreamService(env, auth).attachResource(target.workstreamId, target.resourceId);
+      await workspace.completeProjectDefaultTarget(target);
+      message.ack();
+    } catch {
+      await workspace.recordProjectDefaultTargetFailure(target).catch(() => undefined);
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
+    }
+    return;
+  }
   if (await consumeWorkstreamBatchUpdate(message, env)) return;
   const regionalEffect = WorkstreamRegionalEffectQueueMessageSchema.safeParse(message.body);
   if (regionalEffect.success) {
