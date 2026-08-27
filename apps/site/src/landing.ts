@@ -22,21 +22,9 @@ const updateHeader = (): void => {
 updateHeader();
 window.addEventListener('scroll', updateHeader, { passive: true });
 
-const faqItems = document.querySelectorAll<HTMLDetailsElement>('.faq-list details');
-faqItems.forEach((item) => {
-  item.addEventListener('toggle', () => {
-    if (!item.open) return;
-    reportSiteAction('faq_opened', 'faq');
-    faqItems.forEach((other) => {
-      if (other !== item) other.open = false;
-    });
-  });
-});
-
-function actionPlacement(element: Element): 'header' | 'hero' | 'body' | 'footer' | 'connector' | 'unknown' {
+function actionPlacement(element: Element): 'header' | 'hero' | 'body' | 'footer' | 'unknown' {
   if (element.closest('.rally-header')) return 'header';
   if (element.closest('.rally-hero')) return 'hero';
-  if (element.closest('#connections')) return 'connector';
   if (element.closest('footer')) return 'footer';
   if (element.closest('main')) return 'body';
   return 'unknown';
@@ -49,13 +37,9 @@ document.addEventListener('click', (event) => {
   const placement = actionPlacement(link);
   if (href === '#download' || /\.dmg(?:$|[?#])/iu.test(href)) {
     reportSiteAction('download', placement);
-  } else if (href.startsWith('/support/#granola')) {
-    reportSiteAction('connector_setup', 'connector');
   } else if (href.startsWith('/support')) {
     reportSiteAction('support_contact', placement);
   } else if (link.classList.contains('button-primary')) {
     reportSiteAction('primary_cta', placement);
-  } else if (link.classList.contains('button-quiet')) {
-    reportSiteAction('secondary_cta', placement);
   }
 });
