@@ -117,14 +117,12 @@ latest conversation turns, unread attention anchors, sequence ranges, active
 activities, exact loop reconstruction, provider-boundary verification, and
 compaction lookup.
 
-The one-time pre-v27 backfill adds ordering/reference rows but does not move
-payload ownership. Legacy participant content and structured tool summaries
-remain owned by `parts`; exact legacy checkpoint arrays remain owned by
-`compaction_checkpoints`. Canonical facts hold stable references to those rows,
-and normal transcript/checkpoint reads hydrate through the reference. The
-singleton `legacy_transcript_backfills` receipt records the v27 cutover time,
-source digest/counts, pre-write PITR bookmark, and the explicit absence of
-reconstructable historical Bind state.
+`workstream_message_records` and its referenced content-addressed facts now own
+all message payloads. Canonical attachment and mention relations reference the
+message record directly. `transcript_compaction_checkpoints` references the
+exact model-only checkpoint fact. The pre-v27 projection and payload-transfer
+receipts were one-time migration evidence and are removed after schema v31's
+fail-closed reconciliation; they are not runtime sources of truth.
 
 `WorkspaceDO` is the relational authority for workspace product state and
 cross-work-stream serving. It stores connector/product configuration, Terminal
@@ -800,6 +798,22 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-27 — Canonical transcript records become the sole payload owner
+
+**What changed:** SubstreamAgent schema v31 verifies the v30 transfer receipt
+and every source row, atomically swaps foreign keys onto
+`workstream_message_records`, removes the old message/relation/checkpoint tables,
+and deletes the one-time operator RPCs and scripts.
+
+**Why:** The transition deliberately duplicated writes only long enough to move
+historical ownership. Leaving both paths would preserve ambiguity and allow the
+copies to drift.
+
+**Consequences:** Runtime code reads canonical records/facts only. Migration
+fails before deletion if any message, relation, payload, or legacy checkpoint is
+unowned. Participant compaction statuses and activity edges are not part of the
+swap and remain byte-for-byte durable.
 
 ### 2026-08-27 — Legacy message payloads gain a canonical owner
 

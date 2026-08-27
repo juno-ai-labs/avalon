@@ -952,7 +952,7 @@ export class WorkstreamToolReceiptStorage {
           settledIndex,
           receipt.effect_intent_id,
         );
-        this.#projectSettledPart(preparedPart, ambiguous ? "ambiguous" : "failed", input.now);
+        this.#projectSettledPart(preparedPart);
         settled += 1;
       }
       // `open` is what the caller's terminal event is fenced on. It is normally
@@ -1050,9 +1050,8 @@ export class WorkstreamToolReceiptStorage {
               part.tool_name, part.tool_mode, part.tool_status, part.visibility,
               part.sequence_number, part.attention_ordinal, part.created_at,
               effect.output_summary,
-              EXISTS (SELECT 1 FROM workstream_message_records record
-                       WHERE record.message_id = part.id) AS canonical_record_exists
-         FROM parts part
+              1 AS canonical_record_exists
+         FROM workstream_message_details part
          JOIN tool_effects effect ON effect.effect_intent_id = part.id
         WHERE part.id = ? AND part.message_type = 'tool'`,
       effectIntentId,
@@ -1104,23 +1103,9 @@ export class WorkstreamToolReceiptStorage {
    */
   #projectSettledPart(
     projection: PreparedResidualToolPart,
-    status: "failed" | "ambiguous",
-    settledAt: number,
   ): void {
-    if (projection.structuredContentJson === null) return;
-    this.sql.exec(
-      `UPDATE parts SET
-         structured_content_json = ?1,
-         tool_status = ?2,
-         edited_at = COALESCE(?3, parts.edited_at, parts.updated_at),
-         updated_at = MAX(parts.updated_at, ?3)
-       WHERE parts.id = ?4 AND parts.message_type = 'tool'`,
-      projection.structuredContentJson,
-      status,
-      settledAt,
-      projection.effectIntentId,
-    );
-    if (projection.prepared) insertWorkstreamMessageRecord(this.sql, projection.prepared);
+    if (projection.structuredContentJson === null || projection.prepared === null) return;
+    insertWorkstreamMessageRecord(this.sql, projection.prepared);
   }
 
   // ----------------------------------------------------------------- settle

@@ -173,7 +173,7 @@ export class WorkstreamMessageStorage {
   messageByClientId(input: { clientMessageId: string }): MessageRow | undefined {
     return first(this.sql.exec<MessageRow>(
       `SELECT ${MESSAGE_COLUMNS}
-         FROM parts part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+         FROM workstream_message_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
         WHERE part.substream_id = '0' AND part.client_message_id = ?`,
       input.clientMessageId,
     ));
@@ -183,7 +183,7 @@ export class WorkstreamMessageStorage {
   message(input: { messageId: string }): MessageRow | undefined {
     return first(this.sql.exec<MessageRow>(
       `SELECT ${MESSAGE_COLUMNS}
-         FROM parts part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+         FROM workstream_message_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
         WHERE part.substream_id = '0' AND part.id = ?`,
       input.messageId,
     ));
@@ -200,7 +200,7 @@ export class WorkstreamMessageStorage {
   messagesBefore(input: { beforeSequence: number; limit: number }): MessageRow[] {
     return this.sql.exec<MessageRow>(
       `SELECT ${MESSAGE_COLUMNS}
-         FROM parts part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+         FROM workstream_message_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
         WHERE part.substream_id = '0' AND part.sequence_number < ?
         ORDER BY part.sequence_number DESC LIMIT ?`,
       input.beforeSequence,
@@ -212,7 +212,7 @@ export class WorkstreamMessageStorage {
   messagesAfter(input: { afterSequence: number; limit: number }): MessageRow[] {
     return this.sql.exec<MessageRow>(
       `SELECT ${MESSAGE_COLUMNS}
-         FROM parts part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+         FROM workstream_message_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
         WHERE part.substream_id = '0' AND part.sequence_number > ?
         ORDER BY part.sequence_number ASC LIMIT ?`,
       input.afterSequence,
@@ -224,7 +224,7 @@ export class WorkstreamMessageStorage {
   messageAtSequence(input: { sequenceNumber: number }): MessageRow | undefined {
     return first(this.sql.exec<MessageRow>(
       `SELECT ${MESSAGE_COLUMNS}
-         FROM parts part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+         FROM workstream_message_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
         WHERE part.substream_id = '0' AND part.sequence_number = ?`,
       input.sequenceNumber,
     ));
@@ -253,7 +253,7 @@ export class WorkstreamMessageStorage {
     const types = messageTypePredicate(input.messageTypes, "part.message_type");
     const rows = this.sql.exec<MessageRow>(
       `SELECT ${MESSAGE_COLUMNS}
-         FROM parts part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+         FROM workstream_message_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
         WHERE part.substream_id = '0' AND ${types.sql}
           AND trim(COALESCE(part.content, '')) <> ''
           AND (? IS NULL OR part.created_at >= ?)
@@ -283,7 +283,7 @@ export class WorkstreamMessageStorage {
     const types = messageTypePredicate(input.messageTypes, "message_type");
     return Number(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
       `SELECT COUNT(*) AS count FROM (
-         SELECT 1 FROM parts
+         SELECT 1 FROM workstream_message_details
           WHERE substream_id = '0' AND ${types.sql}
             AND trim(COALESCE(content, '')) <> ''
             AND (? IS NULL OR created_at >= ?)
@@ -354,7 +354,7 @@ export class WorkstreamMessageStorage {
   }): { text_content: string } | undefined {
     return first(this.sql.exec<{ text_content: string } & Record<string, SqlStorageValue>>(
       `SELECT COALESCE(part.content, '') AS text_content
-         FROM parts part
+         FROM workstream_message_details part
          JOIN participants participant ON participant.user_id = part.author_user_id
         WHERE part.substream_id = '0' AND part.id = ?1
           AND part.author_type = 'member' AND part.author_user_id = ?2
@@ -368,8 +368,8 @@ export class WorkstreamMessageStorage {
   openingAttachmentCount(): number {
     return Number(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
       `SELECT COUNT(*) AS count
-         FROM part_attachments attachment
-         JOIN parts part ON part.id = attachment.part_id
+         FROM workstream_message_attachments attachment
+         JOIN workstream_message_records part ON part.id = attachment.message_id
         WHERE part.substream_id = '0' AND part.sequence_number = 1`,
     ).one().count);
   }
@@ -384,10 +384,10 @@ export class WorkstreamMessageStorage {
     // tables the same way, for the same reason.
     return boundParameterChunks(input.messageIds).flatMap((ids) =>
       this.sql.exec<MessageMentionRow>(
-        `SELECT part_id, mention_kind, target_user_id, connector_type, start_offset, end_offset
-           FROM part_mentions
-          WHERE part_id IN (${ids.map(() => "?").join(", ")})
-          ORDER BY part_id, mention_index`,
+        `SELECT message_id AS part_id, mention_kind, target_user_id, connector_type, start_offset, end_offset
+           FROM workstream_message_mentions
+          WHERE message_id IN (${ids.map(() => "?").join(", ")})
+          ORDER BY message_id, mention_index`,
         ...ids,
       ).toArray());
   }
@@ -405,16 +405,16 @@ export class WorkstreamMessageStorage {
     if (input.messageIds.length === 0) return [];
     return boundParameterChunks(input.messageIds).flatMap((ids) =>
       this.sql.exec<MessageAttachmentRow>(
-        `SELECT attachment.part_id, attachment.resource_id, attachment.position,
+        `SELECT attachment.message_id AS part_id, attachment.resource_id, attachment.position,
                 json_extract(link.resource_json, '$.title') AS title,
                 json_extract(link.resource_json, '$.mimeType') AS mime_type,
                 json_extract(link.resource_json, '$.contentRef') AS content_ref,
                 json_extract(link.resource_json, '$.metadata') AS metadata_json,
                 link.attached_at
-           FROM part_attachments attachment
+           FROM workstream_message_attachments attachment
            JOIN workstream_resource_links link ON link.resource_id = attachment.resource_id
-          WHERE attachment.part_id IN (${ids.map(() => "?").join(", ")})
-          ORDER BY attachment.part_id, attachment.position`,
+          WHERE attachment.message_id IN (${ids.map(() => "?").join(", ")})
+          ORDER BY attachment.message_id, attachment.position`,
         ...ids,
       ).toArray());
   }
@@ -495,42 +495,6 @@ export class WorkstreamMessageStorage {
         `SELECT next_sequence_number, next_attention_ordinal FROM workstream WHERE id = 1`,
       ).one();
       const attention = root.next_attention_ordinal;
-      // Every placeholder is numbered, because one of them is read twice: the
-      // run id both lands in its own column and selects the attempt epoch
-      // beside it. SQLite continues auto-numbering from the highest explicit
-      // index, so a single `?12` in a list of bare `?` silently shifts the rest.
-      this.sql.exec(
-        `INSERT INTO parts
-           (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
-            author_user_id, external_actor_json, content, client_message_id, effect_intent_id,
-            produced_by_run_id, attempt_epoch, tool_name, tool_mode, tool_status, visibility,
-            pinned, message_type, structured_content_json, edited_at, created_at, updated_at)
-         VALUES (?1, '0', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                 (SELECT attempt_epoch FROM runs WHERE run_id = ?12),
-                 ?13, ?14, ?15, ?16, 0, ?17, ?18, NULL, ?19, ?20)`,
-        input.messageId,
-        root.next_sequence_number,
-        attention,
-        PART_ROLE[input.authorType],
-        "text",
-        PART_AUTHOR[input.authorType],
-        input.authorUserId,
-        input.externalActorJson,
-        input.text,
-        input.clientMessageId,
-        null,
-        input.producedByRunId,
-        null,
-        null,
-        null,
-        // `both` means people and the model; a `system` notice is written for a
-        // member to read and is not part of what the model is answering.
-        input.messageType === "text" || input.messageType === "elicitation" ? "both" : "people",
-        input.messageType,
-        input.structuredContentJson,
-        input.now,
-        input.now,
-      );
       prepared.input.sequenceNumber = root.next_sequence_number;
       prepared.input.attentionOrdinal = attention;
       if (input.messageType === "tool" || input.messageType === "suggestion") {
@@ -632,21 +596,11 @@ export class WorkstreamMessageStorage {
       // message carries it — so this is about the operation answering truly
       // rather than about a state to handle.
     const existing = first(this.sql.exec<{ sequence_number: number } & Record<string, SqlStorageValue>>(
-        `SELECT sequence_number FROM parts
+        `SELECT sequence_number FROM workstream_message_records
           WHERE substream_id = '0' AND id = ? AND message_type = 'tool'`,
         input.messageId,
     ));
     if (existing) {
-      this.sql.exec(
-          `UPDATE parts
-              SET structured_content_json = ?, tool_status = ?, edited_at = ?, updated_at = ?
-            WHERE id = ? AND substream_id = '0' AND message_type = 'tool'`,
-          input.structuredContentJson,
-          toolStatusOf(input.structuredContentJson),
-          input.editedAt,
-          input.editedAt ?? input.createdAt,
-          input.messageId,
-        );
       prepared.input.sequenceNumber = existing.sequence_number;
       insertWorkstreamMessageRecord(this.sql, prepared);
         // What the trigger's counter update did on the conflict path: the work
@@ -660,25 +614,6 @@ export class WorkstreamMessageStorage {
     const sequence = this.sql.exec<{ next_sequence_number: number } & Record<string, SqlStorageValue>>(
         `SELECT next_sequence_number FROM workstream WHERE id = 1`,
     ).one().next_sequence_number;
-    this.sql.exec(
-        `INSERT INTO parts
-           (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
-            author_user_id, external_actor_json, content, client_message_id, effect_intent_id,
-            produced_by_run_id, attempt_epoch, tool_name, tool_mode, tool_status, visibility,
-            pinned, message_type, structured_content_json, edited_at, created_at, updated_at)
-         VALUES (?1, '0', ?2, NULL, 'assistant', 'tool_call', 'agent', NULL, NULL, '', ?3, ?4,
-                 NULL, NULL, ?5, 'read', ?6, 'people', 0, 'tool', ?7, ?8, ?9, ?10)`,
-        input.messageId,
-        sequence,
-        input.clientMessageId,
-        input.messageId,
-        toolNameOf(input.structuredContentJson),
-        toolStatusOf(input.structuredContentJson),
-        input.structuredContentJson,
-        input.editedAt,
-        input.createdAt,
-        input.editedAt ?? input.createdAt,
-      );
     prepared.input.sequenceNumber = sequence;
     insertWorkstreamMessageRecord(this.sql, prepared);
     this.#advanceCounters(true, input.createdAt);
@@ -709,22 +644,6 @@ export class WorkstreamMessageStorage {
     );
   }
 }
-
-/** The `parts.role` each retired author vocabulary mapped to. */
-const PART_ROLE: Record<string, string> = {
-  human: "user",
-  agent: "assistant",
-  external: "user",
-  system: "system",
-};
-
-/** The `parts.author_type` each retired author vocabulary mapped to. */
-const PART_AUTHOR: Record<string, string> = {
-  human: "member",
-  agent: "agent",
-  external: "external",
-  system: "system",
-};
 
 /** The tool name a tool message's payload carries, as the trigger read it. */
 function toolNameOf(structuredContentJson: string | null): string | null {

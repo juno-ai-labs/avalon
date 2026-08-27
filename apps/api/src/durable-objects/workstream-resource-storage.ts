@@ -103,8 +103,8 @@ export class WorkstreamResourceStorage {
     return boundParameterChunks(input.resourceIds).flatMap((chunk) =>
       this.sql.exec<{ resource_id: string } & Record<string, SqlStorageValue>>(
         `SELECT DISTINCT attachment.resource_id
-           FROM part_attachments attachment
-           JOIN parts part ON part.id = attachment.part_id
+           FROM workstream_message_attachments attachment
+           JOIN workstream_message_records part ON part.id = attachment.message_id
           WHERE part.substream_id = '0'
             AND attachment.resource_id IN (${chunk.map(() => "?").join(", ")})`,
         ...chunk,

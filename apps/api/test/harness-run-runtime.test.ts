@@ -930,7 +930,7 @@ describe("durable harness attempt runtime", () => {
       `SELECT tool_status,
               json_extract(structured_content_json, '$.invocation.status') AS visible_status,
               json_extract(structured_content_json, '$.invocation.error.code') AS visible_error_code
-         FROM parts WHERE id = ?`,
+         FROM workstream_message_details WHERE id = ?`,
     ).get("invocation-stale-parent")).toEqual({
       tool_status: "ambiguous",
       visible_status: "ambiguous",
@@ -3140,7 +3140,7 @@ describe("durable harness attempt runtime", () => {
     });
     seedPendingToolCard(sqlite, "invocation-direct-failure", "load_plugin");
     expect(sqlite.object.prepare(
-      "SELECT tool_status FROM parts WHERE id = ?",
+      "SELECT tool_status FROM workstream_message_details WHERE id = ?",
     ).get("invocation-direct-failure")).toEqual({ tool_status: "pending" });
 
     // The run dies between `tool_started` and the guard that reports
@@ -3161,7 +3161,7 @@ describe("durable harness attempt runtime", () => {
       error_json: '{"code":"run_terminated","message":"The run ended before the tool produced a result"}',
     });
     expect(sqlite.object.prepare(
-      "SELECT tool_status FROM parts WHERE id = ?",
+      "SELECT tool_status FROM workstream_message_details WHERE id = ?",
     ).get("invocation-direct-failure")).toEqual({ tool_status: "failed" });
     expect(sqlite.object.prepare(
       `SELECT COUNT(*) AS count FROM run_lifecycle_events
@@ -3207,7 +3207,7 @@ describe("durable harness attempt runtime", () => {
       "SELECT status FROM tool_effects WHERE effect_intent_id = ?",
     ).get("invocation-completed-residual")).toEqual({ status: "failed" });
     expect(sqlite.object.prepare(
-      "SELECT tool_status FROM parts WHERE id = ?",
+      "SELECT tool_status FROM workstream_message_details WHERE id = ?",
     ).get("invocation-completed-residual")).toEqual({ tool_status: "failed" });
     expect(sqlite.object.prepare(
       `SELECT COUNT(*) AS count FROM run_lifecycle_events
@@ -3259,7 +3259,7 @@ describe("durable harness attempt runtime", () => {
       "SELECT status FROM harness_runs WHERE id = ?",
     ).get(RUN_ONE)).toEqual({ status: "failed" });
     expect(sqlite.object.prepare(
-      "SELECT tool_status FROM parts WHERE id = ?",
+      "SELECT tool_status FROM workstream_message_details WHERE id = ?",
     ).get("invocation-direct-failure-repair")).toEqual({ tool_status: "pending" });
 
     // The dispatch does not retry a run whose terminal row already landed, so
@@ -3280,7 +3280,7 @@ describe("durable harness attempt runtime", () => {
       error_json: '{"code":"run_terminated","message":"The run ended before the tool produced a result"}',
     });
     expect(sqlite.object.prepare(
-      "SELECT tool_status FROM parts WHERE id = ?",
+      "SELECT tool_status FROM workstream_message_details WHERE id = ?",
     ).get("invocation-direct-failure-repair")).toEqual({ tool_status: "failed" });
     expect(sqlite.object.prepare(
       `SELECT COUNT(*) AS count FROM run_lifecycle_events
@@ -3334,7 +3334,7 @@ describe("durable harness attempt runtime", () => {
       error_json: '{"code":"run_terminated","message":"The run ended before the tool produced a result"}',
     });
     expect(sqlite.object.prepare(
-      "SELECT tool_status FROM parts WHERE id = ?",
+      "SELECT tool_status FROM workstream_message_details WHERE id = ?",
     ).get("invocation-needs-input-residual")).toEqual({ tool_status: "failed" });
     expect(sqlite.object.prepare(
       `SELECT COUNT(*) AS count FROM run_lifecycle_events
@@ -3404,7 +3404,7 @@ describe("durable harness attempt runtime", () => {
       automationDatabase: sqlite.binding,
     })).toEqual([RUN_ONE]);
     expect(sqlite.object.prepare(
-      "SELECT tool_status FROM parts WHERE id = ?",
+      "SELECT tool_status FROM workstream_message_details WHERE id = ?",
     ).get("invocation-stale-behind-backfill")).toEqual({ tool_status: "failed" });
     // Both halves of the activation did their work, not one at the other's cost.
     expect(sqlite.object.prepare(
