@@ -1944,21 +1944,39 @@ export class WorkstreamObjectProductService {
     ];
   }
 
-  async removeParticipant(auth: AuthContext, userId: string): Promise<void> {
+  async removeParticipant(auth: AuthContext, userId: string): Promise<boolean> {
     await this.authorize(auth);
-    if (userId !== auth.userId && auth.role !== "owner" && auth.role !== "admin") {
-      throw new ApiError(403, "participant_removal_denied", "You can only remove yourself from this work stream");
-    }
     const now = Date.now();
-    await this.objectStore.commitWithRegionalEffects(
-      (sql) => sql.exec(
-        `UPDATE participants SET status = 'removed', removed_at = ?,
+    const { result: removed } = await this.objectStore.commitWithRegionalEffects(
+      (sql) => {
+        const target = first(sql.exec<{ one: number }>(
+          `SELECT 1 AS one FROM participants WHERE user_id = ? AND status = 'active'`,
+          userId,
+        ));
+        if (!target) return false;
+        const active = first(sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
+        ))?.count ?? 0;
+        if (active <= 1) {
+          throw new ApiError(
+            409,
+            "workstream_participant_required",
+            "At least one participant must remain in this work stream",
+          );
+        }
+        sql.exec(
+          `UPDATE participants SET status = 'removed', removed_at = ?,
                  participant_epoch = participant_epoch + 1, updated_at = ?
-          WHERE user_id = ? AND status = 'active'`,
-        now, now, userId,
-      ),
-      () => [{ partitionKey: `user:${userId}`, effect: this.userEffect(this.root(), userId) }],
+           WHERE user_id = ? AND status = 'active'`,
+          now, now, userId,
+        );
+        return true;
+      },
+      (_sql, changed) => changed
+        ? [{ partitionKey: `user:${userId}`, effect: this.userEffect(this.root(), userId) }]
+        : [],
     );
+    return removed;
   }
 
   async attachResource(auth: AuthContext, resourceId: string): Promise<WorkstreamResource> {

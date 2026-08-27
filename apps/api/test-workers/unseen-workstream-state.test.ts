@@ -179,6 +179,15 @@ async function firstOpenedAt(stub: DurableObjectStub, userId: string): Promise<n
   return rows[0]?.first_opened_at;
 }
 
+async function participantStatus(stub: DurableObjectStub, userId: string): Promise<string | undefined> {
+  const rows = await runInDurableObject(stub, (_instance, state) =>
+    state.storage.sql.exec<{ status: string }>(
+      `SELECT status FROM participants WHERE user_id = ?`,
+      userId,
+    ).toArray());
+  return rows[0]?.status;
+}
+
 describe("a work stream nobody has shown this person yet", () => {
   it("is unseen for everybody named at the start except the person who started it", async () => {
     const stub = agentStub();
@@ -248,5 +257,52 @@ describe("a work stream nobody has shown this person yet", () => {
     // again — the epoch beside this says so too, so the marker agrees.
     expect(await firstOpenedAt(stub, INVITEE_ID)).toBeNull();
     expect((await viewerState(stub, INVITEE_ID))?.unseen).toBe(true);
+  });
+
+  it("lets a participant remove themselves while another participant remains", async () => {
+    const stub = agentStub();
+    await startWorkstream(stub, [INVITEE_ID]);
+
+    const removed = await product(stub, {
+      operation: "remove_participant",
+      auth: INVITEE_AUTH,
+      userId: INVITEE_ID,
+    });
+
+    expect(removed.status).toBe(200);
+    expect(await participantStatus(stub, INVITEE_ID)).toBe("removed");
+    expect(await participantStatus(stub, CREATOR_ID)).toBe("active");
+  });
+
+  it("lets a participant remove somebody else while they remain in the work stream", async () => {
+    const stub = agentStub();
+    await startWorkstream(stub, [INVITEE_ID]);
+
+    const removed = await product(stub, {
+      operation: "remove_participant",
+      auth: INVITEE_AUTH,
+      userId: CREATOR_ID,
+    });
+
+    expect(removed.status).toBe(200);
+    expect(await participantStatus(stub, CREATOR_ID)).toBe("removed");
+    expect(await participantStatus(stub, INVITEE_ID)).toBe("active");
+  });
+
+  it("refuses to remove the final participant", async () => {
+    const stub = agentStub();
+    await startWorkstream(stub, []);
+
+    const removed = await product(stub, {
+      operation: "remove_participant",
+      auth: AUTH,
+      userId: CREATOR_ID,
+    });
+
+    expect(removed.status).toBe(409);
+    expect(removed.body).toMatchObject({
+      error: "workstream_participant_required",
+    });
+    expect(await participantStatus(stub, CREATOR_ID)).toBe("active");
   });
 });

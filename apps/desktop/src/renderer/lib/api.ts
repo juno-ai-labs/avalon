@@ -1818,6 +1818,13 @@ export class RallyApi {
     return this.getWorkstream(id);
   }
 
+  async removeParticipant(id: string, userId: string): Promise<void> {
+    await this.requestVoid(
+      `/workstreams/${encodeURIComponent(id)}/participants/${encodeURIComponent(userId)}`,
+      { method: 'DELETE' },
+    );
+  }
+
   async answerElicitation(
     id: string,
     elicitationId: string,
