@@ -7,6 +7,7 @@ import {
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
+  WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   type BlockDashboardBlockRun,
@@ -5340,6 +5341,85 @@ describe("Durable Objects in the Workers runtime", () => {
           actor: "external",
           blocks: [{ type: "text", text: "The deploy finished." }],
         },
+      });
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
+  it("forces subscribed viewers to resync when a committed runtime event exceeds the frame", async () => {
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000143",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    await runInDurableObject(stub, (_instance, state) => {
+      const server = state.getWebSockets()[0]!;
+      server.serializeAttachment({
+        ...(server.deserializeAttachment() as Record<string, unknown>),
+        subscribed: true,
+      });
+    });
+
+    try {
+      const resync = nextMessageOfType(socket, "resync_required");
+      await runInDurableObject(stub, async (instance) => {
+        await (instance as unknown as TestableSubstreamAgent).publishAgentRuntimeEvent({
+          type: "transcript_turn_upserted",
+          turn: {
+            transcriptSequence: 1,
+            turnId: "00000000-0000-7000-8000-000000000144",
+            entryKind: "conversation",
+            actor: "external",
+            authorUserId: null,
+            clientMessageId: "oversized-runtime-event",
+            externalActor: null,
+            attentionOrdinal: null,
+            createdAtUtc: "2026-08-26T20:00:00.000Z",
+            revision: 1,
+            blocks: [{
+              type: "text",
+              blockId: "00000000-0000-7000-8000-000000000144:text",
+              blockIndex: 0,
+              text: "x".repeat(WORKSTREAM_REALTIME_MAX_FRAME_BYTES),
+              streaming: false,
+              mentions: [],
+              attachments: [],
+              messageType: "text",
+              structuredContent: null,
+            }],
+            activityId: null,
+            turnManifestRef: null,
+            manifestByteLength: null,
+            manifestSha256: null,
+          },
+        });
+      });
+      expect(await resync).toMatchObject({
+        type: "resync_required",
+        reason: "history_unavailable",
+        sequence: 1,
+        latestSequence: 1,
       });
     } finally {
       socket.close(1000, "test complete");

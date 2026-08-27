@@ -1,3 +1,6 @@
+import { MESSAGE_MAX_CHARACTERS } from "@rally/contracts";
+import { z } from "zod";
+
 import {
   type Exhaustive,
   objectPortRequestSchema,
@@ -5,7 +8,6 @@ import {
   type ObjectPortOf,
 } from "./object-port-protocol";
 import type { WorkstreamMessageStorage } from "./workstream-message-storage";
-import { z } from "zod";
 
 export const AppendMessageInputSchema = z.object({
   messageId: z.string().min(1),
@@ -14,8 +16,8 @@ export const AppendMessageInputSchema = z.object({
   authorUserId: z.string().min(1).nullable(),
   externalActorJson: z.string().nullable(),
   messageType: z.enum(["text", "system", "elicitation"]),
-  text: z.string(),
-  structuredContentJson: z.string().nullable(),
+  text: z.string().max(MESSAGE_MAX_CHARACTERS),
+  structuredContentJson: z.string().max(MESSAGE_MAX_CHARACTERS).nullable(),
   producedByRunId: z.string().min(1).nullable(),
   now: z.number().finite(),
 }).strict();

@@ -1409,6 +1409,11 @@ attachment tiles, and reconstructs system, elicitation, suggestion, and
 external-message rendering. Message-port appends and scheduling's elicitation
 messages join their part write to the ordered projection in the same
 object-local transaction and publish the committed turn to subscribed readers.
+Those object-port message fields reuse the product's existing 100,000-character
+message ceiling. If any other committed runtime event still cannot fit the
+bounded realtime frame, publication advances the durable cursor, marks that
+sequence unavailable for replay, and sends subscribed readers an immediate
+`resync_required` frame instead of falsely reporting that the mutation failed.
 
 **Why:** The ordered-transcript cutover projected the human author's ID but
 dropped it while flattening a turn for the renderer, and did not project mention
@@ -1446,6 +1451,10 @@ the desktop flattening boundary. Rows written during a deployment that omitted
 the ordered projection remain readable through the identity-matched message
 overlay; that compatibility path is not a durable backfill and must remain until
 a historical repair has completed.
+Realtime publication must likewise never turn a committed mutation into a
+reported failure: an event that cannot be replayed as one bounded frame must
+force canonical snapshot repair for current readers and advance the replay
+floor for reconnecting readers.
 
 ### 2026-08-26 — Foreground presence is explicit on the workspace socket
 

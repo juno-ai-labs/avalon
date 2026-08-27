@@ -3094,8 +3094,27 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       occurredAt: new Date().toISOString(),
     });
     const sequenced = await this.commitRealtimeEvent(parsed);
-    this.recordRecentEvent(sequenced);
-    this.broadcast(sequenced);
+    const encodedBytes = textEncoder.encode(JSON.stringify(sequenced)).byteLength;
+    if (encodedBytes > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+      // The source row and canonical transcript turn are already durable by
+      // the time publication runs. Reporting a failed mutation here would be
+      // false, and an idempotent retry cannot republish an append it correctly
+      // recognizes as a replay. Mark this sequence unavailable and make every
+      // subscribed reader repair from the canonical snapshot immediately.
+      this.replayFloorSequence = sequenced.sequence;
+      for (const socket of this.state.getWebSockets()) {
+        const attachment = this.readAttachment(socket);
+        if (!attachment?.subscribed) continue;
+        try {
+          this.sendResyncRequired(socket, sequenced.sequence, "history_unavailable");
+        } catch {
+          // A stale socket cannot turn a committed mutation into a failure.
+        }
+      }
+    } else {
+      this.recordRecentEvent(sequenced);
+      this.broadcast(sequenced);
+    }
     if (BLOCK_DASHBOARD_REFRESH_EVENT_TYPES.has(sequenced.type)) {
       await this.scheduleBlockDashboardRefresh(sequenced.sequence);
     }
