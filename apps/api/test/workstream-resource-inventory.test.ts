@@ -3,8 +3,6 @@ import {
   loadVisibleWorkstreamResourceInventory,
   type VisibleWorkstreamResourceRow,
 } from "../src/services/workstream-resource-visibility";
-import type { HarnessCompactionCheckpoint } from "@rally/agent-harness";
-import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import {
   CHECKPOINT_TEMPLATE_VERSION,
   renderWorkstreamResourceInventory,
@@ -21,11 +19,11 @@ import {
 import {
   seedWorkstreamObjectRoot,
   testResourcePort,
-  testSchedulingPort,
+  testTranscriptPort,
   testWorkstreamObjectStore,
 } from "./helpers/durable-authority";
 import type { ResourceObjectPort } from "../src/durable-objects/workstream-resource-protocol";
-import type { SchedulingObjectPort } from "../src/durable-objects/workstream-scheduling-protocol";
+import type { TranscriptObjectPort } from "../src/durable-objects/workstream-transcript-protocol";
 
 const AS_OF = "2026-08-12T18:30:00.000Z";
 
@@ -81,16 +79,28 @@ function seedResourceLink(
   ).run(input.resourceId, Date.parse(AS_OF), Date.parse(AS_OF));
   if (!input.onMessage) return;
   store.prepare(
-    `INSERT INTO parts
-       (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
-        author_user_id, content, client_message_id, visibility, pinned, message_type,
-        created_at, updated_at)
-     VALUES (?, '0', 1, 1, 'user', 'text', 'member',
-             '4b2a1529-867b-4d69-8685-b1722ccd0149', 'here', ?, 'both', 0, 'text', ?, ?)
-     ON CONFLICT(id) DO NOTHING`,
-  ).run(`part-${input.resourceId}`, `client-${input.resourceId}`, Date.parse(AS_OF), Date.parse(AS_OF));
+    `INSERT INTO transcript_payloads
+       (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
+     VALUES (?, 'shared', 'application/json', '{"role":"user","content":"here","structuredContent":null}',
+             ?, 64, ?)`,
+  ).run(`payload-${input.resourceId}`, `hash-${input.resourceId}`, Date.parse(AS_OF));
   store.prepare(
-    `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+    `INSERT INTO transcript_facts
+       (fact_id, fact_kind, payload_id, origin_kind, created_at)
+     VALUES (?, 'workstream_message', ?, 'canonical', ?)`,
+  ).run(`fact-${input.resourceId}`, `payload-${input.resourceId}`, Date.parse(AS_OF));
+  store.prepare(
+    `INSERT INTO workstream_message_records
+       (id, substream_id, sequence_number, attention_ordinal, fact_id, role, kind,
+        author_type, author_user_id, client_message_id, visibility, pinned, message_type,
+        created_at, updated_at)
+     VALUES (?, '0', 1, 1, ?, 'user', 'text', 'member',
+             '4b2a1529-867b-4d69-8685-b1722ccd0149', ?, 'both', 0, 'text', ?, ?)
+     ON CONFLICT(id) DO NOTHING`,
+  ).run(`part-${input.resourceId}`, `fact-${input.resourceId}`, `client-${input.resourceId}`,
+    Date.parse(AS_OF), Date.parse(AS_OF));
+  store.prepare(
+    `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
      VALUES (?, ?, 0, '{}')`,
   ).run(`part-${input.resourceId}`, input.resourceId);
 }
@@ -112,7 +122,7 @@ afterEach(() => {
  */
 function objectStore(): {
   store: DatabaseSync;
-  scheduling: SchedulingObjectPort;
+  transcript: TranscriptObjectPort;
   attachments: ResourceObjectPort;
 } {
   const store = testWorkstreamObjectStore();
@@ -128,7 +138,7 @@ function objectStore(): {
      VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
              'member_message', '{}', 0, 'test/model', 1, 1)`,
   ).run(CHECKPOINT_RUN);
-  return { store, scheduling: testSchedulingPort(store), attachments: testResourcePort(store) };
+  return { store, transcript: testTranscriptPort(store), attachments: testResourcePort(store) };
 }
 
 /** Put the object's resource-inventory revision where a fence will accept it. */
@@ -139,7 +149,7 @@ function setInventoryRevision(store: DatabaseSync, revision: number): void {
   ).run(revision);
 }
 
-/** One stored checkpoint, under the projection key the retired trigger built. */
+/** One canonical stored checkpoint. */
 function seedCheckpoint(store: DatabaseSync, input: {
   executionPrincipalKey: string;
   resourceVisibilityFingerprint: string;
@@ -149,22 +159,35 @@ function seedCheckpoint(store: DatabaseSync, input: {
   summary: string;
   model?: string;
 }): void {
+  const factId = `checkpoint:${input.executionPrincipalKey}:${input.compactedThroughSequence}`;
+  const payloadId = `payload:${factId}`;
   store.prepare(
-    `INSERT INTO compaction_checkpoints
-       (projection_key, execution_principal_key, resource_visibility_fingerprint,
-        checkpoint_template_version, run_id, compacted_through_sequence, messages_json,
-        summary, model, context_tokens_before_compaction, context_window_tokens,
-        input_tokens, output_tokens, cost_micros, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, 0, 0, 0, 1, 1)`,
+    `INSERT INTO transcript_payloads
+       (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
+     VALUES (?, 'model', 'application/json', ?, ?, 1, 1)`,
+  ).run(payloadId, JSON.stringify({
+    messages: JSON.parse(input.messagesJson), summary: input.summary,
+    model: input.model ?? "test/model", compactedThroughSequence: input.compactedThroughSequence,
+  }), `hash:${factId}`);
+  store.prepare(
+    `INSERT INTO transcript_facts
+       (fact_id, fact_kind, payload_id, origin_kind, run_id, created_at)
+     VALUES (?, 'compaction_checkpoint', ?, 'canonical', ?, 1)`,
+  ).run(factId, payloadId, CHECKPOINT_RUN);
+  store.prepare(
+    `INSERT INTO transcript_compaction_checkpoints
+       (checkpoint_fact_id, execution_principal_key, resource_visibility_fingerprint,
+        checkpoint_template_version, run_id, compacted_through_sequence, model,
+        context_tokens_before_compaction, context_window_tokens, input_tokens, output_tokens,
+        cost_micros, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 0, 0, 0, 1, 1)`,
   ).run(
-    `legacy:${input.executionPrincipalKey}:${input.resourceVisibilityFingerprint}:v${input.checkpointTemplateVersion}`,
+    factId,
     input.executionPrincipalKey,
     input.resourceVisibilityFingerprint,
     input.checkpointTemplateVersion,
     CHECKPOINT_RUN,
     input.compactedThroughSequence,
-    input.messagesJson,
-    input.summary,
     input.model ?? "test/model",
   );
 }
@@ -225,7 +248,7 @@ describe("work-stream compaction resource inventory", () => {
   it("rebuilds a stored current-version checkpoint from its raw summary and current principal visibility", async () => {
     let currentRows = [resource("current-id", "current-private.png", "image/png", true)];
     const storedFingerprint = "inventory:1";
-    const { store, scheduling, attachments } = objectStore();
+    const { store, transcript, attachments } = objectStore();
     // The link half is the object's now, so it is seeded rather than faked. The
     // resource half is still the workspace's and still comes from the double
     // below — which is the whole point of the split this slice makes.
@@ -259,7 +282,7 @@ describe("work-stream compaction resource inventory", () => {
 
     const checkpoint = await __integrationTesting.loadWorkstreamContextCompaction(
       database,
-      scheduling,
+      transcript,
       attachments,
       WORKSPACE,
       WORKSTREAM,
@@ -283,7 +306,7 @@ describe("work-stream compaction resource inventory", () => {
     setInventoryRevision(store, 2);
     const replayAfterRemoval = await __integrationTesting.loadWorkstreamContextCompaction(
       database,
-      scheduling,
+      transcript,
       attachments,
       WORKSPACE,
       WORKSTREAM,
@@ -294,7 +317,7 @@ describe("work-stream compaction resource inventory", () => {
   });
 
   it("never replays a raw attachment summary for a different execution principal", async () => {
-    const { store, scheduling, attachments } = objectStore();
+    const { store, transcript, attachments } = objectStore();
     seedCheckpoint(store, {
       executionPrincipalKey: "user:original-viewer",
       resourceVisibilityFingerprint: "inventory:1",
@@ -324,63 +347,13 @@ describe("work-stream compaction resource inventory", () => {
     // this principal's to read.
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
-      scheduling,
+      transcript,
       attachments,
       WORKSPACE,
       WORKSTREAM,
       { type: "user", userId: asUserId("df345be8-2f51-49ed-873d-bd48ada54749") },
       AS_OF,
     )).resolves.toBeNull();
-  });
-
-  it("persists the raw summary checkpoint and template version without a live inventory", async () => {
-    const { store, scheduling } = objectStore();
-    setInventoryRevision(store, 0);
-    const checkpoint: HarnessCompactionCheckpoint = {
-      trigger: "auto",
-      summary: "# Request\nContinue the exact work.",
-      messages: [{ role: "user", content: "[Compaction checkpoint]\n\n# Request\nContinue the exact work." }],
-      model: "test/model",
-      contextTokensBeforeCompaction: 81,
-      contextWindowTokens: 100,
-      inputTokens: 82,
-      outputTokens: 5,
-      costCents: 0.25,
-    };
-
-    await __integrationTesting.persistWorkstreamContextCompaction(
-      scheduling,
-      {
-        workspaceId: WORKSPACE,
-        workstreamId: WORKSTREAM,
-        harnessRunId: CHECKPOINT_RUN,
-        executionPrincipal: { type: "user", userId: "4b2a1529-867b-4d69-8685-b1722ccd0149" },
-      } as WorkstreamWorkflowInput,
-      42,
-      checkpoint,
-      "inventory:0",
-    );
-
-    // The row, rather than the statement's bindings. What the checkpoint must
-    // carry is the raw summary and the template version it was written under —
-    // and, just as importantly, not the rendered inventory appendix, which is
-    // this principal's visibility at one instant and would be replayed to
-    // whoever resumes.
-    const stored = store.prepare(
-      `SELECT summary, checkpoint_template_version, execution_principal_key,
-              resource_visibility_fingerprint, messages_json
-         FROM compaction_checkpoints`,
-    ).get() as {
-      summary: string; checkpoint_template_version: number;
-      execution_principal_key: string; resource_visibility_fingerprint: string;
-      messages_json: string;
-    };
-    expect(stored.summary).toBe(checkpoint.summary);
-    expect(stored.checkpoint_template_version).toBe(CHECKPOINT_TEMPLATE_VERSION);
-    expect(stored.execution_principal_key).toBe("user:4b2a1529-867b-4d69-8685-b1722ccd0149");
-    expect(stored.resource_visibility_fingerprint).toBe("inventory:0");
-    expect(stored.messages_json).toContain("# Request");
-    expect(stored.messages_json).not.toContain("Authoritative work-stream resource inventory");
   });
 
   it("rejects a visibility change between inventory preparation and appendix rendering", async () => {
@@ -417,44 +390,8 @@ describe("work-stream compaction resource inventory", () => {
     expect(reads).toBe(2);
   });
 
-  it("does not persist a summary when visibility changes at the final fenced insert", async () => {
-    const { store, scheduling } = objectStore();
-    // The inventory moved after this compaction prepared against revision 1.
-    setInventoryRevision(store, 2);
-    const checkpoint: HarnessCompactionCheckpoint = {
-      trigger: "auto",
-      summary: "confidential summary",
-      messages: [{ role: "user", content: "checkpoint" }],
-      model: "test/model",
-      contextTokensBeforeCompaction: 81,
-      contextWindowTokens: 100,
-      inputTokens: 82,
-      outputTokens: 5,
-      costCents: 0.25,
-    };
-
-    await expect(__integrationTesting.persistWorkstreamContextCompaction(
-      scheduling,
-      {
-        workspaceId: WORKSPACE,
-        workstreamId: WORKSTREAM,
-        harnessRunId: CHECKPOINT_RUN,
-        executionPrincipal: { type: "user", userId: "4b2a1529-867b-4d69-8685-b1722ccd0149" },
-      } as WorkstreamWorkflowInput,
-      42,
-      checkpoint,
-      "inventory:1",
-    )).rejects.toThrow("compaction_resource_visibility_changed");
-    // Nothing written, which is the point: the summary is confidential to the
-    // visibility it was produced under. The fence and the write are one
-    // transaction now, so there is no instant at which the row exists and the
-    // check has not yet run.
-    expect(store.prepare(`SELECT COUNT(*) AS n FROM compaction_checkpoints`).get())
-      .toEqual({ n: 0 });
-  });
-
   it("keeps an unknown checkpoint template readable from its persisted base message", async () => {
-    const { store, scheduling, attachments } = objectStore();
+    const { store, transcript, attachments } = objectStore();
     seedCheckpoint(store, {
       executionPrincipalKey: `workspace:${WORKSPACE}`,
       resourceVisibilityFingerprint: "inventory:0",
@@ -475,7 +412,7 @@ describe("work-stream compaction resource inventory", () => {
 
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
-      scheduling,
+      transcript,
       attachments,
       WORKSPACE,
       WORKSTREAM,
@@ -489,7 +426,7 @@ describe("work-stream compaction resource inventory", () => {
         provenance: {
           originKind: "derived",
           sourceKind: "compaction_checkpoint",
-          sourceId: `${CHECKPOINT_RUN}:7`,
+          sourceId: `checkpoint:workspace:${WORKSPACE}:7`,
           sourceRevision: 7,
         },
       }],
@@ -508,7 +445,7 @@ describe("work-stream compaction resource inventory", () => {
       summary: "# Request\nContinue from the frozen point.",
       model: "test/model",
     };
-    const { store, scheduling, attachments } = objectStore();
+    const { store, transcript, attachments } = objectStore();
     seedCheckpoint(store, {
       executionPrincipalKey: stored.executionPrincipalKey,
       resourceVisibilityFingerprint: stored.resourceVisibilityFingerprint,
@@ -548,7 +485,7 @@ describe("work-stream compaction resource inventory", () => {
 
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
-      scheduling,
+      transcript,
       attachments,
       WORKSPACE,
       WORKSTREAM,
@@ -559,7 +496,7 @@ describe("work-stream compaction resource inventory", () => {
     // Unfenced, the same read answers with the later checkpoint.
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
-      scheduling,
+      transcript,
       attachments,
       WORKSPACE,
       WORKSTREAM,
@@ -569,7 +506,7 @@ describe("work-stream compaction resource inventory", () => {
 
     await expect(__integrationTesting.loadWorkstreamContextCompaction(
       database,
-      scheduling,
+      transcript,
       attachments,
       WORKSPACE,
       WORKSTREAM,

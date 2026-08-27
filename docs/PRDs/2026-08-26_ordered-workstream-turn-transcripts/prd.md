@@ -1896,7 +1896,13 @@ coordinated cutover and no compatibility phases:
    `part_attachments`, `part_mentions`, `compaction_checkpoints`, and the
    one-time migration surfaces. Missing evidence aborts the object migration;
    it never treats an empty or partially copied canonical table as permission to
-   delete the old owner.
+   delete the old owner. Canonical-only post-cutover checkpoints are not a
+   mismatch: the proof is that every legacy checkpoint has an exact canonical
+   owner, not that both tables have equal totals. The cleanup must not update,
+   delete, synthesize, or reorder participant compaction status rows, compaction
+   activities/intervals, or Bind generations. Real-workerd coverage must commit
+   two separate compactions and retain both completed edges, while the existing
+   mid-compaction reconnect case remains green.
 
 The completed release has no inference-archive backfill, legacy protocol reader,
 dual write, dual read, capability negotiation, compatibility window, staged

@@ -986,14 +986,6 @@ describe("settling the residual receipts of a terminal run", () => {
     const { storage, sql } = open();
     storage.admit(plan());
     // A rendered tool part carrying the same id as its receipt, mid-flight.
-    sql.exec(
-      `INSERT INTO parts (id, substream_id, sequence_number, role, kind, author_type,
-         content, client_message_id, effect_intent_id, visibility, pinned, message_type,
-         tool_name, tool_mode, tool_status, structured_content_json, created_at, updated_at)
-       VALUES ('effect-1', '0', 2, 'assistant', 'tool_call', 'agent',
-         '', 'tool:effect-1', 'effect-1', 'both', 0, 'tool', 'read_resource', 'read', 'pending',
-         json('{"invocation":{"status":"started","completedAt":null,"error":null}}'), 1, 1)`,
-    );
     insertWorkstreamMessageRecord(sql, await prepareWorkstreamMessageRecord({
       messageId: "effect-1",
       clientMessageId: "tool:effect-1",
@@ -1032,7 +1024,7 @@ describe("settling the residual receipts of a terminal run", () => {
       `SELECT tool_status,
               json_extract(structured_content_json, '$.invocation.status') AS visible_status,
               json_extract(structured_content_json, '$.invocation.error.code') AS visible_error
-         FROM parts WHERE id = 'effect-1'`,
+         FROM workstream_message_details WHERE id = 'effect-1'`,
     ).toArray()).toEqual([{
       tool_status: "failed",
       visible_status: "failed",
@@ -1047,7 +1039,7 @@ describe("settling the residual receipts of a terminal run", () => {
          FROM workstream_message_records record
          JOIN transcript_facts fact ON fact.fact_id = record.fact_id
          JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
-        WHERE record.message_id = 'effect-1'`,
+        WHERE record.id = 'effect-1'`,
     ).one();
     expect(canonical.tool_status).toBe("failed");
     expect(canonical.edited_at).toBe(NOW);

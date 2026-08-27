@@ -508,7 +508,7 @@ function insertIdentity(
   storage.sql.exec(
     `INSERT OR IGNORE INTO substreams
        (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq, depth,
-        return_mode, origin_part_id, owner_user_id, audience, tool_policy, status,
+        return_mode, origin_message_id, owner_user_id, audience, tool_policy, status,
         created_at, closed_at)
      VALUES ('0', 'main', 'none', NULL, NULL, 0, 'none', NULL, NULL,
              'workspace', 'full', 'open', ?, NULL)`,

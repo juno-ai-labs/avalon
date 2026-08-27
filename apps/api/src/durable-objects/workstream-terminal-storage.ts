@@ -1520,7 +1520,7 @@ export class WorkstreamTerminalStorage {
   }): void {
     this.sql.exec(
       `INSERT OR IGNORE INTO terminal_publication_grants
-         (grant_id, run_id, source_part_id, principal_key, repository_full_name,
+         (grant_id, run_id, source_message_id, principal_key, repository_full_name,
           base_ref, head_ref, expires_at, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.grantId,
@@ -1631,6 +1631,11 @@ export class WorkstreamTerminalStorage {
     body: string;
     now: number;
   }): void {
+    const grant = first<{ grant_id: string }>(this.sql.exec(
+      `SELECT grant_id FROM terminal_publication_grants WHERE grant_id = ?`,
+      input.grantId,
+    ));
+    if (!grant) throw new Error("terminal_publication_grant_missing");
     this.sql.exec(
       `INSERT INTO repository_publications
          (publication_id, effect_intent_id, grant_id, repository_full_name, base_ref,
