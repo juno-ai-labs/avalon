@@ -15,7 +15,9 @@ import type { z } from "zod";
  * scope insert proved its right to write by joining `harness_runs` and checking
  * `lease_owner`. Those joins become this port's own fence.
  */
-type LocalOnlyHarnessRunOperation = "abandonPreCutoverLeaseLessRuns";
+type LocalOnlyHarnessRunOperation =
+  | "abandonPreCutoverLeaseLessRuns"
+  | "preCutoverLeaseLessCleanupReceipt";
 export type HarnessRunOperation = Exclude<keyof WorkstreamHarnessRunStorage, LocalOnlyHarnessRunOperation>;
 
 export type HarnessRunObjectPort = ObjectPortOf<Pick<WorkstreamHarnessRunStorage, HarnessRunOperation>>;

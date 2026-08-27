@@ -1126,7 +1126,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     objectId: string;
     operatorRunId: string;
     cutoverVersion: number;
-  }): Promise<{ abandonedRunCount: number }> {
+  }): Promise<{ abandonedRunCount: number; cleanupOperatorRunId: string | null }> {
     await this.initialized;
     if (this.externalSubstreamId() !== "0") {
       throw new Error("legacy_transcript_backfill_requires_main_substream");
@@ -1139,8 +1139,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       throw new Error("legacy_transcript_backfill_run_id_invalid");
     }
     if (input.cutoverVersion !== 27) throw new Error("legacy_transcript_backfill_cutover_invalid");
-    if (this.transcript.hasLegacyBackfillReceipt()) return { abandonedRunCount: 0 };
+    const cleanupReceipt = this.harnessRuns.preCutoverLeaseLessCleanupReceipt();
+    if (cleanupReceipt) return cleanupReceipt;
+    if (this.transcript.hasLegacyBackfillReceipt()) {
+      return { abandonedRunCount: 0, cleanupOperatorRunId: null };
+    }
     return this.harnessRuns.abandonPreCutoverLeaseLessRuns({
+      operatorRunId: input.operatorRunId,
       cutoverVersion: input.cutoverVersion,
       now: Date.now(),
     });

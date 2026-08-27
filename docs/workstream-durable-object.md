@@ -110,7 +110,9 @@ backfill, a separate explicit operator RPC may abandon an active pre-v27 run
 only when it has no attempt ID, lease owner, lease deadline, heartbeat, or open
 tool receipt. The abandonment records a terminal `failed` row with
 `migration_cutover_abandoned`; any post-cutover or leased shape aborts without
-mutation. The backfill RPC then runs only the terminal-run residual-receipt phase of the existing
+mutation. Schema v29 commits the original operator run and abandonment count in
+the same transaction, so a later retry returns the same cleanup evidence even
+when the first backfill attempt failed. The backfill RPC then runs only the terminal-run residual-receipt phase of the existing
 reaper so a tool
 receipt left open after its owning run terminalized is settled through the same
 runtime path used at ordinary run admission. It does not expire or terminalize
@@ -1251,7 +1253,8 @@ remain in their existing owning rows; canonical facts store only stable source
 references. Historical Bind state is explicitly unavailable. An operator-only
 precursor terminalizes lease-less pre-v27 active rows with an explicit
 migration-abandonment reason; it refuses every run that acquired a durable
-attempt, lease, heartbeat, or open receipt.
+attempt, lease, heartbeat, or open receipt. Schema v29 adds the singleton cleanup
+receipt that makes a cleanup-success/backfill-failure retry auditable.
 
 **Why:** the v27 breaking cutover created the correct durable substrate but did
 not make existing work-stream rows visible through it. The old `parts` table
@@ -1285,6 +1288,9 @@ that loop boundary exists. Pre-cutover run abandonment must remain a separate,
 explicit operator action with a strict v27 timestamp plus null
 attempt/lease/heartbeat and no-open-receipt fence. It may not be generalized
 into ordinary backfill quiescence or used to expire current runs.
+Its object-local receipt must commit atomically with the run terminalization and
+remain the count returned by every retry; a later transcript failure may not
+erase or replace that evidence.
 
 ### 2026-08-26 — Foreground presence is explicit on the workspace socket
 
