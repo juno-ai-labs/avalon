@@ -475,9 +475,13 @@ pre {
 .menu-separator { background: var(--av-sys-color-border-default); height: 1px; margin: 4px; }
 /* `width` and `text-align` matter for the items rendered `asChild` onto a
    button, which would otherwise shrink to fit its label and centre it. Both
-   restate what an item rendered onto Radix's own div already computes. */
+   restate what an item rendered onto Radix's own div already computes. The
+   menu is `surface-raised`, so its ordinary highlight uses that surface's own
+   hover partner; Terra Light's `elevated-hover` is the same as the menu base.
+   The danger rule has equal specificity and follows this one, so source order
+   preserves its dedicated tint. */
 .menu-item { align-items: center; border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 8px; min-height: 30px; outline: 0; padding: 4px 8px; text-align: start; width: 100%; }
-.menu-item[data-highlighted] { background: var(--av-sys-color-surface-elevated-hover); color: var(--av-sys-color-text-default); }
+.menu-item[data-highlighted] { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
 .menu-item[data-disabled] { opacity: 0.42; }
 .menu-item-danger { color: var(--av-sys-color-danger-base); }
 .menu-item-danger[data-highlighted] { background: var(--av-sys-color-danger-tint); color: var(--av-sys-color-danger-strong); }
@@ -4018,10 +4022,13 @@ pre {
   width: 100%;
 }
 
+/* This popover is `surface-raised` too. Terra Light gives `elevated-hover` the
+   same value as that base, so command rows use the raised surface's visible
+   hover partner for pointer, focus, and selected states. */
 .command-popover > button:hover,
 .command-popover > button:focus-visible,
 .command-popover > button.is-selected {
-  background: var(--av-sys-color-surface-elevated-hover);
+  background: var(--av-sys-color-surface-raised-hover);
 }
 
 .command-popover strong {

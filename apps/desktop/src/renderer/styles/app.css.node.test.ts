@@ -103,6 +103,31 @@ describe('member picker controls', () => {
   });
 });
 
+describe('raised popover interaction states', () => {
+  it('highlights ordinary menu rows and preserves the danger override', () => {
+    expect(rule('.menu-content')).toContain(
+      'background: var(--av-sys-color-surface-raised);',
+    );
+    expect(rule('.menu-item[data-highlighted]')).toContain(
+      'background: var(--av-sys-color-surface-raised-hover);',
+    );
+    expect(rule('.menu-item-danger[data-highlighted]')).toContain(
+      'background: var(--av-sys-color-danger-tint);',
+    );
+  });
+
+  it('highlights command rows against the raised command popover', () => {
+    expect(rule('.command-popover')).toContain(
+      'background: var(--av-sys-color-surface-raised);',
+    );
+    expect(rule(
+      '.command-popover > button:hover,\n'
+      + '.command-popover > button:focus-visible,\n'
+      + '.command-popover > button.is-selected',
+    )).toContain('background: var(--av-sys-color-surface-raised-hover);');
+  });
+});
+
 describe('work-stream participant presence', () => {
   it('draws a tokenized sonar ring and preserves a static reduced-motion state', () => {
     const ping = rule('.avatar-presence-ping');
