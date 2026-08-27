@@ -352,3 +352,10 @@ made deliberately.
    its own activity copy ("Setting up the work stream's workspace…") or
    the existing tool rows suffice — settle against real screenshots
    during implementation.
+4. **A token-friendly resource identifier.** The model handles resource
+   ids here only occasionally — publish outputs return one, and the
+   recycle-recovery path passes one to import — but the suggestion of a
+   short slug alias for resources (raised against the citations sibling,
+   where ids are emitted routinely; see its open questions) would make
+   those ids cheaper and safer to copy here too. A resource-system
+   decision, not this PRD's; nothing here depends on identifier shape.
