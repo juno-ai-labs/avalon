@@ -3343,7 +3343,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .project-space-title { min-width: 0; }
 .project-space-title > .inline-error { margin-top: 6px; }
 .project-space-audience { align-items: center; display: flex; }
-.project-space-audience .dropdown-select-trigger { color: inherit; font: inherit; margin: -8px 0 -8px -10px; }
+.project-space-audience .dropdown-select-trigger { color: inherit; font: inherit; justify-content: flex-start; margin: -8px 0 -8px -10px; min-width: 0; }
 .project-space-header p,
 .project-space-muted { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 5px 0 0; }
 .project-space-section { border-top: 1px solid var(--av-sys-color-border-subtle); padding: 24px 0 32px; }
