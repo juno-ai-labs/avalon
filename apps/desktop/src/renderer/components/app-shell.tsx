@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import type { WorkstreamBatchFilter } from '@rally/contracts';
+import type { CreateProjectRequest, ProjectDirectory, ProjectSummary, WorkstreamBatchFilter } from '@rally/contracts';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
+import { useProjectDirectories } from '../lib/use-project-directories';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WorkstreamSocketPool } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
@@ -32,6 +33,21 @@ export const RUNNING_HARNESS_STATUSES: ReadonlySet<WorkstreamSummary['harnessSta
   'scheduled', 'running', 'needs_input',
 ]);
 export const PROACTIVE_RECENT_WORKSTREAM_COUNT = 5;
+
+/** Upsert a mutation response without duplicating an earlier socket push. */
+export function upsertProjectDirectory(
+  current: ProjectDirectory | undefined,
+  project: ProjectSummary,
+): ProjectDirectory {
+  return {
+    // A REST response does not advance the socket receiver's ledger. The next
+    // authoritative socket snapshot still has to be accepted at this version.
+    waterline: current?.waterline ?? 0,
+    items: current?.items.some((item) => item.id === project.id)
+      ? current.items.map((item) => item.id === project.id ? project : item)
+      : [...(current?.items ?? []), project],
+  };
+}
 
 export function backgroundRealtimeWorkstreamIds(
   activeWorkstreamId: string | null,
@@ -229,6 +245,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     return true;
   };
   const notes = useSocketOwnedList<NoteSummary>(['notes']);
+  const { active: projects, inactive: inactiveProjects } = useProjectDirectories();
   const featureFlags = useClientFeatureFlags(api);
   const { setForegroundWorkstreamId } = useWorkspaceSocket();
 
@@ -281,6 +298,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         // claiming an empty workspace when the socket cannot connect.
         loading={workstreams.data === undefined}
         notes={notes.data ?? []}
+        projects={projects.data?.items ?? []}
+        inactiveProjects={inactiveProjects.data?.items ?? []}
         meetingRecordingAvailable={featureFlags.data?.meetingRecordingEnabled === true}
         automationWorkspaceTemplatesAvailable={featureFlags.data?.automationWorkspaceTemplatesEnabled === true}
         onArchiveDraftAutomation={async (automation) => {
@@ -462,6 +481,44 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onPreviewWorkstreamBatch={async (filter) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
           return api.previewWorkstreamBatch(filter);
+        }}
+        onCreateProject={async (input: CreateProjectRequest) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          const created = await api.createProject(input);
+          queryClient.setQueryData<ProjectDirectory>(
+            ['projects'],
+            (current) => upsertProjectDirectory(current, created),
+          );
+        }}
+        onAddWorkstreamToProject={async (projectId, workstreamId) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          const updated = await api.addWorkstreamToProject(projectId, workstreamId);
+          queryClient.setQueryData<ProjectDirectory>(['projects'], (current) => current ? {
+            ...current,
+            items: current.items.map((project) => project.id === updated.id ? updated : {
+              ...project,
+              workstreamIds: project.workstreamIds.filter((id) => id !== workstreamId),
+            }),
+          } : current);
+        }}
+        onReorderProjects={async (projectIds) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          const directory = await api.reorderProjects(projectIds);
+          queryClient.setQueryData(['projects'], directory);
+        }}
+        onRestoreProject={async (projectId) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          const restored = await api.restoreProject(projectId);
+          queryClient.setQueryData<ProjectDirectory>(['projects-inactive'], (current) => current ? {
+            ...current,
+            items: current.items.filter((project) => project.id !== restored.id),
+          } : current);
+          queryClient.setQueryData<ProjectDirectory>(['projects'], (current) => current ? {
+            ...current,
+            items: current.items.some((project) => project.id === restored.id)
+              ? current.items.map((project) => project.id === restored.id ? restored : project)
+              : [...current.items, restored],
+          } : current);
         }}
         onSignOut={() => {
           void signOut().catch(() => undefined);

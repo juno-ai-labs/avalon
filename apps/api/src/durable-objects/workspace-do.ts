@@ -4,6 +4,8 @@ import {
   IdSchema,
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
+  PROJECT_COLOR_KEYS,
+  PROJECT_ICON_KEYS,
   UserIdSchema,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
@@ -11,6 +13,7 @@ import {
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceIdSchema,
+  WorkspaceProjectSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceSidebarSchema,
   WorkspaceWorkstreamPageEventSchema,
@@ -27,6 +30,7 @@ import {
   type AutomationSummary,
   type WorkspaceSidebar,
   type NoteSummary,
+  type ProjectSnapshot,
   type Workstream,
   type WorkspaceSocketSyncEvent,
   type WorkspaceSyncTopic,
@@ -76,6 +80,7 @@ import {
 import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
   ScheduledDurableObject,
+  scheduledAlarmRetryDelay,
   type ScheduledAlarm,
   type ScheduledAlarmOutcome,
 } from "./scheduled-alarms";
@@ -256,6 +261,42 @@ import {
   type WorkspaceOpportunityWindowSettleRequest,
 } from "./workspace-opportunity-protocol";
 import { WorkspaceProductStorage } from "./workspace-product-storage";
+import {
+  WorkspaceProjectCreateRequestSchema,
+  WorkspaceProjectAudienceRequestSchema,
+  ProjectDefaultResourceQueueMessageSchema,
+  WorkspaceProjectDefaultResourceRequestSchema,
+  WorkspaceProjectDefaultResultSchema,
+  WorkspaceProjectDirectoryResultSchema,
+  WorkspaceProjectListRequestSchema,
+  WorkspaceProjectLifecycleRequestSchema,
+  WorkspaceProjectMembershipPlanResultSchema,
+  WorkspaceProjectMembershipPrepareRequestSchema,
+  WorkspaceProjectMembershipSettleRequestSchema,
+  WorkspaceProjectMutationResultSchema,
+  WorkspaceProjectReorderRequestSchema,
+  WorkspaceProjectUpdateRequestSchema,
+  WorkspaceProjectWorkstreamConstraintRequestSchema,
+  WorkspaceProjectWorkstreamConstraintResultSchema,
+  type WorkspaceProjectCreateRequest,
+  type WorkspaceProjectAudienceRequest,
+  type ProjectDefaultResourceQueueMessage,
+  type WorkspaceProjectDefaultResourceRequest,
+  type WorkspaceProjectDefaultResult,
+  type WorkspaceProjectDirectoryResult,
+  type WorkspaceProjectListRequest,
+  type WorkspaceProjectLifecycleRequest,
+  type WorkspaceProjectMembershipPlanResult,
+  type WorkspaceProjectMembershipPrepareRequest,
+  type WorkspaceProjectMembershipSettleRequest,
+  type WorkspaceProjectMutationResult,
+  type WorkspaceProjectReorderRequest,
+  type WorkspaceProjectUpdateRequest,
+  type WorkspaceProjectWorkstreamConstraintRequest,
+  type WorkspaceProjectWorkstreamConstraintResult,
+} from "./workspace-project-protocol";
+import { WorkspaceProjectStorage } from "./workspace-project-storage";
+import { publishProjectDefaultResourceTargets } from "./workspace-project-default-publication";
 import {
   applyWorkstreamRegionalEnvelope,
   insertWorkstreamEffectReceipt,
@@ -488,6 +529,10 @@ const WORKSPACE_SCHEDULE_ALARM_KINDS: readonly WorkspaceScheduleTargetKind[] = [
 
 function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTargetKind {
   return (WORKSPACE_SCHEDULE_ALARM_KINDS as readonly string[]).includes(kind);
+}
+
+function projectRegistrySql(values: readonly string[]): string {
+  return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(", ");
 }
 
 export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
@@ -1099,6 +1144,149 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
            SELECT OLD.model_content_ref, OLD.workspace_id, OLD.resource_id, 'derivative', datetime('now'), datetime('now')
             WHERE OLD.model_content_ref IS NOT NULL;
        END`,
+  ],
+}, {
+  version: 14,
+  description: "make WorkspaceDO authoritative for projects and per-person ordering",
+  statements: [
+    `CREATE TABLE projects (
+      project_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+      normalized_name TEXT NOT NULL CHECK (length(normalized_name) > 0),
+      icon_key TEXT NOT NULL CHECK (icon_key IN (${projectRegistrySql(PROJECT_ICON_KEYS)})),
+      icon_color_key TEXT NOT NULL CHECK (icon_color_key IN (${projectRegistrySql(PROJECT_COLOR_KEYS)})),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+      status TEXT NOT NULL CHECK (status IN (
+        'active', 'archiving', 'archived', 'restoring', 'cancelling_restore'
+      )),
+      creator_user_id TEXT NOT NULL,
+      archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0),
+      archived_by_user_id TEXT,
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      presentation_revision INTEGER NOT NULL DEFAULT 1 CHECK (presentation_revision > 0),
+      audience_generation INTEGER NOT NULL DEFAULT 1 CHECK (audience_generation > 0),
+      lifecycle_generation INTEGER NOT NULL DEFAULT 1 CHECK (lifecycle_generation > 0),
+      CHECK ((status = 'archived') = (archived_at IS NOT NULL)),
+      CHECK ((archived_at IS NULL) = (archived_by_user_id IS NULL))
+    ) STRICT`,
+    `CREATE TABLE project_participants (
+      project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('adding', 'active', 'removing', 'removed')),
+      generation INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      PRIMARY KEY (project_id, user_id)
+    ) STRICT`,
+    `CREATE INDEX project_participants_user_state_idx
+      ON project_participants(user_id, state, project_id)`,
+    `CREATE TABLE workspace_project_order (
+      user_id TEXT NOT NULL,
+      project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+      position INTEGER NOT NULL CHECK (position >= 0),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      PRIMARY KEY (user_id, project_id)
+    ) STRICT`,
+    `CREATE INDEX workspace_project_order_user_position_idx
+      ON workspace_project_order(user_id, position, project_id)`,
+    `CREATE TABLE workspace_project_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      waterline INTEGER NOT NULL CHECK (waterline >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0)
+    ) STRICT`,
+    `INSERT INTO workspace_project_state (id, waterline, updated_at) VALUES (1, 0, 0)`,
+  ],
+}, {
+  version: 15,
+  description: "stage many-to-many project membership for work streams",
+  statements: [
+    `CREATE TABLE project_workstream_memberships (
+      project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+      workstream_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('joining', 'active', 'removing', 'removed')),
+      generation INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0),
+      joined_at INTEGER NOT NULL CHECK (joined_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      removed_at INTEGER CHECK (removed_at IS NULL OR removed_at >= 0),
+      CHECK ((state = 'removed') = (removed_at IS NOT NULL)),
+      PRIMARY KEY (project_id, workstream_id)
+    ) STRICT`,
+    `CREATE INDEX project_workstream_memberships_workstream_state_idx
+      ON project_workstream_memberships(workstream_id, state, project_id)`,
+    `CREATE INDEX project_workstream_memberships_project_state_idx
+      ON project_workstream_memberships(project_id, state, workstream_id)`,
+  ],
+}, {
+  version: 16,
+  description: "store project defaults and their per-work-stream Queue targets",
+  statements: [
+    `CREATE TABLE project_default_resources (
+      project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+      resource_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('active', 'removed')),
+      generation INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      removed_at INTEGER CHECK (removed_at IS NULL OR removed_at >= 0),
+      CHECK ((state = 'removed') = (removed_at IS NOT NULL)),
+      PRIMARY KEY (project_id, resource_id)
+    ) STRICT`,
+    `CREATE TABLE project_default_resource_targets (
+      project_id TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      default_generation INTEGER NOT NULL CHECK (default_generation > 0),
+      workstream_id TEXT NOT NULL,
+      membership_generation INTEGER NOT NULL CHECK (membership_generation > 0),
+      state TEXT NOT NULL CHECK (state IN ('pending', 'applied', 'terminal')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      applied_at INTEGER CHECK (applied_at IS NULL OR applied_at >= 0),
+      last_error_code TEXT,
+      PRIMARY KEY (project_id, resource_id, default_generation, workstream_id, membership_generation),
+      FOREIGN KEY (project_id, resource_id) REFERENCES project_default_resources(project_id, resource_id)
+        ON DELETE CASCADE
+    ) STRICT`,
+    `CREATE INDEX project_default_resource_targets_pending_idx
+      ON project_default_resource_targets(state, project_id, resource_id, workstream_id)`,
+  ],
+}, {
+  version: 17,
+  description: "publish project default-resource targets through a durable outbox",
+  statements: [
+    `CREATE TABLE project_default_resource_publications (
+      project_id TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      default_generation INTEGER NOT NULL CHECK (default_generation > 0),
+      workstream_id TEXT NOT NULL,
+      membership_generation INTEGER NOT NULL CHECK (membership_generation > 0),
+      requested_by_user_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('pending', 'accepted')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      next_attempt_at INTEGER NOT NULL CHECK (next_attempt_at >= 0),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      accepted_at INTEGER CHECK (accepted_at IS NULL OR accepted_at >= 0),
+      PRIMARY KEY (project_id, resource_id, default_generation, workstream_id, membership_generation),
+      FOREIGN KEY (project_id, resource_id, default_generation, workstream_id, membership_generation)
+        REFERENCES project_default_resource_targets(
+          project_id, resource_id, default_generation, workstream_id, membership_generation
+        ) ON DELETE CASCADE
+    ) STRICT`,
+    `CREATE INDEX project_default_resource_publications_due_idx
+      ON project_default_resource_publications(state, next_attempt_at, project_id, resource_id)`,
+    `INSERT INTO project_default_resource_publications (
+       project_id, resource_id, default_generation, workstream_id, membership_generation,
+       requested_by_user_id, state, attempts, next_attempt_at, created_at, updated_at, accepted_at
+     )
+     SELECT target.project_id, target.resource_id, target.default_generation, target.workstream_id,
+            target.membership_generation, project.creator_user_id, 'pending', 0,
+            target.updated_at, target.created_at, target.updated_at, NULL
+       FROM project_default_resource_targets target
+       JOIN projects project ON project.project_id = target.project_id
+      WHERE target.state = 'pending'`,
   ],
 }];
 
@@ -1811,16 +1999,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * Everything this object wakes for that is not a stored entry.
    *
-   * Only the activity-event retention sweep: it is derived from the oldest row
-   * in a table this object writes constantly, so an entry would be rewritten on
-   * every event. Product work, schedules, watches, maintenance passes, and
-   * Terminal deadlines are all entries, each with its own retry gate.
+   * Activity retention and project-default publication are derived from their
+   * authoritative rows. Product work, schedules, watches, maintenance passes,
+   * and Terminal deadlines are stored entries with their own retry gates.
    */
   protected override nextDerivedAlarmCandidates(): readonly number[] {
     const oldest = this.state.storage.sql.exec<{ created_at: number | null }>(
       `SELECT MIN(created_at) AS created_at FROM workspace_activity_events`,
     ).one().created_at;
-    return oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS];
+    const publication = this.projectStorage().nextDefaultPublicationDueAt();
+    return [
+      ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
+      ...(publication === null ? [] : [publication]),
+    ];
   }
 
   /**
@@ -1831,10 +2022,29 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * moves with every event this workspace records.
    */
   protected override async runDueAlarmWork(now: number): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (workspaceId) {
+      await this.instrumentWorkspaceAlarmPhase("project_default_publish", undefined, async () => {
+        try {
+          await publishProjectDefaultResourceTargets({
+            storage: this.projectStorage(),
+            queue: this.env.ACTIVITY_QUEUE,
+            workspaceId,
+            region: this.env.AVALON_REGION,
+            now,
+            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
+          });
+        } catch (error) {
+          logWarn(this.env, "project_default_publication_failed", {
+            workspace_id: workspaceId,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+        }
+      });
+    }
     await this.instrumentWorkspaceAlarmPhase("activity_reap", undefined, async () => {
       this.reapExpiredActivityEvents(now);
     });
-    const workspaceId = this.workspaceId();
     // Re-derive the whole index before this alarm ends, exactly as the object
     // that used to own it did. A target that just fired has advanced its own
     // canonical row — `runSchedule` writes the next `next_run_at`,
@@ -2321,6 +2531,282 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ): Promise<void> {
     await this.initialized;
     this.ensureIdentity(workspaceId, placementAffinity);
+  }
+
+  async createProject(input: WorkspaceProjectCreateRequest): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectCreateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().create(request, uuidV7());
+    this.publishProjectSnapshot();
+    return WorkspaceProjectMutationResultSchema.parse({ ok: true, project });
+  }
+
+  async listProjects(input: WorkspaceProjectListRequest): Promise<WorkspaceProjectDirectoryResult> {
+    await this.initialized;
+    const request = WorkspaceProjectListRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    return WorkspaceProjectDirectoryResultSchema.parse({
+      ok: true,
+      directory: this.projectStorage().list(request.userId),
+    });
+  }
+
+  async listInactiveProjects(input: WorkspaceProjectListRequest): Promise<WorkspaceProjectDirectoryResult> {
+    await this.initialized;
+    const request = WorkspaceProjectListRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    return WorkspaceProjectDirectoryResultSchema.parse({
+      ok: true,
+      directory: this.projectStorage().listInactive(request.userId),
+    });
+  }
+
+  async archiveProject(input: WorkspaceProjectLifecycleRequest): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectLifecycleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().archive(request);
+    if (project) this.publishProjectSnapshot();
+    return WorkspaceProjectMutationResultSchema.parse(project
+      ? { ok: true, project }
+      : { ok: false, code: "project_not_found" });
+  }
+
+  async restoreProject(input: WorkspaceProjectLifecycleRequest): Promise<WorkspaceProjectDefaultResult> {
+    await this.initialized;
+    const request = WorkspaceProjectLifecycleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().restore(request);
+    const result = WorkspaceProjectDefaultResultSchema.parse(project === "conflict"
+      ? { ok: false, code: "project_restore_conflict" }
+      : project
+        ? { ok: true, project: project.project, targets: project.targets }
+        : { ok: false, code: "project_not_found" });
+    if (result.ok) this.publishProjectSnapshot();
+    if (result.ok && result.targets.length > 0) await this.armNextAlarm();
+    return result;
+  }
+
+  async reorderProjects(
+    input: WorkspaceProjectReorderRequest,
+  ): Promise<WorkspaceProjectDirectoryResult> {
+    await this.initialized;
+    const request = WorkspaceProjectReorderRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const result = WorkspaceProjectDirectoryResultSchema.parse({
+      ok: true,
+      directory: this.projectStorage().reorder(request.userId, request.order.projectIds),
+    });
+    this.publishProjectSnapshot();
+    return result;
+  }
+
+  async updateProjectPresentation(
+    input: WorkspaceProjectUpdateRequest,
+  ): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectUpdateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().updatePresentation(request);
+    if (project !== false) this.publishProjectSnapshot();
+    return WorkspaceProjectMutationResultSchema.parse(project === false
+      ? { ok: false, code: "project_not_found" }
+      : { ok: true, project });
+  }
+
+  async updateProjectAudience(input: WorkspaceProjectAudienceRequest): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectAudienceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const activeMemberIds = await Promise.all(request.audience.participantUserIds.map(async (userId) => (
+      await this.activeWorkspaceMember(request.workspaceId, userId) ? userId : null
+    )));
+    if (activeMemberIds.some((userId) => userId === null)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().updateAudience(request);
+    if (project) this.publishProjectSnapshot();
+    return WorkspaceProjectMutationResultSchema.parse(project
+      ? { ok: true, project }
+      : { ok: false, code: "project_not_found" });
+  }
+
+  async prepareProjectMembership(
+    input: WorkspaceProjectMembershipPrepareRequest,
+  ): Promise<WorkspaceProjectMembershipPlanResult> {
+    await this.initialized;
+    const request = WorkspaceProjectMembershipPrepareRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const result = WorkspaceProjectMembershipPlanResultSchema.parse(
+      this.projectStorage().prepareMembership(request),
+    );
+    if (result.ok) this.publishProjectSnapshot();
+    return result;
+  }
+
+  async projectWorkstreamConstraints(
+    input: WorkspaceProjectWorkstreamConstraintRequest,
+  ): Promise<WorkspaceProjectWorkstreamConstraintResult> {
+    await this.initialized;
+    const request = WorkspaceProjectWorkstreamConstraintRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return WorkspaceProjectWorkstreamConstraintResultSchema.parse({
+        activeProject: false,
+        requiresWorkspaceScope: false,
+      });
+    }
+    return WorkspaceProjectWorkstreamConstraintResultSchema.parse(
+      this.projectStorage().workstreamConstraints(request.workstreamId),
+    );
+  }
+
+  async finalizeProjectMembership(
+    input: WorkspaceProjectMembershipSettleRequest,
+  ): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectMembershipSettleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().finalizeMembership(request);
+    if (project) this.publishProjectSnapshot();
+    return WorkspaceProjectMutationResultSchema.parse(project
+      ? { ok: true, project }
+      : { ok: false, code: "project_not_found" });
+  }
+
+  async cancelProjectMembership(
+    input: WorkspaceProjectMembershipSettleRequest,
+  ): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectMembershipSettleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().cancelMembership(request);
+    if (project) this.publishProjectSnapshot();
+    return WorkspaceProjectMutationResultSchema.parse(project
+      ? { ok: true, project }
+      : { ok: false, code: "project_not_found" });
+  }
+
+  async removeProjectMembership(
+    input: WorkspaceProjectMembershipPrepareRequest,
+  ): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectMembershipPrepareRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().removeMembership(
+      request.userId,
+      request.projectId,
+      request.workstreamId,
+    );
+    if (project) this.publishProjectSnapshot();
+    return WorkspaceProjectMutationResultSchema.parse(project
+      ? { ok: true, project }
+      : { ok: false, code: "project_not_found" });
+  }
+
+  async addProjectDefaultResource(
+    input: WorkspaceProjectDefaultResourceRequest,
+  ): Promise<WorkspaceProjectDefaultResult> {
+    await this.initialized;
+    const request = WorkspaceProjectDefaultResourceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const result = WorkspaceProjectDefaultResultSchema.parse(
+      this.projectStorage().addDefaultResource(request),
+    );
+    if (result.ok) this.publishProjectSnapshot();
+    if (result.ok && result.targets.length > 0) await this.armNextAlarm();
+    return result;
+  }
+
+  async removeProjectDefaultResource(
+    input: WorkspaceProjectDefaultResourceRequest,
+  ): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectDefaultResourceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().removeDefaultResource(request);
+    if (project) this.publishProjectSnapshot();
+    return WorkspaceProjectMutationResultSchema.parse(project
+      ? { ok: true, project }
+      : { ok: false, code: "project_not_found" });
+  }
+
+  async projectDefaultTargetCurrent(input: ProjectDefaultResourceQueueMessage): Promise<boolean> {
+    await this.initialized;
+    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.projectStorage().defaultTargetCurrent(request);
+  }
+
+  async projectDefaultTargetActors(input: ProjectDefaultResourceQueueMessage): Promise<string[]> {
+    await this.initialized;
+    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.projectStorage().defaultTargetActors(request);
+  }
+
+  async completeProjectDefaultTarget(input: ProjectDefaultResourceQueueMessage): Promise<boolean> {
+    await this.initialized;
+    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.projectStorage().completeDefaultTarget(request);
+  }
+
+  async recordProjectDefaultTargetFailure(input: ProjectDefaultResourceQueueMessage): Promise<boolean> {
+    await this.initialized;
+    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.projectStorage().recordDefaultTargetFailure(request, "resource_attach_failed");
+  }
+
+  async failProjectDefaultTarget(input: ProjectDefaultResourceQueueMessage): Promise<boolean> {
+    await this.initialized;
+    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.projectStorage().failDefaultTarget(request, "project_no_active_participant");
   }
 
   /**
@@ -4615,6 +5101,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         waterline: this.sidebarListWaterline("notes"),
         items: this.listSidebarNotes(attachment.workspaceId, attachment.userId),
       },
+      projects: this.projectSnapshot(attachment.userId),
     });
   }
 
@@ -4668,6 +5155,40 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
   }
 
+  /**
+   * Re-send both project lists to every subscribed socket, shaped for its user.
+   *
+   * Project presentation, audience, membership, resource, lifecycle, and order
+   * all share the WorkspaceDO project waterline. Sending the complete pair
+   * means an audience removal is represented by absence for the removed person,
+   * and a reconnect can install exactly the same authoritative state.
+   */
+  private publishProjectSnapshot(): void {
+    const occurredAt = new Date().toISOString();
+    // An open workspace socket is the authorization. Access revocation closes
+    // it through the one shared revocation path; do not add a D1 read here.
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      try {
+        socket.send(JSON.stringify(WorkspaceProjectSnapshotEventSchema.parse({
+          type: "workspace_project_snapshot",
+          occurredAt,
+          projects: this.projectSnapshot(attachment.userId),
+        })));
+      } catch {
+        // Reconnect receives this same snapshot in the subscribe payload.
+      }
+    }
+  }
+
+  private projectSnapshot(userId: string): ProjectSnapshot {
+    return {
+      active: this.projectStorage().list(userId),
+      inactive: this.projectStorage().listInactive(userId),
+    };
+  }
+
   private async publishDirectorySync(workspaceId: string): Promise<void> {
     const placementAffinity = this.placementAffinity();
     if (!placementAffinity) throw new Error("workspace_object_placement_affinity_missing");
@@ -4676,6 +5197,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private productStorage(): WorkspaceProductStorage {
     return new WorkspaceProductStorage(this.state.storage);
+  }
+
+  private projectStorage(): WorkspaceProjectStorage {
+    return new WorkspaceProjectStorage(this.state.storage);
+  }
+
+  private async activeWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
+    return Boolean(await this.env.DB.prepare(
+      `SELECT 1 FROM workspace_members
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active' LIMIT 1`,
+    ).bind(workspaceId, userId).first());
   }
 
   private reapExpiredActivityEvents(now: number): void {

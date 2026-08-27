@@ -4,7 +4,7 @@
 >
 > Add projects as an optional way to group related work streams, give them
 > shared resources, and find them in the sidebar.
-> Companion: [state](state.md). Subsystem references:
+> Companions: [state](state.md), [build plan](plan.md). Subsystem references:
 > [data model](../../data-model.md),
 > [Queue versus RPC](../../choosing-queues-or-rpc.md),
 > [work-stream creation](../../workstream-creation.md),
@@ -136,6 +136,11 @@ tooltip are **New work stream in {project name}**. A personal project carries
 the same “only the participants can see this” privacy marker used by other
 personal Rally surfaces.
 
+Opening a project through the middle link also expands its accordion. Both plus
+controls use the same compact, transparent header-action treatment as the
+sidebar ellipsis controls, have no painted hover container, and occupy the same
+right-hand grid column so their centers line up.
+
 Archived projects do not appear among active project accordions, **Add to
 project** menus, or project icon piles.
 
@@ -204,7 +209,7 @@ between that marker and the work-stream name.
   whitespace and letter case so `Hiring` and `hiring` cannot become two
   different projects.
 - **Icon:** exactly one icon from the fixed V1 library below.
-- **Color:** one solid icon fill chosen from the fixed project palette below.
+- **Color:** one solid icon color chosen from the fixed project palette below.
   Rally stores the palette key rather than a hex value, so the same choice can
   use the right accessible shade in every theme.
 
@@ -230,6 +235,8 @@ technology. The selected swatch has a non-color selection indicator. These keys
 resolve through new `sys.color.project.<key>` design tokens supplied by every
 Rally theme. A theme may change the rendered shade for contrast, but it must
 preserve the named hue. V1 does not accept custom colors, opacity, or gradients.
+Every icon option is an outline drawn in the currently selected color, so a
+color change previews all 25 choices immediately.
 
 The V1 icon library contains exactly these Lucide choices. The first value is
 the `lucide-react` component; the second is the stable stored `icon_key`:
@@ -270,8 +277,8 @@ SVG.
 
 The creation dialog also chooses **Personal** or **Workspace** scope and starts
 with the creator as a participant. Personal is the default, matching new work
-streams. Project settings in the project space provide the same fields for
-later editing, plus participants.
+streams. Later edits are made directly from the project-space header rather
+than through one general settings dialog.
 
 Name, icon, and color are presentation only. Editing them does not change the
 project's audience, lifecycle, per-membership, or per-default generations or
@@ -307,12 +314,19 @@ Clicking the project row opens a project space with two main sections:
   still ordered by `lastActivityAt DESC, workstreamId`, and clicking a row opens
   that work stream.
 - **Default resources:** the project's current default-resource list and an
-  **Add resource** control. Each item uses the ordinary Rally resource row and
-  can be removed from the defaults without removing it from work streams that
-  already received it.
+  **Add resource** control aligned at the other side of the section header.
+  **Add resource** opens a participant-picker-style modal with selectable
+  resource rows rather than an inline dropdown. Each current item uses the
+  ordinary Rally resource row and can be removed from the defaults without
+  removing it from work streams that already received it.
 
 The project-space header shows the project icon, name, scope, and participants.
-Its settings affordance edits those fields and the participant list.
+Clicking the icon opens the full 25-icon and 12-color grid. Double-clicking the
+name edits it inline. The participant face pile opens the same **Add people**
+modal pattern used by work streams. Scope is a live Personal/Workspace dropdown;
+choosing the other value opens a **Change project access?** confirmation with
+**Continue** and **Cancel** before any mutation is sent. There is no general
+project Settings button.
 
 A work stream whose project start gate has not released appears in this table
 as **Preparing work stream…**, using its persisted opening text and start
@@ -497,7 +511,10 @@ of two ways:
 
 - drag the work-stream row onto an expanded or collapsed project row; or
 - right-click the work stream, choose **Add to project**, then choose a project
-  from a submenu that shows each project's icon, color, and name.
+  from a submenu that shows each project's icon, color, and name. This uses the
+  shared nested-menu pattern: the submenu opens directly to the right, anchors
+  vertically to the parent row, and puts a trailing checkmark on the current
+  project.
 
 Before committing an audience change, Rally says what will happen: either
 **Everyone in this workspace will be able to open this work stream** or
@@ -945,6 +962,14 @@ None yet.
    to guess what the project previously changed. Archiving retains membership,
    audiences, and attached resource links while stopping new assignments and
    default-resource propagation.
+11. **Project reads come down the workspace socket; project changes go up over
+    REST.** The subscribe response includes the current viewer's active and
+    inactive projects. Every committed mutation sends a new viewer-shaped
+    snapshot to every subscribed workspace socket, including sockets belonging
+    to somebody whose project access was just removed. A socket event carries
+    project state, not an invalidation that triggers a GET. The REST response
+    may support read-your-write for its caller, but the socket snapshot is what
+    converges every window and reconnect.
 
 ## Data model
 
@@ -962,9 +987,9 @@ meaningless local `workspace_id` column.
   advance the audience generation. Archive, restore, and cancellation lifecycle
   transitions advance the lifecycle generation. Membership and default rows
   own their narrower generations; changing one membership never invalidates an
-  operation for a different work stream. `normalized_name` is unique among
-  projects in every lifecycle state so restoring a project cannot collide with
-  a newer name.
+  operation for a different work stream. Duplicate normalized names are
+  allowed: project identity and navigation use `project_id`, and rejecting a
+  duplicate would leak the names of personal projects the caller cannot read.
   `icon_key` is restricted to the 25 V1 keys; `icon_color_key` is restricted to
   the 12 V1 project-color keys.
 - `project_participants` owns `adding`, `active`, `removing`, and `removed`
@@ -1171,8 +1196,11 @@ carries each readable work stream's project summaries—`projectId`, name,
 `iconKey`, and `iconColorKey`—ordered by the current viewer's project
 positions, so **Needs attention** can render its icon pile without one request
 per row. Only active projects appear in this summary. Project order, lifecycle,
-name, icon, membership, and work-stream activity changes publish the
-corresponding typed workspace query invalidations.
+name, icon, membership, default-resource, and work-stream membership changes
+publish the complete active-and-inactive project snapshot to every subscribed
+workspace socket, filtered and ordered for that socket's user. Work-stream
+activity continues to arrive through the existing versioned workspace
+work-stream state path.
 
 `workspace_workstream_directory.last_activity_at` remains maintained by the
 existing work-stream regional-effect path described in
@@ -1358,14 +1386,17 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
 15. Every active sidebar project row renders, in order, a stateful Tabler
     `IconTriangle` accordion control, project icon, project name, flexible empty
     space, and a Tabler `IconPlus` control. The middle link opens the project
-    space, the triangle changes only accordion state, and the plus opens only
-    **New project work stream**.
+    space and expands its accordion, the triangle changes only accordion state,
+    and the plus opens only **New project work stream**. Section and row plus
+    controls align and use the transparent sidebar-header action style.
 16. **New project work stream** preserves the ordinary creation controls and
     behavior, shows its fixed project, and omits both **Needs attention** and
     **Suggested work**.
 17. The project space presents an activity-ordered work-stream table styled
-    like **Needs attention**, a default-resource list with an **Add resource**
-    control. A persisted start operation that has not activated its route
+    like **Needs attention**, a default-resource list with a right-aligned
+    **Add resource** modal selector, direct icon/color and inline-name editors,
+    a participant face-pile modal, and a live scope dropdown with a confirmation
+    step. A persisted start operation that has not activated its route
     remains discoverable there as **Preparing work stream…** with retry and
     cancellation on failure, including after a desktop restart. Cancellation
     waits for live setup claims, durably abandons the gated run and draft
@@ -1409,3 +1440,10 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
 21. Changing an empty workspace project to personal scope requires the caller
     to be an active participant or atomically seats them with confirmation
     before narrowing, so the resulting personal project always has a reader.
+22. Project list reads use no REST route. The workspace subscribe payload and
+    later `workspace_project_snapshot` frames carry active and inactive
+    directories with one WorkspaceDO waterline. Every successful project
+    mutation is sent to all subscribed users in viewer-specific form; a removed
+    participant receives a newer snapshot with the project absent. Reconnect
+    installs the same canonical pair, and equal or older pairs cannot overwrite
+    newer state.

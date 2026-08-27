@@ -1,4 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query';
+import type { ProjectSnapshot } from '@rally/contracts';
 import type { AutomationSummary, NoteSummary } from './types';
 
 /**
@@ -24,6 +25,7 @@ import type { AutomationSummary, NoteSummary } from './types';
  */
 
 export type SidebarList = 'automations' | 'notes';
+type SidebarWaterline = SidebarList | 'projects';
 
 /** The cache entries the shell reads these lists under. */
 export const SIDEBAR_LIST_QUERY_KEYS = {
@@ -78,10 +80,29 @@ export function applyVersionedSidebarList<K extends SidebarList>(
   // Seeded at -1 rather than 0: a workspace that has never written either table
   // is served waterline 0, and that first list still has to apply.
   if (waterline <= (waterlines[list] ?? -1)) return false;
-  queryClient.setQueryData<Partial<Record<SidebarList, number>>>(
+  queryClient.setQueryData<Partial<Record<SidebarWaterline, number>>>(
     SIDEBAR_LIST_WATERLINES_KEY,
     (current = {}) => ({ ...current, [list]: waterline }),
   );
   queryClient.setQueryData<SidebarListItems[K]>(SIDEBAR_LIST_QUERY_KEYS[list], items);
+  return true;
+}
+
+/** Apply the project directory only when its WorkspaceDO waterline is newer. */
+export function applyVersionedProjectSnapshot(
+  queryClient: QueryClient,
+  snapshot: ProjectSnapshot,
+): boolean {
+  pinWaterlineLedger(queryClient);
+  const waterlines = queryClient.getQueryData<Partial<Record<SidebarWaterline, number>>>(
+    SIDEBAR_LIST_WATERLINES_KEY,
+  ) ?? {};
+  if (snapshot.active.waterline <= (waterlines.projects ?? -1)) return false;
+  queryClient.setQueryData<Partial<Record<SidebarWaterline, number>>>(
+    SIDEBAR_LIST_WATERLINES_KEY,
+    (current = {}) => ({ ...current, projects: snapshot.active.waterline }),
+  );
+  queryClient.setQueryData(['projects'], snapshot.active);
+  queryClient.setQueryData(['projects-inactive'], snapshot.inactive);
   return true;
 }

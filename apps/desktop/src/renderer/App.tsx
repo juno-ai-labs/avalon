@@ -28,6 +28,7 @@ import { MeetingNotesScreen } from './screens/meeting-notes';
 import { NoteDetailScreen } from './screens/note-detail';
 import { NewAutomationScreen } from './screens/new-automation';
 import { NewWorkstreamScreen } from './screens/new-workstream';
+import { ProjectSpaceScreen } from './screens/project-space';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
 import { WorkstreamScreen } from './screens/workstream';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
@@ -231,6 +232,8 @@ function WorkspaceApp(): React.JSX.Element {
             <Routes>
               <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
               <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
+              <Route element={<ProjectSpaceScreen />} path="/projects/:projectId" />
+              <Route element={<NewWorkstreamScreen workspace={workspace.data} projectId="route" />} path="/projects/:projectId/workstreams/new" />
               <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
               <Route element={<NoteDetailScreen />} path="/notes/:id" />
               <Route element={<NewAutomationScreen workspace={workspace.data} />} path="/automations/new" />

@@ -14,6 +14,7 @@ import { featureFlagRoutes } from "./routes/feature-flags";
 import { healthRoutes } from "./routes/health";
 import { onboardingRoutes } from "./routes/onboarding";
 import { noteRoutes } from "./routes/notes";
+import { projectRoutes } from "./routes/projects";
 import { realtimeRoutes } from "./routes/realtime";
 import { resourceRoutes } from "./routes/resources";
 import { resendInboundRoutes } from "./routes/resend";
@@ -137,6 +138,7 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/workstreams", workstreamRoutes);
   protectedApi.route("/work-opportunities", workOpportunityRoutes);
   protectedApi.route("/notes", noteRoutes);
+  protectedApi.route("/projects", projectRoutes);
   protectedApi.route("/digest", digestRoutes);
   protectedApi.route("/automations", automationRoutes);
   protectedApi.route("/automation-templates", templateRoutes);

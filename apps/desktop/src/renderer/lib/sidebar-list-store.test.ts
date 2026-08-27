@@ -1,6 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applyVersionedSidebarList } from './sidebar-list-store';
+import { applyVersionedProjectSnapshot, applyVersionedSidebarList } from './sidebar-list-store';
+import type { ProjectSnapshot } from '@rally/contracts';
 import type { AutomationSummary } from './types';
 
 function automation(id: string): AutomationSummary {
@@ -38,5 +39,22 @@ describe('applyVersionedSidebarList', () => {
 
     // And a genuinely newer one still applies, so the pin has not frozen it.
     expect(applyVersionedSidebarList(queryClient, 'automations', 6, [automation('c')])).toBe(true);
+  });
+
+  it('keeps a late project snapshot from replacing a newer directory', () => {
+    const queryClient = new QueryClient();
+    const newer = {
+      active: { waterline: 8, items: [] },
+      inactive: { waterline: 8, items: [] },
+    } satisfies ProjectSnapshot;
+    const older = {
+      active: { waterline: 7, items: [] },
+      inactive: { waterline: 7, items: [] },
+    } satisfies ProjectSnapshot;
+
+    expect(applyVersionedProjectSnapshot(queryClient, newer)).toBe(true);
+    expect(applyVersionedProjectSnapshot(queryClient, older)).toBe(false);
+    expect(queryClient.getQueryData(['projects'])).toEqual(newer.active);
+    expect(queryClient.getQueryData(['projects-inactive'])).toEqual(newer.inactive);
   });
 });
