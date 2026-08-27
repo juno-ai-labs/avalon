@@ -217,6 +217,7 @@ describe('WorkstreamHeader presence', () => {
     expect(container.querySelector('.avatar-stack-item.is-present')).not.toBeNull();
     expect(screen.queryByTitle(collaborator.name)).not.toBeInTheDocument();
     expect(container.querySelectorAll('.avatar-presence-ping')).toHaveLength(1);
+    expect(container.querySelector('.participant-header-button [tabindex]')).toBeNull();
   });
 });
 
