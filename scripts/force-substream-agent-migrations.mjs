@@ -44,8 +44,13 @@ function parseArguments(argv) {
   if (unknown.length > 0) throw new Error(`Unknown argument ${unknown[0]}`);
   const jurisdictionProbeUrl = probeArgument?.slice('--jurisdiction-probe-url='.length) ?? null;
   if (jurisdictionProbeUrl !== null) {
-    const parsedProbeUrl = URL.parse(jurisdictionProbeUrl);
-    if (!parsedProbeUrl || !['http:', 'https:'].includes(parsedProbeUrl.protocol)) {
+    let parsedProbeUrl;
+    try {
+      parsedProbeUrl = new URL(jurisdictionProbeUrl);
+    } catch {
+      throw new Error('--jurisdiction-probe-url must be an HTTP URL');
+    }
+    if (!['http:', 'https:'].includes(parsedProbeUrl.protocol)) {
       throw new Error('--jurisdiction-probe-url must be an HTTP URL');
     }
   }

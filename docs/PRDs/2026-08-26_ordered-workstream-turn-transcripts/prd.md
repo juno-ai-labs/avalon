@@ -1843,7 +1843,9 @@ coordinated cutover and no compatibility phases:
    operator-confirmed eligible counts before the first write. For the initial
    production operation those witnesses are 389 Global and 3 EU objects;
    unrestricted legacy IDs are not addressable through a regional binding and
-   remain explicit skips rather than cross-region fallbacks.
+   remain explicit skips rather than cross-region fallbacks. The content RPC
+   also refuses a non-main substream instead of recording a misleading empty
+   receipt; the reviewed 392-object target is the main-feed fleet.
 5. Backfill only quiescent objects. Each object captures a pre-write PITR
    bookmark, hashes the complete v27-fenced source, re-reads it inside the same
    SQLite transaction that adds the ordered projections and v28 receipt, and
