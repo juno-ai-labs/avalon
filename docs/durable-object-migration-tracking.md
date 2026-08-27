@@ -115,6 +115,12 @@ and no report is `unreported`; an ID Cloudflare still enumerates without stored
 data is `empty`. Both remain queryable, but only the first is a live migration
 target.
 
+The storage flag is required input, even though Cloudflare's generated API type
+marks it optional. A payload that omits it makes that namespace listing fail and
+the sweep partial. Missing is not false: silently accepting an API shape change
+would move the fleet to `empty`, zero the actionable counts, and make forced
+migrations report that nothing matched.
+
 The sweep deliberately does **not** ask each object for its version. A binding
 can address another script's class, so it could — and it would wake every
 hibernating object in the account every hour, making the monitor the largest
@@ -126,11 +132,13 @@ API, while an absent identity was not. A listing that was truncated at the page
 cap, or that failed, marks nothing: it says nothing about the objects it did not
 reach.
 
-The inventory observation and reports have an explicit time fence. A report
-newer than the latest sweep proves that the identity woke and owns storage
-again, so it clears `empty`. A delayed report older than that sweep is retained
-in the event history but cannot contradict the later `hasStoredData=false`
-observation.
+The inventory observation and reports have an explicit time fence. Each object
+is stamped when the API page carrying it finishes loading, not later when the
+whole account sweep is committed. A report newer than that observation proves
+that the identity woke and owns storage again, so it clears `empty`. A delayed
+report older than the observation is retained in the event history but cannot
+contradict the later `hasStoredData=false` fact. Equal timestamps favor the
+inventory observation, the only one that directly inspected storage.
 
 A whole namespace can leave too, when a class is deleted from the Worker. That
 is a second pass rather than the same one, because the first iterates the
@@ -468,7 +476,9 @@ report is out of scope by design.
 | Report delivered twice | The second is ignored — `report_id` carries a unique index. |
 | Reports delivered out of order | The older one updates nothing on the object row; both stay in the history. |
 | Cloudflare API unavailable | The sweep records a `failed` receipt with the reason rather than throwing. Nothing is marked absent. |
+| An object payload omits its ID or `hasStoredData` | That namespace listing fails visibly, its prior objects and counts remain unchanged, and the sweep is `partial`; missing never becomes absence or `false`. |
 | Cloudflare keeps listing an ID after its storage is cleared | The latest `hasStoredData=false` observation makes it `empty`. It stays in history but leaves live totals and forced-migration targets. |
+| Storage is cleared after a failed migration report | `empty` supersedes `failed`: the historical event remains, but the object leaves recent failures and forced-migration targets because no schema remains to repair. |
 | One namespace's listing fails | That namespace's objects stay `null`; the sweep is `partial` and names the namespace in `migration_inventory_sweep_completed`. |
 | Namespace larger than the page cap | Listing stops at 20 pages of 1,000, the namespace is recorded as truncated, and the site shows the sweep as `partial`. |
 | Access unconfigured | Every request is refused with `access_not_configured`. |
@@ -507,7 +517,7 @@ banner carrying the error.
 
 | Suite | Covers |
 | --- | --- |
-| `pnpm --filter @rally/migration-tracker test` | The registry's SQL and derived statuses, including stored/unreported versus enumerated/empty identities, status filtering, a newer report reviving storage, an older delayed report not reviving it, immediate compatibility with a pre-deploy false storage flag followed by a newer report, empty identities being excluded from both forceable-component counts and migration targets, and the UI's separate Stored/IDs counts and empty-object explanation. It also covers the queue consumer's acknowledgement, dedupe, and out-of-order behavior, the sweep against a `fetch` double, Access verification against a locally generated key, and the site's routes and escaping. `dispatch.test.ts` covers the fan-out against the real registry and queue doubles: routing by script name, per-region grouping, an unbound region, a send that fails partway, the 100-message batch, and the run cap. |
+| `pnpm --filter @rally/migration-tracker test` | The registry's SQL and derived statuses, including stored/unreported versus enumerated/empty identities, status filtering and precedence, per-object observation fencing, equal and stale report timestamps, immutable inventory facts with newer effective liveness, failed-listing count retention, the v5 listing-stamp upgrade, empty identities being excluded from both forceable-component counts and migration targets, malformed Cloudflare object payloads failing visibly, and the UI's separate Stored/IDs counts and empty-object explanation even when report history exists. It also covers the queue consumer's acknowledgement, dedupe, and out-of-order behavior, the sweep against a `fetch` double, Access verification against a locally generated key, and the site's routes and escaping. `dispatch.test.ts` covers the fan-out against the real registry and queue doubles: routing by script name, per-region grouping, an unbound region, a send that fails partway, the 100-message batch, and the run cap. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/migration-reporting.test.ts`) | The reporter, in workerd against real Durable Object storage: first report, silence on an unchanged wake, a new report after a build change, applied versions, the failure path, retry after refusal, and the two "cannot break the object" cases. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/forced-migration.test.ts`) | `forceMigration` through a real Durable Object stub, its two identity guards, the unconditional report, and the consumer's ack/retry contract. |
 | `pnpm --filter @rally/contracts test` | The report contract, the command contract, the opaque-name guard, and the queue-name predicates. |
@@ -566,19 +576,23 @@ columns because they come apart in two ways that both need to be visible: an
 object with no resolvable region is matched and never dispatched, and a run over
 a class larger than the cap stops early.
 
-`durable_objects.has_stored_data` is the latest authoritative inventory fact,
-not a second source of migration state. A swept `false` resolves to `empty`.
-A later object report changes it back to `true`, because waking and reporting
-proves storage exists; a Queue-delayed report whose `occurredAt` precedes the
-latest sweep does not. Report-only rows are treated as stored until their first
-inventory observation, because producing a migration report itself required the
-object to wake and apply its SQLite ledger.
+`durable_objects.has_stored_data` is the latest immutable inventory fact, not a
+second source of migration state. A swept `false` resolves to `empty`. A later
+object report makes the effective read projection stored, because waking and
+reporting proves storage exists, but it does not rewrite what the sweep saw; a
+Queue-delayed report whose `occurredAt` precedes the observation does neither.
+Report-only rows are treated as stored until their first inventory observation,
+because producing a migration report itself required the object to wake and
+apply its SQLite ledger.
 
 The namespace table shows both counts Cloudflare exposes operationally: `IDs`
 is every identity in the latest successful listing, while `Stored` is the
 subset from that same listing whose `hasStoredData` flag was true. The latter is
 the useful live-storage count; the former explains why cleared identities can
-remain visible in Cloudflare inventory.
+remain visible in Cloudflare inventory. Namespace discovery and successful
+object listing have separate receipt stamps: a failed listing proves the
+namespace still exists but must leave both counts paired to the prior successful
+listing.
 
 Absence is decided by comparing an object's `last_sweep_id` against the current
 sweep's row id, not by timestamp: two sweeps inside one millisecond would make a
@@ -592,12 +606,13 @@ bound parameters per query**, an account may hold up to 500 Durable Object
 classes, and the statement runs inside the sweep's `transactionSync` — so
 crossing that line would lose the whole sweep, not just the retirement.
 
-The registry's own schema is at v4 and is append-only from v1 onwards, which is
+The registry's own schema is at v5 and is append-only from v1 onwards, which is
 now deployed: every later version reaches the live object inside the
 constructor's `blockConcurrencyWhile` — v2's retirement column as an
 `ALTER TABLE`, v3's component rename as three `UPDATE`s, v4's run log as a
-`CREATE TABLE` — so a statement any of them rejected would take the tracker down
-for every read rather than only for the thing it added.
+`CREATE TABLE`, and v5's successful-listing stamp as an `ALTER TABLE` plus
+backfill — so a statement any of them rejected would take the tracker down for
+every read rather than only for the thing it added.
 
 ## Regional impact
 
@@ -817,9 +832,9 @@ the authoritative storage flag.
 
 **Consequences:** Operators can distinguish historical identities from stored
 objects without losing audit history. Empty and absent identities cannot be
-woken by a migration run. No registry schema migration is required because
-`has_stored_data` has been stored since v1; this change corrects how that
-canonical fact is projected.
+woken by a migration run. Registry schema v5 automatically adds a distinct
+successful-listing stamp; no manual data migration is required because
+`has_stored_data` has been stored since v1.
 
 ### 2026-08-27 — Completed transcript operators retired after ownership transfer
 

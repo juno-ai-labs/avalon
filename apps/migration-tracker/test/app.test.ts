@@ -147,6 +147,7 @@ describe("the operator site", () => {
   });
 
   it("shows enumerated empty identities separately from stored objects", async () => {
+    await deliver(report());
     await withRegistry((registry) => {
       registry.recordSweep({
         startedAt: 1_700_000_000_000,
@@ -158,8 +159,8 @@ describe("the operator site", () => {
           className: "SubstreamAgent",
           usesSqlite: true,
           objects: [
-            { objectId: OBJECT_ID, hasStoredData: true },
-            { objectId: "b".repeat(64), hasStoredData: false },
+            { objectId: OBJECT_ID, hasStoredData: false },
+            { objectId: "b".repeat(64), hasStoredData: true },
           ],
         }],
         truncatedNamespaces: [],
@@ -168,14 +169,16 @@ describe("the operator site", () => {
     });
 
     const overview = await (await get("/")).text();
-    const emptyObject = await (await get(`/objects/${"b".repeat(64)}`)).text();
+    const emptyObject = await (await get(`/objects/${OBJECT_ID}`)).text();
+    const emptyText = emptyObject.replace(/\s+/gu, " ");
 
     expect(overview).toMatch(/<div class="n">1<\/div>\s*<div class="k">Empty<\/div>/u);
     expect(tableHeaders(overview)).toContainEqual(
       ["Script", "Class", "Storage", "Stored", "IDs", "Swept"],
     );
-    expect(emptyObject).toContain("latest inventory sweep found no stored data");
-    expect(emptyObject).toContain("not a forced-migration target");
+    expect(emptyText).toContain("latest inventory sweep found no stored data");
+    expect(emptyText).toContain("not a forced-migration target");
+    expect(emptyObject).toContain("Report history");
   });
 
   it("renders an object's report history", async () => {
