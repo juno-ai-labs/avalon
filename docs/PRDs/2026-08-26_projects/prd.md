@@ -325,8 +325,10 @@ Its menu also provides **Archive project**. Archiving is confirmed because it
 removes the project from active navigation and stops new assignments and
 default-resource propagation. An archived project space is read-only except for
 editing its name, icon, or color, **Restore project**, and removing a retained
-work stream from the project. Scope, participants, and defaults stay read-only
-until restoration succeeds.
+work stream from the project. An active participant in an archived personal
+project may also **Leave project**, and a workspace owner or admin may remove a
+participant, subject to the usual final-reader guard. Adding participants,
+changing scope, and changing defaults stay read-only until restoration succeeds.
 A restoring project space is read-only except for **Retry restore**, **Cancel
 restore**, and removing a retained work stream through the command that first
 supersedes its pending restore targets.
@@ -553,8 +555,13 @@ the work stream or change its pin.
 
 ### Default resources
 
-A project reader can add any workspace resource they are authorized to use to
-the project's **Default resources** list. Adding a default applies it to:
+A project reader can add a workspace resource to the project's **Default
+resources** list only when the resource's current audience contains the whole
+project audience. A workspace project therefore requires a workspace-visible
+resource. A personal project may use a narrower resource only when every active
+project participant can read it. A private note visible only to the selecting
+person is refused rather than linked invisibly for everybody else. Adding a
+default applies it to:
 
 - every work stream already in the project; and
 - every work stream added or created later.
@@ -564,6 +571,14 @@ resource or its bytes. Deduplication uses the canonical resource identity. If
 that resource is already attached to a work stream, Rally keeps the existing
 link and records the project application as satisfied. It does not add a second
 row or replace the existing relationship metadata.
+
+The same containment check runs before adding a participant or widening a
+project to workspace scope. If an existing default would not be readable by the
+enlarged audience, Rally returns `project_resource_audience_mismatch`, names
+only defaults the caller may read, and asks them to widen or remove those
+resources first. A resource-audience mutation is likewise refused while the
+resource is a default for a project whose active audience it would no longer
+contain. Queue consumers recheck this condition before every application.
 
 Adding a default resource to a project with existing work streams is performed
 through a regional Cloudflare Queue. The `WorkspaceDO` transaction that adds
@@ -693,12 +708,15 @@ so the participant becomes active in the creating transaction.
 
 A failed addition also offers **Cancel participant addition**. Cancellation
 changes the audience operation to `cancelling`, prevents unclaimed targets from
-being claimed, and waits for every live target lease to settle or expire. The
-final transaction changes the never-active `adding` participant to `removed`,
-marks the operation `cancelled`, and releases the project fence. Participants
-already added to individual work streams stay there as ordinary work-stream
-participants; cancellation removes their project access but does not pretend
-that an already-applied audience expansion was rolled back.
+being claimed, and waits for every live target lease to settle or expire. Every
+member work stream where the participant addition did apply is then removed
+from the project through the membership late-effect barrier. The participant
+and resources already added to that work stream stay there. Only after those
+memberships are detached does the final transaction change the never-active
+`adding` participant to `removed`, mark the operation `cancelled`, and release
+the project fence. The cancellation confirmation names the work streams that
+will leave the project. This preserves personal-project audience containment
+without pretending the audience expansion was rolled back.
 
 Removing a participant from a personal project starts with the same
 authorization and final-reader checks whether or not the project has work
@@ -736,6 +754,13 @@ may still open a not-yet-updated work stream directly but cannot use the project
 to discover or open other members. Its region-specific dead-letter consumer
 marks an exhausted target `failed` and lets an authorized reader retry it; it
 does not restore project access.
+
+Leaving or removing a participant from an archived personal project uses the
+same authorization and final-reader checks but completes in one `WorkspaceDO`
+transaction. Because retained archived memberships no longer constrain their
+work-stream audiences, this explicit inactive-project change removes only the
+project participant. It does not remove that person from former member work
+streams. A later restore preflight reports those audience conflicts normally.
 
 Every direct participant or scope mutation for a project member work stream is
 submitted through `WorkspaceDO` as a durable member-audience mutation. In one
@@ -782,11 +807,14 @@ project completes in the creating transaction.
 
 A failed widening also offers **Cancel scope change**. It uses the same
 `cancelling` state and live-lease barrier: unclaimed targets stop, live claims
-settle or expire, and only then does the final transaction clear the pending
-workspace scope, leave the project personal, mark the operation `cancelled`,
-and release the project fence. Work streams already widened to workspace scope
-remain workspace-scoped. That is a safe monotonic effect, and the project does
-not advertise workspace access because its own scope never became active.
+settle or expire. Every work stream that did become workspace-scoped is then
+removed from the personal project through the membership late-effect barrier;
+its wider scope and inherited resources remain. Only after those memberships
+are detached does the final transaction clear the pending workspace scope,
+leave the project personal, mark the operation `cancelled`, and release the
+project fence. The confirmation names the work streams that will leave. This
+keeps the remaining personal-project membership contained without attempting
+to narrow an already-widened work stream.
 
 While one of these audience operations is unfinished, `WorkspaceDO` refuses a
 second participant addition or project-scope change and any add, move,
@@ -936,9 +964,10 @@ meaningless local `workspace_id` column.
   IDs, actor, expected project lifecycle and audience generations, optional
   participant and pending scope, and `pending`, `running`, `failed`,
   `cancelling`, `applied`, or `cancelled` state. Cancelling an addition removes
-  the never-active participant after live claims finish; cancelling a widening
-  clears its pending scope. Neither path reverses audience already applied to a
-  work stream.
+  the never-active participant after live claims finish and detaches every
+  membership whose participant target applied; cancelling a widening detaches
+  every membership whose scope target applied before clearing pending scope.
+  Neither path reverses audience or resources already applied to a work stream.
 - `project_audience_targets` owns one receipt per operation and member work
   stream. It stores the operation, project, participant when applicable, and
   work-stream IDs; expected membership and audience generations; and
@@ -1226,8 +1255,12 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
    instead of waiting behind its setup fence.
 5. Adding a project default records one durable application for every current
    member and delivers those applications through the regional Cloudflare
-   Queue. At-least-once or out-of-order delivery cannot duplicate or overwrite
-   an existing resource link. Ambiguous sends create separately identified
+   Queue. The default's audience must contain the complete current project
+   audience; participant additions, scope widening, direct resource-audience
+   changes, and each Queue application revalidate that containment. A private
+   resource cannot become invisibly unusable to part of the project.
+   At-least-once or out-of-order delivery cannot duplicate or overwrite an
+   existing resource link. Ambiguous sends create separately identified
    durable publication rows. Messages are acknowledged or retried independently,
    and a dead-letter consumer marks only its publication exhausted; the target
    fails only when every current publication and effect lease proves terminal.
@@ -1252,8 +1285,8 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
    `WorkstreamDO` stores and returns its idempotent effect receipt. A retained
    archiving or archived membership does not constrain direct audience changes;
    restore preflight catches any new mismatch. A project membership command
-   cannot commit in the cross-object gap. Any
-   project participant may remove themself; only a workspace owner or admin may
+   cannot commit in the cross-object gap. Any project participant may remove
+   themself; only a workspace owner or admin may
    remove somebody else from a project and its work streams.
 8. A work stream can remain pinned while it is in a project. Neither action
    changes the other.
@@ -1298,7 +1331,11 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
     offers retry and cancel without undoing already-applied audience or resource
     effects. Cancellation retains reservations and waits for every live target
     lease to settle or expire before returning to archived, so no restore effect
-    commits after cancellation completes.
+    commits after cancellation completes. An active participant may leave an
+    archived personal project, and a workspace owner or admin may remove one,
+    without restoring it; the final-reader guard still applies, former member
+    work-stream audiences stay unchanged, and restore preflight reports any
+    resulting conflict.
 15. Every active sidebar project row renders, in order, a stateful Tabler
     `IconTriangle` accordion control, project icon, project name, flexible empty
     space, and a Tabler `IconPlus` control. The middle link opens the project
@@ -1318,7 +1355,7 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
 18. Creating, joining, leaving, archiving, or restoring a project does not
     change a work stream's system prompt, compaction behavior, or available
     memory scopes.
-19. Removing a personal-project participant immediately ends their project
+19. Removing an active personal-project participant immediately ends their project
     read access, durably removes them from every current member work stream
     through the regional project-audience Queue, and remains resumable in
     `removing` state until every work-stream authority acknowledges the change.
@@ -1335,10 +1372,12 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
     workspace scope becomes active only after all retained targets acknowledge
     the enlarged audience; failed targets remain visible and retryable without
     replaying successful effects. Either failed operation can also be cancelled:
-    cancellation blocks new claims, waits for live leases, removes a never-active
-    `adding` participant or clears a pending workspace scope, keeps audience
-    effects already applied to individual work streams, and releases
-    `project_busy` only in its terminal transaction. Default-resource mutations
+    cancellation blocks new claims, waits for live leases, detaches every member
+    whose audience was already enlarged, and then removes the never-active
+    `adding` participant or clears the pending workspace scope. It keeps audience
+    and resource effects already applied to the detached work streams and
+    releases `project_busy` only after containment is restored in its terminal
+    transaction. Default-resource mutations
     cannot interleave with this convergence, and participant addition or scope
     widening cannot start while a default-resource application is unfinished.
     Participant removal remains immediate and replaces any resource applications
