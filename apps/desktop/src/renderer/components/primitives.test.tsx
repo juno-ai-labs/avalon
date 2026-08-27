@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RallyMark, DropdownSelect, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
+import { AvatarStack, RallyMark, DropdownSelect, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state }: { size: number; state: string }) => (
@@ -106,6 +106,52 @@ describe('SocketStatusIndicator', () => {
     );
     expect(screen.getByRole('status', { name: 'Live updates unavailable' }))
       .toHaveTextContent('Live updates unavailable');
+  });
+});
+
+describe('AvatarStack', () => {
+  it('explains when another participant is viewing the work stream', async () => {
+    stubResizeObserver();
+    const { container } = render(
+      <Tooltip.Provider delayDuration={0}>
+        <AvatarStack
+          currentUserId="user-current"
+          members={[
+            {
+              id: 'user-current',
+              name: 'Current User',
+              email: 'current@rally.test',
+              timezone: 'America/Los_Angeles',
+            },
+            {
+              id: 'user-collaborator',
+              name: 'Ari Collaborator',
+              email: 'ari@rally.test',
+              timezone: 'America/Los_Angeles',
+            },
+          ]}
+          presentUserIds={['user-current', 'user-collaborator']}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const currentItem = screen.getByTitle('Current User').closest('.avatar-stack-item');
+    const collaboratorItem = container.querySelector('.avatar-stack-item.is-present');
+    if (!currentItem || !collaboratorItem) throw new Error('avatar stack item missing');
+
+    fireEvent.pointerMove(currentItem, { pointerType: 'mouse' });
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+
+    fireEvent.pointerMove(collaboratorItem, { pointerType: 'mouse' });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'Ari Collaborator is viewing this workstream.',
+    );
+    expect(container.querySelector('.avatar-stack')).toHaveAccessibleName(
+      'Current User, Ari Collaborator is viewing this workstream.',
+    );
+    expect(currentItem).not.toHaveAttribute('tabindex');
+    expect(collaboratorItem).not.toHaveAttribute('tabindex');
+    expect(screen.queryByTitle('Ari Collaborator')).not.toBeInTheDocument();
   });
 });
 

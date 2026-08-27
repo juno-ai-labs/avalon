@@ -130,7 +130,15 @@ export function SocketStatusIndicator({ state }: { state: SocketState }): React.
   );
 }
 
-export function Avatar({ member, size = 'medium' }: { member: WorkspaceMember; size?: 'small' | 'medium' | 'large' }): React.JSX.Element {
+export function Avatar({
+  member,
+  size = 'medium',
+  title = member.name,
+}: {
+  member: WorkspaceMember;
+  size?: 'small' | 'medium' | 'large';
+  title?: string | null;
+}): React.JSX.Element {
   const initials = member.name
     .split(/\s+/)
     .map((part) => part[0])
@@ -138,7 +146,7 @@ export function Avatar({ member, size = 'medium' }: { member: WorkspaceMember; s
     .slice(0, 2)
     .toUpperCase();
   return (
-    <AvatarPrimitive.Root className={clsx('avatar', `avatar-${size}`)} title={member.name}>
+    <AvatarPrimitive.Root className={clsx('avatar', `avatar-${size}`)} title={title ?? undefined}>
       {member.avatarUrl && <AvatarPrimitive.Image alt="" className="avatar-image" src={member.avatarUrl} />}
       <AvatarPrimitive.Fallback className="avatar-fallback" delayMs={200}>
         {initials || '?'}
@@ -164,17 +172,37 @@ export function AvatarStack({
   return (
     <span
       aria-label={members.map((member) => (
-        present.has(member.id) && member.id !== currentUserId ? `${member.name}, present` : member.name
+        present.has(member.id) && member.id !== currentUserId
+          ? `${member.name} is viewing this workstream.`
+          : member.name
       )).join(', ')}
       className="avatar-stack"
     >
       {visible.map((member) => {
         const showingPresence = present.has(member.id) && member.id !== currentUserId;
+        if (!showingPresence) {
+          return (
+            <span className="avatar-stack-item" key={member.id}>
+              <Avatar member={member} size="small" />
+            </span>
+          );
+        }
+        const presenceDescription = `${member.name} is viewing this workstream.`;
         return (
-          <span className={clsx('avatar-stack-item', showingPresence && 'is-present')} key={member.id}>
-            <Avatar member={member} size="small" />
-            {showingPresence && <span aria-hidden="true" className="avatar-presence-ping" />}
-          </span>
+          <Tooltip.Root delayDuration={300} key={member.id}>
+            <Tooltip.Trigger asChild>
+              <span className="avatar-stack-item is-present">
+                <Avatar member={member} size="small" title={null} />
+                <span aria-hidden="true" className="avatar-presence-ping" />
+              </span>
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+              <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
+                {presenceDescription}
+                <Tooltip.Arrow className="tooltip-arrow" />
+              </Tooltip.Content>
+            </Tooltip.Portal>
+          </Tooltip.Root>
         );
       })}
       {overflow > 0 && <span className="avatar-overflow">+{overflow}</span>}
