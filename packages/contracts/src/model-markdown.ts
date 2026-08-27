@@ -29,6 +29,8 @@
  * text valid, which they would not be if this ran before they were resolved.
  */
 
+import { mapMarkdownProse } from "./markdown-code";
+
 /**
  * Commands worth mapping: the arrows, comparisons and operators that turn up in
  * a status update or a metric. Anything outside this list is left as the model
@@ -279,14 +281,6 @@ function texToPlainText(body: string): string {
 const MATH_SPAN = /\$\$([^$]+?)\$\$|\$([^$\n]+?)\$|\\\(([\s\S]+?)\\\)|\\\[([\s\S]+?)\\\]/gu;
 
 /**
- * A fenced code block, an inline code span, or a stretch of neither. Splitting
- * on this is what keeps the rewriter out of code — the alternative, a rule
- * clever enough to recognise code mid-replacement, is the kind that fails on
- * the first sample containing a dollar sign.
- */
-const CODE_OR_TEXT = /(^|\n)([ \t]*(?:```|~~~)[\s\S]*?(?:\n[ \t]*(?:```|~~~)[^\n]*(?=\n|$)|$))|(`+)([\s\S]*?)\3/gu;
-
-/**
  * A run of prose with its TeX turned back into the characters it stood for.
  *
  * `escape` is what separates the two entry points below. Unwrapped math is
@@ -337,17 +331,11 @@ function normalizeProse(value: string, escape: (plain: string) => string): strin
  */
 export function normalizeModelMarkdown(value: string): string {
   if (!value.includes("\\") && !value.includes("$")) return value;
-  let result = "";
-  let cursor = 0;
-  CODE_OR_TEXT.lastIndex = 0;
-  for (let match = CODE_OR_TEXT.exec(value); match !== null; match = CODE_OR_TEXT.exec(value)) {
-    result += normalizeProse(value.slice(cursor, match.index), escapeForMarkdown);
-    // A fenced block keeps its leading newline, which the pattern had to
-    // capture to prove the fence started a line.
-    result += match[0];
-    cursor = match.index + match[0].length;
-  }
-  return result + normalizeProse(value.slice(cursor), escapeForMarkdown);
+  // Code is skipped by the shared splitter rather than a private copy of it:
+  // the citation rewrite has to make exactly the same call about what is code,
+  // and two regexes for one question is how the three markdown renderers this
+  // repository used to have drifted apart.
+  return mapMarkdownProse(value, (prose) => normalizeProse(prose, escapeForMarkdown));
 }
 
 /**
