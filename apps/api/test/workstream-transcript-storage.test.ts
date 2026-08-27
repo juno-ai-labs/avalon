@@ -128,6 +128,26 @@ describe("canonical ordered work-stream transcript", () => {
     expect(sql.exec(`SELECT COUNT(*) AS count FROM legacy_transcript_backfills`).one().count).toBe(0);
   });
 
+  it("backfills after a needs-input run has yielded execution", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO runs
+      (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+       next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+       idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+       input_tokens, output_tokens, cost_micros, output_bytes, terminalized_at,
+       created_at, updated_at)
+      VALUES ('yielded-run', '0', 'needs_input', '{}', 0, 0, '', 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`);
+
+    await expect(transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-00000000000a",
+      cutoverVersion: 27,
+    })).resolves.toMatchObject({ applied: true, verified: true });
+  });
+
   it("backfills legacy participant order before post-cutover turns and replays idempotently", async () => {
     const { transcript, sql } = open();
     sql.exec(`INSERT INTO substreams
