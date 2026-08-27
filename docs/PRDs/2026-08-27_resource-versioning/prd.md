@@ -120,9 +120,13 @@ Three pressures, one of them now urgent:
    substrate diffs will be computed from — externally, by comparison,
    never from a producer's account of its own edits.
 3. **Version UI beyond the rail's list-and-open.** Deferred. No compare
-   view, no restore button, no pinning. (Restore is cheap later — it is
-   one more pointer swap, which versions the state it supersedes — but it
-   is a product decision, not a free ride-along.)
+   view, no restore button, no pinning. (Restore is cheap later, and its
+   semantics are fixed now so nobody invents a rewind: a restore is a
+   *new* version whose pointers reuse the restored version's objects —
+   v1 → v2 → v3, then undo-to-v1 produces v4 pointing at v1's object.
+   History only appends; nothing rewinds or rewrites, an undo is itself
+   an attributable event, and undoing the undo works the same way.
+   Shipping the button is the product decision, not a free ride-along.)
 4. **Continuous or bidirectional external synchronization.** Rejected.
    Notifications mark staleness and invite a re-fetch; nothing mirrors,
    polls aggressively, or writes back.
@@ -213,13 +217,20 @@ None yet.
    and a prior version opens for people without waiting on conversion.
    Where no derivative existed at swap time, the version says so
    honestly.
-5. **Version numbers are allocated by the authority and count superseded
-   states.** The current state lives on the resource row, as today;
-   version rows are the past, numbered from 1 in the order they were
-   superseded. A never-changed resource has zero version rows and no UI.
-   The rejected alternative — modeling current as the newest version
-   row — rewrites every existing reader of the resources table for
-   symmetry nothing needs.
+5. **Version numbers are allocated by the authority; the resource row
+   carries the current number.** Every state has a number: the resource
+   row holds `current_version_number` (1 at creation, incremented on
+   every swap), and a version row materializes for each *superseded*
+   state carrying the number it had — so the visible history is the
+   version rows plus current, numbered continuously (v1 … vN, with vN
+   the live resource row). A never-changed resource is v1 with zero
+   version rows and no history UI. Because restore reuses objects
+   (non-goal 3), one content object may be referenced by several
+   version rows; the sweeper's liveness rule already accounts for every
+   referencing row. The rejected alternative — modeling current as the
+   newest *ledger* row — rewrites every existing reader of the
+   resources table for symmetry nothing needs; the current number on
+   the row buys the same continuous history without touching them.
 6. **Notifications mark, agents decide, re-fetches version.** The
    external-change path composes machinery that is live today, plus one
    missing hook. Live: the `resource_watches` poll schedule (a watched
@@ -276,7 +287,9 @@ the resource authority:
   (`published` | `refetched` | `replaced`).
 - `created_at`.
 
-One addition to the `resources` table itself (goal 8, key design
+Two additions to the `resources` table itself. First (key design
+decision 5): `current_version_number` — 1 at creation, incremented in
+the same transaction as every pointer swap. Second (goal 8, key design
 decision 8): a `slug` column — short, from the existing slug generator,
 unique per workspace with regenerate-on-conflict at allocation —
 assigned at creation for new resources and backfilled once for the
