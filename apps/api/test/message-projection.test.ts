@@ -134,13 +134,13 @@ describe("the transcript the harness reads", () => {
       NOW,
     );
     sql.exec(
-      `INSERT INTO part_mentions
-         (part_id, mention_index, mention_kind, target_user_id, connector_type,
+      `INSERT INTO workstream_message_mentions
+         (message_id, mention_index, mention_kind, target_user_id, connector_type,
           start_offset, end_offset, attention_ordinal)
        VALUES ('message-1', 0, 'person', 'user-2', NULL, 0, 5, 1)`,
     );
     sql.exec(
-      `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+      `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
        VALUES ('message-1', 'resource-1', 0, '{}')`,
     );
     sql.exec(

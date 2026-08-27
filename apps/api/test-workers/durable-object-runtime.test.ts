@@ -37,6 +37,10 @@ import type { Env } from "../src/env";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import {
+  seedCanonicalMessageRecord,
+  seedParticipantMessage,
+} from "./helpers/substream-fixture";
+import {
   substreamAgentName,
   blockDashboardAgentName,
   workspaceDOName,
@@ -822,7 +826,7 @@ describe("Durable Objects in the Workers runtime", () => {
         migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.length,
         tables: [
           "_sql_schema_migrations",
-          "parts",
+          "workstream_message_records",
           "agent_run_dispatches",
           "active_agent_compaction",
         ],
@@ -1029,7 +1033,7 @@ describe("Durable Objects in the Workers runtime", () => {
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
     await fetchAndDrain(stub, "https://substream.test/health");
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       state.storage.sql.exec(
         `INSERT INTO workstream
            (id, workstream_key, parent_workspace_key, region, authority_mode,
@@ -1046,7 +1050,7 @@ describe("Durable Objects in the Workers runtime", () => {
       state.storage.sql.exec(
         `INSERT INTO substreams
            (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq,
-            depth, return_mode, origin_part_id, owner_user_id, audience,
+            depth, return_mode, origin_message_id, owner_user_id, audience,
             tool_policy, status, created_at, closed_at)
          VALUES ('0', 'main', 'none', NULL, NULL, 0, 'none', NULL, NULL,
                  'workspace', 'full', 'open', 1000, NULL)`,
@@ -1058,29 +1062,19 @@ describe("Durable Objects in the Workers runtime", () => {
       state.storage.sql.exec(
         `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 0, 1000)`,
       );
-      state.storage.sql.exec(
-        `INSERT INTO parts
-           (id, substream_id, sequence_number, attention_ordinal, role, kind,
-            author_type, author_user_id, content, visibility, pinned, created_at, updated_at)
-         VALUES ('message-1', '0', 1, 1, 'assistant', 'text', 'agent', NULL,
-                 'before tool', 'both', 0, 1000, 1000)`,
-      );
-      state.storage.sql.exec(
-        `INSERT INTO parts
-           (id, substream_id, sequence_number, role, kind, author_type, content,
-            effect_intent_id, tool_name, tool_mode, tool_status, visibility, pinned,
-            created_at, updated_at)
-         VALUES ('tool-2', '0', 2, 'assistant', 'tool_call', 'agent', '', 'effect-2',
-                 'terminal_run', 'read', 'pending', 'people', 0, 1001, 1001)`,
-      );
-      state.storage.sql.exec(
-        `INSERT INTO parts
-           (id, substream_id, sequence_number, attention_ordinal, role, kind,
-            author_type, author_user_id, content, visibility, pinned, created_at, updated_at)
-         VALUES ('message-3', '0', 3, 2, 'user', 'text', 'member', ?,
-                 'queued while the tool runs', 'both', 0, 1002, 1002)`,
-        USER_ID,
-      );
+      await seedParticipantMessage(state, {
+        id: "message-1", sequence: 1, text: "before tool", authorType: "agent",
+        attentionOrdinal: 1, now: 1_000,
+      });
+      await seedCanonicalMessageRecord(state, {
+        id: "tool-2", sequence: 2, messageType: "tool",
+        structuredContentJson: '{"invocation":{"status":"pending"}}',
+        effectIntentId: "effect-2", toolName: "terminal_run", toolStatus: "pending", now: 1_001,
+      });
+      await seedParticipantMessage(state, {
+        id: "message-3", sequence: 3, text: "queued while the tool runs",
+        authorUserId: USER_ID, attentionOrdinal: 2, now: 1_002,
+      });
     });
 
     const requestRefresh = async (triggerSequence: number): Promise<void> => {
@@ -1096,13 +1090,14 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(response.status).toBe(200);
     };
     await requestRefresh(3);
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       const pending = JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
         `SELECT payload_json FROM due_work WHERE job_key = 'block_dashboard_refresh'`,
       ).one().payload_json) as { contextFence: { throughSequence: number } };
       expect(pending.contextFence.throughSequence).toBe(1);
       state.storage.sql.exec(
-        `UPDATE parts SET tool_status = 'completed', updated_at = 1003 WHERE id = 'tool-2'`,
+        `UPDATE workstream_message_records
+            SET tool_status = 'completed', updated_at = 1003 WHERE id = 'tool-2'`,
       );
     });
 
@@ -4860,7 +4855,7 @@ describe("Durable Objects in the Workers runtime", () => {
     // what puts the frame over the cap while the newest page stays small. Only
     // the newest page used to be reducible, which left the loop with nothing to
     // trim and failed the open outright.
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       state.storage.sql.exec(
         `UPDATE workstream SET title = 'Oversized resume', next_attention_ordinal = 81, updated_at = ?
           WHERE id = 1`,
@@ -4877,17 +4872,13 @@ describe("Durable Objects in the Workers runtime", () => {
         Date.now(),
       );
       for (let sequence = 1; sequence <= 80; sequence += 1) {
-        state.storage.sql.exec(
-          `INSERT INTO parts
-             (id, substream_id, sequence_number, role, kind, author_type, content,
-              visibility, pinned, created_at, updated_at)
-           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
-          `00000000-0000-7000-8004-${String(sequence).padStart(12, "0")}`,
+        await seedParticipantMessage(state, {
+          id: `00000000-0000-7000-8004-${String(sequence).padStart(12, "0")}`,
           sequence,
-          sequence <= 40 ? "z".repeat(120_000) : `short ${sequence}`,
-          4_000 + sequence,
-          4_000 + sequence,
-        );
+          text: sequence <= 40 ? "z".repeat(120_000) : `short ${sequence}`,
+          authorType: "agent",
+          now: 4_000 + sequence,
+        });
       }
     });
 
@@ -4946,7 +4937,7 @@ describe("Durable Objects in the Workers runtime", () => {
     socket.accept();
 
     // 60 messages, with this reader stopped a long way behind the end.
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       state.storage.sql.exec(
         `UPDATE workstream SET title = 'Two windows', next_attention_ordinal = 61, updated_at = ?
           WHERE id = 1`,
@@ -4964,17 +4955,13 @@ describe("Durable Objects in the Workers runtime", () => {
         Date.now(),
       );
       for (let sequence = 1; sequence <= 60; sequence += 1) {
-        state.storage.sql.exec(
-          `INSERT INTO parts
-             (id, substream_id, sequence_number, role, kind, author_type, content,
-              visibility, pinned, created_at, updated_at)
-           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
-          `00000000-0000-7000-8003-${String(sequence).padStart(12, "0")}`,
+        await seedParticipantMessage(state, {
+          id: `00000000-0000-7000-8003-${String(sequence).padStart(12, "0")}`,
           sequence,
-          `message ${sequence}`,
-          3_000 + sequence,
-          3_000 + sequence,
-        );
+          text: `message ${sequence}`,
+          authorType: "agent",
+          now: 3_000 + sequence,
+        });
       }
     });
 
@@ -5046,7 +5033,7 @@ describe("Durable Objects in the Workers runtime", () => {
 
     // The durable cursor survived, while the events that produced it existed
     // only in the old instance's bounded replay cache.
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       state.storage.sql.exec(
         `UPDATE workstream
             SET title = 'Hibernation recovery', next_attention_ordinal = 61, updated_at = ?
@@ -5064,17 +5051,13 @@ describe("Durable Objects in the Workers runtime", () => {
         Date.now(),
       );
       for (let sequence = 1; sequence <= 60; sequence += 1) {
-        state.storage.sql.exec(
-          `INSERT INTO parts
-             (id, substream_id, sequence_number, role, kind, author_type, content,
-              visibility, pinned, created_at, updated_at)
-           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
-          `00000000-0000-7000-8006-${String(sequence).padStart(12, "0")}`,
+        await seedParticipantMessage(state, {
+          id: `00000000-0000-7000-8006-${String(sequence).padStart(12, "0")}`,
           sequence,
-          `message ${sequence}`,
-          6_000 + sequence,
-          6_000 + sequence,
-        );
+          text: `message ${sequence}`,
+          authorType: "agent",
+          now: 6_000 + sequence,
+        });
       }
       state.storage.sql.exec(`UPDATE realtime_state SET event_sequence = 2 WHERE id = 1`);
     });
@@ -5097,7 +5080,7 @@ describe("Durable Objects in the Workers runtime", () => {
     // older first-unread window here would make a pre-fix desktop treat the
     // first frame seen by a fresh hook as an arrival and visibly roll back.
     expect(frame.resumeFeed).toBeNull();
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       expect(state.getWebSockets()[0]!.deserializeAttachment()).toMatchObject({
         afterSequence: 2,
         publishPresence: false,
@@ -5229,7 +5212,7 @@ describe("Durable Objects in the Workers runtime", () => {
       code: "subscription_required",
     });
 
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       const server = state.getWebSockets()[0]!;
       server.serializeAttachment({
         ...(server.deserializeAttachment() as Record<string, unknown>),
@@ -5240,17 +5223,13 @@ describe("Durable Objects in the Workers runtime", () => {
         Date.now(),
       );
       for (let sequence = 1; sequence <= 3; sequence += 1) {
-        state.storage.sql.exec(
-          `INSERT INTO parts
-             (id, substream_id, sequence_number, role, kind, author_type, content,
-              visibility, pinned, created_at, updated_at)
-           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
-          `00000000-0000-7000-8002-${String(sequence).padStart(12, "0")}`,
+        await seedParticipantMessage(state, {
+          id: `00000000-0000-7000-8002-${String(sequence).padStart(12, "0")}`,
           sequence,
-          `canonical ${sequence}`,
-          2_000 + sequence,
-          2_000 + sequence,
-        );
+          text: `canonical ${sequence}`,
+          authorType: "agent",
+          now: 2_000 + sequence,
+        });
       }
     });
 
@@ -5300,7 +5279,7 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(response.status).toBe(101);
     const socket = response.webSocket!;
     socket.accept();
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       const server = state.getWebSockets()[0]!;
       server.serializeAttachment({
         ...(server.deserializeAttachment() as Record<string, unknown>),
@@ -5373,7 +5352,7 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(response.status).toBe(101);
     const socket = response.webSocket!;
     socket.accept();
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       const server = state.getWebSockets()[0]!;
       server.serializeAttachment({
         ...(server.deserializeAttachment() as Record<string, unknown>),
@@ -5453,24 +5432,20 @@ describe("Durable Objects in the Workers runtime", () => {
     const socket = response.webSocket!;
     socket.accept();
     let roomSequence = 0;
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       const server = state.getWebSockets()[0]!;
       server.serializeAttachment({
         ...(server.deserializeAttachment() as Record<string, unknown>),
         subscribed: true,
       });
       for (let sequence = 1; sequence <= 6; sequence += 1) {
-        state.storage.sql.exec(
-          `INSERT INTO parts
-             (id, substream_id, sequence_number, role, kind, author_type, content,
-              visibility, pinned, created_at, updated_at)
-           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
-          `00000000-0000-7000-8000-${String(sequence).padStart(12, "0")}`,
+        await seedParticipantMessage(state, {
+          id: `00000000-0000-7000-8000-${String(sequence).padStart(12, "0")}`,
           sequence,
-          `message ${sequence}`,
-          1_000 + sequence,
-          1_000 + sequence,
-        );
+          text: `message ${sequence}`,
+          authorType: "agent",
+          now: 1_000 + sequence,
+        });
       }
       roomSequence = state.storage.sql.exec<{ event_sequence: number }>(
         `SELECT event_sequence FROM realtime_state WHERE id = 1`,
@@ -5510,22 +5485,18 @@ describe("Durable Objects in the Workers runtime", () => {
         newerCursor: "4",
       },
     });
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       expect(state.storage.sql.exec<{ event_sequence: number }>(
         `SELECT event_sequence FROM realtime_state WHERE id = 1`,
       ).one().event_sequence).toBe(roomSequence);
       for (let sequence = 7; sequence <= 11; sequence += 1) {
-        state.storage.sql.exec(
-          `INSERT INTO parts
-             (id, substream_id, sequence_number, role, kind, author_type, content,
-              visibility, pinned, created_at, updated_at)
-           VALUES (?, '0', ?, 'assistant', 'text', 'agent', ?, 'people', 0, ?, ?)`,
-          `00000000-0000-7000-8001-${String(sequence).padStart(12, "0")}`,
+        await seedParticipantMessage(state, {
+          id: `00000000-0000-7000-8001-${String(sequence).padStart(12, "0")}`,
           sequence,
-          `message ${sequence} ${"x".repeat(240_000)}`,
-          1_000 + sequence,
-          1_000 + sequence,
-        );
+          text: `message ${sequence} ${"x".repeat(240_000)}`,
+          authorType: "agent",
+          now: 1_000 + sequence,
+        });
       }
     });
 
@@ -5565,21 +5536,20 @@ describe("Durable Objects in the Workers runtime", () => {
       },
     });
 
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       const oversizedPartId = "00000000-0000-7000-8001-000000000012";
-      state.storage.sql.exec(
-        `INSERT INTO parts
-           (id, substream_id, sequence_number, role, kind, author_type, content,
-            visibility, pinned, message_type, structured_content_json, created_at, updated_at)
-         VALUES (?, '0', 12, 'assistant', 'text', 'agent', ?, 'people', 0, 'text', ?, 1012, 1012)`,
-        oversizedPartId,
-        "z".repeat(260_000),
-        JSON.stringify({ payload: "y".repeat(259_900) }),
-      );
+      await seedParticipantMessage(state, {
+        id: oversizedPartId,
+        sequence: 12,
+        text: "z".repeat(260_000),
+        authorType: "agent",
+        structuredContentJson: JSON.stringify({ payload: "y".repeat(259_900) }),
+        now: 1_012,
+      });
       for (let mentionIndex = 0; mentionIndex < 3_000; mentionIndex += 1) {
         state.storage.sql.exec(
-          `INSERT INTO part_mentions
-             (part_id, mention_index, mention_kind, target_user_id, connector_type,
+          `INSERT INTO workstream_message_mentions
+             (message_id, mention_index, mention_kind, target_user_id, connector_type,
               start_offset, end_offset, attention_ordinal)
            VALUES (?, ?, 'connector', NULL, ?, 0, 1, ?)`,
           oversizedPartId,

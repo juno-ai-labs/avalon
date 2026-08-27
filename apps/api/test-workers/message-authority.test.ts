@@ -30,6 +30,7 @@ import {
   WORKSTREAM_ID,
   boot,
   post,
+  seedParticipantMessage,
   seedOpenWorkstreamAuthority,
   seedWorkstreamRoot,
 } from "./helpers/substream-fixture";
@@ -95,7 +96,7 @@ describe("message authority on real workerd", () => {
     expect(result.status).toBe(200);
     expect(result.value).toMatchObject({ outcome: "appended", sequenceNumber: 1 });
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM parts`).one().count).toBe(1);
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records`).one().count).toBe(1);
       const transcript = new WorkstreamTranscriptStorage(state.storage)
         .createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null });
       expect(transcript.ranges[0]!.turns[0]).toMatchObject({
@@ -169,7 +170,7 @@ describe("message authority on real workerd", () => {
     await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
     await messages(stub, "appendMessage", append());
 
-    // The replay check reads `parts` and then inserts, inside one
+    // The replay check reads the canonical message records and then inserts, inside one
     // `transactionSync`. Over `node:sqlite` that transaction is a function
     // call; here it is the runtime's, which is what makes the read and the
     // write one decision rather than two.
@@ -184,7 +185,7 @@ describe("message authority on real workerd", () => {
       sequenceNumber: 1,
     });
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM parts`).one().count).toBe(1);
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records`).one().count).toBe(1);
       expect(state.storage.sql.exec(
         `SELECT next_sequence_number FROM workstream`,
       ).one().next_sequence_number).toBe(2);
@@ -209,7 +210,7 @@ describe("message authority on real workerd", () => {
     expect(status).toBe(409);
     expect(body).toMatchObject({ error: "workstream_message_identity_mismatch" });
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM parts`).one().count).toBe(0);
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records`).one().count).toBe(0);
     });
   });
 
@@ -226,7 +227,7 @@ describe("message authority on real workerd", () => {
     expect(result.status).toBe(409);
     expect(result.error).toBe("workstream_runtime_authority_fenced");
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM parts`).one().count).toBe(0);
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records`).one().count).toBe(0);
     });
   });
 
@@ -256,24 +257,21 @@ describe("message authority on real workerd", () => {
     const stub = agent();
     await boot(stub);
     const messageIds = Array.from({ length: 250 }, (_, index) => `m${String(index).padStart(3, "0")}`);
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       seedWorkstreamRoot(state);
       for (const [index, id] of messageIds.entries()) {
-        state.storage.sql.exec(
-          `INSERT INTO parts
-             (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
-              author_user_id, content, client_message_id, visibility, pinned, message_type,
-              created_at, updated_at)
-           VALUES (?, '0', ?, ?, 'user', 'text', 'member', ?, 'hi', ?, 'both', 0, 'text', 1, 1)`,
+        await seedParticipantMessage(state, {
           id,
-          index + 1,
-          index + 1,
-          `u${index}`,
-          `c${index}`,
-        );
+          sequence: index + 1,
+          text: "hi",
+          authorUserId: `u${index}`,
+          clientMessageId: `c${index}`,
+          attentionOrdinal: index + 1,
+          now: 1,
+        });
         state.storage.sql.exec(
-          `INSERT INTO part_mentions
-             (part_id, mention_index, mention_kind, target_user_id, connector_type,
+          `INSERT INTO workstream_message_mentions
+             (message_id, mention_index, mention_kind, target_user_id, connector_type,
               start_offset, end_offset, attention_ordinal)
            VALUES (?, 0, 'person', ?, NULL, 0, 1, 1)`,
           id,
@@ -295,7 +293,7 @@ describe("message authority on real workerd", () => {
           `r${index}`,
         );
         state.storage.sql.exec(
-          `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+          `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
            VALUES (?, ?, 0, '{}')`,
           id,
           `r${index}`,
@@ -345,7 +343,7 @@ describe("message authority on real workerd", () => {
 
     expect(result).toMatchObject({ status: 400, error: "invalid_message_operation" });
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM parts`).one().count).toBe(0);
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records`).one().count).toBe(0);
     });
   });
 
@@ -361,7 +359,7 @@ describe("message authority on real workerd", () => {
 
     expect(result).toMatchObject({ status: 400, error: "invalid_message_operation" });
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM parts`).one().count).toBe(0);
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records`).one().count).toBe(0);
       expect(state.storage.sql.exec(
         `SELECT next_sequence_number FROM workstream`,
       ).one().next_sequence_number).toBe(1);

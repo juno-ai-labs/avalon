@@ -1251,7 +1251,7 @@ export class WorkstreamHarnessRunStorage {
       this.sql.exec(
         `INSERT OR IGNORE INTO substreams
            (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq, depth,
-            return_mode, origin_part_id, owner_user_id, audience, tool_policy, status, created_at)
+            return_mode, origin_message_id, owner_user_id, audience, tool_policy, status, created_at)
          VALUES (?, 'agent', 'fork', '0', 0, ?, 'tool_result', NULL, NULL, 'system',
                  'read_only', 'open', ?)`,
         substreamId,
@@ -1654,117 +1654,6 @@ export class WorkstreamHarnessRunStorage {
       input.blockOnly ? 1 : 0,
       input.limit,
     ).toArray();
-  }
-
-  /**
-   * Explicitly abandon only lease-less runs inherited from before the ordered
-   * transcript cutover. This is an operator migration primitive, not ordinary
-   * stale-run recovery: current runs and any row that ever acquired a durable
-   * attempt or lease are outside its authority.
-   */
-  abandonPreCutoverLeaseLessRuns(input: {
-    operatorRunId: string;
-    cutoverVersion: number;
-    now: number;
-  }): { abandonedRunCount: number; cleanupOperatorRunId: string } {
-    return this.storage.transactionSync(() => {
-      const existing = this.preCutoverLeaseLessCleanupReceipt();
-      if (existing) return existing;
-      const cutover = first(this.sql.exec<{
-        applied_at: number;
-      } & Record<string, SqlStorageValue>>(
-        `SELECT applied_at FROM _sql_schema_migrations WHERE version = ?`,
-        input.cutoverVersion,
-      ));
-      if (!cutover) throw new Error("legacy_transcript_cutover_receipt_missing");
-      const active = this.sql.exec<{
-        run_id: string;
-        abandonable: number;
-        origin: string;
-        parent_tool_call_id: string | null;
-      } & Record<string, SqlStorageValue>>(
-        `SELECT run_id, origin, parent_tool_call_id,
-                CASE WHEN started_at <= ?1
-                       AND legacy_attempt_id IS NULL
-                       AND lease_owner IS NULL
-                       AND lease_expires_at IS NULL
-                       AND heartbeat_at IS NULL
-                     THEN 1 ELSE 0 END AS abandonable
-           FROM runs
-          WHERE status IN ${OPEN_RUN_STATUSES}
-            AND terminalized_at IS NULL`,
-        Number(cutover.applied_at),
-      ).toArray();
-      if (active.some((run) => Number(run.abandonable) !== 1)) {
-        throw new Error("legacy_transcript_pre_cutover_run_not_abandonable");
-      }
-      const openReceipt = first(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
-        `SELECT COUNT(*) AS count
-           FROM tool_effects effect
-           JOIN runs run ON run.run_id = effect.run_id
-          WHERE run.status IN ${OPEN_RUN_STATUSES}
-            AND run.terminalized_at IS NULL
-            AND effect.status IN ('admitted', 'executing')`,
-      ))?.count ?? 0;
-      if (active.length > 0 && Number(openReceipt) > 0) {
-        throw new Error("legacy_transcript_pre_cutover_run_has_open_receipt");
-      }
-      const mainRun = active.find((run) =>
-        run.origin !== "block_dashboard_block" && run.parent_tool_call_id === null);
-      this.sql.exec(
-        `UPDATE runs
-            SET status = 'failed',
-                terminal_reason = 'migration_cutover_abandoned',
-                error_json = '{"code":"migration_cutover_abandoned","message":"The pre-cutover run had no durable attempt or lease and was abandoned during transcript migration"}',
-                completed_at = ?2,
-                terminalized_at = ?2,
-                updated_at = ?2
-          WHERE status IN ${OPEN_RUN_STATUSES}
-            AND terminalized_at IS NULL
-            AND started_at <= ?1
-            AND legacy_attempt_id IS NULL
-            AND lease_owner IS NULL
-            AND lease_expires_at IS NULL
-            AND heartbeat_at IS NULL`,
-        Number(cutover.applied_at),
-        input.now,
-      );
-      if (mainRun) this.settleWorkstreamState(mainRun.run_id, "failed", input.now);
-      this.sql.exec(
-        `INSERT INTO legacy_transcript_cleanup_receipts
-          (id, operator_run_id, cutover_version, cutover_applied_at,
-           abandoned_run_count, completed_at)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5)`,
-        input.operatorRunId,
-        input.cutoverVersion,
-        Number(cutover.applied_at),
-        active.length,
-        input.now,
-      );
-      return {
-        abandonedRunCount: active.length,
-        cleanupOperatorRunId: input.operatorRunId,
-      };
-    });
-  }
-
-  preCutoverLeaseLessCleanupReceipt(): {
-    abandonedRunCount: number;
-    cleanupOperatorRunId: string;
-  } | null {
-    const receipt = first(this.sql.exec<{
-      operator_run_id: string;
-      abandoned_run_count: number;
-    } & Record<string, SqlStorageValue>>(
-      `SELECT operator_run_id, abandoned_run_count
-         FROM legacy_transcript_cleanup_receipts WHERE id = 1`,
-    ));
-    return receipt
-      ? {
-          abandonedRunCount: Number(receipt.abandoned_run_count),
-          cleanupOperatorRunId: String(receipt.operator_run_id),
-        }
-      : null;
   }
 
   /**

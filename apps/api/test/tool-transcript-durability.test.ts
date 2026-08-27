@@ -77,7 +77,7 @@ describe("durable inline tool transcript", () => {
 
     // One row, one sequence position, and the counter moved exactly once — the
     // two refreshes rewrote the card rather than taking a new position.
-    const parts = store.prepare(`SELECT * FROM parts`).all() as StoredToolPart[];
+    const parts = store.prepare(`SELECT * FROM workstream_message_details`).all() as StoredToolPart[];
     expect(parts).toHaveLength(1);
     expect(parts[0]).toMatchObject({
       id: invocationId,

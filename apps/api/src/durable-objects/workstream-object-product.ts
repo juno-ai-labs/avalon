@@ -517,7 +517,7 @@ export class WorkstreamObjectProductService {
     const existingRoot = first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
     if (existingRoot?.authority_mode === "authoritative") {
       const part = first(this.storage.sql.exec<{ id: string }>(
-        `SELECT id FROM parts WHERE client_message_id = ?`, input.clientMessageId,
+        `SELECT id FROM workstream_message_details WHERE client_message_id = ?`, input.clientMessageId,
       ));
       const run = first(this.storage.sql.exec<{ run_id: string }>(
         `SELECT run_id FROM runs WHERE trigger_part_id = ? ORDER BY created_at LIMIT 1`, part?.id ?? "",
@@ -630,16 +630,6 @@ export class WorkstreamObjectProductService {
         );
       }
       this.storage.sql.exec(
-        `INSERT INTO parts
-           (id, substream_id, sequence_number, attention_ordinal, role, kind,
-            author_type, author_user_id, content, client_message_id, visibility, pinned,
-            message_type, structured_content_json, created_at, updated_at)
-         VALUES (?, '0', 1, 1, 'user', 'text', 'member', ?, ?, ?, 'both', 0, 'text', ?, ?, ?)`,
-        messageId, input.creatorUserId, prepared.text, input.clientMessageId,
-        input.openingStructuredContent === null ? null : JSON.stringify(input.openingStructuredContent),
-        now, now,
-      );
-      this.storage.sql.exec(
         `INSERT INTO member_attention
            (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
             manual_unread_from_ordinal, latest_mention_attention_ordinal,
@@ -650,8 +640,8 @@ export class WorkstreamObjectProductService {
       this.transcript.appendPreparedParticipantMessage(transcriptMessage);
       prepared.mentions.forEach((mention, index) => {
         this.storage.sql.exec(
-          `INSERT INTO part_mentions
-             (part_id, mention_index, mention_kind, target_user_id, connector_type,
+          `INSERT INTO workstream_message_mentions
+             (message_id, mention_index, mention_kind, target_user_id, connector_type,
               start_offset, end_offset, attention_ordinal)
            VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
           messageId, index, mention.type, mention.userId, mention.connectorType,
@@ -688,7 +678,7 @@ export class WorkstreamObjectProductService {
           metadata: parseJson(String(resource.metadata_json ?? "{}"), {}),
         };
         this.storage.sql.exec(
-          `INSERT INTO part_attachments(part_id, resource_id, position, attachment_json)
+          `INSERT INTO workstream_message_attachments(message_id, resource_id, position, attachment_json)
            VALUES (?, ?, ?, ?)`,
           messageId, resourceId, position, JSON.stringify({ attachedAt: iso(now) }),
         );
@@ -1482,7 +1472,7 @@ export class WorkstreamObjectProductService {
       `SELECT id, sequence_number, attention_ordinal, author_type, author_user_id, external_actor_json,
               message_type, content, structured_content_json, client_message_id,
               edited_at, created_at
-         FROM parts
+         FROM workstream_message_details
         WHERE substream_id = '0' AND visibility IN ('people', 'both')
           ${cursor === undefined ? "" : `AND sequence_number ${comparator} ?`}
         ORDER BY sequence_number ${order} LIMIT ?`,
@@ -1496,15 +1486,15 @@ export class WorkstreamObjectProductService {
     if (ordered.length === 0) return [];
     const partIds = ordered.map((row) => row.id);
     const mentionRows = chunks(partIds).flatMap((ids) => this.storage.sql.exec<PartMentionRow>(
-      `SELECT part_id, mention_kind, target_user_id, connector_type, start_offset, end_offset
-         FROM part_mentions WHERE part_id IN (${ids.map(() => "?").join(",")})
-        ORDER BY part_id, mention_index`,
+      `SELECT message_id AS part_id, mention_kind, target_user_id, connector_type, start_offset, end_offset
+         FROM workstream_message_mentions WHERE message_id IN (${ids.map(() => "?").join(",")})
+        ORDER BY message_id, mention_index`,
       ...ids,
     ).toArray());
     const attachmentRows = chunks(partIds).flatMap((ids) => this.storage.sql.exec<PartAttachmentRow>(
-      `SELECT part_id, resource_id, attachment_json
-         FROM part_attachments WHERE part_id IN (${ids.map(() => "?").join(",")})
-        ORDER BY part_id, position`,
+      `SELECT message_id AS part_id, resource_id, attachment_json
+         FROM workstream_message_attachments WHERE message_id IN (${ids.map(() => "?").join(",")})
+        ORDER BY message_id, position`,
       ...ids,
     ).toArray());
     const authorIds = [...new Set(ordered.flatMap((row) => row.author_user_id ? [row.author_user_id] : []))];
@@ -2248,7 +2238,7 @@ export class WorkstreamObjectProductService {
           source_revisions_json, source_authorization_epoch, display_title,
           display_body, status, created_at, expires_at, resolved_at, retracted_at,
           resolved_by_user_id, resolution_client_id, share_intent_json,
-          authored_part_id, feedback_message_id)
+          authored_message_id, feedback_message_id)
        VALUES (?, 1, ?, ?, 'workstream', NULL, ?, 'regional-activity-authority',
                '[]', 0, ?, ?, 'pending', ?, 253402300799000, NULL, NULL,
                NULL, NULL, ?, NULL, NULL)
@@ -2576,7 +2566,7 @@ export class WorkstreamObjectProductService {
       author_user_id: string | null;
       content: string | null;
     }>(
-      `SELECT author_type, author_user_id, content FROM parts
+      `SELECT author_type, author_user_id, content FROM workstream_message_details
         WHERE substream_id = '0' AND sequence_number < ? AND message_type = 'text'
           AND author_type IN ('member', 'agent')
         ORDER BY sequence_number DESC LIMIT 10`,
@@ -2615,7 +2605,7 @@ export class WorkstreamObjectProductService {
     const existing = first(this.storage.sql.exec<PartRow>(
       `SELECT id, sequence_number, attention_ordinal, author_type, author_user_id, external_actor_json,
               message_type, content, structured_content_json, client_message_id,
-              edited_at, created_at FROM parts WHERE client_message_id = ?`,
+              edited_at, created_at FROM workstream_message_details WHERE client_message_id = ?`,
       input.clientMessageId,
     ));
     if (existing) {
@@ -2731,7 +2721,7 @@ export class WorkstreamObjectProductService {
         const replay = first(sql.exec<PartRow>(
           `SELECT id, sequence_number, attention_ordinal, author_type, author_user_id, external_actor_json,
                   message_type, content, structured_content_json, client_message_id,
-                  edited_at, created_at FROM parts WHERE client_message_id = ?`,
+                  edited_at, created_at FROM workstream_message_details WHERE client_message_id = ?`,
           input.clientMessageId,
         ));
         if (replay) {
@@ -2786,15 +2776,6 @@ export class WorkstreamObjectProductService {
             userId, auth.userId, now, now,
           );
         }
-        sql.exec(
-          `INSERT INTO parts
-             (id, substream_id, sequence_number, attention_ordinal, role, kind,
-              author_type, author_user_id, content, client_message_id, visibility,
-              pinned, message_type, structured_content_json, created_at, updated_at)
-           VALUES (?, '0', ?, ?, 'user', 'text', 'member', ?, ?, ?, 'both',
-                   0, 'text', NULL, ?, ?)`,
-          messageId, sequence, attention, auth.userId, prepared.text, input.clientMessageId, now, now,
-        );
         transcriptMessage.input.attentionOrdinal = attention;
         transcriptMessage.input.messageSequenceNumber = sequence;
         this.transcript.appendPreparedParticipantMessage(transcriptMessage);
@@ -2813,7 +2794,7 @@ export class WorkstreamObjectProductService {
             metadata: parseJson(String(row.metadata_json ?? "{}"), {}),
           };
           sql.exec(
-            `INSERT INTO part_attachments(part_id, resource_id, position, attachment_json)
+            `INSERT INTO workstream_message_attachments(message_id, resource_id, position, attachment_json)
              VALUES (?, ?, ?, ?)`,
             messageId, resourceId, position, JSON.stringify({ attachedAt: new Date(now).toISOString() }),
           );
@@ -2828,8 +2809,8 @@ export class WorkstreamObjectProductService {
         });
         prepared.mentions.forEach((mention, index) => {
           sql.exec(
-            `INSERT INTO part_mentions
-               (part_id, mention_index, mention_kind, target_user_id, connector_type,
+            `INSERT INTO workstream_message_mentions
+               (message_id, mention_index, mention_kind, target_user_id, connector_type,
                 start_offset, end_offset, attention_ordinal)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             messageId, index, mention.type, mention.userId, mention.connectorType,
@@ -2884,11 +2865,11 @@ export class WorkstreamObjectProductService {
             if (inFlight) {
               sql.exec(
                 `INSERT INTO run_steering
-                   (run_id, steering_part_id, requested_at, boundaries_observed,
+                   (run_id, steering_message_id, requested_at, boundaries_observed,
                     max_boundaries, consumed_at)
                  VALUES (?, ?, ?, 0, 2, NULL)
                  ON CONFLICT(run_id) DO UPDATE SET
-                   steering_part_id = excluded.steering_part_id,
+                   steering_message_id = excluded.steering_message_id,
                    requested_at = excluded.requested_at,
                    boundaries_observed = 0,
                    max_boundaries = excluded.max_boundaries,
@@ -2987,7 +2968,7 @@ export class WorkstreamObjectProductService {
     const row = first(this.storage.sql.exec<PartRow>(
       `SELECT id, sequence_number, attention_ordinal, author_type, author_user_id, external_actor_json,
               message_type, content, structured_content_json, client_message_id,
-              edited_at, created_at FROM parts WHERE id = ?`,
+              edited_at, created_at FROM workstream_message_details WHERE id = ?`,
       committed.result.messageId,
     ));
     if (!row) throw new ApiError(500, "message_write_failed", "The message could not be stored");
@@ -3100,18 +3081,6 @@ export class WorkstreamObjectProductService {
         }
         const sequence = current.next_sequence_number;
         const attention = current.next_attention_ordinal;
-        sql.exec(
-          `INSERT INTO parts
-             (id, substream_id, sequence_number, attention_ordinal, role, kind,
-              author_type, author_user_id, content, client_message_id, visibility,
-              pinned, message_type, structured_content_json, created_at, updated_at)
-           VALUES (?, '0', ?, ?, 'user', 'text', 'member', ?, '', ?, 'both', 0,
-                   'elicitation', ?, ?, ?)`,
-          responsePartId, sequence, attention, auth.userId,
-          `elicitation-response:${elicitationId}`,
-          structuredResponse,
-          now, now,
-        );
         this.transcript.appendPreparedParticipantMessage({
           ...transcriptMessage,
           input: {
@@ -3269,7 +3238,7 @@ export class WorkstreamObjectProductService {
       throw new ApiError(409, "harness_not_retryable", "The latest run is not retryable");
     }
     const newest = first(this.storage.sql.exec<{ id: string; sequence_number: number }>(
-      `SELECT id, sequence_number FROM parts WHERE substream_id = '0'
+      `SELECT id, sequence_number FROM workstream_message_details WHERE substream_id = '0'
         ORDER BY sequence_number DESC LIMIT 1`,
     ));
     const now = Date.now();

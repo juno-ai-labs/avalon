@@ -471,7 +471,7 @@ describe("naming somebody when the work stream is created", () => {
         INVITEE_ID,
       ).one().count).toBe(0);
       expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM part_mentions WHERE target_user_id = ?`,
+        `SELECT COUNT(*) AS count FROM workstream_message_mentions WHERE target_user_id = ?`,
         INVITEE_ID,
       ).one().count).toBe(0);
     });
@@ -511,7 +511,8 @@ describe("naming somebody when the work stream is created", () => {
       }>(
         `SELECT part.content, mention.mention_kind, mention.target_user_id,
                 mention.start_offset, mention.end_offset
-           FROM parts part JOIN part_mentions mention ON mention.part_id = part.id
+           FROM workstream_message_details part
+           JOIN workstream_message_mentions mention ON mention.message_id = part.id
           WHERE part.client_message_id = ?`,
         `participant-open-${WORKSTREAM_ID}`,
       ).one();
@@ -531,7 +532,7 @@ describe("naming somebody when the work stream is created", () => {
         latest_mention_attention_ordinal: 1,
       });
       const partId = state.storage.sql.exec<{ id: string }>(
-        `SELECT id FROM parts WHERE client_message_id = ?`,
+        `SELECT id FROM workstream_message_records WHERE client_message_id = ?`,
         `participant-open-${WORKSTREAM_ID}`,
       ).one().id;
       state.storage.sql.exec(
@@ -552,7 +553,7 @@ describe("naming somebody when the work stream is created", () => {
         Date.parse("2026-08-26T12:00:00.000Z"),
       );
       state.storage.sql.exec(
-        `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+        `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
          VALUES (?, ?, 0, ?)`,
         partId,
         ATTACHMENT_ID,
@@ -702,7 +703,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         INVITEE_ID,
       ).one().count).toBe(0);
       expect(state.storage.sql.exec<{ target_user_id: string }>(
-        `SELECT target_user_id FROM part_mentions WHERE part_id = ?`,
+        `SELECT target_user_id FROM workstream_message_mentions WHERE message_id = ?`,
         (sent.body.message as { id: string }).id,
       ).one().target_user_id).toBe(INVITEE_ID);
     });
@@ -740,7 +741,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         `SELECT status FROM participants WHERE user_id = ?`, INVITEE_ID,
       ).one().status).toBe("active");
       expect(state.storage.sql.exec<{ target_user_id: string }>(
-        `SELECT target_user_id FROM part_mentions WHERE part_id = ?`,
+        `SELECT target_user_id FROM workstream_message_mentions WHERE message_id = ?`,
         (sent.body.message as { id: string }).id,
       ).one().target_user_id).toBe(INVITEE_ID);
     });
@@ -783,7 +784,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         INVITEE_ID,
       ).one().count).toBe(0);
       expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM part_mentions WHERE target_user_id = ?`,
+        `SELECT COUNT(*) AS count FROM workstream_message_mentions WHERE target_user_id = ?`,
         INVITEE_ID,
       ).one().count).toBe(0);
     });
