@@ -250,6 +250,10 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/gu, `'"'"'`)}'`;
 }
 
+function trustedPublicationFailureStage(output: string): string {
+  return /^RALLY_PUBLISH_FAILED_STAGE=([a-z_]+)$/mu.exec(output)?.[1] ?? "unknown_stage";
+}
+
 export function terminalGitCaSetupCommands(input: {
   required: boolean;
   sessionEnvPath?: string;
@@ -948,19 +952,7 @@ export function createDaytonaTerminalProvider(
       if (input.bundle.byteLength > 50 * 1_048_576) {
         throw new Error("The Git bundle exceeds the 50 MiB publication limit");
       }
-      if (!client.secret) throw new Error("Daytona Secrets are unavailable for trusted Git publication");
       const operationKey = input.operationId.replace(/[^a-zA-Z0-9_-]/gu, "_").slice(0, 80);
-      const secretName = `AVALON_GH_${operationKey}`;
-      const existingSecrets = await measureRequest("secret.list", () => client.secret!.list({ name: secretName, limit: 20 }));
-      for (const existing of existingSecrets.items.filter((secret) => secret.name === secretName)) {
-        await measureRequest("secret.delete", () => client.secret!.delete(existing.id));
-      }
-      const secret = await measureRequest("secret.create", () => client.secret!.create({
-        name: secretName,
-        value: input.githubBasicCredential,
-        description: `Ephemeral Rally publication ${input.operationId}`,
-        hosts: ["github.com"],
-      }));
       let publisher: DaytonaSandboxLike | null = null;
       try {
         publisher = await measureRequest("sandbox.create", () => client.create({
@@ -974,7 +966,6 @@ export function createDaytonaTerminalProvider(
           autoDeleteInterval: 0,
           ttlMinutes: 30,
           domainAllowList: "github.com",
-          secrets: { GITHUB_WRITE_BASIC: secret.name },
           labels: { "rally.publisher": input.operationId },
         }, { timeout: 60 }));
         if (!publisher.fs || !publisher.process) throw new Error("The Daytona publisher sandbox is missing required services");
@@ -983,36 +974,46 @@ export function createDaytonaTerminalProvider(
         const expectedOld = input.expectedOldSha ?? "";
         const command = [
           "set -euo pipefail",
+          "publish_stage=environment",
+          "trap 'rally_status=$?; if [ \"$rally_status\" -ne 0 ]; then printf \"RALLY_PUBLISH_FAILED_STAGE=%s\\n\" \"$publish_stage\"; fi; exit \"$rally_status\"' EXIT",
           "export GIT_CONFIG_NOSYSTEM=1 HOME=/tmp/rally-publisher-home",
+          "publish_stage=git_ca",
           ...terminalGitCaSetupCommands({ required: true }),
+          "publish_stage=repository_init",
           'mkdir -p "$HOME"',
           "git init --bare /workspace/repository.git >/dev/null",
+          "publish_stage=bundle_import",
           `git -C /workspace/repository.git fetch /workspace/publication.bundle ${shellQuote(`refs/heads/${input.headRef}`)}:${shellQuote(`refs/heads/${input.headRef}`)}`,
+          "publish_stage=bundle_verify",
           "git -C /workspace/repository.git fsck --strict",
           `test "$(git -C /workspace/repository.git rev-parse ${shellQuote(`refs/heads/${input.headRef}`)})" = ${shellQuote(input.headSha)}`,
           `git -C /workspace/repository.git merge-base --is-ancestor ${shellQuote(input.baseSha)} ${shellQuote(input.headSha)}`,
+          "publish_stage=remote_verify",
           `git -C /workspace/repository.git remote add origin ${shellQuote(repositoryUrl)}`,
           `git -C /workspace/repository.git config ${shellQuote(`http.${repositoryUrl}.extraheader`)} "Authorization: Basic $GITHUB_WRITE_BASIC"`,
           `remote_sha=$(git -C /workspace/repository.git ls-remote origin ${shellQuote(`refs/heads/${input.headRef}`)} | cut -f1)`,
           `test "$remote_sha" = ${shellQuote(expectedOld)}`,
+          "publish_stage=remote_push",
           `git -C /workspace/repository.git push origin ${shellQuote(`${input.headSha}:refs/heads/${input.headRef}`)}`,
+          "publish_stage=post_push_verify",
           `test "$(git -C /workspace/repository.git ls-remote origin ${shellQuote(`refs/heads/${input.headRef}`)} | cut -f1)" = ${shellQuote(input.headSha)}`,
+          "trap - EXIT",
           "printf 'published\\n'",
         ].join("\n");
         if (!publisher.process.executeCommand) throw new Error("The Daytona publisher sandbox cannot execute commands");
         const result = await measureRequest("process.execute_utility", () => publisher!.process!.executeCommand!(
           `bash -lc ${shellQuote(command)}`,
           "/workspace",
-          undefined,
+          { GITHUB_WRITE_BASIC: input.githubBasicCredential },
           180,
         ));
         if ((result.exitCode ?? 1) !== 0) {
-          throw new Error(`Trusted Git publication failed with exit code ${result.exitCode ?? 1}`);
+          const output = result.result ?? result.artifacts?.stdout ?? "";
+          throw new Error(`Trusted Git publication failed at ${trustedPublicationFailureStage(output)} with exit code ${result.exitCode ?? 1}`);
         }
         return { publishedSha: input.headSha };
       } finally {
         if (publisher?.delete) await measureRequest("sandbox.delete", () => publisher!.delete!(60, true)).catch(() => undefined);
-        await measureRequest("secret.delete", () => client.secret!.delete(secret.id)).catch(() => undefined);
       }
     },
   };
