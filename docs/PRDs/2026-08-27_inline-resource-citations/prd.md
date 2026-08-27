@@ -37,11 +37,14 @@ presentation modes, one protocol:
    splits a sentence — and the chip for passing references inside prose.
    Clicking either opens the resource in the right rail, whose detail
    view gains a readable content preview (today it is metadata only).
-2. **Footnote.** Grounding and research answers cite sources
-   GitHub-footnote style — a superscript number after the punctuation,
-   with a hover popover naming the source and offering to open it.
-   Internal sources open in the right rail; external sources open in the
-   browser.
+2. **Footnote syntax, floater presentation.** Grounding and research
+   answers cite sources in standard GFM footnote syntax, but Rally's
+   renderer turns each reference into an inline floating pill — a
+   numbered marker after the punctuation with a hover popover naming
+   the source and offering to open it — and renders no source list at
+   the bottom, so citations cost no vertical space. Internal sources
+   open in the right rail; external sources open in the browser; outside
+   Rally the same markdown degrades to classic footnotes.
 
 The whole feature is a syntax convention plus a renderer hook: the model
 emits ordinary markdown link, image, and footnote syntax with a
@@ -173,18 +176,29 @@ During streaming, either form renders as plain text until its syntax
 closes, then becomes the chip or card — the same progressive settling
 every markdown construct already has.
 
-**Footnotes.** "Q3 revenue grew 40%.[^1]" renders the sentence with a
-superscript ¹; the message's footnote definitions render as a compact
-source list at the message's end, as GFM footnotes do. Hovering or
-focusing the superscript raises a popover with the source's title and an
-**Open** action; clicking the superscript or the popover's action opens
-the source — right rail for `resource://` targets, the system browser for
-external URLs, routed through the app's existing navigation-denial
-interception that already sends every external link to the OS browser.
-During streaming, a footnote whose definition has not yet arrived
-renders literally until the message settles — the renderer's existing,
-documented behavior for split footnotes — while chips settle
-progressively as their link syntax closes.
+**Footnotes as inline floaters.** The model emits standard GFM footnote
+syntax — "Q3 revenue grew 40%.[^1]" with `[^1]: [Title](resource://…)`
+definitions at the end — but Rally's renderer does not render the
+bottom list. Instead it lifts each definition's content into its
+reference and presents the reference as an inline floating pill: a
+small numbered marker after the punctuation whose hover/focus popover
+carries the source (title, and per open question 1 possibly an excerpt)
+with an **Open** action. Adjacent references cluster as adjacent pills.
+The message therefore spends no vertical space on a source footer —
+the vertical cost of long answers being the original frustration this
+whole family of PRDs exists to fix — while the *stored* markdown stays
+completely standard: any renderer outside Rally (the digest email,
+GitHub, an export) shows the same message as classic numbered footnotes
+with the list at the bottom, which is exactly the right degraded form.
+
+Clicking a pill or its popover's action opens the source — right rail
+for `resource://` targets, the system browser for external URLs, routed
+through the app's existing navigation-denial interception that already
+sends every external link to the OS browser. During streaming, a
+footnote whose definition has not yet arrived renders literally until
+the message settles — the renderer's existing, documented behavior for
+split footnotes — while chips settle progressively as their link syntax
+closes.
 
 **Failure and degradation states, exhaustively.** A `resource://` target
 that is malformed, unknown, or not visible to the viewer renders as the
@@ -247,13 +261,18 @@ None yet.
    the link form outside Rally (a broken-image placeholder rather than
    label text), which makes the email renderer's degradation rule
    load-bearing rather than nice-to-have.
-3. **GFM footnotes for the grounding mode.** `[^1]` with a
-   link-carrying definition is deeply in training data, parses under the
-   renderer's existing GFM support, renders acceptably as plain
-   footnotes anywhere else, and gives the renderer hook a natural
-   upgrade point (superscript + popover). The rejected alternative —
-   inline bracketed URLs after every claim — is what long grounded
-   answers look like today, and it is unreadable.
+3. **GFM footnote syntax; Rally renders floaters, not a footer.**
+   Revised in review to be explicit about presentation: `[^1]` with a
+   link-carrying definition is deeply in training data and parses under
+   the renderer's existing GFM support — so the *stored* markdown stays
+   standard and degrades to classic footnotes everywhere outside Rally —
+   while Rally's renderer lifts each definition into its reference's
+   popover and suppresses the trailing footnote section entirely.
+   Citations therefore cost no vertical space, which was the original
+   frustration behind this work. The rejected alternatives: inline
+   bracketed URLs after every claim (what long grounded answers look
+   like today — unreadable), and rendering the bottom list as-is (spends
+   the vertical space the feature exists to reclaim).
 4. **Navigation is a property of the protocol.** `resource://` and
    `http(s)` navigate — rail in-app, the sanctioned external-open path
    for the browser — because they name openable content; `person:` and
@@ -351,9 +370,11 @@ passing through unmangled.
 - Footnote parsing already works: the pinned GFM plugin (4.0.1) renders
   footnotes today as an unstyled superscript link plus a trailing list
   whose heading is visually hidden, and whose fragment anchors are dead
-  under the desktop's navigation denial. This change styles that output
-  and hooks the reference anchors (they carry a stable data attribute)
-  into the popover behavior — a renderer-hook change, not a parser one.
+  under the desktop's navigation denial. This change is a renderer hook,
+  not a parser: the reference anchors (they carry a stable data
+  attribute) become the floating pills, each definition's content is
+  lifted into its reference's popover, and the trailing footnote section
+  is not rendered at all.
 
 ## Acceptance
 
@@ -362,9 +383,11 @@ passing through unmangled.
    clicking either opens that resource's detail in the right rail, and
    the detail shows the resource's readable content beneath its
    metadata.
-2. A grounded answer renders numbered superscripts after punctuation
-   with popovers; internal sources open in the rail, external sources in
-   the system browser.
+2. A grounded answer renders inline numbered pills after punctuation
+   with popovers carrying the source, and no footnote list renders at
+   the message's end; internal sources open in the rail, external
+   sources in the system browser; the same message in a digest email
+   shows classic numbered footnotes with the list at the bottom.
 3. Malformed and unauthorized targets render as plain label text; a
    digest email containing citations shows readable text and no raw
    scheme URLs.
