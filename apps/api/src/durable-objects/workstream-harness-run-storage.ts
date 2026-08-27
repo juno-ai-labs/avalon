@@ -291,6 +291,11 @@ export interface RunRow extends Record<string, SqlStorageValue> {
   child_result_hash: string | null;
 }
 
+export interface RecoverableAttempt {
+  runId: string;
+  attemptId: string;
+}
+
 const RUN_COLUMNS = `run_id, status, origin, parent_run_id, parent_tool_call_id,
   legacy_attempt_id, attempt_epoch, lease_owner, lease_expires_at,
   cancellation_requested_at, cancellation_reason, terminalized_at, started_at,
@@ -300,6 +305,67 @@ const RUN_COLUMNS = `run_id, status, origin, parent_run_id, parent_tool_call_id,
 
 function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageValue> ? T : never>) {
   return cursor.toArray()[0];
+}
+
+/**
+ * Give a replacement SubstreamAgent the attempts its predecessor owned.
+ *
+ * Cloudflare may stop an object while an external await is in flight. The
+ * await may still return, but the next storage operation is rejected because
+ * the old instance no longer owns the object. When the constructor runs
+ * again, any local-agent lease still present therefore belongs to an executor
+ * that cannot write again. Expiring it here lets the replacement reclaim the
+ * same attempt immediately, preserving its frozen scope and tool receipts
+ * rather than waiting five minutes and reaping the run as failed.
+ *
+ * HyperSight roots are deliberately excluded: their executor is a separate
+ * BlockDashboardAgent, so this object's restart says nothing about whether
+ * that owner is alive. Descendants of a local root are included so the resumed
+ * parent can reclaim the same child attempt when it reaches that tool call.
+ */
+export function expireLocalAttemptLeasesFromPreviousInstance(
+  storage: DurableObjectStorage,
+  now: number,
+): RecoverableAttempt[] {
+  return storage.transactionSync(() => {
+    const roots = storage.sql.exec<{
+      run_id: string;
+      attempt_id: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT run_id, legacy_attempt_id AS attempt_id
+         FROM runs
+        WHERE parent_tool_call_id IS NULL
+          AND origin != 'block_dashboard_block'
+          AND terminalized_at IS NULL
+          AND legacy_attempt_id IS NOT NULL
+          AND lease_owner IS NOT NULL
+          AND lease_expires_at IS NOT NULL`,
+    ).toArray();
+    if (roots.length === 0) return [];
+    storage.sql.exec(
+      `UPDATE runs
+          SET lease_expires_at = ?1, updated_at = ?1
+        WHERE terminalized_at IS NULL
+          AND lease_owner IS NOT NULL
+          AND lease_expires_at IS NOT NULL
+          AND (
+            run_id IN (
+              SELECT run_id FROM runs
+               WHERE parent_tool_call_id IS NULL
+                 AND origin != 'block_dashboard_block'
+                 AND terminalized_at IS NULL
+            )
+            OR chain_root_run_id IN (
+              SELECT run_id FROM runs
+               WHERE parent_tool_call_id IS NULL
+                 AND origin != 'block_dashboard_block'
+                 AND terminalized_at IS NULL
+            )
+          )`,
+      now,
+    );
+    return roots.map((row) => ({ runId: row.run_id, attemptId: row.attempt_id }));
+  });
 }
 
 export class WorkstreamHarnessRunStorage {
@@ -357,7 +423,7 @@ export class WorkstreamHarnessRunStorage {
         `UPDATE runs
             SET status = 'running',
                 started_at = CASE WHEN started_at = 0 THEN ?5 ELSE started_at END,
-                attempt_epoch = CASE WHEN legacy_attempt_id = ?2
+                attempt_epoch = CASE WHEN legacy_attempt_id = ?2 AND lease_owner = ?3
                   THEN attempt_epoch ELSE attempt_epoch + 1 END,
                 legacy_attempt_id = ?2,
                 lease_owner = ?3,
