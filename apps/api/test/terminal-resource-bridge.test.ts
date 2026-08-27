@@ -134,6 +134,7 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
     createSandbox: vi.fn(), getSandbox: vi.fn(), startSandbox: vi.fn(), stopSandbox: vi.fn(), archiveSandbox: vi.fn(), deleteSandbox: vi.fn(), updateNetworkPolicy: vi.fn(),
     configureGitHubReadAccess: vi.fn(), clearGitHubReadAccess: vi.fn(),
     readFile: vi.fn(), writeFile: vi.fn(async () => undefined),
+    runUtilityCommand: vi.fn(),
     runCommand: vi.fn(async (_id, input) => {
       if (input.taskName.startsWith("avalon-import-check")) return { exitCode: 44, stdout: "", stderr: "" };
       if (input.taskName.startsWith("avalon-import-verify")) return { exitCode: 0, stdout: "14 8a6c44a03adda8a5af9627533116a8ab735dac8085f998c6f41cc13aef707169\n", stderr: "" };
@@ -141,6 +142,15 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
     }),
     publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),
   };
+  const utilityImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
+  provider.runUtilityCommand = vi.fn((id, input) => utilityImplementation(id, {
+    ...input,
+    taskName: input.operation === "resource.import.inspect"
+      ? "avalon-import-check"
+      : input.operation === "resource.import.finalize"
+        ? "avalon-import-verify"
+        : "terminal-utility",
+  }));
   return {
     database,
     objectStore,
@@ -184,7 +194,15 @@ describe("Terminal resource bridge", () => {
       sizeBytes: 14,
       sourceSha256: digest,
     });
-    expect(provider.writeFile).toHaveBeenCalledWith("sandbox", `/workspace/.rally/resources/${RESOURCE}/resource`, bytes, context.signal);
+    expect(provider.writeFile).toHaveBeenCalledWith(
+      "sandbox",
+      expect.stringMatching(/^\/workspace\/\.rally\/tmp\//u),
+      bytes,
+      context.signal,
+    );
+    expect(provider.runUtilityCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
+      command: expect.stringMatching(new RegExp(`target='/workspace/\\.rally/resources/${RESOURCE}/resource'.*mv --`, "su")),
+    }));
     expect(workstreamObjectGet(
       objectStore,
       `SELECT destination_path, source_sha256, size_bytes, state, imported_at IS NOT NULL AS imported
@@ -196,6 +214,41 @@ describe("Terminal resource bridge", () => {
       state: "completed",
       imported: 1,
     });
+  });
+
+  it("cleans an uploaded import temp file after a provider request failure", async () => {
+    const { database, objectStore, objects, provider, bridge } = fixture();
+    const bytes = new TextEncoder().encode("attached data\n");
+    const digest = "8a6c44a03adda8a5af9627533116a8ab735dac8085f998c6f41cc13aef707169";
+    objects.set("global/source", bytes);
+    database.prepare(
+      `INSERT INTO resources
+       (id, workspace_id, resource_type, provider, title, mime_type, content_ref, content_sha256,
+        metadata_json, attachment_status, created_at, updated_at)
+       VALUES (?, ?, 'uploaded_file', 'avalon_upload', 'Input data.csv', 'text/csv', 'global/source', ?, '{}', 'attached', '2026-08-13', '2026-08-13')`,
+    ).run(RESOURCE, W, digest);
+    objectStore.prepare(
+      `INSERT INTO workstream_resource_links
+         (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+       VALUES (?, ?, 0, 'attachment', ?, ?, ?)`,
+    ).run(RESOURCE, U, JSON.stringify({ id: RESOURCE }), Date.parse("2026-08-13"), Date.parse("2026-08-13"));
+    vi.mocked(provider.runUtilityCommand)
+      .mockResolvedValueOnce({ exitCode: 44, stdout: "", stderr: "" })
+      .mockRejectedValueOnce(new Error("provider unavailable"))
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "" });
+
+    await expect(bridge.importResource(
+      context,
+      { resourceId: RESOURCE },
+      `.rally/resources/${RESOURCE}/resource`,
+      1,
+      "sandbox",
+      provider,
+    )).rejects.toThrow("provider unavailable");
+    expect(provider.runUtilityCommand).toHaveBeenLastCalledWith("sandbox", expect.objectContaining({
+      operation: "file.temp_cleanup",
+      command: expect.stringMatching(/^rm -f -- /u),
+    }));
   });
 
   it("fails helpfully when a resource is detached before import", async () => {
@@ -222,7 +275,7 @@ describe("Terminal resource bridge", () => {
          (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
        VALUES (?, ?, 0, 'attachment', ?, ?, ?)`,
     ).run(RESOURCE, U, JSON.stringify({ id: RESOURCE }), Date.parse("2026-08-13"), Date.parse("2026-08-13"));
-    vi.mocked(provider.runCommand).mockImplementation(async (_id, input) => input.taskName.startsWith("avalon-import-check")
+    vi.mocked(provider.runUtilityCommand).mockImplementation(async (_id, input) => input.operation === "resource.import.inspect"
       ? { exitCode: 45, stdout: "", stderr: "" }
       : { exitCode: 0, stdout: "", stderr: "" });
 

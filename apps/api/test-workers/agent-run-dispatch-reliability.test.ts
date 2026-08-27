@@ -73,6 +73,27 @@ async function boot(stub: DurableObjectStub, path: string): Promise<void> {
   await response.clone().arrayBuffer();
 }
 
+async function activeDrainHeartbeatOutcome(
+  stub: DurableObjectStub,
+  release: () => void,
+): Promise<"returned" | "joined"> {
+  return runInDurableObject(stub, async (instance) => {
+    const heartbeatDrain = (instance as unknown as {
+      drainRunsToCompletion(): Promise<"drained" | "deferred">;
+    }).drainRunsToCompletion();
+    let returned = false;
+    void heartbeatDrain.then(() => { returned = true; });
+    // Stay in one object event: provider scheduling latency cannot turn this
+    // behavior assertion into a machine-speed race.
+    await Promise.resolve();
+    await Promise.resolve();
+    const joined = !returned;
+    if (joined) release();
+    await heartbeatDrain;
+    return joined ? "joined" : "returned";
+  });
+}
+
 /** Writes the rows a dispatch needs, without going through the product API. */
 function seedSubstreamDispatch(
   state: DurableObjectState,
@@ -296,18 +317,19 @@ describe("a dispatched agent run is never orphaned", () => {
       void drain.resume(() => held, () => undefined);
     });
 
+    const outcome = await activeDrainHeartbeatOutcome(stub, release);
+    if (outcome === "joined") {
+      expect(outcome).toBe("returned");
+      return;
+    }
+
     const heartbeatStartedAt = Date.now();
-    const heartbeat = runInDurableObject(stub, async (instance) => {
+    await runInDurableObject(stub, async (instance) => {
       await (instance as unknown as { alarm(): Promise<void> }).alarm();
     });
-    const outcome = await Promise.race([
-      heartbeat.then(() => "returned" as const),
-      new Promise<"joined">((resolve) => setTimeout(() => resolve("joined"), 250)),
-    ]);
     const nextAlarm = await runInDurableObject(stub, (_instance, state) =>
       state.storage.getAlarm());
     release();
-    await heartbeat;
 
     // An alarm is a distinct request context. Awaiting a drain promise that
     // belongs to the request already executing the run can strand both events
@@ -531,18 +553,19 @@ describe("the same guarantees hold for a HyperSight block run", () => {
       void drain.resume(() => held, () => undefined);
     });
 
+    const outcome = await activeDrainHeartbeatOutcome(stub, release);
+    if (outcome === "joined") {
+      expect(outcome).toBe("returned");
+      return;
+    }
+
     const heartbeatStartedAt = Date.now();
-    const heartbeat = runInDurableObject(stub, async (instance) => {
+    await runInDurableObject(stub, async (instance) => {
       await (instance as unknown as { alarm(): Promise<void> }).alarm();
     });
-    const outcome = await Promise.race([
-      heartbeat.then(() => "returned" as const),
-      new Promise<"joined">((resolve) => setTimeout(() => resolve("joined"), 250)),
-    ]);
     const nextAlarm = await runInDurableObject(stub, (_instance, state) =>
       state.storage.getAlarm());
     release();
-    await heartbeat;
 
     expect(outcome).toBe("returned");
     expect(nextAlarm).not.toBeNull();

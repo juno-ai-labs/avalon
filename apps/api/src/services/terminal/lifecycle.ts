@@ -318,8 +318,8 @@ export function createTerminalFinalDiffPreserver(
     const regional = regionalDatabase(env);
     const terminal = createTerminalPortFactory(env)(workspaceId, workstreamId);
     if (await terminal.finalDiffResourceId()) return;
-    const result = await provider.runCommand(providerSandboxId, {
-      taskName: `avalon-final-diff-${generation}`,
+    const result = await provider.runUtilityCommand(providerSandboxId, {
+      operation: "lifecycle.final_diff",
       cwd: "/workspace",
       timeoutMs: 60_000,
       command: [
@@ -451,8 +451,8 @@ export function createTerminalWorkspaceBackup(
     const safeCallId = input.toolCallId.replace(/[^a-zA-Z0-9_-]/gu, "").slice(0, 64);
     const archivePath = `/tmp/avalon-workspace-backup-${safeCallId}.tar.gz`;
     const stagingPath = `/tmp/avalon-workspace-backup-${safeCallId}-staging`;
-    const result = await provider.runCommand(input.providerSandboxId, {
-      taskName: `avalon-workspace-backup-${input.generation}-${input.toolCallId.replace(/[^a-zA-Z0-9_-]/gu, "").slice(0, 48)}`,
+    const result = await provider.runUtilityCommand(input.providerSandboxId, {
+      operation: "lifecycle.backup",
       cwd: "/workspace",
       timeoutMs: 120_000,
       signal: input.signal,
@@ -504,8 +504,8 @@ export function createTerminalWorkspaceBackup(
     const expectedSize = Number(ready[1]);
     const expectedSha256 = ready[2]!;
     const bytes = await provider.readFile(input.providerSandboxId, archivePath);
-    await provider.runCommand(input.providerSandboxId, {
-      taskName: `avalon-workspace-backup-cleanup-${input.generation}-${input.toolCallId.replace(/[^a-zA-Z0-9_-]/gu, "").slice(0, 40)}`,
+    await provider.runUtilityCommand(input.providerSandboxId, {
+      operation: "lifecycle.backup_cleanup",
       cwd: "/workspace",
       timeoutMs: 10_000,
       signal: input.signal,
