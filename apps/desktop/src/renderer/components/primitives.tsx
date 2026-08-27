@@ -14,6 +14,7 @@ import {
   type ReactNode,
 } from 'react';
 import { statusDescription, statusLabel, type WorkstreamMarkerStatus } from '../lib/format';
+import { isComposingKeyEvent } from '../lib/ime';
 import type { WorkspaceMember } from '../lib/types';
 import type { SocketState } from '../lib/use-workstream-socket';
 
@@ -328,6 +329,14 @@ export function Modal({
         <Dialog.Overlay className="dialog-overlay" />
         <Dialog.Content
           className="dialog-content"
+          /* Escape belongs to the IME while it is composing: it abandons the
+             candidate, and Radix must not read the same keystroke as a request
+             to close the dialog and take the typed draft with it. Radix calls
+             this before dismissing and skips the dismissal when the event is
+             defaultPrevented. A native KeyboardEvent, so no `nativeEvent`. */
+          onEscapeKeyDown={(event) => {
+            if (isComposingKeyEvent(event)) event.preventDefault();
+          }}
           onOpenAutoFocus={(event) => {
             const initialFocus = initialFocusRef?.current;
             if (!initialFocus) return;

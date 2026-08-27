@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import type { RallyDesktopBridge } from '../../common/desktop';
 import { RallyMark, Button, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
+import { isComposingKeyEvent } from '../lib/ime';
 import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
 import type { PendingWorkspaceInvitation, Region } from '../lib/types';
@@ -151,6 +152,12 @@ export function RegionOnboarding(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   const continueSetup = async (): Promise<void> => {
+    // Holding Enter repeats it, and the button stays reachable while the first
+    // create is in flight: without this each repeat mints a fresh operation id,
+    // so the server answers the second one with a conflict on the reservation
+    // the first one took, and the funnel counts a workspace_create_requested
+    // per keystroke. The button's own `disabled` covers only the pointer.
+    if (working) return;
     if (name.trim().length < 2) return;
     const operationId = uuidV7();
     reportTelemetryProductIntent({
@@ -199,6 +206,9 @@ export function RegionOnboarding(): React.JSX.Element {
               maxLength={120}
               onChange={(event) => setName(event.target.value)}
               onKeyDown={(event) => {
+                // A plain input rather than a ComposerInput, so this field
+                // keeps its own copy of the guard. See `../lib/ime.ts`.
+                if (isComposingKeyEvent(event.nativeEvent)) return;
                 if (event.key === 'Enter') void continueSetup();
               }}
               placeholder="Acme"
