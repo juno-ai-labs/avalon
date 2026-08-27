@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { MANAGED_FLAGS } from '../src/protocol';
+import { MANAGED_FLAGS, MANAGED_MODELS } from '../src/protocol';
 
 const aceDirectory = fileURLToPath(new URL('..', import.meta.url));
 const repositoryDirectory = fileURLToPath(new URL('../../..', import.meta.url));
@@ -114,6 +114,11 @@ describe('Ace deployment contract', () => {
     expect(deploy).toContain("ensureFlag('suggested-work-enabled'");
     expect(deploy).toContain("ensureFlag('automation-workspace-templates-enabled'");
     expect(deploy).toContain('variations: { off: false, on: true }');
+    for (const model of MANAGED_MODELS) {
+      expect(deploy, `${model.key} is provisioned before Ace deploys`).toContain(`ensureModelFlag('${model.key}'`);
+    }
+    expect(deploy).toContain("default_variation: 'current'");
+    expect(deploy).toContain('variations: { current: { model, fallbackModels } }');
     expect(deploy).toContain('await verifyRuntimeQueuePermissions({ accountId, token: aceRuntimeToken })');
   });
 
@@ -150,6 +155,28 @@ describe('Ace deployment contract', () => {
       const call = deploy.match(new RegExp(`ensureFlag\\('${flag.key}',\\s*'([^']*)'`, 'u'));
       expect(call, `no ensureFlag('${flag.key}', ...) call found in deploy.mjs`).not.toBeNull();
       expect(call![1], `${flag.key}'s deploy.mjs description drifted from its MANAGED_FLAGS entry`).toBe(flag.description);
+    }
+  });
+
+  it('provisions every model role from the route and explanation in the Ace catalog', async () => {
+    const deploy = await readFile(`${aceDirectory}/scripts/deploy.mjs`, 'utf8');
+
+    for (const model of MANAGED_MODELS) {
+      const call = deploy.match(new RegExp(
+        `ensureModelFlag\\('${model.key}',\\s*'([^']*)',\\s*'([^']*)',\\s*\\[([^\\]]*)\\]\\)`,
+        'u',
+      ));
+      expect(call, `no complete ensureModelFlag('${model.key}', ...) call found`).not.toBeNull();
+      const fallbacks = Array.from(call![3]!.matchAll(/'([^']+)'/gu), (match) => match[1]);
+      expect({
+        description: call![1],
+        model: call![2],
+        fallbackModels: fallbacks,
+      }).toEqual({
+        description: model.description,
+        model: model.defaultRouting.model,
+        fallbackModels: [...model.defaultRouting.fallbackModels],
+      });
     }
   });
 });

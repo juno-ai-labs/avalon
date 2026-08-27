@@ -8,7 +8,10 @@ import {
   AutomationDeliveryTargetSetSchema,
   AutomationDraftSchema,
   AutomationDraftStreamEventSchema,
+  AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_OVERRIDES,
+  AGENT_MODEL_ROLES,
+  AgentModelRoutingSchema,
   ClientSocketEventSchema,
   CompileAutomationRequestSchema,
   ConnectorOAuthProviderSchema,
@@ -224,6 +227,39 @@ describe("boundary contracts", () => {
     expect(CreateWorkstreamRequestSchema.safeParse({ ...base, modelOverride: "x-ai/grok-9" }).success).toBe(false);
     expect(AGENT_MODEL_OVERRIDES[0]).toBe("x-ai/grok-4.3");
     expect(new Set(AGENT_MODEL_OVERRIDES).size).toBe(AGENT_MODEL_OVERRIDES.length);
+  });
+
+  it("owns the complete model-role, Flagship-key, and route-value contract", () => {
+    expect(AGENT_MODEL_ROLES).toEqual([
+      "workstream",
+      "inline_child",
+      "automation_compiler",
+      "block_dashboard",
+      "meeting_notes",
+      "addressing_classifier",
+      "workstream_naming",
+      "activity_structured",
+      "work_opportunity_admission",
+      "work_opportunity_ranking",
+      "workstream_description",
+    ]);
+    expect(AGENT_MODEL_ROLES.map((role) => AGENT_MODEL_FLAG_KEYS[role])).toEqual([
+      "agent-model-workstream",
+      "agent-model-inline-child",
+      "agent-model-automation-compiler",
+      "agent-model-block-dashboard",
+      "agent-model-meeting-notes",
+      "agent-model-addressing-classifier",
+      "agent-model-workstream-naming",
+      "agent-model-activity-structured",
+      "agent-model-work-opportunity-admission",
+      "agent-model-work-opportunity-ranking",
+      "agent-model-workstream-description",
+    ]);
+    expect(AgentModelRoutingSchema.parse({ model: " x-ai/grok-4.3 " })).toEqual({
+      model: "x-ai/grok-4.3",
+      fallbackModels: [],
+    });
   });
 
   it("accepts only explicit workspace timezone updates", () => {
