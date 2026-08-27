@@ -100,6 +100,46 @@ describe("harness-run authority on real workerd", () => {
     });
   });
 
+  it("prepares the final payload before atomically publishing its message and projection", async () => {
+    const stub = agent();
+    await boot(stub);
+    const now = Date.now();
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      seedRun(state, RUN);
+    });
+    await harnessRuns(stub, "claimAttempt", claim({ now }));
+
+    const publishedAt = now + 1_000;
+    const result = await harnessRuns(stub, "publishFinalMessage", {
+      runId: RUN,
+      attemptId: "attempt-1",
+      owner: "owner-1",
+      now: publishedAt,
+      messageId: "final-message-1",
+      text: "The work is complete.",
+      hostOutcomeStatus: "completed",
+      eventPayloadJson: "{}",
+      lifecycleEventId: "final-message-event-1",
+      allowCancellationRequested: false,
+    });
+
+    expect(result.value).toEqual({ outcome: "published", sequenceNumber: 1 });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT content FROM parts WHERE id = 'final-message-1'`,
+      ).one().content).toBe("The work is complete.");
+      expect(state.storage.sql.exec(
+        `SELECT event_type FROM run_lifecycle_events WHERE event_id = 'final-message-event-1'`,
+      ).one().event_type).toBe("final_message_persisted");
+      const envelope = JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
+        `SELECT payload_json FROM durable_outbox
+          WHERE partition_key = 'common' ORDER BY source_version DESC LIMIT 1`,
+      ).one().payload_json) as { effect: { updatedAt: string } };
+      expect(envelope.effect.updatedAt).toBe(new Date(publishedAt).toISOString());
+    });
+  });
+
   it("leaves no projection behind for a heartbeat", async () => {
     const stub = agent();
     await boot(stub);

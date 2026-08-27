@@ -340,6 +340,15 @@ describe("a tool card in the transcript", () => {
     expect(sql.exec(`SELECT COUNT(*) AS n FROM parts`).one().n).toBe(1);
     expect(sql.exec(`SELECT tool_status, edited_at FROM parts`).toArray())
       .toEqual([{ tool_status: "completed", edited_at: NOW + 5_000 }]);
+    expect(sql.exec(
+      `SELECT tool_name, tool_mode, tool_status, edited_at
+         FROM workstream_message_records WHERE message_id = 'invocation-1'`,
+    ).toArray()).toEqual([{
+      tool_name: "linear.issue.get",
+      tool_mode: "read",
+      tool_status: "completed",
+      edited_at: NOW + 5_000,
+    }]);
     expect(JSON.parse(sql.exec<{ payload_json: string } & Record<string, SqlStorageValue>>(
       `SELECT payload.payload_json
          FROM workstream_message_records record
