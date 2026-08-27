@@ -176,10 +176,25 @@ describe('the Projects sidebar section', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('Blue');
   });
 
+  it('given a customized new-project form, when it is cancelled and reopened, then it starts from gray again', () => {
+    renderSection({ projects: [] });
+    fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Temporary' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Red' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    const reopened = screen.getByRole('dialog', { name: 'New project' });
+    expect(within(reopened).getByRole('button', { name: 'Gray' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(reopened).getByRole('textbox', { name: 'Name' })).toHaveValue('');
+  });
+
   it('given a failed restore, when recovery is closed and project creation opens, then the restore error stays out of the new-project form', async () => {
     const onRestore = vi.fn(async () => { throw new Error('Resolve the project conflict'); });
     renderSection({ inactiveProjects: [{ ...hiring, status: 'archived' }], onRestore, projects: [] });
     fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Temporary' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Red' }));
     fireEvent.click(screen.getByRole('button', { name: 'Restore archived project' }));
     fireEvent.click(screen.getByRole('button', { name: /Hiring/u }));
     await screen.findByText('Resolve the project conflict');
@@ -188,6 +203,9 @@ describe('the Projects sidebar section', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New project' }));
 
     expect(screen.queryByText('Resolve the project conflict')).not.toBeInTheDocument();
+    const reopened = screen.getByRole('dialog', { name: 'New project' });
+    expect(within(reopened).getByRole('button', { name: 'Gray' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(reopened).getByRole('textbox', { name: 'Name' })).toHaveValue('');
   });
 
   it('given fixed server order, when Alt+Arrow moves a row, then the complete new order is saved', async () => {

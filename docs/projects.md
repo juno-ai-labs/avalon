@@ -245,7 +245,9 @@ starting presentation.
 
 **Consequences:** Creation-flow behavior checks must treat gray as selected and
 render every icon preview with the gray project color until the person chooses
-another swatch.
+another swatch. Projects whose creators leave the palette untouched share the
+same gray icon, trading automatic color distinction for a neutral starting
+point.
 
 ### 2026-08-27 — Project editing moves onto the owning surfaces
 

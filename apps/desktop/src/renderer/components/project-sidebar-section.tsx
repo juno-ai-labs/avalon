@@ -343,7 +343,11 @@ export function ProjectSidebarSection({
         {sectionError && <InlineError>{sectionError}</InlineError>}
       </section>
       <Modal
-        footer={<>{inactiveProjects.length > 0 && <Button disabled={saving} onClick={() => { setModalError(null); setCreateOpen(false); setRecoveryOpen(true); }}>Restore archived project</Button>}<Button disabled={saving} onClick={closeCreate}>Cancel</Button><Button className="button-primary" disabled={saving || !name.trim()} onClick={() => void submit()}>Create project</Button></>}
+        footer={<>
+          {inactiveProjects.length > 0 && <Button disabled={saving} onClick={() => { closeCreate(); setRecoveryOpen(true); }}>Restore archived project</Button>}
+          <Button disabled={saving} onClick={closeCreate}>Cancel</Button>
+          <Button className="button-primary" disabled={saving || !name.trim()} onClick={() => void submit()}>Create project</Button>
+        </>}
         onOpenChange={(open) => open ? setCreateOpen(true) : closeCreate()}
         open={createOpen}
         title="New project"
