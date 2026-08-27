@@ -256,7 +256,7 @@ None yet.
    out-of-distribution. The identifier part stays an opaque token —
    bounded length, safe alphabet, never a strict-UUID pattern — because
    its shape belongs to the resource system, not the renderer; a future
-   token-friendly slug or alias (open question 4) needs no renderer
+   token-friendly slug or alias (key design decision 8) needs no renderer
    change. The known cost, accepted: the image form degrades worse than
    the link form outside Rally (a broken-image placeholder rather than
    label text), which makes the email renderer's degradation rule
@@ -291,6 +291,37 @@ None yet.
    build degrades to label text anyway — so the desktop branch and the
    prompt module ship as one coordinated push. Rollback remains a prompt
    revert that leaves already-sent citations rendering forever.
+7. **A citation opens the current version; `?v=` is reserved, unparsed
+   syntax.** Resolved from open questions in review. A citation in a
+   live conversation means "the document", not "the bytes as of 2:14
+   PM": collaborators clicking a chip mid-discussion want what the
+   group is working on now, and a pin-at-write default would routinely
+   show already-fixed content as though it were current. Provenance is
+   the versioning sibling's job — open current, and history is one
+   click away in its version list. The V1 renderer does not parse a
+   `?v=` parameter; the URL-style scheme reserves it for a future
+   explicitly-pinned citation ("compare v3 against v5") once the
+   version list exists to give it meaning. The rejected alternative,
+   pinning by default, optimizes for the archival reading at the cost
+   of the collaborative one, and the transcript's own record already
+   serves the archival reading.
+8. **Citations carry the resource slug once it exists; the alias itself
+   is the versioning sibling's schema work.** Resolved from open
+   questions in review, adopting the proposed alias: resources gain a
+   short slug from the existing slug generator, allocated by the
+   authority under a unique index (a collision at the quoted
+   one-in-a-billion odds costs a regenerate-and-retry, never
+   correctness), with the UUID remaining the internal primary key. The
+   schema lands in the resource-versioning PRD — the change already
+   touching the resource application, which was the condition attached
+   to the proposal. This PRD consumes whichever identifier the resource
+   system serves: the opaque-token pattern (decision 2) accepts UUID
+   and slug alike, so there is no ordering dependency — citations ship
+   on UUIDs and get cheaper and more copy-reliable for free when slugs
+   arrive in model-facing outputs. Rejected: switching the primary key
+   outright (a cross-cutting identity migration for a benefit the alias
+   delivers), and owning the column here (identity belongs to the
+   resource system's PRD, not the renderer's).
 
 ## Data model
 
@@ -407,23 +438,6 @@ passing through unmangled.
 2. **Embed card contents** — icon, title, and kind now; later an inline
    excerpt or live preview of the resource inside the card itself?
    Presentation call to revisit once the rail preview exists.
-3. **Version pinning** — once the versioning sibling lands, should a
-   citation open the version that existed when it was written, or
-   current? V1 opens current; the question returns with that PRD's
-   version list, and the URL-style scheme reserves a natural slot either
-   way (a future `resource://<uuid>?v=3` remains available).
-4. **A token-friendly resource identifier.** Citations make the model
-   emit resource identifiers routinely, and a UUID is the worst shape
-   for that: ~36 characters tokenizing to roughly four times a short
-   slug's cost, in both directions — and, more importantly, a
-   high-entropy string the model must copy exactly, which is precisely
-   what small models mangle and what this PRD's degradation path exists
-   to absorb. The suggestion on the table (Morgan's): a resource ID alias
-   or an outright switch to the slug generator, with collision odds he
-   puts at roughly one in a billion — and with the authority allocating
-   under a unique index, a collision costs a retry, not correctness.
-   The decision belongs to the resource system, not this PRD: identity
-   cross-cuts contracts, links, cursors, and storage keys. This PRD
-   stays compatible either way via the opaque-token pattern (key design
-   decision 2); if the alias lands first, the prompt guidance and tool
-   outputs simply carry slugs and citation fidelity improves for free.
+3. **Popover and card interaction details on touch/keyboard** — hover
+   has no touch equivalent and focus order matters for the pills; settle
+   against the real window during implementation.
