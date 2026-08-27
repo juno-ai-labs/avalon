@@ -160,3 +160,28 @@ describe("normalizeModelText", () => {
       .toBe("Migrate C:\\to\\dist and \\in-flight work");
   });
 });
+
+describe("citations through the repair", () => {
+  // The repair sits between the model and the renderer, and it escapes the
+  // Markdown-active characters in whatever it unwraps — brackets included. A
+  // citation that came out the other side escaped would reach the renderer as
+  // text, and the whole protocol with it.
+  it("passes every citation form through unchanged", () => {
+    const citing = [
+      "Published the [Mute windows PRD](resource://prd-1).",
+      "",
+      "![Mute windows PRD](resource://prd-1)",
+      "",
+      "Revenue grew 40%.[^1]",
+      "",
+      "[^1]: [Q3 board deck](resource://deck-01)",
+    ].join("\n");
+
+    expect(normalizeModelMarkdown(citing)).toBe(citing);
+  });
+
+  it("still repairs TeX in a sentence that also carries a citation", () => {
+    expect(normalizeModelMarkdown("Backlog $\\rightarrow$ [Done](resource://d-1)."))
+      .toBe("Backlog → [Done](resource://d-1).");
+  });
+});

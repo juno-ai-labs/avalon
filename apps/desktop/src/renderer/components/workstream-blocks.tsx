@@ -32,6 +32,15 @@ import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/mod
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import * as Tooltip from '@radix-ui/react-tooltip';
+import {
+  footnoteIdentifierFromHref,
+  footnoteIdentifierFromId,
+  liftableFootnoteCitations,
+  MessageCitationContext,
+  renderCitation,
+  useMessageCitations,
+} from './citations';
 import { logError } from '../../common/logger';
 import { messageExportDate, messageExportFileName, type MessageExportFormat } from '../../common/message-export';
 import { formatDuration, formatRelative } from '../lib/format';
@@ -275,6 +284,17 @@ function isConnectorHref(href: string | undefined): boolean {
   return href !== undefined && href.startsWith('connector:');
 }
 
+/**
+ * A target this renderer decides for itself rather than handing to the browser.
+ *
+ * Well-formed or not: what makes a scheme belong here is that a component below
+ * has a rule for it, and a malformed one has to arrive intact for that rule to
+ * recognise what it was.
+ */
+function isRendererDecidedScheme(href: string | undefined): boolean {
+  return href !== undefined && /^(?:person|connector|resource):/iu.test(href);
+}
+
 function connectorTypeFromHref(href: string | undefined, token: string): string | undefined {
   const match = href?.match(CONNECTOR_LINK_PATTERN);
   if (!match || match[1] !== token) return undefined;
@@ -374,10 +394,114 @@ function MentionChip({ fallbackLabel, mention, personId }: {
   );
 }
 
+/**
+ * A footnote reference, once its definition has been lifted out of the trailing
+ * list and into it.
+ *
+ * `remark-gfm` already emits the structure this needs — an anchor carrying
+ * `data-footnote-ref` and a fragment naming its definition — so nothing here is
+ * parser work. The hook reads the identifier off that fragment and asks the
+ * message's citation map for the definition that was lifted; a reference whose
+ * definition was not lifted keeps the classic superscript link GFM made of it.
+ */
+function FootnoteReference({ children, href, ...props }: React.ComponentProps<'a'>): React.JSX.Element {
+  const { clobberPrefix, footnotes } = useMessageCitations();
+  const identifier = footnoteIdentifierFromHref(href, clobberPrefix);
+  const citation = identifier === undefined ? undefined : footnotes.get(identifier);
+  if (!citation) return <a {...props} href={href}>{children}</a>;
+  return renderCitation({
+    position: 'footnote',
+    href: citation.href,
+    label: citation.label,
+    footnote: { marker: children, citation },
+  }) ?? <a {...props} href={href}>{children}</a>;
+}
+
+/**
+ * A footnote definition in the trailing list, or nothing when it was lifted.
+ *
+ * A lifted definition renders inside its reference's popover; rendering it a
+ * second time at the bottom spends exactly the vertical space this feature
+ * exists to reclaim.
+ */
+function MarkdownListItem({ children, id, node, ...props }: React.ComponentProps<'li'> & ExtraProps): React.JSX.Element | null {
+  void node;
+  const { clobberPrefix, footnotes } = useMessageCitations();
+  const identifier = footnoteIdentifierFromId(id, clobberPrefix);
+  if (identifier !== undefined && footnotes.has(identifier)) return null;
+  return <li {...props} id={id}>{children}</li>;
+}
+
+/** The footnote section, or nothing when every definition in it was lifted. */
+function MarkdownSection({ children, node, ...props }: React.ComponentProps<'section'> & ExtraProps): React.JSX.Element | null {
+  const { clobberPrefix, footnotes } = useMessageCitations();
+  // An emptied section is still a visually hidden heading and an empty list,
+  // which renders as a gap under the message rather than as nothing.
+  if (isFootnoteSection(node) && everyFootnoteLifted(node, clobberPrefix, footnotes)) return null;
+  return <section {...props}>{children}</section>;
+}
+
+/**
+ * The superscript GFM wraps a reference in, unwrapped when the pill replaced it.
+ *
+ * A pill is not a superscript: the wrapper shrinks and raises whatever is inside
+ * it, which a chip-shaped element is not built to survive.
+ */
+function MarkdownSuperscript({ children, node, ...props }: React.ComponentProps<'sup'> & ExtraProps): React.JSX.Element {
+  const { clobberPrefix, footnotes } = useMessageCitations();
+  if (isLiftedFootnoteWrapper(node, clobberPrefix, footnotes)) return <>{children}</>;
+  return <sup {...props}>{children}</sup>;
+}
+
+/** Whether this element is the section GFM writes the footnote list into. */
+function isFootnoteSection(node: ExtraProps['node']): boolean {
+  return node?.type === 'element' && node.properties['dataFootnotes'] !== undefined;
+}
+
+/** Whether every definition in the footnote section was lifted into a pill. */
+function everyFootnoteLifted(
+  node: ExtraProps['node'],
+  clobberPrefix: string,
+  footnotes: Map<string, unknown>,
+): boolean {
+  if (node?.type !== 'element') return false;
+  const items = node.children
+    .filter((child) => child.type === 'element' && child.tagName === 'ol')
+    .flatMap((list) => (list.type === 'element' ? list.children : []))
+    .filter((child) => child.type === 'element' && child.tagName === 'li');
+  if (items.length === 0) return false;
+  return items.every((item) => {
+    const id = item.type === 'element' ? item.properties['id'] : undefined;
+    const identifier = footnoteIdentifierFromId(typeof id === 'string' ? id : undefined, clobberPrefix);
+    return identifier !== undefined && footnotes.has(identifier);
+  });
+}
+
+/** Whether this superscript wraps a reference whose definition was lifted. */
+function isLiftedFootnoteWrapper(
+  node: ExtraProps['node'],
+  clobberPrefix: string,
+  footnotes: Map<string, unknown>,
+): boolean {
+  if (node?.type !== 'element') return false;
+  return node.children.some((child) => {
+    if (child.type !== 'element' || !isFootnoteRef(child)) return false;
+    const href = child.properties['href'];
+    const identifier = footnoteIdentifierFromHref(typeof href === 'string' ? href : undefined, clobberPrefix);
+    return identifier !== undefined && footnotes.has(identifier);
+  });
+}
+
+/** Whether this element is the anchor GFM writes for a footnote reference. */
+function isFootnoteRef(node: ExtraProps['node']): boolean {
+  return node?.type === 'element' && node.properties['dataFootnoteRef'] !== undefined;
+}
+
 const REMARK_PLUGINS = [remarkGfm];
 
 type MarkdownComponents = NonNullable<React.ComponentProps<typeof ReactMarkdown>['components']>;
 type MarkdownUrlTransform = NonNullable<React.ComponentProps<typeof ReactMarkdown>['urlTransform']>;
+type MarkdownRehypeOptions = NonNullable<React.ComponentProps<typeof ReactMarkdown>['remarkRehypeOptions']>;
 
 /** A blank line: the classic boundary between markdown blocks. */
 const BLANK_LINE = /^\s*$/u;
@@ -488,13 +612,24 @@ export function splitStreamingMarkdown(source: string): { settled: string[]; tai
  * makes a paced reveal affordable: each animation-frame commit re-parses only
  * the open tail, while every settled segment's element is reused untouched.
  */
-const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components, source, urlTransform }: {
+const SettledMarkdownSegment = memo(function SettledMarkdownSegment({
+  components,
+  rehypeOptions,
+  source,
+  urlTransform,
+}: {
   components: MarkdownComponents;
+  rehypeOptions: MarkdownRehypeOptions;
   source: string;
   urlTransform: MarkdownUrlTransform;
 }): React.JSX.Element {
   return (
-    <ReactMarkdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={urlTransform}>
+    <ReactMarkdown
+      components={components}
+      remarkPlugins={REMARK_PLUGINS}
+      remarkRehypeOptions={rehypeOptions}
+      urlTransform={urlTransform}
+    >
       {source}
     </ReactMarkdown>
   );
@@ -529,6 +664,11 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
 }): React.JSX.Element {
   // One token per mounted body, so the links keep stable identity across renders.
   const token = useMemo(createConnectorMentionToken, []);
+  // GFM writes identical footnote ids into every mount — `user-content-fn-1` in
+  // each of them — and every message is its own mount. Namespacing them on this
+  // body's token is what stops an anchor or an ARIA reference in one message
+  // resolving to a footnote in another, or in an earlier streaming segment.
+  const clobberPrefix = `m${token}-`;
   // Mentions first, normalization second, and the order is load-bearing: the
   // connector offsets are measured against the stored text, so anything that
   // changes its length has to run after they have been resolved into links.
@@ -539,10 +679,38 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
   // Stable across commits that change nothing they depend on, for two reasons:
   // the settled segments' memo compares them by identity, and the memoised
   // element below reuses the whole rendered body while they hold still.
-  const { components, urlTransform } = useMemo(() => ({
+  // The definitions this message will lift into their references, and the
+  // per-mount prefix GFM writes into footnote ids. Message-wide rather than
+  // per-segment because the prefix has to be, and one map for the body is
+  // simpler than one per segment for no behavioural difference: a reference
+  // only has an anchor to hook when its definition was in the same parse.
+  // While a message streams, a reference whose definition has not arrived
+  // renders literally — the renderer's existing behaviour for a split
+  // footnote — and the commit that ends the stream heals it.
+  const citations = useMemo(() => ({
+    clobberPrefix,
+    footnotes: liftableFootnoteCitations(markdown),
+  }), [clobberPrefix, markdown]);
+  // Stable across commits that change nothing they depend on, for two reasons:
+  // the settled segments' memo compares them by identity, and the memoised
+  // element below reuses the whole rendered body while they hold still.
+  //
+  // The citation map is deliberately *not* a dependency. It changes on every
+  // streamed commit, and threading it through here would invalidate the
+  // memoised component config and with it every settled segment — the whole
+  // streaming fast path, silently, in the client only. It reaches the
+  // components through context instead, which re-renders the consumers without
+  // re-parsing anything.
+  const { components, rehypeOptions, urlTransform } = useMemo(() => ({
+    rehypeOptions: { clobberPrefix } satisfies MarkdownRehypeOptions,
     components: {
       a: ({ children: linkChildren, href, node, ...props }) => {
+        if (isFootnoteRef(node)) {
+          return <FootnoteReference {...props} href={href}>{linkChildren}</FootnoteReference>;
+        }
         void node;
+        const citation = renderCitation({ position: 'link', href, label: linkChildren });
+        if (citation) return citation;
         const personId = personIdFromHref(href);
         if (personId) {
           const mention = mentions.find((candidate) => (
@@ -581,28 +749,46 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
           telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId } : undefined}
         />
       ),
+      img: ({ alt, node, src, ...props }) => {
+        void node;
+        const citation = renderCitation({ position: 'image', href: src, label: alt ?? '' });
+        // No opinion means the image is an image: an `https` source renders
+        // today and means the same thing everywhere, so the registry declines
+        // that cell rather than hijacking it.
+        return citation ?? <img {...props} alt={alt} src={src} />;
+      },
+      li: MarkdownListItem,
+      section: MarkdownSection,
+      sup: MarkdownSuperscript,
       pre: ({ children: preChildren }) => <>{preChildren}</>,
       table: MarkdownTable,
     } satisfies MarkdownComponents,
     urlTransform: ((url, key, node) => (
-      // Both schemes reach the `a` component intact so it can decide there;
-      // neither is ever rendered as a navigable link. The whole scheme
-      // passes, not only a well-formed id: `defaultUrlTransform` empties
-      // what it rejects, and an emptied href would reach the component as
-      // '' — indistinguishable from a link with no target, and too late
-      // for the fallback branch to know it was a mention.
-      key === 'href' && node.tagName === 'a' && (/^person:/iu.test(url) || isConnectorHref(url))
-        ? url
+      // Every scheme this renderer decides for itself reaches its component
+      // intact; none of them is ever rendered as a navigable href. The whole
+      // scheme passes, not only a well-formed target: `defaultUrlTransform`
+      // empties what it rejects, and an emptied href would reach the component
+      // as '' — indistinguishable from a link with no target, and too late for
+      // the fallback branch to know what it was. That is exactly how a
+      // malformed `person:` link once shipped as a chip-shaped anchor opening
+      // a blank window, and a `resource://` target is decided the same way.
+      (key === 'href' && node.tagName === 'a') || (key === 'src' && node.tagName === 'img')
+        ? (isRendererDecidedScheme(url) ? url : defaultUrlTransform(url))
         : defaultUrlTransform(url)
     )) satisfies MarkdownUrlTransform,
-  }), [mentions, messageId, token, workstreamId]);
+  }), [clobberPrefix, mentions, messageId, token, workstreamId]);
   // A settled body's element is reused whenever the markdown has not changed,
   // so a commit elsewhere on the screen — another message streaming at 60
   // commits a second included — skips this subtree instead of re-parsing it.
   const rendered = useMemo(() => {
     if (!streaming) {
       return (
-        <ReactMarkdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={urlTransform}>
+        <ReactMarkdown
+          components={components}
+          remarkPlugins={REMARK_PLUGINS}
+          remarkRehypeOptions={rehypeOptions}
+          urlTransform={urlTransform}
+        >
           {markdown}
         </ReactMarkdown>
       );
@@ -614,17 +800,33 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
           <SettledMarkdownSegment
             components={components}
             key={index}
+            rehypeOptions={rehypeOptions}
             source={segment}
             urlTransform={urlTransform}
           />
         ))}
-        <ReactMarkdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={urlTransform}>
+        <ReactMarkdown
+          components={components}
+          remarkPlugins={REMARK_PLUGINS}
+          remarkRehypeOptions={rehypeOptions}
+          urlTransform={urlTransform}
+        >
           {tail}
         </ReactMarkdown>
       </>
     );
-  }, [components, markdown, streaming, urlTransform]);
-  return <div className="markdown-body">{rendered}</div>;
+  }, [components, markdown, rehypeOptions, streaming, urlTransform]);
+  // The provider is here rather than around the application because this body
+  // is rendered in places the application is not: the export card renders it
+  // into a detached root of its own, and a citation popover has to work there
+  // and in a component test without either installing a provider first.
+  return (
+    <Tooltip.Provider>
+      <MessageCitationContext.Provider value={citations}>
+        <div className="markdown-body">{rendered}</div>
+      </MessageCitationContext.Provider>
+    </Tooltip.Provider>
+  );
 }
 
 /**
